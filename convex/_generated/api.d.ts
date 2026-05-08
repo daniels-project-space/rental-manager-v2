@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as seed_account_profiles from "../seed/account_profiles.js";
 import type * as seed_inventory from "../seed/inventory.js";
 
 import type {
@@ -17,6 +18,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "seed/account_profiles": typeof seed_account_profiles;
   "seed/inventory": typeof seed_inventory;
 }>;
 

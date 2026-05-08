@@ -16,14 +16,27 @@ export default defineSchema({
     updated_at: v.number(),
   }).index("by_slug", ["slug"]),
 
-  // Per-account persona/templates/rules (Daniel authors later)
+  // Per-account persona/templates/rules (Phase 1.B v1 mining seed)
   account_profiles: defineTable({
     account_id: v.id("accounts"),
+    // legacy fields (kept for compat)
     persona: v.optional(v.string()),
     templates: v.optional(v.any()),
-    rules: v.optional(v.any()),
+    // expanded Phase 1.B fields
+    persona_prompt: v.optional(v.string()),
+    language: v.optional(v.string()),
+    greeting_template: v.optional(v.string()),
+    signoff_template: v.optional(v.string()),
     business_hours: v.optional(v.any()),
-    response_style: v.optional(v.string()),
+    delivery: v.optional(v.any()),
+    pricing_rules: v.optional(v.any()),
+    discount_codes: v.optional(v.array(v.any())),
+    response_style: v.optional(v.any()),    // widened from string to JSON object
+    rules: v.optional(v.any()),
+    message_templates: v.optional(v.any()),
+    unknown_categories: v.optional(v.array(v.string())),
+    last_synced_v1: v.optional(v.number()),
+    source_files: v.optional(v.array(v.string())),
     created_at: v.number(),
     updated_at: v.number(),
   }).index("by_account", ["account_id"]),
