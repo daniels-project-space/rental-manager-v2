@@ -4,6 +4,7 @@ export default defineConfig({
   project: "proj_cdhxwycwcjdmxnsodsmc",
   runtime: "node",
   logLevel: "log",
+  maxDuration: 300,
   // Retry sane defaults — individual tasks can override.
   retries: {
     enabledInDev: true,
