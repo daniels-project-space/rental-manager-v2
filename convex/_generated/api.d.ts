@@ -10,6 +10,7 @@
 
 import type * as seed_account_profiles from "../seed/account_profiles.js";
 import type * as seed_inventory from "../seed/inventory.js";
+import type * as seed_settings from "../seed/settings.js";
 
 import type {
   ApiFromModules,
@@ -20,6 +21,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   "seed/account_profiles": typeof seed_account_profiles;
   "seed/inventory": typeof seed_inventory;
+  "seed/settings": typeof seed_settings;
 }>;
 
 /**

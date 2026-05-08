@@ -73,6 +73,9 @@ export default defineSchema({
     is_marketing_only: v.boolean(),
     status: v.string(),               // "active" | "inactive" | "marketing_only" | "archived"
     description_source: v.optional(v.string()),
+    // Phase 1.B.3: per-item Hygglo cancellation policy text (scraped from listing bottom every 60d).
+    // null/undefined for now until Phase 3 Stagehand scrape populates.
+    cancellation_policy: v.optional(v.string()),
     created_at: v.number(),
     updated_at: v.number(),
   })
@@ -246,7 +249,7 @@ export default defineSchema({
   // ── Settings singleton ───────────────────────────────────────
   settings: defineTable({
     ALLOW_HYGGLO_SEND: v.boolean(),     // MASTER SAFETY RAIL — must stay false
-    read_only_mode: v.boolean(),
+    read_only_mode: v.boolean(),       // Umbrella safety flag (Phase 1.B.3): blocks send + auto_accept + decline + listing modify
     polling_interval_ms: v.number(),
     escalate_to_sonnet: v.boolean(),
     troubleshooting_policy: v.optional(v.object({
@@ -258,6 +261,25 @@ export default defineSchema({
       broken_action: v.string(),
       unknown_action: v.string(),
     })),
+    // Phase 1.B.3 — operator policy fields
+    read_only_mode_blocks: v.optional(v.array(v.string())),
+    hygglo_care_terms: v.optional(v.string()),                       // populated by Phase 3 Stagehand scrape
+    hygglo_care_terms_last_synced: v.optional(v.number()),
+    hygglo_care_terms_refresh_cadence_days: v.optional(v.number()),
+    cancellation_policy_refresh_cadence_days: v.optional(v.number()),
+    timezone: v.optional(v.string()),
+    quiet_hours: v.optional(v.object({
+      start: v.string(),
+      end: v.string(),
+      tz: v.string(),
+    })),
+    pickup_no_show_grace_minutes: v.optional(v.number()),
+    price_objection_surfacing: v.optional(v.object({
+      dashboard: v.boolean(),
+      telegram_alerts: v.boolean(),
+      weekly_digest: v.boolean(),
+    })),
+    policy_notes: v.optional(v.string()),
     updated_at: v.optional(v.number()),
   }),
 
