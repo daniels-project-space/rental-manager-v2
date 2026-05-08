@@ -8,13 +8,17 @@
  * @module
  */
 
+import type * as seed_inventory from "../seed/inventory.js";
+
 import type {
   ApiFromModules,
   FilterApi,
   FunctionReference,
 } from "convex/server";
 
-declare const fullApi: ApiFromModules<{}>;
+declare const fullApi: ApiFromModules<{
+  "seed/inventory": typeof seed_inventory;
+}>;
 
 /**
  * A utility for referencing Convex functions in your app's public API.
