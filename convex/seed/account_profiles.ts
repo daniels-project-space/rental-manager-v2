@@ -614,6 +614,198 @@ export const expand_rules_with_behavioral_patterns = internalMutation({
   },
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// Phase 1.B.3 — apply 12 policy decisions
+// Merges new policy keys into rules JSON (preserves Phase 1.B + 1.B.2),
+// appends the off-platform-payment HARD POLICY clause to BOTH persona prompts.
+// ─────────────────────────────────────────────────────────────────────
+
+const P1B3_SOURCE_FILES = [
+  "convex/seed/settings.ts (phase 1.B.3 policy apply)",
+  "Daniel decisions doc 2026-05-08 (12 policy answers)",
+];
+
+// VERBATIM clause appended to both persona prompts (do not edit).
+const OFF_PLATFORM_PAYMENT_CLAUSE = [
+  "HARD POLICY — OFF-PLATFORM PAYMENT",
+  "- Bank-transfer details may ONLY be shared for: (a) delivery fees, (b) agreed repayments for broken items.",
+  "- NEVER suggest off-platform payment as an alternative to Hygglo's checkout. NEVER imply a discount for paying outside Hygglo. NEVER route a rental's primary payment off-platform.",
+  "- If a renter requests off-platform payment for the rental itself, decline politely and route them back to Hygglo.",
+  "- Off-platform mentions are logged for compliance review.",
+].join("\n");
+
+// Per-account fallback messages (shared content; just data).
+const CANCELLATION_FALLBACK =
+  "Cancellation terms are set per item — see the cancellation section at the bottom of this listing on Hygglo. Hygglo's terms are binding.";
+
+const INSURANCE_COVERAGE_SUMMARY =
+  "Usually covered except for negligence — refer to Hygglo Care terms";
+
+function buildP1B3Patch(prevRules: any) {
+  const prev = prevRules ?? {};
+  const prevLate = prev.late_return ?? {};
+  const prevPickup = prev.pickup_no_show ?? {};
+  const prevNeg = prev.negotiation ?? {};
+  const prevBlacklist = prev.blacklist_triggers ?? {};
+  const prevCancel = prev.cancellation ?? {};
+
+  return {
+    ...prev,
+
+    // late_return: bot NEVER messages renter; telegram alert only; no fixed fee schedule.
+    late_return: {
+      ...prevLate,
+      renter_communication: false,
+      telegram_alert_only: true,
+      no_fixed_fee_schedule: true,
+      grace_minutes: prevLate.grace_minutes ?? 30,
+      half_day_grace: prevLate.half_day_grace ?? true,
+      extension_policy: prevLate.extension_policy ??
+        "Anything beyond half-day grace = paid extension that must be booked AND paid through Hygglo. Date changes require renter to message Hygglo via the platform app — bot does NOT modify dates.",
+    },
+
+    // cancellation: per-item Hygglo listing, refresh 60d, owner cannot cancel for external reasons.
+    cancellation: {
+      ...prevCancel,
+      source: "per_item_hygglo_listing",
+      refresh_cadence_days: 60,
+      owner_cannot_cancel_for_external_reasons: true,
+      hygglo_tc_binding: true,
+      fallback_message: CANCELLATION_FALLBACK,
+      // preserve existing v1 cancellation refund_policy_text + numeric GAPs noted in 1.B.2
+      notes: prevCancel.refund_policy_text ?? prevCancel.notes ?? null,
+    },
+
+    // insurance: NEW key — settings-driven Hygglo Care summary, refresh 30d.
+    insurance: {
+      coverage_summary: INSURANCE_COVERAGE_SUMMARY,
+      source: "settings.hygglo_care_terms",
+      quote_strategy: "use_settings_value_if_set_else_default_summary",
+      refresh_cadence_days: 30,
+    },
+
+    // off_platform_payment: NEW key — soft enforcement via persona prompt; logged for audit.
+    off_platform_payment: {
+      allowed_contexts: ["delivery_fee", "broken_item_repayment_agreed"],
+      strictly_disallowed: ["platform_fee_avoidance", "rental_payment_alternative"],
+      enforcement: "persona_prompt",
+      monitoring: "log_all_off_platform_mentions_for_audit",
+    },
+
+    // pickup_no_show: 30-min grace, telegram-alert-only, never message renter.
+    pickup_no_show: {
+      ...prevPickup,
+      grace_minutes: 30,
+      action_after_grace: "telegram_alert_only",
+      do_not_message_renter: true,
+    },
+
+    // timezone_and_hours: NEW key — Europe/London, quiet hours 02:00-07:00.
+    timezone_and_hours: {
+      timezone: "Europe/London",
+      quiet_hours_start: "02:00",
+      quiet_hours_end: "07:00",
+      quiet_hours_action: "queue_until_07:00",
+    },
+
+    // negotiation: no hard floor, escalate sub-Stage-3.
+    negotiation: {
+      ...prevNeg,
+      no_hard_floor: true,
+      sub_stage3_action: "escalate_telegram",
+      notes: "Per Daniel: always escalate sub-Stage-3 offers; no fixed £/% floor",
+    },
+
+    // blacklist_triggers: cross_account confirmed (already true from 1.B.2; reaffirmed).
+    blacklist_triggers: {
+      ...prevBlacklist,
+      cross_account: true,
+    },
+  };
+}
+
+function appendOffPlatformClause(persona: string | undefined): string {
+  if (!persona) return OFF_PLATFORM_PAYMENT_CLAUSE;
+  if (persona.includes("HARD POLICY — OFF-PLATFORM PAYMENT")) return persona; // idempotent
+  return `${persona}\n\n${OFF_PLATFORM_PAYMENT_CLAUSE}`;
+}
+
+export const apply_phase_1_b3_policies = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const accounts = await ctx.db.query("accounts").collect();
+    const bySlug: Record<string, any> = {};
+    for (const a of accounts) bySlug[a.slug] = a;
+    if (!bySlug["leo"] || !bySlug["dbcinema"]) {
+      throw new Error("Both leo and dbcinema accounts must exist before applying p1_b3 policies");
+    }
+
+    const t = now();
+    const results: { slug: string; merged_keys: string[]; persona_len_before: number; persona_len_after: number }[] = [];
+
+    for (const slug of ["leo", "dbcinema"] as const) {
+      const account = bySlug[slug];
+      const existing = await ctx.db
+        .query("account_profiles")
+        .withIndex("by_account", (q: any) => q.eq("account_id", account._id))
+        .collect();
+      if (existing.length === 0) {
+        throw new Error(`account_profiles row missing for ${slug} — run seedAccountProfilesFromV1 first`);
+      }
+      const row = existing[0];
+
+      const prevRules = (row.rules as any) ?? {};
+      const mergedRules = buildP1B3Patch(prevRules);
+
+      const prevPersona = (row.persona_prompt as string) ?? "";
+      const newPersona = appendOffPlatformClause(prevPersona);
+
+      const prevSources: string[] = (row.source_files as string[]) ?? [];
+      const mergedSources = Array.from(new Set([...prevSources, ...P1B3_SOURCE_FILES]));
+
+      // No new unknown_categories expected from p1_b3 — all 12 decisions resolved.
+      const prevUnknown: string[] = (row.unknown_categories as string[]) ?? [];
+
+      await ctx.db.patch(row._id, {
+        persona_prompt: newPersona,
+        rules: mergedRules,
+        source_files: mergedSources,
+        unknown_categories: prevUnknown,
+        last_synced_v1: t,
+        updated_at: t,
+      });
+
+      results.push({
+        slug,
+        merged_keys: [
+          "late_return",
+          "cancellation",
+          "insurance",
+          "off_platform_payment",
+          "pickup_no_show",
+          "timezone_and_hours",
+          "negotiation",
+          "blacklist_triggers",
+        ],
+        persona_len_before: prevPersona.length,
+        persona_len_after: newPersona.length,
+      });
+    }
+
+    await ctx.db.insert("audit_log", {
+      table_name: "account_profiles",
+      actor: "p1_b3_policy_apply",
+      op: "update",
+      count: results.length,
+      source_file: P1B3_SOURCE_FILES.join(","),
+      note: "merge_rules_and_persona: phase 1.B.3 — added insurance + off_platform_payment + timezone_and_hours; merged late_return/cancellation/pickup_no_show/negotiation/blacklist_triggers; appended HARD POLICY OFF-PLATFORM PAYMENT clause to both persona prompts",
+      ts: t,
+    });
+
+    return { count: results.length, results };
+  },
+});
+
 // Read-only verification helper.
 export const verifyAccountProfiles = internalMutation({
   args: {},
