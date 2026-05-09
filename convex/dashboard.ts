@@ -161,31 +161,3 @@ export const getSummary = query({
     };
   },
 });
-
-/**
- * W03 Lifetime Revenue Card — all-time aggregation
- */
-export const getLifetimeSummary = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
-    let reservations = await ctx.db.query("reservations").collect();
-    if (accountSlug) {
-      reservations = reservations.filter(
-        (r) => r.account_slug === accountSlug
-      );
-    }
-
-    const totalRevenue = reservations.reduce(
-      (sum, r) => sum + (r.gross_paid_gbp ?? 0),
-      0
-    );
-    const totalBookings = reservations.length;
-    const avgValue = totalBookings > 0 ? totalRevenue / totalBookings : 0;
-
-    const totalDays = reservations.reduce((sum, r) => {
-      return sum + (r.duration_days ?? 0);
-    }, 0);
-
-    return { totalRevenue, totalBookings, avgValue, totalDays };
-  },
-});

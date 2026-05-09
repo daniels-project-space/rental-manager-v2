@@ -390,6 +390,20 @@ export default defineSchema({
     .index("by_thread_and_message", ["thread_id", "message_id"])
     .index("by_fetched", ["fetched_at"]),
 
+  // ── Insurance Claims (W03 chart series + W22 Claims widget) ─
+  insurance_claims: defineTable({
+    account_slug: v.optional(v.string()),
+    account_id: v.optional(v.id("accounts")),
+    item_id: v.optional(v.id("items")),
+    item_name_canonical: v.optional(v.string()),
+    amount_gbp: v.number(),
+    claim_date: v.string(),            // ISO YYYY-MM-DD
+    description: v.optional(v.string()),
+    status: v.string(),                // "open" | "settled" | "denied"
+    created_at: v.number(),
+  }).index("by_account", ["account_slug"])
+    .index("by_claim_date", ["claim_date"]),
+
   // ── Competitor listings (informational, optional) ───────────
   competitor_listings: defineTable({
     listing_id: v.string(),

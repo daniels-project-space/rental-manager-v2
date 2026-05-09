@@ -17,6 +17,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as denial_records from "../denial_records.js";
 import type * as health from "../health.js";
 import type * as hygglo from "../hygglo.js";
+import type * as insurance_claims from "../insurance_claims.js";
 import type * as items from "../items.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as reservations from "../reservations.js";
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   denial_records: typeof denial_records;
   health: typeof health;
   hygglo: typeof hygglo;
+  insurance_claims: typeof insurance_claims;
   items: typeof items;
   pricing_catalog: typeof pricing_catalog;
   reservations: typeof reservations;

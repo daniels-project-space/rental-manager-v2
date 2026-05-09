@@ -242,62 +242,240 @@ export const getInvestmentScorecard = query({
  * Returns every month from first reservation to today (inclusive), with zeros for empty months.
  * accountSlug: null = all accounts combined
  */
+
+/**
+ * W03 Lifetime Revenue Chart — full series: organic per account, AI Boost,
+ * damage/claims, booked-next, pending-next, cumulative line, forecast.
+ * Returns months from first reservation through current+3 (forecast tail).
+ * accountSlug: null = all accounts combined
+ */
 export const getLifetimeByMonth = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
-    let reservations = await ctx.db.query('reservations').collect();
+    const AI_ACTIVE_FROM = "2026-02";
+    // boostRate from settings.ai_boost_rate if present, else 0
+    const settings = await ctx.db.query("settings").first();
+    const boostRate: number =
+      settings && "ai_boost_rate" in settings
+        ? (settings as unknown as Record<string, number>).ai_boost_rate
+        : 0;
 
-    // Find earliest start_date across ALL accounts for x-axis span
-    const allDates = reservations
+    const allReservations = await ctx.db.query("reservations").collect();
+
+    const allDates = allReservations
       .filter((r) => r.start_date)
       .map((r) => r.start_date as string)
       .sort();
-    if (allDates.length === 0) return [];
-
-    const firstMonth = allDates[0].slice(0, 7); // YYYY-MM
-    const todayMonth = new Date().toISOString().slice(0, 7);
-
-    // Generate all YYYY-MM keys from firstMonth to todayMonth
-    const months: string[] = [];
-    let cur = new Date(firstMonth + '-01');
-    const endDate = new Date(todayMonth + '-01');
-    while (cur <= endDate) {
-      months.push(cur.toISOString().slice(0, 7));
-      cur.setMonth(cur.getMonth() + 1);
+    if (allDates.length === 0) {
+      return {
+        months: [],
+        totalRevenue: 0,
+        avgMonthly: 0,
+        strongestMonth: null,
+        weakestMonth: null,
+        boostRate,
+        aiActiveFrom: AI_ACTIVE_FROM,
+        forecast: [],
+      };
     }
 
-    // Filter reservations by account if needed
-    const filtered = accountSlug
-      ? reservations.filter((r) => r.account_slug === accountSlug)
-      : reservations;
+    const firstMonth = allDates[0].slice(0, 7);
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+    const forecastEnd = new Date(now.getFullYear(), now.getMonth() + 4, 1);
 
-    // Bucket per-account monthly gross
-    const dbMap = new Map<string, number>();
-    const leoMap = new Map<string, number>();
-
-    for (const r of filtered) {
-      if (!r.start_date) continue;
-      const key = r.start_date.slice(0, 7);
-      const gross = r.gross_paid_gbp ?? 0;
-      if (r.account_slug === 'dbcinema') {
-        dbMap.set(key, (dbMap.get(key) ?? 0) + gross);
-      } else if (r.account_slug === 'leo') {
-        leoMap.set(key, (leoMap.get(key) ?? 0) + gross);
+    const monthKeys: string[] = [];
+    {
+      const c = new Date(firstMonth + "-01");
+      while (c < forecastEnd) {
+        monthKeys.push(c.toISOString().slice(0, 7));
+        c.setMonth(c.getMonth() + 1);
       }
     }
 
-    // Build output with running cumulative
+    const filtered = accountSlug
+      ? allReservations.filter((r) => r.account_slug === accountSlug)
+      : allReservations;
+
+    // Insurance claims grouped by month
+    const allClaims = await ctx.db.query("insurance_claims").collect();
+    const claimsByMonth = new Map<string, number>();
+    for (const c of allClaims) {
+      if (accountSlug && c.account_slug !== accountSlug) continue;
+      const m = c.claim_date.slice(0, 7);
+      claimsByMonth.set(m, r2((claimsByMonth.get(m) ?? 0) + c.amount_gbp));
+    }
+
+    const nextMonthKey = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+      .toISOString()
+      .slice(0, 7);
+
+    const dbGross = new Map<string, number>();
+    const leoGross = new Map<string, number>();
+    let bookedNextTotal = 0;
+    let pendingNextTotal = 0;
+
+    for (const res of filtered) {
+      const dateStr = res.pickup_date ?? res.start_date;
+      if (!dateStr) continue;
+      const gross = res.gross_paid_gbp ?? 0;
+      const slug = res.account_slug ?? "dbcinema";
+      const isFutureRes = dateStr.slice(0, 7) > currentMonth;
+
+      if (isFutureRes) {
+        const futureMo = (res.start_date ?? dateStr).slice(0, 7);
+        if (futureMo === nextMonthKey) {
+          if (res.status === "confirmed") bookedNextTotal = r2(bookedNextTotal + gross);
+          else if (res.status === "pending_review" || res.status === "pending")
+            pendingNextTotal = r2(pendingNextTotal + gross);
+        }
+        continue;
+      }
+
+      const key = dateStr.slice(0, 7);
+      if (slug === "leo") {
+        leoGross.set(key, r2((leoGross.get(key) ?? 0) + gross));
+      } else {
+        dbGross.set(key, r2((dbGross.get(key) ?? 0) + gross));
+      }
+    }
+
+    const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    type MonthRow = {
+      month: string;
+      monthLabel: string;
+      dbcinemaOrganic: number;
+      leoOrganic: number;
+      danielRetired: number;
+      vertusRetired: number;
+      aiBoost: number;
+      damageClaims: number;
+      bookedNext: number;
+      pendingNext: number;
+      cumulative: number;
+      count: number;
+    };
+
+    const rows: MonthRow[] = [];
     let cumulative = 0;
-    return months.map((month) => {
-      const dbcinema = parseFloat((dbMap.get(month) ?? 0).toFixed(2));
-      const leo = parseFloat((leoMap.get(month) ?? 0).toFixed(2));
-      cumulative += dbcinema + leo;
-      return {
-        month,
-        dbcinema,
-        leo,
-        cumulative: parseFloat(cumulative.toFixed(2)),
-      };
-    });
+
+    for (const mo of monthKeys) {
+      const [yr, mIdx] = mo.split("-").map(Number);
+      const label = MONTH_NAMES[mIdx - 1] + " " + String(yr).slice(2);
+      const isFuture = mo > currentMonth;
+      const isNextMo = mo === nextMonthKey;
+
+      let dbOrganic = 0;
+      let leoOrganic = 0;
+      let aiBoost = 0;
+      let damageClaims = 0;
+      let bookedNextVal = 0;
+      let pendingNextVal = 0;
+
+      if (!isFuture) {
+        const dbRaw = dbGross.get(mo) ?? 0;
+        const leoRaw = leoGross.get(mo) ?? 0;
+        const totalRaw = dbRaw + leoRaw;
+        if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
+          aiBoost = r2(totalRaw * boostRate / (1 + boostRate));
+          const dbFrac = dbRaw / totalRaw;
+          dbOrganic = r2(dbRaw - aiBoost * dbFrac);
+          leoOrganic = r2(leoRaw - aiBoost * (1 - dbFrac));
+        } else {
+          dbOrganic = dbRaw;
+          leoOrganic = leoRaw;
+        }
+        damageClaims = claimsByMonth.get(mo) ?? 0;
+      } else if (isNextMo) {
+        bookedNextVal = bookedNextTotal;
+        pendingNextVal = pendingNextTotal;
+      }
+
+      const monthTotal = dbOrganic + leoOrganic + aiBoost + damageClaims + bookedNextVal + pendingNextVal;
+      cumulative = r2(cumulative + monthTotal);
+
+      const count = !isFuture
+        ? filtered.filter((r) => {
+            const d = r.pickup_date ?? r.start_date;
+            return d && d.slice(0, 7) === mo && (r.gross_paid_gbp ?? 0) > 0;
+          }).length
+        : 0;
+
+      rows.push({
+        month: mo,
+        monthLabel: label,
+        dbcinemaOrganic: dbOrganic,
+        leoOrganic,
+        danielRetired: 0,
+        vertusRetired: 0,
+        aiBoost,
+        damageClaims,
+        bookedNext: bookedNextVal,
+        pendingNext: pendingNextVal,
+        cumulative,
+        count,
+      });
+    }
+
+    const completedRows = rows.filter(
+      (row) =>
+        row.month < currentMonth &&
+        row.dbcinemaOrganic + row.leoOrganic + row.aiBoost + row.damageClaims > 0
+    );
+
+    const monthRev = (row: MonthRow) =>
+      row.dbcinemaOrganic + row.leoOrganic + row.aiBoost + row.damageClaims;
+
+    const totalRevenue = r2(completedRows.reduce((s, row) => s + monthRev(row), 0));
+    const avgMonthly =
+      completedRows.length > 0 ? Math.round(totalRevenue / completedRows.length) : 0;
+
+    const strongestMonth =
+      completedRows.length > 0
+        ? completedRows.reduce((best, row) => (monthRev(row) > monthRev(best) ? row : best))
+        : null;
+    const weakestMonth =
+      completedRows.length > 0
+        ? completedRows.reduce((worst, row) => (monthRev(row) < monthRev(worst) ? row : worst))
+        : null;
+
+    // Forecast: weighted 3-month moving average → project next 3 months
+    const recent3 = completedRows.slice(-3);
+    let forecastBase = avgMonthly;
+    if (recent3.length === 3) {
+      forecastBase = Math.round(
+        monthRev(recent3[2]) * 0.5 + monthRev(recent3[1]) * 0.3 + monthRev(recent3[0]) * 0.2
+      );
+    } else if (recent3.length === 2) {
+      forecastBase = Math.round(monthRev(recent3[1]) * 0.6 + monthRev(recent3[0]) * 0.4);
+    } else if (recent3.length === 1) {
+      forecastBase = Math.round(monthRev(recent3[0]));
+    }
+
+    const forecast: Array<{ month: string; value: number }> = [];
+    for (let i = 1; i <= 3; i++) {
+      const fd = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      forecast.push({ month: fd.toISOString().slice(0, 7), value: forecastBase });
+    }
+
+    return {
+      months: rows,
+      totalRevenue,
+      avgMonthly,
+      strongestMonth: strongestMonth
+        ? { month: strongestMonth.month, revenue: r2(monthRev(strongestMonth)) }
+        : null,
+      weakestMonth: weakestMonth
+        ? { month: weakestMonth.month, revenue: r2(monthRev(weakestMonth)) }
+        : null,
+      boostRate,
+      aiActiveFrom: AI_ACTIVE_FROM,
+      forecast,
+    };
   },
 });
+
+function r2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
