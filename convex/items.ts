@@ -22,12 +22,28 @@ export const getItemRevenueRanking = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
+    // Fetch pricing for weighted split (BF wrong-number fix 3)
+    const pricingAll = await ctx.db.query("pricing_catalog").collect();
+    const priceByName = new Map(pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]));
+
     const itemMap = new Map<string, { totalRevenue: number; rentalCount: number; totalDays: number }>();
     for (const r of reservations) {
-      const grossShare = (r.gross_paid_gbp ?? 0) / Math.max(1, (r.items ?? []).length);
-      for (const item of r.items ?? []) {
+      const items = r.items ?? [];
+      const gross = r.gross_paid_gbp ?? 0;
+      if (items.length === 0) continue;
+
+      // Proportional split: each item's share = its daily_price_min / sum of all items' daily_price_min
+      const prices = items.map((i) => priceByName.get(i.item_name) ?? 0);
+      const priceSum = prices.reduce((s, p) => s + p, 0);
+
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
+        // Fall back to equal split if any price is missing
+        const share = priceSum > 0
+          ? gross * (prices[idx] / priceSum)
+          : gross / items.length;
         const existing = itemMap.get(item.item_name) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
-        existing.totalRevenue += grossShare;
+        existing.totalRevenue += share;
         existing.rentalCount += 1;
         existing.totalDays += r.duration_days ?? 0;
         itemMap.set(item.item_name, existing);
@@ -272,33 +288,53 @@ export const getPriceRecommendations = query({
       }
     }
 
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
-    return pricingRows
-      .filter((p) => !p.is_bundle && !p.marketing_only)
-      .map((p) => {
-        const bookings = freqMap.get(p.item_name_canonical) ?? 0;
-        const currentRate = p.daily_price_min;
-        if (bookings >= 3) {
-          return {
-            itemId: p.item_id,
-            name: p.item_name_canonical,
-            currentRate,
-            suggestedRate: parseFloat((currentRate * 1.15).toFixed(2)),
-            pctChange: 15,
-            demandSignal: `${bookings} bookings this month`,
-          };
-        } else if (bookings <= 1) {
-          return {
-            itemId: p.item_id,
-            name: p.item_name_canonical,
-            currentRate,
-            suggestedRate: parseFloat((currentRate * 0.9).toFixed(2)),
-            pctChange: -10,
-            demandSignal: bookings === 0 ? "No bookings this month" : "Low demand",
-          };
-        }
-        return null;
-      })
-      .filter((r) => r !== null);
+    const allPricingRows = await ctx.db.query("pricing_catalog").collect();
+
+    // BF-01: deduplicate — one row per name_canonical, keep highest updated_at
+    const bestByName = new Map<string, typeof allPricingRows[0]>();
+    for (const p of allPricingRows) {
+      if (p.is_bundle || p.marketing_only) continue;
+      const existing = bestByName.get(p.item_name_canonical);
+      if (!existing || p.created_at > existing.created_at) {
+        bestByName.set(p.item_name_canonical, p);
+      }
+    }
+
+    return Array.from(bestByName.values()).map((p) => {
+      const bookings = freqMap.get(p.item_name_canonical) ?? 0;
+      const currentRate = p.daily_price_min;
+      if (bookings >= 3) {
+        return {
+          itemId: p.item_id,
+          name: p.item_name_canonical,
+          currentRate,
+          suggestedRate: parseFloat((currentRate * 1.15).toFixed(2)),
+          pctChange: 15,
+          demandSignal: bookings + " bookings this month",
+        };
+      } else if (bookings <= 1) {
+        return {
+          itemId: p.item_id,
+          name: p.item_name_canonical,
+          currentRate,
+          suggestedRate: parseFloat((currentRate * 0.9).toFixed(2)),
+          pctChange: -10,
+          demandSignal: bookings === 0 ? "No bookings this month" : "Low demand",
+        };
+      }
+      return null;
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
+  },
+});
+
+/** Simple list of active item names for dropdown selects. */
+export const listActive = query({
+  args: {},
+  handler: async (ctx) => {
+    const items = await ctx.db.query("items").collect();
+    return items
+      .filter((i) => i.status === "active" && !i.is_marketing_only)
+      .map((i) => ({ id: i._id, name: i.name_canonical }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   },
 });

@@ -29,18 +29,22 @@ export const getEarningsByPeriod = query({
     const buckets = new Map<string, { revenue: number; bookings: number }>();
 
     for (const r of rows) {
-      if (!r.start_date) continue;
+      // BF-06: use pickup_date if available, fall back to start_date
+      const dateStr = r.pickup_date ?? r.start_date;
+      if (!dateStr) continue;
       let key: string;
       if (granularity === "monthly") {
-        key = r.start_date.slice(0, 7); // YYYY-MM
+        key = dateStr.slice(0, 7); // YYYY-MM
       } else {
-        // ISO week: YYYY-WNN
-        const d = new Date(r.start_date);
-        const jan1 = new Date(d.getFullYear(), 0, 1);
-        const weekNum = Math.ceil(
-          ((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7
-        );
-        key = `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+        // ISO 8601 week: use proper ISO week number (not naive day-of-year / 7)
+        const d = new Date(dateStr);
+        // ISO week: Monday-based, week 1 = week containing first Thursday
+        const dayOfWeek = (d.getDay() + 6) % 7; // Mon=0 .. Sun=6
+        const thursday = new Date(d);
+        thursday.setDate(d.getDate() - dayOfWeek + 3);
+        const jan1 = new Date(thursday.getFullYear(), 0, 1);
+        const weekNum = 1 + Math.round((thursday.getTime() - jan1.getTime()) / 604800000);
+        key = thursday.getFullYear() + "-W" + String(weekNum).padStart(2, "0");
       }
       const existing = buckets.get(key) ?? { revenue: 0, bookings: 0 };
       existing.revenue += r.gross_paid_gbp ?? 0;
@@ -179,10 +183,16 @@ export const getInvestmentScorecard = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
     const allItems = await ctx.db.query("items").collect();
-    // Only count active non-marketing items in total investment (mirrors v1 acquisition-costs scope)
-    const totalInvested = allItems
-      .filter((i) => !i.is_marketing_only && i.status !== "inactive" && i.status !== "archived")
-      .reduce((sum, i) => sum + (i.acquisition_cost_gbp ?? 0), 0);
+    // Only count active non-marketing items WITH known acquisition cost (null items excluded, not treated as 0)
+    const itemsWithCost = allItems.filter(
+      (i) => !i.is_marketing_only && i.status !== "inactive" && i.status !== "archived" &&
+             i.acquisition_cost_gbp != null && i.acquisition_cost_gbp > 0
+    );
+    const totalInvested = itemsWithCost.reduce((sum, i) => sum + (i.acquisition_cost_gbp ?? 0), 0);
+    const itemsWithCostCount = itemsWithCost.length;
+    const itemsMissingCostCount = allItems.filter(
+      (i) => !i.is_marketing_only && i.status === "active" && (i.acquisition_cost_gbp == null || i.acquisition_cost_gbp === 0)
+    ).length;
 
     let reservations = await ctx.db.query("reservations").collect();
     if (accountSlug) {
@@ -221,6 +231,8 @@ export const getInvestmentScorecard = query({
       roiPct,
       paybackMonths: isFinite(paybackMonths) ? paybackMonths : null,
       monthlyRate,
+      itemsWithCostCount,
+      itemsMissingCostCount,
     };
   },
 });

@@ -11,22 +11,8 @@ export const getInsights = query({
   handler: async (ctx, { accountSlug }) => {
     const insights: { headline: string; body: string; kind: string }[] = [];
 
-    const thisMonthStart = new Date();
-    thisMonthStart.setDate(1);
-    thisMonthStart.setHours(0, 0, 0, 0);
-    const thisMonthStr = thisMonthStart.toISOString().slice(0, 10);
-
-    const prevMonthStart = new Date(thisMonthStart);
-    prevMonthStart.setMonth(prevMonthStart.getMonth() - 1);
-    const prevMonthStr = prevMonthStart.toISOString().slice(0, 10);
-
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const sixtyDaysAgoStr = sixtyDaysAgo.toISOString().slice(0, 10);
-
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const ninetyDaysAgoStr = ninetyDaysAgo.toISOString().slice(0, 10);
+    const sixtyDaysAgoStr = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    const ninetyDaysAgoStr = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
 
     let allReservations = await ctx.db.query("reservations").collect();
     if (accountSlug) {
@@ -38,23 +24,27 @@ export const getInsights = query({
       (i) => i.status === "active" && !i.is_marketing_only
     );
 
-    // Insight 1: Revenue trend this month vs prior month
-    const thisMonthRevenue = allReservations
-      .filter((r) => r.start_date !== undefined && r.start_date >= thisMonthStr)
+    // Insight 1: Revenue trend rolling 30d vs prior 30d (avoids spurious 100% drops at month start)
+    const thirtyDaysAgoStr2 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const sixtyDaysAgoStr2 = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    const todayStr2 = new Date().toISOString().slice(0, 10);
+
+    const rolling30Revenue = allReservations
+      .filter((r) => {
+        const d = r.pickup_date ?? r.start_date;
+        return d !== undefined && d >= thirtyDaysAgoStr2 && d <= todayStr2;
+      })
       .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
 
-    const prevMonthRevenue = allReservations
-      .filter(
-        (r) =>
-          r.start_date !== undefined &&
-          r.start_date >= prevMonthStr &&
-          r.start_date < thisMonthStr
-      )
+    const prior30Revenue = allReservations
+      .filter((r) => {
+        const d = r.pickup_date ?? r.start_date;
+        return d !== undefined && d >= sixtyDaysAgoStr2 && d < thirtyDaysAgoStr2;
+      })
       .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
 
-    if (prevMonthRevenue > 0) {
-      const pctChange =
-        ((thisMonthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100;
+    if (prior30Revenue > 0) {
+      const pctChange = ((rolling30Revenue - prior30Revenue) / prior30Revenue) * 100;
       const dir = pctChange >= 0 ? "up" : "down";
       const absPct = Math.abs(pctChange).toFixed(0);
       const comment =
@@ -62,23 +52,19 @@ export const getInsights = query({
           ? "Strong momentum — consider expanding capacity."
           : pctChange <= -10
           ? "Revenue declining — review pricing and availability."
-          : "Revenue is broadly stable month-over-month.";
+          : "Revenue is broadly stable over rolling 30 days.";
       insights.push({
         kind: "revenue_trend",
-        headline: "Revenue " + dir + " " + absPct + "% vs prior month",
+        headline: "Revenue " + dir + " " + absPct + "% vs prior 30 days",
         body:
-          "This month: £" +
-          thisMonthRevenue.toFixed(0) +
-          " vs prior month: £" +
-          prevMonthRevenue.toFixed(0) +
-          ". " +
-          comment,
+          "Rolling 30d: £" + rolling30Revenue.toFixed(0) +
+          " vs prior 30d: £" + prior30Revenue.toFixed(0) + ". " + comment,
       });
-    } else if (thisMonthRevenue > 0) {
+    } else if (rolling30Revenue > 0) {
       insights.push({
         kind: "revenue_trend",
-        headline: "£" + thisMonthRevenue.toFixed(0) + " booked this month",
-        body: "Prior month data unavailable for comparison.",
+        headline: "£" + rolling30Revenue.toFixed(0) + " in last 30 days",
+        body: "Prior period data unavailable for comparison.",
       });
     }
 

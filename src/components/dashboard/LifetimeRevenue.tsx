@@ -42,6 +42,10 @@ function tooltipFmt(value: ValueType | undefined, name: NameType | undefined): [
 export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
 
+  const summary = useQuery(api.dashboard.getLifetimeSummary, {
+    accountSlug: activeAccountSlug,
+  });
+
   const raw = useQuery(api.revenue.getLifetimeByMonth, {
     accountSlug: activeAccountSlug,
   });
@@ -61,6 +65,27 @@ export function LifetimeRevenue() {
         }}
       />
       <CardHeader title="Lifetime Revenue" />
+
+      {summary !== undefined && (
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="p-2.5 rounded-lg" style={{background:"rgba(255,255,255,0.04)"}}>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Revenue</div>
+            <div className="text-lg font-bold text-[#22c55e]">£{summary.totalRevenue.toFixed(0)}</div>
+          </div>
+          <div className="p-2.5 rounded-lg" style={{background:"rgba(255,255,255,0.04)"}}>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Bookings</div>
+            <div className="text-lg font-bold text-[#6ea8fe]">{summary.totalBookings}</div>
+          </div>
+          <div className="p-2.5 rounded-lg" style={{background:"rgba(255,255,255,0.04)"}}>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Avg Value</div>
+            <div className="text-lg font-bold text-[#e4e6eb]">£{summary.avgValue.toFixed(2)}</div>
+          </div>
+          <div className="p-2.5 rounded-lg" style={{background:"rgba(255,255,255,0.04)"}}>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Days</div>
+            <div className="text-lg font-bold text-[#e4e6eb]">{summary.totalDays}</div>
+          </div>
+        </div>
+      )}
 
       {data === undefined ? (
         <SkeletonBlock className="h-[280px] w-full" />

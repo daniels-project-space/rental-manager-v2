@@ -205,6 +205,7 @@ export default defineSchema({
     hygglo_listing_id: v.optional(v.string()),
     start_date: v.optional(v.string()),       // ISO date YYYY-MM-DD
     end_date: v.optional(v.string()),         // ISO date YYYY-MM-DD
+    pickup_date: v.optional(v.string()),      // actual gear pickup date (BF-06)
     duration_days: v.optional(v.number()),
     gross_paid_gbp: v.optional(v.number()),
     net_to_owner_gbp: v.optional(v.number()),
@@ -311,6 +312,7 @@ export default defineSchema({
     account_id: v.optional(v.id("accounts")),
     reason: v.string(),
     item_name: v.optional(v.string()),
+    estimated_value: v.optional(v.number()),
     notes: v.optional(v.string()),
     created_at: v.number(),
   }).index("by_account", ["account_id"]).index("by_reason", ["reason"]),

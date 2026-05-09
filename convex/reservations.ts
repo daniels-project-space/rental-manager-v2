@@ -1,4 +1,4 @@
-import { query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
@@ -149,5 +149,26 @@ export const getConversionFunnel = query({
       conversionRate,
       denialRate,
     };
+  },
+});
+
+/** W06 Return Hub — mark a reservation as returned. */
+export const markReturned = mutation({
+  args: {
+    reservationId: v.id("reservations"),
+    condition: v.string(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, { reservationId, condition, notes }) => {
+    const res = await ctx.db.get(reservationId);
+    if (!res) throw new Error("Reservation not found");
+    if (res.status === "completed") throw new Error("Already returned");
+    const base = res.notes ?? "";
+    const cn = notes ? "Condition: " + condition + ". " + notes : "Condition: " + condition;
+    await ctx.db.patch(reservationId, {
+      status: "completed",
+      notes: base ? base + " | " + cn : cn,
+    });
+    return { ok: true };
   },
 });

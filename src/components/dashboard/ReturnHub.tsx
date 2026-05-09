@@ -1,5 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -8,7 +9,7 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
 
 type DueReturn = {
-  reservationId: string;
+  reservationId: Id<"reservations">;
   renterName: string;
   itemNames: string[];
   endDate?: string;
@@ -19,9 +20,11 @@ type DueReturn = {
 function ReturnModal({
   item,
   onClose,
+  onConfirm,
 }: {
   item: DueReturn;
   onClose: () => void;
+  onConfirm: (condition: string, notes: string) => Promise<void>;
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [condition, setCondition] = useState<"good" | "minor" | "major">("good");
@@ -31,7 +34,7 @@ function ReturnModal({
     if (step === 1) setStep(2);
     else if (step === 2) {
       setStep(3);
-      setTimeout(onClose, 2500);
+      onConfirm(condition, notes).finally(() => setTimeout(onClose, 2000));
     }
   }
 
@@ -109,6 +112,16 @@ export function ReturnHub() {
     accountSlug: activeAccountSlug,
   });
   const [active, setActive] = useState<DueReturn | null>(null);
+  const markReturned = useMutation(api.reservations.markReturned);
+
+  async function handleReturn(condition: string, notes: string) {
+    if (!active) return;
+    await markReturned({
+      reservationId: active.reservationId,
+      condition,
+      notes: notes || undefined,
+    });
+  }
 
   const overdueCount = rows?.filter((r) => r.isOverdue).length ?? 0;
   const todayCount = rows?.filter((r) => !r.isOverdue).length ?? 0;
@@ -171,7 +184,7 @@ export function ReturnHub() {
           </>
         )}
       </Card>
-      {active && <ReturnModal item={active} onClose={() => setActive(null)} />}
+      {active && <ReturnModal item={active} onClose={() => setActive(null)} onConfirm={handleReturn} />}
     </>
   );
 }

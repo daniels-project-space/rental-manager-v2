@@ -94,6 +94,11 @@ export function ConversationFunnel() {
               </div>
             </div>
           </div>
+          {data.inquiries === 0 && (
+            <p className="text-xs mt-3" style={{ color: "#8b8fa3" }}>
+              No conversation data yet. Funnel will auto-populate once Hygglo message polling is active (Phase 4).
+            </p>
+          )}
         </>
       )}
     </Card>

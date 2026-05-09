@@ -1,11 +1,12 @@
 "use client";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
+import { DenialRecordingModal } from "@/components/modals/DenialRecordingModal";
 
 type Days = 30 | 90;
 
@@ -13,6 +14,7 @@ export function MissedRevenue() {
   const { activeAccountSlug } = useAccount();
   const [days, setDays] = useState<Days>(30);
   const [tab, setTab] = useState<"denials" | "idle">("denials");
+  const [showDenialModal, setShowDenialModal] = useState(false);
 
   const data = useQuery(api.revenue.getMissedRevenue, {
     accountSlug: activeAccountSlug,
@@ -25,11 +27,12 @@ export function MissedRevenue() {
   ];
 
   return (
+    <>
     <Card>
       <CardHeader
         title="Missed Revenue"
         actions={
-          <div className="flex gap-1">
+          <div className="flex items-center gap-1.5"><button onClick={() => setShowDenialModal(true)} style={{fontSize:11,padding:"2px 8px",borderRadius:"6px",background:"rgba(239,68,68,0.12)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.25)"}}>+ Denial</button>
             {dayOpts.map((d) => (
               <button
                 key={d.val}
@@ -199,5 +202,9 @@ export function MissedRevenue() {
         </>
       )}
     </Card>
+    {showDenialModal && (
+      <DenialRecordingModal onClose={() => setShowDenialModal(false)} />
+    )}
+    </>
   );
 }

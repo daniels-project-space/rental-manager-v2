@@ -6,6 +6,10 @@ const TODAY = () => {
   return d.toISOString().slice(0, 10); // YYYY-MM-DD
 };
 
+/** BF-06: Use pickup_date if set, fall back to start_date for revenue attribution. */
+const effectiveDate = (r: { pickup_date?: string; start_date?: string }): string | undefined =>
+  r.pickup_date ?? r.start_date;
+
 const isoWeekBounds = () => {
   const now = new Date();
   const day = now.getDay(); // 0=Sun
@@ -69,33 +73,27 @@ export const getSummary = query({
       (r) => r.end_date !== undefined && r.end_date < today
     ).length;
 
-    // Monthly revenue: sum gross_paid_gbp where start_date in current month
+    // Monthly revenue: sum gross_paid_gbp where effective date (pickup_date ?? start_date) in current month (BF-06)
     const monthlyRevenue = allReservations
-      .filter(
-        (r) =>
-          r.start_date !== undefined &&
-          r.start_date >= monthStart &&
-          r.start_date <= monthEnd
-      )
+      .filter((r) => {
+        const d = effectiveDate(r);
+        return d !== undefined && d >= monthStart && d <= monthEnd;
+      })
       .reduce((sum, r) => sum + (r.gross_paid_gbp ?? 0), 0);
 
-    // Weekly revenue
+    // Weekly revenue (BF-06)
     const weeklyRevenue = allReservations
-      .filter(
-        (r) =>
-          r.start_date !== undefined &&
-          r.start_date >= weekStart &&
-          r.start_date <= weekEnd
-      )
+      .filter((r) => {
+        const d = effectiveDate(r);
+        return d !== undefined && d >= weekStart && d <= weekEnd;
+      })
       .reduce((sum, r) => sum + (r.gross_paid_gbp ?? 0), 0);
 
-    // Monthly bookings count
-    const monthlyBookings = allReservations.filter(
-      (r) =>
-        r.start_date !== undefined &&
-        r.start_date >= monthStart &&
-        r.start_date <= monthEnd
-    ).length;
+    // Monthly bookings count (BF-06)
+    const monthlyBookings = allReservations.filter((r) => {
+      const d = effectiveDate(r);
+      return d !== undefined && d >= monthStart && d <= monthEnd;
+    }).length;
 
     // Avg rental value last 30d
     const last30 = allReservations.filter(
