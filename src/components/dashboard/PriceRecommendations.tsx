@@ -1,0 +1,109 @@
+"use client";
+import { useQuery } from "convex/react";
+import { api } from "../../../convex/_generated/api";
+import { useAccount } from "@/lib/account-context";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { useState } from "react";
+
+export function PriceRecommendations() {
+  const { activeAccountSlug } = useAccount();
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+
+  const data = useQuery(api.items.getPriceRecommendations, {
+    accountSlug: activeAccountSlug,
+  });
+
+  const visible = data ? data.filter((r) => !dismissed.has(String(r!.itemId))) : [];
+
+  return (
+    <Card>
+      <CardHeader
+        title="Price Recommendations"
+        badge={
+          visible.length > 0 ? (
+            <span
+              className="text-xs px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(110,168,254,0.12)", color: "#6ea8fe" }}
+            >
+              {visible.length}
+            </span>
+          ) : null
+        }
+      />
+
+      {data === undefined && (
+        <div className="space-y-2">
+          {[...Array(4)].map((_, i) => (
+            <SkeletonBlock key={i} className="h-14 w-full rounded-lg" />
+          ))}
+        </div>
+      )}
+
+      {data !== undefined && visible.length === 0 && (
+        <EmptyState message="All pricing looks good" icon="✓" />
+      )}
+
+      {data !== undefined && visible.length > 0 && (
+        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+          {visible.map((item) => {
+            const raise = item!.pctChange > 0;
+            const changeColor = raise ? "#22c55e" : "#ef4444";
+            const changeBg = raise ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)";
+            return (
+              <div
+                key={String(item!.itemId)}
+                className="px-3 py-2.5 rounded-lg"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate" style={{ color: "#e4e6eb" }}>
+                      {item!.name}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "#8b8fa3" }}>
+                      {item!.demandSignal}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="text-right">
+                      <p className="text-xs" style={{ color: "#8b8fa3" }}>
+                        £{item!.currentRate}/d
+                      </p>
+                      <p className="text-sm font-semibold" style={{ color: changeColor }}>
+                        £{item!.suggestedRate}/d
+                      </p>
+                    </div>
+                    <span
+                      className="text-xs px-1.5 py-0.5 rounded font-semibold"
+                      style={{ color: changeColor, background: changeBg }}
+                    >
+                      {raise ? "+" : ""}{item!.pctChange}%
+                    </span>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    className="text-xs px-3 py-1 rounded font-medium transition-colors"
+                    style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
+                    onClick={() => setDismissed((p) => new Set([...p, String(item!.itemId)]))}
+                  >
+                    Apply
+                  </button>
+                  <button
+                    className="text-xs px-3 py-1 rounded transition-colors"
+                    style={{ background: "rgba(255,255,255,0.06)", color: "#8b8fa3" }}
+                    onClick={() => setDismissed((p) => new Set([...p, String(item!.itemId)]))}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}

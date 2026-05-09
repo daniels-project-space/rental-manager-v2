@@ -1,9 +1,128 @@
 @import "tailwindcss";
 
+@theme {
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  --color-body-bg: #070910;
+  --color-surface-card: rgba(14, 17, 28, 0.85);
+  --color-border-card: rgba(255, 255, 255, 0.12);
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+
+  /* ── Text ─────────────────────────────────────────────────── */
+  --color-text-primary: #e4e6eb;
+  --color-text-secondary: #8b8fa3;
+
+  /* ── Accents ──────────────────────────────────────────────── */
+  --color-accent-green: #22c55e;
+  --color-accent-amber: #f59e0b;
+  --color-accent-blue: #6ea8fe;
+  --color-accent-purple: #a78bfa;
+  --color-accent-red: #ef4444;
+
+  /* ── Account brand ────────────────────────────────────────── */
+  --color-account-dbcinema: #6ea8fe;
+  --color-account-leo: #22c55e;
+
+  /* ── Spacing helpers ──────────────────────────────────────── */
+  --spacing-card-pad: 1.25rem;  /* 20px */
+  --spacing-card-gap: 1rem;     /* 16px */
+
+  /* ── Radius ───────────────────────────────────────────────── */
+  --radius-card: 1rem; /* 16px → rounded-2xl */
+
+  /* ── Max content width ────────────────────────────────────── */
+  --max-w-dashboard: 1440px;
+}
+
 @layer base {
-  html,
-  body {
-    background: #09090b;
-    color: #fafafa;
+  html, body {
+    background-color: var(--color-body-bg);
+    color: var(--color-text-primary);
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100dvh;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+}
+
+@layer utilities {
+  /* Glass card — core surface pattern */
+  .glass-card {
+    background: var(--color-surface-card);
+    border: 1px solid var(--color-border-card);
+    border-radius: var(--radius-card);
+    backdrop-filter: blur(24px) saturate(1.5);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Glass top-shine pseudo-element */
+  .glass-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.2) 50%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+
+  /* Disable backdrop-filter on mobile for performance */
+  @media (max-width: 768px) {
+    .glass-card {
+      backdrop-filter: none;
+      background: rgba(14, 17, 28, 0.95);
+    }
+  }
+
+  /* Stat card hover lift */
+  .stat-card-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .stat-card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(110, 168, 254, 0.15);
+  }
+
+  /* Delivery glow animation for active rows */
+  .delivery-glow {
+    animation: deliveryPulse 2s ease-in-out infinite;
+  }
+  @keyframes deliveryPulse {
+    0%, 100% { background-color: transparent; }
+    50% { background-color: rgba(34, 197, 94, 0.08); }
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(255,255,255,0.05) 25%,
+      rgba(255,255,255,0.1) 50%,
+      rgba(255,255,255,0.05) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 4px;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Expand/collapse transition */
+  .expand-drawer {
+    transition: max-height 0.35s ease, opacity 0.35s ease;
+    overflow: hidden;
   }
 }

@@ -1,16 +1,103 @@
-export default function Home() {
+import { HeaderBar } from "@/components/dashboard/HeaderBar";
+import { StatsGrid } from "@/components/dashboard/StatsGrid";
+import { LifetimeRevenue } from "@/components/dashboard/LifetimeRevenue";
+import { EarningsChart } from "@/components/dashboard/EarningsChart";
+import { LiveActivity } from "@/components/dashboard/LiveActivity";
+import { ReturnHub } from "@/components/dashboard/ReturnHub";
+import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
+import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
+import { ConversationFunnel } from "@/components/dashboard/ConversationFunnel";
+import { ItemRevenuePanel } from "@/components/dashboard/ItemRevenuePanel";
+import { TopBundles } from "@/components/dashboard/TopBundles";
+import { ItemCycleTracker } from "@/components/dashboard/ItemCycleTracker";
+import { OutOfStockPanel } from "@/components/dashboard/OutOfStockPanel";
+import { MissedRevenue } from "@/components/dashboard/MissedRevenue";
+import { InvestmentScorecard } from "@/components/dashboard/InvestmentScorecard";
+import { SellRecommender } from "@/components/dashboard/SellRecommender";
+import { PriceRecommendations } from "@/components/dashboard/PriceRecommendations";
+import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsights";
+import { HealthScanner } from "@/components/dashboard/HealthScanner";
+import { AIChat } from "@/components/dashboard/AIChat";
+
+export default function DashboardPage() {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
-      <div className="max-w-xl px-8 py-12 text-center">
-        <h1 className="text-4xl font-semibold tracking-tight mb-4">Rental Manager v2</h1>
-        <p className="text-zinc-400 mb-6">
-          Phase 0 scaffold. Convex + Vercel + Trigger + Mastra + Stagehand wiring in progress.
-        </p>
-        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          <span>READ-ONLY mode — ALLOW_HYGGLO_SEND = false</span>
-        </div>
-      </div>
-    </main>
+    <div style={{ background: "#070910", minHeight: "100dvh" }}>
+      <HeaderBar />
+      <main
+        className="mx-auto px-4 md:px-6 py-5"
+        style={{ maxWidth: "1440px" }}
+      >
+        {/* W02 Stats Grid */}
+        <section className="mb-5">
+          <StatsGrid />
+        </section>
+
+        {/* Row 1: Lifetime Revenue + Earnings Chart */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="md:col-span-1">
+            <LifetimeRevenue />
+          </div>
+          <div className="md:col-span-2">
+            <EarningsChart />
+          </div>
+        </section>
+
+        {/* Row 2: Live Activity + Return Hub */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <LiveActivity />
+          <ReturnHub />
+        </section>
+
+        {/* Row 3: Calendar Strip (full width) */}
+        <section className="mb-4">
+          <CalendarStrip />
+        </section>
+
+        {/* Row 4: Weekly Calendar (desktop only — hidden on mobile) */}
+        <section className="mb-4">
+          <WeeklyCalendar />
+        </section>
+
+        {/* Row 5: Conversation Funnel + Item Revenue */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <ConversationFunnel />
+          <ItemRevenuePanel />
+        </section>
+
+        {/* Row 6: Top Bundles + Item Cycle Tracker */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <TopBundles />
+          <ItemCycleTracker />
+        </section>
+
+        {/* Row 7: Out of Stock + Missed Revenue */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <OutOfStockPanel />
+          <MissedRevenue />
+        </section>
+
+        {/* Row 8: Investment Scorecard + Sell Recommender */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <InvestmentScorecard />
+          <SellRecommender />
+        </section>
+
+        {/* Row 9: Price Recommendations + AI Investment Insights */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <PriceRecommendations />
+          <AIInvestmentInsights />
+        </section>
+
+        {/* Row 10: Health Scanner (full width) */}
+        <section className="mb-4">
+          <HealthScanner />
+        </section>
+
+        {/* Row 11: AI Chat (full width) */}
+        <section className="mb-4">
+          <AIChat />
+        </section>
+      </main>
+    </div>
   );
 }
