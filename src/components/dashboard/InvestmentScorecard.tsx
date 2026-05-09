@@ -4,6 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { useCountUp } from "@/hooks/useCountUp";
 
 function Metric({
   label,
@@ -18,7 +19,7 @@ function Metric({
 }) {
   return (
     <div
-      className="p-3 rounded-xl flex flex-col gap-0.5"
+      className="p-3 rounded-xl flex flex-col gap-0.5 row-hover"
       style={{ background: "rgba(255,255,255,0.04)" }}
     >
       <span className="text-xs uppercase tracking-wider" style={{ color: "#8b8fa3" }}>
@@ -29,6 +30,16 @@ function Metric({
       </span>
       {sub && <span className="text-xs" style={{ color: "#8b8fa3" }}>{sub}</span>}
     </div>
+  );
+}
+
+function HeroRoi({ roiPct, color }: { roiPct: number; color: string }) {
+  const animated = useCountUp(roiPct, 700);
+  const sign = roiPct > 0 ? "+" : "";
+  return (
+    <p className="text-4xl font-bold" style={{ color }}>
+      {sign}{animated.toFixed(1)}%
+    </p>
   );
 }
 
@@ -59,7 +70,7 @@ export function InvestmentScorecard() {
 
       {data !== undefined && (
         <div className="space-y-4">
-          {/* Hero ROI */}
+          {/* Hero ROI with count-up */}
           <div
             className="p-4 rounded-xl text-center"
             style={{ background: `rgba(${data.roiPct >= 0 ? "34,197,94" : "239,68,68"},0.08)` }}
@@ -67,13 +78,10 @@ export function InvestmentScorecard() {
             <p className="text-xs uppercase tracking-wider mb-1" style={{ color: "#8b8fa3" }}>
               Return on Investment
             </p>
-            <p className="text-4xl font-bold" style={{ color: roiColor }}>
-              {data.roiPct > 0 ? "+" : ""}
-              {data.roiPct.toFixed(1)}%
-            </p>
+            <HeroRoi roiPct={data.roiPct} color={roiColor} />
           </div>
 
-          {/* 2×3 metrics grid */}
+          {/* 2x3 metrics grid */}
           <div className="grid grid-cols-2 gap-3">
             <Metric
               label="Total Invested"

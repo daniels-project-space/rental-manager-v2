@@ -21,7 +21,7 @@ export function StatsGrid() {
 
   if (data === undefined) {
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+      <div className="stats-grid-mobile grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
         {Array.from({ length: 12 }).map((_, i) => (
           <SkeletonCard key={i} rows={1} />
         ))}
@@ -102,15 +102,19 @@ export function StatsGrid() {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-      {tiles.map((t) => (
-        <MetricTile
-          key={t.key}
-          label={t.label}
-          value={t.value}
-          color={t.color}
-        />
-      ))}
+    <div className="stats-grid-mobile grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+      {tiles.map((t, i) => {
+        const delayClass = i <= 5 ? `anim-delay-${i}` : "anim-delay-5";
+        return (
+          <div key={t.key} className={"anim-fade-up " + delayClass}>
+            <MetricTile
+              label={t.label}
+              value={t.value}
+              color={t.color}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

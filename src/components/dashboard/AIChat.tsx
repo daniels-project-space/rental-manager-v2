@@ -159,7 +159,7 @@ export function AIChat() {
 
       {/* Input area */}
       <div
-        className="flex gap-2 pt-3"
+        className="ai-input-row flex gap-2 pt-3"
         style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
       >
         <textarea

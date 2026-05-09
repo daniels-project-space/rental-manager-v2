@@ -126,3 +126,122 @@
     overflow: hidden;
   }
 }
+
+/* ── Animation Keyframes ─────────────────────────────────────────────────── */
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spring-in {
+  0%   { opacity: 0; transform: scale(0.3); }
+  70%  { transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes code-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 1; }
+}
+
+/* ── Modal entrance/exit utilities ──────────────────────────────────────── */
+
+.modal-backdrop {
+  animation: fade-in 200ms ease both;
+}
+.modal-backdrop.closing {
+  animation: fade-in 150ms ease both reverse;
+}
+
+.modal-card {
+  animation: slide-up 250ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.modal-card.closing {
+  animation: slide-up 150ms cubic-bezier(0.16, 1, 0.3, 1) both reverse;
+}
+
+/* ── Card hover lift (full rm-card pattern) ─────────────────────────────── */
+.rm-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.2s ease;
+}
+.rm-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  border-color: rgba(79, 195, 247, 0.4);
+}
+
+/* ── Item row hover ─────────────────────────────────────────────────────── */
+.row-hover {
+  transition: background-color 0.15s ease;
+}
+.row-hover:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Stagger animation helpers ──────────────────────────────────────────── */
+.anim-fade-up {
+  animation: fade-in-up 0.4s ease both;
+}
+.anim-delay-1 { animation-delay: 60ms; }
+.anim-delay-2 { animation-delay: 120ms; }
+.anim-delay-3 { animation-delay: 180ms; }
+.anim-delay-4 { animation-delay: 240ms; }
+.anim-delay-5 { animation-delay: 300ms; }
+
+/* ── Code-pulse for AI thinking indicator ───────────────────────────────── */
+.thinking-pulse {
+  animation: code-pulse 1.5s ease-in-out infinite;
+}
+
+/* ── Mobile tweaks ──────────────────────────────────────────────────────── */
+@media (max-width: 390px) {
+  /* Header: ensure pills don't overflow, allow wrapping */
+  header nav {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  header nav button {
+    padding: 2px 8px;
+    font-size: 0.65rem;
+  }
+
+  /* AI chat input: full width, no Send button height mismatch */
+  .ai-input-row {
+    flex-direction: column;
+  }
+  .ai-input-row textarea {
+    width: 100%;
+  }
+  .ai-input-row button {
+    width: 100%;
+    height: auto !important;
+    padding: 10px;
+  }
+
+  /* Stats grid: force 2-col on narrowest screens */
+  .stats-grid-mobile {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Chart cards: remove right padding that causes overflow */
+  .chart-card-mobile {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+}

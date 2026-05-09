@@ -6,6 +6,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
 import { ClaimsRecordingModal } from "@/components/modals/ClaimsRecordingModal";
+import { useCountUp } from "@/hooks/useCountUp";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -57,6 +58,14 @@ function tooltipFmt(value: ValueType | undefined, name: NameType | undefined): [
   return ["£" + v.toFixed(2), label];
 }
 
+
+function TotalChip({ value }: { value: number }) {
+  const animated = useCountUp(value, 800);
+  return (
+    <span>Total: <b style={{ color: "#22c55e" }}>£{Math.round(animated).toLocaleString("en-GB")}</b></span>
+  );
+}
+
 export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
@@ -100,7 +109,7 @@ export function LifetimeRevenue() {
         {/* Stats bar */}
         {raw !== undefined && (
           <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-xs text-[#8b8fa3]">
-            <span>Total: <b style={{ color: "#22c55e" }}>{"£"}{totalRevenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
+            <TotalChip value={totalRevenue} />
             <span>Avg/mo: <b style={{ color: "#e4e6eb" }}>{"£"}{avgMonthly.toLocaleString("en-GB")}</b></span>
             {strongest && (
               <span>Best: <b style={{ color: "#22c55e" }}>{fmtMonth(strongest.month)} {"£"}{strongest.revenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
