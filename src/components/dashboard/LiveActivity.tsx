@@ -14,6 +14,11 @@ const STATUS_BADGE: Record<string, { label: string; bg: string; color: string }>
   declined:       { label: "DECLINED", bg: "rgba(239,68,68,0.15)",  color: "#ef4444" },
 };
 
+function fmtDate(d?: string) {
+  if (!d) return "";
+  return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
 function relTime(ts: number) {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
@@ -62,6 +67,8 @@ export function LiveActivity() {
             };
             const names = r.itemNames.slice(0, 2).join(", ");
             const extra = r.itemNames.length > 2 ? ` +${r.itemNames.length - 2}` : "";
+            const dateRange = r.startDate && r.endDate ? `${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}` : "";
+            const fallback = dateRange ? `Rental · ${dateRange}` : "Rental";
             return (
               <div
                 key={r.id}
@@ -70,7 +77,7 @@ export function LiveActivity() {
                 <AccountDot slug={r.accountSlug} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-[#e4e6eb] truncate">
-                    {names || "Unknown item"}{extra}
+                    {names || fallback}{extra}
                   </div>
                 </div>
                 <span
