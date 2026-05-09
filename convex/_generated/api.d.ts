@@ -15,6 +15,7 @@ import type * as calendar from "../calendar.js";
 import type * as chat from "../chat.js";
 import type * as dashboard from "../dashboard.js";
 import type * as health from "../health.js";
+import type * as hygglo from "../hygglo.js";
 import type * as items from "../items.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as reservations from "../reservations.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   dashboard: typeof dashboard;
   health: typeof health;
+  hygglo: typeof hygglo;
   items: typeof items;
   pricing_catalog: typeof pricing_catalog;
   reservations: typeof reservations;

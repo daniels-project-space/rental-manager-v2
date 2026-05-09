@@ -5,35 +5,63 @@ import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Legend,
+  Tooltip,
+} from "recharts";
+import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
 
 type Granularity = "monthly" | "weekly";
 type Period = 3 | 6 | 12;
 
-function shortLabel(period: string, granularity: Granularity) {
+function fmtCurrency(v: number) {
+  if (v >= 1000) return `£${(v / 1000).toFixed(1)}k`;
+  return `£${v.toFixed(0)}`;
+}
+
+function shortLabel(period: string, granularity: Granularity): string {
   if (granularity === "monthly") {
-    // YYYY-MM → "Jan"
     const [, m] = period.split("-");
     return new Date(2000, parseInt(m) - 1).toLocaleString("en", { month: "short" });
   }
-  // YYYY-Wnn → "W12"
-  return period.split("-")[1] ?? period;
+  const [yearStr, weekPart] = period.split("-");
+  const week = parseInt(weekPart.replace("W", ""));
+  const year = parseInt(yearStr);
+  const jan1 = new Date(year, 0, 1);
+  const dayOfYear = (week - 1) * 7 - jan1.getDay() + 1;
+  const d = new Date(year, 0, 1 + dayOfYear);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function tooltipFmt(value: ValueType | undefined, name: NameType | undefined): [string, string] {
+  const v = typeof value === "number" ? value : 0;
+  if (name === "revenue") return [`£${v.toFixed(2)}`, "Earnings"];
+  return [`${v}`, "Bookings"];
 }
 
 export function EarningsChart() {
   const { activeAccountSlug } = useAccount();
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [months, setMonths] = useState<Period>(12);
+  const periods: Period[] = [3, 6, 12];
 
-  const data = useQuery(api.revenue.getEarningsByPeriod, {
+  const raw = useQuery(api.revenue.getEarningsByPeriod, {
     accountSlug: activeAccountSlug,
     granularity,
     months,
   });
 
-  const periods = [3, 6, 12] as Period[];
-  const CHART_H = 120;
-  const BAR_COLOR = "#22c55e";
-  const BAR_MUTED = "rgba(34,197,94,0.2)";
+  const data = raw?.map((d) => ({
+    ...d,
+    label: shortLabel(d.period, granularity),
+  }));
 
   return (
     <Card>
@@ -77,98 +105,87 @@ export function EarningsChart() {
       </div>
 
       {data === undefined ? (
-        <SkeletonBlock className="h-32 w-full" />
+        <SkeletonBlock className="h-[280px] w-full" />
       ) : data.length === 0 ? (
-        <div className="flex items-center justify-center h-32 text-sm text-[#8b8fa3]">
+        <div className="flex items-center justify-center h-[280px] text-sm text-[#8b8fa3]">
           No earnings data
         </div>
       ) : (
-        <BarChart data={data} height={CHART_H} barColor={BAR_COLOR} mutedColor={BAR_MUTED} granularity={granularity} />
+        <ResponsiveContainer width="100%" height={280}>
+          <ComposedChart
+            data={data}
+            margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid
+              vertical={false}
+              stroke="rgba(255,255,255,0.06)"
+              strokeDasharray="0"
+            />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: "#8b8fa3", fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              yAxisId="left"
+              orientation="left"
+              tickFormatter={fmtCurrency}
+              tick={{ fill: "#8b8fa3", fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              width={52}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              allowDecimals={false}
+              tick={{ fill: "#8b8fa3", fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              width={28}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "rgba(14,17,28,0.95)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+              labelStyle={{ color: "#e4e6eb" }}
+              formatter={tooltipFmt}
+            />
+            <Legend
+              verticalAlign="top"
+              align="center"
+              wrapperStyle={{ fontSize: 12, color: "#9ca3af", paddingBottom: 8 }}
+              formatter={(value: string) =>
+                value === "revenue" ? "Earnings" : "Bookings"
+              }
+            />
+            <Bar
+              yAxisId="left"
+              dataKey="revenue"
+              name="revenue"
+              fill="rgba(34,197,94,0.4)"
+              stroke="#22c55e"
+              strokeWidth={1}
+              radius={[2, 2, 0, 0]}
+              maxBarSize={48}
+            />
+            <Line
+              yAxisId="right"
+              dataKey="bookings"
+              name="bookings"
+              type="monotone"
+              stroke="#a78bfa"
+              strokeWidth={2}
+              dot={{ fill: "#a78bfa", r: 4, strokeWidth: 0 }}
+              activeDot={{ r: 6 }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       )}
     </Card>
-  );
-}
-
-function BarChart({
-  data,
-  height,
-  barColor,
-  mutedColor,
-  granularity,
-}: {
-  data: { period: string; revenue: number; bookings: number }[];
-  height: number;
-  barColor: string;
-  mutedColor: string;
-  granularity: Granularity;
-}) {
-  const [hovered, setHovered] = useState<number | null>(null);
-  const maxRev = Math.max(...data.map((d) => d.revenue), 1);
-  const padX = 4;
-  const totalW = 600;
-  const barW = Math.max(4, (totalW - padX * (data.length + 1)) / data.length);
-
-  return (
-    <div className="relative">
-      <svg
-        viewBox={`0 0 ${totalW} ${height + 24}`}
-        className="w-full"
-        style={{ height: height + 24 }}
-      >
-        {data.map((d, i) => {
-          const barH = Math.max(2, (d.revenue / maxRev) * height);
-          const x = padX + i * (barW + padX);
-          const y = height - barH;
-          const isHov = hovered === i;
-          return (
-            <g key={d.period}>
-              <rect
-                x={x}
-                y={y}
-                width={barW}
-                height={barH}
-                fill={isHov ? barColor : mutedColor}
-                rx={2}
-                style={{ transition: "fill 0.15s" }}
-                onMouseEnter={() => setHovered(i)}
-                onMouseLeave={() => setHovered(null)}
-              />
-              {/* Label */}
-              <text
-                x={x + barW / 2}
-                y={height + 16}
-                textAnchor="middle"
-                fontSize="9"
-                fill="#8b8fa3"
-              >
-                {shortLabel(d.period, granularity)}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Tooltip */}
-      {hovered !== null && data[hovered] && (
-        <div
-          className="absolute pointer-events-none px-2 py-1 rounded text-xs"
-          style={{
-            top: 0,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(14,17,28,0.95)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            color: "#e4e6eb",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <span style={{ color: "#22c55e" }}>
-            £{data[hovered].revenue.toFixed(2)}
-          </span>
-          {" · "}
-          {data[hovered].bookings} bookings
-        </div>
-      )}
-    </div>
   );
 }

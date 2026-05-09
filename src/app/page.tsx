@@ -18,6 +18,7 @@ import { PriceRecommendations } from "@/components/dashboard/PriceRecommendation
 import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsights";
 import { HealthScanner } from "@/components/dashboard/HealthScanner";
 import { AIChat } from "@/components/dashboard/AIChat";
+import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
 
 export default function DashboardPage() {
   return (
@@ -91,6 +92,11 @@ export default function DashboardPage() {
         {/* Row 10: Health Scanner (full width) */}
         <section className="mb-4">
           <HealthScanner />
+        </section>
+
+        {/* Row 11b: Hygglo Inbox (Phase 6.0) */}
+        <section className="mb-4">
+          <HyggloInbox />
         </section>
 
         {/* Row 11: AI Chat (full width) */}

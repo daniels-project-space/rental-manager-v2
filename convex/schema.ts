@@ -372,6 +372,22 @@ export default defineSchema({
   })
     .index("by_item_name", ["item_name_canonical"]),
 
+  // ── Hygglo inbox messages (Phase 6.0) ─────────────────────
+  hygglo_messages: defineTable({
+    account_slug: v.string(),
+    thread_id: v.string(),
+    message_id: v.string(),
+    sender: v.string(),
+    sender_name: v.optional(v.string()),
+    body_text: v.string(),
+    hygglo_sent_at: v.optional(v.number()),
+    fetched_at: v.number(),
+    raw: v.optional(v.string()),
+  }).index("by_account", ["account_slug"])
+    .index("by_thread", ["thread_id"])
+    .index("by_thread_and_message", ["thread_id", "message_id"])
+    .index("by_fetched", ["fetched_at"]),
+
   // ── Competitor listings (informational, optional) ───────────
   competitor_listings: defineTable({
     listing_id: v.string(),

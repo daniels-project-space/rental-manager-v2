@@ -224,3 +224,68 @@ export const getInvestmentScorecard = query({
     };
   },
 });
+
+/**
+ * W03 Lifetime Revenue Chart — monthly stacked bars + cumulative line
+ * Returns every month from first reservation to today (inclusive), with zeros for empty months.
+ * accountSlug: null = all accounts combined
+ */
+export const getLifetimeByMonth = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: async (ctx, { accountSlug }) => {
+    let reservations = await ctx.db.query('reservations').collect();
+
+    // Find earliest start_date across ALL accounts for x-axis span
+    const allDates = reservations
+      .filter((r) => r.start_date)
+      .map((r) => r.start_date as string)
+      .sort();
+    if (allDates.length === 0) return [];
+
+    const firstMonth = allDates[0].slice(0, 7); // YYYY-MM
+    const todayMonth = new Date().toISOString().slice(0, 7);
+
+    // Generate all YYYY-MM keys from firstMonth to todayMonth
+    const months: string[] = [];
+    let cur = new Date(firstMonth + '-01');
+    const endDate = new Date(todayMonth + '-01');
+    while (cur <= endDate) {
+      months.push(cur.toISOString().slice(0, 7));
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    // Filter reservations by account if needed
+    const filtered = accountSlug
+      ? reservations.filter((r) => r.account_slug === accountSlug)
+      : reservations;
+
+    // Bucket per-account monthly gross
+    const dbMap = new Map<string, number>();
+    const leoMap = new Map<string, number>();
+
+    for (const r of filtered) {
+      if (!r.start_date) continue;
+      const key = r.start_date.slice(0, 7);
+      const gross = r.gross_paid_gbp ?? 0;
+      if (r.account_slug === 'dbcinema') {
+        dbMap.set(key, (dbMap.get(key) ?? 0) + gross);
+      } else if (r.account_slug === 'leo') {
+        leoMap.set(key, (leoMap.get(key) ?? 0) + gross);
+      }
+    }
+
+    // Build output with running cumulative
+    let cumulative = 0;
+    return months.map((month) => {
+      const dbcinema = parseFloat((dbMap.get(month) ?? 0).toFixed(2));
+      const leo = parseFloat((leoMap.get(month) ?? 0).toFixed(2));
+      cumulative += dbcinema + leo;
+      return {
+        month,
+        dbcinema,
+        leo,
+        cumulative: parseFloat(cumulative.toFixed(2)),
+      };
+    });
+  },
+});
