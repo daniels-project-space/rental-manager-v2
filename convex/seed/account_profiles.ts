@@ -1,5 +1,4 @@
 import { internalMutation } from "../_generated/server";
-import { v } from "convex/values";
 
 // Phase 1.B account profiles seed.
 // Mines persona, rules, templates from v1 source. Idempotent: upsert by account_id.

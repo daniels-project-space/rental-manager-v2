@@ -347,8 +347,6 @@ export const getLifetimeByMonth = query({
       monthLabel: string;
       dbcinemaOrganic: number;
       leoOrganic: number;
-      danielRetired: number;
-      vertusRetired: number;
       aiBoost: number;
       damageClaims: number;
       bookedNext: number;
@@ -407,8 +405,6 @@ export const getLifetimeByMonth = query({
         monthLabel: label,
         dbcinemaOrganic: dbOrganic,
         leoOrganic,
-        danielRetired: 0,
-        vertusRetired: 0,
         aiBoost,
         damageClaims,
         bookedNext: bookedNextVal,

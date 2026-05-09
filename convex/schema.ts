@@ -224,6 +224,7 @@ export default defineSchema({
     v1_created_at: v.optional(v.number()),
     v1_updated_at: v.optional(v.number()),
     imported_at: v.optional(v.number()),
+    hygglo_order_id: v.optional(v.string()),   // Hygglo order ID for poll-synced reservations
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
@@ -231,7 +232,8 @@ export default defineSchema({
     .index("by_renter", ["renter_id"])
     .index("by_account_slug", ["account_slug"])
     .index("by_start_date", ["start_date"])
-    .index("by_v1_rental_id", ["v1_rental_id"]),
+    .index("by_v1_rental_id", ["v1_rental_id"])
+    .index("by_hygglo_order_id", ["hygglo_order_id"]),
 
   calendar_holds: defineTable({
     item_id: v.id("items"),
@@ -334,21 +336,10 @@ export default defineSchema({
     read_only_mode: v.boolean(),       // Umbrella safety flag (Phase 1.B.3): blocks send + auto_accept + decline + listing modify
     polling_interval_ms: v.number(),
     escalate_to_sonnet: v.boolean(),
-    troubleshooting_policy: v.optional(v.object({
-      classification: v.array(v.string()),
-      resolvable_action: v.string(),
-      web_search_tool: v.string(),
-      money_action: v.string(),
-      missing_items_action: v.string(),
-      broken_action: v.string(),
-      unknown_action: v.string(),
-    })),
+
     // Phase 1.B.3 — operator policy fields
     read_only_mode_blocks: v.optional(v.array(v.string())),
-    hygglo_care_terms: v.optional(v.string()),                       // populated by Phase 3 Stagehand scrape
-    hygglo_care_terms_last_synced: v.optional(v.number()),
-    hygglo_care_terms_refresh_cadence_days: v.optional(v.number()),
-    cancellation_policy_refresh_cadence_days: v.optional(v.number()),
+
     timezone: v.optional(v.string()),
     quiet_hours: v.optional(v.object({
       start: v.string(),

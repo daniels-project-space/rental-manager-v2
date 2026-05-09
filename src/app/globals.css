@@ -94,10 +94,7 @@
     box-shadow: 0 8px 24px rgba(110, 168, 254, 0.15);
   }
 
-  /* Delivery glow animation for active rows */
-  .delivery-glow {
-    animation: deliveryPulse 2s ease-in-out infinite;
-  }
+
   @keyframes deliveryPulse {
     0%, 100% { background-color: transparent; }
     50% { background-color: rgba(34, 197, 94, 0.08); }
@@ -120,11 +117,7 @@
     100% { background-position: -200% 0; }
   }
 
-  /* Expand/collapse transition */
-  .expand-drawer {
-    transition: max-height 0.35s ease, opacity 0.35s ease;
-    overflow: hidden;
-  }
+
 }
 
 /* ── Animation Keyframes ─────────────────────────────────────────────────── */
@@ -204,10 +197,7 @@
 .anim-delay-4 { animation-delay: 240ms; }
 .anim-delay-5 { animation-delay: 300ms; }
 
-/* ── Code-pulse for AI thinking indicator ───────────────────────────────── */
-.thinking-pulse {
-  animation: code-pulse 1.5s ease-in-out infinite;
-}
+
 
 /* ── Mobile tweaks ──────────────────────────────────────────────────────── */
 @media (max-width: 390px) {
@@ -239,11 +229,7 @@
     grid-template-columns: repeat(2, 1fr) !important;
   }
 
-  /* Chart cards: remove right padding that causes overflow */
-  .chart-card-mobile {
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-  }
+
 }
 
 /* ── Drawer slide-in from right ──────────────────────────────────────────── */

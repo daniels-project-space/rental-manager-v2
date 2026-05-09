@@ -88,3 +88,63 @@ export const getRecentMessages = query({
     );
   },
 });
+
+// ── Reservation upsert ────────────────────────────────────────
+
+const orderItemArgs = v.object({
+  item_name: v.string(),
+  qty: v.optional(v.number()),
+});
+
+/**
+ * Internal mutation called by poll-hygglo-inbox after each order fetch.
+ * Upserts a reservation row keyed by hygglo_order_id.
+ * Does NOT overwrite rows that have v1_rental_id set (historical imports stay authoritative).
+ */
+export const upsertOrderAsReservation = mutation({
+  args: {
+    account_slug: v.string(),
+    hygglo_order_id: v.string(),
+    status: v.string(),
+    start_date: v.string(),
+    end_date: v.string(),
+    gross_paid_gbp: v.optional(v.number()),
+    net_to_owner_gbp: v.optional(v.number()),
+    currency: v.optional(v.string()),
+    items: v.array(orderItemArgs),
+    duration_days: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ action: "inserted" | "updated" | "skipped" }> => {
+    const existing = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
+      .first();
+
+    const now = Date.now();
+    const fields = {
+      account_slug: args.account_slug,
+      hygglo_order_id: args.hygglo_order_id,
+      status: args.status,
+      start_date: args.start_date,
+      end_date: args.end_date,
+      gross_paid_gbp: args.gross_paid_gbp,
+      net_to_owner_gbp: args.net_to_owner_gbp,
+      currency: args.currency,
+      items: args.items,
+      duration_days: args.duration_days,
+    };
+
+    if (existing) {
+      // Skip rows with v1_rental_id — historical import is authoritative.
+      if (existing.v1_rental_id) return { action: "skipped" };
+      await ctx.db.patch(existing._id, fields);
+      return { action: "updated" };
+    }
+
+    await ctx.db.insert("reservations", {
+      ...fields,
+      created_at: now,
+    });
+    return { action: "inserted" };
+  },
+});

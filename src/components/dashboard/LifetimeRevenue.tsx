@@ -27,8 +27,6 @@ import type {
 // Stack order: Daniel (retired) → Vertus (retired) → DB Cinema organic →
 // Leo Adams organic → AI Boost → Claims → Booked next → Pending next
 const SERIES = [
-  { key: "danielRetired",   label: "Daniel (retired)", color: "#f97316", fill: "rgba(249,115,22,0.45)" },
-  { key: "vertusRetired",   label: "Vertus (retired)", color: "#8b5a2b", fill: "rgba(139,90,43,0.5)" },
   { key: "dbcinemaOrganic", label: "DB Cinema",        color: "#8b6dff", fill: "rgba(139,109,255,0.7)" },
   { key: "leoOrganic",      label: "Leo Adams",        color: "#ef4444", fill: "rgba(239,68,68,0.7)" },
   { key: "aiBoost",         label: "AI Boost",         color: "#22c55e", fill: "rgba(34,197,94,0.5)" },
@@ -37,7 +35,6 @@ const SERIES = [
   { key: "pendingNext",     label: "Pending (next mo)",color: "#eab308", fill: "rgba(234,179,8,0.45)" },
 ] as const;
 
-type SeriesKey = (typeof SERIES)[number]["key"];
 
 function fmtK(v: number) {
   if (v >= 1000) return "£" + (v / 1000).toFixed(0) + "k";

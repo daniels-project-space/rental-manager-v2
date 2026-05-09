@@ -8,12 +8,6 @@ import { useState } from "react";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
-function addDays(dateStr: string, n: number) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
 function dayLabel(dateStr: string) {
   const d = new Date(dateStr);
   return {

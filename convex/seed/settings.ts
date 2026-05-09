@@ -52,10 +52,6 @@ export const apply_phase_1_b3_policies = internalMutation({
       read_only_mode,
       // Phase 1.B.3 additions
       read_only_mode_blocks: READ_ONLY_MODE_BLOCKS,
-      hygglo_care_terms: undefined, // null until Phase 3 Stagehand scrape
-      hygglo_care_terms_last_synced: undefined,
-      hygglo_care_terms_refresh_cadence_days: 30,
-      cancellation_policy_refresh_cadence_days: 60,
       timezone: "Europe/London",
       quiet_hours: {
         start: "02:00",
@@ -129,8 +125,6 @@ export const verify_p1_b3_invariants = internalMutation({
         settings.read_only_mode_blocks.length >= 4 &&
         settings.timezone === "Europe/London" &&
         settings.quiet_hours &&
-        settings.cancellation_policy_refresh_cadence_days === 60 &&
-        settings.hygglo_care_terms_refresh_cadence_days === 30 &&
         settings.pickup_no_show_grace_minutes === 30 &&
         settings.price_objection_surfacing &&
         settings.policy_notes

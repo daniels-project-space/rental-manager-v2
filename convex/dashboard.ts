@@ -60,7 +60,6 @@ export const getSummary = query({
     }
 
     const active = allReservations.filter((r) => r.status === "confirmed");
-    const completed = allReservations.filter((r) => r.status === "completed");
 
     // Active rentals count
     const activeRentalsCount = active.length;

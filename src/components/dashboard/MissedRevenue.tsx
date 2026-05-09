@@ -16,7 +16,6 @@ type Days = 30 | 90;
 export function MissedRevenue() {
   const { activeAccountSlug } = useAccount();
   const [days, setDays] = useState<Days>(30);
-  const [tab, setTab] = useState<"denials" | "idle">("denials");
   const [showDenialModal, setShowDenialModal] = useState(false);
   const [denialsOpen, setDenialsOpen] = useState(false);
   const [editingDenial, setEditingDenial] = useState<DenialRow | null>(null);

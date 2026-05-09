@@ -16,7 +16,7 @@ const CONVEX_URL = "https://hearty-oyster-600.convex.cloud";
 
 const API_BASE = "https://api.hygglo.com/api";
 const CLIENT_ID = "ngHyggloApp";
-const CLIENT_SECRET = "lQVS05DGy9SQdAEInEPqTMK3aktEfSc7iupC7BYM4JY=";
+// CLIENT_SECRET is read from vault at runtime (key: HYGGLO_CLIENT_SECRET)
 const COUNTRY = "GB";
 
 // ── Vault helper ──────────────────────────────────────────────
@@ -56,6 +56,29 @@ type OrderDetail = {
   activities?: Activity[];
   users?: { otherPart?: { name?: string } };
   labels?: { otherPart?: string };
+  rentalPeriod?: { startDateUTC?: string; endDateUTC?: string };
+  price?: {
+    currency?: string;
+    total?: number;
+    ownerEarnings?: number;
+    breakdown?: {
+      totalPrice?: { amount?: number };
+      lenderEarnings?: { amount?: number };
+    };
+  };
+  items?: Array<{ name?: string; type?: string }>;
+};
+
+type OrderReservationPayload = {
+  hygglo_order_id: string;
+  status: string;
+  start_date: string;
+  end_date: string;
+  gross_paid_gbp?: number;
+  net_to_owner_gbp?: number;
+  currency?: string;
+  items: Array<{ item_name: string; qty?: number }>;
+  duration_days?: number;
 };
 
 // ── Timestamp parser ──────────────────────────────────────────
@@ -101,23 +124,27 @@ function parseCreatedAtLabel(label: string): Date | null {
 async function scrapeAccount(
   accountSlug: string,
   email: string,
-  password: string
-): Promise<Array<{
-  thread_id: string;
-  message_id: string;
-  sender: string;
-  sender_name?: string;
-  body_text: string;
-  hygglo_sent_at?: number;
-  fetched_at: number;
-}>> {
+  password: string,
+  clientSecret: string
+): Promise<{
+  messages: Array<{
+    thread_id: string;
+    message_id: string;
+    sender: string;
+    sender_name?: string;
+    body_text: string;
+    hygglo_sent_at?: number;
+    fetched_at: number;
+  }>;
+  reservations: OrderReservationPayload[];
+}> {
   // 1. Authenticate
   const tokenParams = new URLSearchParams({
     grant_type: "password",
     username: email,
     password,
     client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
+    client_secret: clientSecret,
   });
 
   const tokenRes = await fetch(`${API_BASE}/token?country=${COUNTRY}`, {
@@ -183,6 +210,7 @@ async function scrapeAccount(
     hygglo_sent_at?: number;
     fetched_at: number;
   }> = [];
+  const reservationPayloads: OrderReservationPayload[] = [];
 
   const fetchedAt = Date.now();
 
@@ -212,10 +240,44 @@ async function scrapeAccount(
         fetched_at: fetchedAt,
       });
     }
-  }
 
-  console.log(`[poll-hygglo] ${accountSlug}: ${messages.length} messages extracted`);
-  return messages;
+    // Extract reservation metadata from the order detail
+    const startUTC = detail.rentalPeriod?.startDateUTC;
+    const endUTC = detail.rentalPeriod?.endDateUTC;
+    if (startUTC && endUTC) {
+      const startDate = startUTC.slice(0, 10);
+      const endDate = endUTC.slice(0, 10);
+      const grossPaid =
+        detail.price?.breakdown?.totalPrice?.amount ??
+        detail.price?.total;
+      const netToOwner =
+        detail.price?.breakdown?.lenderEarnings?.amount ??
+        detail.price?.ownerEarnings;
+      const currency = detail.price?.currency ?? "GBP";
+      const orderItems = (detail.items ?? [])
+        .filter((i) => i.type !== "INSURANCE")
+        .map((i) => ({ item_name: i.name ?? "Unknown item" }));
+      const start = new Date(startUTC);
+      const end = new Date(endUTC);
+      const durationDays = Math.round((end.getTime() - start.getTime()) / 86400000);
+      reservationPayloads.push({
+        hygglo_order_id: String(order.id),
+        status: "confirmed",
+        start_date: startDate,
+        end_date: endDate,
+        gross_paid_gbp: grossPaid,
+        net_to_owner_gbp: netToOwner,
+        currency,
+        items: orderItems,
+        duration_days: durationDays > 0 ? durationDays : undefined,
+      });
+    }
+  }
+  console.log(
+    "[poll-hygglo] " + accountSlug + ": " + String(messages.length) + " messages, " +
+    String(reservationPayloads.length) + " reservation payloads extracted"
+  );
+  return { messages, reservations: reservationPayloads };
 }
 
 // ── Task ──────────────────────────────────────────────────────
@@ -227,6 +289,7 @@ export const pollHyggloInbox = schedules.task({
   retry: { maxAttempts: 2 },
   run: async () => {
     const hyggloSecrets = await getVaultSecrets("hygglo");
+    const clientSecret = hyggloSecrets["HYGGLO_CLIENT_SECRET"] ?? "lQVS05DGy9SQdAEInEPqTMK3aktEfSc7iupC7BYM4JY=";
 
     const accounts = [
       {
@@ -259,8 +322,9 @@ export const pollHyggloInbox = schedules.task({
       }
 
       try {
-        const messages = await scrapeAccount(account.slug, account.email, account.password);
+        const { messages, reservations } = await scrapeAccount(account.slug, account.email, account.password, clientSecret);
 
+        // Upsert chat messages (batched 50)
         let totalInserted = 0;
         let totalSkipped = 0;
         for (let i = 0; i < messages.length; i += 50) {
@@ -272,18 +336,33 @@ export const pollHyggloInbox = schedules.task({
           totalInserted += r.inserted;
           totalSkipped += r.skipped;
         }
-        const upsertResult = { inserted: totalInserted, skipped: totalSkipped };
+
+        // Upsert reservations (batched 50)
+        let resInserted = 0;
+        let resUpdated = 0;
+        for (let i = 0; i < reservations.length; i += 50) {
+          const batch = reservations.slice(i, i + 50);
+          for (const payload of batch) {
+            const resResult = await convex.mutation(api.hygglo.upsertOrderAsReservation, {
+              account_slug: account.slug,
+              ...payload,
+            });
+            if (resResult.action === "inserted") resInserted++;
+            else if (resResult.action === "updated") resUpdated++;
+          }
+        }
 
         console.log(
-          `[poll-hygglo] ${account.slug}: ${messages.length} found, ` +
-          `${upsertResult.inserted} inserted, ${upsertResult.skipped} skipped`
+          "[poll-hygglo] " + account.slug + ": " + String(messages.length) + " msgs, " +
+          String(totalInserted) + " inserted, " + String(totalSkipped) + " skipped. " +
+          "Reservations: " + String(resInserted) + " inserted, " + String(resUpdated) + " updated"
         );
 
         results.push({
           slug: account.slug,
           ok: true,
           messages: messages.length,
-          inserted: upsertResult.inserted,
+          inserted: totalInserted,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

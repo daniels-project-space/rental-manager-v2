@@ -376,15 +376,6 @@ export const seedSettings = internalMutation({
         read_only_mode: true,
         polling_interval_ms: s.polling_interval_ms ?? 30000,
         escalate_to_sonnet: s.escalate_to_sonnet ?? true,
-        troubleshooting_policy: {
-          classification: ["resolvable", "money_issue", "missing_items", "broken_item", "unknown"],
-          resolvable_action: "research_online_then_help",
-          web_search_tool: "tavily_or_serper",
-          money_action: "escalate_telegram",
-          missing_items_action: "prompt_double_check_bags_first_then_escalate_if_still_missing",
-          broken_action: "escalate_telegram",
-          unknown_action: "escalate_telegram",
-        },
         updated_at: t,
       });
       return { skipped: false, patched: true };
@@ -394,15 +385,6 @@ export const seedSettings = internalMutation({
       read_only_mode: true,
       polling_interval_ms: 30000,
       escalate_to_sonnet: true,
-      troubleshooting_policy: {
-        classification: ["resolvable", "money_issue", "missing_items", "broken_item", "unknown"],
-        resolvable_action: "research_online_then_help",
-        web_search_tool: "tavily_or_serper",
-        money_action: "escalate_telegram",
-        missing_items_action: "prompt_double_check_bags_first_then_escalate_if_still_missing",
-        broken_action: "escalate_telegram",
-        unknown_action: "escalate_telegram",
-      },
       updated_at: t,
     });
     await ctx.db.insert("audit_log", {
