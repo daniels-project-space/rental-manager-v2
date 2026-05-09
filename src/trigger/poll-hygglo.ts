@@ -12,7 +12,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
-const CONVEX_URL = "https://exciting-lion-29.convex.cloud";
+const CONVEX_URL = "https://hearty-oyster-600.convex.cloud";
 
 const API_BASE = "https://api.hygglo.com/api";
 const CLIENT_ID = "ngHyggloApp";
@@ -261,10 +261,18 @@ export const pollHyggloInbox = schedules.task({
       try {
         const messages = await scrapeAccount(account.slug, account.email, account.password);
 
-        const upsertResult = await convex.mutation(api.hygglo.upsertMessages, {
-          account_slug: account.slug,
-          messages,
-        });
+        let totalInserted = 0;
+        let totalSkipped = 0;
+        for (let i = 0; i < messages.length; i += 50) {
+          const batch = messages.slice(i, i + 50);
+          const r = await convex.mutation(api.hygglo.upsertMessages, {
+            account_slug: account.slug,
+            messages: batch,
+          });
+          totalInserted += r.inserted;
+          totalSkipped += r.skipped;
+        }
+        const upsertResult = { inserted: totalInserted, skipped: totalSkipped };
 
         console.log(
           `[poll-hygglo] ${account.slug}: ${messages.length} found, ` +
