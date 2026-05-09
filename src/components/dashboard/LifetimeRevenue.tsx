@@ -1,12 +1,14 @@
 "use client";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
 import { ClaimsRecordingModal } from "@/components/modals/ClaimsRecordingModal";
-import { useCountUp } from "@/hooks/useCountUp";
+import { EditClaimModal } from "@/components/modals/EditClaimModal";
+import type { ClaimRow } from "@/components/modals/EditClaimModal";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -48,7 +50,7 @@ function fmtMonth(yyyyMM: string): string {
   return NAMES[parseInt(parts[1]) - 1] + " " + parts[0].slice(2);
 }
 
-function tooltipFmt(value: ValueType | undefined, name: NameType | undefined): [string, string] {
+function tooltipFmt(value: ValueType, name: NameType): [string, string] {
   const v = typeof value === "number" ? value : 0;
   const series = SERIES.find((s) => s.key === name);
   const label =
@@ -58,20 +60,22 @@ function tooltipFmt(value: ValueType | undefined, name: NameType | undefined): [
   return ["£" + v.toFixed(2), label];
 }
 
-
-function TotalChip({ value }: { value: number }) {
-  const animated = useCountUp(value, 800);
-  return (
-    <span>Total: <b style={{ color: "#22c55e" }}>£{Math.round(animated).toLocaleString("en-GB")}</b></span>
-  );
-}
+const STATUS_COLOR: Record<string, string> = {
+  open: "#f59e0b",
+  settled: "#22c55e",
+  denied: "#ef4444",
+};
 
 export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [showClaimsModal, setShowClaimsModal] = useState(false);
+  const [claimsOpen, setClaimsOpen] = useState(false);
+  const [editingClaim, setEditingClaim] = useState<ClaimRow | null>(null);
+  const deleteClaim = useMutation(api.insurance_claims.remove);
 
   const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug });
+  const recentClaims = useQuery(api.insurance_claims.list, { accountSlug: activeAccountSlug ?? undefined });
 
   const toggle = (key: string) => setHidden((h) => ({ ...h, [key]: !h[key] }));
 
@@ -85,6 +89,12 @@ export function LifetimeRevenue() {
   const strongest = raw?.strongestMonth;
   const weakest = raw?.weakestMonth;
   const boostPct = Math.round((raw?.boostRate ?? 0) * 100);
+  const topClaims = (recentClaims ?? []).slice(0, 10);
+
+  async function handleDeleteClaim(id: Id<"insurance_claims">) {
+    if (!window.confirm("Delete this claim? This cannot be undone.")) return;
+    await deleteClaim({ id });
+  }
 
   return (
     <>
@@ -109,7 +119,7 @@ export function LifetimeRevenue() {
         {/* Stats bar */}
         {raw !== undefined && (
           <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-xs text-[#8b8fa3]">
-            <TotalChip value={totalRevenue} />
+            <span>Total: <b style={{ color: "#22c55e" }}>{"£"}{totalRevenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
             <span>Avg/mo: <b style={{ color: "#e4e6eb" }}>{"£"}{avgMonthly.toLocaleString("en-GB")}</b></span>
             {strongest && (
               <span>Best: <b style={{ color: "#22c55e" }}>{fmtMonth(strongest.month)} {"£"}{strongest.revenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
@@ -214,7 +224,7 @@ export function LifetimeRevenue() {
               <Tooltip
                 contentStyle={{ background: "rgba(14,17,28,0.95)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, fontSize: 12 }}
                 labelStyle={{ color: "#e4e6eb" }}
-                formatter={tooltipFmt}
+                formatter={tooltipFmt as never}
               />
               {/* Stacked bars — bottom to top per spec */}
               {SERIES.map((s) => (
@@ -259,10 +269,48 @@ export function LifetimeRevenue() {
             </ComposedChart>
           </ResponsiveContainer>
         )}
+
+        {/* Recent Claims */}
+        <div className="mt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 12 }}>
+          <button
+            className="flex items-center gap-1.5 text-xs font-medium w-full text-left"
+            style={{ color: "#8b8fa3" }}
+            onClick={() => setClaimsOpen((o) => !o)}
+          >
+            <span style={{ transform: claimsOpen ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", fontSize: 10 }}>&#9658;</span>
+            Recent Claims
+            {recentClaims !== undefined && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: "rgba(255,255,255,0.08)", color: "#e4e6eb" }}>
+                {topClaims.length}
+              </span>
+            )}
+          </button>
+          {claimsOpen && (
+            <div className="mt-2 space-y-1">
+              {recentClaims === undefined && <SkeletonBlock className="h-8 w-full rounded" />}
+              {recentClaims !== undefined && topClaims.length === 0 && (
+                <p className="text-xs text-[#8b8fa3] py-2">No claims recorded.</p>
+              )}
+              {topClaims.map((c) => (
+                <div key={c.id as string} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs text-[#e4e6eb] truncate block">{c.claimDate} &bull; {c.itemNameCanonical ?? "no item"} &bull; £{c.amountGbp.toFixed(2)}</span>
+                    <span className="text-[10px]" style={{ color: STATUS_COLOR[c.status] ?? "#8b8fa3" }}>{c.status}{c.accountSlug ? " · " + c.accountSlug : ""}</span>
+                  </div>
+                  <button onClick={() => setEditingClaim({ id: c.id, accountSlug: c.accountSlug, itemNameCanonical: c.itemNameCanonical, amountGbp: c.amountGbp, claimDate: c.claimDate, description: c.description, status: c.status })} className="text-[#8b8fa3] hover:text-[#e4e6eb] px-1 text-sm" title="Edit">&#9998;</button>
+                  <button onClick={() => handleDeleteClaim(c.id)} className="text-[#8b8fa3] hover:text-[#ef4444] px-1 text-sm" title="Delete">&#x2715;</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </Card>
 
       {showClaimsModal && (
         <ClaimsRecordingModal onClose={() => setShowClaimsModal(false)} />
+      )}
+      {editingClaim && (
+        <EditClaimModal claim={editingClaim} onClose={() => setEditingClaim(null)} />
       )}
     </>
   );

@@ -245,3 +245,17 @@
     padding-right: 0.5rem !important;
   }
 }
+
+/* ── Drawer slide-in from right ──────────────────────────────────────────── */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.drawer-backdrop {
+  animation: fade-in 200ms ease both;
+}
+
+.drawer-panel {
+  animation: slide-in-right 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
