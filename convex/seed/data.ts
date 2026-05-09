@@ -378,3 +378,66 @@ export const rollback_audit_failed_import = internalMutation({
     return { deleted_renters, deleted_reservations, deleted_holds };
   },
 });
+
+// ── BACKFILL: reservation items ──────────────────────────────
+// Updates existing reservation rows (by v1_rental_id) to set items[].
+// Called by scripts/backfill-reservation-items.mjs.
+export const backfillReservationItemsBatch = internalMutation({
+  args: {
+    rows: v.array(v.object({
+      v1_rental_id: v.string(),
+      items: v.array(v.object({
+        item_name: v.string(),
+        qty: v.optional(v.number()),
+        source: v.optional(v.string()),
+        confidence_score: v.optional(v.number()),
+        v1_extracteditem_id: v.optional(v.string()),
+      })),
+    })),
+  },
+  handler: async (ctx, { rows }) => {
+    let updated = 0;
+    let skipped_not_found = 0;
+    let skipped_already_has_items = 0;
+    for (const row of rows) {
+      const res = await ctx.db
+        .query('reservations')
+        .withIndex('by_v1_rental_id', (q) => q.eq('v1_rental_id', row.v1_rental_id))
+        .first();
+      if (!res) { skipped_not_found += 1; continue; }
+      // Only backfill if items is currently empty
+      if ((res.items ?? []).length > 0) { skipped_already_has_items += 1; continue; }
+      await ctx.db.patch(res._id, { items: row.items });
+      updated += 1;
+    }
+    return { updated, skipped_not_found, skipped_already_has_items };
+  },
+});
+
+// ── BACKFILL: item acquisition costs ────────────────────────
+// Updates items rows setting acquisition_cost_gbp from v1's ACQUISITION_COSTS data.
+// Called by scripts/backfill-acquisition-costs.mjs.
+export const backfillItemAcquisitionCostsBatch = internalMutation({
+  args: {
+    rows: v.array(v.object({
+      name_canonical: v.string(),
+      acquisition_cost_gbp: v.number(),
+    })),
+  },
+  handler: async (ctx, { rows }) => {
+    let updated = 0;
+    let not_found = 0;
+    for (const row of rows) {
+      const items = await ctx.db
+        .query('items')
+        .withIndex('by_canonical_name', (q) => q.eq('name_canonical', row.name_canonical))
+        .collect();
+      if (items.length === 0) { not_found += 1; continue; }
+      for (const item of items) {
+        await ctx.db.patch(item._id, { acquisition_cost_gbp: row.acquisition_cost_gbp });
+        updated += 1;
+      }
+    }
+    return { updated, not_found };
+  },
+});

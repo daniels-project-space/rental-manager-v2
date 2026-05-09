@@ -1,4 +1,4 @@
-import { internalMutation } from "../_generated/server";
+import { internalMutation, internalQuery } from "../_generated/server";
 import { v } from "convex/values";
 
 // Phase 1.A inventory seed mutations.
@@ -481,5 +481,16 @@ export const verifyCounts = internalMutation({
       ALLOW_HYGGLO_SEND: settings?.ALLOW_HYGGLO_SEND,
       read_only_mode: settings?.read_only_mode,
     };
+  },
+});
+
+// ── List all item names (for backfill scripts) ───────────────
+export const listAllItemNames = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const items = await ctx.db.query('items').collect();
+    return items
+      .filter((i) => !i.is_marketing_only && i.status === 'active')
+      .map((i) => ({ _id: i._id, name_canonical: i.name_canonical, acquisition_cost_gbp: i.acquisition_cost_gbp }));
   },
 });

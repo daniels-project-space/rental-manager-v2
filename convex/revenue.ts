@@ -109,16 +109,65 @@ export const getMissedRevenue = query({
       })
     );
 
-    const totalMissed = denialLosses.reduce(
+    const denialTotal = denialLosses.reduce(
       (sum, d) => sum + d.estimatedValue,
       0
     );
 
+    // ── Idle-gap losses ──────────────────────────────────────────
+    // For each active item that had ANY rental in the lookback window,
+    // estimate idle days = (days - actual_rental_days) × daily_price_min.
+    // This gives an upper-bound on opportunity cost from un-rented inventory.
+    // Conservative: items with zero bookings in the period are excluded
+    // (no demand signal → gap is not reliably a loss).
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    let allResForGap = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+      .collect();
+    if (accountSlug) {
+      allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
+    }
+
+    // Accumulate rental days per item name across the window
+    const rentalDaysPerItem = new Map<string, number>();
+    for (const r of allResForGap) {
+      for (const item of r.items ?? []) {
+        rentalDaysPerItem.set(
+          item.item_name,
+          (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0)
+        );
+      }
+    }
+
+    // Only items that actually had at least one booking in the window
+    const gapLosses: Array<{ itemName: string; rentalDays: number; idleDays: number; estimatedGapLoss: number }> = [];
+    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const priceByName = new Map(pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]));
+
+    for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
+      const idleDays = Math.max(0, days - Math.min(rentalDays, days));
+      if (idleDays <= 0) continue;
+      const dailyRate = priceByName.get(itemName);
+      if (!dailyRate) continue;
+      gapLosses.push({
+        itemName,
+        rentalDays,
+        idleDays,
+        estimatedGapLoss: parseFloat((idleDays * dailyRate).toFixed(2)),
+      });
+    }
+    gapLosses.sort((a, b) => b.estimatedGapLoss - a.estimatedGapLoss);
+
+    const gapTotal = gapLosses.reduce((s, g) => s + g.estimatedGapLoss, 0);
+    const totalMissed = denialTotal + gapTotal;
+
     return {
       totalMissed,
       denialLosses,
-      // gapLosses (idle item gaps) omitted — requires per-item timeline analysis,
-      // deferred to a dedicated future query.
+      gapLosses,
+      gapTotal: parseFloat(gapTotal.toFixed(2)),
+      denialTotal: parseFloat(denialTotal.toFixed(2)),
     };
   },
 });
@@ -130,10 +179,10 @@ export const getInvestmentScorecard = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
     const allItems = await ctx.db.query("items").collect();
-    const totalInvested = allItems.reduce(
-      (sum, i) => sum + (i.acquisition_cost_gbp ?? 0),
-      0
-    );
+    // Only count active non-marketing items in total investment (mirrors v1 acquisition-costs scope)
+    const totalInvested = allItems
+      .filter((i) => !i.is_marketing_only && i.status !== "inactive" && i.status !== "archived")
+      .reduce((sum, i) => sum + (i.acquisition_cost_gbp ?? 0), 0);
 
     let reservations = await ctx.db.query("reservations").collect();
     if (accountSlug) {

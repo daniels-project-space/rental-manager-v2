@@ -363,6 +363,15 @@ export default defineSchema({
     updated_at: v.optional(v.number()),
   }),
 
+  // ── Price recommendation dismissals (W17) ───────────────────
+  recommendation_dismissals: defineTable({
+    item_id: v.optional(v.id("items")),
+    item_name_canonical: v.string(),
+    dismissed_at: v.number(),
+    dismissed_by: v.optional(v.string()),   // "user" | "applied"
+  })
+    .index("by_item_name", ["item_name_canonical"]),
+
   // ── Competitor listings (informational, optional) ───────────
   competitor_listings: defineTable({
     listing_id: v.string(),

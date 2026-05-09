@@ -153,7 +153,9 @@ export const getOutOfStockItems = query({
 });
 
 /**
- * W16 Sell Recommender - low utilization items flagged for sale
+ * W16 Sell Recommender - low utilization items flagged for sale.
+ * Groups by name_canonical so multiple units of the same model appear as ONE row
+ * (mirrors v1 sell-recommender.service.ts which groups by item_name before scoring).
  */
 export const getSellRecommendations = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
@@ -173,6 +175,7 @@ export const getSellRecommendations = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
+    // Build rental-days per canonical name from reservation items[]
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
       for (const item of r.items ?? []) {
@@ -184,32 +187,59 @@ export const getSellRecommendations = query({
     }
 
     const allItems = await ctx.db.query("items").collect();
+
+    // Group by name_canonical — multiple unit rows collapse to one recommendation
+    type GroupEntry = {
+      representative_id: string;
+      name_canonical: string;
+      total_qty: number;
+      earliest_created_at: number;
+    };
+    const groups = new Map<string, GroupEntry>();
+    for (const i of allItems) {
+      if (i.status !== "active" || i.is_marketing_only) continue;
+      const existing = groups.get(i.name_canonical);
+      if (!existing) {
+        groups.set(i.name_canonical, {
+          representative_id: i._id,
+          name_canonical: i.name_canonical,
+          total_qty: i.qty,
+          earliest_created_at: i.created_at,
+        });
+      } else {
+        existing.total_qty += i.qty;
+        if (i.created_at < existing.earliest_created_at) {
+          existing.earliest_created_at = i.created_at;
+        }
+      }
+    }
+
     const flagged = await Promise.all(
-      allItems
-        .filter((i) => i.status === "active" && !i.is_marketing_only)
-        .map(async (i) => {
-          const rentalDays = rentalDaysMap.get(i.name_canonical) ?? 0;
-          const utilizationPct = rentalDays / LOOKBACK_DAYS;
-          const ageMonths = (Date.now() - i.created_at) / (1000 * 60 * 60 * 24 * 30);
+      Array.from(groups.values()).map(async (g) => {
+        const rentalDays = rentalDaysMap.get(g.name_canonical) ?? 0;
+        const utilizationPct = rentalDays / LOOKBACK_DAYS;
+        const ageMonths =
+          (Date.now() - g.earliest_created_at) / (1000 * 60 * 60 * 24 * 30);
 
-          if (utilizationPct > UTIL_THRESHOLD && ageMonths < 24) return null;
+        if (utilizationPct > UTIL_THRESHOLD && ageMonths < 24) return null;
 
-          const priceRow = await ctx.db
-            .query("pricing_catalog")
-            .withIndex("by_name", (q) => q.eq("item_name_canonical", i.name_canonical))
-            .first();
-          const estResaleValue = priceRow ? priceRow.daily_price_min * 30 : null;
-          const reason = utilizationPct <= UTIL_THRESHOLD ? "Low demand" : "High age";
+        const priceRow = await ctx.db
+          .query("pricing_catalog")
+          .withIndex("by_name", (q) => q.eq("item_name_canonical", g.name_canonical))
+          .first();
+        const estResaleValue = priceRow ? priceRow.daily_price_min * 30 : null;
+        const reason = utilizationPct <= UTIL_THRESHOLD ? "Low demand" : "High age";
 
-          return {
-            itemId: i._id,
-            name: i.name_canonical,
-            utilizationPct,
-            ageMonths,
-            estResaleValue,
-            reason,
-          };
-        })
+        return {
+          itemId: g.representative_id,
+          name: g.name_canonical,
+          qty: g.total_qty,
+          utilizationPct,
+          ageMonths,
+          estResaleValue,
+          reason,
+        };
+      })
     );
 
     return flagged.filter((r) => r !== null);

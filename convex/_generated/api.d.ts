@@ -9,12 +9,14 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
 import type * as calendar from "../calendar.js";
 import type * as chat from "../chat.js";
 import type * as dashboard from "../dashboard.js";
 import type * as health from "../health.js";
 import type * as items from "../items.js";
+import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as reservations from "../reservations.js";
 import type * as revenue from "../revenue.js";
 import type * as seed_account_profiles from "../seed/account_profiles.js";
@@ -31,12 +33,14 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  ai_insights: typeof ai_insights;
   bundles: typeof bundles;
   calendar: typeof calendar;
   chat: typeof chat;
   dashboard: typeof dashboard;
   health: typeof health;
   items: typeof items;
+  pricing_catalog: typeof pricing_catalog;
   reservations: typeof reservations;
   revenue: typeof revenue;
   "seed/account_profiles": typeof seed_account_profiles;
