@@ -441,3 +441,34 @@ export const backfillItemAcquisitionCostsBatch = internalMutation({
     return { updated, not_found };
   },
 });
+
+
+// -- BACKFILL: reservation pickup_date (BF-06) ---------------------
+// Patches reservations.pickup_date from v1 booking.pickup_date.
+// pickup_date is the actual gear handoff date (vs. Hygglo start_date which is
+// the renter-requested date -- can differ by +/-1 day in ~13% of cases).
+// Called by scripts/backfill-pickup-dates.mjs.
+export const backfillPickupDatesBatch = internalMutation({
+  args: {
+    rows: v.array(v.object({
+      v1_rental_id: v.string(),
+      pickup_date: v.string(), // ISO YYYY-MM-DD
+    })),
+  },
+  handler: async (ctx, { rows }) => {
+    let updated = 0;
+    let skipped_not_found = 0;
+    let skipped_already_set = 0;
+    for (const row of rows) {
+      const res = await ctx.db
+        .query('reservations')
+        .withIndex('by_v1_rental_id', (q) => q.eq('v1_rental_id', row.v1_rental_id))
+        .first();
+      if (!res) { skipped_not_found += 1; continue; }
+      if (res.pickup_date) { skipped_already_set += 1; continue; }
+      await ctx.db.patch(res._id, { pickup_date: row.pickup_date });
+      updated += 1;
+    }
+    return { updated, skipped_not_found, skipped_already_set };
+  },
+});
