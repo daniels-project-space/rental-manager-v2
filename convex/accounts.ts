@@ -10,19 +10,3 @@ export const list = query({
   },
 });
 
-// W01, W02 — account + profile detail for a single slug
-export const getBySlug = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_slug", (q) => q.eq("slug", slug))
-      .first();
-    if (!account) return null;
-    const profile = await ctx.db
-      .query("account_profiles")
-      .withIndex("by_account", (q) => q.eq("account_id", account._id))
-      .first();
-    return { account, profile };
-  },
-});
