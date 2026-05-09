@@ -164,34 +164,114 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_kind", ["kind"]).index("by_listing", ["listing_id"]).index("by_item", ["item_id"]),
 
-  // ── Renters / reservations / calendar (empty, Phase 2) ──────
+  // ── Renters / reservations / calendar (Phase 2.A v1 import) ──
   renters: defineTable({
-    hygglo_user_id: v.string(),
+    // Phase 2.A v1 import fields (all optional to remain backward-compatible)
+    v1_renter_profile_id: v.optional(v.string()),
+    hygglo_user_id: v.optional(v.string()),    // widened to optional for v2 import (some v1 rows lack hygglo_user_id)
     display_name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    hygglo_rating: v.optional(v.number()),
+    hygglo_review_count: v.optional(v.number()),
+    total_rentals_count: v.optional(v.number()),
+    total_spend_gbp: v.optional(v.number()),
+    first_rental_at: v.optional(v.number()),
+    last_rental_at: v.optional(v.number()),
+    blacklisted: v.optional(v.boolean()),
+    blacklist_reason: v.optional(v.string()),
+    imported_at: v.optional(v.number()),
     notes: v.optional(v.string()),
-    blacklist: v.optional(v.boolean()),
+    blacklist: v.optional(v.boolean()),       // legacy boolean (kept for compat)
     created_at: v.number(),
-  }).index("by_hygglo_user_id", ["hygglo_user_id"]),
+  })
+    .index("by_hygglo_user_id", ["hygglo_user_id"])
+    .index("by_v1_renter_profile_id", ["v1_renter_profile_id"])
+    .index("by_blacklisted", ["blacklisted"])
+    .index("by_total_spend", ["total_spend_gbp"]),
 
   reservations: defineTable({
-    account_id: v.id("accounts"),
+    // Legacy/scaffold fields (kept)
+    account_id: v.optional(v.id("accounts")),
     renter_id: v.optional(v.id("renters")),
     listing_id: v.optional(v.string()),
-    status: v.string(),               // "confirmed" | "pending_review" | "declined"
-    start_at: v.number(),
-    end_at: v.number(),
+    status: v.string(),               // "confirmed" | "completed" | "pending_review" | "cancelled" | "declined"
+    start_at: v.optional(v.number()),
+    end_at: v.optional(v.number()),
     notes: v.optional(v.string()),
+    // Phase 2.A v1 import fields
+    account_slug: v.optional(v.string()),
+    v1_rental_id: v.optional(v.string()),
+    hygglo_listing_id: v.optional(v.string()),
+    start_date: v.optional(v.string()),       // ISO date YYYY-MM-DD
+    end_date: v.optional(v.string()),         // ISO date YYYY-MM-DD
+    duration_days: v.optional(v.number()),
+    gross_paid_gbp: v.optional(v.number()),
+    net_to_owner_gbp: v.optional(v.number()),
+    platform_fee_gbp: v.optional(v.number()),
+    platform_fee_pct: v.optional(v.number()),
+    delivery_fee_gbp: v.optional(v.number()),
+    currency: v.optional(v.string()),
+    items: v.optional(v.array(v.object({
+      item_name: v.string(),
+      qty: v.optional(v.number()),
+      source: v.optional(v.string()),
+      confidence_score: v.optional(v.number()),
+      v1_extracteditem_id: v.optional(v.string()),
+    }))),
+    bundle_id: v.optional(v.id("bundles")),
+    v1_created_at: v.optional(v.number()),
+    v1_updated_at: v.optional(v.number()),
+    imported_at: v.optional(v.number()),
     created_at: v.number(),
-  }).index("by_account", ["account_id"]).index("by_status", ["status"]),
+  })
+    .index("by_account", ["account_id"])
+    .index("by_status", ["status"])
+    .index("by_renter", ["renter_id"])
+    .index("by_account_slug", ["account_slug"])
+    .index("by_start_date", ["start_date"])
+    .index("by_v1_rental_id", ["v1_rental_id"]),
 
   calendar_holds: defineTable({
     item_id: v.id("items"),
     reservation_id: v.optional(v.id("reservations")),
-    start_at: v.number(),
-    end_at: v.number(),
-    qty_held: v.number(),
+    // Legacy scaffold fields
+    start_at: v.optional(v.number()),
+    end_at: v.optional(v.number()),
+    qty_held: v.optional(v.number()),
+    // Phase 2.A v1 import fields
+    account_slug: v.optional(v.string()),
+    date: v.optional(v.string()),             // ISO date YYYY-MM-DD (one row per item per day)
+    status: v.optional(v.string()),           // "confirmed" | "completed"
+    v1_booking_id: v.optional(v.string()),
+    imported_at: v.optional(v.number()),
     created_at: v.number(),
-  }).index("by_item_date_range", ["item_id", "start_at"]),
+  })
+    .index("by_item_date_range", ["item_id", "start_at"])
+    .index("by_item_date", ["item_id", "date"])
+    .index("by_reservation", ["reservation_id"])
+    .index("by_account_date", ["account_slug", "date"]),
+
+  // ── Phase 2.A import audit (NEW table) ──────────────────────
+  import_audit: defineTable({
+    table_name: v.string(),
+    v1_table_source: v.string(),
+    v1_row_count: v.number(),
+    v2_row_count: v.number(),
+    drift: v.number(),
+    sum_field: v.optional(v.string()),
+    v1_sum: v.optional(v.number()),
+    v2_sum: v.optional(v.number()),
+    sum_drift: v.optional(v.number()),
+    sample_count: v.number(),
+    sample_pass_count: v.number(),
+    sample_fail_count: v.number(),
+    sample_failures: v.array(v.any()),
+    import_started_at: v.number(),
+    import_completed_at: v.optional(v.number()),
+    status: v.string(),                       // "pending" | "ok" | "drift" | "audit_failed"
+    notes: v.optional(v.string()),
+  }).index("by_table", ["table_name"]),
 
   // ── Conversations (empty, Phase 4) ──────────────────────────
   conversations: defineTable({
