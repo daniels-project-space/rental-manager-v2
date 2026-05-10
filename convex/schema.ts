@@ -422,4 +422,16 @@ export default defineSchema({
     source: v.string(),                   // "v1-historical-static"
     created_at: v.number(),
   }).index("by_month", ["month"]),
+
+  // -- Dashboard AI Chat (Phase B-1) ----
+  dashboard_chat_messages: defineTable({
+    thread_id: v.string(),
+    role: v.string(),
+    content: v.string(),
+    tool_name: v.optional(v.string()),
+    tool_call_id: v.optional(v.string()),
+    metadata: v.optional(v.string()),
+    created_at: v.number(),
+  }).index('by_thread', ['thread_id'])
+    .index('by_thread_and_time', ['thread_id', 'created_at']),
 });

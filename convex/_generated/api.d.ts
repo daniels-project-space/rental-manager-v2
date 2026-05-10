@@ -14,6 +14,7 @@ import type * as bundles from "../bundles.js";
 import type * as calendar from "../calendar.js";
 import type * as chat from "../chat.js";
 import type * as dashboard from "../dashboard.js";
+import type * as dashboard_chat from "../dashboard_chat.js";
 import type * as denial_records from "../denial_records.js";
 import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   calendar: typeof calendar;
   chat: typeof chat;
   dashboard: typeof dashboard;
+  dashboard_chat: typeof dashboard_chat;
   denial_records: typeof denial_records;
   health: typeof health;
   historical_revenue: typeof historical_revenue;
