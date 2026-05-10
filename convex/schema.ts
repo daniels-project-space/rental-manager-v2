@@ -188,7 +188,8 @@ export default defineSchema({
     .index("by_hygglo_user_id", ["hygglo_user_id"])
     .index("by_v1_renter_profile_id", ["v1_renter_profile_id"])
     .index("by_blacklisted", ["blacklisted"])
-    .index("by_total_spend", ["total_spend_gbp"]),
+    .index("by_total_spend", ["total_spend_gbp"])
+    .index("by_display_name", ["display_name"]),
 
   reservations: defineTable({
     // Legacy/scaffold fields (kept)

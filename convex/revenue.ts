@@ -96,8 +96,9 @@ export const getMissedRevenue = query({
     // Compute estimated value per denial via pricing_catalog daily rate
     const denialLosses = await Promise.all(
       denials.map(async (d) => {
-        let estimatedValue = 0;
-        if (d.item_name) {
+        // Use stored estimated_value (backfilled from v1) first; fallback to pricing_catalog.
+        let estimatedValue = d.estimated_value ?? 0;
+        if (estimatedValue === 0 && d.item_name) {
           const priceRow = await ctx.db
             .query("pricing_catalog")
             .withIndex("by_name", (q) =>

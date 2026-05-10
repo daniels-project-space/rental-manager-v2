@@ -1,9 +1,10 @@
 /**
- * poll-hygglo-inbox — Phase 6.0
+ * poll-hygglo-inbox — Phase 6.1
  *
  * Runs every 5 minutes. Pulls Hygglo credentials from the project-hub vault,
  * authenticates to the Hygglo REST API (read-only) for each account,
  * extracts chat messages from active orders, and upserts into Convex.
+ * Phase 6.1: also populates renters + conversations tables.
  *
  * READ-ONLY on Hygglo: only GET requests after auth. No mutations sent to Hygglo.
  */
@@ -54,7 +55,7 @@ type Activity = {
 type OrderDetail = {
   id: number;
   activities?: Activity[];
-  users?: { otherPart?: { name?: string } };
+  users?: { otherPart?: { name?: string; id?: number | string } };
   labels?: { otherPart?: string };
   rentalPeriod?: { startDateUTC?: string; endDateUTC?: string };
   price?: {
@@ -137,6 +138,14 @@ async function scrapeAccount(
     fetched_at: number;
   }>;
   reservations: OrderReservationPayload[];
+  renters: Array<{ hygglo_user_id?: string; display_name: string }>;
+  conversations: Array<{
+    thread_id: string;
+    hygglo_user_id?: string;
+    display_name: string;
+    last_msg_at: number;
+    created_at: number;
+  }>;
 }> {
   // 1. Authenticate
   const tokenParams = new URLSearchParams({
@@ -212,6 +221,16 @@ async function scrapeAccount(
   }> = [];
   const reservationPayloads: OrderReservationPayload[] = [];
 
+  // Phase 6.1: renter + conversation accumulators
+  const renterMap = new Map<string, { hygglo_user_id?: string; display_name: string }>();
+  const conversationSpecs: Array<{
+    thread_id: string;
+    hygglo_user_id?: string;
+    display_name: string;
+    last_msg_at: number;
+    created_at: number;
+  }> = [];
+
   const fetchedAt = Date.now();
 
   for (const order of uniqueOrders) {
@@ -224,20 +243,53 @@ async function scrapeAccount(
 
     const otherPartName =
       detail.users?.otherPart?.name ?? detail.labels?.otherPart ?? "Renter";
+    const otherPartUserId = detail.users?.otherPart?.id
+      ? String(detail.users.otherPart.id)
+      : undefined;
 
+    // Accumulate renter (dedup by user ID if available, else by name)
+    const renterKey = otherPartUserId ?? otherPartName.trim().toLowerCase();
+    if (!renterMap.has(renterKey)) {
+      renterMap.set(renterKey, {
+        hygglo_user_id: otherPartUserId,
+        display_name: otherPartName,
+      });
+    }
+
+    // Extract chat messages and compute conversation timestamps
+    const orderMessages: typeof messages = [];
     for (const activity of detail.activities ?? []) {
       if (!activity.chatMessage) continue;
       const text = activity.chatMessage.text?.content ?? "";
       if (!text.trim()) continue;
 
-      messages.push({
+      const ts = parseCreatedAtLabel(activity.createdAtLabel ?? "")?.getTime();
+      orderMessages.push({
         thread_id: String(order.id),
         message_id: activity.key,
         sender: activity.chatMessage.byMe ? "owner" : "renter",
         sender_name: activity.chatMessage.byMe ? "Owner" : otherPartName,
         body_text: text,
-        hygglo_sent_at: parseCreatedAtLabel(activity.createdAtLabel ?? "")?.getTime(),
+        hygglo_sent_at: ts,
         fetched_at: fetchedAt,
+      });
+    }
+
+    messages.push(...orderMessages);
+
+    // Build conversation spec for orders that have messages
+    if (orderMessages.length > 0) {
+      const timestamps = orderMessages
+        .map((m) => m.hygglo_sent_at ?? fetchedAt)
+        .filter((t) => t > 0);
+      const lastMsgAt = timestamps.length > 0 ? Math.max(...timestamps) : fetchedAt;
+      const firstMsgAt = timestamps.length > 0 ? Math.min(...timestamps) : fetchedAt;
+      conversationSpecs.push({
+        thread_id: String(order.id),
+        hygglo_user_id: otherPartUserId,
+        display_name: otherPartName,
+        last_msg_at: lastMsgAt,
+        created_at: firstMsgAt,
       });
     }
 
@@ -273,11 +325,20 @@ async function scrapeAccount(
       });
     }
   }
+
   console.log(
     "[poll-hygglo] " + accountSlug + ": " + String(messages.length) + " messages, " +
-    String(reservationPayloads.length) + " reservation payloads extracted"
+    String(reservationPayloads.length) + " reservation payloads, " +
+    String(renterMap.size) + " renters, " +
+    String(conversationSpecs.length) + " conversations extracted"
   );
-  return { messages, reservations: reservationPayloads };
+
+  return {
+    messages,
+    reservations: reservationPayloads,
+    renters: Array.from(renterMap.values()),
+    conversations: conversationSpecs,
+  };
 }
 
 // ── Task ──────────────────────────────────────────────────────
@@ -311,6 +372,8 @@ export const pollHyggloInbox = schedules.task({
       ok: boolean;
       messages?: number;
       inserted?: number;
+      renters_upserted?: number;
+      conversations_upserted?: number;
       error?: string;
     }> = [];
 
@@ -322,7 +385,9 @@ export const pollHyggloInbox = schedules.task({
       }
 
       try {
-        const { messages, reservations } = await scrapeAccount(account.slug, account.email, account.password, clientSecret);
+        const { messages, reservations, renters, conversations } = await scrapeAccount(
+          account.slug, account.email, account.password, clientSecret
+        );
 
         // Upsert chat messages (batched 50)
         let totalInserted = 0;
@@ -352,10 +417,30 @@ export const pollHyggloInbox = schedules.task({
           }
         }
 
+        // Phase 6.1: upsert renters first, then conversations
+        let rentersUpserted = 0;
+        if (renters.length > 0) {
+          const rr = await convex.mutation(api.hygglo.upsertRentersBatch, {
+            account_slug: account.slug,
+            renters,
+          });
+          rentersUpserted = rr.upserted;
+        }
+
+        let convsUpserted = 0;
+        if (conversations.length > 0) {
+          const cr = await convex.mutation(api.hygglo.upsertConversationsBatch, {
+            account_slug: account.slug,
+            conversations,
+          });
+          convsUpserted = cr.upserted;
+        }
+
         console.log(
           "[poll-hygglo] " + account.slug + ": " + String(messages.length) + " msgs, " +
           String(totalInserted) + " inserted, " + String(totalSkipped) + " skipped. " +
-          "Reservations: " + String(resInserted) + " inserted, " + String(resUpdated) + " updated"
+          "Reservations: " + String(resInserted) + " inserted, " + String(resUpdated) + " updated. " +
+          "Renters: " + String(rentersUpserted) + " new. Conversations: " + String(convsUpserted) + " new."
         );
 
         results.push({
@@ -363,6 +448,8 @@ export const pollHyggloInbox = schedules.task({
           ok: true,
           messages: messages.length,
           inserted: totalInserted,
+          renters_upserted: rentersUpserted,
+          conversations_upserted: convsUpserted,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

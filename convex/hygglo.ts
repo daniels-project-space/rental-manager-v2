@@ -97,7 +97,7 @@ const orderItemArgs = v.object({
 });
 
 /**
- * Internal mutation called by poll-hygglo-inbox after each order fetch.
+ * Public mutation called by poll-hygglo-inbox after each order fetch.
  * Upserts a reservation row keyed by hygglo_order_id.
  * Does NOT overwrite rows that have v1_rental_id set (historical imports stay authoritative).
  */
@@ -146,5 +146,138 @@ export const upsertOrderAsReservation = mutation({
       created_at: now,
     });
     return { action: "inserted" };
+  },
+});
+
+// ── Renter upsert (batch) ─────────────────────────────────────
+
+/**
+ * Upserts renters extracted from Hygglo order details.
+ * Dedup by hygglo_user_id (indexed) when present, else by display_name (indexed).
+ * Called by poll-hygglo-inbox and backfill scripts.
+ */
+export const upsertRentersBatch = mutation({
+  args: {
+    account_slug: v.string(),
+    renters: v.array(
+      v.object({
+        hygglo_user_id: v.optional(v.string()),
+        display_name: v.string(),
+      })
+    ),
+  },
+  handler: async (ctx, { account_slug: _account_slug, renters }): Promise<{ upserted: number; skipped: number }> => {
+    let upserted = 0;
+    let skipped = 0;
+    const now = Date.now();
+
+    for (const r of renters) {
+      // 1. Try by hygglo_user_id (indexed, fast)
+      if (r.hygglo_user_id) {
+        const existing = await ctx.db
+          .query("renters")
+          .withIndex("by_hygglo_user_id", (q) => q.eq("hygglo_user_id", r.hygglo_user_id))
+          .first();
+        if (existing) {
+          skipped++;
+          continue;
+        }
+      }
+
+      // 2. Fallback: by display_name (indexed)
+      const displayNameTrimmed = r.display_name.trim();
+      const existingByName = await ctx.db
+        .query("renters")
+        .withIndex("by_display_name", (q) => q.eq("display_name", displayNameTrimmed))
+        .first();
+      if (existingByName) {
+        skipped++;
+        continue;
+      }
+
+      await ctx.db.insert("renters", {
+        hygglo_user_id: r.hygglo_user_id,
+        display_name: displayNameTrimmed,
+        created_at: now,
+      });
+      upserted++;
+    }
+
+    return { upserted, skipped };
+  },
+});
+
+// ── Conversation upsert (batch) ───────────────────────────────
+
+/**
+ * Upserts one conversation row per Hygglo order that has chat messages.
+ * Dedup by thread_id (= String(order.id)). Resolves renter_id by hygglo_user_id or name.
+ * Called by poll-hygglo-inbox and backfill scripts.
+ */
+export const upsertConversationsBatch = mutation({
+  args: {
+    account_slug: v.string(),
+    conversations: v.array(
+      v.object({
+        thread_id: v.string(),
+        hygglo_user_id: v.optional(v.string()),
+        display_name: v.string(),
+        last_msg_at: v.number(),
+        created_at: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, { account_slug, conversations }): Promise<{ upserted: number; skipped: number }> => {
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_slug", (q) => q.eq("slug", account_slug))
+      .first();
+    const account_id = account?._id;
+
+    let upserted = 0;
+    let skipped = 0;
+
+    for (const c of conversations) {
+      const existing = await ctx.db
+        .query("conversations")
+        .withIndex("by_thread", (q) => q.eq("thread_id", c.thread_id))
+        .first();
+
+      if (existing) {
+        if (c.last_msg_at > existing.last_msg_at) {
+          await ctx.db.patch(existing._id, { last_msg_at: c.last_msg_at });
+        }
+        skipped++;
+        continue;
+      }
+
+      // Resolve renter_id: prefer hygglo_user_id match, fall back to display_name (both indexed)
+      let renter_id: import("./_generated/dataModel").Id<"renters"> | undefined;
+      if (c.hygglo_user_id) {
+        const renter = await ctx.db
+          .query("renters")
+          .withIndex("by_hygglo_user_id", (q) => q.eq("hygglo_user_id", c.hygglo_user_id))
+          .first();
+        renter_id = renter?._id;
+      }
+      if (!renter_id) {
+        const renter = await ctx.db
+          .query("renters")
+          .withIndex("by_display_name", (q) => q.eq("display_name", c.display_name.trim()))
+          .first();
+        renter_id = renter?._id;
+      }
+
+      await ctx.db.insert("conversations", {
+        thread_id: c.thread_id,
+        account_id,
+        renter_id,
+        last_msg_at: c.last_msg_at,
+        created_at: c.created_at,
+      });
+      upserted++;
+    }
+
+    return { upserted, skipped };
   },
 });
