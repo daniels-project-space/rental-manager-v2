@@ -423,3 +423,163 @@ export const listActive = query({
       .sort((a, b) => a.name.localeCompare(b.name));
   },
 });
+
+// B-3: availability check for dashboard chat tool
+export const checkAvailability = query({
+  args: {
+    item_name: v.string(),
+    start_date: v.string(),
+    end_date: v.string(),
+  },
+  handler: async (ctx, { item_name, start_date, end_date }) => {
+    function norm(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    const q = norm(item_name);
+
+    // Resolve canonical item
+    const allItems = await ctx.db.query("items").collect();
+    let best: typeof allItems[0] | null = null;
+    let bestScore = 0;
+    for (const i of allItems) {
+      if (i.status !== "active" || i.is_marketing_only) continue;
+      const cn = norm(i.name_canonical);
+      const score = cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
+      if (score > bestScore) { best = i; bestScore = score; }
+    }
+    if (!best) return { ok: false as const, error: "item_not_found" as const };
+
+    const item = best;
+    const qty_total = item.qty;
+
+    // Count overlapping confirmed reservations
+    const reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q2) => q2.gte("start_date", start_date))
+      .collect();
+    const overlapRes = reservations.filter((r) => {
+      if (r.status !== "confirmed" && r.status !== "pending_review") return false;
+      if (!r.start_date || !r.end_date) return false;
+      if (r.start_date > end_date) return false;
+      if (r.end_date < start_date) return false;
+      return (r.items ?? []).some((ri) => norm(ri.item_name).includes(norm(item.name_canonical)) || norm(item.name_canonical).includes(norm(ri.item_name).slice(0, 6)));
+    });
+
+    // Count calendar_holds in range
+    const allHolds = await ctx.db.query("calendar_holds").collect();
+    const overlapHolds = allHolds.filter((h) => {
+      if (!h.date) return false;
+      if (h.date < start_date || h.date > end_date) return false;
+      if (h.status !== "confirmed") return false;
+      return h.item_id === item._id;
+    });
+
+    const qty_held_in_window = overlapRes.length + overlapHolds.length;
+    const available = qty_held_in_window < qty_total;
+
+    // Next free date if unavailable
+    let next_free_date: string | null = null;
+    if (!available) {
+      const latestEnd = overlapRes
+        .map((r) => r.end_date ?? "")
+        .sort()
+        .reverse()[0];
+      if (latestEnd) {
+        const d = new Date(latestEnd);
+        d.setDate(d.getDate() + 1);
+        next_free_date = d.toISOString().slice(0, 10);
+      }
+    }
+
+    return {
+      ok: true as const,
+      item: item.name_canonical,
+      available,
+      qty_total,
+      qty_held_in_window,
+      next_free_date_if_unavailable: next_free_date,
+    };
+  },
+});
+
+// B-3: compatibility check for dashboard chat tool
+export const checkCompat = query({
+  args: { itemA: v.string(), itemB: v.string() },
+  handler: async (ctx, { itemA, itemB }) => {
+    function norm(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    const allItems = await ctx.db.query("items").collect();
+    function resolveItem(name: string) {
+      const q = norm(name);
+      let best: (typeof allItems)[0] | null = null;
+      let bestScore = 0;
+      for (const i of allItems) {
+        const cn = norm(i.name_canonical);
+        const score = cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
+        if (score > bestScore) { best = i; bestScore = score; }
+      }
+      return best;
+    }
+    const a = resolveItem(itemA);
+    const b = resolveItem(itemB);
+    if (!a || !b) {
+      const missing = [!a ? itemA : null, !b ? itemB : null].filter(Boolean).join(", ");
+      return { compatible: false as const, reason: "item_not_found", evidence: [] as string[], missing };
+    }
+    const evidence: string[] = [];
+    const compatA = a.compatibility;
+    const compatB = b.compatibility;
+    const bNorm = norm(b.name_canonical);
+    const aNorm = norm(a.name_canonical);
+    function listContains(list: string[] | undefined, target: string): boolean {
+      if (!list) return false;
+      return list.some((s) => norm(s).includes(target) || target.includes(norm(s).slice(0, 5)));
+    }
+    let compatible = false;
+    if (compatA) {
+      for (const [field, list] of Object.entries(compatA) as [string, string[] | undefined][]) {
+        if (field === "included_with_rental") continue;
+        if (listContains(list, bNorm)) {
+          compatible = true;
+          evidence.push(a.name_canonical + " lists " + b.name_canonical + " in compatibility." + field);
+        }
+      }
+    }
+    if (compatB) {
+      for (const [field, list] of Object.entries(compatB) as [string, string[] | undefined][]) {
+        if (field === "included_with_rental") continue;
+        if (listContains(list, aNorm)) {
+          compatible = true;
+          evidence.push(b.name_canonical + " lists " + a.name_canonical + " in compatibility." + field);
+        }
+      }
+    }
+    if (a.lens_mount && b.lens_mount) {
+      if (a.lens_mount === b.lens_mount) {
+        compatible = true;
+        evidence.push("Shared lens mount: " + a.lens_mount);
+      } else {
+        evidence.push("Mount mismatch: " + a.name_canonical + "=" + a.lens_mount + " vs " + b.name_canonical + "=" + b.lens_mount);
+      }
+    }
+    if (a.battery_type && b.battery_type) {
+      if (a.battery_type === b.battery_type) {
+        compatible = true;
+        evidence.push("Shared battery type: " + a.battery_type);
+      } else {
+        evidence.push("Battery mismatch: " + a.name_canonical + "=" + a.battery_type + " vs " + b.name_canonical + "=" + b.battery_type);
+      }
+    }
+    if (a.card_type && b.card_type && a.card_type === b.card_type) {
+      compatible = true;
+      evidence.push("Shared card type: " + a.card_type);
+    }
+    const reason = compatible
+      ? "Compatible — " + (evidence[0] ?? "shared spec found")
+      : evidence.length > 0
+        ? "Incompatible — " + evidence[0]
+        : "No compatibility data found for this item pair";
+    return { compatible, reason, evidence };
+  },
+});

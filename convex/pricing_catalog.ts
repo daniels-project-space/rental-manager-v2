@@ -78,3 +78,26 @@ export const getDismissedItemNames = query({
     return rows.map((r) => r.item_name_canonical);
   },
 });
+
+// B-3: fuzzy lookup for dashboard chat tool
+export const lookup = query({
+  args: { item_name: v.string() },
+  handler: async (ctx, { item_name }) => {
+    const allRows = await ctx.db.query("pricing_catalog").collect();
+    function norm(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    const q = norm(item_name);
+    const scored = allRows
+      .filter((r) => !r.is_bundle && !r.marketing_only)
+      .map((r) => {
+        const cn = norm(r.item_name_canonical);
+        const score =
+          cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
+        return { row: r, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.row.item_name_canonical.length - a.row.item_name_canonical.length);
+    return scored.map((x) => x.row).slice(0, 5);
+  },
+});

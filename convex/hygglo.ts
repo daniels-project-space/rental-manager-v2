@@ -281,3 +281,23 @@ export const upsertConversationsBatch = mutation({
     return { upserted, skipped };
   },
 });
+
+
+
+// B-3: list messages by thread_id for dashboard chat tool
+export const listByThread = query({
+  args: { thread_id: v.string() },
+  handler: async (ctx, { thread_id }) => {
+    const rows = await ctx.db
+      .query("hygglo_messages")
+      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
+      .order("asc")
+      .take(50);
+    return rows.map((m) => ({
+      role: m.sender === "owner" ? "owner" : "renter",
+      sender_name: m.sender_name ?? m.sender,
+      content: m.body_text,
+      timestamp: m.hygglo_sent_at ?? m.fetched_at,
+    }));
+  },
+});

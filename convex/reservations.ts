@@ -172,3 +172,41 @@ export const markReturned = mutation({
     return { ok: true };
   },
 });
+
+
+
+
+// B-3: list pending rentals for dashboard chat tool
+export const listPending = query({
+  args: { accountSlug: v.optional(v.string()) },
+  handler: async (ctx, { accountSlug }) => {
+    let rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "pending_review"))
+      .collect();
+    if (accountSlug) {
+      rows = rows.filter((r) => r.account_slug === accountSlug);
+    }
+    rows.sort((a, b) => b._creationTime - a._creationTime);
+    const top = rows.slice(0, 20);
+    const rentals = await Promise.all(
+      top.map(async (r) => {
+        let renterName = "";
+        if (r.renter_id) {
+          const renter = await ctx.db.get(r.renter_id);
+          renterName = renter?.display_name ?? "";
+        }
+        return {
+          id: r._id,
+          accountSlug: r.account_slug,
+          item: (r.items ?? []).map((i) => i.item_name).join(", "),
+          renter: renterName,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          gross: r.gross_paid_gbp ?? 0,
+        };
+      })
+    );
+    return { count: rows.length, rentals };
+  },
+});
