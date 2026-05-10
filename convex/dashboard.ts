@@ -148,7 +148,8 @@ export const getSummary = query({
     ).length;
 
     const settings = await ctx.db.query("settings").first();
-    const boostRate = 0.34;
+    // Stage 2.5: read boostRate from settings (no hardcoded constant)
+    const boostRate: number = (settings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.33;
     const aiBoostAmount = Math.round(monthlyRevenue * boostRate / (1 + boostRate));
 
     return {

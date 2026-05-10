@@ -20,6 +20,8 @@ export const update = mutation({
     ALLOW_HYGGLO_SEND: v.optional(v.boolean()),
     polling_interval_ms: v.optional(v.number()),
     escalate_to_sonnet: v.optional(v.boolean()),
+    ai_boost_rate: v.optional(v.number()),
+    ai_active_from: v.optional(v.string()),
   },
   handler: async (ctx, fields) => {
     // Double-unlock guard: refuse read_only_mode=false + ALLOW_HYGGLO_SEND=true together
@@ -36,6 +38,8 @@ export const update = mutation({
     if (fields.ALLOW_HYGGLO_SEND !== undefined) patch.ALLOW_HYGGLO_SEND = fields.ALLOW_HYGGLO_SEND;
     if (fields.polling_interval_ms !== undefined) patch.polling_interval_ms = fields.polling_interval_ms;
     if (fields.escalate_to_sonnet !== undefined) patch.escalate_to_sonnet = fields.escalate_to_sonnet;
+    if (fields.ai_boost_rate !== undefined) patch.ai_boost_rate = fields.ai_boost_rate;
+    if (fields.ai_active_from !== undefined) patch.ai_active_from = fields.ai_active_from;
 
     await ctx.db.patch(existing._id, patch);
     return { ok: true };

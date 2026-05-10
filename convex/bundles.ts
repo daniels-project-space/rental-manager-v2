@@ -1,45 +1,15 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 
-type BundleDef = { name: string; items: string[] };
+/**
+ * Stage 2.5: bundle definitions now read from Convex bundles + bundle_items tables.
+ * The inline BUNDLE_DEFINITIONS constant has been deleted — no static data in code.
+ */
 
-const BUNDLE_DEFINITIONS: BundleDef[] = [
-  { name: "Sony FX3 + 24-70mm GM Kit", items: ["Sony FX3", "Sony GM 24-70mm f2.8"] },
-  { name: "Sony FX3 + 24-70mm GM + RS3 Gimbal Kit", items: ["Sony FX3", "Sony GM 24-70mm f2.8", "DJI RS3 Pro gimbal"] },
-  { name: "Sony FX3 Full Production Kit", items: ["Sony FX3", "Sony GM 24-70mm f2.8", "DJI RS3 Pro gimbal", "Rode Wireless Mic Pro set", "Atomos Ninja V", "ND filter"] },
-  { name: "Sony FX3 Full Production Kit + V-Mount 95mAh", items: ["Sony FX3", "Sony GM 24-70mm f2.8", "DJI RS3 Pro gimbal", "Rode Wireless Mic Pro set", "Atomos Ninja V", "ND filter", "V-mount 95mAh"] },
-  { name: "Sony FX3 Full Production Kit + V-Mount 150mAh", items: ["Sony FX3", "Sony GM 24-70mm f2.8", "DJI RS3 Pro gimbal", "Rode Wireless Mic Pro set", "Atomos Ninja V", "ND filter", "V-mount 150mAh"] },
-  { name: "2x Sony FX3 Set", items: ["Sony FX3", "Sony FX3"] },
-  { name: "BMPCC 6K Pro Cinema Kit", items: ["BMPCC 6K Pro", "Canon EF 24-105mm f4", "DJI RS3 Pro gimbal", "Atomos Ninja V"] },
-  { name: "BMPCC 6K Pro Interview Kit", items: ["BMPCC 6K Pro", "Canon EF 24-105mm f4", "Nanlite Pavotube 30x II", "Rode Wireless Mic Pro set"] },
-  { name: "BMPCC 6K Pro + Canon Dual Lens Set", items: ["BMPCC 6K Pro", "Canon EF 16-35mm f2.8", "Canon EF 24-105mm f4"] },
-  { name: "BMPCC 6K Full Frame + Canon 24-105mm Kit", items: ["BMPCC 6K Full Frame", "Canon EF 24-105mm f4"] },
-  { name: "BMPCC 6K Full Frame + Canon 24-105mm + Gimbal Kit", items: ["BMPCC 6K Full Frame", "Canon EF 24-105mm f4", "DJI RS3 Pro gimbal"] },
-  { name: "BMPCC Explorer Set (6K Pro + Full Frame + Canon 16-35mm)", items: ["BMPCC 6K Pro", "BMPCC 6K Full Frame", "Canon EF 16-35mm f2.8", "DJI RS3 Pro gimbal"] },
-  { name: "BMPCC 6K Pro Ultimate Short Film Set", items: ["BMPCC 6K Pro", "Canon EF 24-105mm f4", "DJI RS3 Pro gimbal", "Atomos Ninja V", "Rode Wireless Mic Pro set"] },
-  { name: "Sony GM Triple Lens Set (16-35 + 24-70 + 70-200)", items: ["Sony GM 16-35mm f2.8", "Sony GM 24-70mm f2.8", "Sony GM 70-200mm f2.8"] },
-  { name: "Blazar Remus 4-Lens Anamorphic Set", items: ["Anamorphic Blazar Remus 33mm", "Anamorphic Blazar Remus 45mm", "Anamorphic Blazar Remus 65mm", "Anamorphic Blazar Remus 100mm"] },
-  { name: "JBL Speakers + Pioneer DJ RX3 Set", items: ["JBL Club 120 speaker", "JBL Club 120 speaker", "DJ RX3 Pioneer controller"] },
-  { name: "Interview Lighting Kit (2x LED + Softbox)", items: ["LED light panels RGB", "LED light panels RGB", "Softbox 85cm"] },
-  { name: "Full Lighting Kit (Forza + 2x Pavotube + C-stand)", items: ["Nanlite Forza 300", "Nanlite Pavotube 30x II", "Nanlite Pavotube 30x II", "C-stand"] },
-  { name: "2x Nanlite Pavotube 30x II Set", items: ["Nanlite Pavotube 30x II", "Nanlite Pavotube 30x II"] },
-  { name: "4x Nanlite Pavotube 30x II Set", items: ["Nanlite Pavotube 30x II", "Nanlite Pavotube 30x II", "Nanlite Pavotube 30x II", "Nanlite Pavotube 30x II"] },
-  { name: "3x GoPro Hero 12 Set", items: ["GoPro 12 Hero", "GoPro 12 Hero", "GoPro 12 Hero"] },
-  { name: "Action Cam Duo (GoPro + DJI Osmo)", items: ["GoPro 12 Hero", "DJI Osmo Action Pro 5"] },
-  { name: "Car Mount Kit (3x Suction Cups + GoPro)", items: ["Suction cups", "Suction cups", "Suction cups", "GoPro 12 Hero"] },
-  { name: "Dual Drone Kit (Mavic 3 Pro + Mini 4 Pro)", items: ["DJI Mavic 3 Pro", "DJI Mini 4 Pro"] },
-  { name: "Aerial + Ground Kit (Mavic 3 + FX3 + 16-35mm)", items: ["DJI Mavic 3 Pro", "Sony FX3", "Sony GM 16-35mm f2.8"] },
-  { name: "Full Audio Kit (Rode + Boom + VideoMic)", items: ["Rode Wireless Mic Pro set", "Audio boom mic Sennheiser", "Rode Video Mic Pro Plus"] },
-  { name: "Interview Audio Kit (Rode Wireless + Boom)", items: ["Rode Wireless Mic Pro set", "Audio boom mic Sennheiser"] },
-  { name: "Dual Wireless Mic Kit (2x Rode)", items: ["Rode Wireless Mic Pro set", "Rode Wireless Mic Pro set"] },
-  { name: "Smoke Duo (Ninja + Ninja Pro)", items: ["Smoke Ninja", "Smoke Ninja Pro hazer"] },
-  { name: "Music Video Atmosphere Kit (Smoke + 2x Pavotube)", items: ["Smoke Ninja Pro hazer", "Nanlite Pavotube 30x II", "Nanlite Pavotube 30x II"] },
-  { name: "Wireless Monitor Kit (Hollyland 7in + Mars 4K)", items: ["Hollyland 7-inch monitor", "Hollyland Mars 4K transmitter"] },
-  { name: "Wedding Dual Camera Kit", items: ["Sony FX3", "Sony FX3", "Sony GM 24-70mm f2.8", "Sony GM 70-200mm f2.8"] },
-  { name: "Documentary Filmmaker Kit", items: ["Sony FX3", "Sony GM 24-70mm f2.8", "Rode Wireless Mic Pro set", "Audio boom mic Sennheiser"] },
-];
-
-function matchToBundle(itemNames: string[]): string | null {
+function matchToBundle(
+  itemNames: string[],
+  bundles: Array<{ name: string; items: string[] }>
+): string | null {
   const freq = new Map<string, number>();
   for (const name of itemNames) {
     const key = name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -47,7 +17,7 @@ function matchToBundle(itemNames: string[]): string | null {
   }
   let bestMatch: string | null = null;
   let bestLength = 0;
-  const sorted = [...BUNDLE_DEFINITIONS].sort((a, b) => b.items.length - a.items.length);
+  const sorted = [...bundles].sort((a, b) => b.items.length - a.items.length);
   for (const bundle of sorted) {
     const required = new Map<string, number>();
     for (const item of bundle.items) {
@@ -76,6 +46,24 @@ export const getTopBundles = query({
     days: v.number(),
   },
   handler: async (ctx, { accountSlug, days }) => {
+    // Load bundle definitions from Convex tables (replaces inline BUNDLE_DEFINITIONS)
+    const bundleRows = await ctx.db.query("bundles").collect();
+    const bundleItemRows = await ctx.db.query("bundle_items").collect();
+
+    // Build { name, items[] } map from Convex rows
+    const itemsByBundleId = new Map<string, string[]>();
+    for (const bi of bundleItemRows) {
+      const existing = itemsByBundleId.get(bi.bundle_id) ?? [];
+      for (let i = 0; i < (bi.qty ?? 1); i++) {
+        existing.push(bi.item_name_canonical);
+      }
+      itemsByBundleId.set(bi.bundle_id, existing);
+    }
+    const bundleDefs = bundleRows.map((b) => ({
+      name: b.bundle_name,
+      items: itemsByBundleId.get(b._id) ?? [],
+    }));
+
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
@@ -93,13 +81,13 @@ export const getTopBundles = query({
     for (const res of reservations) {
       const itemNames = (res.items ?? []).map((i: { item_name: string }) => i.item_name);
       if (itemNames.length < 2) continue;
-      const bundleName = matchToBundle(itemNames);
+      const bundleName = matchToBundle(itemNames, bundleDefs);
       if (!bundleName) continue;
       const gross = res.gross_paid_gbp ?? 0;
       const dur = res.duration_days ?? 0;
       const existing = byBundle.get(bundleName) ?? {
         revenue: 0, count: 0, totalDays: 0,
-        items: BUNDLE_DEFINITIONS.find((b) => b.name === bundleName)?.items ?? [],
+        items: bundleDefs.find((b) => b.name === bundleName)?.items ?? [],
       };
       existing.revenue += gross;
       existing.count += 1;

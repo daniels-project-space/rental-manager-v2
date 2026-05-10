@@ -16,6 +16,7 @@ import type * as chat from "../chat.js";
 import type * as dashboard from "../dashboard.js";
 import type * as denial_records from "../denial_records.js";
 import type * as health from "../health.js";
+import type * as historical_revenue from "../historical_revenue.js";
 import type * as hygglo from "../hygglo.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as items from "../items.js";
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   dashboard: typeof dashboard;
   denial_records: typeof denial_records;
   health: typeof health;
+  historical_revenue: typeof historical_revenue;
   hygglo: typeof hygglo;
   insurance_claims: typeof insurance_claims;
   items: typeof items;

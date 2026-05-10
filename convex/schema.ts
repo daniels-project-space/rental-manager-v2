@@ -355,6 +355,10 @@ export default defineSchema({
     })),
     policy_notes: v.optional(v.string()),
     updated_at: v.optional(v.number()),
+
+    // Stage 2.5: AI boost parameters (replace hardcoded constants in revenue.ts)
+    ai_boost_rate: v.optional(v.number()),      // e.g. 0.33 — fraction attributed to AI
+    ai_active_from: v.optional(v.string()),     // "YYYY-MM" — first month AI was active
   }),
 
   // ── Price recommendation dismissals (W17) ───────────────────
@@ -405,4 +409,17 @@ export default defineSchema({
     notes: v.optional(v.string()),
     created_at: v.number(),
   }).index("by_listing", ["listing_id"]),
+
+  // ── Historical revenue (retired accounts + damage overlay, 2022-2026) ──────
+  // Source: v1 historical-revenue.ts static. v2 queries this table; no v1 ref at runtime.
+  // Rows with total_revenue_gbp=0 are "damage-only" sentinels (overlay damageCosts only).
+  historical_revenue: defineTable({
+    month: v.string(),                    // "YYYY-MM"
+    total_revenue_gbp: v.number(),        // base rental revenue across all accounts
+    damage_costs_gbp: v.number(),         // insurance/damage claim payouts (additive)
+    business_expenses_gbp: v.number(),    // deducted expenses (positive = expense)
+    total_overall_made_gbp: v.number(),   // definitive total (0 for damage-only rows)
+    source: v.string(),                   // "v1-historical-static"
+    created_at: v.number(),
+  }).index("by_month", ["month"]),
 });

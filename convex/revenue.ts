@@ -260,13 +260,10 @@ export const getInvestmentScorecard = query({
 export const getLifetimeByMonth = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
-    const AI_ACTIVE_FROM = "2026-02";
-    // boostRate from settings.ai_boost_rate if present, else 0.33 (v1 parity)
+    // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
-    const boostRate: number =
-      settings && "ai_boost_rate" in settings
-        ? (settings as unknown as Record<string, number>).ai_boost_rate
-        : 0.33;
+    const AI_ACTIVE_FROM: string = (settings as unknown as Record<string, string>)?.ai_active_from ?? "2026-02";
+    const boostRate: number = (settings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.33;
 
     const allReservations = await ctx.db.query("reservations").collect();
 
@@ -314,23 +311,13 @@ export const getLifetimeByMonth = query({
       claimsByMonth.set(m, r2((claimsByMonth.get(m) ?? 0) + c.amount_gbp));
     }
 
-    // Historical damage costs from HISTORICAL_REVENUE static data (v1 parity)
-    // Full override 2022-08 to 2024-07, damage-only overlay 2024-08 to 2026-01
+    // Historical damage costs from Convex historical_revenue table (Stage 2.5 migration).
+    // Rows with damage_costs_gbp > 0 are overlaid onto claimsByMonth if no tracked claim exists.
     if (!accountSlug) {
-      const HIST_DAMAGE: Record<string, number> = {
-        "2023-02": 55, "2023-03": 600, "2023-04": 450, "2023-05": 130,
-        "2023-07": 1318, "2023-08": 585, "2023-09": 778, "2023-10": 655,
-        "2023-12": 170, "2024-03": 330, "2024-04": 100, "2024-05": 282,
-        "2024-06": 419, "2024-07": 1464,
-        "2024-08": 389, "2024-09": 389, "2024-10": 389, "2024-11": 389, "2024-12": 389,
-        "2025-01": 389, "2025-02": 389, "2025-03": 389, "2025-04": 389,
-        "2025-05": 389, "2025-06": 389, "2025-07": 389, "2025-08": 389,
-        "2025-09": 389, "2025-10": 389, "2025-11": 388, "2025-12": 388,
-        "2026-01": 388,
-      };
-      for (const [mo, dmg] of Object.entries(HIST_DAMAGE)) {
-        if (!claimsByMonth.has(mo)) {
-          claimsByMonth.set(mo, dmg);
+      const histDamageMap = await ctx.db.query("historical_revenue").collect();
+      for (const row of histDamageMap) {
+        if (row.damage_costs_gbp > 0 && !claimsByMonth.has(row.month)) {
+          claimsByMonth.set(row.month, row.damage_costs_gbp);
         }
       }
     }
