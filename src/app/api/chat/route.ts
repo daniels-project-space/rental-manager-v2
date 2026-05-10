@@ -6,11 +6,13 @@ import {
   SYSTEM_PROMPT_BASE,
 } from "../../../mastra/agents/dashboard-chat";
 import { formatContext } from "../../../mastra/context-formatter";
+import type { AgentExecutionOptionsBase } from "@mastra/core/agent";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type StreamOpts = AgentExecutionOptionsBase<unknown>;
 
 export async function POST(req: Request) {
   const body = (await req.json()) as { message?: string; thread_id?: string };
@@ -37,7 +39,7 @@ export async function POST(req: Request) {
   });
 
   // 3. Fetch live business context and build composed system prompt
-  let composedInstructions = SYSTEM_PROMPT_BASE;
+  let composedInstructions: string = SYSTEM_PROMPT_BASE;
   try {
     const bundle = await convex.query(
       api.dashboard_chat_context.getContextBundle,
@@ -58,11 +60,10 @@ export async function POST(req: Request) {
     content: m.content,
   }));
 
-  // 4. Stream with composed system prompt overriding agent's static instructions
-  const result = await dashboardChatAgent.stream(messages, {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    instructions: composedInstructions as any,
-  });
+  // 4. Stream with composed system prompt overriding agent's static instructions.
+  // AgentExecutionOptionsBase.instructions accepts SystemMessage (string | ...).
+  const streamOpts: StreamOpts = { instructions: composedInstructions };
+  const result = await dashboardChatAgent.stream(messages, streamOpts);
   const textStream = result.textStream;
 
   const encoder = new TextEncoder();
