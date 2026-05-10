@@ -13,6 +13,8 @@ export const getEarningsByPeriod = query({
     months: v.number(),
   },
   handler: async (ctx, { accountSlug, granularity, months }) => {
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - months);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
@@ -25,6 +27,8 @@ export const getEarningsByPeriod = query({
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
     }
+    // Exclude cancelled/unconfirmed reservations (v1 parity: only confirmed/completed)
+    rows = rows.filter((r) => r.status !== "cancelled" && r.status !== "denied");
 
     const buckets = new Map<string, { revenue: number; bookings: number }>();
 
@@ -32,9 +36,12 @@ export const getEarningsByPeriod = query({
       // BF-06: use pickup_date if available, fall back to start_date
       const dateStr = r.pickup_date ?? r.start_date;
       if (!dateStr) continue;
+      // Cap to current month — don't show future months in the earnings chart
+      const effectiveMo = dateStr.slice(0, 7);
+      if (effectiveMo > currentMonth) continue;
       let key: string;
       if (granularity === "monthly") {
-        key = dateStr.slice(0, 7); // YYYY-MM
+        key = effectiveMo;
       } else {
         // ISO 8601 week: use proper ISO week number (not naive day-of-year / 7)
         const d = new Date(dateStr);
@@ -253,12 +260,12 @@ export const getLifetimeByMonth = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
     const AI_ACTIVE_FROM = "2026-02";
-    // boostRate from settings.ai_boost_rate if present, else 0
+    // boostRate from settings.ai_boost_rate if present, else 0.33 (v1 parity)
     const settings = await ctx.db.query("settings").first();
     const boostRate: number =
       settings && "ai_boost_rate" in settings
         ? (settings as unknown as Record<string, number>).ai_boost_rate
-        : 0;
+        : 0.33;
 
     const allReservations = await ctx.db.query("reservations").collect();
 
@@ -304,6 +311,27 @@ export const getLifetimeByMonth = query({
       if (accountSlug && c.account_slug !== accountSlug) continue;
       const m = c.claim_date.slice(0, 7);
       claimsByMonth.set(m, r2((claimsByMonth.get(m) ?? 0) + c.amount_gbp));
+    }
+
+    // Historical damage costs from HISTORICAL_REVENUE static data (v1 parity)
+    // Full override 2022-08 to 2024-07, damage-only overlay 2024-08 to 2026-01
+    if (!accountSlug) {
+      const HIST_DAMAGE: Record<string, number> = {
+        "2023-02": 55, "2023-03": 600, "2023-04": 450, "2023-05": 130,
+        "2023-07": 1318, "2023-08": 585, "2023-09": 778, "2023-10": 655,
+        "2023-12": 170, "2024-03": 330, "2024-04": 100, "2024-05": 282,
+        "2024-06": 419, "2024-07": 1464,
+        "2024-08": 389, "2024-09": 389, "2024-10": 389, "2024-11": 389, "2024-12": 389,
+        "2025-01": 389, "2025-02": 389, "2025-03": 389, "2025-04": 389,
+        "2025-05": 389, "2025-06": 389, "2025-07": 389, "2025-08": 389,
+        "2025-09": 389, "2025-10": 389, "2025-11": 388, "2025-12": 388,
+        "2026-01": 388,
+      };
+      for (const [mo, dmg] of Object.entries(HIST_DAMAGE)) {
+        if (!claimsByMonth.has(mo)) {
+          claimsByMonth.set(mo, dmg);
+        }
+      }
     }
 
     const nextMonthKey = new Date(now.getFullYear(), now.getMonth() + 1, 1)
