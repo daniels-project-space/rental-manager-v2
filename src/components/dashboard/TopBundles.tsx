@@ -79,7 +79,7 @@ export function TopBundles() {
               const barW = maxRev > 0 ? (bundle!.totalRevenue / maxRev) * 100 : 0;
               const y = i * 36;
               return (
-                <g key={bundle!.bundleId as string} transform={`translate(0,${y})`}>
+                <g key={bundle!.name} transform={`translate(0,${y})`}>
                   <rect
                     x={0}
                     y={4}
@@ -118,7 +118,7 @@ export function TopBundles() {
           <div className="mt-2 space-y-1">
             {data.slice(0, 5).map((bundle, i) => (
               <div
-                key={bundle!.bundleId as string}
+                key={bundle!.name}
                 className="flex items-center justify-between py-2 px-3 rounded-lg"
                 style={{ background: "rgba(255,255,255,0.03)" }}
               >
@@ -134,8 +134,8 @@ export function TopBundles() {
                       {bundle!.name}
                     </p>
                     <p className="text-xs truncate" style={{ color: "#8b8fa3" }}>
-                      {bundle!.itemNames.slice(0, 3).join(", ")}
-                      {bundle!.itemNames.length > 3 ? ` +${bundle!.itemNames.length - 3}` : ""}
+                      {bundle!.items.slice(0, 3).join(", ")}
+                      {bundle!.items.length > 3 ? ` +${bundle!.items.length - 3}` : ""}
                     </p>
                   </div>
                 </div>
