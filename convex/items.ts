@@ -124,38 +124,68 @@ export const getOutOfStockItems = query({
     endDate.setDate(endDate.getDate() + lookAheadDays);
     const endStr = endDate.toISOString().slice(0, 10);
 
+    // Include ongoing (start<=today, end>=today) + upcoming (start<=endStr) confirmed reservations
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", today))
       .collect();
     reservations = reservations.filter(
       (r) =>
+        r.status === "confirmed" &&
         r.start_date !== undefined &&
+        r.end_date !== undefined &&
         r.start_date <= endStr &&
-        r.status === "confirmed"
+        r.end_date >= today
     );
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
+    // Build hold counts using fuzzy canonical name matching
+    // (Hygglo item_name is the full listing title; items table uses short canonical names)
+    const allItems = await ctx.db.query("items").collect();
+    const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+
+    // Build a normalized lookup map: simplified key -> canonical name
+    function normalize(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+
+    // Match a Hygglo listing title to a canonical item name
+    function matchCanonical(listingTitle: string, canonicalNames: string[]): string | null {
+      const titleNorm = normalize(listingTitle);
+      // Score each canonical name: how many of its tokens appear in the listing title
+      let best: string | null = null;
+      let bestScore = 0;
+      for (const canon of canonicalNames) {
+        const canonNorm = normalize(canon);
+        // If the canonical name (normalized) appears in the listing title, it is a match
+        if (titleNorm.includes(canonNorm) && canonNorm.length > bestScore) {
+          best = canon;
+          bestScore = canonNorm.length;
+        }
+      }
+      return best;
+    }
+
+    const canonicalNames = activeItems.map((i) => i.name_canonical);
+
     const holdCounts = new Map<string, number>();
     const nextAvailMap = new Map<string, string>();
     for (const r of reservations) {
       for (const item of r.items ?? []) {
-        holdCounts.set(item.item_name, (holdCounts.get(item.item_name) ?? 0) + 1);
-        const existing = nextAvailMap.get(item.item_name);
+        const canon = matchCanonical(item.item_name, canonicalNames);
+        if (!canon) continue;
+        holdCounts.set(canon, (holdCounts.get(canon) ?? 0) + 1);
+        const existing = nextAvailMap.get(canon);
         if (!existing || (r.end_date && r.end_date > existing)) {
-          nextAvailMap.set(item.item_name, r.end_date ?? endStr);
+          nextAvailMap.set(canon, r.end_date ?? endStr);
         }
       }
     }
 
-    const allItems = await ctx.db.query("items").collect();
-    return allItems
+    return activeItems
       .filter(
         (i) =>
-          i.status === "active" &&
-          !i.is_marketing_only &&
           holdCounts.has(i.name_canonical) &&
           (holdCounts.get(i.name_canonical) ?? 0) >= i.qty
       )
