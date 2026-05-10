@@ -22,9 +22,29 @@ export const getItemRevenueRanking = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
-    // Fetch pricing for weighted split (BF wrong-number fix 3)
+    // Fetch pricing for weighted split
     const pricingAll = await ctx.db.query("pricing_catalog").collect();
-    const priceByName = new Map(pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]));
+    const priceByCanonical = new Map(pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]));
+
+    // Build canonical name lookup from pricing_catalog keys (normalized for fuzzy match)
+    function normalizeKey(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    const canonicalNames = Array.from(priceByCanonical.keys());
+
+    function matchCanonicalName(listingTitle: string): string {
+      const titleNorm = normalizeKey(listingTitle);
+      let best = listingTitle;
+      let bestScore = 0;
+      for (const canon of canonicalNames) {
+        const canonNorm = normalizeKey(canon);
+        if (titleNorm.includes(canonNorm) && canonNorm.length > bestScore) {
+          best = canon;
+          bestScore = canonNorm.length;
+        }
+      }
+      return best;
+    }
 
     const itemMap = new Map<string, { totalRevenue: number; rentalCount: number; totalDays: number }>();
     for (const r of reservations) {
@@ -32,30 +52,30 @@ export const getItemRevenueRanking = query({
       const gross = r.gross_paid_gbp ?? 0;
       if (items.length === 0) continue;
 
-      // Proportional split: each item's share = its daily_price_min / sum of all items' daily_price_min
-      const prices = items.map((i) => priceByName.get(i.item_name) ?? 0);
+      // Resolve canonical names and prices
+      const canonNames = items.map((i) => matchCanonicalName(i.item_name));
+      const prices = canonNames.map((name) => priceByCanonical.get(name) ?? 0);
       const priceSum = prices.reduce((s, p) => s + p, 0);
 
       for (let idx = 0; idx < items.length; idx++) {
-        const item = items[idx];
-        // Fall back to equal split if any price is missing
+        const canonName = canonNames[idx];
         const share = priceSum > 0
           ? gross * (prices[idx] / priceSum)
           : gross / items.length;
-        const existing = itemMap.get(item.item_name) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
+        const existing = itemMap.get(canonName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
         existing.totalRevenue += share;
         existing.rentalCount += 1;
         existing.totalDays += r.duration_days ?? 0;
-        itemMap.set(item.item_name, existing);
+        itemMap.set(canonName, existing);
       }
     }
 
     return Array.from(itemMap.entries())
       .map(([name, stats]) => ({
         name,
-        totalRevenue: stats.totalRevenue,
+        totalRevenue: Math.round(stats.totalRevenue * 100) / 100,
         rentalCount: stats.rentalCount,
-        avgValue: stats.rentalCount > 0 ? stats.totalRevenue / stats.rentalCount : 0,
+        avgValue: stats.rentalCount > 0 ? Math.round((stats.totalRevenue / stats.rentalCount) * 100) / 100 : 0,
         totalDays: stats.totalDays,
       }))
       .sort((a, b) => b.totalRevenue - a.totalRevenue);
@@ -83,20 +103,37 @@ export const getItemCycles = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
+    const allItems = await ctx.db.query("items").collect();
+    const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+    const activeCanonicals = activeItems.map((i) => i.name_canonical);
+
+    function normKey(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    function matchCanon(listingTitle: string): string | null {
+      const tNorm = normKey(listingTitle);
+      let best: string | null = null;
+      let bestScore = 0;
+      for (const canon of activeCanonicals) {
+        const cNorm = normKey(canon);
+        if (tNorm.includes(cNorm) && cNorm.length > bestScore) {
+          best = canon;
+          bestScore = cNorm.length;
+        }
+      }
+      return best;
+    }
+
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
       for (const item of r.items ?? []) {
-        rentalDaysMap.set(
-          item.item_name,
-          (rentalDaysMap.get(item.item_name) ?? 0) + (r.duration_days ?? 0)
-        );
+        const canon = matchCanon(item.item_name);
+        if (!canon) continue;
+        rentalDaysMap.set(canon, (rentalDaysMap.get(canon) ?? 0) + (r.duration_days ?? 0));
       }
     }
 
-    const allItems = await ctx.db.query("items").collect();
-    return allItems
-      .filter((i) => i.status === "active" && !i.is_marketing_only)
-      .map((item) => {
+    return activeItems.map((item) => {
         const rentalDays = rentalDaysMap.get(item.name_canonical) ?? 0;
         return {
           itemId: item._id,
@@ -221,18 +258,36 @@ export const getSellRecommendations = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
-    // Build rental-days per canonical name from reservation items[]
+    const allItems = await ctx.db.query("items").collect();
+    const activeGroups = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+    const sellCanonicals = activeGroups.map((i) => i.name_canonical);
+
+    function normSell(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    function matchSellCanon(listingTitle: string): string | null {
+      const tNorm = normSell(listingTitle);
+      let best: string | null = null;
+      let bestScore = 0;
+      for (const canon of sellCanonicals) {
+        const cNorm = normSell(canon);
+        if (tNorm.includes(cNorm) && cNorm.length > bestScore) {
+          best = canon;
+          bestScore = cNorm.length;
+        }
+      }
+      return best;
+    }
+
+    // Build rental-days per canonical name from reservation items[] with fuzzy matching
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
       for (const item of r.items ?? []) {
-        rentalDaysMap.set(
-          item.item_name,
-          (rentalDaysMap.get(item.item_name) ?? 0) + (r.duration_days ?? 0)
-        );
+        const canon = matchSellCanon(item.item_name);
+        if (!canon) continue;
+        rentalDaysMap.set(canon, (rentalDaysMap.get(canon) ?? 0) + (r.duration_days ?? 0));
       }
     }
-
-    const allItems = await ctx.db.query("items").collect();
 
     // Group by name_canonical — multiple unit rows collapse to one recommendation
     type GroupEntry = {
