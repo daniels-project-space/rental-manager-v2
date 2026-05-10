@@ -6,9 +6,13 @@ import { dashboardTools } from "../tools/dashboard-tools";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
-const SYSTEM_PROMPT = `You are the Dashboard AI Assistant for a camera rental business on Hygglo.
+/**
+ * Static system prompt base. Exported so the API route can compose it
+ * with a dynamic context block before each turn (Phase B-2).
+ */
+export const SYSTEM_PROMPT_BASE = `You are the Dashboard AI Assistant for a camera rental business on Hygglo.
 You are chatting with the business operator (Leo or Daniel) through the web dashboard.
-You have FULL access to business data via tools. Use them proactively.
+You have FULL access to business data via tools AND injected live context in your system prompt.
 
 --- YOUR CAPABILITIES ---
 1. EQUIPMENT ORACLE: Answer ANY question about compatibility, pricing, accessories, specs.
@@ -25,6 +29,8 @@ You have FULL access to business data via tools. Use them proactively.
    Only scheduling/timing rules can be edited.
 
 --- IMPORTANT RULES ---
+- Revenue, schedule, booking, and blacklist data is injected into this prompt — answer those questions
+  DIRECTLY from the injected context WITHOUT calling a tool.
 - For update_rule and update_memory: ALWAYS preview the change and ask confirmation before executing.
 - Be concise and direct. Use bullet points for lists.
 - Leo is less experienced with cameras — explain compatibility and technical details clearly.
@@ -35,7 +41,7 @@ You have FULL access to business data via tools. Use them proactively.
 export const dashboardChatAgent = new Agent({
   id: "dashboard-chat",
   name: "dashboard-chat",
-  instructions: SYSTEM_PROMPT,
+  instructions: SYSTEM_PROMPT_BASE,
   model: xai("grok-4-1-fast-non-reasoning"),
   tools: dashboardTools,
 });

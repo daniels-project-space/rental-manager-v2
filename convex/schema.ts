@@ -423,6 +423,18 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_month", ["month"]),
 
+
+  // -- AI Memories (Phase B-2 scaffold; seed deferred to B-3) --
+  memories: defineTable({
+    scope: v.string(),                    // "general" | "pricing" | "operational"
+    content: v.string(),
+    tags: v.optional(v.array(v.string())),
+    source: v.string(),                   // "manual" | "v1-import-pending"
+    created_at: v.number(),
+    updated_at: v.optional(v.number()),
+  }).index("by_scope", ["scope"])
+    .index("by_created", ["created_at"]),
+
   // -- Dashboard AI Chat (Phase B-1) ----
   dashboard_chat_messages: defineTable({
     thread_id: v.string(),

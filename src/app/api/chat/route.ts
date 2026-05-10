@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
-import { dashboardChatAgent } from "../../../mastra/agents/dashboard-chat";
+import {
+  dashboardChatAgent,
+  SYSTEM_PROMPT_BASE,
+} from "../../../mastra/agents/dashboard-chat";
+import { formatContext } from "../../../mastra/context-formatter";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,13 +36,33 @@ export async function POST(req: Request) {
     limit: 20,
   });
 
+  // 3. Fetch live business context and build composed system prompt
+  let composedInstructions = SYSTEM_PROMPT_BASE;
+  try {
+    const bundle = await convex.query(
+      api.dashboard_chat_context.getContextBundle,
+      {}
+    );
+    const ctxStr = formatContext(bundle);
+    if (ctxStr.length > 0) {
+      composedInstructions =
+        SYSTEM_PROMPT_BASE + "\n\n--- LIVE BUSINESS CONTEXT ---\n" + ctxStr;
+    }
+  } catch (err) {
+    // Non-fatal: agent still works without injected context
+    console.error("[chat] context bundle fetch failed:", err);
+  }
+
   const messages: ChatMessage[] = history.map((m) => ({
     role: m.role === "user" ? "user" : "assistant",
     content: m.content,
   }));
 
-  // 3. Stream agent response
-  const result = await dashboardChatAgent.stream(messages);
+  // 4. Stream with composed system prompt overriding agent's static instructions
+  const result = await dashboardChatAgent.stream(messages, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    instructions: composedInstructions as any,
+  });
   const textStream = result.textStream;
 
   const encoder = new TextEncoder();
