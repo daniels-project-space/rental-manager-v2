@@ -10,6 +10,11 @@ function getConvex(): ConvexHttpClient {
   return new ConvexHttpClient(url);
 }
 
+function toError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 // Group A: Read-only, all data in Convex
 
 export const getDashboardStats = createTool({
@@ -17,25 +22,29 @@ export const getDashboardStats = createTool({
   description: "Live today/week/month earnings, active rental counts, and pending decisions.",
   inputSchema: z.object({}),
   execute: async () => {
-    const convex = getConvex();
-    const stats = await convex.query(anyApi.dashboard.getSummary, { accountSlug: null });
-    return {
-      ok: true,
-      today_revenue: stats.todayRevenue,
-      today_rental_count: stats.todayRentalCount,
-      weekly_revenue: stats.weeklyRevenue,
-      monthly_revenue: stats.monthlyRevenue,
-      projected_month_revenue: stats.projectedMonthRevenue,
-      active_rentals: stats.activeRentalsCount,
-      ongoing: stats.ongoingCount,
-      upcoming: stats.upcomingCount,
-      overdue: stats.overdueCount,
-      items_out: stats.itemsOut,
-      available_items: stats.availableItems,
-      out_of_stock_count: stats.outOfStockCount,
-      denial_rate: stats.denialRate,
-      denied_revenue_90d: stats.deniedRevenue,
-    };
+    try {
+      const convex = getConvex();
+      const stats = await convex.query(anyApi.dashboard.getSummary, { accountSlug: null });
+      return {
+        ok: true as const,
+        today_revenue: stats.todayRevenue,
+        today_rental_count: stats.todayRentalCount,
+        weekly_revenue: stats.weeklyRevenue,
+        monthly_revenue: stats.monthlyRevenue,
+        projected_month_revenue: stats.projectedMonthRevenue,
+        active_rentals: stats.activeRentalsCount,
+        ongoing: stats.ongoingCount,
+        upcoming: stats.upcomingCount,
+        overdue: stats.overdueCount,
+        items_out: stats.itemsOut,
+        available_items: stats.availableItems,
+        out_of_stock_count: stats.outOfStockCount,
+        denial_rate: stats.denialRate,
+        denied_revenue_90d: stats.deniedRevenue,
+      };
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -47,24 +56,28 @@ export const lookupPricing = createTool({
     days: z.number().int().min(1).optional(),
   }),
   execute: async (input: { itemName: string; days?: number }) => {
-    const convex = getConvex();
-    const items = await convex.query(anyApi.pricing_catalog.lookup, { item_name: input.itemName });
-    if (!items || items.length === 0) return { ok: false as const, error: "item_not_found" };
-    const row = items[0];
-    const rate: number = row.daily_price_min;
-    const days = input.days ?? 1;
-    let total: number;
-    if (days >= 7) total = rate * 5;
-    else if (days >= 3) total = rate * 2.5;
-    else total = rate * days;
-    return {
-      ok: true as const,
-      item: row.item_name_canonical,
-      daily_rate: rate,
-      days,
-      total: Math.round(total * 100) / 100,
-      note: days >= 3 ? "Hygglo multi-day discount applied" : undefined,
-    };
+    try {
+      const convex = getConvex();
+      const items = await convex.query(anyApi.pricing_catalog.lookup, { item_name: input.itemName });
+      if (!items || items.length === 0) return { ok: false as const, error: "item_not_found" };
+      const row = items[0];
+      const rate: number = row.daily_price_min;
+      const days = input.days ?? 1;
+      let total: number;
+      if (days >= 7) total = rate * 5;
+      else if (days >= 3) total = rate * 2.5;
+      else total = rate * days;
+      return {
+        ok: true as const,
+        item: row.item_name_canonical,
+        daily_rate: rate,
+        days,
+        total: Math.round(total * 100) / 100,
+        note: days >= 3 ? "Hygglo multi-day discount applied" : undefined,
+      };
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -77,12 +90,16 @@ export const checkAvailability = createTool({
     endDate: z.string().describe("YYYY-MM-DD"),
   }),
   execute: async (input: { itemName: string; startDate: string; endDate: string }) => {
-    const convex = getConvex();
-    return await convex.query(anyApi.items.checkAvailability, {
-      item_name: input.itemName,
-      start_date: input.startDate,
-      end_date: input.endDate,
-    });
+    try {
+      const convex = getConvex();
+      return await convex.query(anyApi.items.checkAvailability, {
+        item_name: input.itemName,
+        start_date: input.startDate,
+        end_date: input.endDate,
+      });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -91,8 +108,12 @@ export const getPendingRentals = createTool({
   description: "Fetch pending rental requests awaiting accept/decline decision.",
   inputSchema: z.object({}),
   execute: async () => {
-    const convex = getConvex();
-    return await convex.query(anyApi.reservations.listPending, {});
+    try {
+      const convex = getConvex();
+      return await convex.query(anyApi.reservations.listPending, {});
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -101,18 +122,22 @@ export const getBusinessIntelligence = createTool({
   description: "Purchase recommendations, demand signals, denied-rental patterns, investment analysis.",
   inputSchema: z.object({}),
   execute: async () => {
-    const convex = getConvex();
-    const [sell, price, insights] = await Promise.all([
-      convex.query(anyApi.items.getSellRecommendations, { accountSlug: null }),
-      convex.query(anyApi.items.getPriceRecommendations, { accountSlug: null }),
-      convex.query(anyApi.ai_insights.getInsights, { accountSlug: null }),
-    ]);
-    return {
-      ok: true as const,
-      underutilizedItems: (sell as unknown[]).slice(0, 10),
-      priceSuggestions: (price as unknown[]).slice(0, 10),
-      insights,
-    };
+    try {
+      const convex = getConvex();
+      const [sell, price, insights] = await Promise.all([
+        convex.query(anyApi.items.getSellRecommendations, { accountSlug: null }),
+        convex.query(anyApi.items.getPriceRecommendations, { accountSlug: null }),
+        convex.query(anyApi.ai_insights.getInsights, { accountSlug: null }),
+      ]);
+      return {
+        ok: true as const,
+        underutilizedItems: (sell as unknown[]).slice(0, 10),
+        priceSuggestions: (price as unknown[]).slice(0, 10),
+        insights,
+      };
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -125,31 +150,35 @@ export const checkCompatibility = createTool({
     items: z.array(z.string()).describe("Item names to check for compatibility"),
   }),
   execute: async (input: { items: string[] }) => {
-    const convex = getConvex();
-    const { items } = input;
-    if (items.length < 2) return { ok: false as const, error: "Provide at least 2 items" };
-    const results = [];
-    for (let i = 0; i < items.length; i++) {
-      for (let j = i + 1; j < items.length; j++) {
-        const result = await convex.query(anyApi.items.checkCompat, {
-          itemA: items[i],
-          itemB: items[j],
-        });
-        results.push({ pair: [items[i], items[j]], ...result });
+    try {
+      const convex = getConvex();
+      const { items } = input;
+      if (items.length < 2) return { ok: false as const, error: "Provide at least 2 items" };
+      const results = [];
+      for (let i = 0; i < items.length; i++) {
+        for (let j = i + 1; j < items.length; j++) {
+          const result = await convex.query(anyApi.items.checkCompat, {
+            itemA: items[i],
+            itemB: items[j],
+          });
+          results.push({ pair: [items[i], items[j]], ...result });
+        }
       }
+      const conflicts = results.filter((r) => !r.compatible);
+      const compatible = results.filter((r) => r.compatible);
+      return {
+        ok: true as const,
+        compatible_pairs: compatible.length,
+        conflict_pairs: conflicts.length,
+        results,
+        summary:
+          conflicts.length > 0
+            ? "CONFLICTS: " + conflicts.map((r) => r.pair.join(" + ") + " -- " + r.reason).join("; ")
+            : "All pairs compatible",
+      };
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
     }
-    const conflicts = results.filter((r) => !r.compatible);
-    const compatible = results.filter((r) => r.compatible);
-    return {
-      ok: true as const,
-      compatible_pairs: compatible.length,
-      conflict_pairs: conflicts.length,
-      results,
-      summary:
-        conflicts.length > 0
-          ? "CONFLICTS: " + conflicts.map((r) => r.pair.join(" + ") + " -- " + r.reason).join("; ")
-          : "All pairs compatible",
-    };
   },
 });
 
@@ -160,17 +189,21 @@ export const readConversation = createTool({
     search: z.string().describe("Thread ID (numeric) or reservation keyword"),
   }),
   execute: async (input: { search: string }) => {
-    const convex = getConvex();
-    const messages = await convex.query(anyApi.hygglo.listByThread, { thread_id: input.search });
-    if ((messages as unknown[]).length === 0) {
-      return { ok: false as const, error: "No messages found for thread: " + input.search };
+    try {
+      const convex = getConvex();
+      const messages = await convex.query(anyApi.hygglo.listByThread, { thread_id: input.search });
+      if ((messages as unknown[]).length === 0) {
+        return { ok: false as const, error: "No messages found for thread: " + input.search };
+      }
+      return {
+        ok: true as const,
+        thread_id: input.search,
+        message_count: (messages as unknown[]).length,
+        messages,
+      };
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
     }
-    return {
-      ok: true as const,
-      thread_id: input.search,
-      message_count: (messages as unknown[]).length,
-      messages,
-    };
   },
 });
 
@@ -179,34 +212,38 @@ export const getDailyBriefing = createTool({
   description: "Full status briefing: revenue, active/upcoming/pending rentals, schedule, recent activity.",
   inputSchema: z.object({}),
   execute: async () => {
-    const convex = getConvex();
-    const today = new Date().toISOString().slice(0, 10);
-    const [stats, schedule, pending, activity] = await Promise.all([
-      convex.query(anyApi.dashboard.getSummary, { accountSlug: null }),
-      convex.query(anyApi.calendar.getCalendarStrip, { accountSlug: null, startDate: today, days: 3 }),
-      convex.query(anyApi.reservations.listPending, {}),
-      convex.query(anyApi.reservations.getRecentActivity, { accountSlug: null, limit: 5 }),
-    ]);
-    const attentionNeeded: string[] = [];
-    if ((pending as { count: number }).count > 0)
-      attentionNeeded.push((pending as { count: number }).count + " pending rental(s) need review");
-    if ((stats as { overdueCount: number }).overdueCount > 0)
-      attentionNeeded.push((stats as { overdueCount: number }).overdueCount + " overdue return(s)");
-    return {
-      ok: true as const,
-      date: today,
-      summary: {
-        today_revenue: (stats as { todayRevenue: number }).todayRevenue,
-        monthly_revenue: (stats as { monthlyRevenue: number }).monthlyRevenue,
-        projected: (stats as { projectedMonthRevenue: number }).projectedMonthRevenue,
-        active_rentals: (stats as { activeRentalsCount: number }).activeRentalsCount,
-        items_out: (stats as { itemsOut: number }).itemsOut,
-      },
-      schedule_next_3_days: schedule,
-      pending_rentals: pending,
-      recent_activity: activity,
-      attention_needed: attentionNeeded,
-    };
+    try {
+      const convex = getConvex();
+      const today = new Date().toISOString().slice(0, 10);
+      const [stats, schedule, pending, activity] = await Promise.all([
+        convex.query(anyApi.dashboard.getSummary, { accountSlug: null }),
+        convex.query(anyApi.calendar.getCalendarStrip, { accountSlug: null, startDate: today, days: 3 }),
+        convex.query(anyApi.reservations.listPending, {}),
+        convex.query(anyApi.reservations.getRecentActivity, { accountSlug: null, limit: 5 }),
+      ]);
+      const attentionNeeded: string[] = [];
+      if ((pending as { count: number }).count > 0)
+        attentionNeeded.push((pending as { count: number }).count + " pending rental(s) need review");
+      if ((stats as { overdueCount: number }).overdueCount > 0)
+        attentionNeeded.push((stats as { overdueCount: number }).overdueCount + " overdue return(s)");
+      return {
+        ok: true as const,
+        date: today,
+        summary: {
+          today_revenue: (stats as { todayRevenue: number }).todayRevenue,
+          monthly_revenue: (stats as { monthlyRevenue: number }).monthlyRevenue,
+          projected: (stats as { projectedMonthRevenue: number }).projectedMonthRevenue,
+          active_rentals: (stats as { activeRentalsCount: number }).activeRentalsCount,
+          items_out: (stats as { itemsOut: number }).itemsOut,
+        },
+        schedule_next_3_days: schedule,
+        pending_rentals: pending,
+        recent_activity: activity,
+        attention_needed: attentionNeeded,
+      };
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -217,8 +254,12 @@ export const searchRules = createTool({
   description: "Search active business rules by keyword.",
   inputSchema: z.object({ query: z.string() }),
   execute: async (input: { query: string }) => {
-    const convex = getConvex();
-    return await convex.query(anyApi.rules.search, { query: input.query });
+    try {
+      const convex = getConvex();
+      return await convex.query(anyApi.rules.search, { query: input.query });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -234,8 +275,12 @@ export const updateRule = createTool({
     if (input.field !== "content") {
       return { ok: false as const, error: "Only content field updates supported. Use field=content." };
     }
-    const convex = getConvex();
-    return await convex.mutation(anyApi.rules.update, { id: input.ruleId, new_content: input.value });
+    try {
+      const convex = getConvex();
+      return await convex.mutation(anyApi.rules.update, { id: input.ruleId, new_content: input.value });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -244,8 +289,12 @@ export const searchMemories = createTool({
   description: "Search business memory store by keyword.",
   inputSchema: z.object({ query: z.string() }),
   execute: async (input: { query: string }) => {
-    const convex = getConvex();
-    return await convex.query(anyApi.memories.search, { query: input.query });
+    try {
+      const convex = getConvex();
+      return await convex.query(anyApi.memories.search, { query: input.query });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 
@@ -258,12 +307,16 @@ export const updateMemory = createTool({
     scope: z.string().optional().default("general"),
   }),
   execute: async (input: { memoryId?: string; newContent: string; scope?: string }) => {
-    const convex = getConvex();
-    return await convex.mutation(anyApi.memories.upsert, {
-      id: input.memoryId,
-      scope: input.scope ?? "general",
-      content: input.newContent,
-    });
+    try {
+      const convex = getConvex();
+      return await convex.mutation(anyApi.memories.upsert, {
+        id: input.memoryId,
+        scope: input.scope ?? "general",
+        content: input.newContent,
+      });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
   },
 });
 

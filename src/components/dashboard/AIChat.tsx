@@ -2,7 +2,7 @@
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Card, CardHeader } from "@/components/ui/Card";
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 
 type PersistedMessage = {
   _id: string;
@@ -25,13 +25,18 @@ export function AIChat() {
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamDraft, setStreamDraft] = useState("");
+  const [streamError, setStreamError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, streamDraft]);
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, streamDraft, scrollToBottom]);
 
   async function handleSend() {
     const text = draft.trim();
@@ -39,6 +44,7 @@ export function AIChat() {
     setDraft("");
     setStreaming(true);
     setStreamDraft("");
+    setStreamError(null);
 
     try {
       const res = await fetch("/api/chat", {
@@ -46,6 +52,12 @@ export function AIChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, thread_id: "dashboard" }),
       });
+
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After") ?? "60";
+        setStreamError("Rate limit reached. Try again in " + retryAfter + "s.");
+        return;
+      }
 
       if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
 
@@ -64,13 +76,19 @@ export function AIChat() {
           const payload = line.slice(6).trim();
           if (payload === "[DONE]") { setStreamDraft(""); break; }
           try {
-            const parsed = JSON.parse(payload) as { text: string };
-            setStreamDraft((prev) => prev + parsed.text);
-          } catch { /* ignore */ }
+            const parsed = JSON.parse(payload) as { text?: string; error?: string };
+            if (parsed.error) {
+              setStreamError(parsed.error);
+            } else if (parsed.text) {
+              setStreamDraft((prev) => prev + parsed.text);
+            }
+          } catch { /* ignore malformed chunk */ }
         }
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("[AIChat] stream error:", err);
+      setStreamError("Connection error: " + msg);
     } finally {
       setStreaming(false);
       setStreamDraft("");
@@ -84,9 +102,12 @@ export function AIChat() {
   async function handleClear() {
     await clearThread({ thread_id: "dashboard" });
     setStreamDraft("");
+    setStreamError(null);
   }
 
   const hasHistory = (messages?.length ?? 0) > 0;
+  const lastMsg = messages?.[messages.length - 1];
+  const lastIsSystemError = lastMsg?.role === "system" && lastMsg.content.startsWith("Error:");
 
   return (
     <div style={{ minHeight: "420px" }}>
@@ -111,13 +132,24 @@ export function AIChat() {
           {!hasHistory && !streaming && !streamDraft && (
             <div className="flex items-center justify-center h-full">
               <p className="text-sm text-center" style={{ color: "#8b8fa3" }}>
-                Ask about your rentals, revenue, or inventory.
+                Ask about rentals, calendar, pricing, or compatibility — I have full context.
               </p>
             </div>
           )}
 
           {(messages ?? []).map((msg: PersistedMessage) => {
             const isUser = msg.role === "user";
+            const isSystemError = msg.role === "system" && msg.content.startsWith("Error:");
+            if (isSystemError) {
+              return (
+                <div key={msg._id} className="flex flex-col gap-1 items-start">
+                  <div className="max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-relaxed" style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", color: "#fca5a5", borderRadius: "16px 16px 16px 4px" }}>
+                    <span className="inline-block text-xs font-semibold mr-1 px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.25)", color: "#f87171" }}>error</span>{" "}{msg.content.replace(/^Error:\s*/, "")}
+                  </div>
+                  <span className="text-xs px-1" style={{ color: "#8b8fa3" }}>{formatTime(msg.created_at)}</span>
+                </div>
+              );
+            }
             return (
               <div key={msg._id} className={"flex flex-col gap-1 " + (isUser ? "items-end" : "items-start")}>
                 <div
@@ -134,14 +166,29 @@ export function AIChat() {
             );
           })}
 
+          {lastIsSystemError && !streaming && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", color: "#fca5a5" }}>
+              <span className="inline-block w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#ef4444" }} />
+              Something went wrong with the last request. Try resending.
+            </div>
+          )}
+
+          {streamError && !streaming && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", color: "#fca5a5" }}>
+              <span className="inline-block w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#ef4444" }} />
+              {streamError}
+            </div>
+          )}
+
           {(streaming || streamDraft) && (
             <div className="flex flex-col gap-1 items-start">
               <div className="max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap" style={{ background: "rgba(14,17,28,0.85)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb", borderRadius: "16px 16px 16px 4px" }}>
                 {streamDraft || (
-                  <span className="flex gap-1 items-center" style={{ color: "#8b8fa3" }}>
+                  <span className="flex gap-1.5 items-center" style={{ color: "#8b8fa3" }}>
                     <span className="w-1.5 h-1.5 rounded-full animate-bounce bg-current" style={{ animationDelay: "0ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full animate-bounce bg-current" style={{ animationDelay: "150ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full animate-bounce bg-current" style={{ animationDelay: "300ms" }} />
+                    <span className="text-xs ml-1">thinking...</span>
                   </span>
                 )}
               </div>
@@ -166,7 +213,7 @@ export function AIChat() {
             className="px-4 rounded-xl font-medium text-sm transition-colors disabled:opacity-40 self-end pb-2"
             style={{ background: "#6ea8fe", color: "#070910", height: 68 }}
           >
-            Send
+            {streaming ? "..." : "Send"}
           </button>
         </div>
       </Card>
