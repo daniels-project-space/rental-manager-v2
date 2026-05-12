@@ -71,6 +71,7 @@ export const getCalendarStrip = query({
     }
 
     return dates.map((date) => {
+      // For same-day rentals (start === end === date), place in pickups only to avoid double-count.
       const pickups = reservations
         .filter((r) => r.start_date === date)
         .map((r) => ({
@@ -81,8 +82,10 @@ export const getCalendarStrip = query({
           status: r.status,
         }));
 
+      // Exclude same-day rentals from returns (already counted in pickups above).
+      const pickupIds = new Set(pickups.map((p) => p.reservationId));
       const returns = reservations
-        .filter((r) => r.end_date === date)
+        .filter((r) => r.end_date === date && !pickupIds.has(r._id))
         .map((r) => ({
           reservationId: r._id,
           itemNames: (r.items ?? []).map((i) => i.item_name),

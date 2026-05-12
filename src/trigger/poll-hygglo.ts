@@ -80,6 +80,7 @@ type OrderReservationPayload = {
   currency?: string;
   items: Array<{ item_name: string; qty?: number }>;
   duration_days?: number;
+  sourceFilter: string;
 };
 
 // ── Timestamp parser ──────────────────────────────────────────
@@ -183,8 +184,8 @@ async function scrapeAccount(
   };
 
   // 2. Fetch orders (read-only GETs)
-  const filters = ["pending", "current", "future"] as const;
-  const allOrders: Array<{ id: number }> = [];
+  const filters = ["pending", "current", "future", "obsolete"] as const;
+  const allOrders: Array<{ id: number; sourceFilter: string }> = [];
 
   for (const filter of filters) {
     const res = await fetch(
@@ -196,10 +197,10 @@ async function scrapeAccount(
     const arr = Array.isArray(data)
       ? (data as Array<{ id: number }>)
       : ((data as { items?: Array<{ id: number }> }).items ?? []);
-    allOrders.push(...arr);
+    allOrders.push(...arr.map((o) => ({ ...o, sourceFilter: filter })));
   }
 
-  // Deduplicate by order id
+  // Deduplicate by order id — first-seen filter wins (active/current beats obsolete)
   const seen = new Set<number>();
   const uniqueOrders = allOrders.filter((o) => {
     if (seen.has(o.id)) return false;
@@ -312,9 +313,11 @@ async function scrapeAccount(
       const start = new Date(startUTC);
       const end = new Date(endUTC);
       const durationDays = Math.round((end.getTime() - start.getTime()) / 86400000);
+      // obsolete filter = cancelled/rejected orders
+      const status = order.sourceFilter === "obsolete" ? "cancelled" : "confirmed";
       reservationPayloads.push({
         hygglo_order_id: String(order.id),
-        status: "confirmed",
+        status,
         start_date: startDate,
         end_date: endDate,
         gross_paid_gbp: grossPaid,
@@ -322,6 +325,7 @@ async function scrapeAccount(
         currency,
         items: orderItems,
         duration_days: durationDays > 0 ? durationDays : undefined,
+        sourceFilter: order.sourceFilter,
       });
     }
   }
@@ -349,6 +353,16 @@ export const pollHyggloInbox = schedules.task({
   maxDuration: 120,
   retry: { maxAttempts: 2 },
   run: async () => {
+    const runStart = Date.now();
+    let runSucceeded = false;
+    let runError: string | undefined;
+
+    // Aggregate counts across all accounts for sync_state
+    let totalReservationsUpserted = 0;
+    let totalHyggloMessagesUpserted = 0;
+    let totalRentersUpserted = 0;
+    let totalConversationsUpserted = 0;
+
     const hyggloSecrets = await getVaultSecrets("hygglo");
     const clientSecret = hyggloSecrets["HYGGLO_CLIENT_SECRET"] ?? "lQVS05DGy9SQdAEInEPqTMK3aktEfSc7iupC7BYM4JY=";
 
@@ -377,85 +391,145 @@ export const pollHyggloInbox = schedules.task({
       error?: string;
     }> = [];
 
-    for (const account of accounts) {
-      if (!account.email || !account.password) {
-        console.warn(`[poll-hygglo] Missing creds for ${account.slug}, skipping`);
-        results.push({ slug: account.slug, ok: false, error: "missing_creds" });
-        continue;
-      }
-
-      try {
-        const { messages, reservations, renters, conversations } = await scrapeAccount(
-          account.slug, account.email, account.password, clientSecret
-        );
-
-        // Upsert chat messages (batched 50)
-        let totalInserted = 0;
-        let totalSkipped = 0;
-        for (let i = 0; i < messages.length; i += 50) {
-          const batch = messages.slice(i, i + 50);
-          const r = await convex.mutation(api.hygglo.upsertMessages, {
-            account_slug: account.slug,
-            messages: batch,
-          });
-          totalInserted += r.inserted;
-          totalSkipped += r.skipped;
+    try {
+      for (const account of accounts) {
+        if (!account.email || !account.password) {
+          console.warn(`[poll-hygglo] Missing creds for ${account.slug}, skipping`);
+          results.push({ slug: account.slug, ok: false, error: "missing_creds" });
+          continue;
         }
 
-        // Upsert reservations (batched 50)
-        let resInserted = 0;
-        let resUpdated = 0;
-        for (let i = 0; i < reservations.length; i += 50) {
-          const batch = reservations.slice(i, i + 50);
-          for (const payload of batch) {
-            const resResult = await convex.mutation(api.hygglo.upsertOrderAsReservation, {
+        // ── Paused-mode guard ──────────────────────────────────
+        try {
+          const accountState = await convex.query(api.account_state.get, { account: account.slug });
+          if (accountState?.mode === "paused") {
+            console.warn(
+              `[poll-hygglo] Account ${account.slug} is paused (consecutiveFailures=${accountState.consecutiveFailures}); skipping poll`
+            );
+            results.push({ slug: account.slug, ok: true, messages: 0, inserted: 0 });
+            continue;
+          }
+        } catch (stateErr) {
+          console.error(`[poll-hygglo] Failed to fetch account_state for ${account.slug}:`, stateErr);
+          // Non-fatal: proceed with poll
+        }
+
+        try {
+          const { messages, reservations, renters, conversations } = await scrapeAccount(
+            account.slug, account.email, account.password, clientSecret
+          );
+
+          // Upsert chat messages (batched 50)
+          let totalInserted = 0;
+          let totalSkipped = 0;
+          for (let i = 0; i < messages.length; i += 50) {
+            const batch = messages.slice(i, i + 50);
+            const r = await convex.mutation(api.hygglo.upsertMessages, {
               account_slug: account.slug,
-              ...payload,
+              messages: batch,
             });
-            if (resResult.action === "inserted") resInserted++;
-            else if (resResult.action === "updated") resUpdated++;
+            totalInserted += r.inserted;
+            totalSkipped += r.skipped;
+          }
+          totalHyggloMessagesUpserted += totalInserted;
+
+          // Upsert reservations (batched 50)
+          let resInserted = 0;
+          let resUpdated = 0;
+          for (let i = 0; i < reservations.length; i += 50) {
+            const batch = reservations.slice(i, i + 50);
+            for (const payload of batch) {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { sourceFilter: _sf, ...mutationPayload } = payload;
+              const resResult = await convex.mutation(api.hygglo.upsertOrderAsReservation, {
+                account_slug: account.slug,
+                ...mutationPayload,
+              });
+              if (resResult.action === "inserted") resInserted++;
+              else if (resResult.action === "updated") resUpdated++;
+            }
+          }
+          totalReservationsUpserted += resInserted + resUpdated;
+
+          // Phase 6.1: upsert renters first, then conversations
+          let rentersUpserted = 0;
+          if (renters.length > 0) {
+            const rr = await convex.mutation(api.hygglo.upsertRentersBatch, {
+              account_slug: account.slug,
+              renters,
+            });
+            rentersUpserted = rr.upserted;
+          }
+          totalRentersUpserted += rentersUpserted;
+
+          let convsUpserted = 0;
+          if (conversations.length > 0) {
+            const cr = await convex.mutation(api.hygglo.upsertConversationsBatch, {
+              account_slug: account.slug,
+              conversations,
+            });
+            convsUpserted = cr.upserted;
+          }
+          totalConversationsUpserted += convsUpserted;
+
+          console.log(
+            "[poll-hygglo] " + account.slug + ": " + String(messages.length) + " msgs, " +
+            String(totalInserted) + " inserted, " + String(totalSkipped) + " skipped. " +
+            "Reservations: " + String(resInserted) + " inserted, " + String(resUpdated) + " updated. " +
+            "Renters: " + String(rentersUpserted) + " new. Conversations: " + String(convsUpserted) + " new."
+          );
+
+          results.push({
+            slug: account.slug,
+            ok: true,
+            messages: messages.length,
+            inserted: totalInserted,
+            renters_upserted: rentersUpserted,
+            conversations_upserted: convsUpserted,
+          });
+
+          // ── account_state: success ────────────────────────────
+          try {
+            await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: true });
+          } catch (asErr) {
+            console.error(`[poll-hygglo] account_state.upsert (success) failed for ${account.slug}:`, asErr);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[poll-hygglo] ${account.slug} failed: ${msg}`);
+          // Continue — Leo failure must not crash DB Cinema
+          results.push({ slug: account.slug, ok: false, error: msg });
+
+          // ── account_state: failure ────────────────────────────
+          try {
+            await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: false, errorMessage: msg });
+          } catch (asErr) {
+            console.error(`[poll-hygglo] account_state.upsert (failure) failed for ${account.slug}:`, asErr);
           }
         }
+      }
 
-        // Phase 6.1: upsert renters first, then conversations
-        let rentersUpserted = 0;
-        if (renters.length > 0) {
-          const rr = await convex.mutation(api.hygglo.upsertRentersBatch, {
-            account_slug: account.slug,
-            renters,
-          });
-          rentersUpserted = rr.upserted;
-        }
-
-        let convsUpserted = 0;
-        if (conversations.length > 0) {
-          const cr = await convex.mutation(api.hygglo.upsertConversationsBatch, {
-            account_slug: account.slug,
-            conversations,
-          });
-          convsUpserted = cr.upserted;
-        }
-
-        console.log(
-          "[poll-hygglo] " + account.slug + ": " + String(messages.length) + " msgs, " +
-          String(totalInserted) + " inserted, " + String(totalSkipped) + " skipped. " +
-          "Reservations: " + String(resInserted) + " inserted, " + String(resUpdated) + " updated. " +
-          "Renters: " + String(rentersUpserted) + " new. Conversations: " + String(convsUpserted) + " new."
-        );
-
-        results.push({
-          slug: account.slug,
-          ok: true,
-          messages: messages.length,
-          inserted: totalInserted,
-          renters_upserted: rentersUpserted,
-          conversations_upserted: convsUpserted,
+      runSucceeded = true;
+    } catch (err) {
+      runError = err instanceof Error ? err.message : String(err);
+      console.error(`[poll-hygglo] Fatal error: ${runError}`);
+    } finally {
+      const durationMs = Date.now() - runStart;
+      try {
+        await convex.mutation(api.sync_state.recordSyncRun, {
+          source: "hygglo_poller",
+          succeeded: runSucceeded,
+          durationMs,
+          rowsUpserted: {
+            reservations: totalReservationsUpserted,
+            hygglo_messages: totalHyggloMessagesUpserted,
+            renters: totalRentersUpserted,
+            conversations: totalConversationsUpserted,
+          },
+          ...(runError ? { errorMessage: runError } : {}),
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[poll-hygglo] ${account.slug} failed: ${msg}`);
-        // Continue — Leo failure must not crash DB Cinema
-        results.push({ slug: account.slug, ok: false, error: msg });
+      } catch (syncErr) {
+        console.error("[poll-hygglo] Failed to record sync state:", syncErr);
       }
     }
 

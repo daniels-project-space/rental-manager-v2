@@ -226,6 +226,29 @@ export default defineSchema({
     v1_updated_at: v.optional(v.number()),
     imported_at: v.optional(v.number()),
     hygglo_order_id: v.optional(v.string()),   // Hygglo order ID for poll-synced reservations
+    // ── Phase 1 live-polling fields ──────────────────────────────
+    order_step: v.optional(v.union(
+      v.literal("REQUEST"),
+      v.literal("APPROVED"),
+      v.literal("FUNDS_RESERVED"),
+      v.literal("VERIFIED"),
+      v.literal("BOOKED_AFTER_VERIFIED"),
+      v.literal("DELIVERED"),
+      v.literal("RETURNED"),
+      v.literal("REVIEWED"),
+      v.literal("CANCELED"),
+      v.literal("VERIFICATION_FAILED"),
+    )),
+    pickup_time: v.optional(v.string()),           // "HH:MM" or free-text from chat extraction
+    return_time: v.optional(v.string()),
+    pickup_arrival_confirmed: v.optional(v.boolean()),
+    is_obsolete: v.optional(v.boolean()),           // mirrors Hygglo filter=obsolete
+    obsolete_reason: v.optional(v.union(
+      v.literal("owner_denied"),                    // REQUEST step never advanced
+      v.literal("renter_cancelled"),                // CANCELED step active
+      v.literal("verification_failed"),             // VERIFIED/FUNDS_RESERVED but obsolete
+      v.literal("other"),
+    )),
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
@@ -434,6 +457,36 @@ export default defineSchema({
     updated_at: v.optional(v.number()),
   }).index("by_scope", ["scope"])
     .index("by_created", ["created_at"]),
+
+  // ── Account poller state (Phase 1 live-polling) ─────────────
+  account_state: defineTable({
+    account: v.string(),                          // e.g. "dbcinema" | "leo"
+    lastSuccessfulPollAt: v.number(),
+    lastTimestamp: v.optional(v.number()),        // cursor for differential polling if ever supported
+    consecutiveFailures: v.number(),
+    mode: v.union(
+      v.literal("active"),                        // normal cadence
+      v.literal("quiet"),                         // reduced cadence (off-peak)
+      v.literal("paused"),                        // skip polling due to repeated failures
+    ),
+    modeChangedAt: v.number(),
+    lastError: v.optional(v.string()),
+  }).index("by_account", ["account"]),
+
+  // ── Sync state (freshness tracking, Phase 1 live-data upgrade) ─
+  sync_state: defineTable({
+    source: v.string(),         // e.g. "hygglo_poller"
+    lastRunAt: v.number(),       // ms since epoch
+    lastRunSucceeded: v.boolean(),
+    durationMs: v.optional(v.number()),
+    rowsUpserted: v.optional(v.object({
+      reservations: v.optional(v.number()),
+      hygglo_messages: v.optional(v.number()),
+      renters: v.optional(v.number()),
+      conversations: v.optional(v.number()),
+    })),
+    errorMessage: v.optional(v.string()),
+  }).index("by_source", ["source"]),
 
   // -- Dashboard AI Chat (Phase B-1) ----
   dashboard_chat_messages: defineTable({

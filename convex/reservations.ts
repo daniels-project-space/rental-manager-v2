@@ -176,6 +176,78 @@ export const markReturned = mutation({
 
 
 
+/**
+ * T4: listObsolete — cancelled/rejected orders (lost revenue / dead deals)
+ */
+export const listObsolete = query({
+  args: { sinceTs: v.optional(v.number()) },
+  handler: async (ctx, { sinceTs }) => {
+    const rows = await ctx.db.query("reservations").collect();
+    const filtered = rows
+      .filter((r) => r.is_obsolete === true)
+      .filter(
+        (r) =>
+          !sinceTs ||
+          (r.v1_updated_at ?? r._creationTime) >= sinceTs
+      );
+    return Promise.all(
+      filtered.map(async (r) => {
+        let renterName: string | null = null;
+        if (r.renter_id) {
+          const renter = await ctx.db.get(r.renter_id);
+          if (renter && "display_name" in renter) {
+            renterName = (renter as { display_name?: string }).display_name ?? null;
+          }
+        }
+        return {
+          order_id: r.hygglo_order_id ?? null,
+          account: r.account_slug ?? null,
+          order_step: r.order_step ?? null,
+          obsolete_reason: r.obsolete_reason ?? "other",
+          renter_name: renterName,
+          start_date: r.start_date ?? null,
+          end_date: r.end_date ?? null,
+          items: r.items ?? [],
+          last_seen_at: r.v1_updated_at ?? r._creationTime,
+        };
+      })
+    );
+  },
+});
+
+/**
+ * T4: getPipelineCounts — aggregate active order counts per order_step
+ */
+export const getPipelineCounts = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("reservations").collect();
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      if (r.is_obsolete) continue;
+      const step = r.order_step ?? "UNKNOWN";
+      counts[step] = (counts[step] ?? 0) + 1;
+    }
+    const paidSteps = [
+      "FUNDS_RESERVED",
+      "VERIFIED",
+      "BOOKED_AFTER_VERIFIED",
+      "DELIVERED",
+      "RETURNED",
+    ];
+    const paidCount = paidSteps.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+    const requestedCount = (counts["REQUEST"] ?? 0) + (counts["APPROVED"] ?? 0);
+    return {
+      perStep: counts,
+      summary: {
+        requested_unpaid: requestedCount,
+        paid_active: paidCount,
+        unknown: counts["UNKNOWN"] ?? 0,
+      },
+    };
+  },
+});
+
 // B-3: list pending rentals for dashboard chat tool
 export const listPending = query({
   args: { accountSlug: v.optional(v.string()) },

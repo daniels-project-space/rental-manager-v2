@@ -76,14 +76,14 @@ export async function POST(req: Request) {
   // 3. Fetch live business context
   let composedInstructions: string = SYSTEM_PROMPT_BASE;
   try {
-    const bundle = await convex.query(
-      api.dashboard_chat_context.getContextBundle,
-      {}
-    );
-    const ctxStr = formatContext(bundle);
+    const [bundle, syncState] = await Promise.all([
+      convex.query(api.dashboard_chat_context.getContextBundle, {}),
+      convex.query(api.sync_state.get, { source: "hygglo_poller" }),
+    ]);
+    const ctxStr = formatContext(bundle, { syncState, generatedAt: Date.now() });
     if (ctxStr.length > 0) {
       composedInstructions =
-        SYSTEM_PROMPT_BASE + "\n\n--- LIVE BUSINESS CONTEXT ---\n" + ctxStr;
+        SYSTEM_PROMPT_BASE + "\n\n" + ctxStr;
     }
   } catch (err) {
     console.error("[chat] context bundle fetch failed:", err);

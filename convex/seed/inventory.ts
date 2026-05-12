@@ -400,42 +400,6 @@ export const seedSettings = internalMutation({
   },
 });
 
-// ── SAMPLE FINGERPRINTS (3 items + spec + compat) ────────────────
-export const sampleFingerprints = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const sampleNames = ["Sony FX3", "BMPCC 6K Pro", "DJI RS3 Pro gimbal"];
-    const out = [];
-    for (const name of sampleNames) {
-      const item = await ctx.db
-        .query("items")
-        .withIndex("by_canonical_name", (q) => q.eq("name_canonical", name))
-        .first();
-      if (!item) { out.push({ name, missing: true }); continue; }
-      const spec = await ctx.db
-        .query("item_specs")
-        .withIndex("by_item", (q) => q.eq("item_id", item._id))
-        .first();
-      out.push({
-        name_canonical: item.name_canonical,
-        kind: item.kind,
-        sub_kind: item.sub_kind,
-        qty: item.qty,
-        unit_kind: item.unit_kind,
-        lens_mount: item.lens_mount,
-        battery_type: item.battery_type,
-        weight_kg: item.weight_kg,
-        replacement_cost_gbp: item.replacement_cost_gbp,
-        acquisition_cost_gbp: item.acquisition_cost_gbp,
-        spec_chars: spec?.description?.length ?? 0,
-        spec_source: spec?.source,
-        has_compatibility: !!item.compatibility,
-      });
-    }
-    return out;
-  },
-});
-
 // ── VERIFY COUNTS ───────────────────────────────────────────────
 export const verifyCounts = internalMutation({
   args: {},

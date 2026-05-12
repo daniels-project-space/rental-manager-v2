@@ -1,6 +1,77 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
+// ── order_step helpers ────────────────────────────────────────
+
+/** All recognised Hygglo order step keys. */
+const VALID_ORDER_STEPS = new Set([
+  "REQUEST",
+  "APPROVED",
+  "FUNDS_RESERVED",
+  "VERIFIED",
+  "BOOKED_AFTER_VERIFIED",
+  "DELIVERED",
+  "RETURNED",
+  "REVIEWED",
+  "CANCELED",
+  "VERIFICATION_FAILED",
+]);
+
+/** Steps where the renter has already paid. */
+export const PAID_ORDER_STEPS = [
+  "FUNDS_RESERVED",
+  "VERIFIED",
+  "BOOKED_AFTER_VERIFIED",
+  "DELIVERED",
+  "RETURNED",
+] as const;
+
+/**
+ * Extract the active order step from a raw Hygglo order object.
+ * Looks at `order.detail.steps[]` or `order._detail.steps[]`.
+ * Returns null when the step array is absent or no step is active.
+ * Logs a warning and returns undefined for unrecognised step keys.
+ */
+function extractActiveOrderStep(order: any): string | null | undefined {
+  const steps = order?.detail?.steps ?? order?._detail?.steps;
+  if (!Array.isArray(steps)) return null;
+  const active = steps.find((s: any) => s?.active === true);
+  if (!active) return null;
+  const key: string = active?.key;
+  if (!VALID_ORDER_STEPS.has(key)) {
+    console.warn(`[hygglo] Unrecognised order_step key: "${key}" — storing undefined`);
+    return undefined;
+  }
+  return key;
+}
+
+/** Priority map for order steps (higher = more advanced). */
+const STEP_PRIORITY: Record<string, number> = {
+  REVIEWED: 8,
+  RETURNED: 7,
+  DELIVERED: 6,
+  BOOKED_AFTER_VERIFIED: 5,
+  VERIFIED: 4,
+  FUNDS_RESERVED: 3,
+  APPROVED: 2,
+  REQUEST: 1,
+  CANCELED: 0,
+  VERIFICATION_FAILED: 0,
+};
+
+/**
+ * Returns true when `incomingStep` is a regression vs. `storedStep`
+ * and is NOT a terminal cancellation — meaning we should skip the update.
+ */
+function isStepRegression(stored: string | null | undefined, incoming: string | null | undefined): boolean {
+  if (!stored || !incoming) return false;
+  // CANCELED is always allowed through (terminal)
+  if (incoming === "CANCELED") return false;
+  const storedPriority = STEP_PRIORITY[stored] ?? -1;
+  const incomingPriority = STEP_PRIORITY[incoming] ?? -1;
+  return incomingPriority < storedPriority;
+}
+
 const messageArgs = v.array(
   v.object({
     thread_id: v.string(),
@@ -113,6 +184,10 @@ export const upsertOrderAsReservation = mutation({
     currency: v.optional(v.string()),
     items: v.array(orderItemArgs),
     duration_days: v.optional(v.number()),
+    /** Raw Hygglo order object — used to extract order_step. */
+    order: v.optional(v.any()),
+    /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
+    sourceFilter: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ action: "inserted" | "updated" | "skipped" }> => {
     const existing = await ctx.db
@@ -121,7 +196,38 @@ export const upsertOrderAsReservation = mutation({
       .first();
 
     const now = Date.now();
-    const fields = {
+
+    // ── order_step extraction ──────────────────────────────────
+    // null = no active step found (treat as undefined for schema compat); undefined = unrecognised key
+    const incomingStepRaw = extractActiveOrderStep(args.order);
+    const incomingStep = incomingStepRaw === null ? undefined : (incomingStepRaw as
+      | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
+      | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED"
+      | undefined);
+
+    // ── obsolete classification ────────────────────────────────
+    let obsoleteFields: {
+      is_obsolete?: boolean;
+      obsolete_reason?: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
+    } = {};
+    if (args.sourceFilter === "obsolete") {
+      let reason: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
+      if (incomingStep === "REQUEST") {
+        reason = "owner_denied";
+      } else if (incomingStep === "CANCELED") {
+        reason = "renter_cancelled";
+      } else if (
+        incomingStep === "VERIFIED" ||
+        incomingStep === "FUNDS_RESERVED"
+      ) {
+        reason = "verification_failed";
+      } else {
+        reason = "other";
+      }
+      obsoleteFields = { is_obsolete: true, obsolete_reason: reason };
+    }
+
+    const baseFields = {
       account_slug: args.account_slug,
       hygglo_order_id: args.hygglo_order_id,
       status: args.status,
@@ -137,12 +243,43 @@ export const upsertOrderAsReservation = mutation({
     if (existing) {
       // Skip rows with v1_rental_id — historical import is authoritative.
       if (existing.v1_rental_id) return { action: "skipped" };
-      await ctx.db.patch(existing._id, fields);
+
+      // ── step-priority dedup ──────────────────────────────────
+      const storedStep = (existing as any).order_step ?? null;
+      const isObsoleteUpsert = args.sourceFilter === "obsolete";
+
+      if (
+        !isObsoleteUpsert &&
+        incomingStep !== undefined &&
+        isStepRegression(storedStep, incomingStep)
+      ) {
+        // Stale filter response — don't roll back an advanced step.
+        console.info(
+          `[hygglo] Step regression skipped for order ${args.hygglo_order_id}: ` +
+            `stored="${storedStep}" incoming="${incomingStep}"`
+        );
+        // Still apply non-step fields (dates, amounts) but preserve order_step.
+        await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
+        return { action: "updated" };
+      }
+
+      const stepPatch =
+        incomingStep !== undefined ? { order_step: incomingStep } : {};
+      await ctx.db.patch(existing._id, {
+        ...baseFields,
+        ...stepPatch,
+        ...obsoleteFields,
+      });
       return { action: "updated" };
     }
 
+    // ── INSERT ────────────────────────────────────────────────
+    const stepInsert =
+      incomingStep !== undefined ? { order_step: incomingStep } : {};
     await ctx.db.insert("reservations", {
-      ...fields,
+      ...baseFields,
+      ...stepInsert,
+      ...obsoleteFields,
       created_at: now,
     });
     return { action: "inserted" };

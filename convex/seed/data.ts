@@ -346,39 +346,6 @@ export const fetchRenterByV1Id = internalQuery({
   },
 });
 
-// ── ROLLBACK (DO NOT INVOKE — provided for emergency only) ──
-// Safety rails: requires explicit `confirm: "I_UNDERSTAND_DELETE_ALL_PHASE2A_DATA"`.
-export const rollback_audit_failed_import = internalMutation({
-  args: { confirm: v.string() },
-  handler: async (ctx, { confirm }) => {
-    if (confirm !== "I_UNDERSTAND_DELETE_ALL_PHASE2A_DATA") {
-      throw new Error("rollback aborted: confirm string mismatch");
-    }
-    let deleted_renters = 0;
-    let deleted_reservations = 0;
-    let deleted_holds = 0;
-    for (const r of await ctx.db.query("renters").collect()) {
-      if (r.imported_at) { await ctx.db.delete(r._id); deleted_renters += 1; }
-    }
-    for (const r of await ctx.db.query("reservations").collect()) {
-      if (r.imported_at) { await ctx.db.delete(r._id); deleted_reservations += 1; }
-    }
-    for (const h of await ctx.db.query("calendar_holds").collect()) {
-      if (h.imported_at) { await ctx.db.delete(h._id); deleted_holds += 1; }
-    }
-    await ctx.db.insert("audit_log", {
-      table_name: "phase2a_rollback",
-      actor: "phase2a-rollback",
-      op: "delete",
-      count: deleted_renters + deleted_reservations + deleted_holds,
-      source_file: "convex/seed/data.ts",
-      note: `renters=${deleted_renters} reservations=${deleted_reservations} holds=${deleted_holds}`,
-      ts: now(),
-    });
-    return { deleted_renters, deleted_reservations, deleted_holds };
-  },
-});
-
 // ── BACKFILL: reservation items ──────────────────────────────
 // Updates existing reservation rows (by v1_rental_id) to set items[].
 // Called by scripts/backfill-reservation-items.mjs.

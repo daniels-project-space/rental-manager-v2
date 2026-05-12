@@ -3,6 +3,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
+import { wrap, type SyncStateDoc } from "../lib/tool-envelope";
 
 function getConvex(): ConvexHttpClient {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -15,6 +16,14 @@ function toError(err: unknown): string {
   return String(err);
 }
 
+async function getSyncState(convex: ConvexHttpClient): Promise<SyncStateDoc | null> {
+  try {
+    return await convex.query(anyApi.sync_state.get, { source: "hygglo_poller" });
+  } catch {
+    return null;
+  }
+}
+
 // Group A: Read-only, all data in Convex
 
 export const getDashboardStats = createTool({
@@ -24,24 +33,31 @@ export const getDashboardStats = createTool({
   execute: async () => {
     try {
       const convex = getConvex();
-      const stats = await convex.query(anyApi.dashboard.getSummary, { accountSlug: null });
-      return {
-        ok: true as const,
-        today_revenue: stats.todayRevenue,
-        today_rental_count: stats.todayRentalCount,
-        weekly_revenue: stats.weeklyRevenue,
-        monthly_revenue: stats.monthlyRevenue,
-        projected_month_revenue: stats.projectedMonthRevenue,
-        active_rentals: stats.activeRentalsCount,
-        ongoing: stats.ongoingCount,
-        upcoming: stats.upcomingCount,
-        overdue: stats.overdueCount,
-        items_out: stats.itemsOut,
-        available_items: stats.availableItems,
-        out_of_stock_count: stats.outOfStockCount,
-        denial_rate: stats.denialRate,
-        denied_revenue_90d: stats.deniedRevenue,
-      };
+      const [stats, syncState] = await Promise.all([
+        convex.query(anyApi.dashboard.getSummary, { accountSlug: null }),
+        getSyncState(convex),
+      ]);
+      return wrap({
+        data: {
+          ok: true as const,
+          today_revenue: stats.todayRevenue,
+          today_rental_count: stats.todayRentalCount,
+          weekly_revenue: stats.weeklyRevenue,
+          monthly_revenue: stats.monthlyRevenue,
+          projected_month_revenue: stats.projectedMonthRevenue,
+          active_rentals: stats.activeRentalsCount,
+          ongoing: stats.ongoingCount,
+          upcoming: stats.upcomingCount,
+          overdue: stats.overdueCount,
+          items_out: stats.itemsOut,
+          available_items: stats.availableItems,
+          out_of_stock_count: stats.outOfStockCount,
+          denial_rate: stats.denialRate,
+          denied_revenue_90d: stats.deniedRevenue,
+        },
+        source: "convex.dashboard.getSummary",
+        syncState,
+      });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -58,7 +74,10 @@ export const lookupPricing = createTool({
   execute: async (input: { itemName: string; days?: number }) => {
     try {
       const convex = getConvex();
-      const items = await convex.query(anyApi.pricing_catalog.lookup, { item_name: input.itemName });
+      const [items, syncState] = await Promise.all([
+        convex.query(anyApi.pricing_catalog.lookup, { item_name: input.itemName }),
+        getSyncState(convex),
+      ]);
       if (!items || items.length === 0) return { ok: false as const, error: "item_not_found" };
       const row = items[0];
       const rate: number = row.daily_price_min;
@@ -67,14 +86,18 @@ export const lookupPricing = createTool({
       if (days >= 7) total = rate * 5;
       else if (days >= 3) total = rate * 2.5;
       else total = rate * days;
-      return {
-        ok: true as const,
-        item: row.item_name_canonical,
-        daily_rate: rate,
-        days,
-        total: Math.round(total * 100) / 100,
-        note: days >= 3 ? "Hygglo multi-day discount applied" : undefined,
-      };
+      return wrap({
+        data: {
+          ok: true as const,
+          item: row.item_name_canonical,
+          daily_rate: rate,
+          days,
+          total: Math.round(total * 100) / 100,
+          note: days >= 3 ? "Hygglo multi-day discount applied" : undefined,
+        },
+        source: "convex.pricing_catalog",
+        syncState,
+      });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -92,11 +115,15 @@ export const checkAvailability = createTool({
   execute: async (input: { itemName: string; startDate: string; endDate: string }) => {
     try {
       const convex = getConvex();
-      return await convex.query(anyApi.items.checkAvailability, {
-        item_name: input.itemName,
-        start_date: input.startDate,
-        end_date: input.endDate,
-      });
+      const [data, syncState] = await Promise.all([
+        convex.query(anyApi.items.checkAvailability, {
+          item_name: input.itemName,
+          start_date: input.startDate,
+          end_date: input.endDate,
+        }),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.items.checkAvailability", syncState });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -110,7 +137,11 @@ export const getPendingRentals = createTool({
   execute: async () => {
     try {
       const convex = getConvex();
-      return await convex.query(anyApi.reservations.listPending, {});
+      const [data, syncState] = await Promise.all([
+        convex.query(anyApi.reservations.listPending, {}),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.reservations.listPending", syncState });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -124,17 +155,22 @@ export const getBusinessIntelligence = createTool({
   execute: async () => {
     try {
       const convex = getConvex();
-      const [sell, price, insights] = await Promise.all([
+      const [sell, price, insights, syncState] = await Promise.all([
         convex.query(anyApi.items.getSellRecommendations, { accountSlug: null }),
         convex.query(anyApi.items.getPriceRecommendations, { accountSlug: null }),
         convex.query(anyApi.ai_insights.getInsights, { accountSlug: null }),
+        getSyncState(convex),
       ]);
-      return {
-        ok: true as const,
-        underutilizedItems: (sell as unknown[]).slice(0, 10),
-        priceSuggestions: (price as unknown[]).slice(0, 10),
-        insights,
-      };
+      return wrap({
+        data: {
+          ok: true as const,
+          underutilizedItems: (sell as unknown[]).slice(0, 10),
+          priceSuggestions: (price as unknown[]).slice(0, 10),
+          insights,
+        },
+        source: "convex.ai_insights+items",
+        syncState,
+      });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -154,6 +190,7 @@ export const checkCompatibility = createTool({
       const convex = getConvex();
       const { items } = input;
       if (items.length < 2) return { ok: false as const, error: "Provide at least 2 items" };
+      const syncState = await getSyncState(convex);
       const results = [];
       for (let i = 0; i < items.length; i++) {
         for (let j = i + 1; j < items.length; j++) {
@@ -166,16 +203,20 @@ export const checkCompatibility = createTool({
       }
       const conflicts = results.filter((r) => !r.compatible);
       const compatible = results.filter((r) => r.compatible);
-      return {
-        ok: true as const,
-        compatible_pairs: compatible.length,
-        conflict_pairs: conflicts.length,
-        results,
-        summary:
-          conflicts.length > 0
-            ? "CONFLICTS: " + conflicts.map((r) => r.pair.join(" + ") + " -- " + r.reason).join("; ")
-            : "All pairs compatible",
-      };
+      return wrap({
+        data: {
+          ok: true as const,
+          compatible_pairs: compatible.length,
+          conflict_pairs: conflicts.length,
+          results,
+          summary:
+            conflicts.length > 0
+              ? "CONFLICTS: " + conflicts.map((r) => r.pair.join(" + ") + " -- " + r.reason).join("; ")
+              : "All pairs compatible",
+        },
+        source: "convex.items.checkCompat",
+        syncState,
+      });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -191,16 +232,23 @@ export const readConversation = createTool({
   execute: async (input: { search: string }) => {
     try {
       const convex = getConvex();
-      const messages = await convex.query(anyApi.hygglo.listByThread, { thread_id: input.search });
+      const [messages, syncState] = await Promise.all([
+        convex.query(anyApi.hygglo.listByThread, { thread_id: input.search }),
+        getSyncState(convex),
+      ]);
       if ((messages as unknown[]).length === 0) {
         return { ok: false as const, error: "No messages found for thread: " + input.search };
       }
-      return {
-        ok: true as const,
-        thread_id: input.search,
-        message_count: (messages as unknown[]).length,
-        messages,
-      };
+      return wrap({
+        data: {
+          ok: true as const,
+          thread_id: input.search,
+          message_count: (messages as unknown[]).length,
+          messages,
+        },
+        source: "convex.hygglo_messages",
+        syncState,
+      });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -215,32 +263,37 @@ export const getDailyBriefing = createTool({
     try {
       const convex = getConvex();
       const today = new Date().toISOString().slice(0, 10);
-      const [stats, schedule, pending, activity] = await Promise.all([
+      const [stats, schedule, pending, activity, syncState] = await Promise.all([
         convex.query(anyApi.dashboard.getSummary, { accountSlug: null }),
         convex.query(anyApi.calendar.getCalendarStrip, { accountSlug: null, startDate: today, days: 3 }),
         convex.query(anyApi.reservations.listPending, {}),
         convex.query(anyApi.reservations.getRecentActivity, { accountSlug: null, limit: 5 }),
+        getSyncState(convex),
       ]);
       const attentionNeeded: string[] = [];
       if ((pending as { count: number }).count > 0)
         attentionNeeded.push((pending as { count: number }).count + " pending rental(s) need review");
       if ((stats as { overdueCount: number }).overdueCount > 0)
         attentionNeeded.push((stats as { overdueCount: number }).overdueCount + " overdue return(s)");
-      return {
-        ok: true as const,
-        date: today,
-        summary: {
-          today_revenue: (stats as { todayRevenue: number }).todayRevenue,
-          monthly_revenue: (stats as { monthlyRevenue: number }).monthlyRevenue,
-          projected: (stats as { projectedMonthRevenue: number }).projectedMonthRevenue,
-          active_rentals: (stats as { activeRentalsCount: number }).activeRentalsCount,
-          items_out: (stats as { itemsOut: number }).itemsOut,
+      return wrap({
+        data: {
+          ok: true as const,
+          date: today,
+          summary: {
+            today_revenue: (stats as { todayRevenue: number }).todayRevenue,
+            monthly_revenue: (stats as { monthlyRevenue: number }).monthlyRevenue,
+            projected: (stats as { projectedMonthRevenue: number }).projectedMonthRevenue,
+            active_rentals: (stats as { activeRentalsCount: number }).activeRentalsCount,
+            items_out: (stats as { itemsOut: number }).itemsOut,
+          },
+          schedule_next_3_days: schedule,
+          pending_rentals: pending,
+          recent_activity: activity,
+          attention_needed: attentionNeeded,
         },
-        schedule_next_3_days: schedule,
-        pending_rentals: pending,
-        recent_activity: activity,
-        attention_needed: attentionNeeded,
-      };
+        source: "convex.dashboard+calendar+reservations",
+        syncState,
+      });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -256,7 +309,11 @@ export const searchRules = createTool({
   execute: async (input: { query: string }) => {
     try {
       const convex = getConvex();
-      return await convex.query(anyApi.rules.search, { query: input.query });
+      const [data, syncState] = await Promise.all([
+        convex.query(anyApi.rules.search, { query: input.query }),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.rules", syncState });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -277,7 +334,11 @@ export const updateRule = createTool({
     }
     try {
       const convex = getConvex();
-      return await convex.mutation(anyApi.rules.update, { id: input.ruleId, new_content: input.value });
+      const [data, syncState] = await Promise.all([
+        convex.mutation(anyApi.rules.update, { id: input.ruleId, new_content: input.value }),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.rules", syncState });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -291,7 +352,11 @@ export const searchMemories = createTool({
   execute: async (input: { query: string }) => {
     try {
       const convex = getConvex();
-      return await convex.query(anyApi.memories.search, { query: input.query });
+      const [data, syncState] = await Promise.all([
+        convex.query(anyApi.memories.search, { query: input.query }),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.memories", syncState });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -309,11 +374,15 @@ export const updateMemory = createTool({
   execute: async (input: { memoryId?: string; newContent: string; scope?: string }) => {
     try {
       const convex = getConvex();
-      return await convex.mutation(anyApi.memories.upsert, {
-        id: input.memoryId,
-        scope: input.scope ?? "general",
-        content: input.newContent,
-      });
+      const [data, syncState] = await Promise.all([
+        convex.mutation(anyApi.memories.upsert, {
+          id: input.memoryId,
+          scope: input.scope ?? "general",
+          content: input.newContent,
+        }),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.memories", syncState });
     } catch (err) {
       return { ok: false as const, error: toError(err) };
     }
@@ -329,13 +398,67 @@ export const sendCorrection = createTool({
     rentalId: z.string(),
     message: z.string(),
   }),
-  execute: async () => ({
-    ok: false as const,
-    blocked: true as const,
-    reason: "ALLOW_HYGGLO_SEND=false (master safety rail). Cannot send to renter.",
-    message:
-      "Read-only mode is active. To compose a correction, paste suggested text here and the operator will send manually.",
+  execute: async () =>
+    wrap({
+      data: {
+        ok: false as const,
+        blocked: true as const,
+        reason: "ALLOW_HYGGLO_SEND=false (master safety rail). Cannot send to renter.",
+        message:
+          "Read-only mode is active. To compose a correction, paste suggested text here and the operator will send manually.",
+      },
+      source: "stub",
+      syncState: null,
+      extraCaveats: ["This tool is currently a stub."],
+    }),
+});
+
+export const getObsoleteOrders = createTool({
+  id: "get_obsolete_orders",
+  description:
+    "Get cancelled or rejected orders (lost revenue / dead deals). Use when user asks about cancellations, lost revenue, what went obsolete, deals that fell through.",
+  inputSchema: z.object({
+    sinceDays: z
+      .number()
+      .optional()
+      .describe(
+        "Only return orders updated within the last N days (default: all-time)"
+      ),
   }),
+  execute: async (input: { sinceDays?: number }) => {
+    try {
+      const convex = getConvex();
+      const sinceTs = input.sinceDays
+        ? Date.now() - input.sinceDays * 24 * 60 * 60 * 1000
+        : undefined;
+      const [data, syncState] = await Promise.all([
+        convex.query(anyApi.reservations.listObsolete, { sinceTs }),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.reservations.listObsolete", syncState });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
+  },
+});
+
+export const getOrderPipeline = createTool({
+  id: "get_order_pipeline",
+  description:
+    "Get counts of active orders per order_step. Useful for 'how many requests are waiting?', 'pipeline status', 'where are we in the funnel?', distinguishing requested-but-unpaid from paid-active.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    try {
+      const convex = getConvex();
+      const [data, syncState] = await Promise.all([
+        convex.query(anyApi.reservations.getPipelineCounts, {}),
+        getSyncState(convex),
+      ]);
+      return wrap({ data, source: "convex.reservations.getPipelineCounts", syncState });
+    } catch (err) {
+      return { ok: false as const, error: toError(err) };
+    }
+  },
 });
 
 // Export map
@@ -354,4 +477,6 @@ export const dashboardTools = {
   update_rule: updateRule,
   search_memories: searchMemories,
   update_memory: updateMemory,
+  get_obsolete_orders: getObsoleteOrders,
+  get_order_pipeline: getOrderPipeline,
 };

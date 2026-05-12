@@ -18,10 +18,11 @@ function monthBounds(offsetMonths: number) {
 }
 
 export type TodayScheduleEntry = {
-  type: "pickup" | "return";
+  type: "pickup" | "return" | "same_day";
   items: string[];
   renterName: string;
   accountSlug: string | undefined;
+  orderId: string;
 };
 
 export type UpcomingBooking = {
@@ -83,7 +84,6 @@ export type ContextBundle = {
     last6Months: MonthRevenue[];
   };
   bundlePricing: BundlePricingEntry[];
-  competitorIntelligence: null;
 };
 
 export const getContextBundle = query({
@@ -93,12 +93,11 @@ export const getContextBundle = query({
     const in14d = addDays(today, 14);
 
     // load raw data in parallel
-    const [allReservations, allRenters, bundleRows, bundleItemRows, pricingRows, histRevRows] =
+    const [allReservations, allRenters, bundleRows, pricingRows, histRevRows] =
       await Promise.all([
         ctx.db.query("reservations").collect(),
         ctx.db.query("renters").collect(),
         ctx.db.query("bundles").collect(),
-        ctx.db.query("bundle_items").collect(),
         ctx.db.query("pricing_catalog").collect(),
         ctx.db.query("historical_revenue").collect(),
       ]);
@@ -120,11 +119,13 @@ export const getContextBundle = query({
         ? (renterNameById.get(r.renter_id as string) ?? "?")
         : "?";
       const items = (r.items ?? []).map((i) => i.item_name);
-      if (r.start_date === today) {
-        todayEntries.push({ type: "pickup", items, renterName, accountSlug: r.account_slug });
-      }
-      if (r.end_date === today) {
-        todayEntries.push({ type: "return", items, renterName, accountSlug: r.account_slug });
+      const orderId: string = (r.hygglo_order_id as string | undefined) ?? (r._id as string);
+      if (r.start_date === today && r.end_date === today) {
+        todayEntries.push({ type: "same_day", items, renterName, accountSlug: r.account_slug, orderId });
+      } else if (r.start_date === today) {
+        todayEntries.push({ type: "pickup", items, renterName, accountSlug: r.account_slug, orderId });
+      } else if (r.end_date === today) {
+        todayEntries.push({ type: "return", items, renterName, accountSlug: r.account_slug, orderId });
       }
     }
 
@@ -336,8 +337,6 @@ export const getContextBundle = query({
       }))
       .sort((a, b) => b.daily_max - a.daily_max);
 
-    void bundleItemRows; // loaded for future cross-ref; not used in this aggregation pass
-
     return {
       todaySchedule: { date: today, entries: todayEntries },
       blacklist: { count: blacklisted.length, names: blacklistNames },
@@ -365,7 +364,6 @@ export const getContextBundle = query({
         last6Months: last6,
       },
       bundlePricing,
-      competitorIntelligence: null,
     };
   },
 });

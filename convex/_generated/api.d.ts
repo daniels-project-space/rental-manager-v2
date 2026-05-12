@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
@@ -31,6 +32,7 @@ import type * as seed_data from "../seed/data.js";
 import type * as seed_inventory from "../seed/inventory.js";
 import type * as seed_settings from "../seed/settings.js";
 import type * as settings from "../settings.js";
+import type * as sync_state from "../sync_state.js";
 
 import type {
   ApiFromModules,
@@ -39,6 +41,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  account_state: typeof account_state;
   accounts: typeof accounts;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
@@ -62,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   "seed/inventory": typeof seed_inventory;
   "seed/settings": typeof seed_settings;
   settings: typeof settings;
+  sync_state: typeof sync_state;
 }>;
 
 /**
