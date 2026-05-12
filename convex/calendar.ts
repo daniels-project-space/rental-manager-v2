@@ -1,4 +1,4 @@
-import { query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc } from "./_generated/dataModel";
 
@@ -112,6 +112,102 @@ export const getCalendarStrip = query({
 /**
  * W08 Weekly Calendar Overlay
  */
+// Batch insert/update calendar holds
+export const upsertHoldsBatch = mutation({
+  args: {
+    holds: v.array(v.object({
+      item_id: v.id("items"),
+      date: v.string(),                   // YYYY-MM-DD
+      reservation_id: v.id("reservations"),
+      account_slug: v.string(),
+      status: v.union(v.literal("confirmed"), v.literal("completed")),
+      qty_held: v.optional(v.number()),
+    })),
+  },
+  handler: async (ctx, { holds }) => {
+    let inserted = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const h of holds) {
+      // by_item_date index: ["item_id", "date"]
+      const existing = await ctx.db
+        .query("calendar_holds")
+        .withIndex("by_item_date", q => q.eq("item_id", h.item_id).eq("date", h.date))
+        .first();
+      if (!existing) {
+        await ctx.db.insert("calendar_holds", {
+          item_id: h.item_id,
+          reservation_id: h.reservation_id,
+          account_slug: h.account_slug,
+          date: h.date,
+          status: h.status,
+          qty_held: h.qty_held,
+          created_at: Date.now(),
+        });
+        inserted++;
+      } else if (existing.reservation_id === h.reservation_id) {
+        // same reservation, idempotent — only update if status/qty changed
+        if (existing.status !== h.status || existing.qty_held !== h.qty_held) {
+          await ctx.db.patch(existing._id, {
+            status: h.status,
+            qty_held: h.qty_held,
+          });
+          updated++;
+        } else {
+          skipped++;
+        }
+      } else {
+        // different reservation — last-writer wins for now (could collect overbookings later)
+        await ctx.db.patch(existing._id, {
+          reservation_id: h.reservation_id,
+          status: h.status,
+          qty_held: h.qty_held,
+        });
+        updated++;
+      }
+    }
+    return { inserted, updated, skipped, total: holds.length };
+  },
+});
+
+// Delete holds for reservations that have moved to cancelled/obsolete
+export const deleteStaleHolds = mutation({
+  args: {
+    reservation_ids: v.array(v.id("reservations")),
+  },
+  handler: async (ctx, { reservation_ids }) => {
+    let deleted = 0;
+    for (const rid of reservation_ids) {
+      const holds = await ctx.db
+        .query("calendar_holds")
+        .withIndex("by_reservation", q => q.eq("reservation_id", rid))
+        .collect();
+      for (const h of holds) {
+        await ctx.db.delete(h._id);
+        deleted++;
+      }
+    }
+    return { deleted };
+  },
+});
+
+// Diagnostic query — count of holds (used by verification step in Wave 3)
+export const getHoldsCount = query({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("calendar_holds").collect();
+    const byAccount: Record<string, number> = {};
+    const byStatus: Record<string, number> = {};
+    for (const h of all) {
+      const acc = h.account_slug ?? "unknown";
+      byAccount[acc] = (byAccount[acc] ?? 0) + 1;
+      const st = h.status ?? "unknown";
+      byStatus[st] = (byStatus[st] ?? 0) + 1;
+    }
+    return { total: all.length, byAccount, byStatus };
+  },
+});
+
 export const getWeeklyCalendar = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),

@@ -76,6 +76,7 @@ export default defineSchema({
     // Phase 1.B.3: per-item Hygglo cancellation policy text (scraped from listing bottom every 60d).
     // null/undefined for now until Phase 3 Stagehand scrape populates.
     cancellation_policy: v.optional(v.string()),
+    aliases: v.optional(v.array(v.string())),        // alternate names imported from v1
     created_at: v.number(),
     updated_at: v.number(),
   })
@@ -249,6 +250,9 @@ export default defineSchema({
       v.literal("verification_failed"),             // VERIFIED/FUNDS_RESERVED but obsolete
       v.literal("other"),
     )),
+    // Phase 3 calendar integration fields
+    pickup_at: v.optional(v.number()),              // ms epoch — actual handover start
+    return_at: v.optional(v.number()),              // ms epoch — actual handover end
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
@@ -278,6 +282,17 @@ export default defineSchema({
     .index("by_item_date", ["item_id", "date"])
     .index("by_reservation", ["reservation_id"])
     .index("by_account_date", ["account_slug", "date"]),
+
+  // ── Owner unavailability blocks (Phase 3 calendar) ───────────
+  owner_unavailability: defineTable({
+    item_id: v.id("items"),
+    start_date: v.string(),       // YYYY-MM-DD inclusive
+    end_date: v.string(),
+    reason: v.optional(v.string()),
+    created_by: v.optional(v.string()),
+    created_at: v.number(),
+  })
+    .index("by_item_date", ["item_id", "start_date"]),
 
   // ── Phase 2.A import audit (NEW table) ──────────────────────
   import_audit: defineTable({

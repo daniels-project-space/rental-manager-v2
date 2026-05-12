@@ -1,0 +1,197 @@
+/**
+ * seed-items-from-v1-master-inventory.mjs
+ *
+ * Reads MASTER_INVENTORY from v1's item-matcher.ts and seeds v2's items table
+ * via the Convex seedItems internalMutation (called via HTTP API).
+ *
+ * Required env: CONVEX_DEPLOY_KEY_RMV2 (fetched from project-hub vault)
+ *
+ * Usage:
+ *   node scripts/historical/seed-items-from-v1-master-inventory.mjs [--dry-run]
+ *
+ * Exit codes:
+ *   0 = success (or already seeded)
+ *   1 = setup error
+ *   2 = table already non-empty (mutation refused) — Daniel must decide
+ *   3 = mutation HTTP error
+ */
+
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
+const CONVEX_URL = 'https://exciting-lion-29.convex.cloud';
+const V1_ITEM_MATCHER = '/home/ubuntu/rental-manager/src/utils/item-matcher.ts';
+const VAULT_URL = 'https://fantastic-roadrunner-485.convex.cloud/api/query';
+const DRY_RUN = process.argv.includes('--dry-run');
+
+function log(...args) {
+  process.stderr.write(args.join(' ') + '\n');
+}
+
+// ── Step 1: Fetch CONVEX_DEPLOY_KEY from vault ────────────────────────────
+log('[seed-items] Step 1: Fetching CONVEX_DEPLOY_KEY_RMV2 from vault...');
+let deployKey;
+try {
+  const vaultRes = JSON.parse(
+    execSync(
+      `curl -sS '${VAULT_URL}' -H 'Content-Type: application/json' ` +
+        `-d '{"path":"secrets:listByService","args":{"service":"convex"},"format":"json"}'`,
+      { encoding: 'utf8' }
+    )
+  );
+  if (vaultRes.status !== 'success') {
+    throw new Error(`Vault query failed: ${JSON.stringify(vaultRes)}`);
+  }
+  const rec = (vaultRes.value ?? []).find((r) => r.keyName === 'CONVEX_DEPLOY_KEY_RMV2');
+  if (!rec) throw new Error('CONVEX_DEPLOY_KEY_RMV2 not found in vault');
+  deployKey = rec.value;
+  log('[seed-items] Deploy key fetched (length=' + deployKey.length + ')');
+} catch (e) {
+  process.stderr.write('[seed-items] ERROR: ' + e.message + '\n');
+  process.exit(1);
+}
+
+// ── Step 2: Parse MASTER_INVENTORY from v1 TS file ───────────────────────
+log('[seed-items] Step 2: Parsing MASTER_INVENTORY from v1...');
+const src = readFileSync(V1_ITEM_MATCHER, 'utf8');
+
+// Extract the literal object body between the first { after MASTER_INVENTORY: Record
+const startMarker = 'MASTER_INVENTORY: Record<string, number> = {';
+const startIdx = src.indexOf(startMarker);
+if (startIdx === -1) {
+  process.stderr.write('[seed-items] ERROR: MASTER_INVENTORY not found in ' + V1_ITEM_MATCHER + '\n');
+  process.exit(1);
+}
+
+// Find the matching closing brace
+let depth = 0;
+let bodyStart = src.indexOf('{', startIdx + startMarker.length - 1);
+let bodyEnd = bodyStart;
+for (let i = bodyStart; i < src.length; i++) {
+  if (src[i] === '{') depth++;
+  else if (src[i] === '}') {
+    depth--;
+    if (depth === 0) { bodyEnd = i; break; }
+  }
+}
+
+const body = src.slice(bodyStart + 1, bodyEnd);
+
+// Parse lines like: 'item name': qty, (with optional // comment)
+const inventory = [];
+const lineRe = /^\s*'([^']+)'\s*:\s*(\d+)\s*,?/;
+for (const line of body.split('\n')) {
+  const m = lineRe.exec(line);
+  if (m) {
+    inventory.push({ name: m[1], qty: parseInt(m[2], 10) });
+  }
+}
+
+log(`[seed-items] Parsed ${inventory.length} items from MASTER_INVENTORY`);
+if (inventory.length !== 71) {
+  process.stderr.write(`[seed-items] WARNING: expected 71 items, got ${inventory.length}\n`);
+}
+
+// ── Step 3: Build seed payload ────────────────────────────────────────────
+log('[seed-items] Step 3: Building seed payload...');
+
+/**
+ * Infer kind/sub_kind/unit_kind from item name.
+ * These are best-effort; all optional fields are omitted (undefined → not sent).
+ */
+function inferMeta(name) {
+  const n = name.toLowerCase();
+
+  // kind
+  let kind = 'accessory';
+  if (/\b(fx3|a7|bmpcc|fuji|x100|camera body)\b/.test(n)) kind = 'camera_body';
+  else if (/\b(lens|mm f|fisheye|anamorphic)\b/.test(n)) kind = 'lens';
+  else if (/\b(light|softbox|reflector|nanlite|ambitful|led|flash)\b/.test(n)) kind = 'lighting';
+  else if (/\b(battery|batteries|v-mount|np-f|np-fz|anker|power station|gimbal battery)\b/.test(n)) kind = 'power';
+  else if (/\b(gimbal|slider|tripod|c-stand|monopod|shoulder|follow focus|tilta)\b/.test(n)) kind = 'support';
+  else if (/\b(monitor|atomos|ninja|hollyland|transmitter)\b/.test(n)) kind = 'monitor';
+  else if (/\b(mic|microphone|rode|sennheiser|audio|boom|dji mic|dji wireless)\b/.test(n)) kind = 'audio';
+  else if (/\b(drone|mavic|mini 4|action|osmo|gopro)\b/.test(n)) kind = 'action_cam';
+  else if (/\b(dj|controller|speaker|jbl|partybox)\b/.test(n)) kind = 'av';
+  else if (/\b(smoke|hazer|fogger|ninja hazer|ninja pro)\b/.test(n)) kind = 'effects';
+  else if (/\b(filter|nd filter|cinebloom|mist)\b/.test(n)) kind = 'filter';
+  else if (/\b(card|256gb|cf express)\b/.test(n)) kind = 'media';
+  else if (/\b(mount|adapter|pl to)\b/.test(n)) kind = 'adapter';
+  else if (/\b(suction|cups)\b/.test(n)) kind = 'mount';
+  else if (/\b(cage|rig|smallrig)\b/.test(n)) kind = 'rig';
+
+  const unit_kind = 'unit';
+
+  return { kind, unit_kind };
+}
+
+function toSlug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+const items = inventory.map(({ name, qty }) => {
+  const { kind, unit_kind } = inferMeta(name);
+  return {
+    name_canonical: name,
+    name_input: name,
+    slug: toSlug(name),
+    kind,
+    qty,
+    unit_kind,
+    is_marketing_only: false,
+    status: 'active',
+  };
+});
+
+if (DRY_RUN) {
+  log('[seed-items] DRY-RUN — payload built, not sending. Sample:');
+  log(JSON.stringify(items.slice(0, 3), null, 2));
+  console.log(`DRY_RUN: would seed ${items.length} items`);
+  process.exit(0);
+}
+
+// ── Step 4: Call seedItems via Convex HTTP API ────────────────────────────
+log('[seed-items] Step 4: POSTing to Convex seedItems mutation...');
+
+const body2 = JSON.stringify({
+  path: 'seed/inventory:seedItems',
+  args: { items },
+  format: 'json',
+});
+
+let result;
+try {
+  const raw = execSync(
+    `curl -sS -X POST '${CONVEX_URL}/api/mutation' ` +
+      `-H 'Content-Type: application/json' ` +
+      `-H 'Authorization: Convex ${deployKey}' ` +
+      `--data-binary @-`,
+    {
+      encoding: 'utf8',
+      input: body2,
+      maxBuffer: 10 * 1024 * 1024,
+    }
+  );
+  result = JSON.parse(raw);
+} catch (e) {
+  process.stderr.write('[seed-items] CURL ERROR: ' + e.message + '\n');
+  process.exit(3);
+}
+
+log('[seed-items] Response: ' + JSON.stringify(result));
+
+if (result.status !== 'success') {
+  process.stderr.write('[seed-items] ERROR: mutation failed — ' + JSON.stringify(result) + '\n');
+  process.exit(3);
+}
+
+const val = result.value ?? {};
+
+if (val.skipped) {
+  process.stderr.write(`[seed-items] REFUSED: table already has ${val.count} rows. Exit 2.\n`);
+  console.log(`SEED_REFUSED: items table already has ${val.count} rows. Daniel must clear+reseed or add upsert path.`);
+  process.exit(2);
+}
+
+console.log(`Seeded ${val.count} items (target: 71)`);
+log(`[seed-items] Done. count=${val.count}`);

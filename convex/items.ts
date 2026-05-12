@@ -1,5 +1,6 @@
-import { query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { PAID_ORDER_STEPS } from "./hygglo";
 
 /**
  * W10 Item Revenue Panel - ranked list by revenue over a period
@@ -425,94 +426,185 @@ export const listActive = query({
 });
 
 // B-3: availability check for dashboard chat tool
+// v2 algorithm: indexed calendar_holds reads + reservation cross-check (transition safety)
+// NOTE: 1-hour buffer is deferred — day-level model; same-day return + pickup is
+// impossible in a binary day-level system. Buffer deferred to future time-of-day task.
 export const checkAvailability = query({
   args: {
     item_name: v.string(),
     start_date: v.string(),
     end_date: v.string(),
+    account_slug: v.optional(v.string()),
   },
-  handler: async (ctx, { item_name, start_date, end_date }) => {
+  handler: async (ctx, { item_name, start_date, end_date, account_slug }) => {
     function norm(s: string): string {
       return s.toLowerCase().replace(/[^a-z0-9]/g, "");
     }
     const q = norm(item_name);
 
-    // Resolve canonical item
+    // ── Step 1: Resolve item ──────────────────────────────────────────────
+    // Case-insensitive match on name_canonical; fallback to aliases[].
+    // NOTE: items table has no account_slug column (items are shared across accounts
+    // in v2 schema). account_slug is echoed in output only for caller context.
     const allItems = await ctx.db.query("items").collect();
     let best: typeof allItems[0] | null = null;
     let bestScore = 0;
     for (const i of allItems) {
       if (i.status !== "active" || i.is_marketing_only) continue;
       const cn = norm(i.name_canonical);
-      const score = cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
+      let score = cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
+      if (score === 0) {
+        // Alias fallback: any alias that matches bumps score to 1
+        const aliasHit = (i.aliases ?? []).some((a) => {
+          const an = norm(a);
+          return an === q || an.includes(q) || (q.includes(an) && an.length > 3);
+        });
+        if (aliasHit) score = 1;
+      }
       if (score > bestScore) { best = i; bestScore = score; }
     }
-    if (!best) return { ok: false as const, error: "item_not_found" as const };
+    if (!best) return { ok: false as const, error: "Item not found" as const, item_name };
 
     const item = best;
-    const qty_total = item.qty;
+    const qty_total = item.qty ?? 1;
 
-    // Count overlapping confirmed reservations.
-    // NOTE: Full collect (no index filter) is intentional. The by_start_date index with
-    // gte(start_date) would miss reservations that START before the query window but END
-    // within it (e.g. a May 10-17 booking is invisible to a May 15-18 query). At current
-    // scale (~138 rows) a full collect is correct and fast enough.
-    const paidOrderSteps = new Set([
-      "FUNDS_RESERVED",
-      "VERIFIED",
-      "BOOKED_AFTER_VERIFIED",
-      "DELIVERED",
-      "RETURNED",
-    ]);
-    const allReservations = await ctx.db.query("reservations").collect();
-    const overlapRes = allReservations.filter((r) => {
-      if (r.is_obsolete === true) return false;
-      if (!r.start_date || !r.end_date) return false;
-      // Overlap predicate: strings are YYYY-MM-DD so lexical compare is correct
-      if (r.start_date > end_date) return false;
-      if (r.end_date < start_date) return false;
-      // Status guard: only confirmed bookings block availability
-      const isConfirmed =
-        (r.order_step && paidOrderSteps.has(r.order_step)) ||
-        (!r.order_step && r.status === "confirmed");
-      if (!isConfirmed) return false;
-      return (r.items ?? []).some((ri) => norm(ri.item_name).includes(norm(item.name_canonical)) || norm(item.name_canonical).includes(norm(ri.item_name).slice(0, 6)));
-    });
+    // ── Step 2: Generate inclusive date range (YYYY-MM-DD strings) ───────
+    const dates: string[] = [];
+    const cursor = new Date(start_date + "T00:00:00Z");
+    const endD = new Date(end_date + "T00:00:00Z");
+    while (cursor <= endD) {
+      dates.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
 
-    // Count calendar_holds in range
-    const allHolds = await ctx.db.query("calendar_holds").collect();
-    const overlapHolds = allHolds.filter((h) => {
-      if (!h.date) return false;
-      if (h.date < start_date || h.date > end_date) return false;
-      if (h.status !== "confirmed") return false;
-      return h.item_id === item._id;
-    });
+    // ── Step 3: calendar_holds per date — indexed reads ───────────────────
+    // status ∈ {"confirmed","completed"} mirrors PAID_ORDER_STEPS derivation.
+    const HOLD_STATUSES = new Set(["confirmed", "completed"]);
+    const holdCountByDate = new Map<string, number>();
+    for (const date of dates) {
+      const holds = await ctx.db
+        .query("calendar_holds")
+        .withIndex("by_item_date", (q2) =>
+          q2.eq("item_id", item._id).eq("date", date)
+        )
+        .collect();
+      const filtered = holds.filter((h) => h.status && HOLD_STATUSES.has(h.status));
+      holdCountByDate.set(date, filtered.reduce((sum, h) => sum + (h.qty_held ?? 1), 0));
+    }
 
-    const qty_held_in_window = overlapRes.length + overlapHolds.length;
-    const available = qty_held_in_window < qty_total;
-
-    // Next free date if unavailable
-    let next_free_date: string | null = null;
-    if (!available) {
-      const latestEnd = overlapRes
-        .map((r) => r.end_date ?? "")
-        .sort()
-        .reverse()[0];
-      if (latestEnd) {
-        const d = new Date(latestEnd);
-        d.setDate(d.getDate() + 1);
-        next_free_date = d.toISOString().slice(0, 10);
+    // ── Step 4: owner_unavailability overlap ──────────────────────────────
+    // Index by_item_date on ["item_id","start_date"]. Fetch rows starting ≤ end_date,
+    // then filter to those whose end_date ≥ start_date for true overlap.
+    const unavailRows = await ctx.db
+      .query("owner_unavailability")
+      .withIndex("by_item_date", (q2) =>
+        q2.eq("item_id", item._id).lte("start_date", end_date)
+      )
+      .collect();
+    const ownerUnavailDates = new Set<string>();
+    for (const row of unavailRows) {
+      if (row.end_date < start_date) continue;
+      for (const date of dates) {
+        if (date >= row.start_date && date <= row.end_date) {
+          ownerUnavailDates.add(date);
+        }
       }
     }
 
+    // ── Step 5: Reservation cross-check (transition safety) ──────────────
+    // Keeps counts correct during brief window when calendar_holds lag reservations.
+    // Excludes REQUEST/APPROVED/pending_review — only PAID_ORDER_STEPS or
+    // legacy status="confirmed" (no order_step).
+    const paidSet = new Set<string>(PAID_ORDER_STEPS);
+    const canonNorm = norm(item.name_canonical);
+    const aliasNorms = (item.aliases ?? []).map(norm);
+
+    function resMatchesItem(resItemName: string): boolean {
+      const rn = norm(resItemName);
+      if (rn.includes(canonNorm) || (canonNorm.includes(rn) && rn.length > 3)) return true;
+      return aliasNorms.some((an) => rn.includes(an) || (an.includes(rn) && rn.length > 3));
+    }
+
+    const allReservations = await ctx.db.query("reservations").collect();
+    const resCountByDate = new Map<string, number>();
+    for (const r of allReservations) {
+      if (r.is_obsolete === true) continue;
+      if (!r.start_date || !r.end_date) continue;
+      if (r.start_date > end_date || r.end_date < start_date) continue;
+      // Only paid steps or legacy confirmed; REQUEST/APPROVED/pending_review excluded
+      const isPaid =
+        (r.order_step != null && paidSet.has(r.order_step)) ||
+        (r.order_step == null && r.status === "confirmed");
+      if (!isPaid) continue;
+      if (!(r.items ?? []).some((ri) => resMatchesItem(ri.item_name))) continue;
+      for (const date of dates) {
+        if (date >= r.start_date && date <= r.end_date) {
+          resCountByDate.set(date, (resCountByDate.get(date) ?? 0) + 1);
+        }
+      }
+    }
+
+    // ── Step 6: Compute peak held (Math.max hold vs res per date) ─────────
+    const heldByDate = new Map<string, number>();
+    for (const date of dates) {
+      heldByDate.set(date, Math.max(holdCountByDate.get(date) ?? 0, resCountByDate.get(date) ?? 0));
+    }
+
+    const peak_held = Math.max(...Array.from(heldByDate.values()), 0);
+    const available = peak_held < qty_total;
+    const blocked_dates = dates.filter((d) => (heldByDate.get(d) ?? 0) >= qty_total);
+    const owner_unavailable_dates = Array.from(ownerUnavailDates).sort();
+
     return {
       ok: true as const,
-      item: item.name_canonical,
+      item: {
+        id: item._id,
+        name: item.name_canonical,
+        // items table has no account_slug; echoing caller's preference for context only
+        account_slug: account_slug ?? null,
+        qty_total,
+      },
       available,
-      qty_total,
-      qty_held_in_window,
-      next_free_date_if_unavailable: next_free_date,
+      peak_held,
+      blocked_dates,
+      owner_unavailable_dates,
+      date_range: { start_date, end_date },
+      source: "calendar_holds+reservations" as const,
     };
+  },
+});
+
+/**
+ * Wave 2 Task 5: listForReconcile — item rows shaped for reconcile-holds.ts.
+ * Items are not account-scoped; returns all items.
+ * Maps name_canonical → name and includes aliases, qty.
+ */
+export const listForReconcile = query({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("items").collect();
+    return all.map((i) => ({
+      _id: i._id as string,
+      name: i.name_canonical,
+      aliases: i.aliases ?? [],
+      qty: i.qty,
+    }));
+  },
+});
+
+export const upsertAliases = mutation({
+  args: {
+    item_id: v.id("items"),
+    aliases: v.array(v.string()),
+  },
+  handler: async (ctx, { item_id, aliases }) => {
+    const existing = await ctx.db.get(item_id);
+    if (!existing) throw new Error(`Item ${item_id} not found`);
+    const merged = Array.from(new Set([...(existing.aliases ?? []), ...aliases]))
+      .filter(a => a && a.trim().length > 0)
+      .map(a => a.trim());
+    await ctx.db.patch(item_id, { aliases: merged });
+    return { item_id, alias_count: merged.length };
   },
 });
 

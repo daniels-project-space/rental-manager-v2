@@ -248,6 +248,20 @@ export const getPipelineCounts = query({
   },
 });
 
+/**
+ * Wave 2 Task 5: listForReconcile — full reservation rows for hold reconciliation.
+ * Returns all fields needed by reconcile-holds.ts for a given account.
+ */
+export const listForReconcile = query({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) => {
+    return await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("account_slug"), account_slug))
+      .collect();
+  },
+});
+
 // B-3: list pending rentals for dashboard chat tool
 // NOTE: Index-based filter replaced with full collect + permissive client-side filter
 // because prod data has zero rows with status="pending_review". All 138 rows are

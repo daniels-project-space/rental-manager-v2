@@ -8,9 +8,10 @@
  *
  * READ-ONLY on Hygglo: only GET requests after auth. No mutations sent to Hygglo.
  */
-import { schedules } from "@trigger.dev/sdk/v3";
+import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
+import { computeHoldsForReservations } from "../lib/reconcile-holds";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL = process.env.CONVEX_URL ?? "https://exciting-lion-29.convex.cloud";
@@ -500,6 +501,59 @@ export const pollHyggloInbox = schedules.task({
             await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: true });
           } catch (asErr) {
             console.error(`[poll-hygglo] account_state.upsert (success) failed for ${account.slug}:`, asErr);
+          }
+
+          // ── Hold reconciliation (Wave 2 T5) ──────────────────
+          try {
+            const [reconReservationsRaw, reconItemsRaw] = await Promise.all([
+              convex.query(api.reservations.listForReconcile, { account_slug: account.slug }),
+              convex.query(api.items.listForReconcile, {}),
+            ]);
+
+            // Convex rows use optional account_slug; ReservationInput requires it — filter nulls.
+            // Also coerce undefined date fields to null (ReservationInput uses string | null).
+            const reconReservations = reconReservationsRaw
+              .filter((r) => r.account_slug != null)
+              .map((r) => ({
+                ...r,
+                _id: r._id as string,
+                account_slug: r.account_slug as string,
+                start_date: r.start_date ?? null,
+                end_date: r.end_date ?? null,
+              }));
+
+            const reconItems = reconItemsRaw.map((i) => ({
+              ...i,
+              _id: i._id as string,
+            }));
+
+            const result = computeHoldsForReservations({
+              reservations: reconReservations,
+              items: reconItems,
+              today: new Date(),
+              forwardCapDays: 180,
+            });
+
+            if (result.holds.length > 0) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const upsertResult = await convex.mutation(api.calendar.upsertHoldsBatch, { holds: result.holds as any });
+              logger.log(`[reconcile] account=${account.slug} upserted=${upsertResult.inserted}+${upsertResult.updated} skipped=${upsertResult.skipped}`);
+            }
+
+            if (result.deleteReservationIds.length > 0) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const delResult = await convex.mutation(api.calendar.deleteStaleHolds, { reservation_ids: result.deleteReservationIds as any });
+              logger.log(`[reconcile] account=${account.slug} deleted_stale=${delResult.deleted}`);
+            }
+
+            if (result.unmatchedItemNames.length > 0) {
+              logger.warn(`[reconcile] account=${account.slug} unmatched=${result.unmatchedItemNames.length}: ${result.unmatchedItemNames.slice(0, 10).join(", ")}`);
+            }
+
+            logger.log(`[reconcile] account=${account.slug} stats: ${JSON.stringify(result.stats)}`);
+          } catch (reconErr) {
+            // Reconciliation failure is non-fatal — Hygglo fetch + reservation upsert succeeded
+            logger.error(`[reconcile] account=${account.slug} failed (non-fatal): ${reconErr instanceof Error ? reconErr.message : String(reconErr)}`);
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
