@@ -16,9 +16,6 @@ import { InvestmentScorecard } from "@/components/dashboard/InvestmentScorecard"
 import { SellRecommender } from "@/components/dashboard/SellRecommender";
 import { PriceRecommendations } from "@/components/dashboard/PriceRecommendations";
 import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsights";
-import { MarketOpportunities } from "@/components/dashboard/MarketOpportunities";
-import { InsuranceClaimsPanel } from "@/components/dashboard/InsuranceClaimsPanel";
-import { PortToLeo } from "@/components/dashboard/PortToLeo";
 import { HealthScanner } from "@/components/dashboard/HealthScanner";
 import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
 import { AIChat } from "@/components/dashboard/AIChat";
@@ -105,20 +102,6 @@ export default function DashboardPage() {
           <AIInvestmentInsights />
         </section>
 
-        {/* Row 16: Market Opportunities — placeholder */}
-        <section className="mb-4">
-          <MarketOpportunities />
-        </section>
-
-        {/* Row 17: Insurance Claims Panel — placeholder */}
-        <section className="mb-4">
-          <InsuranceClaimsPanel />
-        </section>
-
-        {/* Row 18: Port to Leo — placeholder */}
-        <section className="mb-4">
-          <PortToLeo />
-        </section>
 
         {/* Row 19: Health & Scanner — full */}
         <section className="mb-4">
