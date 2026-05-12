@@ -249,13 +249,22 @@ export const getPipelineCounts = query({
 });
 
 // B-3: list pending rentals for dashboard chat tool
+// NOTE: Index-based filter replaced with full collect + permissive client-side filter
+// because prod data has zero rows with status="pending_review". All 138 rows are
+// legacy rows with order_step undefined. We must also match modern REQUEST/APPROVED
+// order_step values and old "pending" status strings.
 export const listPending = query({
   args: { accountSlug: v.optional(v.string()) },
   handler: async (ctx, { accountSlug }) => {
-    let rows = await ctx.db
-      .query("reservations")
-      .withIndex("by_status", (q) => q.eq("status", "pending_review"))
-      .collect();
+    const allRows = await ctx.db.query("reservations").collect();
+    let rows = allRows.filter((r) => {
+      if (r.is_obsolete === true) return false;
+      // Modern: explicit pending order_step
+      if (r.order_step === "REQUEST" || r.order_step === "APPROVED") return true;
+      // Legacy: status field-based (pending_review or pending, no order_step set yet)
+      if (r.status === "pending_review" || r.status === "pending") return true;
+      return false;
+    });
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
     }

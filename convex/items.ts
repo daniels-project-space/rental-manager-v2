@@ -452,16 +452,30 @@ export const checkAvailability = query({
     const item = best;
     const qty_total = item.qty;
 
-    // Count overlapping confirmed reservations
-    const reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q2) => q2.gte("start_date", start_date))
-      .collect();
-    const overlapRes = reservations.filter((r) => {
-      if (r.status !== "confirmed" && r.status !== "pending_review") return false;
+    // Count overlapping confirmed reservations.
+    // NOTE: Full collect (no index filter) is intentional. The by_start_date index with
+    // gte(start_date) would miss reservations that START before the query window but END
+    // within it (e.g. a May 10-17 booking is invisible to a May 15-18 query). At current
+    // scale (~138 rows) a full collect is correct and fast enough.
+    const paidOrderSteps = new Set([
+      "FUNDS_RESERVED",
+      "VERIFIED",
+      "BOOKED_AFTER_VERIFIED",
+      "DELIVERED",
+      "RETURNED",
+    ]);
+    const allReservations = await ctx.db.query("reservations").collect();
+    const overlapRes = allReservations.filter((r) => {
+      if (r.is_obsolete === true) return false;
       if (!r.start_date || !r.end_date) return false;
+      // Overlap predicate: strings are YYYY-MM-DD so lexical compare is correct
       if (r.start_date > end_date) return false;
       if (r.end_date < start_date) return false;
+      // Status guard: only confirmed bookings block availability
+      const isConfirmed =
+        (r.order_step && paidOrderSteps.has(r.order_step)) ||
+        (!r.order_step && r.status === "confirmed");
+      if (!isConfirmed) return false;
       return (r.items ?? []).some((ri) => norm(ri.item_name).includes(norm(item.name_canonical)) || norm(item.name_canonical).includes(norm(ri.item_name).slice(0, 6)));
     });
 

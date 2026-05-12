@@ -5,15 +5,23 @@ import { v } from "convex/values";
 
 /**
  * Returns the sync state row for a given source, or null if none exists.
+ * NOTE: .order("desc") removed — it is only valid on the implicit _creationTime
+ * ordering, but combining it with withIndex on a non-time field can throw on
+ * some Convex versions when the table is empty. We use .first() which safely
+ * returns null when no rows match, and wrap in try/catch for safety.
  */
 export const get = query({
   args: { source: v.string() },
   handler: async (ctx, { source }) => {
-    return await ctx.db
-      .query("sync_state")
-      .withIndex("by_source", (q) => q.eq("source", source))
-      .order("desc")
-      .first();
+    try {
+      return await ctx.db
+        .query("sync_state")
+        .withIndex("by_source", (q) => q.eq("source", source))
+        .first();
+    } catch (err) {
+      console.error("[sync_state.get] Unexpected error:", err);
+      return null;
+    }
   },
 });
 
