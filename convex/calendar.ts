@@ -76,7 +76,7 @@ export const getCalendarStrip = query({
     await Promise.all(
       holdItemIds.map(async (iid) => {
         const item = await ctx.db.get(iid);
-        if (item) itemNameMap.set(iid, (item as { name?: string; item_name_canonical?: string }).name ?? (item as { name?: string; item_name_canonical?: string }).item_name_canonical ?? String(iid).slice(-6));
+        if (item) itemNameMap.set(iid, (item as { name_canonical?: string; name?: string }).name_canonical ?? (item as { name_canonical?: string; name?: string }).name ?? String(iid).slice(-6));
       })
     );
 
