@@ -68,6 +68,7 @@ export function CalendarStrip() {
             const isExpanded = expanded === day.date;
             const { day: dLabel, num } = dayLabel(day.date);
             const totalEvents = day.pickups.length + day.returns.length;
+            const holdCount = day.holds.length;
 
             return (
               <div key={day.date}>
@@ -102,7 +103,12 @@ export function CalendarStrip() {
                         ↓{day.returns.length}
                       </span>
                     )}
-                    {totalEvents === 0 && (
+                    {holdCount > 0 && (
+                      <span className="text-xs px-1 rounded" style={{ background: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>
+                        ●{holdCount}
+                      </span>
+                    )}
+                    {totalEvents === 0 && holdCount === 0 && (
                       <span className="text-xs text-[#8b8fa3]">—</span>
                     )}
                   </div>
@@ -125,6 +131,24 @@ export function CalendarStrip() {
                         accountSlug={r.accountSlug}
                       />
                     ))}
+                    {day.holds.length > 0 && (
+                      <div className="mt-1 pt-1" style={{ borderTop: "1px solid rgba(251,191,36,0.2)" }}>
+                        {day.holds.slice(0, 3).map((h) => (
+                          <span
+                            key={String(h.holdId)}
+                            className="inline-block text-xs px-1.5 py-0.5 rounded truncate max-w-[90px] mb-0.5"
+                            style={{
+                              background: "rgba(251,191,36,0.12)",
+                              color: "#fbbf24",
+                              borderLeft: "2px solid #fbbf24",
+                            }}
+                            title={`${h.itemName} · ${h.renterName}`}
+                          >
+                            {h.itemName}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

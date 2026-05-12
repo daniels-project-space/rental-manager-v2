@@ -70,6 +70,32 @@ export const getCalendarStrip = query({
       );
     }
 
+    // Item name lookup for holds (join items table)
+    const holdItemIds = [...new Set(holds.map((h) => h.item_id).filter(Boolean))];
+    const itemNameMap = new Map<string, string>();
+    await Promise.all(
+      holdItemIds.map(async (iid) => {
+        const item = await ctx.db.get(iid);
+        if (item) itemNameMap.set(iid, (item as { name?: string; item_name_canonical?: string }).name ?? (item as { name?: string; item_name_canonical?: string }).item_name_canonical ?? String(iid).slice(-6));
+      })
+    );
+
+    // Renter name lookup for holds (via reservation)
+    const holdReservationIds = [...new Set(holds.map((h) => h.reservation_id).filter(Boolean) as string[])];
+    const holdRenterMap = new Map<string, string>();
+    await Promise.all(
+      holdReservationIds.map(async (rid) => {
+        const res = await ctx.db.get(rid as Parameters<typeof ctx.db.get>[0]);
+        if (res) {
+          const r = res as { renter_id?: string };
+          if (r.renter_id) {
+            const renter = await ctx.db.get(r.renter_id as Parameters<typeof ctx.db.get>[0]);
+            if (renter) holdRenterMap.set(rid, (renter as { display_name?: string }).display_name ?? "?");
+          }
+        }
+      })
+    );
+
     return dates.map((date) => {
       // For same-day rentals (start === end === date), place in pickups only to avoid double-count.
       const pickups = reservations
@@ -99,7 +125,9 @@ export const getCalendarStrip = query({
         .map((h) => ({
           holdId: h._id,
           itemId: h.item_id,
+          itemName: itemNameMap.get(h.item_id) ?? String(h.item_id).slice(-6),
           reservationId: h.reservation_id,
+          renterName: h.reservation_id ? holdRenterMap.get(h.reservation_id) ?? "?" : "?",
           accountSlug: h.account_slug,
           status: h.status,
         }));
