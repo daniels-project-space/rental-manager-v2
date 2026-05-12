@@ -28,12 +28,15 @@ export const PAID_ORDER_STEPS = [
 
 /**
  * Extract the active order step from a raw Hygglo order object.
- * Looks at `order.detail.steps[]` or `order._detail.steps[]`.
+ * Looks at:
+ *   - `order.steps[]`          — direct detail response from /v4/my/orders/:id
+ *   - `order.detail.steps[]`   — v1 wrapper shape (detail nested under .detail)
+ *   - `order._detail.steps[]`  — v1 wrapper shape (detail nested under ._detail)
  * Returns null when the step array is absent or no step is active.
  * Logs a warning and returns undefined for unrecognised step keys.
  */
 function extractActiveOrderStep(order: any): string | null | undefined {
-  const steps = order?.detail?.steps ?? order?._detail?.steps;
+  const steps = order?.steps ?? order?.detail?.steps ?? order?._detail?.steps;
   if (!Array.isArray(steps)) return null;
   const active = steps.find((s: any) => s?.active === true);
   if (!active) return null;

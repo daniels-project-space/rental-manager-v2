@@ -68,6 +68,8 @@ type OrderDetail = {
     };
   };
   items?: Array<{ name?: string; type?: string }>;
+  /** Steps array — present on the per-order detail endpoint (/v4/my/orders/:id). */
+  steps?: Array<{ key: string; active: boolean }>;
 };
 
 type OrderReservationPayload = {
@@ -81,6 +83,8 @@ type OrderReservationPayload = {
   items: Array<{ item_name: string; qty?: number }>;
   duration_days?: number;
   sourceFilter: string;
+  /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
+  order: OrderDetail;
 };
 
 // ── Timestamp parser ──────────────────────────────────────────
@@ -326,6 +330,7 @@ async function scrapeAccount(
         items: orderItems,
         duration_days: durationDays > 0 ? durationDays : undefined,
         sourceFilter: order.sourceFilter,
+        order: detail,
       });
     }
   }
@@ -440,10 +445,12 @@ export const pollHyggloInbox = schedules.task({
             const batch = reservations.slice(i, i + 50);
             for (const payload of batch) {
               // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { sourceFilter: _sf, ...mutationPayload } = payload;
+              const { sourceFilter: _sf, order: _order, ...mutationPayload } = payload;
               const resResult = await convex.mutation(api.hygglo.upsertOrderAsReservation, {
                 account_slug: account.slug,
                 ...mutationPayload,
+                order: payload.order,
+                sourceFilter: payload.sourceFilter,
               });
               if (resResult.action === "inserted") resInserted++;
               else if (resResult.action === "updated") resUpdated++;
