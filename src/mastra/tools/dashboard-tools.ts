@@ -80,7 +80,7 @@ export const lookupPricing = createTool({
       ]);
       if (!items || items.length === 0) return { ok: false as const, error: "item_not_found" };
       const row = items[0];
-      const rate: number = row.daily_price_min;
+      const rate: number = row.daily_price_max; // daily_price_max = published listing rate; daily_price_min = owner floor (recommendations only)
       const days = input.days ?? 1;
       let total: number;
       if (days >= 7) total = rate * 5;
