@@ -9,7 +9,6 @@
  */
 
 import type * as account_state from "../account_state.js";
-import type * as accounts from "../accounts.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
 import type * as calendar from "../calendar.js";
@@ -18,7 +17,6 @@ import type * as dashboard_chat from "../dashboard_chat.js";
 import type * as dashboard_chat_context from "../dashboard_chat_context.js";
 import type * as denial_records from "../denial_records.js";
 import type * as health from "../health.js";
-import type * as historical_revenue from "../historical_revenue.js";
 import type * as hygglo from "../hygglo.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as items from "../items.js";
@@ -27,7 +25,6 @@ import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as reservations from "../reservations.js";
 import type * as revenue from "../revenue.js";
 import type * as rules from "../rules.js";
-import type * as seed_account_profiles from "../seed/account_profiles.js";
 import type * as seed_data from "../seed/data.js";
 import type * as seed_inventory from "../seed/inventory.js";
 import type * as seed_settings from "../seed/settings.js";
@@ -42,7 +39,6 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
-  accounts: typeof accounts;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
   calendar: typeof calendar;
@@ -51,7 +47,6 @@ declare const fullApi: ApiFromModules<{
   dashboard_chat_context: typeof dashboard_chat_context;
   denial_records: typeof denial_records;
   health: typeof health;
-  historical_revenue: typeof historical_revenue;
   hygglo: typeof hygglo;
   insurance_claims: typeof insurance_claims;
   items: typeof items;
@@ -60,7 +55,6 @@ declare const fullApi: ApiFromModules<{
   reservations: typeof reservations;
   revenue: typeof revenue;
   rules: typeof rules;
-  "seed/account_profiles": typeof seed_account_profiles;
   "seed/data": typeof seed_data;
   "seed/inventory": typeof seed_inventory;
   "seed/settings": typeof seed_settings;

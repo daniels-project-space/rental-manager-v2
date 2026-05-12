@@ -13,7 +13,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
-const CONVEX_URL = "https://hearty-oyster-600.convex.cloud";
+const CONVEX_URL = process.env.CONVEX_URL ?? "https://exciting-lion-29.convex.cloud";
 
 const API_BASE = "https://api.hygglo.com/api";
 const CLIENT_ID = "ngHyggloApp";
