@@ -2,9 +2,8 @@
  * seed-items-from-v1-master-inventory.mjs
  *
  * Reads MASTER_INVENTORY from v1's item-matcher.ts and seeds v2's items table
- * via the Convex seedItems internalMutation (called via HTTP API).
- *
- * Required env: CONVEX_DEPLOY_KEY_RMV2 (fetched from project-hub vault)
+ * via `npx convex run --prod seed/inventory:seedItems` (internalMutation).
+ * Auth: CONVEX_ACCESS_TOKEN (PAT) fetched from project-hub vault.
  *
  * Usage:
  *   node scripts/historical/seed-items-from-v1-master-inventory.mjs [--dry-run]
@@ -13,24 +12,24 @@
  *   0 = success (or already seeded)
  *   1 = setup error
  *   2 = table already non-empty (mutation refused) — Daniel must decide
- *   3 = mutation HTTP error
+ *   3 = mutation error
  */
 
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-const CONVEX_URL = 'https://exciting-lion-29.convex.cloud';
 const V1_ITEM_MATCHER = '/home/ubuntu/rental-manager/src/utils/item-matcher.ts';
 const VAULT_URL = 'https://fantastic-roadrunner-485.convex.cloud/api/query';
+const V2_DIR = '/home/ubuntu/rental-manager-v2';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 function log(...args) {
   process.stderr.write(args.join(' ') + '\n');
 }
 
-// ── Step 1: Fetch CONVEX_DEPLOY_KEY from vault ────────────────────────────
-log('[seed-items] Step 1: Fetching CONVEX_DEPLOY_KEY_RMV2 from vault...');
-let deployKey;
+// ── Step 1: Fetch CONVEX_ACCESS_TOKEN (PAT) from vault ───────────────────
+log('[seed-items] Step 1: Fetching CONVEX_ACCESS_TOKEN from vault...');
+let pat;
 try {
   const vaultRes = JSON.parse(
     execSync(
@@ -42,10 +41,10 @@ try {
   if (vaultRes.status !== 'success') {
     throw new Error(`Vault query failed: ${JSON.stringify(vaultRes)}`);
   }
-  const rec = (vaultRes.value ?? []).find((r) => r.keyName === 'CONVEX_DEPLOY_KEY_RMV2');
-  if (!rec) throw new Error('CONVEX_DEPLOY_KEY_RMV2 not found in vault');
-  deployKey = rec.value;
-  log('[seed-items] Deploy key fetched (length=' + deployKey.length + ')');
+  const rec = (vaultRes.value ?? []).find((r) => r.keyName === 'CONVEX_ACCESS_TOKEN');
+  if (!rec) throw new Error('CONVEX_ACCESS_TOKEN not found in vault');
+  pat = rec.value;
+  log('[seed-items] PAT fetched (length=' + pat.length + ')');
 } catch (e) {
   process.stderr.write('[seed-items] ERROR: ' + e.message + '\n');
   process.exit(1);
@@ -150,42 +149,49 @@ if (DRY_RUN) {
   process.exit(0);
 }
 
-// ── Step 4: Call seedItems via Convex HTTP API ────────────────────────────
-log('[seed-items] Step 4: POSTing to Convex seedItems mutation...');
+// ── Step 4: Call seedItems via `npx convex run --prod` ───────────────────
+// Args must be passed as a positional JSON string (not stdin).
+// Large payload: write to tmp file and read back to avoid shell quoting issues.
+log('[seed-items] Step 4: Running convex run --prod seed/inventory:seedItems...');
 
-const body2 = JSON.stringify({
-  path: 'seed/inventory:seedItems',
-  args: { items },
-  format: 'json',
-});
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-let result;
+const argsFile = join(tmpdir(), 'seed-items-args.json');
+writeFileSync(argsFile, JSON.stringify({ items }), 'utf8');
+
+let rawOut;
 try {
-  const raw = execSync(
-    `curl -sS -X POST '${CONVEX_URL}/api/mutation' ` +
-      `-H 'Content-Type: application/json' ` +
-      `-H 'Authorization: Convex ${deployKey}' ` +
-      `--data-binary @-`,
+  // Use shell to expand $(cat ...) into the positional args string
+  rawOut = execSync(
+    `CONVEX_OVERRIDE_ACCESS_TOKEN='${pat}' npx convex run seed/inventory:seedItems --prod --no-push "$(cat ${argsFile})"`,
     {
+      cwd: V2_DIR,
       encoding: 'utf8',
-      input: body2,
+      shell: '/bin/bash',
+      stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: 10 * 1024 * 1024,
     }
   );
-  result = JSON.parse(raw);
 } catch (e) {
-  process.stderr.write('[seed-items] CURL ERROR: ' + e.message + '\n');
+  process.stderr.write('[seed-items] RUN ERROR: ' + (e.stderr ?? e.message) + '\n');
   process.exit(3);
 }
 
-log('[seed-items] Response: ' + JSON.stringify(result));
+log('[seed-items] Raw output: ' + rawOut.trim());
 
-if (result.status !== 'success') {
-  process.stderr.write('[seed-items] ERROR: mutation failed — ' + JSON.stringify(result) + '\n');
+// Extract the last JSON object from output (may span multiple lines)
+let val;
+try {
+  const jsonMatch = rawOut.match(/\{[\s\S]*\}(?=[^}]*$)/);
+  val = JSON.parse(jsonMatch ? jsonMatch[0] : rawOut.trim());
+} catch {
+  process.stderr.write('[seed-items] Could not parse result: ' + rawOut.trim() + '\n');
   process.exit(3);
 }
 
-const val = result.value ?? {};
+log('[seed-items] Result: ' + JSON.stringify(val));
 
 if (val.skipped) {
   process.stderr.write(`[seed-items] REFUSED: table already has ${val.count} rows. Exit 2.\n`);
