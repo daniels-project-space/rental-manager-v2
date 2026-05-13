@@ -63,9 +63,9 @@ export function MetricTile({
   sub?: string;
 }) {
   return (
-    <div className="glass-card rm-card p-4 stat-card-hover cursor-default flex flex-col gap-1">
+    <div className="glass-card rm-card p-[10px] stat-card-hover cursor-default flex flex-col gap-0.5">
       <span
-        className="text-xs font-medium uppercase tracking-wider"
+        className="text-xs font-medium uppercase tracking-wider leading-none"
         style={{ color: "#8b8fa3" }}
       >
         {label}
@@ -73,7 +73,7 @@ export function MetricTile({
       <CountUpValue
         raw={value}
         color={color}
-        className="text-3xl font-bold leading-tight"
+        className="text-xl font-bold leading-tight"
       />
       {sub && (
         <span className="text-xs" style={{ color: "#8b8fa3" }}>

@@ -25,7 +25,7 @@ export function StatsGrid() {
 
   if (data === undefined) {
     return (
-      <div className="stats-grid-mobile grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+      <div className="stats-grid-mobile grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-2.5">
         {Array.from({ length: 17 }).map((_, i) => (
           <SkeletonCard key={i} rows={1} />
         ))}
@@ -154,7 +154,7 @@ export function StatsGrid() {
     {
       key: "inventory-worth",
       label: "Inventory Worth",
-      value: fmtGbp(data.totalAcquisitionCost),
+      value: data.totalAcquisitionCost > 0 ? fmtGbp(data.totalAcquisitionCost) : "—",
       sub: "acquisition cost",
       color: "#3b82f6",
     },
@@ -163,7 +163,7 @@ export function StatsGrid() {
       key: "tax",
       label: "UK Tax",
       value: "—",
-      sub: "OPEN_QUESTION",
+      sub: "—",
       color: "#ef4444",
     },
     // 16. Hygglo Sync
@@ -185,7 +185,7 @@ export function StatsGrid() {
   ];
 
   return (
-    <div className="stats-grid-mobile grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+    <div className="stats-grid-mobile grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-2.5">
       {tiles.map((t, i) => {
         const delayClass = i <= 5 ? `anim-delay-${i}` : "anim-delay-5";
         return (
