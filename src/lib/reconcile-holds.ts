@@ -21,6 +21,7 @@ export interface ReservationInput {
   status?: string;                    // legacy: confirmed | pending_review | cancelled
   is_obsolete?: boolean;
   items?: Array<{ item_name: string }>;
+  renter_name?: string;
 }
 
 export interface ItemRow {
@@ -38,6 +39,7 @@ export interface HoldInput {
   account_slug: string;
   status: "confirmed" | "completed";
   qty_held?: number;
+  renter_name?: string;
 }
 
 export interface ReconcileResult {
@@ -265,6 +267,7 @@ export function computeHoldsForReservations(args: {
           account_slug,
           status: holdStatus,
           // qty_held intentionally omitted (Wave-2.5)
+          renter_name: res.renter_name || undefined,
         });
       }
     }

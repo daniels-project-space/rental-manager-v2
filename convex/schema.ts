@@ -253,6 +253,7 @@ export default defineSchema({
     // Phase 3 calendar integration fields
     pickup_at: v.optional(v.number()),              // ms epoch — actual handover start
     return_at: v.optional(v.number()),              // ms epoch — actual handover end
+    renter_name: v.optional(v.string()),            // denormalized from Hygglo otherPartName
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
@@ -276,6 +277,7 @@ export default defineSchema({
     status: v.optional(v.string()),           // "confirmed" | "completed"
     v1_booking_id: v.optional(v.string()),
     imported_at: v.optional(v.number()),
+    renter_name: v.optional(v.string()),
     created_at: v.number(),
   })
     .index("by_item_date_range", ["item_id", "start_at"])

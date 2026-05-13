@@ -191,6 +191,7 @@ export const upsertOrderAsReservation = mutation({
     order: v.optional(v.any()),
     /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
     sourceFilter: v.optional(v.string()),
+    renter_name: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ action: "inserted" | "updated" | "skipped" }> => {
     const existing = await ctx.db
@@ -241,6 +242,7 @@ export const upsertOrderAsReservation = mutation({
       currency: args.currency,
       items: args.items,
       duration_days: args.duration_days,
+      renter_name: args.renter_name,
     };
 
     if (existing) {

@@ -278,6 +278,27 @@ describe("computeHoldsForReservations", () => {
     assert.equal(result.stats.skipped_pending, 1);
   });
 
+  // Test 13: renter_name propagates from reservation onto every hold
+  it("propagates renter_name from reservation to all generated holds", () => {
+    const res = makeRes({
+      _id: "res_013",
+      order_step: "BOOKED_AFTER_VERIFIED",
+      start_date: "2025-06-16",
+      end_date: "2025-06-17",
+      items: [{ item_name: "Tent XL" }],
+      renter_name: "Alice Rental",
+    });
+
+    const result = computeHoldsForReservations({
+      reservations: [res],
+      items: [ITEM_A],
+      today: TODAY,
+    });
+
+    assert.equal(result.holds.length, 2, "should generate 2 holds");
+    assert.ok(result.holds.every((h) => h.renter_name === "Alice Rental"), "all holds carry renter_name");
+  });
+
   // Test 12: pickup_at / return_at override start/end dates
   it("uses pickup_at and return_at epoch overrides for date range", () => {
     const res = makeRes({

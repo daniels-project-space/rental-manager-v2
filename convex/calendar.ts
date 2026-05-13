@@ -127,7 +127,7 @@ export const getCalendarStrip = query({
           itemId: h.item_id,
           itemName: itemNameMap.get(h.item_id) ?? String(h.item_id).slice(-6),
           reservationId: h.reservation_id,
-          renterName: h.reservation_id ? holdRenterMap.get(h.reservation_id) ?? "?" : "?",
+          renterName: h.renter_name ?? (h.reservation_id ? holdRenterMap.get(h.reservation_id) ?? "?" : "?"),
           accountSlug: h.account_slug,
           status: h.status,
         }));
@@ -150,6 +150,7 @@ export const upsertHoldsBatch = mutation({
       account_slug: v.string(),
       status: v.union(v.literal("confirmed"), v.literal("completed")),
       qty_held: v.optional(v.number()),
+      renter_name: v.optional(v.string()),
     })),
   },
   handler: async (ctx, { holds }) => {
@@ -170,15 +171,17 @@ export const upsertHoldsBatch = mutation({
           date: h.date,
           status: h.status,
           qty_held: h.qty_held,
+          renter_name: h.renter_name,
           created_at: Date.now(),
         });
         inserted++;
       } else if (existing.reservation_id === h.reservation_id) {
         // same reservation, idempotent — only update if status/qty changed
-        if (existing.status !== h.status || existing.qty_held !== h.qty_held) {
+        if (existing.status !== h.status || existing.qty_held !== h.qty_held || existing.renter_name !== h.renter_name) {
           await ctx.db.patch(existing._id, {
             status: h.status,
             qty_held: h.qty_held,
+            renter_name: h.renter_name,
           });
           updated++;
         } else {
@@ -190,6 +193,7 @@ export const upsertHoldsBatch = mutation({
           reservation_id: h.reservation_id,
           status: h.status,
           qty_held: h.qty_held,
+          renter_name: h.renter_name,
         });
         updated++;
       }

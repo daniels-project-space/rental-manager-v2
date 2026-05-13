@@ -84,6 +84,7 @@ type OrderReservationPayload = {
   items: Array<{ item_name: string; qty?: number }>;
   duration_days?: number;
   sourceFilter: string;
+  renter_name?: string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
 };
@@ -331,6 +332,7 @@ async function scrapeAccount(
         items: orderItems,
         duration_days: durationDays > 0 ? durationDays : undefined,
         sourceFilter: order.sourceFilter,
+        renter_name: otherPartName || undefined,
         order: detail,
       });
     }
