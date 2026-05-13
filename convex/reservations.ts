@@ -262,6 +262,38 @@ export const listForReconcile = query({
   },
 });
 
+// Lookup by Hygglo order ID (used by backfill scripts and reconciliation tools)
+export const getByHygglo = query({
+  args: { hygglo_order_id: v.string() },
+  handler: async (ctx, { hygglo_order_id }) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) =>
+        q.eq("hygglo_order_id", hygglo_order_id)
+      )
+      .collect();
+    return rows[0] ?? null;
+  },
+});
+
+// Admin backfill mutation — direct status override with audit trail.
+// Used for one-off corrections (e.g. v1-imported rows skipped by poller guard).
+export const adminSetStatus = mutation({
+  args: {
+    reservation_id: v.id("reservations"),
+    new_status: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, { reservation_id, new_status, reason }) => {
+    const existing = await ctx.db.get(reservation_id);
+    if (!existing) throw new Error(`Reservation ${reservation_id} not found`);
+    const prev = existing.status;
+    if (prev === new_status) return { reservation_id, prev, new_status, reason, skipped: true };
+    await ctx.db.patch(reservation_id, { status: new_status });
+    return { reservation_id, prev, new_status, reason, skipped: false };
+  },
+});
+
 // B-3: list pending rentals for dashboard chat tool
 // NOTE: Index-based filter replaced with full collect + permissive client-side filter
 // because prod data has zero rows with status="pending_review". All 138 rows are
