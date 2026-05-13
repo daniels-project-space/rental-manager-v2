@@ -9,6 +9,7 @@
  */
 
 import type * as account_state from "../account_state.js";
+import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
 import type * as calendar from "../calendar.js";
@@ -20,6 +21,8 @@ import type * as demand from "../demand.js";
 import type * as denial_records from "../denial_records.js";
 import type * as health from "../health.js";
 import type * as hygglo from "../hygglo.js";
+import type * as hygglo_inbox from "../hygglo_inbox.js";
+import type * as hygglo_poll_trigger from "../hygglo_poll_trigger.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as items from "../items.js";
 import type * as lost_revenue from "../lost_revenue.js";
@@ -29,9 +32,12 @@ import type * as mv_churn_risk from "../mv/churn_risk.js";
 import type * as mv_constants from "../mv/constants.js";
 import type * as mv_daily_briefing from "../mv/daily_briefing.js";
 import type * as mv_purchase_signals from "../mv/purchase_signals.js";
+import type * as mv_refresh_dispatch from "../mv/refresh_dispatch.js";
 import type * as mv_top_earners from "../mv/top_earners.js";
 import type * as mv_upcoming_returns from "../mv/upcoming_returns.js";
 import type * as mv_utilization from "../mv/utilization.js";
+import type * as mv_refresh_locks from "../mv_refresh_locks.js";
+import type * as polling_runs from "../polling_runs.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as renters from "../renters.js";
 import type * as reservations from "../reservations.js";
@@ -51,6 +57,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
+  ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
   calendar: typeof calendar;
@@ -62,6 +69,8 @@ declare const fullApi: ApiFromModules<{
   denial_records: typeof denial_records;
   health: typeof health;
   hygglo: typeof hygglo;
+  hygglo_inbox: typeof hygglo_inbox;
+  hygglo_poll_trigger: typeof hygglo_poll_trigger;
   insurance_claims: typeof insurance_claims;
   items: typeof items;
   lost_revenue: typeof lost_revenue;
@@ -71,9 +80,12 @@ declare const fullApi: ApiFromModules<{
   "mv/constants": typeof mv_constants;
   "mv/daily_briefing": typeof mv_daily_briefing;
   "mv/purchase_signals": typeof mv_purchase_signals;
+  "mv/refresh_dispatch": typeof mv_refresh_dispatch;
   "mv/top_earners": typeof mv_top_earners;
   "mv/upcoming_returns": typeof mv_upcoming_returns;
   "mv/utilization": typeof mv_utilization;
+  mv_refresh_locks: typeof mv_refresh_locks;
+  polling_runs: typeof polling_runs;
   pricing_catalog: typeof pricing_catalog;
   renters: typeof renters;
   reservations: typeof reservations;

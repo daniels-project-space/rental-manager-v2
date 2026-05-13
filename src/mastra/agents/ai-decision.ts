@@ -50,9 +50,8 @@ const lookupPricing = createTool({
     itemName: z.string(),
     days: z.number().optional(),
   }),
-  execute: async ({ context }) => {
-    return data.catalog.lookupPricing(context);
-  },
+  execute: async (input: { itemName: string; days?: number }) =>
+    data.catalog.lookupPricing(input),
 });
 
 const checkAvailability = createTool({
@@ -64,9 +63,8 @@ const checkAvailability = createTool({
     startDate: z.string(),
     endDate: z.string(),
   }),
-  execute: async ({ context }) => {
-    return data.catalog.checkAvailability(context);
-  },
+  execute: async (input: { itemName: string; startDate: string; endDate: string }) =>
+    data.catalog.checkAvailability(input),
 });
 
 const getRenterProfile = createTool({
@@ -76,9 +74,8 @@ const getRenterProfile = createTool({
   inputSchema: z.object({
     name: z.string(),
   }),
-  execute: async ({ context }) => {
-    return data.renters.getProfile(context);
-  },
+  execute: async (input: { name: string }) =>
+    data.renters.getProfile(input),
 });
 
 const checkCompatibility = createTool({
@@ -88,9 +85,8 @@ const checkCompatibility = createTool({
   inputSchema: z.object({
     items: z.array(z.string()),
   }),
-  execute: async ({ context }) => {
-    return data.catalog.checkCompatibility(context);
-  },
+  execute: async (input: { items: string[] }) =>
+    data.catalog.checkCompatibility(input),
 });
 
 const aiDecisionTools = {

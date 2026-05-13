@@ -19,40 +19,49 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
+// NOTE (Wave 4): each MV refresh handler now takes optional `account` arg.
+// Crons always run the full all-accounts refresh — pass `{}` explicitly so the
+// rest-param signature `OptionalRestArgs<FuncRef>` resolves.
 crons.interval(
   "daily_briefing refresh",
   { minutes: 5 },
   internal.mv.daily_briefing.refresh,
+  {},
 );
 
 crons.interval(
   "top_earners_30d refresh",
   { minutes: 15 },
   internal.mv.top_earners.refresh,
+  {},
 );
 
 crons.interval(
   "purchase_signals refresh",
   { minutes: 30 },
   internal.mv.purchase_signals.refresh,
+  {},
 );
 
 crons.interval(
   "churn_risk_renters refresh",
   { minutes: 60 },
   internal.mv.churn_risk.refresh,
+  {},
 );
 
 crons.interval(
   "utilization_today refresh",
   { minutes: 15 },
   internal.mv.utilization.refresh,
+  {},
 );
 
 crons.interval(
   "upcoming_returns refresh",
   { minutes: 10 },
   internal.mv.upcoming_returns.refresh,
+  {},
 );
 
 // ── Wave 4 — Hygglo polling workflow trigger ──────────────────

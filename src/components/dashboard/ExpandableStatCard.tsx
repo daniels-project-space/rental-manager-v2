@@ -46,8 +46,8 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
       style={{
         background: "rgba(14,17,28,0.35)",
         backdropFilter: "blur(24px) saturate(1.5)",
-        borderRadius: 16,
-        padding: 16,
+        borderRadius: 14,
+        padding: 10,
         borderLeft: accentHex ? `3px solid ${accentHex}` : undefined,
         transition: "transform 0.2s ease, box-shadow 0.2s ease",
       }}
@@ -72,10 +72,10 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
             {props.label}
           </div>
           <div
-            className="text-2xl font-semibold mt-1 flex items-center gap-1.5"
+            className="text-xl font-semibold mt-0.5 flex items-center gap-1"
             style={{
               color: valueHex,
-              textShadow: valueHex ? `0 0 12px ${valueHex}40` : undefined,
+              textShadow: valueHex ? `0 0 10px ${valueHex}40` : undefined,
             }}
           >
             {props.icon && (
@@ -84,7 +84,7 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
             {props.value}
           </div>
           {props.subtitle && (
-            <div className="text-xs text-slate-500 mt-1">{props.subtitle}</div>
+            <div className="text-xs text-slate-500 mt-0.5 leading-tight">{props.subtitle}</div>
           )}
         </div>
 

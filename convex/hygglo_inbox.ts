@@ -78,7 +78,8 @@ export const ingestVpsBatch = action({
     payloadHash: v.string(),
     payload: v.any(),
   },
-  handler: async (ctx, { payloadHash, payload }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: async (ctx, { payloadHash, payload }): Promise<any> => {
     return await ctx.runMutation(api.hygglo_inbox.receiveBatch, {
       source: "vps_scraper",
       payloadHash,

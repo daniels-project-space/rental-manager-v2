@@ -361,8 +361,9 @@ export async function runHyggloPoll(): Promise<RunState | { ok: false; error: st
   const c = convex();
   let state: RunState | null = null;
   try {
-    const run = await hyggloPollWorkflow.createRunAsync();
-    const result = await run.start({ inputData: {} });
+    const run = hyggloPollWorkflow.createRun();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (run as any).start({ inputData: {} });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     state = ((result as any)?.result ?? (result as any)?.output ?? null) as RunState | null;
     if (state) {
