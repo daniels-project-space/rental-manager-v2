@@ -18,7 +18,7 @@
 import { execSync } from 'node:child_process';
 
 const VAULT_URL = 'https://fantastic-roadrunner-485.convex.cloud/api/query';
-const CONVEX_URL = 'https://hearty-oyster-600.convex.cloud';
+const CONVEX_URL = 'https://exciting-lion-29.convex.cloud';
 const V1_DIR = '/home/ubuntu/rental-manager';
 const V2_DIR = '/home/ubuntu/rental-manager-v2';
 const DRY_RUN = process.argv.includes('--dry-run');

@@ -79,6 +79,46 @@ export const getDismissedItemNames = query({
   },
 });
 
+/**
+ * Seed / upsert a single pricing_catalog row (used by seed-pricing-from-v1.mjs).
+ * Matches on item_name_canonical; inserts if missing, patches rates if present.
+ */
+export const upsertPricingRow = mutation({
+  args: {
+    item_name_canonical: v.string(),
+    daily_price_min: v.number(),
+    daily_price_max: v.number(),
+    currency: v.optional(v.string()),
+    is_bundle: v.optional(v.boolean()),
+    marketing_only: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("pricing_catalog")
+      .withIndex("by_name", (q) => q.eq("item_name_canonical", args.item_name_canonical))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        daily_price_min: args.daily_price_min,
+        daily_price_max: args.daily_price_max,
+        ...(args.currency !== undefined ? { currency: args.currency } : {}),
+        ...(args.is_bundle !== undefined ? { is_bundle: args.is_bundle } : {}),
+        ...(args.marketing_only !== undefined ? { marketing_only: args.marketing_only } : {}),
+      });
+      return { action: "updated", id: existing._id };
+    }
+    const id = await ctx.db.insert("pricing_catalog", {
+      item_name_canonical: args.item_name_canonical,
+      daily_price_min: args.daily_price_min,
+      daily_price_max: args.daily_price_max,
+      currency: args.currency ?? "SEK",
+      is_bundle: args.is_bundle ?? false,
+      marketing_only: args.marketing_only ?? false,
+    });
+    return { action: "inserted", id };
+  },
+});
+
 // B-3: fuzzy lookup for dashboard chat tool
 // 3-tier resolver:
 //   Tier 1: exact canonical match on pricing_catalog.item_name_canonical (case-insensitive)
