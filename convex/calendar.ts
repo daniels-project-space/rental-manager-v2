@@ -12,6 +12,42 @@ function parseTime(date: string, time: string): number {
 }
 
 /**
+ * 3-tier item name resolver.
+ * Tier 1: exact canonical match (case-insensitive)
+ * Tier 2: exact alias match (case-insensitive)
+ * Tier 3: substring match — item_name ⊆ canonical OR canonical ⊆ item_name (min 5 chars)
+ */
+function findItemByName<T extends { name_canonical?: string; name?: string; aliases?: string[] }>(
+  items: T[],
+  name: string | undefined | null
+): T | null {
+  if (!name) return null;
+  const lower = name.toLowerCase().trim();
+  // Tier 1: exact canonical
+  let m = items.find((i) => (i.name_canonical ?? i.name ?? "").toLowerCase() === lower);
+  if (m) return m;
+  // Tier 2: exact alias
+  m = items.find((i) => (i.aliases ?? []).some((a) => a.toLowerCase() === lower));
+  if (m) return m;
+  // Tier 3: substring (only when name is reasonably long)
+  if (lower.length >= 5) {
+    m = items.find((i) => {
+      const canon = (i.name_canonical ?? i.name ?? "").toLowerCase();
+      return canon && (canon.includes(lower) || lower.includes(canon));
+    });
+    if (m) return m;
+    m = items.find((i) =>
+      (i.aliases ?? []).some((a) => {
+        const al = a.toLowerCase();
+        return al.length >= 5 && (al.includes(lower) || lower.includes(al));
+      })
+    );
+    if (m) return m;
+  }
+  return null;
+}
+
+/**
  * Compute server-side progress percent for a rental chip.
  * Returns null if upcoming, 100 if completed, 1-99 while in progress.
  */
@@ -130,50 +166,22 @@ export const getCalendarStrip = query({
       })
     );
 
-    // Item image lookup for reservations (first item name → items table)
-    // Build a lookup: canonical name → image_url
-    const allReservationItemNames = [
-      ...new Set(
-        reservations.flatMap((r) => (r.items ?? []).map((i) => i.item_name).filter(Boolean))
-      ),
-    ];
-    const itemImageByName = new Map<string, string | null>();
-    if (allReservationItemNames.length > 0) {
-      const allItems = await ctx.db.query("items").collect();
-      for (const item of allItems) {
-        const i = item as { name_canonical?: string; name?: string; aliases?: string[]; image_url?: string };
-        const canonical = i.name_canonical ?? i.name ?? "";
-        if (canonical && itemImageByName.get(canonical) === undefined) {
-          itemImageByName.set(canonical, i.image_url ?? null);
-        }
-        // also index aliases
-        for (const alias of i.aliases ?? []) {
-          if (alias && itemImageByName.get(alias) === undefined) {
-            itemImageByName.set(alias, i.image_url ?? null);
-          }
-        }
-      }
-    }
-
-    // Build a case-insensitive fallback index (lowercased key → image_url)
-    const itemImageByNameLower = new Map<string, string | null>();
-    for (const [k, v] of itemImageByName) {
-      const lk = k.toLowerCase();
-      if (!itemImageByNameLower.has(lk)) itemImageByNameLower.set(lk, v);
+    // Item image lookup for reservations — use findItemByName (3-tier fuzzy resolver)
+    const hasReservationItems = reservations.some((r) => (r.items ?? []).length > 0);
+    type ItemDoc = { name_canonical?: string; name?: string; aliases?: string[]; image_url?: string };
+    let allItemsForStrip: ItemDoc[] = [];
+    if (hasReservationItems) {
+      const rawItems = await ctx.db.query("items").collect();
+      allItemsForStrip = rawItems.map((item) => item as ItemDoc);
     }
 
     /** Resolve image URL for the first item in a reservation's items array.
-     *  Tries exact match first, then case-insensitive fallback. */
+     *  Uses 3-tier fuzzy resolver: exact canonical → exact alias → substring. */
     function resolveFirstImageUrl(items: Array<{ item_name?: string }> | undefined): string | null {
       if (!items || items.length === 0) return null;
       for (const i of items) {
-        const name = i.item_name;
-        if (!name) continue;
-        // BUGFIX: exact match (was the only lookup before — missed casing mismatches)
-        if (itemImageByName.has(name)) return itemImageByName.get(name) ?? null;
-        // FIX: case-insensitive fallback for names like "Canon EOS R5" vs "canon eos r5"
-        const lower = name.toLowerCase();
-        if (itemImageByNameLower.has(lower)) return itemImageByNameLower.get(lower) ?? null;
+        const found = findItemByName(allItemsForStrip, i.item_name);
+        if (found) return found.image_url ?? null;
       }
       return null;
     }
@@ -520,17 +528,9 @@ export const getGanttWeek = query({
       })
     );
 
-    // --- Items table: build name→row map for image + metadata ---
-    const allItems = await ctx.db.query("items").collect();
-    const itemByName = new Map<string, typeof allItems[0]>();
-    for (const item of allItems) {
-      const i = item as { name_canonical?: string; name?: string; aliases?: string[] };
-      const canonical = i.name_canonical ?? i.name ?? "";
-      if (canonical) itemByName.set(canonical, item);
-      for (const alias of i.aliases ?? []) {
-        if (alias && !itemByName.has(alias)) itemByName.set(alias, item);
-      }
-    }
+    // --- Items table: load all for fuzzy resolver ---
+    type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string };
+    const allItems = (await ctx.db.query("items").collect()) as GanttItemDoc[];
 
     // --- Collect unique items referenced across reservations ---
     // Key: item_name string (from reservation.items[])
@@ -543,8 +543,7 @@ export const getGanttWeek = query({
 
     // Build per-item rows
     const itemRows = Array.from(itemNameSet).map((itemName) => {
-      const itemDoc = itemByName.get(itemName);
-      const iDoc = itemDoc as { _id?: string; name_canonical?: string; name?: string; image_url?: string; account_slug?: string } | undefined;
+      const iDoc = findItemByName(allItems, itemName) as GanttItemDoc | null;
 
       // Find reservations that include this item
       const matchingRes = reservations.filter((r) =>
@@ -574,7 +573,7 @@ export const getGanttWeek = query({
       });
 
       return {
-        item_id: iDoc?._id ?? null,
+        item_id: (iDoc?._id ?? null) as string | null,
         item_name: itemName,
         image_url: iDoc?.image_url ?? null,
         account_slug: iDoc?.account_slug ?? null,

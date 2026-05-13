@@ -455,8 +455,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                       style={{
                         width: COL_WIDTH,
                         color: isToday ? "#3b82f6" : "#6b7280",
-                        borderRight: "1px solid rgba(255,255,255,0.04)",
-                        background: isToday ? "rgba(59,130,246,0.06)" : undefined,
+                        background: isToday ? "rgba(59,130,246,0.12)" : undefined,
+                        borderLeft: isToday ? "1px solid rgba(59,130,246,0.35)" : undefined,
+                        borderRight: isToday ? "1px solid rgba(59,130,246,0.35)" : "1px solid rgba(255,255,255,0.04)",
                       }}
                     >
                       {label}
@@ -513,13 +514,14 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           style={{
                             left: i * COL_WIDTH,
                             width: COL_WIDTH,
-                            borderRight: "1px solid rgba(255,255,255,0.03)",
                             background:
                               iso === today
-                                ? "rgba(59,130,246,0.04)"
+                                ? "rgba(59,130,246,0.11)"
                                 : i % 2 === 0
                                 ? "rgba(255,255,255,0.01)"
                                 : undefined,
+                            borderLeft: iso === today ? "1px solid rgba(59,130,246,0.35)" : undefined,
+                            borderRight: iso === today ? "1px solid rgba(59,130,246,0.35)" : "1px solid rgba(255,255,255,0.03)",
                           }}
                         />
                       ))}

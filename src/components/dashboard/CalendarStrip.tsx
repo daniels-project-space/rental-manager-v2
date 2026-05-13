@@ -275,7 +275,13 @@ function StripChip({
             style={{ background: color }}
           />
           <span className="text-sm font-medium text-[#e4e6eb] truncate">
-            {chip.renterName}
+            {chip.renterName && chip.renterName !== "?"
+              ? chip.renterName
+              : chip.status === "pending_review" || chip.status === "REQUEST" || chip.status === "APPROVED"
+                ? "Pending"
+                : chip.accountSlug
+                  ? `${chip.accountSlug} · ${chip.itemNames.filter(Boolean)[0] ?? "—"}`
+                  : "?"}
           </span>
           {isDelivery && (
             <span className="text-xs ml-auto flex-shrink-0" title="Delivery">🚚</span>
@@ -323,10 +329,10 @@ function DayCard({
         width: "120px",
         minHeight: "140px",
         border: isToday
-          ? "1px solid rgba(59,130,246,0.55)"
+          ? "2px solid #3b82f6"
           : "1px solid rgba(255,255,255,0.08)",
         boxShadow: isToday
-          ? "0 0 16px rgba(59,130,246,0.18)"
+          ? "0 0 12px rgba(59,130,246,0.4), 0 0 24px rgba(59,130,246,0.15)"
           : isExpanded
             ? "0 4px 16px rgba(0,0,0,0.3)"
             : "none",
@@ -518,10 +524,11 @@ export function CalendarStrip() {
           </div>
           <button
             onClick={() => setGanttOpen(true)}
-            className="text-xs px-3 py-1 rounded-lg transition-colors hover:bg-white/5"
+            className="text-xs px-3 py-1.5 rounded-lg transition-all duration-150 hover:bg-blue-500/10 hover:border-blue-400/60 active:scale-95"
             style={{
-              border: "1px solid rgba(110,168,254,0.25)",
-              color: "rgba(110,168,254,0.8)",
+              border: "1px solid rgba(59,130,246,0.45)",
+              color: "#60a5fa",
+              fontWeight: 600,
             }}
           >
             📅 Weekly View
