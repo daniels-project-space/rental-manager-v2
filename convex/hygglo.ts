@@ -192,6 +192,8 @@ export const upsertOrderAsReservation = mutation({
     /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
     sourceFilter: v.optional(v.string()),
     renter_name: v.optional(v.string()),
+    /** Raw Hygglo booking status (e.g. "pending_review", "confirmed"). */
+    booking_status: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ action: "inserted" | "updated" | "skipped" }> => {
     const existing = await ctx.db
@@ -243,6 +245,7 @@ export const upsertOrderAsReservation = mutation({
       items: args.items,
       duration_days: args.duration_days,
       renter_name: args.renter_name,
+      booking_status: args.booking_status,
     };
 
     if (existing) {

@@ -85,6 +85,8 @@ type OrderReservationPayload = {
   duration_days?: number;
   sourceFilter: string;
   renter_name?: string;
+  /** Raw Hygglo booking status (e.g. "pending_review") extracted from detail.booking.status. */
+  booking_status?: string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
 };
@@ -319,8 +321,19 @@ async function scrapeAccount(
       const start = new Date(startUTC);
       const end = new Date(endUTC);
       const durationDays = Math.round((end.getTime() - start.getTime()) / 86400000);
-      // obsolete filter = cancelled/rejected orders
-      const status = order.sourceFilter === "obsolete" ? "cancelled" : "confirmed";
+      // Map sourceFilter to booking status:
+      //   "obsolete"  → "cancelled"
+      //   "pending"   → "pending_review" (owner hasn't accepted yet)
+      //   everything else (current/future) → "confirmed"
+      const status =
+        order.sourceFilter === "obsolete"
+          ? "cancelled"
+          : order.sourceFilter === "pending"
+            ? "pending_review"
+            : "confirmed";
+      // Also capture the raw Hygglo booking status from the detail object if present.
+      const bookingStatus: string | undefined =
+        (detail as any)?.booking?.status ?? undefined;
       reservationPayloads.push({
         hygglo_order_id: String(order.id),
         status,
@@ -333,6 +346,7 @@ async function scrapeAccount(
         duration_days: durationDays > 0 ? durationDays : undefined,
         sourceFilter: order.sourceFilter,
         renter_name: otherPartName || undefined,
+        booking_status: bookingStatus,
         order: detail,
       });
     }

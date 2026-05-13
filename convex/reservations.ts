@@ -267,16 +267,21 @@ export const listForReconcile = query({
 // because prod data has zero rows with status="pending_review". All 138 rows are
 // legacy rows with order_step undefined. We must also match modern REQUEST/APPROVED
 // order_step values and old "pending" status strings.
+// Also match rows where booking_status === "pending_review" (captured from Hygglo since
+// many "pending_review" orders have order_step=APPROVED already — renter approved by owner
+// but renter hasn't paid yet).
 export const listPending = query({
   args: { accountSlug: v.optional(v.string()) },
   handler: async (ctx, { accountSlug }) => {
     const allRows = await ctx.db.query("reservations").collect();
     let rows = allRows.filter((r) => {
       if (r.is_obsolete === true) return false;
-      // Modern: explicit pending order_step
-      if (r.order_step === "REQUEST" || r.order_step === "APPROVED") return true;
-      // Legacy: status field-based (pending_review or pending, no order_step set yet)
+      // Canonical: booking_status field directly from Hygglo (most accurate when present)
+      if ((r as any).booking_status === "pending_review") return true;
+      // Modern: status field set to pending_review by poller (sourceFilter="pending")
       if (r.status === "pending_review" || r.status === "pending") return true;
+      // Fallback: explicit pending order_step (REQUEST = awaiting owner accept)
+      if (r.order_step === "REQUEST" || r.order_step === "APPROVED") return true;
       return false;
     });
     if (accountSlug) {

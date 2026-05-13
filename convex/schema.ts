@@ -254,6 +254,7 @@ export default defineSchema({
     pickup_at: v.optional(v.number()),              // ms epoch — actual handover start
     return_at: v.optional(v.number()),              // ms epoch — actual handover end
     renter_name: v.optional(v.string()),            // denormalized from Hygglo otherPartName
+    booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
