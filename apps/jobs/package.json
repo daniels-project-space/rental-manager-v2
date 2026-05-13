@@ -1,0 +1,22 @@
+{
+  "name": "jobs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "trigger:dev": "trigger.dev dev",
+    "trigger:deploy": "trigger.dev deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rental/shared": "workspace:*",
+    "@trigger.dev/sdk": "^4.4.5",
+    "convex": "^1.37.0"
+  },
+  "devDependencies": {
+    "@trigger.dev/build": "^4.4.5",
+    "@types/node": "^20",
+    "trigger.dev": "^4.4.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

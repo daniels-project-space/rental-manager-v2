@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@rental/shared": ["../../packages/shared/src/index.ts"],
+      "@rental/shared/*": ["../../packages/shared/src/*"],
+      "@convex/*": ["../../convex/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "trigger.config.ts"]
+}
