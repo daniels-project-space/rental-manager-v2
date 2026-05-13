@@ -328,11 +328,11 @@ function DayCard({
       style={{
         width: "120px",
         minHeight: "140px",
-        border: isToday
-          ? "2px solid #3b82f6"
-          : "1px solid rgba(255,255,255,0.08)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        outline: isToday ? "2px solid #3b82f6" : undefined,
+        outlineOffset: isToday ? "-1px" : undefined,
         boxShadow: isToday
-          ? "0 0 12px rgba(59,130,246,0.4), 0 0 24px rgba(59,130,246,0.15)"
+          ? "inset 0 0 0 2px #3b82f6, 0 0 12px rgba(59,130,246,0.4), 0 0 24px rgba(59,130,246,0.15)"
           : isExpanded
             ? "0 4px 16px rgba(0,0,0,0.3)"
             : "none",

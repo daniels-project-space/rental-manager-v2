@@ -174,10 +174,26 @@ function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgre
     block.pickup_time ? `pickup ${block.pickup_time}` : null,
   ].filter(Boolean).join(" • ");
 
-  // Renter label truncated at ~12 chars
-  const renterShort = (block.renter_name ?? "—").length > 12
-    ? (block.renter_name ?? "—").slice(0, 12) + "…"
-    : (block.renter_name ?? "—");
+  // Renter label: use name if present, else order_step-derived fallback
+  function orderStepLabel(step: string | null): string {
+    switch (step) {
+      case "REQUEST": return "Request";
+      case "APPROVED": return "Approved";
+      case "FUNDS_RESERVED": return "Booked";
+      case "VERIFIED": return "Verified";
+      case "BOOKED_AFTER_VERIFIED": return "Confirmed";
+      case "DELIVERED": return "Out";
+      case "RETURNED": return "Returned";
+      case "REVIEWED": return "Done";
+      case "CANCELED": return "Cancelled";
+      default: return "Booking";
+    }
+  }
+  const hasRenter = block.renter_name && block.renter_name.trim().length > 0;
+  const renterFallback = orderStepLabel(block.order_step);
+  const renterShort = hasRenter
+    ? ((block.renter_name!).length > 12 ? (block.renter_name!).slice(0, 12) + "…" : block.renter_name!)
+    : renterFallback;
 
   return (
     <div
@@ -196,6 +212,9 @@ function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgre
         style={{
           color: ss.text,
           textDecoration: ss.strikethrough ? "line-through" : undefined,
+          fontStyle: hasRenter ? undefined : "italic",
+          opacity: hasRenter ? undefined : 0.75,
+          fontSize: hasRenter ? undefined : "10px",
         }}
       >
         {renterShort}
@@ -456,8 +475,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                         width: COL_WIDTH,
                         color: isToday ? "#3b82f6" : "#6b7280",
                         background: isToday ? "rgba(59,130,246,0.12)" : undefined,
-                        borderLeft: isToday ? "1px solid rgba(59,130,246,0.35)" : undefined,
-                        borderRight: isToday ? "1px solid rgba(59,130,246,0.35)" : "1px solid rgba(255,255,255,0.04)",
+                        borderLeft: isToday ? undefined : undefined,
+                        borderRight: isToday ? undefined : "1px solid rgba(255,255,255,0.04)",
+                        boxShadow: isToday ? "inset 1px 0 0 rgba(59,130,246,0.35), inset -1px 0 0 rgba(59,130,246,0.35)" : undefined,
                       }}
                     >
                       {label}
@@ -520,8 +540,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                                 : i % 2 === 0
                                 ? "rgba(255,255,255,0.01)"
                                 : undefined,
-                            borderLeft: iso === today ? "1px solid rgba(59,130,246,0.35)" : undefined,
-                            borderRight: iso === today ? "1px solid rgba(59,130,246,0.35)" : "1px solid rgba(255,255,255,0.03)",
+                            borderLeft: undefined,
+                            borderRight: iso === today ? undefined : "1px solid rgba(255,255,255,0.03)",
+                            boxShadow: iso === today ? "inset 1px 0 0 rgba(59,130,246,0.35), inset -1px 0 0 rgba(59,130,246,0.35)" : undefined,
                           }}
                         />
                       ))}
