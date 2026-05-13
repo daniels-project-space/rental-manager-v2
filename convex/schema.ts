@@ -716,4 +716,71 @@ export default defineSchema({
       httpStatus: v.optional(v.number()),
     }),
   }).index("by_decisionId", ["decisionId"]),
+
+  // ── Wave 4.6 — Hygglo UI automation ──────────────────────────
+  // Storage_state cookie blobs captured by `scripts/bootstrap-hygglo-session.mjs`
+  // after Daniel performs a manual login locally. Restored by the
+  // `hygglo-ui-action` Trigger task before each browser run so we never
+  // log in inside the task container.
+  //
+  // SECURITY: storageStateJson contains live Hygglo session cookies in
+  // plaintext. v1 stores it raw — v2 should encrypt at rest with
+  // ENCRYPT_AT_REST_KEY once available. Marked future_work in PR body.
+  hygglo_sessions: defineTable({
+    accountSlug: v.union(v.literal("dbcinema"), v.literal("leo")),
+    storageStateJson: v.string(),
+    capturedAt: v.number(),
+    expiresHintAt: v.optional(v.number()),     // operator-provided cookie expiry estimate
+    lastUsedAt: v.optional(v.number()),
+    lastUsedRunId: v.optional(v.string()),
+  }).index("by_account", ["accountSlug"]),
+
+  // Audit row per UI action attempt (one per correlationId). Idempotency
+  // gate: the Trigger task short-circuits on a row whose status is in
+  // ["shadow_complete","live_complete"]. Shadow rows always carry a
+  // screenshot URL — that's the entire point of shadow mode.
+  hygglo_ui_actions: defineTable({
+    correlationId: v.string(),
+    accountSlug: v.string(),
+    orderId: v.optional(v.string()),
+    action: v.string(),                        // accept | decline | apply_discount | ...
+    args: v.any(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("shadow_complete"),
+      v.literal("live_complete"),
+      v.literal("failed"),
+    ),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    strategyUsed: v.union(
+      v.literal("recipe"),
+      v.literal("ai_fallback"),                // recipe attempted then fell through
+      v.literal("ai_first"),                   // started in AI mode (no recipe registered)
+    ),
+    llmCallCount: v.optional(v.number()),
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    estCostUsd: v.optional(v.number()),
+    screenshotR2Key: v.optional(v.string()),
+    screenshotUrl: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    hyggloConfirmationText: v.optional(v.string()),
+  })
+    .index("by_correlation", ["correlationId"])
+    .index("by_status_account", ["status", "accountSlug"])
+    .index("by_startedAt", ["startedAt"]),
+
+  // Per-account per-day LLM/API spend ledger for the UI automation loop.
+  // Pre-flight gate: dispatchUiAction refuses with caveat
+  // `daily_cost_cap_reached` when today's accumulated spend > $5.
+  // Override: env HYGGLO_UI_COST_OVERRIDE=true (operator escape hatch).
+  ui_cost_guards: defineTable({
+    accountSlug: v.string(),
+    isoDate: v.string(),                       // YYYY-MM-DD UTC
+    spendUsd: v.number(),
+    actionCount: v.number(),
+    updatedAt: v.number(),
+  }).index("by_account_date", ["accountSlug", "isoDate"]),
 });

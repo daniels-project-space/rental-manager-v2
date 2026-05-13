@@ -23,6 +23,7 @@ import type * as health from "../health.js";
 import type * as hygglo from "../hygglo.js";
 import type * as hygglo_inbox from "../hygglo_inbox.js";
 import type * as hygglo_poll_trigger from "../hygglo_poll_trigger.js";
+import type * as hygglo_ui from "../hygglo_ui.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as items from "../items.js";
 import type * as lost_revenue from "../lost_revenue.js";
@@ -71,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   hygglo: typeof hygglo;
   hygglo_inbox: typeof hygglo_inbox;
   hygglo_poll_trigger: typeof hygglo_poll_trigger;
+  hygglo_ui: typeof hygglo_ui;
   insurance_claims: typeof insurance_claims;
   items: typeof items;
   lost_revenue: typeof lost_revenue;

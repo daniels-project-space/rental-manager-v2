@@ -517,7 +517,189 @@ export const approveDecision = createTool({
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 = 34 total)
+// Wave 4.6 — Hygglo UI automation tools (browser-use + shadow mode)
+// ─────────────────────────────────────────────────────────────────────────
+// All 10 below dispatch through `data.uiActions.*`. Default behaviour:
+// shadow mode — bot performs every step end-to-end, screenshots the
+// pre-submit state to R2, ABORTS before the final submit click, writes
+// an audit row, and returns the screenshot URL. Flip per-action via env
+// `HYGGLO_UI_LIVE_<ACTION>=true` to actually submit.
+
+const accountSlug = {
+  accountSlug: z
+    .enum(["leo", "dbcinema"])
+    .describe("Which Hygglo account this order belongs to."),
+};
+
+export const acceptOrderUi = createTool({
+  id: "accept_order_ui",
+  description:
+    "INTENT-ROUTING: 'click accept on order X', 'accept via UI', 'use the UI path for accepting'. " +
+    "Fallback when REST acceptOrder fails or you want to verify the browser flow. " +
+    "Runs in shadow mode by default — captures a screenshot for review without submitting. " +
+    "Once HYGGLO_UI_LIVE_ACCEPT=true the bot submits automatically.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string().describe("Hygglo order id."),
+  }),
+  execute: async (input: { accountSlug: "leo" | "dbcinema"; orderId: string }) =>
+    data.uiActions.acceptOrderUi(input),
+});
+
+export const declineOrderUi = createTool({
+  id: "decline_order_ui",
+  description:
+    "INTENT-ROUTING: 'click decline via UI', 'decline through the browser'. " +
+    "Fallback when REST declineOrder fails. Shadow mode by default — " +
+    "flip HYGGLO_UI_LIVE_DECLINE=true to submit.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    reason: z.string().optional().describe("Optional polite reason shown in confirm modal."),
+  }),
+  execute: async (input: { accountSlug: "leo" | "dbcinema"; orderId: string; reason?: string }) =>
+    data.uiActions.declineOrderUi(input),
+});
+
+export const addItemToOrder = createTool({
+  id: "add_item_to_order",
+  description:
+    "INTENT-ROUTING: 'add a Sigma 24-70 to order 123', 'put a battery on this rental', " +
+    "'attach the FX3 to the booking'. AI-driven (autocomplete is dynamic). " +
+    "Shadow mode by default — flip HYGGLO_UI_LIVE_ADD_ITEM=true to submit.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    itemName: z.string().describe("Renter-facing item name as it appears in your inventory."),
+    quantity: z.number().int().min(1).max(20).optional(),
+    days: z.number().int().min(1).max(60).optional(),
+  }),
+  execute: async (input: {
+    accountSlug: "leo" | "dbcinema"; orderId: string; itemName: string;
+    quantity?: number; days?: number;
+  }) => data.uiActions.addItemToOrder(input),
+});
+
+export const removeItemFromOrder = createTool({
+  id: "remove_item_from_order",
+  description:
+    "INTENT-ROUTING: 'remove the V-mount from 123', 'drop the FX3 from this order'. " +
+    "Per-row delete icon (recipe). Shadow mode by default — flip HYGGLO_UI_LIVE_REMOVE_ITEM=true.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    itemName: z.string().describe("Exact item name as listed on the order."),
+  }),
+  execute: async (input: { accountSlug: "leo" | "dbcinema"; orderId: string; itemName: string }) =>
+    data.uiActions.removeItemFromOrder(input),
+});
+
+export const applyOrderDiscount = createTool({
+  id: "apply_order_discount",
+  description:
+    "INTENT-ROUTING: 'give 10% off', 'reduce to £200', 'discount this rental'. " +
+    "Pass percentOff OR newOwnerEarningsGbp, not both. The bot clicks the displayed £ " +
+    "amount, types the new value; Hygglo recomputes platform fees server-side. " +
+    "AI-driven (dynamic text element). Shadow mode by default — " +
+    "flip HYGGLO_UI_LIVE_APPLY_DISCOUNT=true to submit.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    percentOff: z.number().min(1).max(100).optional(),
+    newOwnerEarningsGbp: z.number().min(1).optional(),
+    reason: z.string().optional(),
+  }),
+  execute: async (input: {
+    accountSlug: "leo" | "dbcinema"; orderId: string;
+    percentOff?: number; newOwnerEarningsGbp?: number; reason?: string;
+  }) => data.uiActions.applyOrderDiscount(input),
+});
+
+export const changeOwnerEarnings = createTool({
+  id: "change_owner_earnings",
+  description:
+    "INTENT-ROUTING: 'set my share to £150 on order 123', 'change owner earnings to X'. " +
+    "Use when the user wants the owner-share total set explicitly without computing a percent. " +
+    "AI-driven. Shadow mode by default — flip HYGGLO_UI_LIVE_CHANGE_OWNER_EARNINGS=true.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    newGbp: z.number().min(1),
+    reason: z.string().optional(),
+  }),
+  execute: async (input: {
+    accountSlug: "leo" | "dbcinema"; orderId: string; newGbp: number; reason?: string;
+  }) => data.uiActions.changeOwnerEarnings(input),
+});
+
+export const markOrderPickedUp = createTool({
+  id: "mark_order_picked_up",
+  description:
+    "INTENT-ROUTING: 'mark 123 picked up', 'renter has it now', 'collection done'. " +
+    "Recipe-driven (stable button). Shadow mode by default — flip HYGGLO_UI_LIVE_MARK_PICKED_UP=true.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    notes: z.string().optional(),
+  }),
+  execute: async (input: { accountSlug: "leo" | "dbcinema"; orderId: string; notes?: string }) =>
+    data.uiActions.markOrderPickedUp(input),
+});
+
+export const markOrderReturned = createTool({
+  id: "mark_order_returned",
+  description:
+    "INTENT-ROUTING: 'returned', 'got it back', 'mark 123 returned'. " +
+    "NOTE: damage / insurance claims are a separate flow not in this tool. " +
+    "Recipe-driven. Shadow mode by default — flip HYGGLO_UI_LIVE_MARK_RETURNED=true.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    conditionNotes: z.string().optional().describe("Optional return notes (e.g. 'clean, no damage')."),
+  }),
+  execute: async (input: { accountSlug: "leo" | "dbcinema"; orderId: string; conditionNotes?: string }) =>
+    data.uiActions.markOrderReturned(input),
+});
+
+export const leaveRenterReview = createTool({
+  id: "leave_renter_review",
+  description:
+    "INTENT-ROUTING: 'leave a 5 star for John', 'review this rental', 'rate the renter'. " +
+    "Recipe-driven (form). Shadow mode by default — flip HYGGLO_UI_LIVE_LEAVE_REVIEW=true.",
+  inputSchema: z.object({
+    ...accountSlug,
+    orderId: z.string(),
+    rating: z.number().int().min(1).max(5),
+    comment: z.string().optional(),
+  }),
+  execute: async (input: {
+    accountSlug: "leo" | "dbcinema"; orderId: string;
+    rating: number; comment?: string;
+  }) => data.uiActions.leaveRenterReview({
+    accountSlug: input.accountSlug,
+    orderId: input.orderId,
+    rating: input.rating as 1 | 2 | 3 | 4 | 5,
+    comment: input.comment,
+  }),
+});
+
+export const getPendingShadowActions = createTool({
+  id: "get_pending_shadow_actions",
+  description:
+    "INTENT-ROUTING: 'show me pending UI actions', \"what's queued for review\", " +
+    "'list shadow mode runs'. Read-only — lists hygglo_ui_actions rows " +
+    "with status='shadow_complete', each with a screenshot URL for Daniel " +
+    "to eyeball before flipping live mode.",
+  inputSchema: z.object({
+    accountSlug: z.enum(["leo", "dbcinema"]).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { accountSlug?: "leo" | "dbcinema"; limit?: number }) =>
+    data.uiActions.getPendingShadowActions(input),
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 + Wave 4.6: 10 = 44 total)
 // ─────────────────────────────────────────────────────────────────────────
 
 export const dashboardTools = {
@@ -560,4 +742,15 @@ export const dashboardTools = {
   // Wave 4.5 — ai_decision approval
   get_pending_decisions: getPendingDecisions,
   approve_decision: approveDecision,
+  // Wave 4.6 — Hygglo UI automation (browser-use)
+  accept_order_ui: acceptOrderUi,
+  decline_order_ui: declineOrderUi,
+  add_item_to_order: addItemToOrder,
+  remove_item_from_order: removeItemFromOrder,
+  apply_order_discount: applyOrderDiscount,
+  change_owner_earnings: changeOwnerEarnings,
+  mark_order_picked_up: markOrderPickedUp,
+  mark_order_returned: markOrderReturned,
+  leave_renter_review: leaveRenterReview,
+  get_pending_shadow_actions: getPendingShadowActions,
 };

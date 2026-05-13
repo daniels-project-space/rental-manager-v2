@@ -30,6 +30,9 @@ export * as demand from "./demand";
 export * as intelligence from "./intelligence";
 // Wave 4.5 — ai_decision approval orchestrator
 export * as decisions from "./decisions";
+// Wave 4.6 — Hygglo UI automation (browser-use + Trigger v4)
+export * as uiActions from "./ui_actions";
+export * as costGuards from "./cost_guards";
 
 export * from "./constants";
 export { validateAccount, type AccountSlug } from "./account-scope";
