@@ -269,11 +269,12 @@ export const getLifetimeByMonth = query({
 
     // Load historical_revenue for pre-import months (retired accounts + v1 migration)
     const histRows = await ctx.db.query("historical_revenue").collect();
-    const histByMonth = new Map<string, { total: number; damage: number }>();
+    const histByMonth = new Map<string, { total: number; damage: number; totalOverallMade: number }>();
     for (const row of histRows) {
       histByMonth.set(row.month, {
         total: row.total_revenue_gbp,
         damage: row.damage_costs_gbp,
+        totalOverallMade: row.total_overall_made_gbp ?? 0,
       });
     }
 
@@ -409,20 +410,31 @@ export const getLifetimeByMonth = query({
         const leoRaw = leoGross.get(mo) ?? 0;
         const totalRaw = dbRaw + leoRaw;
         const hist = histByMonth.get(mo);
-        if (totalRaw === 0 && hist && hist.total > 0 && !accountSlug) {
+        if (!accountSlug && hist && hist.totalOverallMade > 0) {
+          // v1 parity: totalOverallMade is the definitive all-accounts total for this month
+          // (DB Cinema + Daniel + Vertus combined, payment-date basis). Override live data.
+          // damageCosts are already included in totalOverallMade; surface as damageClaims separately.
+          const netRental = hist.totalOverallMade - hist.damage;
+          dbOrganic = netRental;
+          leoOrganic = 0;
+          damageClaims = hist.damage;
+        } else if (totalRaw === 0 && hist && hist.total > 0 && !accountSlug) {
           // No live reservations for this month — use historical_revenue aggregate.
           // Shown as dbcinemaOrganic (combined historical total across all retired + active accounts).
           dbOrganic = hist.total;
-        } else if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
-          aiBoost = r2(totalRaw * boostRate / (1 + boostRate));
-          const dbFrac = dbRaw / totalRaw;
-          dbOrganic = r2(dbRaw - aiBoost * dbFrac);
-          leoOrganic = r2(leoRaw - aiBoost * (1 - dbFrac));
+          damageClaims = claimsByMonth.get(mo) ?? 0;
         } else {
-          dbOrganic = dbRaw;
-          leoOrganic = leoRaw;
+          if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
+            aiBoost = r2(totalRaw * boostRate / (1 + boostRate));
+            const dbFrac = dbRaw / totalRaw;
+            dbOrganic = r2(dbRaw - aiBoost * dbFrac);
+            leoOrganic = r2(leoRaw - aiBoost * (1 - dbFrac));
+          } else {
+            dbOrganic = dbRaw;
+            leoOrganic = leoRaw;
+          }
+          damageClaims = claimsByMonth.get(mo) ?? 0;
         }
-        damageClaims = claimsByMonth.get(mo) ?? 0;
       } else if (isNextMo) {
         bookedNextVal = bookedNextTotal;
         pendingNextVal = pendingNextTotal;
