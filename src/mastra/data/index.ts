@@ -26,6 +26,10 @@ export * as feedback from "./feedback";
 export * as lostRevenue from "./lost-revenue";
 export * as renters from "./renters";
 export * as demand from "./demand";
+// Wave 3 — thick intelligence (MV-backed)
+export * as intelligence from "./intelligence";
+// Wave 4.5 — ai_decision approval orchestrator
+export * as decisions from "./decisions";
 
 export * from "./constants";
 export { validateAccount, type AccountSlug } from "./account-scope";

@@ -412,7 +412,112 @@ export const recordDenial = createTool({
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Export map (Wave 1: 15 keys + Wave 2: 14 new = 29 total)
+// Wave 3 — thick "intelligence" tools (MV-backed)
+//
+// Each tool returns the full picture for its surface in ONE call:
+//   - numbers (typed scalar block)
+//   - summary (narrative)
+//   - topInsight (single highest-leverage sentence)
+//   - suggestedFollowups (drill-down tool names)
+//   - freshness (relative age of underlying MV)
+//   - ofRecord (top-N raw rows for follow-up reasoning)
+// ─────────────────────────────────────────────────────────────────────────
+
+export const getPurchaseIntelligence = createTool({
+  id: "get_purchase_intelligence",
+  description:
+    "Returns the full purchase-recommendation picture in ONE call: 30-day unmet-demand signals, projected annual upside per item, top insight, and links to deeper drill-down tools. Use when user asks 'what should we buy', 'where's our demand', 'investment recommendations', 'top opportunities', 'gaps in inventory'.",
+  inputSchema: z.object({ ...accountField }),
+  execute: async (input: { account?: "leo" | "dbcinema" }) =>
+    data.intelligence.getPurchaseIntelligence({ account: input.account }),
+});
+
+export const getChurnRisk = createTool({
+  id: "get_churn_risk",
+  description:
+    "Returns the full renter-churn picture in ONE call: at-risk renters with lifetime value, days since last rental, risk tier, and pre-rendered reason strings. Use when user asks 'who's at risk of churning', 'top customers we're losing', 'who should we re-engage', 'lapsed renters'.",
+  inputSchema: z.object({ ...accountField }),
+  execute: async (input: { account?: "leo" | "dbcinema" }) =>
+    data.intelligence.getChurnRisk({ account: input.account }),
+});
+
+export const getUtilizationSnapshot = createTool({
+  id: "get_utilization_snapshot",
+  description:
+    "Returns the full fleet-utilization picture in ONE call: per-item rented-now count, 7-day utilization %, idle days, and fleet-level rollup. Use when user asks 'what's our utilization', 'fleet usage', 'idle inventory', 'most-rented items', 'underutilized gear'.",
+  inputSchema: z.object({ ...accountField }),
+  execute: async (input: { account?: "leo" | "dbcinema" }) =>
+    data.intelligence.getUtilizationSnapshot({ account: input.account }),
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wave 4.5 — ai_decision approval tools.
+//
+// `get_pending_decisions` exposes the queue to the chat agent (shortId
+// included so the user can say "approve abc123"). `approve_decision` is the
+// action path: gates Hygglo writes through READ_ONLY_MODE and records an
+// audit row.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const getPendingDecisions = createTool({
+  id: "get_pending_decisions",
+  description:
+    "List AI decisions awaiting Daniel's approval. Use when user asks 'what's pending', 'what needs my approval', 'show me the AI's suggestions', 'queue', 'what did the AI decide today'. Returns id, shortId (last 6 chars — use this in approve_decision), decision, confidence, suggestedReply, renter name, item, dates." +
+    accountSuffix,
+  inputSchema: z.object({
+    ...accountField,
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { account?: "leo" | "dbcinema"; limit?: number }) =>
+    data.decisions.getPendingDecisions(input),
+});
+
+export const approveDecision = createTool({
+  id: "approve_decision",
+  description:
+    "Apply a pending AI decision (accept/decline/send message to renter). Use when the user says 'approve decision X', 'send that reply', 'accept rental N', 'decline N', 'approve with this edit: ...'. Calls Hygglo only if READ_ONLY_MODE is false; otherwise records the approval intent without sending. `decisionId` accepts either the full Convex id or the 6-char shortId from get_pending_decisions.",
+  inputSchema: z.object({
+    decisionId: z
+      .string()
+      .describe(
+        "Full Convex decision id OR the 6-char shortId surfaced by get_pending_decisions.",
+      ),
+    modifyReply: z
+      .string()
+      .optional()
+      .describe(
+        "If user wants to edit the AI-drafted reply before sending, pass the new text here. Omit to send the AI's draft as-is.",
+      ),
+    forceDecline: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true when the user explicitly wants to decline the rental instead of approving. Default false = approve.",
+      ),
+    declineReason: z
+      .string()
+      .optional()
+      .describe(
+        "Optional decline reason (only used when forceDecline=true). Defaults to the AI's suggested reply.",
+      ),
+  }),
+  execute: async (input: {
+    decisionId: string;
+    modifyReply?: string;
+    forceDecline?: boolean;
+    declineReason?: string;
+  }) =>
+    data.decisions.applyApproval({
+      decisionId: input.decisionId,
+      actorSource: "dashboard_chat",
+      modifyReply: input.modifyReply,
+      forceDecline: input.forceDecline,
+      declineReason: input.declineReason,
+    }),
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 = 34 total)
 // ─────────────────────────────────────────────────────────────────────────
 
 export const dashboardTools = {
@@ -448,4 +553,11 @@ export const dashboardTools = {
   get_demand_top: getDemandTop,
   // Wave 2 — write
   record_denial: recordDenial,
+  // Wave 3 — thick intelligence
+  get_purchase_intelligence: getPurchaseIntelligence,
+  get_churn_risk: getChurnRisk,
+  get_utilization_snapshot: getUtilizationSnapshot,
+  // Wave 4.5 — ai_decision approval
+  get_pending_decisions: getPendingDecisions,
+  approve_decision: approveDecision,
 };

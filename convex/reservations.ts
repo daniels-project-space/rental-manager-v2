@@ -342,3 +342,31 @@ export const listPending = query({
     return { count: rows.length, rentals };
   },
 });
+
+/**
+ * Wave 4 — Internal query consumed by the `hygglo_poll` Mastra workflow.
+ *
+ * Returns pending reservations that do NOT yet have a corresponding
+ * `ai_decision` row (regardless of decision status). This is the net-new
+ * surface for the AI decision step.
+ */
+export const listPendingWithoutDecision = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const pending = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "pending_review"))
+      .order("desc")
+      .take(limit ?? 50);
+
+    const out: typeof pending = [];
+    for (const r of pending) {
+      const decided = await ctx.db
+        .query("ai_decision")
+        .withIndex("by_reservation", (q) => q.eq("reservation_id", r._id))
+        .first();
+      if (!decided) out.push(r);
+    }
+    return out;
+  },
+});

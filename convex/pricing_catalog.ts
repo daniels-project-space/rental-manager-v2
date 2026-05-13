@@ -80,37 +80,42 @@ export const getDismissedItemNames = query({
 });
 
 // B-3: fuzzy lookup for dashboard chat tool
-// Uses 3-tier resolver mirroring convex/calendar.ts findItemByName:
-//   Tier 1: exact canonical match on pricing_catalog.item_name_canonical
-//   Tier 2: exact alias match via items table (aliases field)
-//   Tier 3: substring match (canonical or alias, min 5 chars)
+// 3-tier resolver:
+//   Tier 1: exact canonical match on pricing_catalog.item_name_canonical (case-insensitive)
+//   Tier 2: exact alias match via items table
+//   Tier 3: substring match on canonical name or alias (min 5 chars)
 export const lookup = query({
   args: { item_name: v.string() },
   handler: async (ctx, { item_name }) => {
     const lower = item_name.toLowerCase().trim();
 
-    // ── Tier 1: exact canonical match ────────────────────────────────────
+    // ── Tier 1: exact canonical match on pricing_catalog ─────────────────
     const exactRows = await ctx.db
       .query("pricing_catalog")
       .withIndex("by_name", (q) => q.eq("item_name_canonical", item_name))
       .collect();
-    const exactRowsCI = exactRows.length > 0
-      ? exactRows
-      : (await ctx.db.query("pricing_catalog").collect()).filter(
-          (r) => !r.is_bundle && !r.marketing_only && r.item_name_canonical.toLowerCase() === lower
-        );
+    const exactRowsCI =
+      exactRows.length > 0
+        ? exactRows
+        : (await ctx.db.query("pricing_catalog").collect()).filter(
+            (r) => !r.is_bundle && !r.marketing_only && r.item_name_canonical.toLowerCase() === lower,
+          );
     if (exactRowsCI.length > 0) return exactRowsCI.slice(0, 5);
 
-    // ── Resolve via items table (has aliases) ────────────────────────────
+    // ── Tier 2 + 3: resolve via items table (has aliases) ────────────────
     const allItems = await ctx.db.query("items").collect();
 
-    function findItemByName(name: string) {
+    function findItemByName(name: string): { name_canonical?: string } | null {
       const q = name.toLowerCase().trim();
       // T1: exact canonical
-      let m = allItems.find((i) => (i.name_canonical ?? "").toLowerCase() === q);
+      let m: { name_canonical?: string; aliases?: string[] } | undefined = allItems.find(
+        (i) => (i.name_canonical ?? "").toLowerCase() === q,
+      );
       if (m) return m;
       // T2: exact alias
-      m = allItems.find((i) => (i.aliases ?? []).some((a: string) => a.toLowerCase() === q));
+      m = allItems.find((i) =>
+        (i.aliases ?? []).some((a: string) => a.toLowerCase() === q),
+      );
       if (m) return m;
       // T3: substring (min 5 chars)
       if (q.length >= 5) {
@@ -123,7 +128,7 @@ export const lookup = query({
           (i.aliases ?? []).some((a: string) => {
             const al = a.toLowerCase();
             return al.length >= 5 && (al.includes(q) || q.includes(al));
-          })
+          }),
         );
         if (m) return m;
       }
@@ -131,38 +136,36 @@ export const lookup = query({
     }
 
     const resolvedItem = findItemByName(item_name);
-    if (resolvedItem) {
-      // Look up pricing_catalog by the resolved canonical name
-      const resolvedRows = await ctx.db
-        .query("pricing_catalog")
-        .withIndex("by_name", (q) => q.eq("item_name_canonical", resolvedItem.name_canonical))
-        .collect();
-      const filtered = resolvedRows.filter((r) => !r.is_bundle && !r.marketing_only);
-      if (filtered.length > 0) return filtered.slice(0, 5);
-      // Also try case-insensitive fallback
-      const allPricing = await ctx.db.query("pricing_catalog").collect();
-      const ciMatch = allPricing.filter(
-        (r) => !r.is_bundle && !r.marketing_only &&
-          r.item_name_canonical.toLowerCase() === (resolvedItem.name_canonical ?? "").toLowerCase()
-      );
-      if (ciMatch.length > 0) return ciMatch.slice(0, 5);
-    }
+    if (!resolvedItem?.name_canonical) return [];
 
-    // ── Tier 3 fallback: substring on pricing_catalog directly ───────────
-    if (lower.length >= 5) {
-      const allRows = await ctx.db.query("pricing_catalog").collect();
-      const scored = allRows
-        .filter((r) => !r.is_bundle && !r.marketing_only)
+    // Look up pricing_catalog by the resolved canonical name
+    const resolvedCanon = resolvedItem.name_canonical;
+    const resolvedRows = await ctx.db
+      .query("pricing_catalog")
+      .withIndex("by_name", (q) => q.eq("item_name_canonical", resolvedCanon))
+      .collect();
+    const filtered = resolvedRows.filter((r) => !r.is_bundle && !r.marketing_only);
+    if (filtered.length > 0) return filtered.slice(0, 5);
+
+    // Fallback: substring match on all pricing_catalog rows
+    const allRows = await ctx.db.query("pricing_catalog").collect();
+    const lq = lower.replace(/[^a-z0-9]/g, "");
+    // First try non-bundle rows only
+    const scoreRows = (rows: typeof allRows) =>
+      rows
         .map((r) => {
-          const cn = r.item_name_canonical.toLowerCase();
-          const score = cn === lower ? 3 : cn.includes(lower) ? 2 : lower.includes(cn) && cn.length > 3 ? 1 : 0;
+          const cn = r.item_name_canonical.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const score = cn === lq ? 3 : cn.includes(lq) ? 2 : lq.includes(cn) && cn.length > 3 ? 1 : 0;
           return { row: r, score };
         })
         .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score || a.row.item_name_canonical.length - b.row.item_name_canonical.length);
-      return scored.map((x) => x.row).slice(0, 5);
-    }
+        .sort((a, b) => b.score - a.score || b.row.item_name_canonical.length - a.row.item_name_canonical.length);
 
-    return [];
+    const nonBundleScored = scoreRows(allRows.filter((r) => !r.is_bundle && !r.marketing_only));
+    if (nonBundleScored.length > 0) return nonBundleScored.map((x) => x.row).slice(0, 5);
+
+    // Fallback: include bundle rows if no non-bundle match found
+    const bundleScored = scoreRows(allRows.filter((r) => !r.marketing_only));
+    return bundleScored.map((x) => x.row).slice(0, 5);
   },
 });

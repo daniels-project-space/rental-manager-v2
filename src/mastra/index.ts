@@ -12,10 +12,12 @@ import "server-only";
 import { Mastra } from "@mastra/core";
 import { PinoLogger } from "@mastra/loggers";
 import { dashboardChatAgent } from "./agents/dashboard-chat";
+import { aiDecisionAgent } from "./agents/ai-decision";
+import { hyggloPollWorkflow } from "./workflows/hygglo_poll";
 
 export const mastra = new Mastra({
-  agents: { dashboardChatAgent },
-  workflows: {},
+  agents: { dashboardChatAgent, aiDecisionAgent },
+  workflows: { hyggloPollWorkflow },
   logger: new PinoLogger({
     name: "rental-manager-v2",
     level: process.env.NODE_ENV === "production" ? "info" : "debug",

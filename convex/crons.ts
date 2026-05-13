@@ -1,0 +1,86 @@
+/**
+ * Convex cron schedule for the Wave 3 materialized-view layer.
+ *
+ * Refresh intervals tuned per MV staleness tolerance:
+ *
+ *   daily_briefing       5 min   most-stale-sensitive — drives chat "what
+ *                                happened today" surface; must look live.
+ *   top_earners_30d     15 min   30-day window changes slowly; 15 min is plenty.
+ *   purchase_signals    30 min   30d denial aggregation — slow-moving.
+ *   churn_risk          60 min   renter behaviour shifts over weeks.
+ *   utilization_today   15 min   per-item snapshot; updates as bookings flow in.
+ *   upcoming_returns    10 min   needs to feel fresh after each poll cycle.
+ *
+ * All MV refreshers run as `internalMutation` (no external network calls,
+ * so action wrappers are unnecessary for crons — direct mutation is faster).
+ */
+import { cronJobs } from "convex/server";
+import { internal } from "./_generated/api";
+
+const crons = cronJobs();
+
+// NOTE (Wave 4): each MV refresh handler now takes optional `account` arg.
+// Crons always run the full all-accounts refresh — pass `{}` explicitly so the
+// rest-param signature `OptionalRestArgs<FuncRef>` resolves.
+crons.interval(
+  "daily_briefing refresh",
+  { minutes: 5 },
+  internal.mv.daily_briefing.refresh,
+  {},
+);
+
+crons.interval(
+  "top_earners_30d refresh",
+  { minutes: 15 },
+  internal.mv.top_earners.refresh,
+  {},
+);
+
+crons.interval(
+  "purchase_signals refresh",
+  { minutes: 30 },
+  internal.mv.purchase_signals.refresh,
+  {},
+);
+
+crons.interval(
+  "churn_risk_renters refresh",
+  { minutes: 60 },
+  internal.mv.churn_risk.refresh,
+  {},
+);
+
+crons.interval(
+  "utilization_today refresh",
+  { minutes: 15 },
+  internal.mv.utilization.refresh,
+  {},
+);
+
+crons.interval(
+  "upcoming_returns refresh",
+  { minutes: 10 },
+  internal.mv.upcoming_returns.refresh,
+  {},
+);
+
+// ── Wave 4 — Hygglo polling workflow trigger ──────────────────
+//
+// Every 3 min. Cadence tuned so:
+//   - faster than Trigger.dev's 5-min scrape, so any new Hygglo order
+//     picked up by the scraper gets an AI decision in under 3 min
+//     (decision-latency SLO for Daniel's admin review).
+//   - slow enough that with 2 accounts × ~50 orders/day, AI decision
+//     calls per day stay around 100 — well within xAI rate limits.
+//
+// The Convex action `fetch()`es a Next.js API route which owns the
+// Mastra workflow invocation (the workflow runs in Node, not Convex).
+// Until POLL_TRIGGER_URL env var is set, the action no-ops — keeping
+// the cron registered is harmless.
+crons.interval(
+  "hygglo_poll workflow",
+  { minutes: 3 },
+  internal.hygglo_poll_trigger.triggerWorkflow,
+);
+
+export default crons;

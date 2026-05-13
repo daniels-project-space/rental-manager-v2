@@ -10,7 +10,8 @@
     "start": "next start",
     "lint": "eslint",
     "trigger:dev": "trigger.dev dev",
-    "trigger:deploy": "trigger.dev deploy"
+    "trigger:deploy": "trigger.dev deploy",
+    "check:mirror": "node scripts/check-mirror-sync.mjs"
   },
   "dependencies": {
     "@ai-sdk/xai": "^3.0.89",
