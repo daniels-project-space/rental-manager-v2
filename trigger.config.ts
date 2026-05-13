@@ -26,7 +26,7 @@ export default defineConfig({
   //   * postInstall pip            → installs from requirements.txt
   build: {
     extensions: [
-      playwright({ browsers: ["chromium"] }),
+      playwright({ browsers: ["chromium"], version: "1.49.0" }),
       aptGet({ packages: ["python3", "python3-pip", "python3-venv"] }),
       additionalPackages({
         // Node-side helper: AWS S3 client used to upload shadow screenshots to R2.
