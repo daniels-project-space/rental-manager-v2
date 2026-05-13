@@ -306,8 +306,15 @@ export const listPending = query({
   args: { accountSlug: v.optional(v.string()) },
   handler: async (ctx, { accountSlug }) => {
     const allRows = await ctx.db.query("reservations").collect();
+    // Fix C: hard exclusion — if step is a paid step, never show as pending
+    const PAID_STEPS = new Set([
+      "FUNDS_RESERVED", "VERIFIED", "BOOKED_AFTER_VERIFIED",
+      "DELIVERED", "RETURNED", "REVIEWED",
+    ]);
     let rows = allRows.filter((r) => {
       if (r.is_obsolete === true) return false;
+      // Hard exclusion: if step is paid, never pending
+      if (r.order_step && PAID_STEPS.has(r.order_step)) return false;
       // Canonical: booking_status field directly from Hygglo (most accurate when present)
       if ((r as any).booking_status === "pending_review") return true;
       // Modern: status field set to pending_review by poller (sourceFilter="pending")
@@ -340,6 +347,32 @@ export const listPending = query({
       })
     );
     return { count: rows.length, rentals };
+  },
+});
+
+/**
+ * Fix D — Backfill: re-derive status from order_step for all existing rows.
+ * Corrects ~10 rows wrongly tagged status=pending_review due to sourceFilter bug.
+ */
+export const adminFixStatusFromStep = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("reservations").collect();
+    let fixed = 0;
+    const PAID = new Set(["FUNDS_RESERVED", "VERIFIED", "BOOKED_AFTER_VERIFIED", "DELIVERED"]);
+    const COMPLETED = new Set(["RETURNED", "REVIEWED"]);
+    const CANCELLED_STEPS = new Set(["CANCELED", "VERIFICATION_FAILED"]);
+    for (const r of rows) {
+      let newStatus: string | null = null;
+      if (PAID.has(r.order_step ?? "")) newStatus = "confirmed";
+      else if (COMPLETED.has(r.order_step ?? "")) newStatus = "completed";
+      else if (CANCELLED_STEPS.has(r.order_step ?? "")) newStatus = "cancelled";
+      if (newStatus && r.status !== newStatus) {
+        await ctx.db.patch(r._id, { status: newStatus });
+        fixed++;
+      }
+    }
+    return { total: rows.length, fixed };
   },
 });
 

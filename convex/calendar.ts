@@ -311,6 +311,11 @@ export const upsertHoldsBatch = mutation({
         }
       } else {
         // different reservation — last-writer wins for now (could collect overbookings later)
+        // Fix E: log overbooking for diagnostics (dedup key unchanged pending Daniel's decision)
+        console.warn(
+          `[upsertHoldsBatch] Overbooking detected: item_id=${h.item_id} date=${h.date} ` +
+          `existing_res=${existing.reservation_id} new_res=${h.reservation_id}; replacing`
+        );
         await ctx.db.patch(existing._id, {
           reservation_id: h.reservation_id,
           status: h.status,

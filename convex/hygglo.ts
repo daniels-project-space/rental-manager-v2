@@ -88,6 +88,41 @@ const messageArgs = v.array(
   })
 );
 
+// ── Status derivation helper ──────────────────────────────────
+
+/**
+ * Derives canonical status from order_step (primary) or sourceFilter (fallback).
+ * Fixes the v2 bug where Hygglo's filter=pending contains PAID orders with future
+ * start dates — those must be "confirmed", not "pending_review".
+ */
+function deriveStatusFromStep(
+  step: string | null | undefined,
+  sourceFilterFallback: string | null | undefined
+): "confirmed" | "pending_review" | "completed" | "cancelled" {
+  switch (step) {
+    case "REQUEST":
+    case "APPROVED":
+      return "pending_review";
+    case "FUNDS_RESERVED":
+    case "VERIFIED":
+    case "BOOKED_AFTER_VERIFIED":
+    case "DELIVERED":
+      return "confirmed";
+    case "RETURNED":
+    case "REVIEWED":
+      return "completed";
+    case "CANCELED":
+    case "VERIFICATION_FAILED":
+      return "cancelled";
+    default:
+      // No step → fall back to filter-derived
+      if (sourceFilterFallback === "obsolete") return "cancelled";
+      if (sourceFilterFallback === "pending") return "pending_review";
+      if (sourceFilterFallback === "current" || sourceFilterFallback === "future") return "confirmed";
+      return "pending_review"; // safe default
+  }
+}
+
 // ── Mutations ─────────────────────────────────────────────────
 
 /**
@@ -256,10 +291,13 @@ export const upsertOrderAsReservation = mutation({
       obsoleteFields = { is_obsolete: true, obsolete_reason: reason };
     }
 
+    // ── status derivation (Fix A) ──────────────────────────────
+    const incomingStatus = deriveStatusFromStep(incomingStep, args.sourceFilter);
+
     const baseFields = {
       account_slug: args.account_slug,
       hygglo_order_id: args.hygglo_order_id,
-      status: args.status,
+      status: incomingStatus,
       start_date: args.start_date,
       end_date: args.end_date,
       gross_paid_gbp: args.gross_paid_gbp,
@@ -301,10 +339,26 @@ export const upsertOrderAsReservation = mutation({
         return { action: "updated" };
       }
 
+      // ── status downgrade guard (Fix B) ────────────────────────
+      // Never downgrade: confirmed→pending_review, completed→confirmed
+      // Cancellation (priority 3) always allowed through.
+      const STATUS_PRIORITY: Record<string, number> = {
+        pending_review: 0,
+        confirmed: 1,
+        completed: 2,
+        cancelled: 3,
+      };
+      const currentStatus = existing.status ?? "pending_review";
+      const finalStatus =
+        (STATUS_PRIORITY[incomingStatus] ?? 0) >= (STATUS_PRIORITY[currentStatus] ?? 0)
+          ? incomingStatus
+          : currentStatus;
+
       const stepPatch =
         incomingStep !== undefined ? { order_step: incomingStep } : {};
       await ctx.db.patch(existing._id, {
         ...baseFields,
+        status: finalStatus,
         ...stepPatch,
         ...obsoleteFields,
       });
