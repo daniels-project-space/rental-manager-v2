@@ -451,7 +451,73 @@ export const getUtilizationSnapshot = createTool({
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Export map (Wave 1: 15 keys + Wave 2: 14 + Wave 3: 3 = 32 total)
+// Wave 4.5 — ai_decision approval tools.
+//
+// `get_pending_decisions` exposes the queue to the chat agent (shortId
+// included so the user can say "approve abc123"). `approve_decision` is the
+// action path: gates Hygglo writes through READ_ONLY_MODE and records an
+// audit row.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const getPendingDecisions = createTool({
+  id: "get_pending_decisions",
+  description:
+    "List AI decisions awaiting Daniel's approval. Use when user asks 'what's pending', 'what needs my approval', 'show me the AI's suggestions', 'queue', 'what did the AI decide today'. Returns id, shortId (last 6 chars — use this in approve_decision), decision, confidence, suggestedReply, renter name, item, dates." +
+    accountSuffix,
+  inputSchema: z.object({
+    ...accountField,
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { account?: "leo" | "dbcinema"; limit?: number }) =>
+    data.decisions.getPendingDecisions(input),
+});
+
+export const approveDecision = createTool({
+  id: "approve_decision",
+  description:
+    "Apply a pending AI decision (accept/decline/send message to renter). Use when the user says 'approve decision X', 'send that reply', 'accept rental N', 'decline N', 'approve with this edit: ...'. Calls Hygglo only if READ_ONLY_MODE is false; otherwise records the approval intent without sending. `decisionId` accepts either the full Convex id or the 6-char shortId from get_pending_decisions.",
+  inputSchema: z.object({
+    decisionId: z
+      .string()
+      .describe(
+        "Full Convex decision id OR the 6-char shortId surfaced by get_pending_decisions.",
+      ),
+    modifyReply: z
+      .string()
+      .optional()
+      .describe(
+        "If user wants to edit the AI-drafted reply before sending, pass the new text here. Omit to send the AI's draft as-is.",
+      ),
+    forceDecline: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true when the user explicitly wants to decline the rental instead of approving. Default false = approve.",
+      ),
+    declineReason: z
+      .string()
+      .optional()
+      .describe(
+        "Optional decline reason (only used when forceDecline=true). Defaults to the AI's suggested reply.",
+      ),
+  }),
+  execute: async (input: {
+    decisionId: string;
+    modifyReply?: string;
+    forceDecline?: boolean;
+    declineReason?: string;
+  }) =>
+    data.decisions.applyApproval({
+      decisionId: input.decisionId,
+      actorSource: "dashboard_chat",
+      modifyReply: input.modifyReply,
+      forceDecline: input.forceDecline,
+      declineReason: input.declineReason,
+    }),
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 = 34 total)
 // ─────────────────────────────────────────────────────────────────────────
 
 export const dashboardTools = {
@@ -491,4 +557,7 @@ export const dashboardTools = {
   get_purchase_intelligence: getPurchaseIntelligence,
   get_churn_risk: getChurnRisk,
   get_utilization_snapshot: getUtilizationSnapshot,
+  // Wave 4.5 — ai_decision approval
+  get_pending_decisions: getPendingDecisions,
+  approve_decision: approveDecision,
 };

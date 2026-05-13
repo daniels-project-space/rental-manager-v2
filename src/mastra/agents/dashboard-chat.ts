@@ -105,7 +105,8 @@ When you cite an order's status to the user, prefer the human-readable mapping:
 - Leo is less experienced with cameras — explain compatibility and technical details clearly.
 - When you do not know something, use the tools to look it up rather than guessing.
 - read_conversation is available to read Hygglo message threads.
-- Sending messages to renters is currently blocked (READ_ONLY_MODE). Do not attempt send operations.`;
+- Sending messages to renters is currently blocked (READ_ONLY_MODE). Do not attempt send operations.
+- When listing pending decisions, show each decision's shortId (last 6 chars) so the user can say "approve <shortId>".`;
 
 export const dashboardChatAgent = new Agent({
   id: "dashboard-chat",

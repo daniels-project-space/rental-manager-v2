@@ -675,6 +675,11 @@ export default defineSchema({
       v.literal("approved"),
       v.literal("rejected"),
       v.literal("expired"),
+      // Wave 4.5: Daniel edited the AI's draft reply before approving.
+      v.literal("approved_modified"),
+      // Wave 4.5: Daniel chose decline. Distinct from `rejected`, which the
+      // poller writes when re-evaluating. Both surface as 'declined' to UI.
+      v.literal("declined"),
     ),
     generatedAt: v.number(),
     generatedByAgent: v.string(),
@@ -685,4 +690,30 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_account_status", ["account_slug", "status"])
     .index("by_generatedAt", ["generatedAt"]),
+
+  // ── Wave 4.5 — ai_decision approval audit ────────────────────
+  // Every approval/decline action on an ai_decision row writes an audit entry.
+  // `hygglo.attempted=false` means READ_ONLY_MODE was on; intent is recorded
+  // but no side effect was sent. Lets us reconcile "intent" vs "executed".
+  ai_decision_audit: defineTable({
+    decisionId: v.id("ai_decision"),
+    action: v.union(
+      v.literal("approve"),
+      v.literal("decline"),
+      v.literal("approve_modified"),
+    ),
+    actorSource: v.string(),          // 'dashboard_chat' for now; later 'daniel_telegram'
+    actedAt: v.number(),
+    finalReply: v.optional(v.string()),
+    hygglo: v.object({
+      attempted: v.boolean(),         // false if READ_ONLY_MODE
+      status: v.union(
+        v.literal("sent"),
+        v.literal("skipped"),
+        v.literal("failed"),
+      ),
+      error: v.optional(v.string()),
+      httpStatus: v.optional(v.number()),
+    }),
+  }).index("by_decisionId", ["decisionId"]),
 });
