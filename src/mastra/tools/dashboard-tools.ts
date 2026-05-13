@@ -48,7 +48,8 @@ export const getDashboardStats = createTool({
 
 export const lookupPricing = createTool({
   id: "lookup_pricing",
-  description: "Get daily rate and multi-day totals for a rental item.",
+  description:
+    "INTENT-ROUTING: 'pricing', 'rate', 'cost', 'how much', \"what's the rate\", 'what do we charge'. Get daily rate and multi-day totals for a rental item.",
   inputSchema: z.object({
     itemName: z.string(),
     days: z.number().int().min(1).optional(),
@@ -60,7 +61,7 @@ export const lookupPricing = createTool({
 export const checkAvailability = createTool({
   id: "check_availability",
   description:
-    "Check item availability for dates. Returns available qty and next free date if booked.",
+    "INTENT-ROUTING: 'is X free', 'is X available', 'booked', 'open on <date>', 'can we rent X on...'. Check item availability for dates. Returns available qty and next free date if booked.",
   inputSchema: z.object({
     itemName: z.string(),
     startDate: z.string().describe("YYYY-MM-DD"),
@@ -76,7 +77,7 @@ export const checkAvailability = createTool({
 export const getPendingRentals = createTool({
   id: "get_pending_rentals",
   description:
-    "Fetch pending rental requests awaiting accept/decline decision." +
+    "INTENT-ROUTING: 'pending', 'awaiting', 'unconfirmed', 'needs approval', 'to confirm', \"what's pending\". Fetch pending rental requests awaiting accept/decline decision." +
     accountSuffix,
   inputSchema: z.object(accountField),
   execute: async (input: { account?: "leo" | "dbcinema" }) =>
@@ -193,7 +194,7 @@ export const sendCorrection = createTool({
 export const getObsoleteOrders = createTool({
   id: "get_obsolete_orders",
   description:
-    "Get cancelled or rejected orders (lost revenue / dead deals). Use when user asks about cancellations, lost revenue, what went obsolete, deals that fell through." +
+    "INTENT-ROUTING: 'lost revenue', 'cancelled', 'fell through', 'what got cancelled', 'deals lost', 'obsolete', 'dead deals'. Get cancelled or rejected orders." +
     accountSuffix,
   inputSchema: z.object({
     ...accountField,
@@ -213,7 +214,7 @@ export const getObsoleteOrders = createTool({
 export const getOrderPipeline = createTool({
   id: "get_order_pipeline",
   description:
-    "Get counts of active orders per order_step. Useful for 'how many requests are waiting?', 'pipeline status', 'where are we in the funnel?', distinguishing requested-but-unpaid from paid-active." +
+    "INTENT-ROUTING: 'pipeline', 'where are we', 'funnel', 'how many requests', 'how many paid', 'pipeline status'. Counts of active orders per order_step — distinguishes requested-but-unpaid from paid-active." +
     accountSuffix,
   inputSchema: z.object(accountField),
   execute: async (input: { account?: "leo" | "dbcinema" }) =>

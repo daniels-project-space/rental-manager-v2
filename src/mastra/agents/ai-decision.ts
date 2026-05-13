@@ -158,4 +158,14 @@ export const aiDecisionAgent = new Agent({
   instructions: AI_DECISION_PROMPT,
   model: xai(GROK_CHAT_MODEL),
   tools: aiDecisionTools,
+  // grok-4.3 reasoning is ON by default; chat-tier decision agent does not need
+  // it. Cost saver: disable reasoning per https://docs.x.ai/docs/guides/reasoning.
+  // @ai-sdk/xai's ReasoningEffort type is stale (low|medium|high); xAI accepts
+  // "none" — cast around the type.
+  defaultOptions: {
+    modelSettings: { temperature: 0.2 },
+    providerOptions: {
+      xai: { reasoningEffort: "none" as "low" },
+    },
+  },
 });

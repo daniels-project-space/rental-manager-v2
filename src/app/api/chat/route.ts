@@ -95,7 +95,16 @@ export async function POST(req: Request) {
     content: m.content,
   }));
 
-  const streamOpts: StreamOpts = { instructions: composedInstructions };
+  const streamOpts: StreamOpts = {
+    instructions: composedInstructions,
+    modelSettings: { temperature: 0.2 },
+    // grok-4.3 has reasoning ON by default; opt out for chat-tier cost saver.
+    // @ai-sdk/xai's ReasoningEffort type is stale (low|medium|high); xAI API
+    // accepts "none" per https://docs.x.ai/docs/guides/reasoning — cast around the type.
+    providerOptions: {
+      xai: { reasoningEffort: "none" as "low" },
+    },
+  };
 
   // 4. Stream with error handling
   const encoder = new TextEncoder();
