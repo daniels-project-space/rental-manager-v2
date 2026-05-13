@@ -6,12 +6,11 @@
  * Wave 2 status:
  *   - getSummary       → wraps convex.revenue.getMissedRevenue (READY)
  *   - recordDenial     → wraps convex.denial_records.createDenial (READY)
- *   - getUnmatchedDemand          → STUB (Wave 2.5: needs Convex query)
- *   - getSubstitutionPatterns     → STUB (Wave 2.5: needs Convex query)
- *   - getPurchaseRecommendations  → STUB (Wave 2.5: needs Convex query)
  *
- * Each STUB returns `{ ok: false, source: 'pending-convex-query', caveats }`
- * so the agent can degrade gracefully instead of throwing.
+ * Wave 2.5 (this PR):
+ *   - getUnmatchedDemand          → wraps convex.lost_revenue.getUnmatchedDemand (READY)
+ *   - getSubstitutionPatterns     → wraps convex.lost_revenue.getSubstitutionPatterns (READY)
+ *   - getPurchaseRecommendations  → wraps convex.lost_revenue.getPurchaseRecommendations (READY)
  */
 import "server-only";
 import { anyApi } from "convex/server";
@@ -61,33 +60,36 @@ export async function getSummary(input?: {
 
 /**
  * V1: lost-revenue.service.ts:635 getUnmatchedDemand
- * V2: NO MATCHING CONVEX QUERY YET → Wave 2.5 follow-up.
+ * V2: convex.lost_revenue.getUnmatchedDemand
  *
- * STUB: returns the raw denial_records list as a best-effort substitute so the
- * agent has *something* useful to surface ("X renters asked for items we
- * don't own"). True unmatched-demand analysis (de-dup by item, frequency
- * weighting, last-asked timestamp) belongs server-side.
+ * Groups denial_records by item_name within `range` window, keeps items
+ * requested >= minRequestCount times (default 2, mirrors V1), sorts by
+ * request frequency, returns top-N with last-requested timestamp and an
+ * optional lost-£ estimate (sum of `estimated_value` from denial rows).
  */
 export async function getUnmatchedDemand(input?: {
+  range?: string;
+  account?: AccountSlug | null;
   limit?: number;
+  minRequestCount?: number;
 }): Promise<Result<unknown>> {
   try {
     const convex = getConvex();
-    const [denials, syncState] = await Promise.all([
-      convex.query(anyApi.denial_records.list, { limit: input?.limit ?? 50 }),
+    const accountSlug = validateAccount(input?.account);
+    const days = rangeToDays(input?.range);
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.lost_revenue.getUnmatchedDemand, {
+        accountSlug,
+        days,
+        limit: input?.limit ?? 30,
+        minRequestCount: input?.minRequestCount ?? 2,
+      }),
       getSyncState(),
     ]);
     return wrap({
-      data: {
-        ok: true as const,
-        source: "pending-convex-query",
-        denials,
-      },
-      source: "convex.denial_records.list (Wave 2.5 stub)",
+      data: { ok: true as const, range: input?.range ?? "90d", ...(data as object) },
+      source: "convex.lost_revenue.getUnmatchedDemand",
       syncState,
-      extraCaveats: [
-        "getUnmatchedDemandNotYetWired — returning raw denial_records as a best-effort substitute. Wave 2.5 will add convex.lost_revenue.getUnmatchedDemand (item-deduplicated, frequency-weighted).",
-      ],
     });
   } catch (err) {
     return { ok: false as const, error: toError(err) };
@@ -96,29 +98,85 @@ export async function getUnmatchedDemand(input?: {
 
 /**
  * V1: lost-revenue.service.ts:959 getSubstitutionAnalysis
- * V2: NO MATCHING CONVEX QUERY YET → Wave 2.5 follow-up.
- * STUB: returns empty result + caveat. The agent can still answer the
- * question by reasoning over denial_records + inventory if needed.
+ * V2: convex.lost_revenue.getSubstitutionPatterns
+ *
+ * Joins denial_records × reservations within a 14-day sliding window per
+ * V1 line 989. Returns `[{ requested, substitutedWith, count }]`.
+ *
+ * Caveat: V1 also matched on `renter_info`. V2 denial_records has no
+ * renter_id (schema gap). The V2 implementation matches on time window
+ * only, which is a weaker signal — the surfaced caveat warns the agent.
  */
-export async function getSubstitutionPatterns(): Promise<Result<unknown>> {
-  return {
-    ok: false,
-    error:
-      "substitutionPatternsNotYetWired — Wave 2.5: needs convex.lost_revenue.getSubstitutionPatterns query (analyses denial → completed-rental same-customer sequences).",
-  };
+export async function getSubstitutionPatterns(input?: {
+  range?: string;
+  account?: AccountSlug | null;
+  limit?: number;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const accountSlug = validateAccount(input?.account);
+    const days = rangeToDays(input?.range);
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.lost_revenue.getSubstitutionPatterns, {
+        accountSlug,
+        days,
+        limit: input?.limit ?? 20,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({
+      data: { ok: true as const, range: input?.range ?? "90d", ...(data as object) },
+      source: "convex.lost_revenue.getSubstitutionPatterns",
+      syncState,
+      extraCaveats: [
+        "substitutionPatternsApproximate — V2 denial_records has no renter_id, so substitution detection uses a 14-day time-window join only (V1 matched on same renter). Treat results as 'items rented near in time to a denial', not a strict same-customer substitution.",
+      ],
+    });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
 }
 
 /**
  * V1: lost-revenue.service.ts:1171 getPurchaseRecommendations
- * V2: NO MATCHING CONVEX QUERY YET → Wave 2.5 follow-up.
- * STUB. The agent can suggest manually using denial_records + price catalog.
+ * V2: convex.lost_revenue.getPurchaseRecommendations
+ *
+ * Cross-joins unmatched demand × pricing_catalog × ROI window. Projects
+ * annual revenue per item and returns `[{ itemName, requestCount,
+ * projectedAnnualGbp, recommendation }]` ranked by projected revenue.
+ *
+ * Caveat: V1's full output included EXPAND_STOCK and CONVERT_MARKETING
+ * buckets that depend on utilization data we haven't ported yet. V2 ships
+ * the BUY NOW bucket only.
  */
-export async function getPurchaseRecommendations(): Promise<Result<unknown>> {
-  return {
-    ok: false,
-    error:
-      "purchaseRecommendationsNotYetWired — Wave 2.5: needs convex.lost_revenue.getPurchaseRecommendations query (ranks unmet demand × estimated ROI vs acquisition cost).",
-  };
+export async function getPurchaseRecommendations(input?: {
+  range?: string;
+  account?: AccountSlug | null;
+  limit?: number;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const accountSlug = validateAccount(input?.account);
+    const days = rangeToDays(input?.range);
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.lost_revenue.getPurchaseRecommendations, {
+        accountSlug,
+        days,
+        limit: input?.limit ?? 10,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({
+      data: { ok: true as const, range: input?.range ?? "90d", ...(data as object) },
+      source: "convex.lost_revenue.getPurchaseRecommendations",
+      syncState,
+      extraCaveats: [
+        "purchaseRecommendationsBuyNowOnly — V2 ships V1's BUY NOW bucket only (items not in inventory with proven demand). EXPAND_STOCK and CONVERT_MARKETING buckets require utilization data not yet ported.",
+      ],
+    });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
 }
 
 /**
