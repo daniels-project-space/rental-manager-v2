@@ -83,6 +83,44 @@ export const patchLeoMonth = mutation({
   },
 });
 
+/**
+ * Patch ONLY dbcinema_revenue_gbp on an existing historical_revenue row.
+ * Used by backfill-dbcinema-from-hygglo-direct.mjs to fix v1's incomplete dbcinema import
+ * without touching leo/daniel/vertus values for the same month.
+ * If the row doesn't exist, inserts a minimal row with zeros for other fields.
+ */
+export const patchDbcinemaMonth = mutation({
+  args: {
+    month: v.string(),
+    dbcinema_revenue_gbp: v.number(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("historical_revenue")
+      .withIndex("by_month", (q) => q.eq("month", args.month))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        dbcinema_revenue_gbp: args.dbcinema_revenue_gbp,
+        ...(args.source && { source: args.source }),
+      });
+      return { action: "updated", month: args.month, dbcinema_revenue_gbp: args.dbcinema_revenue_gbp };
+    }
+    await ctx.db.insert("historical_revenue", {
+      month: args.month,
+      total_revenue_gbp: 0,
+      damage_costs_gbp: 0,
+      business_expenses_gbp: 0,
+      total_overall_made_gbp: 0,
+      source: args.source ?? "hygglo-direct-dbcinema-only",
+      dbcinema_revenue_gbp: args.dbcinema_revenue_gbp,
+      created_at: Date.now(),
+    });
+    return { action: "inserted", month: args.month, dbcinema_revenue_gbp: args.dbcinema_revenue_gbp };
+  },
+});
+
 /** List all historical revenue rows ordered by month. */
 export const list = query({
   args: {},
