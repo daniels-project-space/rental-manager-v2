@@ -352,25 +352,29 @@ export const getLifetimeByMonth = query({
     for (const res of filtered) {
       const dateStr = res.pickup_date ?? res.start_date;
       if (!dateStr) continue;
-      const gross = res.gross_paid_gbp ?? 0;
+      // v1 parity: exclude cancelled/declined rows from historical totals.
+      if (res.status === "cancelled" || res.status === "declined") continue;
+      // v1 parity: rental_price in V1 == net-to-owner (post Hygglo fee).
+      // Use net_to_owner_gbp here, not gross_paid_gbp, to match V1's chart units.
+      const amount = res.net_to_owner_gbp ?? 0;
       const slug = res.account_slug ?? "dbcinema";
       const isFutureRes = dateStr.slice(0, 7) > currentMonth;
 
       if (isFutureRes) {
         const futureMo = (res.start_date ?? dateStr).slice(0, 7);
         if (futureMo === nextMonthKey) {
-          if (res.status === "confirmed") bookedNextTotal = r2(bookedNextTotal + gross);
+          if (res.status === "confirmed") bookedNextTotal = r2(bookedNextTotal + amount);
           else if (res.status === "pending_review" || res.status === "pending")
-            pendingNextTotal = r2(pendingNextTotal + gross);
+            pendingNextTotal = r2(pendingNextTotal + amount);
         }
         continue;
       }
 
       const key = dateStr.slice(0, 7);
       if (slug === "leo") {
-        leoGross.set(key, r2((leoGross.get(key) ?? 0) + gross));
+        leoGross.set(key, r2((leoGross.get(key) ?? 0) + amount));
       } else {
-        dbGross.set(key, r2((dbGross.get(key) ?? 0) + gross));
+        dbGross.set(key, r2((dbGross.get(key) ?? 0) + amount));
       }
     }
 
