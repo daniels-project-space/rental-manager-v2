@@ -4,7 +4,7 @@ interface UpcomingRental {
   reservation_id: string;
   renter_name: string;
   pickup_date: string;
-  pickup_time: string;
+  pickup_time: string | null;
   items: string[];
   days_until: number;
 }
@@ -19,7 +19,7 @@ interface Props {
 const fmtDate = (d: string) =>
   new Intl.DateTimeFormat("en-GB", { month: "short", day: "numeric" }).format(new Date(d));
 
-const fmtTime = (t: string) => t.slice(0, 5); // HH:MM
+const fmtTime = (t: string | null) => t ? t.slice(0, 5) : "—"; // HH:MM
 
 export default function UpcomingDrawer({ data }: Props) {
   return (

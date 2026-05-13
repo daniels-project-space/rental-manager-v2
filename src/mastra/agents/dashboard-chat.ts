@@ -3,6 +3,7 @@ import "server-only";
 import { Agent } from "@mastra/core/agent";
 import { createXai } from "@ai-sdk/xai";
 import { dashboardTools } from "../tools/dashboard-tools";
+import { GROK_CHAT_MODEL } from "../../lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
@@ -112,6 +113,6 @@ export const dashboardChatAgent = new Agent({
   id: "dashboard-chat",
   name: "dashboard-chat",
   instructions: SYSTEM_PROMPT_BASE,
-  model: xai("grok-4-1-fast-non-reasoning"),
+  model: xai(GROK_CHAT_MODEL),
   tools: dashboardTools,
 });

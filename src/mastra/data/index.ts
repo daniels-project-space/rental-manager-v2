@@ -33,6 +33,8 @@ export * as decisions from "./decisions";
 // Wave 4.6 — Hygglo UI automation (browser-use + Trigger v4)
 export * as uiActions from "./ui_actions";
 export * as costGuards from "./cost_guards";
+// Wave 4.7 — model auto-upgrade advisories
+export * as modelUpgrades from "./model_upgrades";
 
 export * from "./constants";
 export { validateAccount, type AccountSlug } from "./account-scope";

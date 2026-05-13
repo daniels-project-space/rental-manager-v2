@@ -783,4 +783,27 @@ export default defineSchema({
     actionCount: v.number(),
     updatedAt: v.number(),
   }).index("by_account_date", ["accountSlug", "isoDate"]),
+
+  // ── Wave 4.7 — monthly model auto-upgrade scanner audit ──────
+  // One row per scan (cron: 1st of each month at 09:23 UTC). Records the
+  // currently pinned chat model, the full Grok model list returned by xAI,
+  // and the scanner's recommendation. Read by the
+  // `get_model_upgrade_advisories` Mastra tool so the dashboard chat agent
+  // can surface pending major-version / SKU-change advisories that
+  // require human review (auto-PRs for minor bumps land directly).
+  model_upgrade_scans: defineTable({
+    scannedAt: v.number(),
+    currentModel: v.string(),                  // e.g. "grok-4.3"
+    availableModels: v.array(v.string()),
+    recommendation: v.union(
+      v.literal("no_change"),
+      v.literal("auto_pr"),                    // newer minor version → PR opened
+      v.literal("advisory"),                   // major/SKU change → human review
+      v.literal("error"),
+    ),
+    recommendedModel: v.optional(v.string()),
+    prUrl: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    dismissedAt: v.optional(v.number()),       // operator marks an advisory as handled
+  }).index("by_scannedAt", ["scannedAt"]),
 });

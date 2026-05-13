@@ -31,6 +31,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
 import { aiDecisionAgent } from "@/mastra/agents/ai-decision";
+import { GROK_CHAT_MODEL } from "@/lib/ai-models";
 
 const CONVEX_URL = process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
 
@@ -268,7 +269,7 @@ const writeDecisions = createStep({
           suggestedReply: d.suggestedReply,
           redFlags: d.redFlags,
           generatedByAgent: "ai-decision",
-          modelId: "grok-4-1-fast-non-reasoning",
+          modelId: GROK_CHAT_MODEL,
           pollingRunId: inputData.runId as unknown as Id<"polling_runs">,
         });
         written += 1;

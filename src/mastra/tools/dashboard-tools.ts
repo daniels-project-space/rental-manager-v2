@@ -699,7 +699,19 @@ export const getPendingShadowActions = createTool({
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 + Wave 4.6: 10 = 44 total)
+// Wave 4.7 — model auto-upgrade advisories
+// ─────────────────────────────────────────────────────────────────────────
+
+export const getModelUpgradeAdvisories = createTool({
+  id: "get_model_upgrade_advisories",
+  description:
+    "Surface pending major-version or SKU-change Grok advisories that require human review (auto-PRs land directly without surfacing here). Use when user asks 'any model upgrades?', 'grok deprecations', 'model advisories', 'is there a newer grok?', or during the monthly status review.",
+  inputSchema: z.object({}),
+  execute: async () => data.modelUpgrades.getOpenAdvisories(),
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 + Wave 4.6: 10 + Wave 4.7: 1 = 45 total)
 // ─────────────────────────────────────────────────────────────────────────
 
 export const dashboardTools = {
@@ -753,4 +765,6 @@ export const dashboardTools = {
   mark_order_returned: markOrderReturned,
   leave_renter_review: leaveRenterReview,
   get_pending_shadow_actions: getPendingShadowActions,
+  // Wave 4.7 — model auto-upgrade advisories
+  get_model_upgrade_advisories: getModelUpgradeAdvisories,
 };
