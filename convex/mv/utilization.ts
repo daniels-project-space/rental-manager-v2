@@ -13,8 +13,8 @@ import { internalMutation, query } from "../_generated/server";
 import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
 
 export const refresh = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { account: v.optional(v.string()) },
+  handler: async (ctx, { account: targetAccount }) => {
     const startedAt = Date.now();
     const today = todayISO();
     const weekAgo = isoDaysAgo(7);
@@ -22,8 +22,9 @@ export const refresh = internalMutation({
     const items = await ctx.db.query("items").collect();
     const reservations = await ctx.db.query("reservations").collect();
 
+    const targets = targetAccount ? [targetAccount, ACCOUNT_ALL] : getAccountSlugs();
     let rowsAffected = 0;
-    for (const account of getAccountSlugs()) {
+    for (const account of targets) {
       const scoped = account === ACCOUNT_ALL
         ? reservations
         : reservations.filter((r) => r.account_slug === account);

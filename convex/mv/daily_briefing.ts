@@ -99,22 +99,48 @@ function computeForAccount(args: {
  * per account slug.
  */
 export const refresh = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { account: v.optional(v.string()) },
+  handler: async (ctx, { account }) => {
+    const startedAt = Date.now();
+    const today = todayISO();
+    const reservations = await ctx.db.query("reservations").collect();
+
+    const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
+    let rowsAffected = 0;
+    for (const acc of targets) {
+      const computed = computeForAccount({ account: acc, reservations, today });
+      await upsertSingleton(ctx, "daily_briefing", acc, {
+        generatedAt: startedAt,
+        ...computed,
+      });
+      rowsAffected += 1;
+    }
+
+    return { ok: true, rowsAffected, durationMs: Date.now() - startedAt };
+  },
+});
+
+/**
+ * Wave 4 — single-account refresh entry point. Recomputes the targeted
+ * account row PLUS the cross-account `"all"` row (changing one account
+ * always shifts the aggregate). Delegates to `refresh`.
+ */
+export const refreshOne = internalMutation({
+  args: { account: v.string() },
+  handler: async (ctx, { account }) => {
     const startedAt = Date.now();
     const today = todayISO();
     const reservations = await ctx.db.query("reservations").collect();
 
     let rowsAffected = 0;
-    for (const account of getAccountSlugs()) {
-      const computed = computeForAccount({ account, reservations, today });
-      const { inserted } = await upsertSingleton(ctx, "daily_briefing", account, {
+    for (const acc of [account, ACCOUNT_ALL]) {
+      const computed = computeForAccount({ account: acc, reservations, today });
+      await upsertSingleton(ctx, "daily_briefing", acc, {
         generatedAt: startedAt,
         ...computed,
       });
-      rowsAffected += inserted ? 1 : 1;
+      rowsAffected += 1;
     }
-
     return { ok: true, rowsAffected, durationMs: Date.now() - startedAt };
   },
 });

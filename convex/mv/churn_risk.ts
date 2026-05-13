@@ -17,8 +17,8 @@ import { getAccountSlugs, upsertSingleton, ACCOUNT_ALL } from "./_helpers";
 import { elapsedDays } from "./constants";
 
 export const refresh = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { account: v.optional(v.string()) },
+  handler: async (ctx, { account: targetAccount }) => {
     const startedAt = Date.now();
     const renters = await ctx.db.query("renters").collect();
     const reservations = await ctx.db.query("reservations").collect();
@@ -33,8 +33,9 @@ export const refresh = internalMutation({
       renterAccounts.set(r.renter_id, set);
     }
 
+    const targets = targetAccount ? [targetAccount, ACCOUNT_ALL] : getAccountSlugs();
     let rowsAffected = 0;
-    for (const account of getAccountSlugs()) {
+    for (const account of targets) {
       const scoped = renters.filter((rt) => {
         if ((rt.total_rentals_count ?? 0) < 2) return false;
         if (rt.blacklisted || rt.blacklist) return false;

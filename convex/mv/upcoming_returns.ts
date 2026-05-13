@@ -14,8 +14,8 @@ import { getAccountSlugs, upsertSingleton, todayISO, ACCOUNT_ALL } from "./_help
 const WINDOW_DAYS = 7;
 
 export const refresh = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { account: v.optional(v.string()) },
+  handler: async (ctx, { account: targetAccount }) => {
     const startedAt = Date.now();
     const today = todayISO();
     const windowEnd = new Date();
@@ -27,8 +27,9 @@ export const refresh = internalMutation({
       .withIndex("by_status", (q) => q.eq("status", "confirmed"))
       .collect();
 
+    const targets = targetAccount ? [targetAccount, ACCOUNT_ALL] : getAccountSlugs();
     let rowsAffected = 0;
-    for (const account of getAccountSlugs()) {
+    for (const account of targets) {
       const scoped = account === ACCOUNT_ALL
         ? reservations
         : reservations.filter((r) => r.account_slug === account);

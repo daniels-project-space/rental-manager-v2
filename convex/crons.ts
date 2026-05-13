@@ -55,4 +55,23 @@ crons.interval(
   internal.mv.upcoming_returns.refresh,
 );
 
+// ── Wave 4 — Hygglo polling workflow trigger ──────────────────
+//
+// Every 3 min. Cadence tuned so:
+//   - faster than Trigger.dev's 5-min scrape, so any new Hygglo order
+//     picked up by the scraper gets an AI decision in under 3 min
+//     (decision-latency SLO for Daniel's admin review).
+//   - slow enough that with 2 accounts × ~50 orders/day, AI decision
+//     calls per day stay around 100 — well within xAI rate limits.
+//
+// The Convex action `fetch()`es a Next.js API route which owns the
+// Mastra workflow invocation (the workflow runs in Node, not Convex).
+// Until POLL_TRIGGER_URL env var is set, the action no-ops — keeping
+// the cron registered is harmless.
+crons.interval(
+  "hygglo_poll workflow",
+  { minutes: 3 },
+  internal.hygglo_poll_trigger.triggerWorkflow,
+);
+
 export default crons;
