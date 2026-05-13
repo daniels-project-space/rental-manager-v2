@@ -14,7 +14,10 @@ import { api } from "../../convex/_generated/api";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
-const CONVEX_URL = process.env.CONVEX_URL ?? "https://exciting-lion-29.convex.cloud";
+// Fallback URL must match v2's active deployment (see .env.local NEXT_PUBLIC_CONVEX_URL).
+// Wrong fallback caused poll writes to hit exciting-lion-29 while the dashboard
+// read from hearty-oyster-600 — renter_name/order_step/photos_urls never landed.
+const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
 
 const API_BASE = "https://api.hygglo.com/api";
 const CLIENT_ID = "ngHyggloApp";

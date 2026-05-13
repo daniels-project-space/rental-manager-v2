@@ -115,11 +115,12 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
       {/* Drawer */}
       <div
         id={drawerId}
-        className="stat-card-drawer overflow-hidden"
+        className="stat-card-drawer"
         style={{
-          maxHeight: props.isExpanded ? 500 : 0,
+          maxHeight: props.isExpanded ? 720 : 0,
           opacity: props.isExpanded ? 1 : 0,
-          marginTop: props.isExpanded ? 10 : 0,
+          marginTop: props.isExpanded ? 12 : 0,
+          overflow: props.isExpanded ? "visible" : "hidden",
           transition:
             "max-height 350ms ease, opacity 250ms ease, margin-top 250ms ease",
         }}

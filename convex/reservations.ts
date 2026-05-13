@@ -359,12 +359,14 @@ export const adminFixStatusFromStep = mutation({
   handler: async (ctx) => {
     const rows = await ctx.db.query("reservations").collect();
     let fixed = 0;
+    const PENDING = new Set(["REQUEST", "APPROVED"]);
     const PAID = new Set(["FUNDS_RESERVED", "VERIFIED", "BOOKED_AFTER_VERIFIED", "DELIVERED"]);
     const COMPLETED = new Set(["RETURNED", "REVIEWED"]);
     const CANCELLED_STEPS = new Set(["CANCELED", "VERIFICATION_FAILED"]);
     for (const r of rows) {
       let newStatus: string | null = null;
-      if (PAID.has(r.order_step ?? "")) newStatus = "confirmed";
+      if (PENDING.has(r.order_step ?? "")) newStatus = "pending_review";
+      else if (PAID.has(r.order_step ?? "")) newStatus = "confirmed";
       else if (COMPLETED.has(r.order_step ?? "")) newStatus = "completed";
       else if (CANCELLED_STEPS.has(r.order_step ?? "")) newStatus = "cancelled";
       if (newStatus && r.status !== newStatus) {
@@ -373,6 +375,93 @@ export const adminFixStatusFromStep = mutation({
       }
     }
     return { total: rows.length, fixed };
+  },
+});
+
+/**
+ * Patch missing rich fields (renter_name, order_step, photos_urls, etc.) on
+ * an existing reservation, keyed by hygglo_order_id. Used by the
+ * sync-from-exciting-lion-29 backfill script to repair rows the Trigger.dev
+ * poller wrote to the wrong Convex deployment.
+ *
+ * Only fills BLANK fields — never overwrites already-populated values, so the
+ * script is idempotent and safe to re-run.
+ */
+export const adminPatchRichFieldsByHyggloId = mutation({
+  args: {
+    hygglo_order_id: v.string(),
+    renter_name: v.optional(v.string()),
+    order_step: v.optional(v.string()),
+    booking_status: v.optional(v.string()),
+    pickup_time: v.optional(v.string()),
+    return_time: v.optional(v.string()),
+    pickup_date: v.optional(v.string()),
+    photos_urls: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) =>
+        q.eq("hygglo_order_id", args.hygglo_order_id),
+      )
+      .collect();
+    let patched = 0;
+    for (const r of rows) {
+      const patch: Record<string, unknown> = {};
+      if (args.renter_name && !r.renter_name) patch.renter_name = args.renter_name;
+      if (args.order_step && !r.order_step) {
+        const allowed = new Set([
+          "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED",
+          "BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED",
+          "CANCELED", "VERIFICATION_FAILED",
+        ]);
+        if (allowed.has(args.order_step)) patch.order_step = args.order_step;
+      }
+      if (args.booking_status && !r.booking_status) patch.booking_status = args.booking_status;
+      if (args.pickup_time && !r.pickup_time) patch.pickup_time = args.pickup_time;
+      if (args.return_time && !r.return_time) patch.return_time = args.return_time;
+      if (args.pickup_date && !r.pickup_date) patch.pickup_date = args.pickup_date;
+      if (
+        args.photos_urls &&
+        args.photos_urls.length > 0 &&
+        (!r.photos_urls || r.photos_urls.length === 0)
+      ) {
+        patch.photos_urls = args.photos_urls;
+      }
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(r._id, patch);
+        patched++;
+      }
+    }
+    return { rows: rows.length, patched };
+  },
+});
+
+/**
+ * Lightweight list of reservations missing rich fields, capped to the
+ * dashboard window. Used by the backfill script to know which orders
+ * to fetch from the source-of-truth deployment.
+ */
+export const adminListNeedsRichBackfill = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("reservations").collect();
+    const missing: Array<{ hygglo_order_id: string; account_slug: string }> = [];
+    for (const r of rows) {
+      if (!r.hygglo_order_id) continue;
+      const needs =
+        !r.renter_name ||
+        !r.order_step ||
+        !r.photos_urls ||
+        r.photos_urls.length === 0;
+      if (needs) {
+        missing.push({
+          hygglo_order_id: r.hygglo_order_id,
+          account_slug: r.account_slug ?? "",
+        });
+      }
+    }
+    return missing;
   },
 });
 
