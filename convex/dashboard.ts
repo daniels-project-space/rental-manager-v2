@@ -426,19 +426,45 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: missed_revenue ──────────────────────────────────────
-    // TODO: wire when missed-revenue source exists (separate from denied).
-    // For now mirrors denied_revenue as a placeholder.
+    // Maps denial_type "timeout" and "unmatched" from denial_records as
+    // "missed" revenue (distinct from owner_denied).
+    // denial_records.reason holds the denial type string (e.g. "timeout", "unmatched", "owner_denied")
+    const missedTypes = new Set(["timeout", "unmatched"]);
+    const missedDenials = denialRows.filter(
+      (d) => d.created_at >= ninetyDaysAgo && missedTypes.has(d.reason ?? ""),
+    );
+    const missedRevenueTotal = missedDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
     const missed_revenue = {
-      total_gbp: 0 as number,
-      items: [] as Array<{ reservation_id: string; renter_name: string | null; gross: number | null; reason: string | null }>,
+      total_gbp: Math.round(missedRevenueTotal * 100) / 100,
+      items: missedDenials.slice(0, 15).map((d) => ({
+        reservation_id: d._id as string,
+        renter_name: null as string | null,
+        gross: d.estimated_value ?? null,
+        reason: d.reason ?? null,
+      })),
     };
 
     // ── card: ai_boost ────────────────────────────────────────────
-    // TODO: wire to ai_decisions / settings.ai_boost_rate when source is stable.
-    // Placeholder: return zeros. getSummary already computes aiBoostAmount.
+    // Count accepted ai_decisions in last 90d; estimate uplift via boostRate.
+    const drawerSettings = await ctx.db.query("settings").first();
+    const boostRateVal: number = (drawerSettings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.15;
+    const recentAccepted = await ctx.db
+      .query("ai_decision")
+      .withIndex("by_status", (idx) => idx.eq("status", "approved"))
+      .collect()
+      .then((rows) =>
+        rows.filter(
+          (r) => (r.generatedAt ?? 0) >= ninetyDaysAgo &&
+            (!accountSlug || r.account_slug === accountSlug),
+        ),
+      );
+    const aiAcceptedCount = recentAccepted.length;
+    const aiUpliftGbp = Math.round(monthTotal * boostRateVal * 100) / 100;
     const ai_boost = {
-      total_uplift_gbp: 0 as number,
-      breakdown: [] as Array<{ source: string; amount: number }>,
+      total_uplift_gbp: aiUpliftGbp,
+      breakdown: [
+        { source: `Accepted decisions (90d): ${aiAcceptedCount}`, amount: aiUpliftGbp },
+      ] as Array<{ source: string; amount: number }>,
     };
 
     // ── card: out_of_stock ────────────────────────────────────────
@@ -494,11 +520,46 @@ export const getStatsDrawerData = query({
     const vacation = { active_blocks: activeBlocks };
 
     // ── card: sell_reco ───────────────────────────────────────────
-    // TODO: wire to lost_revenue.getPurchaseRecommendations when drawer is built.
-    // Placeholder empty.
-    const sell_reco = {
-      recommendations: [] as Array<{ item_name: string; reason: string; suggested_price_gbp: number | null }>,
-    };
+    // items.getSellRecommendations logic inlined: low-utilization or high-age items.
+    const SELL_LOOKBACK_DAYS = 90;
+    const SELL_UTIL_THRESHOLD = 0.25;
+    const sellCutoffStr = new Date(Date.now() - SELL_LOOKBACK_DAYS * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    let sellReservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", sellCutoffStr))
+      .collect();
+    if (accountSlug) {
+      sellReservations = sellReservations.filter((r) => r.account_slug === accountSlug);
+    }
+    const sellRentalDays = new Map<string, number>();
+    for (const r of sellReservations) {
+      for (const it of r.items ?? []) {
+        const n = it.item_name ?? "";
+        if (!n) continue;
+        const s = new Date(r.start_date as string).getTime();
+        const e = new Date(r.end_date as string).getTime();
+        const days = Math.max(1, Math.round((e - s) / 86400000) + 1);
+        sellRentalDays.set(n, (sellRentalDays.get(n) ?? 0) + days);
+      }
+    }
+    const sellReco: Array<{ item_name: string; reason: string; suggested_price_gbp: number | null }> = [];
+    for (const i of activeItems) {
+      const rentalDays = sellRentalDays.get(i.name_canonical) ?? 0;
+      const utilizationPct = rentalDays / SELL_LOOKBACK_DAYS;
+      const ageMonths = (Date.now() - i.created_at) / (1000 * 60 * 60 * 24 * 30);
+      if (utilizationPct > SELL_UTIL_THRESHOLD && ageMonths < 24) continue;
+      const priceRow = await ctx.db
+        .query("pricing_catalog")
+        .withIndex("by_name", (q) => q.eq("item_name_canonical", i.name_canonical))
+        .first();
+      const suggested = priceRow ? Math.round(priceRow.daily_price_min * 30) : null;
+      const reason = utilizationPct <= SELL_UTIL_THRESHOLD ? "Low demand" : "High age";
+      sellReco.push({ item_name: i.name_canonical, reason, suggested_price_gbp: suggested });
+      if (sellReco.length >= 15) break;
+    }
+    const sell_reco = { recommendations: sellReco };
 
     // ── card: inventory_worth ─────────────────────────────────────
     const worthByKind = new Map<string, number>();
@@ -515,18 +576,94 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: tax ─────────────────────────────────────────────────
-    // TODO: wire to historical_revenue + annual tax computation when confirmed.
-    // Placeholder empty.
+    // Aggregate historical_revenue by calendar year + estimate tax at 20% flat.
+    // Also folds in current-year earnings from reservations.
+    const histRows = await ctx.db.query("historical_revenue").collect();
+    const taxByYear = new Map<number, number>();
+    for (const h of histRows) {
+      const yr = parseInt(h.month.slice(0, 4), 10);
+      if (!isNaN(yr)) {
+        taxByYear.set(yr, (taxByYear.get(yr) ?? 0) + (h.total_overall_made_gbp ?? 0));
+      }
+    }
+    // Add current-year live earnings from reservations
+    const currentYear = new Date().getFullYear();
+    const currentYearEarnings = allRes
+      .filter((r) => {
+        const yr = parseInt((r.start_date as string ?? "").slice(0, 4), 10);
+        return yr === currentYear && (r.status === "confirmed" || r.status === "completed");
+      })
+      .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
+    if (currentYearEarnings > 0) {
+      taxByYear.set(currentYear, (taxByYear.get(currentYear) ?? 0) + currentYearEarnings);
+    }
+    const TAX_RATE = 0.20;
     const tax = {
-      years: [] as Array<{ year: number; gross: number; estimated_tax: number }>,
+      years: Array.from(taxByYear.entries())
+        .sort(([a], [b]) => b - a)
+        .slice(0, 5)
+        .map(([year, gross]) => ({
+          year,
+          gross: Math.round(gross),
+          estimated_tax: Math.round(gross * TAX_RATE),
+        })),
     };
 
     // ── card: business_intel ──────────────────────────────────────
-    // TODO: wire to ai_insights / purchase_signals MV when drawer is built.
-    // Placeholder empty.
-    const business_intel = {
-      kpis: [] as Array<{ label: string; value: string; badge: "strong" | "moderate" | "watch" }>,
-    };
+    // Compose KPI badges from purchase_signals + churn_risk MVs.
+    const [psRow, crRow] = await Promise.all([
+      ctx.db
+        .query("purchase_signals")
+        .withIndex("by_account", (q) => q.eq("account", accountSlug ?? "all"))
+        .first(),
+      ctx.db
+        .query("churn_risk_renters")
+        .withIndex("by_account", (q) => q.eq("account", accountSlug ?? "all"))
+        .first(),
+    ]);
+    type KpiBadge = "strong" | "moderate" | "watch";
+    const kpis: Array<{ label: string; value: string; badge: KpiBadge }> = [];
+    // Purchase signals KPI
+    const psSignals: Array<{ itemRequested: string; requestCount30d: number; projectedAnnualGbp: number }> =
+      (psRow as { signals?: Array<{ itemRequested: string; requestCount30d: number; projectedAnnualGbp: number }> } | null)?.signals ?? [];
+    if (psSignals.length > 0) {
+      const top = psSignals[0];
+      kpis.push({
+        label: "Top unmet demand",
+        value: `${top.itemRequested} (${top.requestCount30d} req/30d, £${top.projectedAnnualGbp}/yr)`,
+        badge: top.projectedAnnualGbp >= 500 ? "strong" : top.projectedAnnualGbp >= 150 ? "moderate" : "watch",
+      });
+    } else {
+      kpis.push({ label: "Unmet demand", value: "No signals", badge: "watch" });
+    }
+    // Churn risk KPI
+    const crRows: Array<{ risk: string; renterName: string; lifetimeGbp: number }> =
+      (crRow as { rows?: Array<{ risk: string; renterName: string; lifetimeGbp: number }> } | null)?.rows ?? [];
+    const highRisk = crRows.filter((r) => r.risk === "high");
+    if (highRisk.length === 0) {
+      kpis.push({ label: "Renter churn risk", value: "No high-risk renters", badge: "strong" });
+    } else {
+      kpis.push({
+        label: "Renter churn risk",
+        value: `${highRisk.length} high-risk renter${highRisk.length > 1 ? "s" : ""}`,
+        badge: highRisk.length >= 3 ? "watch" : "moderate",
+      });
+    }
+    // AI decision acceptance rate KPI
+    const totalDecisions = await ctx.db.query("ai_decision").collect()
+      .then((rows) => rows.filter((r) => (!accountSlug || r.account_slug === accountSlug)));
+    const acceptedCount = totalDecisions.filter((r) => r.status === "approved").length;
+    const acceptRate = totalDecisions.length > 0
+      ? Math.round((acceptedCount / totalDecisions.length) * 100)
+      : null;
+    if (acceptRate !== null) {
+      kpis.push({
+        label: "AI accept rate",
+        value: `${acceptRate}% (${acceptedCount}/${totalDecisions.length})`,
+        badge: acceptRate >= 70 ? "strong" : acceptRate >= 40 ? "moderate" : "watch",
+      });
+    }
+    const business_intel = { kpis };
 
     return {
       active: {
