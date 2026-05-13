@@ -30,7 +30,7 @@ function fmtGbp(n: number): string {
 
 function StatsGridSkeleton() {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2.5 mt-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
       {Array.from({ length: 16 }).map((_, i) => (
         <div key={i} className="h-20 rounded-2xl bg-slate-900/40 animate-pulse" />
       ))}
@@ -61,7 +61,7 @@ export function StatsGrid() {
     setExpandedId((prev) => (prev === id ? null : id));
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2.5 mt-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
       {/* ── Row 1 ─────────────────────────────────────────────── */}
 
       {/* active — 2×1 hero */}
@@ -250,7 +250,7 @@ export function StatsGrid() {
       <ExpandableStatCard
         id="inventory_worth"
         label="Inventory Worth"
-        value={data.inventory_worth.total_gbp > 0 ? fmtGbp(data.inventory_worth.total_gbp) : "—"}
+        value={fmtGbp(data.inventory_worth.total_gbp)}
         valueColor="blue"
         accentColor="blue"
         subtitle="acquisition cost"
@@ -267,7 +267,7 @@ export function StatsGrid() {
         value={data.tax.years.length > 0 ? fmtGbp(data.tax.years[0].estimated_tax) : "—"}
         valueColor="red"
         accentColor="red"
-        subtitle={data.tax.years.length > 0 ? `${data.tax.years[0].year}` : "—"}
+        subtitle={data.tax.years.length > 0 ? `${data.tax.years[0].year}` : "pending"}
         isExpanded={expandedId === "tax"}
         onToggle={() => toggle("tax")}
       >
