@@ -155,14 +155,25 @@ export const getCalendarStrip = query({
       }
     }
 
-    /** Resolve image URL for the first item in a reservation's items array */
+    // Build a case-insensitive fallback index (lowercased key → image_url)
+    const itemImageByNameLower = new Map<string, string | null>();
+    for (const [k, v] of itemImageByName) {
+      const lk = k.toLowerCase();
+      if (!itemImageByNameLower.has(lk)) itemImageByNameLower.set(lk, v);
+    }
+
+    /** Resolve image URL for the first item in a reservation's items array.
+     *  Tries exact match first, then case-insensitive fallback. */
     function resolveFirstImageUrl(items: Array<{ item_name?: string }> | undefined): string | null {
       if (!items || items.length === 0) return null;
       for (const i of items) {
         const name = i.item_name;
-        if (name && itemImageByName.has(name)) {
-          return itemImageByName.get(name) ?? null;
-        }
+        if (!name) continue;
+        // BUGFIX: exact match (was the only lookup before — missed casing mismatches)
+        if (itemImageByName.has(name)) return itemImageByName.get(name) ?? null;
+        // FIX: case-insensitive fallback for names like "Canon EOS R5" vs "canon eos r5"
+        const lower = name.toLowerCase();
+        if (itemImageByNameLower.has(lower)) return itemImageByNameLower.get(lower) ?? null;
       }
       return null;
     }

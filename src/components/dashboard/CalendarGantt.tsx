@@ -134,13 +134,14 @@ function ItemAvatar({ name, imageUrl }: { name: string; imageUrl: string | null 
 
 interface BlockProps {
   block: Block;
+  itemName: string;
   weekStart: string;
   colWidth: number;
   onSelect: (b: Block) => void;
   liveProgress: number | null;
 }
 
-function GanttBlock({ block, weekStart, colWidth, onSelect, liveProgress }: BlockProps) {
+function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgress }: BlockProps) {
   const COL_GAP = 4;
   const weekStartDay = isoToDate(weekStart).getTime();
   const DAY_MS = 86400000;
@@ -165,6 +166,19 @@ function GanttBlock({ block, weekStart, colWidth, onSelect, liveProgress }: Bloc
   const showProgress =
     block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
 
+  // Tooltip: "{renter} • {item} • {start}→{end}"
+  const tooltipText = [
+    block.renter_name ?? "?",
+    itemName,
+    block.start_date && block.end_date ? `${block.start_date} → ${block.end_date}` : null,
+    block.pickup_time ? `pickup ${block.pickup_time}` : null,
+  ].filter(Boolean).join(" • ");
+
+  // Renter label truncated at ~12 chars
+  const renterShort = (block.renter_name ?? "—").length > 12
+    ? (block.renter_name ?? "—").slice(0, 12) + "…"
+    : (block.renter_name ?? "—");
+
   return (
     <div
       className="absolute top-1 bottom-1 rounded-md cursor-pointer overflow-hidden flex flex-col justify-between px-2 py-1 select-none transition-opacity hover:opacity-90"
@@ -174,17 +188,20 @@ function GanttBlock({ block, weekStart, colWidth, onSelect, liveProgress }: Bloc
         background: ss.bg,
         border: `1px solid ${ss.border}`,
       }}
-      title={`${block.renter_name ?? "?"} · ${block.start_date} → ${block.end_date}`}
+      title={tooltipText}
       onClick={() => onSelect(block)}
     >
       <div
-        className="text-xs font-semibold truncate leading-tight"
+        className="text-[11px] font-semibold truncate leading-tight"
         style={{
           color: ss.text,
           textDecoration: ss.strikethrough ? "line-through" : undefined,
         }}
       >
-        {block.renter_name ?? "—"}
+        {renterShort}
+      </div>
+      <div className="text-[9px] truncate leading-tight" style={{ color: ss.text, opacity: 0.6 }}>
+        {itemName.length > 14 ? itemName.slice(0, 14) + "…" : itemName}
       </div>
       {block.pickup_time && (
         <div className="text-[10px] truncate" style={{ color: ss.text, opacity: 0.75 }}>
@@ -255,8 +272,8 @@ function BlockDetail({ block, onClose }: { block: Block; onClose: () => void }) 
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column
-const ROW_HEIGHT = 52; // px per item row
-const LABEL_WIDTH = 210; // px for left item label column
+const ROW_HEIGHT = 58; // px per item row
+const LABEL_WIDTH = 280; // px for left item label column
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? mondayOfThisWeek());
@@ -512,6 +529,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                         <GanttBlock
                           key={block.reservation_id}
                           block={block}
+                          itemName={item.item_name}
                           weekStart={weekStart}
                           colWidth={COL_WIDTH}
                           onSelect={setSelectedBlock}

@@ -233,8 +233,11 @@ function StripChip({
 
   const itemLabel = chip.itemNames.filter(Boolean).join(", ") || "—";
   const isDelivery = chip.pickupMethod === "delivery" || chip.returnMethod === "delivery";
-  const showProgress = chip.progressPercent !== null && chip.progressPercent < 100 &&
-    (chip.status === "active" || chip.status === "DELIVERED");
+  const showProgress =
+    chip.progressPercent !== null &&
+    chip.progressPercent >= 1 &&
+    chip.progressPercent <= 99 &&
+    chip.status === "DELIVERED";
 
   return (
     <div
@@ -497,16 +500,33 @@ export function CalendarStrip() {
         <span className="text-sm font-semibold text-[#e4e6eb]">
           Rental Calendar
         </span>
-        <button
-          onClick={() => setGanttOpen(true)}
-          className="text-xs px-3 py-1 rounded-lg transition-colors hover:bg-white/5"
-          style={{
-            border: "1px solid rgba(110,168,254,0.25)",
-            color: "rgba(110,168,254,0.8)",
-          }}
-        >
-          📅 Weekly View
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Color legend */}
+          <div className="flex items-center gap-1.5 text-[10px] text-[#8b8fa3]">
+            <span className="flex items-center gap-0.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+              Free
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+              Partial
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+              Full
+            </span>
+          </div>
+          <button
+            onClick={() => setGanttOpen(true)}
+            className="text-xs px-3 py-1 rounded-lg transition-colors hover:bg-white/5"
+            style={{
+              border: "1px solid rgba(110,168,254,0.25)",
+              color: "rgba(110,168,254,0.8)",
+            }}
+          >
+            📅 Weekly View
+          </button>
+        </div>
       </div>
 
       {/* Strip */}
