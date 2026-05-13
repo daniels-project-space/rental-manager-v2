@@ -495,6 +495,8 @@ export const getLifetimeByMonth = query({
         // Per-account filter: zero out accounts not requested.
         // For retired accounts (daniel/vertus), also pull in hist columns that live polling skips.
         if (accountSlug === "dbcinema") {
+          // Always incorporate hist.dbcinema so pre-import months surface in the dbcinema-only view.
+          dbOrganic = (hist?.dbcinema !== undefined ? hist.dbcinema : 0) + dbRaw;
           leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "leo") {
           // Always incorporate hist.leo so pre-import months surface in the leo-only view.
