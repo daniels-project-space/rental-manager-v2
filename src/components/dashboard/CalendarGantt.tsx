@@ -166,14 +166,6 @@ function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgre
   const showProgress =
     block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
 
-  // Tooltip: "{renter} • {item} • {start}→{end}"
-  const tooltipText = [
-    block.renter_name ?? "?",
-    itemName,
-    block.start_date && block.end_date ? `${block.start_date} → ${block.end_date}` : null,
-    block.pickup_time ? `pickup ${block.pickup_time}` : null,
-  ].filter(Boolean).join(" • ");
-
   // Renter label: use name if present, else order_step-derived fallback
   function orderStepLabel(step: string | null): string {
     switch (step) {
@@ -189,11 +181,19 @@ function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgre
       default: return "Booking";
     }
   }
-  const hasRenter = block.renter_name && block.renter_name.trim().length > 0;
+  const hasRenter = block.renter_name && block.renter_name.trim().length > 0 && block.renter_name.trim() !== "?";
   const renterFallback = orderStepLabel(block.order_step);
   const renterShort = hasRenter
     ? ((block.renter_name!).length > 12 ? (block.renter_name!).slice(0, 12) + "…" : block.renter_name!)
     : renterFallback;
+
+  // Tooltip: "{renter} • {item} • {start}→{end}"
+  const tooltipText = [
+    hasRenter ? block.renter_name : renterFallback,
+    itemName,
+    block.start_date && block.end_date ? `${block.start_date} → ${block.end_date}` : null,
+    block.pickup_time ? `pickup ${block.pickup_time}` : null,
+  ].filter(Boolean).join(" • ");
 
   return (
     <div
