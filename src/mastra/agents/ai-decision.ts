@@ -5,7 +5,7 @@
  *   - Different system prompt (decision generator, not Q&A).
  *   - READ-ONLY tool subset — NEVER calls a tool that writes to Hygglo or Convex
  *     (we use the same `data/` layer as dashboard-chat but restrict the surface).
- *   - Model: grok-4-1-fast-non-reasoning (matches dashboard agent).
+ *   - Model: GROK_CHAT_MODEL from src/lib/ai-models.ts (default grok-4.3; matches dashboard agent).
  *
  * INPUT shape (passed via system-prompt-injected context block in the workflow):
  *   {
@@ -34,6 +34,7 @@ import { createTool } from "@mastra/core/tools";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import * as data from "@/mastra/data";
+import { GROK_CHAT_MODEL } from "@/lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
@@ -155,6 +156,6 @@ export const aiDecisionAgent = new Agent({
   id: "ai-decision",
   name: "ai-decision",
   instructions: AI_DECISION_PROMPT,
-  model: xai("grok-4-1-fast-non-reasoning"),
+  model: xai(GROK_CHAT_MODEL),
   tools: aiDecisionTools,
 });

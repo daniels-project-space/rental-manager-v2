@@ -267,11 +267,32 @@ export const getLifetimeByMonth = query({
 
     const allReservations = await ctx.db.query("reservations").collect();
 
+    // Load historical_revenue for pre-import months (retired accounts + v1 migration)
+    const histRows = await ctx.db.query("historical_revenue").collect();
+    const histByMonth = new Map<string, { total: number; damage: number }>();
+    for (const row of histRows) {
+      histByMonth.set(row.month, {
+        total: row.total_revenue_gbp,
+        damage: row.damage_costs_gbp,
+      });
+    }
+
     const allDates = allReservations
       .filter((r) => r.start_date)
       .map((r) => r.start_date as string)
       .sort();
-    if (allDates.length === 0) {
+
+    // Determine the earliest month across live reservations AND historical data
+    const histMonths = [...histByMonth.keys()].sort();
+    const firstHistMonth = histMonths[0] ?? null;
+    const firstResMonth = allDates.length > 0 ? allDates[0].slice(0, 7) : null;
+
+    const firstMonth =
+      firstResMonth && firstHistMonth
+        ? firstResMonth < firstHistMonth ? firstResMonth : firstHistMonth
+        : firstResMonth ?? firstHistMonth;
+
+    if (!firstMonth) {
       return {
         months: [],
         totalRevenue: 0,
@@ -283,8 +304,6 @@ export const getLifetimeByMonth = query({
         forecast: [],
       };
     }
-
-    const firstMonth = allDates[0].slice(0, 7);
     const now = new Date();
     const currentMonth = now.toISOString().slice(0, 7);
     const forecastEnd = new Date(now.getFullYear(), now.getMonth() + 4, 1);
@@ -311,13 +330,11 @@ export const getLifetimeByMonth = query({
       claimsByMonth.set(m, r2((claimsByMonth.get(m) ?? 0) + c.amount_gbp));
     }
 
-    // Historical damage costs from Convex historical_revenue table (Stage 2.5 migration).
-    // Rows with damage_costs_gbp > 0 are overlaid onto claimsByMonth if no tracked claim exists.
+    // Historical damage costs — overlay onto claimsByMonth if no tracked claim exists.
     if (!accountSlug) {
-      const histDamageMap = await ctx.db.query("historical_revenue").collect();
-      for (const row of histDamageMap) {
-        if (row.damage_costs_gbp > 0 && !claimsByMonth.has(row.month)) {
-          claimsByMonth.set(row.month, row.damage_costs_gbp);
+      for (const [month, hist] of histByMonth) {
+        if (hist.damage > 0 && !claimsByMonth.has(month)) {
+          claimsByMonth.set(month, hist.damage);
         }
       }
     }
@@ -391,7 +408,12 @@ export const getLifetimeByMonth = query({
         const dbRaw = dbGross.get(mo) ?? 0;
         const leoRaw = leoGross.get(mo) ?? 0;
         const totalRaw = dbRaw + leoRaw;
-        if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
+        const hist = histByMonth.get(mo);
+        if (totalRaw === 0 && hist && hist.total > 0 && !accountSlug) {
+          // No live reservations for this month — use historical_revenue aggregate.
+          // Shown as dbcinemaOrganic (combined historical total across all retired + active accounts).
+          dbOrganic = hist.total;
+        } else if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
           aiBoost = r2(totalRaw * boostRate / (1 + boostRate));
           const dbFrac = dbRaw / totalRaw;
           dbOrganic = r2(dbRaw - aiBoost * dbFrac);

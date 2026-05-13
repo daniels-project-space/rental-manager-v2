@@ -6,6 +6,7 @@ import {
   SYSTEM_PROMPT_BASE,
 } from "../../../mastra/agents/dashboard-chat";
 import { formatContext } from "../../../mastra/context-formatter";
+import { GROK_CHAT_MODEL } from "../../../lib/ai-models";
 import type { AgentExecutionOptionsBase } from "@mastra/core/agent";
 
 export const dynamic = "force-dynamic";
@@ -139,7 +140,7 @@ export async function POST(req: Request) {
         try {
           const usage = await result.usage;
           metadata = JSON.stringify({
-            model: "grok-4-1-fast-non-reasoning",
+            model: GROK_CHAT_MODEL,
             input_tokens: usage?.inputTokens ?? null,
             output_tokens: usage?.outputTokens ?? null,
             latency_ms: latencyMs,
@@ -147,7 +148,7 @@ export async function POST(req: Request) {
           console.log("[chat] token usage:", metadata);
         } catch {
           metadata = JSON.stringify({
-            model: "grok-4-1-fast-non-reasoning",
+            model: GROK_CHAT_MODEL,
             latency_ms: latencyMs,
           });
         }
