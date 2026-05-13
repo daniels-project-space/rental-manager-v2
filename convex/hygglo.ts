@@ -194,6 +194,16 @@ export const upsertOrderAsReservation = mutation({
     renter_name: v.optional(v.string()),
     /** Raw Hygglo booking status (e.g. "pending_review", "confirmed"). */
     booking_status: v.optional(v.string()),
+    /** Pickup/return time strings ("HH:MM") from booking detail. */
+    pickup_time: v.optional(v.string()),
+    return_time: v.optional(v.string()),
+    /** Pickup/return method ("delivery" | "self_pickup" | etc). */
+    pickup_method: v.optional(v.string()),
+    return_method: v.optional(v.string()),
+    /** Owner notes on the order. */
+    notes: v.optional(v.string()),
+    /** Raw CDN photo URLs from the order detail. */
+    photos_urls: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args): Promise<{ action: "inserted" | "updated" | "skipped" }> => {
     const existing = await ctx.db
@@ -202,6 +212,19 @@ export const upsertOrderAsReservation = mutation({
       .first();
 
     const now = Date.now();
+
+    // ── new field extraction from raw order ───────────────────
+    const order = args.order;
+    const pickup_time = args.pickup_time ?? order?.booking?.pickup_time ?? undefined;
+    const return_time = args.return_time ?? order?.booking?.return_time ?? undefined;
+    const pickup_method = args.pickup_method ?? order?.booking?.pickup_method ?? undefined;
+    const return_method = args.return_method ?? order?.booking?.return_method ?? undefined;
+    const notes = args.notes ?? order?.notes ?? order?.detail?.notes ?? undefined;
+    const photos_urls_raw: string[] | undefined =
+      args.photos_urls ?? order?.photos_urls ?? order?.detail?.photos_urls;
+    const photos_urls = Array.isArray(photos_urls_raw)
+      ? photos_urls_raw.filter((u): u is string => typeof u === "string")
+      : undefined;
 
     // ── order_step extraction ──────────────────────────────────
     // null = no active step found (treat as undefined for schema compat); undefined = unrecognised key
@@ -246,6 +269,12 @@ export const upsertOrderAsReservation = mutation({
       duration_days: args.duration_days,
       renter_name: args.renter_name,
       booking_status: args.booking_status,
+      ...(pickup_time !== undefined && { pickup_time }),
+      ...(return_time !== undefined && { return_time }),
+      ...(pickup_method !== undefined && { pickup_method }),
+      ...(return_method !== undefined && { return_method }),
+      ...(notes !== undefined && { notes }),
+      ...(photos_urls !== undefined && { photos_urls }),
     };
 
     if (existing) {
@@ -268,6 +297,7 @@ export const upsertOrderAsReservation = mutation({
         );
         // Still apply non-step fields (dates, amounts) but preserve order_step.
         await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
+        await populateItemImagesInline(ctx, args.items, photos_urls);
         return { action: "updated" };
       }
 
@@ -278,6 +308,7 @@ export const upsertOrderAsReservation = mutation({
         ...stepPatch,
         ...obsoleteFields,
       });
+      await populateItemImagesInline(ctx, args.items, photos_urls);
       return { action: "updated" };
     }
 
@@ -290,9 +321,45 @@ export const upsertOrderAsReservation = mutation({
       ...obsoleteFields,
       created_at: now,
     });
+
+    // ── Populate item images from photos_urls (inline — mutations can't call runMutation) ──
+    await populateItemImagesInline(ctx, args.items, photos_urls);
+
     return { action: "inserted" };
   },
 });
+
+/**
+ * Shared helper: for each reservation item, if the matching items-table row has no
+ * image_url yet, patch it with the first /products/ URL (or first URL) from photos_urls.
+ * Called inline from upsertOrderAsReservation (mutations cannot call runMutation).
+ */
+async function populateItemImagesInline(
+  ctx: { db: any },
+  reservationItems: { item_name: string; qty?: number }[],
+  photos_urls: string[] | undefined,
+): Promise<void> {
+  if (!photos_urls || photos_urls.length === 0) return;
+  if (!reservationItems || reservationItems.length === 0) return;
+
+  const candidate = photos_urls.find((u) => u.includes("/products/")) ?? photos_urls[0];
+  if (!candidate) return;
+
+  const allItems: any[] = await ctx.db.query("items").collect();
+
+  for (const ri of reservationItems) {
+    if (!ri.item_name) continue;
+    const lowerName = ri.item_name.toLowerCase();
+    const item = allItems.find(
+      (i: any) =>
+        i.name_canonical?.toLowerCase() === lowerName ||
+        (i.aliases ?? []).some((a: string) => a.toLowerCase() === lowerName),
+    );
+    if (item && !item.image_url) {
+      await ctx.db.patch(item._id, { image_url: candidate });
+    }
+  }
+}
 
 // ── Renter upsert (batch) ─────────────────────────────────────
 

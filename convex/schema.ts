@@ -77,6 +77,7 @@ export default defineSchema({
     // null/undefined for now until Phase 3 Stagehand scrape populates.
     cancellation_policy: v.optional(v.string()),
     aliases: v.optional(v.array(v.string())),        // alternate names imported from v1
+    image_url: v.optional(v.string()),              // populated from first matching reservation's photos_urls
     created_at: v.number(),
     updated_at: v.number(),
   })
@@ -242,6 +243,9 @@ export default defineSchema({
     )),
     pickup_time: v.optional(v.string()),           // "HH:MM" or free-text from chat extraction
     return_time: v.optional(v.string()),
+    pickup_method: v.optional(v.string()),         // "delivery" | "self_pickup" | etc
+    return_method: v.optional(v.string()),
+    photos_urls: v.optional(v.array(v.string())),  // raw Hygglo CDN URLs
     pickup_arrival_confirmed: v.optional(v.boolean()),
     is_obsolete: v.optional(v.boolean()),           // mirrors Hygglo filter=obsolete
     obsolete_reason: v.optional(v.union(

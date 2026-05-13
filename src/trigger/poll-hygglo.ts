@@ -87,6 +87,13 @@ type OrderReservationPayload = {
   renter_name?: string;
   /** Raw Hygglo booking status (e.g. "pending_review") extracted from detail.booking.status. */
   booking_status?: string;
+  /** Calendar UI fields — extracted from detail.booking.* and detail.* */
+  pickup_time?: string;
+  return_time?: string;
+  pickup_method?: string;
+  return_method?: string;
+  notes?: string;
+  photos_urls?: string[];
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
 };
@@ -334,6 +341,22 @@ async function scrapeAccount(
       // Also capture the raw Hygglo booking status from the detail object if present.
       const bookingStatus: string | undefined =
         (detail as any)?.booking?.status ?? undefined;
+      // Calendar UI fields — extracted from detail.booking.* and detail.*
+      const pickup_time: string | undefined = (detail as any)?.booking?.pickup_time ?? undefined;
+      const return_time: string | undefined = (detail as any)?.booking?.return_time ?? undefined;
+      const pickup_method: string | undefined = (detail as any)?.booking?.pickup_method ?? undefined;
+      const return_method: string | undefined = (detail as any)?.booking?.return_method ?? undefined;
+      const notes: string | undefined = (detail as any)?.notes ?? (detail as any)?.detail?.notes ?? undefined;
+      const photos_urls: string[] | undefined = (() => {
+        const urls: string[] = [];
+        if (Array.isArray((detail as any)?.photos_urls)) return (detail as any).photos_urls as string[];
+        if (Array.isArray((detail as any)?.detail?.photos_urls)) return (detail as any).detail.photos_urls as string[];
+        // Fallback: extract from items[].image.fullSizeUrl (same as v1)
+        for (const item of detail.items ?? []) {
+          if ((item as any)?.image?.fullSizeUrl) urls.push((item as any).image.fullSizeUrl);
+        }
+        return urls.length > 0 ? urls : undefined;
+      })();
       reservationPayloads.push({
         hygglo_order_id: String(order.id),
         status,
@@ -347,6 +370,12 @@ async function scrapeAccount(
         sourceFilter: order.sourceFilter,
         renter_name: otherPartName || undefined,
         booking_status: bookingStatus,
+        pickup_time,
+        return_time,
+        pickup_method,
+        return_method,
+        notes,
+        photos_urls,
         order: detail,
       });
     }

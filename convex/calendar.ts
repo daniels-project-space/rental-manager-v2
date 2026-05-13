@@ -2,6 +2,35 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc } from "./_generated/dataModel";
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Parse a YYYY-MM-DD date + HH:MM time string into a UTC ms timestamp. */
+function parseTime(date: string, time: string): number {
+  return new Date(`${date}T${time}:00Z`).getTime();
+}
+
+/**
+ * Compute server-side progress percent for a rental chip.
+ * Returns null if upcoming, 100 if completed, 1-99 while in progress.
+ */
+function chipProgress(
+  start_date: string | undefined,
+  end_date: string | undefined,
+  pickup_time: string | null | undefined,
+  return_time: string | null | undefined
+): number | null {
+  if (!start_date || !end_date) return null;
+  const startMs = parseTime(start_date, pickup_time ?? "00:00");
+  const endMs = parseTime(end_date, return_time ?? "23:59");
+  const now = Date.now();
+  if (now < startMs) return null; // upcoming — UI renders 0%
+  if (now >= endMs) return 100;  // completed
+  const pct = ((now - startMs) / (endMs - startMs)) * 100;
+  return Math.max(1, Math.min(99, Math.round(pct)));
+}
+
 /**
  * W06 5-Day Calendar Strip
  * Returns reservations and holds for [startDate, startDate + days - 1]
@@ -70,13 +99,18 @@ export const getCalendarStrip = query({
       );
     }
 
-    // Item name lookup for holds (join items table)
+    // Item name + image lookup for holds AND for reservation image projection
     const holdItemIds = [...new Set(holds.map((h) => h.item_id).filter(Boolean))];
-    const itemNameMap = new Map<string, string>();
+    const holdItemMap = new Map<string, string>();
+    const holdItemImageMap = new Map<string, string | null>();
     await Promise.all(
       holdItemIds.map(async (iid) => {
         const item = await ctx.db.get(iid);
-        if (item) itemNameMap.set(iid, (item as { name_canonical?: string; name?: string }).name_canonical ?? (item as { name_canonical?: string; name?: string }).name ?? String(iid).slice(-6));
+        if (item) {
+          const i = item as { name_canonical?: string; name?: string; image_url?: string };
+          holdItemMap.set(iid, i.name_canonical ?? i.name ?? String(iid).slice(-6));
+          holdItemImageMap.set(iid, i.image_url ?? null);
+        }
       })
     );
 
@@ -96,36 +130,105 @@ export const getCalendarStrip = query({
       })
     );
 
+    // Item image lookup for reservations (first item name → items table)
+    // Build a lookup: canonical name → image_url
+    const allReservationItemNames = [
+      ...new Set(
+        reservations.flatMap((r) => (r.items ?? []).map((i) => i.item_name).filter(Boolean))
+      ),
+    ];
+    const itemImageByName = new Map<string, string | null>();
+    if (allReservationItemNames.length > 0) {
+      const allItems = await ctx.db.query("items").collect();
+      for (const item of allItems) {
+        const i = item as { name_canonical?: string; name?: string; aliases?: string[]; image_url?: string };
+        const canonical = i.name_canonical ?? i.name ?? "";
+        if (canonical && itemImageByName.get(canonical) === undefined) {
+          itemImageByName.set(canonical, i.image_url ?? null);
+        }
+        // also index aliases
+        for (const alias of i.aliases ?? []) {
+          if (alias && itemImageByName.get(alias) === undefined) {
+            itemImageByName.set(alias, i.image_url ?? null);
+          }
+        }
+      }
+    }
+
+    /** Resolve image URL for the first item in a reservation's items array */
+    function resolveFirstImageUrl(items: Array<{ item_name?: string }> | undefined): string | null {
+      if (!items || items.length === 0) return null;
+      for (const i of items) {
+        const name = i.item_name;
+        if (name && itemImageByName.has(name)) {
+          return itemImageByName.get(name) ?? null;
+        }
+      }
+      return null;
+    }
+
     return dates.map((date) => {
       // For same-day rentals (start === end === date), place in pickups only to avoid double-count.
       const pickups = reservations
         .filter((r) => r.start_date === date)
-        .map((r) => ({
-          reservationId: r._id,
-          itemNames: (r.items ?? []).map((i) => i.item_name),
-          renterName: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
-          accountSlug: r.account_slug,
-          status: r.status,
-        }));
+        .map((r) => {
+          const rType = r as {
+            pickup_time?: string | null;
+            return_time?: string | null;
+            pickup_method?: string | null;
+            return_method?: string | null;
+          };
+          return {
+            reservationId: r._id,
+            itemNames: (r.items ?? []).map((i) => i.item_name),
+            renterName: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
+            accountSlug: r.account_slug,
+            accountColor: r.account_slug === "leo" ? "purple" : "blue",
+            status: r.status,
+            pickupTime: rType.pickup_time ?? null,
+            returnTime: rType.return_time ?? null,
+            pickupMethod: rType.pickup_method ?? null,
+            returnMethod: rType.return_method ?? null,
+            imageUrl: resolveFirstImageUrl(r.items),
+            progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
+          };
+        });
 
       // Exclude same-day rentals from returns (already counted in pickups above).
       const pickupIds = new Set(pickups.map((p) => p.reservationId));
       const returns = reservations
         .filter((r) => r.end_date === date && !pickupIds.has(r._id))
-        .map((r) => ({
-          reservationId: r._id,
-          itemNames: (r.items ?? []).map((i) => i.item_name),
-          renterName: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
-          accountSlug: r.account_slug,
-          status: r.status,
-        }));
+        .map((r) => {
+          const rType = r as {
+            pickup_time?: string | null;
+            return_time?: string | null;
+            pickup_method?: string | null;
+            return_method?: string | null;
+          };
+          return {
+            reservationId: r._id,
+            itemNames: (r.items ?? []).map((i) => i.item_name),
+            renterName: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
+            accountSlug: r.account_slug,
+            accountColor: r.account_slug === "leo" ? "purple" : "blue",
+            status: r.status,
+            pickupTime: rType.pickup_time ?? null,
+            returnTime: rType.return_time ?? null,
+            pickupMethod: rType.pickup_method ?? null,
+            returnMethod: rType.return_method ?? null,
+            imageUrl: resolveFirstImageUrl(r.items),
+            progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
+          };
+        });
 
       const dayHolds = holds
         .filter((h) => h.date === date)
         .map((h) => ({
           holdId: h._id,
           itemId: h.item_id,
-          itemName: itemNameMap.get(h.item_id) ?? String(h.item_id).slice(-6),
+          itemName: holdItemMap.get(h.item_id) ?? String(h.item_id).slice(-6),
+          holdItemName: holdItemMap.get(h.item_id) ?? null,
+          holdRenterName: h.renter_name ?? (h.reservation_id ? holdRenterMap.get(h.reservation_id) ?? null : null),
           reservationId: h.reservation_id,
           renterName: h.renter_name ?? (h.reservation_id ? holdRenterMap.get(h.reservation_id) ?? "?" : "?"),
           accountSlug: h.account_slug,
@@ -337,6 +440,142 @@ export const getWeeklyCalendar = query({
             status: h.status,
           })),
       })),
+    };
+  },
+});
+
+/**
+ * W08 Gantt Week — per-item rows with booking blocks.
+ * New query (smaller blast radius than reshaping getWeeklyCalendar).
+ * Returns items[] each with blocks[] covering the requested week.
+ */
+export const getGanttWeek = query({
+  args: {
+    weekStartIso: v.optional(v.string()), // YYYY-MM-DD; defaults to current Monday
+    accountSlug: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { weekStartIso, accountSlug }) => {
+    // Resolve weekStart — default to current Monday (UTC)
+    let weekStart = weekStartIso;
+    if (!weekStart) {
+      const now = new Date();
+      const day = now.getUTCDay(); // 0 = Sun
+      const diffToMon = (day === 0 ? -6 : 1 - day);
+      now.setUTCDate(now.getUTCDate() + diffToMon);
+      weekStart = now.toISOString().slice(0, 10);
+    }
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setUTCDate(d.getUTCDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const weekEnd = dates[6];
+
+    // --- Reservations overlapping the week ---
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", weekStart!))
+      .collect();
+    reservations = reservations.filter(
+      (r) => r.start_date !== undefined && r.start_date <= weekEnd
+    );
+    // Reservations starting before weekStart but ending inside / after it
+    const allRes = await ctx.db.query("reservations").collect();
+    for (const r of allRes) {
+      if (
+        r.start_date !== undefined &&
+        r.end_date !== undefined &&
+        r.start_date < weekStart! &&
+        r.end_date >= weekStart!
+      ) {
+        if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
+      }
+    }
+    if (accountSlug) {
+      reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    }
+    reservations = reservations.filter(
+      (r) => r.status === "confirmed" || r.status === "pending_review"
+    );
+
+    // --- Renter name lookup ---
+    const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];
+    const renterMap = new Map<string, string>();
+    await Promise.all(
+      renterIds.map(async (rid) => {
+        const renter = await ctx.db.get(rid);
+        if (renter) renterMap.set(rid, renter.display_name ?? "?");
+      })
+    );
+
+    // --- Items table: build name→row map for image + metadata ---
+    const allItems = await ctx.db.query("items").collect();
+    const itemByName = new Map<string, typeof allItems[0]>();
+    for (const item of allItems) {
+      const i = item as { name_canonical?: string; name?: string; aliases?: string[] };
+      const canonical = i.name_canonical ?? i.name ?? "";
+      if (canonical) itemByName.set(canonical, item);
+      for (const alias of i.aliases ?? []) {
+        if (alias && !itemByName.has(alias)) itemByName.set(alias, item);
+      }
+    }
+
+    // --- Collect unique items referenced across reservations ---
+    // Key: item_name string (from reservation.items[])
+    const itemNameSet = new Set<string>();
+    for (const r of reservations) {
+      for (const i of r.items ?? []) {
+        if (i.item_name) itemNameSet.add(i.item_name);
+      }
+    }
+
+    // Build per-item rows
+    const itemRows = Array.from(itemNameSet).map((itemName) => {
+      const itemDoc = itemByName.get(itemName);
+      const iDoc = itemDoc as { _id?: string; name_canonical?: string; name?: string; image_url?: string; account_slug?: string } | undefined;
+
+      // Find reservations that include this item
+      const matchingRes = reservations.filter((r) =>
+        (r.items ?? []).some((i) => i.item_name === itemName)
+      );
+
+      const blocks = matchingRes.map((r) => {
+        const rType = r as {
+          pickup_time?: string | null;
+          return_time?: string | null;
+          pickup_method?: string | null;
+          return_method?: string | null;
+          order_step?: string | null;
+        };
+        return {
+          reservation_id: r._id,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          renter_name: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
+          order_step: rType.order_step ?? null,
+          pickup_time: rType.pickup_time ?? null,
+          return_time: rType.return_time ?? null,
+          pickup_method: rType.pickup_method ?? null,
+          return_method: rType.return_method ?? null,
+          progress_percent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
+        };
+      });
+
+      return {
+        item_id: iDoc?._id ?? null,
+        item_name: itemName,
+        image_url: iDoc?.image_url ?? null,
+        account_slug: iDoc?.account_slug ?? null,
+        account_color: (iDoc?.account_slug === "leo" ? "purple" : "blue") as "purple" | "blue",
+        blocks,
+      };
+    });
+
+    return {
+      weekStart,
+      weekEnd,
+      items: itemRows,
     };
   },
 });

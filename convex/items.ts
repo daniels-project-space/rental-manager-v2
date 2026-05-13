@@ -608,6 +608,35 @@ export const upsertAliases = mutation({
   },
 });
 
+/**
+ * Admin mutation: populate image_url on an item from a reservation's photos_urls.
+ * Matches by item name or alias (case-insensitive). Skips if image_url already set.
+ * Picks first /products/ URL, or first URL if none contain /products/.
+ * Also callable as a standalone admin tool from the dashboard or scripts.
+ */
+export const populateImageFromReservation = mutation({
+  args: {
+    item_name: v.string(),
+    photos_urls: v.array(v.string()),
+    account_slug: v.optional(v.string()),
+  },
+  handler: async (ctx, { item_name, photos_urls }) => {
+    const items = await ctx.db.query("items").collect();
+    const lowerName = item_name.toLowerCase();
+    const item = items.find(
+      (i) =>
+        i.name_canonical?.toLowerCase() === lowerName ||
+        (i.aliases ?? []).some((a) => a.toLowerCase() === lowerName),
+    );
+    if (!item) return { found: false, item_name };
+    if (item.image_url) return { found: true, skipped_already_set: true, item_id: item._id };
+    const candidate = photos_urls.find((u) => u.includes("/products/")) ?? photos_urls[0];
+    if (!candidate) return { found: true, skipped_no_url: true, item_id: item._id };
+    await ctx.db.patch(item._id, { image_url: candidate });
+    return { found: true, set: true, item_id: item._id, url: candidate };
+  },
+});
+
 // B-3: compatibility check for dashboard chat tool
 export const checkCompat = query({
   args: { itemA: v.string(), itemB: v.string() },
