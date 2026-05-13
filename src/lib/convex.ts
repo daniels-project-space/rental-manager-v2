@@ -1,5 +1,6 @@
 import { ConvexReactClient } from "convex/react";
 
+// prod deployment: exciting-lion-29 (dev: hearty-oyster-600 via CONVEX_DEPLOYMENT)
 export const convex = new ConvexReactClient(
-  process.env.NEXT_PUBLIC_CONVEX_URL ?? "https://exciting-lion-29.convex.cloud"
+  "https://exciting-lion-29.convex.cloud"
 );
