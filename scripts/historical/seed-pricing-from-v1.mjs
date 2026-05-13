@@ -103,7 +103,6 @@ for (const entry of entries) {
       daily_price_min: entry.daily_price_min,
       daily_price_max: entry.daily_price_max,
       is_bundle: false,
-      category: entry.category,
     },
     format: 'json',
   });
