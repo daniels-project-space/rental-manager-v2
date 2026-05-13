@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { Doc } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -587,5 +587,29 @@ export const getGanttWeek = query({
       weekEnd,
       items: itemRows,
     };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Admin: one-shot backfill renter_name for holds that predate denormalization
+// ---------------------------------------------------------------------------
+export const backfillHoldRenterNames = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const holds = await ctx.db.query("calendar_holds").collect();
+    let patched = 0;
+    let skipped_already_set = 0;
+    let missing_reservation = 0;
+    for (const h of holds) {
+      if (h.renter_name) { skipped_already_set++; continue; }
+      if (!h.reservation_id) { missing_reservation++; continue; }
+      const res = await ctx.db.get(h.reservation_id as Id<"reservations">);
+      if (!res) { missing_reservation++; continue; }
+      const renter_name = (res as any).renter_name as string | undefined;
+      if (!renter_name) continue;
+      await ctx.db.patch(h._id, { renter_name });
+      patched++;
+    }
+    return { total: holds.length, patched, skipped_already_set, missing_reservation };
   },
 });

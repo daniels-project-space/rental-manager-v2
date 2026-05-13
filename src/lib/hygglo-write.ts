@@ -58,12 +58,53 @@ function skipResult(): HyggloWriteResult {
 // ── Methods ──────────────────────────────────────────────────────
 
 /**
+ * Hygglo's REST write API uses an *action-dispatcher* pattern: every write
+ * targets the same `PATCH /v4/my/orders/{id}?timezone=...` endpoint with a
+ * body of shape `{ action: <verb>, data: <payload> }`. This is confirmed by
+ * V1's `src/hygglo/hygglo.service.ts:1267` (sendMessage uses `action: 'chat'`)
+ * and is the only REST write path V1 ever shipped — V1's accept/decline run
+ * through Playwright button-click in `src/playwright/playwright.service.ts`,
+ * so the REST `action` strings for approve/decline are not 1:1 verifiable
+ * from V1. We use the conventional names (`approve`, `decline`); if
+ * Hygglo rejects them the captured response body (sliced to 500 chars in
+ * `httpStatus`/`error`) will tell us the right verb on the first live call.
+ */
+const HYGGLO_WRITE_TZ = "Europe/London";
+
+async function patchOrderAction(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  action: string;
+  data: Record<string, unknown>;
+}): Promise<HyggloWriteResult> {
+  const creds = await getAccountCredentials(args.accountSlug);
+  const token = await getHyggloAccessToken({
+    ...creds,
+    accountSlug: args.accountSlug,
+  });
+  const res = await fetch(
+    `${HYGGLO_API_BASE}/v4/my/orders/${encodeURIComponent(args.hyggloOrderId)}?timezone=${encodeURIComponent(HYGGLO_WRITE_TZ)}`,
+    {
+      method: "PATCH",
+      headers: { ...hyggloAuthHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ action: args.action, data: args.data }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "<unreadable>");
+    return { status: "failed", httpStatus: res.status, error: body.slice(0, 500) };
+  }
+  return { status: "sent", httpStatus: res.status };
+}
+
+/**
  * Accept a rental request. Maps to V1 `playwright.service.ts:acceptRental`
- * (which clicked the "Approve" button). We use the REST equivalent so the
- * write is auditable + headless.
+ * (which clicked the "Approve" button). REST equivalent so the write is
+ * auditable + headless.
  *
- * Endpoint shape (placeholder — confirm before flipping READ_ONLY_MODE off):
- *   POST /v4/my/orders/:id/approve
+ * Endpoint (action-dispatcher pattern, see module header):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "approve", data: {} }
  */
 export async function acceptOrder(args: {
   accountSlug: string;
@@ -71,24 +112,7 @@ export async function acceptOrder(args: {
 }): Promise<HyggloWriteResult> {
   if (!writesAllowed()) return skipResult();
   try {
-    const creds = await getAccountCredentials(args.accountSlug);
-    const token = await getHyggloAccessToken({
-      ...creds,
-      accountSlug: args.accountSlug,
-    });
-    const res = await fetch(
-      `${HYGGLO_API_BASE}/v4/my/orders/${encodeURIComponent(args.hyggloOrderId)}/approve`,
-      {
-        method: "POST",
-        headers: { ...hyggloAuthHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      },
-    );
-    if (!res.ok) {
-      const body = await res.text().catch(() => "<unreadable>");
-      return { status: "failed", httpStatus: res.status, error: body.slice(0, 500) };
-    }
-    return { status: "sent", httpStatus: res.status };
+    return await patchOrderAction({ ...args, action: "approve", data: {} });
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }
@@ -97,8 +121,9 @@ export async function acceptOrder(args: {
 /**
  * Decline a rental request. Maps to V1 `playwright.service.ts:declineRental`.
  *
- * Endpoint shape (placeholder — confirm before flipping READ_ONLY_MODE off):
- *   POST /v4/my/orders/:id/decline   body: { reason }
+ * Endpoint (action-dispatcher pattern):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "decline", data: { reason } }
  */
 export async function declineOrder(args: {
   accountSlug: string;
@@ -107,38 +132,29 @@ export async function declineOrder(args: {
 }): Promise<HyggloWriteResult> {
   if (!writesAllowed()) return skipResult();
   try {
-    const creds = await getAccountCredentials(args.accountSlug);
-    const token = await getHyggloAccessToken({
-      ...creds,
+    return await patchOrderAction({
       accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "decline",
+      data: { reason: args.reason },
     });
-    const res = await fetch(
-      `${HYGGLO_API_BASE}/v4/my/orders/${encodeURIComponent(args.hyggloOrderId)}/decline`,
-      {
-        method: "POST",
-        headers: { ...hyggloAuthHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: args.reason }),
-      },
-    );
-    if (!res.ok) {
-      const body = await res.text().catch(() => "<unreadable>");
-      return { status: "failed", httpStatus: res.status, error: body.slice(0, 500) };
-    }
-    return { status: "sent", httpStatus: res.status };
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }
 }
 
 /**
- * Send a chat message to a renter. Maps to V1
- * `playwright.service.ts:sendMessage`.
+ * Send a chat message to a renter. Maps 1:1 to V1
+ * `src/hygglo/hygglo.service.ts:1267 (sendMessage)`.
  *
- * Endpoint shape (placeholder — confirm before flipping READ_ONLY_MODE off):
- *   POST /v4/my/conversations/:id/messages   body: { text }
+ * Endpoint (verified against V1 production):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "chat", data: { message } }
  *
- * `conversationId` here is the Hygglo thread id (e.g. order id or
- * conversation id surfaced in scraper payload).
+ * NB: `conversationId` IS the Hygglo order id — Hygglo conflates rentals
+ * and their chat threads on the same `/v4/my/orders/{id}` resource. The
+ * argument name is kept for the existing caller surface; rename later if
+ * confusing.
  */
 export async function sendMessage(args: {
   accountSlug: string;
@@ -147,24 +163,12 @@ export async function sendMessage(args: {
 }): Promise<HyggloWriteResult> {
   if (!writesAllowed()) return skipResult();
   try {
-    const creds = await getAccountCredentials(args.accountSlug);
-    const token = await getHyggloAccessToken({
-      ...creds,
+    return await patchOrderAction({
       accountSlug: args.accountSlug,
+      hyggloOrderId: args.conversationId,
+      action: "chat",
+      data: { message: args.text },
     });
-    const res = await fetch(
-      `${HYGGLO_API_BASE}/v4/my/conversations/${encodeURIComponent(args.conversationId)}/messages`,
-      {
-        method: "POST",
-        headers: { ...hyggloAuthHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ text: args.text }),
-      },
-    );
-    if (!res.ok) {
-      const body = await res.text().catch(() => "<unreadable>");
-      return { status: "failed", httpStatus: res.status, error: body.slice(0, 500) };
-    }
-    return { status: "sent", httpStatus: res.status };
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }
