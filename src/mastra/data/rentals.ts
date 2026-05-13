@@ -1,22 +1,28 @@
 /**
  * Rental / reservation / pipeline / briefing reads.
  *
- * All return values preserve EXACTLY the shape currently emitted by the
- * Mastra tools in dashboard-tools.ts. Behaviour change is forbidden in
- * Wave 1.
+ * Wave 1 established the data-layer shape; Wave 2 (Q3) threads an optional
+ * `account` arg through every fn. Omitting `account` = combined across both
+ * accounts (Wave 1 behaviour preserved exactly).
  */
 import "server-only";
 import { anyApi } from "convex/server";
 import { getConvex, toError } from "./client";
 import { getSyncState, wrap, type ToolEnvelope } from "./envelope";
+import { validateAccount, type AccountSlug } from "./account-scope";
 
 type Result<T> = ToolEnvelope<T> | { ok: false; error: string };
 
-export async function getPendingRentals(): Promise<Result<unknown>> {
+export async function getPendingRentals(input?: {
+  account?: AccountSlug | null;
+}): Promise<Result<unknown>> {
   try {
     const convex = getConvex();
+    const accountSlug = validateAccount(input?.account);
     const [data, syncState] = await Promise.all([
-      convex.query(anyApi.reservations.listPending, {}),
+      convex.query(anyApi.reservations.listPending, {
+        accountSlug: accountSlug ?? undefined,
+      }),
       getSyncState(),
     ]);
     return wrap({ data, source: "convex.reservations.listPending", syncState });
@@ -27,29 +33,44 @@ export async function getPendingRentals(): Promise<Result<unknown>> {
 
 export async function getObsoleteOrders(input: {
   sinceDays?: number;
+  account?: AccountSlug | null;
 }): Promise<Result<unknown>> {
   try {
     const convex = getConvex();
     const sinceTs = input.sinceDays
       ? Date.now() - input.sinceDays * 24 * 60 * 60 * 1000
       : undefined;
-    const [data, syncState] = await Promise.all([
+    const accountSlug = validateAccount(input.account);
+    const [rawData, syncState] = await Promise.all([
       convex.query(anyApi.reservations.listObsolete, { sinceTs }),
       getSyncState(),
     ]);
+    // Wave 2.5 follow-up: convex.reservations.listObsolete has no accountSlug
+    // arg yet. Client-side filter is a stop-gap so tool surface is stable.
+    const data = accountSlug
+      ? (rawData as Array<{ account: string | null }>).filter(
+          (row) => row.account === accountSlug,
+        )
+      : rawData;
     return wrap({
       data,
       source: "convex.reservations.listObsolete",
       syncState,
+      extraCaveats: accountSlug
+        ? ["Account filter applied client-side (Wave 2.5 will push to server)."]
+        : undefined,
     });
   } catch (err) {
     return { ok: false as const, error: toError(err) };
   }
 }
 
-export async function getOrderPipeline(): Promise<Result<unknown>> {
+export async function getOrderPipeline(input?: {
+  account?: AccountSlug | null;
+}): Promise<Result<unknown>> {
   try {
     const convex = getConvex();
+    const accountSlug = validateAccount(input?.account);
     const [data, syncState] = await Promise.all([
       convex.query(anyApi.reservations.getPipelineCounts, {}),
       getSyncState(),
@@ -58,26 +79,36 @@ export async function getOrderPipeline(): Promise<Result<unknown>> {
       data,
       source: "convex.reservations.getPipelineCounts",
       syncState,
+      extraCaveats: accountSlug
+        ? [
+            "Pipeline counts span ALL accounts — convex.reservations.getPipelineCounts has no accountSlug arg yet (Wave 2.5 follow-up).",
+          ]
+        : undefined,
     });
   } catch (err) {
     return { ok: false as const, error: toError(err) };
   }
 }
 
-export async function getDailyBriefing(): Promise<Result<unknown>> {
+export async function getDailyBriefing(input?: {
+  account?: AccountSlug | null;
+}): Promise<Result<unknown>> {
   try {
     const convex = getConvex();
+    const accountSlug = validateAccount(input?.account);
     const today = new Date().toISOString().slice(0, 10);
     const [stats, schedule, pending, activity, syncState] = await Promise.all([
-      convex.query(anyApi.dashboard.getSummary, { accountSlug: null }),
+      convex.query(anyApi.dashboard.getSummary, { accountSlug }),
       convex.query(anyApi.calendar.getCalendarStrip, {
-        accountSlug: null,
+        accountSlug,
         startDate: today,
         days: 3,
       }),
-      convex.query(anyApi.reservations.listPending, {}),
+      convex.query(anyApi.reservations.listPending, {
+        accountSlug: accountSlug ?? undefined,
+      }),
       convex.query(anyApi.reservations.getRecentActivity, {
-        accountSlug: null,
+        accountSlug,
         limit: 5,
       }),
       getSyncState(),

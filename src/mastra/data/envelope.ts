@@ -23,19 +23,55 @@ export type { ToolEnvelope, SyncStateDoc };
 export { wrapEnvelope as wrap };
 
 /**
+ * In-process sync_state cache (Wave 2 — Q4 decision).
+ *
+ * 30-second TTL, keyed by source string. Each Mastra tool call within a 30s
+ * window reuses the same sync_state doc instead of re-querying Convex.
+ *
+ * NOTE: this cache is *per-process*. The cross-consumer cache properly lives
+ * at the Convex query layer (Convex memoises identical queries automatically).
+ * This local cache eliminates the redundant network round-trip for the common
+ * case where one chat turn fires multiple tools back-to-back.
+ *
+ * Self-correction trail (Wave 1 retrospective): we originally fetched
+ * sync_state on every tool call. Daniel approved the 30s memoise in Q4.
+ */
+const SYNC_STATE_TTL_MS = 30_000;
+const syncStateCache = new Map<
+  string,
+  { value: SyncStateDoc | null; expiresAt: number }
+>();
+
+/**
  * Fetch the current hygglo_poller sync_state document.
  * Returns null on any error so callers can still wrap their data with
  * a "live-sync status unknown" caveat instead of failing.
+ *
+ * Result is cached in-process for 30s per source key.
  */
 export async function getSyncState(): Promise<SyncStateDoc | null> {
+  const key = HYGGLO_POLLER_SOURCE;
+  const now = Date.now();
+  const cached = syncStateCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
   try {
     const convex = getConvex();
-    return await convex.query(anyApi.sync_state.get, {
-      source: HYGGLO_POLLER_SOURCE,
-    });
+    const value = (await convex.query(anyApi.sync_state.get, {
+      source: key,
+    })) as SyncStateDoc | null;
+    syncStateCache.set(key, { value, expiresAt: now + SYNC_STATE_TTL_MS });
+    return value;
   } catch {
+    syncStateCache.set(key, { value: null, expiresAt: now + SYNC_STATE_TTL_MS });
     return null;
   }
+}
+
+/** Test-only: clear the sync_state cache. Not exported from the public index. */
+export function __clearSyncStateCache(): void {
+  syncStateCache.clear();
 }
 
 /**

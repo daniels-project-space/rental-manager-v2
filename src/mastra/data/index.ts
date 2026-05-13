@@ -22,6 +22,10 @@ export * as rules from "./rules";
 export * as memories from "./memories";
 export * as conversations from "./conversations";
 export * as feedback from "./feedback";
+// Wave 2 additions
+export * as lostRevenue from "./lost-revenue";
+export * as renters from "./renters";
+export * as demand from "./demand";
 
 export * from "./constants";
 export { validateAccount, type AccountSlug } from "./account-scope";
