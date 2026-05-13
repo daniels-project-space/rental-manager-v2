@@ -1,150 +1,178 @@
 "use client";
 
+import Image from "next/image";
+
+type Kind = "ongoing" | "upcoming" | "pending";
+
 interface Rental {
   reservation_id: string;
   renter_name: string | null;
   account_slug: string;
-  start_date: string;
-  end_date: string;
+  start_date: string | null;
+  end_date: string | null;
+  pickup_date?: string | null;
+  pickup_time?: string | null;
+  return_time?: string | null;
   items: string[];
-  order_step: string | null;
+  photo_url?: string | null;
+  duration_days?: number | null;
+  net_gbp?: number | null;
+  order_step?: string | null;
+  kind?: Kind;
   is_ongoing?: boolean;
 }
 
 interface Props {
   data: {
     total: number;
-    ongoing_count?: number;
-    upcoming_count?: number;
-    pending_count?: number;
+    ongoing_count: number;
+    upcoming_count: number;
+    pending_count: number;
+    pending_value_gbp?: number;
     rentals: Rental[];
   };
 }
 
+const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
+  dbcinema: { bg: "bg-blue-900/60 border border-blue-500/30", text: "text-blue-200" },
+  leo:      { bg: "bg-amber-900/40 border border-amber-500/30", text: "text-amber-200" },
+};
+
+const SECTION: Record<Kind, { label: string; color: string; bg: string; border: string; ring: string }> = {
+  ongoing:  { label: "ONGOING",  color: "#f59e0b", bg: "bg-amber-500/5",  border: "border-amber-500/20",  ring: "shadow-[inset_3px_0_0_#f59e0b]" },
+  upcoming: { label: "UPCOMING", color: "#a78bfa", bg: "bg-violet-500/5", border: "border-violet-500/20", ring: "shadow-[inset_3px_0_0_#a78bfa]" },
+  pending:  { label: "PENDING",  color: "#ec4899", bg: "bg-pink-500/5",   border: "border-pink-500/20",   ring: "shadow-[inset_3px_0_0_#ec4899]" },
+};
+
 const fmtDate = (d: string) =>
   new Intl.DateTimeFormat("en-GB", { month: "short", day: "numeric" }).format(new Date(d));
 
-const ACCOUNT_PILL: Record<string, { bg: string; text: string; dot: string }> = {
-  dbcinema: { bg: "bg-blue-900/60", text: "text-blue-300", dot: "bg-blue-400" },
-  leo:      { bg: "bg-purple-900/60", text: "text-purple-300", dot: "bg-purple-400" },
+const fmtTime = (t?: string | null) => {
+  if (!t) return null;
+  return t.length >= 5 ? t.slice(0, 5) : t;
 };
 
-export default function ActiveDrawer({ data }: Props) {
-  const ongoing = data.ongoing_count ?? 0;
-  const upcoming = data.upcoming_count ?? 0;
-  const pending = data.pending_count ?? 0;
-  const segTotal = ongoing + upcoming + pending;
-
-  // Segment widths (min 4% so a single tiny segment still shows)
-  const seg = (n: number) => (segTotal === 0 ? 0 : Math.max(n > 0 ? 4 : 0, (n / segTotal) * 100));
-  const wOngoing = seg(ongoing);
-  const wUpcoming = seg(upcoming);
-  const wPending = seg(pending);
-
-  // Group + sort: ongoing first within each account, then by start_date
-  const grouped: Record<string, Rental[]> = {};
-  for (const r of data.rentals) (grouped[r.account_slug] ??= []).push(r);
-  for (const slug of Object.keys(grouped)) {
-    grouped[slug].sort((a, b) => {
-      if ((b.is_ongoing ? 1 : 0) !== (a.is_ongoing ? 1 : 0)) return (b.is_ongoing ? 1 : 0) - (a.is_ongoing ? 1 : 0);
-      return a.start_date.localeCompare(b.start_date);
-    });
-  }
-  const slugs = Object.keys(grouped).sort();
+export function RentalRow({ r }: { r: Rental }) {
+  const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
+  const s = SECTION[kind];
+  const pill = ACCOUNT_PILL[r.account_slug] ?? { bg: "bg-slate-800 border border-slate-700", text: "text-slate-300" };
+  const item = r.items[0] ?? "(no item)";
+  const more = r.items.length > 1 ? ` +${r.items.length - 1}` : "";
 
   return (
-    <div className="text-sm text-slate-300 space-y-3">
-      {/* ── Segmented bar ─────────────────────────────────────────── */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-          <span>{data.total} active</span>
-          <span>{segTotal} tracked</span>
+    <div
+      className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
+    >
+      {/* Thumbnail */}
+      <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-md bg-slate-900/60 ring-1 ring-slate-800">
+        {r.photo_url ? (
+          <Image
+            src={r.photo_url}
+            alt={item}
+            fill
+            sizes="56px"
+            className="object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-[10px] text-slate-600">
+            no img
+          </div>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-sm font-semibold text-slate-100 truncate">
+            {r.renter_name ?? "—"}
+          </span>
+          {r.start_date && r.end_date && (
+            <span className="text-[11px] text-slate-400">
+              {fmtDate(r.start_date)} – {fmtDate(r.end_date)}
+            </span>
+          )}
+          {r.duration_days != null && (
+            <span className="text-[10px] text-slate-500">({r.duration_days}d)</span>
+          )}
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${pill.bg} ${pill.text}`}>
+            {r.account_slug}
+          </span>
         </div>
-        <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-900/60">
-          {wOngoing > 0 && (
-            <div
-              className="bg-emerald-500"
-              style={{ width: `${wOngoing}%` }}
-              title={`Ongoing: ${ongoing}`}
-            />
-          )}
-          {wUpcoming > 0 && (
-            <div
-              className="bg-sky-500"
-              style={{ width: `${wUpcoming}%` }}
-              title={`Upcoming: ${upcoming}`}
-            />
-          )}
-          {wPending > 0 && (
-            <div
-              className="bg-amber-500"
-              style={{ width: `${wPending}%` }}
-              title={`Pending: ${pending}`}
-            />
-          )}
+        <div className="text-[11px] text-slate-400 truncate">
+          {item}
+          {more && <span className="text-slate-500">{more}</span>}
         </div>
-        <div className="flex gap-3 text-[11px]">
-          <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /><span className="text-slate-400">Ongoing</span><span className="text-emerald-300 font-semibold">{ongoing}</span></span>
-          <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-sky-500" /><span className="text-slate-400">Upcoming</span><span className="text-sky-300 font-semibold">{upcoming}</span></span>
-          <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /><span className="text-slate-400">Pending</span><span className="text-amber-300 font-semibold">{pending}</span></span>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-sky-300">
+          {r.pickup_date && (
+            <span className="inline-flex items-center gap-1">
+              ↓{fmtTime(r.pickup_time) ?? "—"}, {fmtDate(r.pickup_date)}
+            </span>
+          )}
+          {r.end_date && (
+            <span className="inline-flex items-center gap-1">
+              ↑{fmtTime(r.return_time) ?? "—"}, {fmtDate(r.end_date)}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* ── Grouped tiles ─────────────────────────────────────────── */}
-      {data.rentals.length === 0 ? (
-        <div className="text-xs text-slate-500 italic py-4 text-center">No active rentals.</div>
-      ) : (
-        <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
-          {slugs.map((slug) => {
-            const pill = ACCOUNT_PILL[slug] ?? { bg: "bg-slate-800", text: "text-slate-300", dot: "bg-slate-500" };
-            const rentals = grouped[slug];
-            return (
-              <div key={slug} className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${pill.bg} ${pill.text}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${pill.dot}`} />
-                    {slug}
-                  </span>
-                  <span className="text-[10px] text-slate-500">{rentals.length} rental{rentals.length !== 1 ? "s" : ""}</span>
-                </div>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {rentals.slice(0, 6).map((r) => (
-                    <div
-                      key={r.reservation_id}
-                      className="flex items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900/40 px-2.5 py-1.5"
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${r.is_ongoing ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-sky-400"}`}
-                        title={r.is_ongoing ? "Ongoing" : "Upcoming"}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-slate-200 truncate">
-                          {r.items.slice(0, 1).join("") || "(no item)"}
-                          {r.items.length > 1 && <span className="text-slate-500"> +{r.items.length - 1}</span>}
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {r.renter_name ? r.renter_name + " · " : ""}
-                          {fmtDate(r.start_date)} – {fmtDate(r.end_date)}
-                        </div>
-                      </div>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                          r.is_ongoing ? "bg-emerald-900/40 text-emerald-300" : "bg-sky-900/40 text-sky-300"
-                        }`}
-                      >
-                        {r.is_ongoing ? "Live" : "Soon"}
-                      </span>
-                    </div>
-                  ))}
-                  {rentals.length > 6 && (
-                    <div className="text-[10px] text-slate-500 pl-2">+ {rentals.length - 6} more in {slug}</div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+      {/* Price */}
+      <div className="flex flex-col items-end justify-center">
+        <div className="text-base font-bold text-emerald-400 tabular-nums">
+          {r.net_gbp != null ? "£" + Math.round(r.net_gbp) : "—"}
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
+
+export default function ActiveDrawer({ data }: Props) {
+  const groups: Record<Kind, Rental[]> = { ongoing: [], upcoming: [], pending: [] };
+  for (const r of data.rentals) {
+    const k: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
+    groups[k].push(r);
+  }
+  for (const k of Object.keys(groups) as Kind[]) {
+    groups[k].sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""));
+  }
+
+  const sections: Array<{ kind: Kind; count: number }> = [
+    { kind: "ongoing", count: data.ongoing_count },
+    { kind: "upcoming", count: data.upcoming_count },
+    { kind: "pending", count: data.pending_count },
+  ];
+
+  const anyRows = data.rentals.length > 0;
+
+  if (!anyRows) {
+    return <div className="text-xs text-slate-500 italic py-4 text-center">No active rentals.</div>;
+  }
+
+  return (
+    <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+      {sections.map(({ kind, count }) => {
+        const s = SECTION[kind];
+        const rows = groups[kind];
+        if (rows.length === 0) return null;
+        return (
+          <div key={kind} className="space-y-1.5">
+            <div className="flex items-center gap-2 px-0.5">
+              <span
+                className="text-[11px] font-bold tracking-wider uppercase"
+                style={{ color: s.color, textShadow: `0 0 8px ${s.color}40` }}
+              >
+                {s.label} ({count})
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {rows.map((r) => (
+                <RentalRow key={r.reservation_id} r={r} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

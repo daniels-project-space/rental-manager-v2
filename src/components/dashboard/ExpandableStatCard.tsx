@@ -9,6 +9,8 @@ export interface ExpandableStatCardProps {
   id: string;
   label: string;
   value: React.ReactNode;
+  /** Optional inline accent next to the value (e.g. "+£68" pending) */
+  valueSuffix?: React.ReactNode;
   valueColor?: StatCardColor;
   accentColor?: StatCardColor;
   isExpanded: boolean;
@@ -18,6 +20,9 @@ export interface ExpandableStatCardProps {
   status?: StatCardStatus;
   icon?: React.ReactNode;
   subtitle?: React.ReactNode;
+  /** Content shown below subtitle and ALWAYS visible (collapsed + expanded).
+   *  Used for in-card visualisations like the v1 segmented bar / progress bar. */
+  headerExtra?: React.ReactNode;
   className?: string;
 }
 
@@ -67,21 +72,24 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
         }}
         className="stat-card-header cursor-pointer flex items-start justify-between gap-2 select-none"
       >
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-xs text-slate-400 uppercase tracking-wider leading-none">
             {props.label}
           </div>
           <div
-            className="text-2xl font-semibold mt-1 flex items-center gap-1.5"
+            className="text-2xl font-semibold mt-1 flex items-baseline gap-1.5"
             style={{
               color: valueHex,
               textShadow: valueHex ? `0 0 12px ${valueHex}40` : undefined,
             }}
           >
             {props.icon && (
-              <span className="inline-flex items-center">{props.icon}</span>
+              <span className="inline-flex items-center self-center">{props.icon}</span>
             )}
-            {props.value}
+            <span>{props.value}</span>
+            {props.valueSuffix && (
+              <span className="text-base font-medium">{props.valueSuffix}</span>
+            )}
           </div>
           {props.subtitle && (
             <div className="text-xs text-slate-500 mt-1">{props.subtitle}</div>
@@ -99,6 +107,10 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
           ▾
         </span>
       </div>
+
+      {props.headerExtra && (
+        <div className="mt-3">{props.headerExtra}</div>
+      )}
 
       {/* Drawer */}
       <div

@@ -28,6 +28,74 @@ function fmtGbp(n: number): string {
   return "£" + n.toFixed(0);
 }
 
+function fmtGbpFull(n: number): string {
+  return "£" + Math.round(n).toLocaleString("en-GB");
+}
+
+/** v1-style segmented bar: amber (ongoing) / violet (upcoming) / pink (pending). */
+function SegmentedBar({
+  ongoing,
+  upcoming,
+  pending,
+}: { ongoing: number; upcoming: number; pending: number }) {
+  const total = ongoing + upcoming + pending;
+  if (total === 0) return null;
+  const pct = (n: number) => (n > 0 ? Math.max(3, (n / total) * 100) : 0);
+  const raw = [pct(ongoing), pct(upcoming), pct(pending)];
+  const sum = raw.reduce((a, b) => a + b, 0) || 1;
+  const [wO, wU, wP] = raw.map((p) => (p / sum) * 100);
+  return (
+    <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-900/60">
+      {wO > 0 && <div style={{ width: `${wO}%`, background: "linear-gradient(90deg,#f59e0b,#fbbf24)" }} />}
+      {wU > 0 && <div style={{ width: `${wU}%`, background: "linear-gradient(90deg,#a78bfa,#8b5cf6)" }} />}
+      {wP > 0 && <div style={{ width: `${wP}%`, background: "linear-gradient(90deg,#f472b6,#ec4899)" }} />}
+    </div>
+  );
+}
+
+/** v1-style 4-segment bar: green (done) / amber (active) / violet (upcoming) / pink (pending). */
+function ConfirmedBar({
+  done,
+  active,
+  upcoming,
+  pending,
+}: { done: number; active: number; upcoming: number; pending: number }) {
+  const total = done + active + upcoming + pending;
+  if (total === 0) return null;
+  const pct = (n: number) => (n > 0 ? Math.max(3, (n / total) * 100) : 0);
+  const raw = [pct(done), pct(active), pct(upcoming), pct(pending)];
+  const sum = raw.reduce((a, b) => a + b, 0) || 1;
+  const [wD, wA, wU, wP] = raw.map((p) => (p / sum) * 100);
+  return (
+    <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-900/60">
+      {wD > 0 && <div style={{ width: `${wD}%`, background: "linear-gradient(90deg,#22c55e,#34d399)" }} />}
+      {wA > 0 && <div style={{ width: `${wA}%`, background: "linear-gradient(90deg,#f59e0b,#fbbf24)" }} />}
+      {wU > 0 && <div style={{ width: `${wU}%`, background: "linear-gradient(90deg,#a78bfa,#8b5cf6)" }} />}
+      {wP > 0 && <div style={{ width: `${wP}%`, background: "linear-gradient(90deg,#f472b6,#ec4899)" }} />}
+    </div>
+  );
+}
+
+function ProgressBar({ pct }: { pct: number }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-900/60">
+      <div
+        className="h-full rounded-full"
+        style={{
+          width: `${clamped}%`,
+          background: "linear-gradient(90deg,#10b981,#22c55e)",
+          boxShadow: "0 0 8px rgba(34,197,94,0.4)",
+        }}
+      />
+    </div>
+  );
+}
+
+function Dot({ color }: { color: string }) {
+  return <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />;
+}
+
 function StatsGridSkeleton() {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
@@ -51,11 +119,13 @@ export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const data = useQuery(api.dashboard.getStatsDrawerData, {
+  const rawData = useQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
 
-  if (!data) return <StatsGridSkeleton />;
+  if (!rawData) return <StatsGridSkeleton />;
+  // Cast: dashboard.ts exposes new fields not yet in convex codegen types.
+  const data = rawData as any;
 
   const toggle = (id: string) =>
     setExpandedId((prev) => (prev === id ? null : id));
@@ -69,32 +139,39 @@ export function StatsGrid() {
         id="active"
         label="Active Rentals"
         value={data.active.total}
-        valueColor="green"
-        accentColor="green"
+        valueColor="blue"
+        accentColor="blue"
         hero
         isExpanded={expandedId === "active"}
         onToggle={() => toggle("active")}
         subtitle={
-          <span className="inline-flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 text-emerald-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              {(data.active as any).ongoing_count ?? data.ongoing.count} ongoing
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+            <span className="inline-flex items-center gap-1 text-amber-300">
+              <Dot color="#f59e0b" />
+              <span className="font-semibold">{data.active.ongoing_count}</span> ongoing
             </span>
-            <span className="text-slate-600">·</span>
-            <span className="inline-flex items-center gap-1 text-sky-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
-              {(data.active as any).upcoming_count ?? data.upcoming.count} upcoming
+            <span className="text-slate-600">+</span>
+            <span className="inline-flex items-center gap-1 text-violet-300">
+              <Dot color="#a78bfa" />
+              <span className="font-semibold">{data.active.upcoming_count}</span> upcoming
             </span>
-            {((data.active as any).pending_count ?? 0) > 0 && (
+            {data.active.pending_count > 0 && (
               <>
-                <span className="text-slate-600">·</span>
-                <span className="inline-flex items-center gap-1 text-amber-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  {(data.active as any).pending_count} pending
+                <span className="text-slate-600">+</span>
+                <span className="inline-flex items-center gap-1 text-pink-300">
+                  <Dot color="#ec4899" />
+                  <span className="font-semibold">{data.active.pending_count}</span> pending
                 </span>
               </>
             )}
           </span>
+        }
+        headerExtra={
+          <SegmentedBar
+            ongoing={data.active.ongoing_count}
+            upcoming={data.active.upcoming_count}
+            pending={data.active.pending_count}
+          />
         }
       >
         <ActiveDrawer data={data.active as any} />
@@ -118,12 +195,28 @@ export function StatsGrid() {
       <ExpandableStatCard
         id="monthly"
         label="Expected Monthly"
-        value={fmtGbp(data.monthly.projected)}
+        value={fmtGbpFull(data.monthly.projected)}
         valueColor="green"
         accentColor="green"
-        subtitle={`£${Math.round(data.monthly.avg_daily_rate)}/day · ${data.monthly.days_remaining}d left`}
+        subtitle={`£${Math.round(data.monthly.avg_daily_rate)}/day avg · ${data.monthly.days_remaining}d left`}
         isExpanded={expandedId === "monthly"}
         onToggle={() => toggle("monthly")}
+        headerExtra={
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">
+                Confirmed: <span className="text-emerald-300 font-semibold">{fmtGbpFull(data.monthly.confirmed_revenue)}</span>
+              </span>
+              <span className="text-slate-400">
+                <span className="text-emerald-300 font-semibold">{data.monthly.pct_of_target}%</span> of target
+              </span>
+            </div>
+            <ProgressBar pct={data.monthly.pct_of_target} />
+            <div className="text-[10px] text-slate-500">
+              £{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining} days left in month
+            </div>
+          </div>
+        }
       >
         <MonthlyDrawer data={data.monthly} />
       </ExpandableStatCard>
@@ -132,12 +225,50 @@ export function StatsGrid() {
       <ExpandableStatCard
         id="confirmed"
         label="Month Confirmed"
-        value={data.confirmed.month_count}
-        valueColor="purple"
+        value={fmtGbpFull(data.confirmed.month_revenue)}
+        valueColor="green"
         accentColor="purple"
-        subtitle="rentals this month"
+        valueSuffix={
+          data.confirmed.pending_value_gbp > 0 ? (
+            <span className="text-pink-400">+{fmtGbpFull(data.confirmed.pending_value_gbp)}</span>
+          ) : undefined
+        }
+        subtitle={
+          <span className="block">
+            {data.confirmed.pending_count > 0 && (
+              <span className="block text-pink-400 text-[11px] font-medium leading-tight">pending</span>
+            )}
+            <span className="block text-slate-400 text-[11px] leading-tight mt-0.5">
+              {data.confirmed.done_count} done, {data.confirmed.active_count} active, {data.confirmed.upcoming_count} upcoming · {data.confirmed.total_rentals} rentals
+            </span>
+          </span>
+        }
         isExpanded={expandedId === "confirmed"}
         onToggle={() => toggle("confirmed")}
+        headerExtra={
+          <div className="space-y-1.5">
+            <ConfirmedBar
+              done={data.confirmed.done_count}
+              active={data.confirmed.active_count}
+              upcoming={data.confirmed.upcoming_count}
+              pending={data.confirmed.pending_count}
+            />
+            <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px]">
+              {data.confirmed.done_count > 0 && (
+                <span className="inline-flex items-center gap-1 text-emerald-300"><Dot color="#22c55e" />{data.confirmed.done_count} done</span>
+              )}
+              {data.confirmed.active_count > 0 && (
+                <span className="inline-flex items-center gap-1 text-amber-300"><Dot color="#f59e0b" />{data.confirmed.active_count} active</span>
+              )}
+              {data.confirmed.upcoming_count > 0 && (
+                <span className="inline-flex items-center gap-1 text-violet-300"><Dot color="#a78bfa" />{data.confirmed.upcoming_count} upcoming</span>
+              )}
+              {data.confirmed.pending_count > 0 && (
+                <span className="inline-flex items-center gap-1 text-pink-300"><Dot color="#ec4899" />{data.confirmed.pending_count} pending</span>
+              )}
+            </div>
+          </div>
+        }
       >
         <ConfirmedDrawer data={data.confirmed as any} />
       </ExpandableStatCard>

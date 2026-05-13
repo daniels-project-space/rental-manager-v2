@@ -357,20 +357,44 @@ export const getStatsDrawerData = query({
     // ── card: active ─────────────────────────────────────────────
     // V1 PARITY: count unique rentals; expose ongoing/upcoming/pending split
     // for segmented bar visualisation.
-    const pendingCount = allRes.filter(
+    const pendingRes = allRes.filter(
       (r) => r.status === "pending_review" && !r.is_obsolete,
-    ).length;
+    );
+    const pendingUniq = dedupRes(pendingRes);
+    const pendingCount = pendingUniq.length;
+    const pendingValueGbp = pendingUniq.reduce((s, r) => s + netOf(r), 0);
     const activeTotal = ongoingUniq.length + upcomingUniq.length;
-    const activeRentals = [...ongoingUniq, ...upcomingUniq].slice(0, 15).map((r) => ({
+
+    const daysBetween = (a: string, b: string): number => {
+      const ms = Date.parse(b) - Date.parse(a);
+      return Math.max(1, Math.round(ms / 86400000) + 1);
+    };
+
+    const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => ({
       reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
       renter_name: r.renter_name ?? null,
       account_slug: r.account_slug ?? "",
       start_date: r.start_date ?? null,
       end_date: r.end_date ?? null,
+      pickup_date: r.pickup_date ?? r.start_date ?? null,
+      pickup_time: r.pickup_time ?? null,
+      return_time: r.return_time ?? null,
       items: (r.items ?? []).map((i) => i.item_name),
+      photo_url: (r.photos_urls ?? [])[0] ?? null,
+      duration_days:
+        r.duration_days ??
+        (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
+      net_gbp: r.net_to_owner_gbp ?? null,
       order_step: r.order_step ?? null,
-      is_ongoing: (r.start_date as string) <= today && (r.end_date as string) >= today,
-    }));
+      kind,
+      is_ongoing: kind === "ongoing",
+    });
+
+    const activeRentals = [
+      ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
+      ...upcomingUniq.map((r) => mapRental(r, "upcoming")),
+      ...pendingUniq.map((r) => mapRental(r, "pending")),
+    ].slice(0, 30);
 
     // ── card: earnings ───────────────────────────────────────────
     const earnings = {
@@ -380,16 +404,47 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: monthly ────────────────────────────────────────────
+    // Target = projected (current trend's end-of-month run-rate).
+    const monthlyTarget = projected;
+    const monthlyPct = monthlyTarget > 0
+      ? Math.round((monthTotal / monthlyTarget) * 100)
+      : 0;
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
+      confirmed_revenue: Math.round(monthTotal * 100) / 100,
       projected,
+      target_gbp: monthlyTarget,
+      pct_of_target: Math.min(100, monthlyPct),
       days_remaining: daysRemaining,
+      days_in_month: daysInMonth,
+      days_elapsed: daysElapsed,
       avg_daily_rate: Math.round(avgDailyRate * 100) / 100,
     };
 
     // ── card: confirmed ──────────────────────────────────────────
+    // Split this-month confirmed rentals into done / active / upcoming
+    // for the v1 4-segment breakdown bar.
+    const monthDone = monthConfirmedRentals.filter((r) => (r.end_date as string) < today);
+    const monthActive = monthConfirmedRentals.filter(
+      (r) => (r.start_date as string) <= today && (r.end_date as string) >= today,
+    );
+    const monthUpcoming = monthConfirmedRentals.filter((r) => (r.start_date as string) > today);
+    const monthPending = dedupRes(
+      pendingRes.filter((r) => {
+        const d = effectiveDateStr(r);
+        return d !== undefined && d >= monthStart && d <= monthEnd;
+      }),
+    );
+    const monthPendingValue = monthPending.reduce((s, r) => s + netOf(r), 0);
     const confirmed = {
       month_count: monthConfirmedRentals.length,
+      month_revenue: Math.round(monthTotal * 100) / 100,
+      done_count: monthDone.length,
+      active_count: monthActive.length,
+      upcoming_count: monthUpcoming.length,
+      pending_count: monthPending.length,
+      pending_value_gbp: Math.round(monthPendingValue * 100) / 100,
+      total_rentals: monthDone.length + monthActive.length + monthUpcoming.length + monthPending.length,
       rentals: monthConfirmedRentals.slice(0, 15).map((r) => ({
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
         renter_name: r.renter_name ?? null,
@@ -407,11 +462,7 @@ export const getStatsDrawerData = query({
           ? Math.max(0, Math.round((Date.parse(r.end_date) - Date.now()) / 86400000))
           : null;
         return {
-          reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
-          renter_name: r.renter_name ?? null,
-          start_date: r.start_date ?? null,
-          end_date: r.end_date ?? null,
-          items: (r.items ?? []).map((i) => i.item_name),
+          ...mapRental(r, "ongoing"),
           days_left: daysLeft,
         };
       }),
@@ -425,11 +476,7 @@ export const getStatsDrawerData = query({
           ? Math.max(0, Math.round((Date.parse(r.start_date) - Date.now()) / 86400000))
           : null;
         return {
-          reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
-          renter_name: r.renter_name ?? null,
-          pickup_date: r.pickup_date ?? r.start_date ?? null,
-          pickup_time: r.pickup_time ?? null,
-          items: (r.items ?? []).map((i) => i.item_name),
+          ...mapRental(r, "upcoming"),
           days_until: daysUntil,
         };
       }),
@@ -703,6 +750,7 @@ export const getStatsDrawerData = query({
         ongoing_count: ongoingUniq.length,
         upcoming_count: upcomingUniq.length,
         pending_count: pendingCount,
+        pending_value_gbp: Math.round(pendingValueGbp * 100) / 100,
         rentals: activeRentals,
       },
       earnings,
