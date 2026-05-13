@@ -94,7 +94,11 @@ export async function POST(req: Request) {
     content: m.content,
   }));
 
-  const streamOpts: StreamOpts = { instructions: composedInstructions };
+  const streamOpts: StreamOpts = {
+    instructions: composedInstructions,
+    // Lower temperature reduces Grok-4-1-fast's marketing-style verbosity around bare item names.
+    modelSettings: { temperature: 0.2 },
+  };
 
   // 4. Stream with error handling
   const encoder = new TextEncoder();

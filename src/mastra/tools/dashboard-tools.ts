@@ -66,7 +66,10 @@ export const getDashboardStats = createTool({
 
 export const lookupPricing = createTool({
   id: "lookup_pricing",
-  description: "Get daily rate and multi-day totals for a rental item.",
+  description:
+    "Get daily rate and multi-day totals for a rental item. " +
+    "Use for pricing/rate/cost/'how much'/'what's the rate'/'what do we charge' questions. " +
+    "The injected briefing snapshot does NOT contain authoritative pricing — always call this for price questions.",
   inputSchema: z.object({
     itemName: z.string(),
     days: z.number().int().min(1).optional(),
@@ -106,7 +109,10 @@ export const lookupPricing = createTool({
 
 export const checkAvailability = createTool({
   id: "check_availability",
-  description: "Check item availability for dates. Returns available qty and next free date if booked.",
+  description:
+    "Check item availability for dates. Returns available qty and next free date if booked. " +
+    "Use for availability/'is X free'/'is X available'/'booked'/'open on <date>'/'can we rent X on...' questions. " +
+    "The briefing snapshot is stale for availability — always call this tool for availability questions.",
   inputSchema: z.object({
     itemName: z.string(),
     startDate: z.string().describe("YYYY-MM-DD"),
@@ -132,7 +138,11 @@ export const checkAvailability = createTool({
 
 export const getPendingRentals = createTool({
   id: "get_pending_rentals",
-  description: "Fetch pending rental requests awaiting accept/decline decision.",
+  description:
+    "Fetch pending rental requests awaiting accept/decline decision. " +
+    "Use for pending/awaiting/unconfirmed/'needs approval'/'to confirm'/'what's pending' questions. " +
+    "Canonical pending = orders with order_step in {REQUEST, APPROVED}: REQUEST = renter sent request, owner not yet approved; APPROVED = owner approved, renter has NOT paid yet (no funds reserved). Neither is a confirmed booking. " +
+    "If the user framed these as 'confirmed' or 'upcoming', clarify in your answer (e.g. \"This isn't a confirmed booking yet — owner approved but renter hasn't paid.\").",
   inputSchema: z.object({}),
   execute: async () => {
     try {
@@ -150,7 +160,13 @@ export const getPendingRentals = createTool({
 
 export const getBusinessIntelligence = createTool({
   id: "get_business_intelligence",
-  description: "Purchase recommendations, demand signals, denied-rental patterns, investment analysis.",
+  description:
+    "Purchase recommendations, demand signals, denied-rental patterns, investment analysis. " +
+    "Use for 'what should I buy', demand patterns, denied rentals, or investment-decision questions. " +
+    // TODO: no dedicated top-earner / revenue-ranking tool exists yet. If user asks about top earners /
+    // best items / 'biggest earner' / 'which items make most', fall back to get_dashboard_stats for
+    // aggregate revenue figures and explain that per-item ranking is not yet wired up.
+    "Returns purchase recommendations and demand signals (NOT per-item revenue ranking).",
   inputSchema: z.object({}),
   execute: async () => {
     try {
@@ -416,7 +432,9 @@ export const sendCorrection = createTool({
 export const getObsoleteOrders = createTool({
   id: "get_obsolete_orders",
   description:
-    "Get cancelled or rejected orders (lost revenue / dead deals). Use when user asks about cancellations, lost revenue, what went obsolete, deals that fell through.",
+    "Get cancelled or rejected orders (lost revenue / dead deals). " +
+    "Use when user asks about cancellations, lost revenue, 'what got cancelled', 'deals lost', 'fell through', or anything obsolete. " +
+    "An order is obsolete when is_obsolete === true (order_step CANCELED or VERIFICATION_FAILED). Exclude these from active counts and revenue.",
   inputSchema: z.object({
     sinceDays: z
       .number()
@@ -445,7 +463,12 @@ export const getObsoleteOrders = createTool({
 export const getOrderPipeline = createTool({
   id: "get_order_pipeline",
   description:
-    "Get counts of active orders per order_step. Useful for 'how many requests are waiting?', 'pipeline status', 'where are we in the funnel?', distinguishing requested-but-unpaid from paid-active.",
+    "Get counts of active orders per order_step. " +
+    "Use for 'pipeline'/'where are we'/'funnel'/'how many requests'/'how many paid'/'pipeline status' questions. " +
+    "Hygglo order_step values (chronological): REQUEST (renter sent, owner not approved) → APPROVED (owner ok, renter not paid, no funds reserved) → FUNDS_RESERVED (paid, escrow — first 'real' booking step) → VERIFIED → BOOKED_AFTER_VERIFIED (true 'booked & locked') → DELIVERED → RETURNED → REVIEWED (terminal). Obsolete: CANCELED, VERIFICATION_FAILED. " +
+    "Paid steps (= real revenue): FUNDS_RESERVED, VERIFIED, BOOKED_AFTER_VERIFIED, DELIVERED, RETURNED. " +
+    "When citing an order's status to the user, use the human-readable mapping: REQUEST → \"request, owner hasn't approved yet\"; APPROVED → \"approved by owner, awaiting renter payment\"; FUNDS_RESERVED → \"paid, funds reserved\"; VERIFIED / BOOKED_AFTER_VERIFIED → \"confirmed booking\"; DELIVERED → \"currently out\"; RETURNED → \"completed\"; CANCELED / VERIFICATION_FAILED → \"cancelled\". " +
+    "When listing 'confirmed bookings' or 'upcoming rentals', EXCLUDE REQUEST and APPROVED unless user explicitly asks about pending/awaiting-payment.",
   inputSchema: z.object({}),
   execute: async () => {
     try {
