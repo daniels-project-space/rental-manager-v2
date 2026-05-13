@@ -430,16 +430,23 @@ export const getLifetimeByMonth = query({
         const leoRaw = leoGross.get(mo) ?? 0;
         const totalRaw = dbRaw + leoRaw;
         const hist = histByMonth.get(mo);
+
+        // Determine whether per-account hist columns are present for this month.
+        // These columns surface regardless of totalOverallMade (fixes gate bug for 2024-08+ leo).
+        const hasPerAccountHist = hist &&
+          (hist.dbcinema !== undefined || hist.leo !== undefined ||
+           hist.daniel !== undefined || hist.vertus !== undefined);
+
         if (!accountSlug && hist && hist.totalOverallMade > 0) {
-          // v1 parity: totalOverallMade is the definitive all-accounts total for this month.
+          // v1 pre-tracking window (2022-08→2024-07): totalOverallMade is the definitive total.
           // Use stored per-account splits when available (populated by extended backfill script).
           // Fall back to v1's subtraction formula if splits not yet written.
           damageClaims = hist.damage;
-          if (hist.dbcinema !== undefined && hist.daniel !== undefined) {
+          if (hasPerAccountHist) {
             // Per-account splits already computed + stored by backfill script
-            dbOrganic = hist.dbcinema;
+            dbOrganic = hist.dbcinema ?? 0;
             leoOrganic = hist.leo ?? 0;
-            danielOrganic = hist.daniel;
+            danielOrganic = hist.daniel ?? 0;
             vertusOrganic = hist.vertus ?? 0;
           } else {
             // Legacy fallback: v1's ratio-cap + 50/50 split on remainder
@@ -459,16 +466,18 @@ export const getLifetimeByMonth = query({
             danielOrganic = r2(remainder / 2);
             vertusOrganic = r2(remainder - danielOrganic);
           }
-        } else if (totalRaw === 0 && hist && hist.total > 0 && !accountSlug) {
-          // No live reservations for this month — use historical_revenue aggregate.
-          if (hist.dbcinema !== undefined && hist.daniel !== undefined) {
-            dbOrganic = hist.dbcinema;
-            leoOrganic = hist.leo ?? 0;
-            danielOrganic = hist.daniel;
-            vertusOrganic = hist.vertus ?? 0;
-          } else {
-            dbOrganic = hist.total;
-          }
+        } else if (!accountSlug && hasPerAccountHist) {
+          // Per-account hist columns present (e.g. 2024-08+ leo activity, or zero-live months).
+          // Stored values take precedence; live gross is fallback for any absent column.
+          dbOrganic = hist!.dbcinema !== undefined ? hist!.dbcinema : dbRaw;
+          leoOrganic = hist!.leo !== undefined ? hist!.leo : leoRaw;
+          danielOrganic = hist!.daniel !== undefined ? hist!.daniel : 0;
+          vertusOrganic = hist!.vertus !== undefined ? hist!.vertus : 0;
+          damageClaims = hist!.damage > 0 ? hist!.damage : (claimsByMonth.get(mo) ?? 0);
+          aiBoost = 0; // already baked into hist splits
+        } else if (!accountSlug && totalRaw === 0 && hist && hist.total > 0) {
+          // No live reservations and no per-account splits — use historical aggregate.
+          dbOrganic = hist.total;
           damageClaims = claimsByMonth.get(mo) ?? 0;
         } else {
           if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
@@ -480,28 +489,25 @@ export const getLifetimeByMonth = query({
             dbOrganic = dbRaw;
             leoOrganic = leoRaw;
           }
-          // Post-tracking: per-account hist splits for dbcinema/leo if stored
-          if (!accountSlug && hist && hist.dbcinema !== undefined) {
-            dbOrganic = hist.dbcinema;
-            leoOrganic = hist.leo ?? 0;
-            danielOrganic = hist.daniel ?? 0;
-            vertusOrganic = hist.vertus ?? 0;
-            aiBoost = 0; // already baked into hist splits
-          }
           damageClaims = claimsByMonth.get(mo) ?? 0;
         }
 
-        // Per-account filter: zero out accounts not requested
+        // Per-account filter: zero out accounts not requested.
+        // For retired accounts (daniel/vertus), also pull in hist columns that live polling skips.
         if (accountSlug === "dbcinema") {
           leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "leo") {
+          // Always incorporate hist.leo so pre-import months surface in the leo-only view.
+          leoOrganic = (hist?.leo !== undefined ? hist.leo : 0) + leoRaw;
           dbOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "daniel") {
-          dbOrganic = 0; leoOrganic = 0; vertusOrganic = 0; damageClaims = 0;
-          dbOrganic = danielOrganic; danielOrganic = 0;
+          const histDaniel = hist?.daniel !== undefined ? hist.daniel : 0;
+          dbOrganic = histDaniel; // surface hist column; live polling is retired
+          leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "vertus") {
-          dbOrganic = 0; leoOrganic = 0; danielOrganic = 0; damageClaims = 0;
-          dbOrganic = vertusOrganic; vertusOrganic = 0;
+          const histVertus = hist?.vertus !== undefined ? hist.vertus : 0;
+          dbOrganic = histVertus; // surface hist column; live polling is retired
+          leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         }
       } else if (isNextMo) {
         bookedNextVal = bookedNextTotal;
