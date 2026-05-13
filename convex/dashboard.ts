@@ -526,7 +526,7 @@ export const getStatsDrawerData = query({
     // ── card: ai_boost ────────────────────────────────────────────
     // Count accepted ai_decisions in last 90d; estimate uplift via boostRate.
     const drawerSettings = await ctx.db.query("settings").first();
-    const boostRateVal: number = (drawerSettings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.15;
+    const boostRateVal: number = (drawerSettings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.24;
     const recentAccepted = await ctx.db
       .query("ai_decision")
       .withIndex("by_status", (idx) => idx.eq("status", "approved"))

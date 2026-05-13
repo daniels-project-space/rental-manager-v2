@@ -263,18 +263,25 @@ export const getLifetimeByMonth = query({
     // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
     const AI_ACTIVE_FROM: string = (settings as unknown as Record<string, string>)?.ai_active_from ?? "2026-02";
-    const boostRate: number = (settings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.33;
+    const boostRate: number = (settings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.24;
 
     const allReservations = await ctx.db.query("reservations").collect();
 
     // Load historical_revenue for pre-import months (retired accounts + v1 migration)
     const histRows = await ctx.db.query("historical_revenue").collect();
-    const histByMonth = new Map<string, { total: number; damage: number; totalOverallMade: number }>();
+    const histByMonth = new Map<string, {
+      total: number; damage: number; totalOverallMade: number;
+      dbcinema?: number; leo?: number; daniel?: number; vertus?: number;
+    }>();
     for (const row of histRows) {
       histByMonth.set(row.month, {
         total: row.total_revenue_gbp,
         damage: row.damage_costs_gbp,
         totalOverallMade: row.total_overall_made_gbp ?? 0,
+        dbcinema: (row as unknown as Record<string, number>).dbcinema_revenue_gbp,
+        leo: (row as unknown as Record<string, number>).leo_revenue_gbp,
+        daniel: (row as unknown as Record<string, number>).daniel_revenue_gbp,
+        vertus: (row as unknown as Record<string, number>).vertus_revenue_gbp,
       });
     }
 
@@ -385,12 +392,19 @@ export const getLifetimeByMonth = query({
       monthLabel: string;
       dbcinemaOrganic: number;
       leoOrganic: number;
+      danielOrganic: number;
+      vertusOrganic: number;
       aiBoost: number;
       damageClaims: number;
       bookedNext: number;
       pendingNext: number;
       cumulative: number;
       count: number;
+      // v1-parity response shape
+      revenue: number;
+      byAccount: { dbcinema: number; leo: number; daniel: number; vertus: number };
+      damage: number;
+      aiAttribution: number;
     };
 
     const rows: MonthRow[] = [];
@@ -404,6 +418,8 @@ export const getLifetimeByMonth = query({
 
       let dbOrganic = 0;
       let leoOrganic = 0;
+      let danielOrganic = 0;
+      let vertusOrganic = 0;
       let aiBoost = 0;
       let damageClaims = 0;
       let bookedNextVal = 0;
@@ -415,17 +431,44 @@ export const getLifetimeByMonth = query({
         const totalRaw = dbRaw + leoRaw;
         const hist = histByMonth.get(mo);
         if (!accountSlug && hist && hist.totalOverallMade > 0) {
-          // v1 parity: totalOverallMade is the definitive all-accounts total for this month
-          // (DB Cinema + Daniel + Vertus combined, payment-date basis). Override live data.
-          // damageCosts are already included in totalOverallMade; surface as damageClaims separately.
-          const netRental = hist.totalOverallMade - hist.damage;
-          dbOrganic = netRental;
-          leoOrganic = 0;
+          // v1 parity: totalOverallMade is the definitive all-accounts total for this month.
+          // Use stored per-account splits when available (populated by extended backfill script).
+          // Fall back to v1's subtraction formula if splits not yet written.
           damageClaims = hist.damage;
+          if (hist.dbcinema !== undefined && hist.daniel !== undefined) {
+            // Per-account splits already computed + stored by backfill script
+            dbOrganic = hist.dbcinema;
+            leoOrganic = hist.leo ?? 0;
+            danielOrganic = hist.daniel;
+            vertusOrganic = hist.vertus ?? 0;
+          } else {
+            // Legacy fallback: v1's ratio-cap + 50/50 split on remainder
+            const netRental = hist.totalOverallMade - hist.damage;
+            const totalTracked = dbRaw + leoRaw;
+            let cappedDb = dbRaw;
+            let cappedLeo = leoRaw;
+            if (totalTracked > netRental && totalTracked > 0) {
+              const ratio = netRental / totalTracked;
+              cappedDb = r2(dbRaw * ratio);
+              cappedLeo = r2(leoRaw * ratio);
+            }
+            const cappedTracked = cappedDb + cappedLeo;
+            const remainder = Math.max(0, netRental - cappedTracked);
+            dbOrganic = cappedDb;
+            leoOrganic = cappedLeo;
+            danielOrganic = r2(remainder / 2);
+            vertusOrganic = r2(remainder - danielOrganic);
+          }
         } else if (totalRaw === 0 && hist && hist.total > 0 && !accountSlug) {
           // No live reservations for this month — use historical_revenue aggregate.
-          // Shown as dbcinemaOrganic (combined historical total across all retired + active accounts).
-          dbOrganic = hist.total;
+          if (hist.dbcinema !== undefined && hist.daniel !== undefined) {
+            dbOrganic = hist.dbcinema;
+            leoOrganic = hist.leo ?? 0;
+            danielOrganic = hist.daniel;
+            vertusOrganic = hist.vertus ?? 0;
+          } else {
+            dbOrganic = hist.total;
+          }
           damageClaims = claimsByMonth.get(mo) ?? 0;
         } else {
           if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
@@ -437,14 +480,35 @@ export const getLifetimeByMonth = query({
             dbOrganic = dbRaw;
             leoOrganic = leoRaw;
           }
+          // Post-tracking: per-account hist splits for dbcinema/leo if stored
+          if (!accountSlug && hist && hist.dbcinema !== undefined) {
+            dbOrganic = hist.dbcinema;
+            leoOrganic = hist.leo ?? 0;
+            danielOrganic = hist.daniel ?? 0;
+            vertusOrganic = hist.vertus ?? 0;
+            aiBoost = 0; // already baked into hist splits
+          }
           damageClaims = claimsByMonth.get(mo) ?? 0;
+        }
+
+        // Per-account filter: zero out accounts not requested
+        if (accountSlug === "dbcinema") {
+          leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+        } else if (accountSlug === "leo") {
+          dbOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+        } else if (accountSlug === "daniel") {
+          dbOrganic = 0; leoOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = danielOrganic; danielOrganic = 0;
+        } else if (accountSlug === "vertus") {
+          dbOrganic = 0; leoOrganic = 0; danielOrganic = 0; damageClaims = 0;
+          dbOrganic = vertusOrganic; vertusOrganic = 0;
         }
       } else if (isNextMo) {
         bookedNextVal = bookedNextTotal;
         pendingNextVal = pendingNextTotal;
       }
 
-      const monthTotal = dbOrganic + leoOrganic + aiBoost + damageClaims + bookedNextVal + pendingNextVal;
+      const monthTotal = dbOrganic + leoOrganic + danielOrganic + vertusOrganic + aiBoost + damageClaims + bookedNextVal + pendingNextVal;
       cumulative = r2(cumulative + monthTotal);
 
       const count = !isFuture
@@ -459,12 +523,24 @@ export const getLifetimeByMonth = query({
         monthLabel: label,
         dbcinemaOrganic: dbOrganic,
         leoOrganic,
+        danielOrganic,
+        vertusOrganic,
         aiBoost,
         damageClaims,
         bookedNext: bookedNextVal,
         pendingNext: pendingNextVal,
         cumulative,
         count,
+        // v1-parity response shape
+        revenue: monthTotal,
+        byAccount: {
+          dbcinema: accountSlug === "daniel" || accountSlug === "vertus" ? 0 : dbOrganic,
+          leo: leoOrganic,
+          daniel: danielOrganic,
+          vertus: vertusOrganic,
+        },
+        damage: damageClaims,
+        aiAttribution: aiBoost,
       });
     }
 
@@ -473,11 +549,11 @@ export const getLifetimeByMonth = query({
         // For all-accounts view: exclude current month (in-progress, incomplete aggregate).
         // For per-account view: include current month so confirmed bookings count toward lifetime total.
         (accountSlug ? row.month <= currentMonth : row.month < currentMonth) &&
-        row.dbcinemaOrganic + row.leoOrganic + row.aiBoost + row.damageClaims > 0
+        row.dbcinemaOrganic + row.leoOrganic + row.danielOrganic + row.vertusOrganic + row.aiBoost + row.damageClaims > 0
     );
 
     const monthRev = (row: MonthRow) =>
-      row.dbcinemaOrganic + row.leoOrganic + row.aiBoost + row.damageClaims;
+      row.dbcinemaOrganic + row.leoOrganic + row.danielOrganic + row.vertusOrganic + row.aiBoost + row.damageClaims;
 
     const totalRevenue = r2(completedRows.reduce((s, row) => s + monthRev(row), 0));
     const avgMonthly =

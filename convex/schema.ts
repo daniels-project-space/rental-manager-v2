@@ -464,7 +464,12 @@ export default defineSchema({
     damage_costs_gbp: v.number(),         // insurance/damage claim payouts (additive)
     business_expenses_gbp: v.number(),    // deducted expenses (positive = expense)
     total_overall_made_gbp: v.number(),   // definitive total (0 for damage-only rows)
-    source: v.string(),                   // "v1-historical-static"
+    // Per-account splits (v1 algorithm port — additive optional, approved 2026-05-12)
+    dbcinema_revenue_gbp: v.optional(v.number()),
+    leo_revenue_gbp: v.optional(v.number()),
+    daniel_revenue_gbp: v.optional(v.number()),
+    vertus_revenue_gbp: v.optional(v.number()),
+    source: v.string(),                   // "v1-historical-static" | "v1-postgres-backfill"
     created_at: v.number(),
   }).index("by_month", ["month"]),
 

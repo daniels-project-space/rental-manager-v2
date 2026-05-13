@@ -1,19 +1,30 @@
 /**
  * backfill-v2-revenue-from-v1.mjs
  *
- * Backfills v2's historical_revenue table for 2024-08 → 2026-02 using v1's
- * Postgres `rental` table (matches v1's getRentalsWithRevenue() logic exactly).
+ * Backfills v2's historical_revenue table for ALL months 2022-08 → 2026-02.
  *
  * V1 CANONICAL FILTER (from revenue.service.ts getRentalsWithRevenue):
- *   status IN ('completed', 'ongoing', 'upcoming', 'consolidated')
+ *   status IN ('completed', 'ongoing', 'upcoming')   ← NOT 'consolidated' (v1 audit finding)
  *   rental_price > 0, start_date NOT NULL
  *   EXCLUDE phantom completed: status='completed' AND order_step='APPROVED'
  *   EXCLUDE upcoming with no confirmed bookings
- *   DEDUP: listing_id + renter_info + start_date → keep highest rental_price
- *   DATE: COALESCE(earliest confirmed booking pickup_date, start_date) for month attribution
+ *   DEDUP: listing_id + renter_info + DATE(start_date) → keep highest rental_price
+ *   DATE: COALESCE(earliest confirmed booking pickup_date, rental.start_date) for month attribution
  *   NET: gross * 0.64
  *
- * - Preserves existing damage_costs_gbp from stub rows (389/388 monthly overlay).
+ * Per-account algorithm (v1 parity):
+ *   Pre-tracking months (2022-08 → 2024-07, where totalOverallMade > 0):
+ *     netRental = totalOverallMade - damageCosts
+ *     totalTracked = dbcinema_gross * 0.64 + leo_gross * 0.64
+ *     if totalTracked > netRental: scale both down proportionally (ratio-cap)
+ *     cappedTracked = min(totalTracked, netRental)
+ *     remainder = max(0, netRental - cappedTracked)
+ *     daniel = vertus = remainder / 2 (50/50 split)
+ *   Post-tracking months (2024-08+, totalOverallMade = 0):
+ *     daniel = vertus = 0 (accounts retired)
+ *     dbcinema + leo = live Postgres net amounts
+ *
+ * - Preserves existing damage_costs_gbp from stub rows.
  * - Idempotent upsert via historical_revenue:upsertMonth.
  * - Auth: CONVEX_ACCESS_TOKEN (PAT) from project-hub vault.
  *
@@ -36,8 +47,11 @@ function log(...args) {
   process.stderr.write(args.join(' ') + '\n');
 }
 
+function r2(n) {
+  return Math.round(n * 100) / 100;
+}
+
 // ── Damage cost overlay (preserved from original stub rows) ──────────────────
-// Monthly camera-damage amortised cost from original migrate-historical-revenue.mjs
 const DAMAGE_COSTS = {
   '2024-08': 389, '2024-09': 389, '2024-10': 389, '2024-11': 389, '2024-12': 389,
   '2025-01': 389, '2025-02': 389, '2025-03': 389, '2025-04': 389, '2025-05': 389,
@@ -46,32 +60,8 @@ const DAMAGE_COSTS = {
   '2026-01': 388, '2026-02': 0,
 };
 
-// ── Step 1: Fetch PAT from vault ─────────────────────────────────────────────
-log('[backfill] Step 1: Fetching CONVEX_ACCESS_TOKEN from vault...');
-let pat;
-try {
-  const vaultRes = JSON.parse(
-    execSync(
-      `curl -sS '${VAULT_URL}' -H 'Content-Type: application/json' ` +
-        `-d '{"path":"secrets:listByService","args":{"service":"convex"},"format":"json"}'`,
-      { encoding: 'utf8' }
-    )
-  );
-  if (vaultRes.status !== 'success') {
-    throw new Error(`Vault query failed: ${JSON.stringify(vaultRes)}`);
-  }
-  const rec = (vaultRes.value ?? []).find((r) => r.keyName === 'CONVEX_ACCESS_TOKEN');
-  if (!rec) throw new Error('CONVEX_ACCESS_TOKEN not found in vault');
-  pat = rec.value;
-  log(`[backfill] PAT fetched (length=${pat.length})`);
-} catch (e) {
-  process.stderr.write('[backfill] ERROR: ' + e.message + '\n');
-  process.exit(1);
-}
-
-// ── Step 1b: Upsert pre-tracking historical data (2022-08 → 2024-07) ────────
-// These months have no Postgres tracking — sourced from v1's static HISTORICAL_REVENUE array.
-// totalOverallMade is the definitive combined net figure (Daniel+Vertus+DBCinema, bank-payout basis).
+// ── V1 static historical data (2022-08 → 2024-07) ───────────────────────────
+// Source: /home/ubuntu/rental-manager/src/data/historical-revenue.ts
 const PRE_TRACKING = [
   { month: '2022-08', totalRevenue: 172,  damageCosts: 0,    businessExpenses: 0,   totalOverallMade: 172 },
   { month: '2022-09', totalRevenue: 105,  damageCosts: 0,    businessExpenses: 0,   totalOverallMade: 105 },
@@ -99,57 +89,38 @@ const PRE_TRACKING = [
   { month: '2024-07', totalRevenue: 4414, damageCosts: 1464, businessExpenses: 0,   totalOverallMade: 5878 },
 ];
 
-if (DRY_RUN) {
-  const preTotal = PRE_TRACKING.reduce((s, r) => s + r.totalOverallMade, 0);
-  log(`[backfill] Step 1b (DRY_RUN): would upsert ${PRE_TRACKING.length} pre-tracking months, totalOverallMade sum=£${preTotal}`);
-} else {
-  log(`[backfill] Step 1b: Upserting ${PRE_TRACKING.length} pre-tracking months (2022-08 → 2024-07)...`);
-  let preOk = 0;
-  for (const row of PRE_TRACKING) {
-    const args = {
-      month: row.month,
-      total_revenue_gbp: row.totalRevenue,
-      damage_costs_gbp: row.damageCosts,
-      business_expenses_gbp: row.businessExpenses,
-      total_overall_made_gbp: row.totalOverallMade,
-      source: 'v1-historical-static',
-    };
-    const body = JSON.stringify({ path: 'historical_revenue:upsertMonth', args, format: 'json' });
-    try {
-      const raw = execSync(
-        `curl -sS -X POST '${CONVEX_URL}/api/mutation' ` +
-          `-H 'Content-Type: application/json' ` +
-          `-H 'Authorization: Convex ${pat}' ` +
-          `-d '${body.replace(/'/g, "'\\''")}'`,
-        { encoding: 'utf8' }
-      );
-      const res = JSON.parse(raw);
-      if (res.status !== 'success') {
-        process.stderr.write(`[backfill] WARN pre-tracking ${row.month} failed: ${raw.trim()}\n`);
-      } else {
-        preOk++;
-        log(`[backfill]   ${res.value?.action ?? 'ok'}: ${row.month}  totalOverallMade=£${row.totalOverallMade}`);
-      }
-    } catch (e) {
-      process.stderr.write(`[backfill] ERROR pre-tracking ${row.month}: ${e.message}\n`);
-    }
+// ── Step 1: Fetch PAT from vault ─────────────────────────────────────────────
+log('[backfill] Step 1: Fetching CONVEX_ACCESS_TOKEN from vault...');
+let pat;
+try {
+  const vaultRes = JSON.parse(
+    execSync(
+      `curl -sS '${VAULT_URL}' -H 'Content-Type: application/json' ` +
+        `-d '{"path":"secrets:listByService","args":{"service":"convex"},"format":"json"}'`,
+      { encoding: 'utf8' }
+    )
+  );
+  if (vaultRes.status !== 'success') {
+    throw new Error(`Vault query failed: ${JSON.stringify(vaultRes)}`);
   }
-  log(`[backfill] Step 1b done: ${preOk}/${PRE_TRACKING.length} pre-tracking months upserted`);
+  const rec = (vaultRes.value ?? []).find((r) => r.keyName === 'CONVEX_ACCESS_TOKEN');
+  if (!rec) throw new Error('CONVEX_ACCESS_TOKEN not found in vault');
+  pat = rec.value;
+  log(`[backfill] PAT fetched (length=${pat.length})`);
+} catch (e) {
+  process.stderr.write('[backfill] ERROR: ' + e.message + '\n');
+  process.exit(1);
 }
 
-// ── Step 2: Query v1 Postgres ────────────────────────────────────────────────
-log('[backfill] Step 2: Querying v1 Postgres for 2024-08 → 2026-02...');
-let rows;
+// ── Step 2: Query v1 Postgres for ALL months (2022-08 → 2026-02) ─────────────
+// Uses v1's exact filter: status IN ('completed','ongoing','upcoming')
+// with phantom-booking exclusion and dedup.
+log('[backfill] Step 2: Querying v1 Postgres for 2022-08 → 2026-02 (v1 exact filter)...');
+let pgRows;
 try {
-  // Mirrors v1 getRentalsWithRevenue() exactly:
-  //  - statuses: completed + ongoing + upcoming + consolidated
-  //  - exclude phantom completed (APPROVED but never paid)
-  //  - exclude upcoming with no confirmed/completed bookings
-  //  - dedup listing_id+renter_info+start_date → keep highest rental_price
-  //  - effective_date = COALESCE(earliest confirmed booking pickup_date, rental.start_date)
   const sql = `
     WITH deduped AS (
-      SELECT DISTINCT ON (r.listing_id, r.renter_info, r.start_date)
+      SELECT DISTINCT ON (r.listing_id, r.renter_info, DATE(r.start_date))
         r.account,
         r.rental_price,
         COALESCE(
@@ -163,11 +134,11 @@ try {
           r.start_date
         ) AS effective_date
       FROM rental r
-      WHERE r.start_date  >= '2024-08-01'
+      WHERE r.start_date  >= '2022-08-01'
         AND r.start_date   < '2026-03-01'
         AND r.rental_price  > 0
         AND r.start_date   IS NOT NULL
-        AND r.status IN ('completed', 'ongoing', 'upcoming', 'consolidated')
+        AND r.status IN ('completed', 'ongoing', 'upcoming')
         -- exclude phantom completed (owner APPROVED but renter never paid)
         AND NOT (r.status = 'completed' AND r.order_step = 'APPROVED')
         -- exclude upcoming rentals that have no confirmed bookings
@@ -179,7 +150,7 @@ try {
                AND b2.status IN ('confirmed', 'completed')
           )
         )
-      ORDER BY r.listing_id, r.renter_info, r.start_date, r.rental_price DESC
+      ORDER BY r.listing_id, r.renter_info, DATE(r.start_date), r.rental_price DESC
     )
     SELECT
       to_char(date_trunc('month', effective_date), 'YYYY-MM') AS month,
@@ -206,76 +177,170 @@ try {
     { encoding: 'utf8', input: sql }
   );
 
-  rows = psqlOut.trim().split('\n').filter(Boolean).map(line => {
+  pgRows = psqlOut.trim().split('\n').filter(Boolean).map(line => {
     const [month, account, gross_total, net_total, cnt] = line.split('|');
     return {
       month,
-      account,
-      gross_total: parseFloat(gross_total),
-      net_total: parseFloat(net_total),
-      cnt: parseInt(cnt, 10),
+      account: account || 'dbcinema',
+      gross_total: parseFloat(gross_total) || 0,
+      net_total: parseFloat(net_total) || 0,
+      cnt: parseInt(cnt, 10) || 0,
     };
   });
 
-  log(`[backfill] Got ${rows.length} month-account rows from v1`);
+  log(`[backfill] Got ${pgRows.length} month-account rows from v1 Postgres`);
 } catch (e) {
   process.stderr.write('[backfill] ERROR querying v1: ' + e.message + '\n');
   process.exit(1);
 }
 
-// ── Step 3: Aggregate by month (sum across accounts) ────────────────────────
-// upsertMonth has no account_slug — one row per calendar month
-const byMonth = new Map();
-for (const r of rows) {
-  const existing = byMonth.get(r.month) ?? { month: r.month, gross: 0, net: 0, cnt: 0, accounts: [] };
-  existing.gross += r.gross_total;
-  existing.net   += r.net_total;
-  existing.cnt   += r.cnt;
-  existing.accounts.push(`${r.account}=£${r.net_total.toFixed(2)}`);
-  byMonth.set(r.month, existing);
+// ── Step 3: Build per-month per-account map from Postgres ────────────────────
+// pgByMonth[month] = { dbcinema: {net, gross}, leo: {net, gross} }
+const pgByMonth = new Map();
+for (const r of pgRows) {
+  if (!pgByMonth.has(r.month)) pgByMonth.set(r.month, {});
+  const m = pgByMonth.get(r.month);
+  const acct = r.account || 'dbcinema';
+  if (!m[acct]) m[acct] = { net: 0, gross: 0, cnt: 0 };
+  m[acct].net   += r.net_total;
+  m[acct].gross += r.gross_total;
+  m[acct].cnt   += r.cnt;
 }
 
-// Build ordered payload
-const payload = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month)).map(m => ({
-  month:                   m.month,
-  total_revenue_gbp:       Math.round(m.net * 100) / 100,
-  damage_costs_gbp:        DAMAGE_COSTS[m.month] ?? 0,
-  business_expenses_gbp:   0,
-  // sentinel 0 = "don't override live reservation data, only supply damage_costs_gbp"
-  // (matches the pattern in v1's HISTORICAL_REVENUE for 2024-08+ sentinel rows)
-  total_overall_made_gbp:  0,
-  source:                  'v1-postgres-backfill',
-  _gross:                  Math.round(m.gross * 100) / 100,
-  _cnt:                    m.cnt,
-  _accounts:               m.accounts.join(', '),
-}));
+// ── Step 4: Compute per-account splits for pre-tracking months ───────────────
+log('[backfill] Step 4: Computing per-account splits for 2022-08 → 2024-07...');
 
-const aggregateNet   = payload.reduce((s, r) => s + r.total_revenue_gbp, 0);
-const aggregateGross = payload.reduce((s, r) => s + r._gross, 0);
+const preTrackingPayload = [];
+let totalDaniel = 0, totalVertus = 0, totalDbPre = 0, totalLeoPre = 0;
 
-log(`[backfill] Months: ${payload.length}`);
-log(`[backfill] Aggregate gross: £${aggregateGross.toFixed(2)}`);
-log(`[backfill] Aggregate net:   £${aggregateNet.toFixed(2)}`);
+for (const row of PRE_TRACKING) {
+  const pg = pgByMonth.get(row.month) ?? {};
+  const dbNet  = pg['dbcinema']?.net ?? 0;
+  const leoNet = pg['leo']?.net ?? 0;
 
-// ── Step 4: Dry-run output ───────────────────────────────────────────────────
+  let dbcinema_revenue_gbp  = dbNet;
+  let leo_revenue_gbp       = leoNet;
+  let daniel_revenue_gbp    = 0;
+  let vertus_revenue_gbp    = 0;
+
+  if (row.totalOverallMade > 0) {
+    const damageRevenue = row.damageCosts;
+    const netRental = row.totalOverallMade - damageRevenue;
+    const totalTracked = dbNet + leoNet;
+
+    if (totalTracked > netRental && totalTracked > 0) {
+      // ratio-cap: scale tracked accounts down proportionally
+      const ratio = netRental / totalTracked;
+      dbcinema_revenue_gbp = r2(dbNet * ratio);
+      leo_revenue_gbp      = r2(leoNet * ratio);
+    }
+    const cappedTracked = dbcinema_revenue_gbp + leo_revenue_gbp;
+    const remainder = Math.max(0, netRental - cappedTracked);
+    daniel_revenue_gbp = r2(remainder / 2);
+    vertus_revenue_gbp = r2(remainder - daniel_revenue_gbp);
+  }
+
+  totalDbPre  += dbcinema_revenue_gbp;
+  totalLeoPre += leo_revenue_gbp;
+  totalDaniel += daniel_revenue_gbp;
+  totalVertus += vertus_revenue_gbp;
+
+  preTrackingPayload.push({
+    month:                  row.month,
+    total_revenue_gbp:      row.totalRevenue,
+    damage_costs_gbp:       row.damageCosts,
+    business_expenses_gbp:  row.businessExpenses,
+    total_overall_made_gbp: row.totalOverallMade,
+    source:                 'v1-historical-static',
+    dbcinema_revenue_gbp,
+    leo_revenue_gbp,
+    daniel_revenue_gbp,
+    vertus_revenue_gbp,
+  });
+
+  log(`[backfill]   ${row.month}  overallMade=£${row.totalOverallMade}  db=£${dbcinema_revenue_gbp.toFixed(2)}  leo=£${leo_revenue_gbp.toFixed(2)}  daniel=£${daniel_revenue_gbp.toFixed(2)}  vertus=£${vertus_revenue_gbp.toFixed(2)}`);
+}
+
+log(`[backfill] Pre-tracking totals: db=£${totalDbPre.toFixed(2)} leo=£${totalLeoPre.toFixed(2)} daniel=£${totalDaniel.toFixed(2)} vertus=£${totalVertus.toFixed(2)}`);
+
+// ── Step 5: Build post-tracking payload (2024-08 → 2026-02) ─────────────────
+log('[backfill] Step 5: Building post-tracking payload (2024-08 → 2026-02)...');
+
+const postMonths = Object.keys(DAMAGE_COSTS).sort();
+const postTrackingPayload = [];
+let totalDbPost = 0, totalLeoPost = 0;
+
+for (const month of postMonths) {
+  const pg = pgByMonth.get(month) ?? {};
+  const dbNet  = r2(pg['dbcinema']?.net ?? 0);
+  const leoNet = r2(pg['leo']?.net ?? 0);
+  const netTotal = r2(dbNet + leoNet);
+
+  totalDbPost  += dbNet;
+  totalLeoPost += leoNet;
+
+  postTrackingPayload.push({
+    month,
+    total_revenue_gbp:      netTotal,
+    damage_costs_gbp:       DAMAGE_COSTS[month] ?? 0,
+    business_expenses_gbp:  0,
+    total_overall_made_gbp: 0, // sentinel: damage-only overlay
+    source:                 'v1-postgres-backfill',
+    dbcinema_revenue_gbp:   dbNet,
+    leo_revenue_gbp:        leoNet,
+    daniel_revenue_gbp:     0, // retired post-2024-07
+    vertus_revenue_gbp:     0, // retired post-2024-07
+  });
+}
+
+log(`[backfill] Post-tracking totals: db=£${totalDbPost.toFixed(2)} leo=£${totalLeoPost.toFixed(2)}`);
+
+const allPayload = [...preTrackingPayload, ...postTrackingPayload];
+const overallDbTotal    = r2(totalDbPre + totalDbPost);
+const overallLeoTotal   = r2(totalLeoPre + totalLeoPost);
+const overallDaniel     = r2(totalDaniel);
+const overallVertus     = r2(totalVertus);
+const damageSum         = allPayload.reduce((s, r) => s + r.damage_costs_gbp, 0);
+const predictedLifetime = r2(overallDbTotal + overallLeoTotal + overallDaniel + overallVertus + damageSum);
+
+log(`[backfill] === PREDICTED TOTALS ===`);
+log(`[backfill]   dbcinema: £${overallDbTotal.toFixed(2)}  (target ~£107,294)`);
+log(`[backfill]   leo:      £${overallLeoTotal.toFixed(2)}  (target ~£2,577)`);
+log(`[backfill]   daniel:   £${overallDaniel.toFixed(2)}  (target ~£7,178)`);
+log(`[backfill]   vertus:   £${overallVertus.toFixed(2)}  (target ~£7,178)`);
+log(`[backfill]   damage:   £${damageSum.toFixed(2)}  (target £14,335)`);
+log(`[backfill]   TOTAL:    £${predictedLifetime.toFixed(2)}  (target £138,563)`);
+log(`[backfill] Total months: ${allPayload.length} (v1 has 47)`);
+
+// Identify months in v1 PRE_TRACKING not in pgByMonth (the 4 missing months)
+const v1Months = new Set(PRE_TRACKING.map(r => r.month));
+const pgMonths = new Set(pgRows.map(r => r.month));
+const missingFromPg = [...v1Months].filter(m => !pgMonths.has(m));
+if (missingFromPg.length > 0) {
+  log(`[backfill] Months with no Postgres data (pre-tracking only, using totalOverallMade): ${missingFromPg.join(', ')}`);
+}
+
 if (DRY_RUN) {
-  console.log(`DRY_RUN: would upsert ${payload.length} months`);
-  console.log(`Aggregate gross: £${aggregateGross.toFixed(2)}`);
-  console.log(`Aggregate net:   £${aggregateNet.toFixed(2)}`);
-  console.log('\nPer-month preview:');
-  for (const r of payload) {
-    console.log(`  ${r.month}  net=£${r.total_revenue_gbp.toFixed(2)}  damage=£${r.damage_costs_gbp}  cnt=${r._cnt}  [${r._accounts}]`);
+  console.log(`DRY_RUN: would upsert ${allPayload.length} months`);
+  console.log(`Predicted lifetime: £${predictedLifetime.toFixed(2)} (target £138,563)`);
+  console.log('\nPre-tracking preview:');
+  for (const r of preTrackingPayload) {
+    console.log(`  ${r.month}  overallMade=£${r.total_overall_made_gbp}  db=£${r.dbcinema_revenue_gbp.toFixed(2)}  leo=£${r.leo_revenue_gbp.toFixed(2)}  daniel=£${r.daniel_revenue_gbp.toFixed(2)}  vertus=£${r.vertus_revenue_gbp.toFixed(2)}`);
+  }
+  console.log('\nPost-tracking preview:');
+  for (const r of postTrackingPayload) {
+    console.log(`  ${r.month}  net=£${r.total_revenue_gbp.toFixed(2)}  damage=£${r.damage_costs_gbp}  db=£${r.dbcinema_revenue_gbp.toFixed(2)}  leo=£${r.leo_revenue_gbp.toFixed(2)}`);
   }
   process.exit(0);
 }
 
-// ── Step 5: Upsert each month via Convex HTTP API ────────────────────────────
-log('[backfill] Step 5: Upserting months via Convex HTTP API...');
+// ── Step 6: Upsert all months via Convex HTTP API ────────────────────────────
+log(`[backfill] Step 6: Upserting ${allPayload.length} months via Convex HTTP API...`);
 
 let upserted = 0;
 let errors   = 0;
 
-for (const r of payload) {
+for (const r of allPayload) {
   const args = {
     month:                  r.month,
     total_revenue_gbp:      r.total_revenue_gbp,
@@ -283,6 +348,10 @@ for (const r of payload) {
     business_expenses_gbp:  r.business_expenses_gbp,
     total_overall_made_gbp: r.total_overall_made_gbp,
     source:                 r.source,
+    dbcinema_revenue_gbp:   r.dbcinema_revenue_gbp,
+    leo_revenue_gbp:        r.leo_revenue_gbp,
+    daniel_revenue_gbp:     r.daniel_revenue_gbp,
+    vertus_revenue_gbp:     r.vertus_revenue_gbp,
   };
   const body = JSON.stringify({ path: 'historical_revenue:upsertMonth', args, format: 'json' });
 
@@ -300,7 +369,7 @@ for (const r of payload) {
       errors++;
     } else {
       upserted++;
-      log(`[backfill]   ${res.value?.action ?? 'ok'}: ${r.month}  net=£${r.total_revenue_gbp.toFixed(2)}  damage=£${r.damage_costs_gbp}`);
+      log(`[backfill]   ${res.value?.action ?? 'ok'}: ${r.month}  db=£${r.dbcinema_revenue_gbp.toFixed(2)}  leo=£${r.leo_revenue_gbp.toFixed(2)}  daniel=£${r.daniel_revenue_gbp.toFixed(2)}  vertus=£${r.vertus_revenue_gbp.toFixed(2)}`);
     }
   } catch (e) {
     process.stderr.write(`[backfill] ERROR ${r.month}: ${e.message}\n`);
@@ -308,5 +377,13 @@ for (const r of payload) {
   }
 }
 
-console.log(`\nUpserted ${upserted} / ${payload.length} months. Errors: ${errors}`);
+console.log(`\nUpserted ${upserted} / ${allPayload.length} months. Errors: ${errors}`);
+console.log(`Per-account totals written:`);
+console.log(`  dbcinema: £${overallDbTotal.toFixed(2)}`);
+console.log(`  leo:      £${overallLeoTotal.toFixed(2)}`);
+console.log(`  daniel:   £${overallDaniel.toFixed(2)}`);
+console.log(`  vertus:   £${overallVertus.toFixed(2)}`);
+console.log(`  damage:   £${damageSum.toFixed(2)}`);
+console.log(`  PREDICTED LIFETIME: £${predictedLifetime.toFixed(2)}`);
+
 if (errors > 0) process.exit(3);
