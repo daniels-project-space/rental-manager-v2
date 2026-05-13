@@ -70,10 +70,32 @@ export function StatsGrid() {
         label="Active Rentals"
         value={data.active.total}
         valueColor="green"
+        accentColor="green"
         hero
         isExpanded={expandedId === "active"}
         onToggle={() => toggle("active")}
-        subtitle={`${data.ongoing.count} ongoing · ${data.upcoming.count} upcoming`}
+        subtitle={
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {(data.active as any).ongoing_count ?? data.ongoing.count} ongoing
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="inline-flex items-center gap-1 text-sky-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+              {(data.active as any).upcoming_count ?? data.upcoming.count} upcoming
+            </span>
+            {((data.active as any).pending_count ?? 0) > 0 && (
+              <>
+                <span className="text-slate-600">·</span>
+                <span className="inline-flex items-center gap-1 text-amber-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  {(data.active as any).pending_count} pending
+                </span>
+              </>
+            )}
+          </span>
+        }
       >
         <ActiveDrawer data={data.active as any} />
       </ExpandableStatCard>
@@ -84,7 +106,8 @@ export function StatsGrid() {
         label="Earnings"
         value={fmtGbp(data.earnings.today)}
         valueColor="green"
-        subtitle={`Week: ${fmtGbp(data.earnings.week)}`}
+        accentColor="green"
+        subtitle={`Week: ${fmtGbp(data.earnings.week)} net`}
         isExpanded={expandedId === "earnings"}
         onToggle={() => toggle("earnings")}
       >
@@ -97,6 +120,7 @@ export function StatsGrid() {
         label="Expected Monthly"
         value={fmtGbp(data.monthly.projected)}
         valueColor="green"
+        accentColor="green"
         subtitle={`£${Math.round(data.monthly.avg_daily_rate)}/day · ${data.monthly.days_remaining}d left`}
         isExpanded={expandedId === "monthly"}
         onToggle={() => toggle("monthly")}
@@ -109,7 +133,8 @@ export function StatsGrid() {
         id="confirmed"
         label="Month Confirmed"
         value={data.confirmed.month_count}
-        valueColor="green"
+        valueColor="purple"
+        accentColor="purple"
         subtitle="rentals this month"
         isExpanded={expandedId === "confirmed"}
         onToggle={() => toggle("confirmed")}
