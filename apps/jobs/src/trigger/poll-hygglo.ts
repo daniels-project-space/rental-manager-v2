@@ -10,8 +10,8 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../convex/_generated/api";
-import { computeHoldsForReservations } from "../lib/reconcile-holds";
+import { api } from "@convex/_generated/api";
+import { computeHoldsForReservations } from "@rental/shared";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL = process.env.CONVEX_URL ?? "https://exciting-lion-29.convex.cloud";

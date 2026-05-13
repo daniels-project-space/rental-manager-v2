@@ -1,6 +1,6 @@
 "use client";
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@convex/_generated/api";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { useRef, useState, useEffect, useCallback } from "react";
 

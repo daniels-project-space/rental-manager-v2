@@ -1,4 +1,4 @@
-import type { ContextBundle } from "../../convex/dashboard_chat_context";
+import type { ContextBundle } from "@convex/dashboard_chat_context";
 import type { SyncStateDoc } from "./lib/tool-envelope";
 
 type SyncState = SyncStateDoc | null;

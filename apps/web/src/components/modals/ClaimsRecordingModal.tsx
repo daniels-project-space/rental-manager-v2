@@ -1,6 +1,6 @@
 "use client";
 import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";

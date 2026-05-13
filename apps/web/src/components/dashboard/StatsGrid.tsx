@@ -1,6 +1,6 @@
 "use client";
 import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { MetricTile } from "@/components/ui/MetricTile";
 import { SkeletonCard } from "@/components/ui/SkeletonBlock";
