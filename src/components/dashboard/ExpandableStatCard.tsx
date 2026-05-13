@@ -17,7 +17,7 @@ export interface ExpandableStatCardProps {
   hero?: boolean;
   status?: StatCardStatus;
   icon?: React.ReactNode;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   className?: string;
 }
 

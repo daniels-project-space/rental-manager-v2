@@ -276,22 +276,46 @@ export const getStatsDrawerData = query({
       (r) => (r.start_date as string) > today,
     );
 
-    // Paid (any non-cancelled/declined) for revenue
+    // V1 PARITY: revenue uses net_to_owner_gbp (already net of platform fee),
+    // excludes cancelled/declined. Mirrors fix/lifetime-revenue-chart-data pattern.
     const paidRes = allRes.filter(
       (r) => r.status !== "cancelled" && r.status !== "declined" && !r.is_obsolete,
     );
 
-    // Monthly confirmed bookings
-    const monthConfirmedRentals = confirmedWithDates.filter((r) => {
-      const d = effectiveDateStr(r);
-      return d !== undefined && d >= monthStart && d <= monthEnd;
-    });
+    // V1 PARITY: dedupe by (renter, start_date, end_date) — V1 groups multi-item
+    // bookings into a single rental. We approximate via renter+dates key and keep
+    // the row with the largest net_to_owner_gbp.
+    type ResRow = typeof allRes[number];
+    const dedupKey = (r: ResRow) =>
+      `${r.renter_id ?? r.renter_name ?? "?"}|${r.start_date ?? ""}|${r.end_date ?? ""}`;
+    const dedupRes = <T extends ResRow>(arr: T[]): T[] => {
+      const seen = new Map<string, T>();
+      for (const r of arr) {
+        const k = dedupKey(r);
+        const ex = seen.get(k);
+        if (!ex || ((r.net_to_owner_gbp ?? 0) > (ex.net_to_owner_gbp ?? 0))) seen.set(k, r);
+      }
+      return Array.from(seen.values());
+    };
 
-    // Revenue slices
-    const earnedPaid = paidRes.filter((r) => {
-      const d = effectiveDateStr(r);
-      return d !== undefined && d <= today;
-    });
+    const ongoingUniq = dedupRes(ongoingRentals);
+    const upcomingUniq = dedupRes(upcomingRentals);
+
+    // Monthly confirmed bookings (deduped)
+    const monthConfirmedRentals = dedupRes(
+      confirmedWithDates.filter((r) => {
+        const d = effectiveDateStr(r);
+        return d !== undefined && d >= monthStart && d <= monthEnd;
+      }),
+    );
+
+    // Revenue slices — net_to_owner_gbp, deduped per rental
+    const earnedPaid = dedupRes(
+      paidRes.filter((r) => {
+        const d = effectiveDateStr(r);
+        return d !== undefined && d <= today;
+      }),
+    );
     const todayEarned = earnedPaid.filter((r) => effectiveDateStr(r) === today);
     const weekEarned = earnedPaid.filter((r) => {
       const d = effectiveDateStr(r) as string;
@@ -302,35 +326,42 @@ export const getStatsDrawerData = query({
       return d >= monthStart && d <= monthEnd;
     });
 
-    const todayTotal = todayEarned.reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
-    const weekTotal = weekEarned.reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
-    const monthTotal = monthEarned.reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
+    const netOf = (r: ResRow) => r.net_to_owner_gbp ?? 0;
+    const todayTotal = todayEarned.reduce((s, r) => s + netOf(r), 0);
+    const weekTotal = weekEarned.reduce((s, r) => s + netOf(r), 0);
+    const monthTotal = monthEarned.reduce((s, r) => s + netOf(r), 0);
 
-    // Per-account earnings breakdown
+    // Per-account earnings breakdown (net)
     const accountSlugs = [...new Set(allRes.map((r) => r.account_slug).filter(Boolean))] as string[];
     const byAccount = accountSlugs.map((slug) => {
       const todayAcc = todayEarned
         .filter((r) => r.account_slug === slug)
-        .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
+        .reduce((s, r) => s + netOf(r), 0);
       const weekAcc = weekEarned
         .filter((r) => r.account_slug === slug)
-        .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
+        .reduce((s, r) => s + netOf(r), 0);
       return { account_slug: slug, today: Math.round(todayAcc * 100) / 100, week: Math.round(weekAcc * 100) / 100 };
     });
 
-    // Month projection
+    // Month projection (net)
     const avgDailyRate = daysElapsed > 0 ? monthTotal / daysElapsed : 0;
-    const bookedFuture = confirmedWithDates
-      .filter((r) => {
+    const bookedFutureUniq = dedupRes(
+      confirmedWithDates.filter((r) => {
         const d = r.start_date as string;
         return d > today && d >= monthStart && d <= monthEnd;
-      })
-      .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
+      }),
+    );
+    const bookedFuture = bookedFutureUniq.reduce((s, r) => s + netOf(r), 0);
     const projected = Math.round(monthTotal + bookedFuture + avgDailyRate * daysRemaining);
 
     // ── card: active ─────────────────────────────────────────────
-    const activeTotal = ongoingRentals.length + upcomingRentals.length;
-    const activeRentals = [...ongoingRentals, ...upcomingRentals].slice(0, 15).map((r) => ({
+    // V1 PARITY: count unique rentals; expose ongoing/upcoming/pending split
+    // for segmented bar visualisation.
+    const pendingCount = allRes.filter(
+      (r) => r.status === "pending_review" && !r.is_obsolete,
+    ).length;
+    const activeTotal = ongoingUniq.length + upcomingUniq.length;
+    const activeRentals = [...ongoingUniq, ...upcomingUniq].slice(0, 15).map((r) => ({
       reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
       renter_name: r.renter_name ?? null,
       account_slug: r.account_slug ?? "",
@@ -338,6 +369,7 @@ export const getStatsDrawerData = query({
       end_date: r.end_date ?? null,
       items: (r.items ?? []).map((i) => i.item_name),
       order_step: r.order_step ?? null,
+      is_ongoing: (r.start_date as string) <= today && (r.end_date as string) >= today,
     }));
 
     // ── card: earnings ───────────────────────────────────────────
@@ -369,8 +401,8 @@ export const getStatsDrawerData = query({
 
     // ── card: ongoing ─────────────────────────────────────────────
     const ongoingCard = {
-      count: ongoingRentals.length,
-      rentals: ongoingRentals.slice(0, 15).map((r) => {
+      count: ongoingUniq.length,
+      rentals: ongoingUniq.slice(0, 15).map((r) => {
         const daysLeft = r.end_date
           ? Math.max(0, Math.round((Date.parse(r.end_date) - Date.now()) / 86400000))
           : null;
@@ -387,8 +419,8 @@ export const getStatsDrawerData = query({
 
     // ── card: upcoming ────────────────────────────────────────────
     const upcomingCard = {
-      count: upcomingRentals.length,
-      rentals: upcomingRentals.slice(0, 15).map((r) => {
+      count: upcomingUniq.length,
+      rentals: upcomingUniq.slice(0, 15).map((r) => {
         const daysUntil = r.start_date
           ? Math.max(0, Math.round((Date.parse(r.start_date) - Date.now()) / 86400000))
           : null;
@@ -668,6 +700,9 @@ export const getStatsDrawerData = query({
     return {
       active: {
         total: activeTotal,
+        ongoing_count: ongoingUniq.length,
+        upcoming_count: upcomingUniq.length,
+        pending_count: pendingCount,
         rentals: activeRentals,
       },
       earnings,
