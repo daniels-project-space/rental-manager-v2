@@ -88,9 +88,9 @@ export const upsertPricingRow = mutation({
     item_name_canonical: v.string(),
     daily_price_min: v.number(),
     daily_price_max: v.number(),
-    currency: v.optional(v.string()),
     is_bundle: v.optional(v.boolean()),
     marketing_only: v.optional(v.boolean()),
+    created_at: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -101,7 +101,6 @@ export const upsertPricingRow = mutation({
       await ctx.db.patch(existing._id, {
         daily_price_min: args.daily_price_min,
         daily_price_max: args.daily_price_max,
-        ...(args.currency !== undefined ? { currency: args.currency } : {}),
         ...(args.is_bundle !== undefined ? { is_bundle: args.is_bundle } : {}),
         ...(args.marketing_only !== undefined ? { marketing_only: args.marketing_only } : {}),
       });
@@ -111,9 +110,9 @@ export const upsertPricingRow = mutation({
       item_name_canonical: args.item_name_canonical,
       daily_price_min: args.daily_price_min,
       daily_price_max: args.daily_price_max,
-      currency: args.currency ?? "SEK",
       is_bundle: args.is_bundle ?? false,
       marketing_only: args.marketing_only ?? false,
+      created_at: args.created_at ?? Date.now(),
     });
     return { action: "inserted", id };
   },
