@@ -412,7 +412,46 @@ export const recordDenial = createTool({
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Export map (Wave 1: 15 keys + Wave 2: 14 new = 29 total)
+// Wave 3 — thick "intelligence" tools (MV-backed)
+//
+// Each tool returns the full picture for its surface in ONE call:
+//   - numbers (typed scalar block)
+//   - summary (narrative)
+//   - topInsight (single highest-leverage sentence)
+//   - suggestedFollowups (drill-down tool names)
+//   - freshness (relative age of underlying MV)
+//   - ofRecord (top-N raw rows for follow-up reasoning)
+// ─────────────────────────────────────────────────────────────────────────
+
+export const getPurchaseIntelligence = createTool({
+  id: "get_purchase_intelligence",
+  description:
+    "Returns the full purchase-recommendation picture in ONE call: 30-day unmet-demand signals, projected annual upside per item, top insight, and links to deeper drill-down tools. Use when user asks 'what should we buy', 'where's our demand', 'investment recommendations', 'top opportunities', 'gaps in inventory'.",
+  inputSchema: z.object({ ...accountField }),
+  execute: async (input: { account?: "leo" | "dbcinema" }) =>
+    data.intelligence.getPurchaseIntelligence({ account: input.account }),
+});
+
+export const getChurnRisk = createTool({
+  id: "get_churn_risk",
+  description:
+    "Returns the full renter-churn picture in ONE call: at-risk renters with lifetime value, days since last rental, risk tier, and pre-rendered reason strings. Use when user asks 'who's at risk of churning', 'top customers we're losing', 'who should we re-engage', 'lapsed renters'.",
+  inputSchema: z.object({ ...accountField }),
+  execute: async (input: { account?: "leo" | "dbcinema" }) =>
+    data.intelligence.getChurnRisk({ account: input.account }),
+});
+
+export const getUtilizationSnapshot = createTool({
+  id: "get_utilization_snapshot",
+  description:
+    "Returns the full fleet-utilization picture in ONE call: per-item rented-now count, 7-day utilization %, idle days, and fleet-level rollup. Use when user asks 'what's our utilization', 'fleet usage', 'idle inventory', 'most-rented items', 'underutilized gear'.",
+  inputSchema: z.object({ ...accountField }),
+  execute: async (input: { account?: "leo" | "dbcinema" }) =>
+    data.intelligence.getUtilizationSnapshot({ account: input.account }),
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export map (Wave 1: 15 keys + Wave 2: 14 + Wave 3: 3 = 32 total)
 // ─────────────────────────────────────────────────────────────────────────
 
 export const dashboardTools = {
@@ -448,4 +487,8 @@ export const dashboardTools = {
   get_demand_top: getDemandTop,
   // Wave 2 — write
   record_denial: recordDenial,
+  // Wave 3 — thick intelligence
+  get_purchase_intelligence: getPurchaseIntelligence,
+  get_churn_risk: getChurnRisk,
+  get_utilization_snapshot: getUtilizationSnapshot,
 };

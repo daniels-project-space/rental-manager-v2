@@ -521,4 +521,89 @@ export default defineSchema({
     created_at: v.number(),
   }).index('by_thread', ['thread_id'])
     .index('by_thread_and_time', ['thread_id', 'created_at']),
+
+  // ── Materialized-view layer (Wave 3) ─────────────────────────
+  // Singleton pattern: one row per `account` slug. Refreshers upsert.
+  // `account = "all"` represents the cross-account aggregate.
+  // Read paths: src/mastra/data/intelligence.ts, dashboard chat tools,
+  // polling agent (Wave 4), renter-bot (Wave 5).
+  daily_briefing: defineTable({
+    account: v.string(),                  // "dbcinema" | "leo" | "all"
+    generatedAt: v.number(),              // unix ms of last refresh
+    todayEarningsGbp: v.number(),
+    activeRentalsCount: v.number(),
+    pendingRequestsCount: v.number(),
+    overdueReturnsCount: v.number(),
+    topItemsToday: v.array(v.object({
+      name: v.string(),
+      gbp: v.number(),
+      count: v.number(),
+    })),
+    summary: v.string(),                  // pre-rendered narrative
+  }).index("by_account", ["account"]),
+
+  top_earners_30d: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    rows: v.array(v.object({
+      itemName: v.string(),
+      gross30dGbp: v.number(),
+      net30dGbp: v.number(),
+      rentalCount: v.number(),
+      utilizationPct: v.number(),
+    })),
+  }).index("by_account", ["account"]),
+
+  purchase_signals: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    signals: v.array(v.object({
+      itemRequested: v.string(),
+      requestCount30d: v.number(),
+      projectedAnnualGbp: v.number(),
+      aliasOfOwned: v.union(v.string(), v.null()),
+      confidence: v.union(v.literal("high"), v.literal("med"), v.literal("low")),
+    })),
+    topInsight: v.string(),
+  }).index("by_account", ["account"]),
+
+  churn_risk_renters: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    rows: v.array(v.object({
+      renterName: v.string(),
+      lastRentalDaysAgo: v.number(),
+      lifetimeGbp: v.number(),
+      lifetimeRentals: v.number(),
+      risk: v.union(v.literal("high"), v.literal("med"), v.literal("low")),
+      reason: v.string(),
+    })),
+  }).index("by_account", ["account"]),
+
+  utilization_today: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    rows: v.array(v.object({
+      itemName: v.string(),
+      capacity: v.number(),
+      rentedNow: v.number(),
+      idleDays7d: v.number(),
+      utilization7dPct: v.number(),
+    })),
+    fleetUtilizationPct: v.number(),
+  }).index("by_account", ["account"]),
+
+  upcoming_returns: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    rows: v.array(v.object({
+      rentalId: v.id("reservations"),
+      renterName: v.string(),
+      items: v.array(v.string()),
+      returnDate: v.string(),               // ISO date YYYY-MM-DD
+      daysUntilReturn: v.number(),
+      overdue: v.boolean(),
+    })),
+    windowDays: v.number(),                 // typically 7
+  }).index("by_account", ["account"]),
 });
