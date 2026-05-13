@@ -140,7 +140,8 @@ try {
         AND r.start_date   IS NOT NULL
         AND r.status IN ('completed', 'ongoing', 'upcoming')
         -- exclude phantom completed (owner APPROVED but renter never paid)
-        AND NOT (r.status = 'completed' AND r.order_step = 'APPROVED')
+        -- NULL-safe: order_step IS NULL for pre-2025 rows; = 'APPROVED' comparison returns NULL not FALSE
+        AND NOT (r.status = 'completed' AND r.order_step IS NOT DISTINCT FROM 'APPROVED')
         -- exclude upcoming rentals that have no confirmed bookings
         AND NOT (
           r.status = 'upcoming'
@@ -155,9 +156,9 @@ try {
     SELECT
       to_char(date_trunc('month', effective_date), 'YYYY-MM') AS month,
       account,
-      ROUND(SUM(rental_price)::numeric, 2)          AS gross_total,
-      ROUND((SUM(rental_price) * 0.64)::numeric, 2) AS net_total,
-      COUNT(*)::int                                  AS cnt
+      ROUND(SUM(rental_price)::numeric, 2) AS gross_total,
+      ROUND(SUM(rental_price)::numeric, 2) AS net_total,
+      COUNT(*)::int                         AS cnt
     FROM deduped
     GROUP BY month, account
     ORDER BY month, account;
