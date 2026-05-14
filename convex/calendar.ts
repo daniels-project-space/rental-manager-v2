@@ -95,9 +95,28 @@ export const getCalendarStrip = query({
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= endDate
     );
+    // Also include reservations that started before the range but end inside / after it.
+    // V1 parity: a rental shows on every day between pickup and return ("away" days).
+    {
+      const allRes = await ctx.db.query("reservations").collect();
+      for (const r of allRes) {
+        if (
+          r.start_date !== undefined &&
+          r.end_date !== undefined &&
+          r.start_date < startDate &&
+          r.end_date >= startDate
+        ) {
+          if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
+        }
+      }
+    }
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
+    // Show confirmed + pending_review, never obsolete/cancelled (parity with getGanttWeek).
+    reservations = reservations.filter(
+      (r) => !r.is_obsolete && (r.status === "confirmed" || r.status === "pending_review")
+    );
 
     // Renter lookups
     const renterIds = [
@@ -186,59 +205,71 @@ export const getCalendarStrip = query({
       return null;
     }
 
+    /** Build a rich chip for one reservation on a specific day. */
+    function buildChip(r: Doc<"reservations">, kind: "pickup" | "return" | "away") {
+      const rType = r as {
+        pickup_time?: string | null;
+        return_time?: string | null;
+        pickup_method?: string | null;
+        return_method?: string | null;
+        gross_paid_gbp?: number | null;
+        net_to_owner_gbp?: number | null;
+        notes?: string | null;
+        renter_name?: string | null;
+      };
+      const renterName =
+        rType.renter_name ??
+        (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?");
+      return {
+        reservationId: r._id,
+        kind,
+        itemNames: (r.items ?? []).map((i) => i.item_name),
+        renterName,
+        accountSlug: r.account_slug,
+        accountColor: r.account_slug === "leo" ? "purple" : "blue",
+        status: r.status,
+        orderStep: (r as { order_step?: string | null }).order_step ?? null,
+        startDate: r.start_date ?? null,
+        endDate: r.end_date ?? null,
+        pickupTime: rType.pickup_time ?? null,
+        returnTime: rType.return_time ?? null,
+        pickupMethod: rType.pickup_method ?? null,
+        returnMethod: rType.return_method ?? null,
+        grossPaidGbp: rType.gross_paid_gbp ?? null,
+        netToOwnerGbp: rType.net_to_owner_gbp ?? null,
+        notes: rType.notes ?? null,
+        imageUrl: resolveFirstImageUrl(r.items),
+        progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
+      };
+    }
+
     return dates.map((date) => {
       // For same-day rentals (start === end === date), place in pickups only to avoid double-count.
       const pickups = reservations
         .filter((r) => r.start_date === date)
-        .map((r) => {
-          const rType = r as {
-            pickup_time?: string | null;
-            return_time?: string | null;
-            pickup_method?: string | null;
-            return_method?: string | null;
-          };
-          return {
-            reservationId: r._id,
-            itemNames: (r.items ?? []).map((i) => i.item_name),
-            renterName: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
-            accountSlug: r.account_slug,
-            accountColor: r.account_slug === "leo" ? "purple" : "blue",
-            status: r.status,
-            pickupTime: rType.pickup_time ?? null,
-            returnTime: rType.return_time ?? null,
-            pickupMethod: rType.pickup_method ?? null,
-            returnMethod: rType.return_method ?? null,
-            imageUrl: resolveFirstImageUrl(r.items),
-            progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
-          };
-        });
+        .map((r) => buildChip(r, "pickup"));
 
       // Exclude same-day rentals from returns (already counted in pickups above).
       const pickupIds = new Set(pickups.map((p) => p.reservationId));
       const returns = reservations
         .filter((r) => r.end_date === date && !pickupIds.has(r._id))
-        .map((r) => {
-          const rType = r as {
-            pickup_time?: string | null;
-            return_time?: string | null;
-            pickup_method?: string | null;
-            return_method?: string | null;
-          };
-          return {
-            reservationId: r._id,
-            itemNames: (r.items ?? []).map((i) => i.item_name),
-            renterName: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
-            accountSlug: r.account_slug,
-            accountColor: r.account_slug === "leo" ? "purple" : "blue",
-            status: r.status,
-            pickupTime: rType.pickup_time ?? null,
-            returnTime: rType.return_time ?? null,
-            pickupMethod: rType.pickup_method ?? null,
-            returnMethod: rType.return_method ?? null,
-            imageUrl: resolveFirstImageUrl(r.items),
-            progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
-          };
-        });
+        .map((r) => buildChip(r, "return"));
+
+      // "Away" — rental days strictly between pickup and return (V1 parity).
+      const dayIds = new Set([
+        ...pickups.map((p) => p.reservationId),
+        ...returns.map((r) => r.reservationId),
+      ]);
+      const away = reservations
+        .filter(
+          (r) =>
+            r.start_date !== undefined &&
+            r.end_date !== undefined &&
+            r.start_date < date &&
+            r.end_date > date &&
+            !dayIds.has(r._id),
+        )
+        .map((r) => buildChip(r, "away"));
 
       const dayHolds = holds
         .filter((h) => h.date === date)
@@ -254,7 +285,7 @@ export const getCalendarStrip = query({
           status: h.status,
         }));
 
-      return { date, pickups, returns, holds: dayHolds };
+      return { date, pickups, returns, away, holds: dayHolds };
     });
   },
 });

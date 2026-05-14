@@ -1,11 +1,5 @@
 "use client";
-import {
-  lazy,
-  Suspense,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
@@ -26,15 +20,22 @@ const CalendarGantt = lazy(() =>
 // ── Types inferred from convex/calendar.ts return shape ─────────────────────
 type ChipData = {
   reservationId: string;
+  kind?: "pickup" | "return" | "away";
   itemNames: (string | undefined)[];
   renterName: string;
   accountSlug: string | undefined;
   accountColor: string;
   status: string | undefined;
+  orderStep?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
   pickupTime: string | null;
   returnTime: string | null;
   pickupMethod: string | null;
   returnMethod: string | null;
+  grossPaidGbp?: number | null;
+  netToOwnerGbp?: number | null;
+  notes?: string | null;
   imageUrl: string | null;
   progressPercent: number | null;
 };
@@ -55,6 +56,7 @@ type DayData = {
   date: string;
   pickups: ChipData[];
   returns: ChipData[];
+  away?: ChipData[];
   holds: HoldData[];
 };
 
@@ -72,101 +74,97 @@ function TODAY_ISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** "Mon 13" */
-function dayLabel(dateStr: string): string {
+/** "MON" / 13 split — used by big day-card layout. */
+function dayLabelSplit(dateStr: string): { wd: string; num: number } {
   const d = new Date(dateStr + "T00:00:00");
-  const day = d.toLocaleString("en", { weekday: "short" });
-  return `${day} ${d.getDate()}`;
+  return {
+    wd: d.toLocaleString("en", { weekday: "short" }).toUpperCase(),
+    num: d.getDate(),
+  };
 }
 
-/** Sum gross earnings hint: we don't have revenue in the strip data directly,
- *  so we skip the £ chip — could be wired later via a separate earnings field.
- *  For now show chip count instead as a fallback. */
+/** "11:00 AM, 11 May" — pickup/return inline label. */
+function fmtTimeWithDate(time: string | null, isoDate: string | null): string {
+  if (!time || !isoDate) return time ?? "tbd";
+  const d = new Date(isoDate + "T00:00:00");
+  const m = time.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return time;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  const dateStr = d.toLocaleString("en", { day: "numeric", month: "short" });
+  return `${h}:${min} ${ampm}, ${dateStr}`;
+}
 
-// ── Availability dot logic ───────────────────────────────────────────────────
-function AvailDot({ pickups, returns, holds }: { pickups: ChipData[]; returns: ChipData[]; holds: HoldData[] }) {
-  const total = pickups.length + returns.length + holds.length;
-  if (total === 0) {
-    return <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1" title="Free" />;
+/** "11 May → 13 May (3d)" — inclusive day count. */
+function fmtRange(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return "";
+  const a = new Date(start + "T00:00:00");
+  const b = new Date(end + "T00:00:00");
+  const days = Math.max(1, Math.round((b.getTime() - a.getTime()) / 86400000) + 1);
+  const aStr = a.toLocaleString("en", { day: "numeric", month: "short" });
+  if (start === end) return `${aStr} (1d)`;
+  const bStr = b.toLocaleString("en", { day: "numeric", month: "short" });
+  return `${aStr} → ${bStr} (${days}d)`;
+}
+
+/** "£48" — rounded, no decimals. */
+function fmtGbp(n: number | null | undefined): string {
+  if (n == null) return "";
+  return "£" + Math.round(n).toLocaleString("en-GB");
+}
+
+/** "Wednesday, 13 May" */
+function fmtFullDate(iso: string): string {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleString("en", { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** Live progress label + percent for a booking. */
+function computeProgress(
+  start: string | null | undefined,
+  end: string | null | undefined,
+  pickupTime: string | null,
+  returnTime: string | null,
+): { pct: number; label: string; status: "upcoming" | "active" | "completed" } {
+  if (!start || !end) return { pct: 0, label: "", status: "upcoming" };
+  const startD = new Date(start + "T00:00:00");
+  if (pickupTime) {
+    const [h, m] = pickupTime.split(":").map(Number);
+    startD.setHours(h, m || 0, 0, 0);
   }
-  // amber if some bookings; red if all holds (fully blocked)
-  const allHeld = pickups.length === 0 && returns.length === 0 && holds.length > 0;
-  const color = allHeld ? "bg-red-500" : "bg-amber-400";
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
-      <span className="text-[10px] text-[#8b8fa3]">{total}</span>
-    </span>
-  );
+  const endD = new Date(end + "T00:00:00");
+  if (returnTime) {
+    const [h, m] = returnTime.split(":").map(Number);
+    endD.setHours(h, m || 0, 0, 0);
+  } else {
+    endD.setHours(23, 59, 59, 999);
+  }
+  const startMs = startD.getTime();
+  const endMs = endD.getTime();
+  const now = Date.now();
+  if (now < startMs) {
+    const hours = Math.round((startMs - now) / 3_600_000);
+    const label = hours < 24 ? `Starts in ${hours}h` : `Starts in ${Math.ceil(hours / 24)}d`;
+    return { pct: 0, label, status: "upcoming" };
+  }
+  if (now >= endMs) {
+    return { pct: 100, label: "Completed", status: "completed" };
+  }
+  const pct = Math.min(99, Math.max(1, Math.round(((now - startMs) / (endMs - startMs)) * 100)));
+  const hoursLeft = Math.round((endMs - now) / 3_600_000);
+  const label = hoursLeft < 24 ? `${hoursLeft}h remaining` : `${Math.ceil(hoursLeft / 24)}d remaining`;
+  return { pct, label, status: "active" };
 }
 
-// ── Mini event dots (up to 3 + overflow) ─────────────────────────────────────
-function EventDots({ pickups, returns, holds }: { pickups: ChipData[]; returns: ChipData[]; holds: HoldData[] }) {
-  const all: { color: string; pending: boolean; key: string }[] = [
-    ...pickups.map((p) => ({
-      color: resolveColor(p.accountColor),
-      pending: p.status === "pending_review",
-      key: `p-${p.reservationId}`,
-    })),
-    ...returns.map((r) => ({
-      color: resolveColor(r.accountColor),
-      pending: r.status === "pending_review",
-      key: `r-${r.reservationId}`,
-    })),
-    ...holds.map((h) => ({
-      color: "#f59e0b",
-      pending: false,
-      key: `h-${h.holdId}`,
-    })),
-  ];
-  const visible = all.slice(0, 3);
-  const overflow = all.length - 3;
-  return (
-    <div className="flex items-center gap-0.5 flex-wrap mt-1">
-      {visible.map((e) =>
-        e.pending ? (
-          <span
-            key={e.key}
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ border: `1.5px solid #f59e0b`, background: "transparent" }}
-          />
-        ) : (
-          <span
-            key={e.key}
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ background: e.color }}
-          />
-        )
-      )}
-      {overflow > 0 && (
-        <span className="text-[10px] text-[#8b8fa3]">+{overflow}</span>
-      )}
-    </div>
-  );
-}
-
-// ── Progress bar ──────────────────────────────────────────────────────────────
-function ProgressBar({
-  progressPercent,
-  barRef,
-}: {
-  progressPercent: number | null;
-  barRef: (el: HTMLDivElement | null) => void;
-}) {
-  if (progressPercent === null || progressPercent >= 100) return null;
-  return (
-    <div className="mt-1.5 h-1 rounded-full bg-slate-700/60 overflow-hidden">
-      <div
-        ref={barRef}
-        className="h-full rounded-full"
-        style={{
-          width: `${Math.max(0, progressPercent)}%`,
-          background: "linear-gradient(90deg, #3b82f6, #10b981)",
-          transition: "width 1s linear",
-        }}
-      />
-    </div>
-  );
+/** Split a `notes` blob into bullet lines (handles newline + "• "/"- " prefixes). */
+function splitNotes(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/\r?\n|(?:^|\s)[•\-]\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 1);
 }
 
 // Per-renter weekly timeline (V1 parity — renter rows + day columns).
@@ -384,137 +382,226 @@ function RentalRowView({ row, dates }: { row: TimelineRow; dates: string[] }) {
 }
 
 // ── Single chip in the expanded drawer ───────────────────────────────────────
-function StripChip({
-  chip,
-  type,
-}: {
-  chip: ChipData;
-  type: "pickup" | "return";
-}) {
+// ── V1-style rich booking card ───────────────────────────────────────────────
+function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
-  const barRef = useRef<HTMLDivElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
-  // Store data attrs for live recompute
-  const startAttr = useRef<string>("");
-  const endAttr = useRef<string>("");
+  const kind = chip.kind ?? "pickup";
+  const isLeo = chip.accountSlug === "leo";
+  const isPickupDelivery = chip.pickupMethod === "delivery";
+  const isReturnDelivery = chip.returnMethod === "delivery";
 
-  // Live progress recompute — updates DOM directly, no Convex re-query
-  useEffect(() => {
-    if (chip.progressPercent === null || chip.progressPercent >= 100) return;
+  const badgeText =
+    kind === "pickup"
+      ? isPickupDelivery
+        ? "🚚 DELIVERY"
+        : "PICKUP"
+      : kind === "return"
+        ? isReturnDelivery
+          ? "🚚 DELIVERY"
+          : "RETURN"
+        : "AWAY";
+  const badgeStyle: React.CSSProperties =
+    kind === "pickup"
+      ? { background: "rgba(34,197,94,0.16)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
+      : kind === "return"
+        ? { background: "rgba(168,85,247,0.16)", color: "#c084fc", border: "1px solid rgba(168,85,247,0.3)" }
+        : { background: "rgba(107,114,128,0.16)", color: "#9ca3af", border: "1px solid rgba(107,114,128,0.3)" };
 
-    // We don't have ISO pickup_at / return_at strings from strip data,
-    // so we drive from progressPercent directly (already server-computed).
-    // If the parent recomputes via setInterval, the chip re-renders naturally
-    // via Convex subscription. For intra-render updates store a synthetic
-    // start/end based on date + time strings if available.
-    const el = barRef.current;
-    if (!el) return;
+  const items = chip.itemNames.filter(Boolean) as string[];
+  const range = fmtRange(chip.startDate, chip.endDate);
+  const pickupLabel = fmtTimeWithDate(chip.pickupTime, chip.startDate ?? null);
+  const returnLabel = fmtTimeWithDate(chip.returnTime, chip.endDate ?? null);
+  const progress = computeProgress(chip.startDate, chip.endDate, chip.pickupTime, chip.returnTime);
+  const noteLines = splitNotes(chip.notes);
 
-    const interval = setInterval(() => {
-      // Re-derive from data attrs set below
-      const startMs = Number(el.dataset.start);
-      const endMs = Number(el.dataset.end);
-      if (!startMs || !endMs) return;
-      const now = Date.now();
-      const pct = Math.min(100, Math.max(0, ((now - startMs) / (endMs - startMs)) * 100));
-      el.style.width = `${pct}%`;
-    }, 300_000);
+  // Collection / delivery tag
+  let collectionTag: { text: string; tone: "delivery" | "collection" } | null = null;
+  if (isPickupDelivery && isReturnDelivery) {
+    collectionTag = { text: "🚚 Delivery (both ways)", tone: "delivery" };
+  } else if (isPickupDelivery) {
+    collectionTag = { text: "🚚 Delivery: pickup", tone: "delivery" };
+  } else if (isReturnDelivery) {
+    collectionTag = { text: "🚚 Delivery: return", tone: "delivery" };
+  } else if (chip.pickupMethod === "collection" && chip.returnMethod === "collection") {
+    collectionTag = { text: "Collection (both ways)", tone: "collection" };
+  } else if (chip.pickupMethod === "collection") {
+    collectionTag = { text: "Pickup: collection", tone: "collection" };
+  } else if (chip.returnMethod === "collection") {
+    collectionTag = { text: "Return: collection", tone: "collection" };
+  }
 
-    return () => clearInterval(interval);
-  }, [chip.progressPercent]);
+  const progressColor =
+    progress.status === "completed" ? "#22c55e" : progress.status === "active" ? "#3b82f6" : "#6b7280";
 
-  // Set data attributes on the bar div for the interval handler
-  const setBarRef = (el: HTMLDivElement | null) => {
-    barRef.current = el;
-    if (el && chip.progressPercent !== null) {
-      // Synthetic epoch based on today + time strings
-      const today = new Date().toISOString().slice(0, 10);
-      const parseTime = (t: string | null, dateStr: string): number => {
-        if (!t) return 0;
-        const [h, m] = t.split(":").map(Number);
-        const d = new Date(`${dateStr}T00:00:00`);
-        d.setHours(h, m, 0, 0);
-        return d.getTime();
-      };
-      const startMs = parseTime(chip.pickupTime, today);
-      const endMs = parseTime(chip.returnTime, today);
-      if (startMs && endMs) {
-        el.dataset.start = String(startMs);
-        el.dataset.end = String(endMs);
-      }
-    }
-  };
-
-  const itemLabel = chip.itemNames.filter(Boolean).join(", ") || "—";
-  const isDelivery = chip.pickupMethod === "delivery" || chip.returnMethod === "delivery";
-  const showProgress =
-    chip.progressPercent !== null &&
-    chip.progressPercent >= 1 &&
-    chip.progressPercent <= 99 &&
-    chip.status === "DELIVERED";
+  const renterDisplay =
+    chip.renterName && chip.renterName !== "?"
+      ? chip.renterName
+      : chip.status === "pending_review" || chip.orderStep === "REQUEST" || chip.orderStep === "APPROVED"
+        ? "Pending"
+        : "?";
 
   return (
     <div
-      className="flex gap-2.5 p-2 rounded-lg"
+      className="flex gap-3 p-2.5 rounded-lg"
       style={{ background: "rgba(255,255,255,0.03)", borderLeft: `3px solid ${color}` }}
     >
       {/* Thumbnail */}
       <div
-        className="w-10 h-10 rounded-lg flex-shrink-0 overflow-hidden"
+        className="w-14 h-14 rounded-lg flex-shrink-0 overflow-hidden"
         style={{ background: "rgba(255,255,255,0.06)" }}
       >
         {chip.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={chip.imageUrl}
-            alt={itemLabel}
+            alt={items[0] ?? ""}
             className="w-full h-full object-cover"
+            loading="lazy"
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
         ) : (
           <div
-            className="w-full h-full flex items-center justify-center text-xs font-bold"
+            className="w-full h-full flex items-center justify-center text-base font-bold"
             style={{ color, background: `${color}22` }}
           >
-            {chip.renterName?.[0]?.toUpperCase() ?? "?"}
+            {renterDisplay[0]?.toUpperCase() ?? "?"}
           </div>
         )}
       </div>
 
       {/* Body */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          {/* Account dot */}
+        {/* Top row: badge | account chip | renter | £ */}
+        <div className="flex items-center gap-2 flex-wrap">
           <span
-            className="inline-block w-2 h-2 rounded-full flex-shrink-0"
-            style={{ background: color }}
-          />
-          <span className="text-sm font-medium text-[#e4e6eb] truncate">
-            {chip.renterName && chip.renterName !== "?"
-              ? chip.renterName
-              : chip.status === "pending_review" || chip.status === "REQUEST" || chip.status === "APPROVED"
-                ? "Pending"
-                : chip.accountSlug
-                  ? `${chip.accountSlug} · ${chip.itemNames.filter(Boolean)[0] ?? "—"}`
-                  : "?"}
+            className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={badgeStyle}
+          >
+            {badgeText}
           </span>
-          {isDelivery && (
-            <span className="text-xs ml-auto flex-shrink-0" title="Delivery">🚚</span>
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+            style={{
+              background: isLeo ? "rgba(168,85,247,0.18)" : "rgba(110,168,254,0.18)",
+              color: isLeo ? "#c084fc" : "#6ea8fe",
+            }}
+          >
+            {isLeo ? "Leo" : "DB"}
+          </span>
+          <span className="text-sm font-semibold text-[#e4e6eb] truncate">{renterDisplay}</span>
+          {chip.grossPaidGbp != null && (
+            <span className="ml-auto text-sm font-bold" style={{ color: "#22c55e" }}>
+              {fmtGbp(chip.grossPaidGbp)}
+            </span>
           )}
         </div>
 
-        <div className="text-xs text-[#8b8fa3] truncate mb-0.5">{itemLabel}</div>
-
-        <div className="flex gap-2 text-xs text-[#8b8fa3]">
-          {chip.pickupTime && (
-            <span>🕐 Pickup {chip.pickupTime}</span>
+        {/* Meta row: range + pickup/return inline + collection tag */}
+        <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-[#8b8fa3]">
+          {range && <span>{range}</span>}
+          {(chip.pickupTime || chip.returnTime || chip.startDate || chip.endDate) && (
+            <>
+              <span className="text-[#3a3d4a]">·</span>
+              <span>
+                <span className="text-[#6b6f80] uppercase tracking-wider mr-1">pickup</span>
+                <span className="text-[#c9cdd5] font-medium">{pickupLabel}</span>
+              </span>
+              <span className="text-[#3a3d4a]">|</span>
+              <span>
+                <span className="text-[#6b6f80] uppercase tracking-wider mr-1">return</span>
+                <span className="text-[#c9cdd5] font-medium">{returnLabel}</span>
+              </span>
+            </>
           )}
-          {chip.returnTime && (
-            <span>🕐 Return {chip.returnTime}</span>
+          {collectionTag && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full"
+              style={
+                collectionTag.tone === "delivery"
+                  ? { background: "rgba(245,158,11,0.12)", color: "#fbbf24" }
+                  : { background: "rgba(255,255,255,0.06)", color: "#9ca3af" }
+              }
+            >
+              {collectionTag.text}
+            </span>
           )}
         </div>
 
-        {showProgress && (
-          <ProgressBar progressPercent={chip.progressPercent!} barRef={setBarRef} />
+        {/* Item dropdown */}
+        {items.length > 0 && (
+          <div className="mt-1.5">
+            {items.length === 1 ? (
+              <span
+                className="inline-block text-[11px] px-2 py-1 rounded"
+                style={{ background: "rgba(255,255,255,0.05)", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                {items[0]}
+              </span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setExpanded((x) => !x)}
+                  className="text-[11px] px-2 py-1 rounded flex items-center gap-1.5 transition-colors"
+                  style={{ background: "rgba(255,255,255,0.05)", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <span>{items[0]}</span>
+                  <span className="text-[#8b8fa3]">+{items.length - 1}</span>
+                  <span className="text-[#8b8fa3]">{expanded ? "▴" : "▾"}</span>
+                </button>
+                {expanded && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {items.slice(1).map((name, i) => (
+                      <span
+                        key={i}
+                        className="inline-block text-[11px] px-2 py-1 rounded"
+                        style={{ background: "rgba(255,255,255,0.04)", color: "#c9cdd5", border: "1px solid rgba(255,255,255,0.06)" }}
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Progress bar with label */}
+        {progress.label && (
+          <div className="mt-2">
+            <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${progress.pct}%`,
+                  background: progressColor,
+                  transition: "width 1s linear",
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between mt-1 text-[10px]">
+              <span style={{ color: progressColor }}>{progress.label}</span>
+              <span className="text-[#6b6f80]">{progress.pct}%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Notes */}
+        {noteLines.length > 0 && (
+          <div
+            className="mt-2 rounded-md px-2.5 py-1.5"
+            style={{ background: "rgba(110,168,254,0.06)", borderLeft: "2px solid #6ea8fe" }}
+          >
+            <div className="text-[10px] font-semibold text-[#6ea8fe] mb-0.5">📋 Notes</div>
+            {noteLines.map((n, i) => (
+              <div key={i} className="text-[11px] text-[#c9cdd5] leading-relaxed">
+                • {n}
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -533,7 +620,16 @@ function DayCard({
   isExpanded: boolean;
   onClick: () => void;
 }) {
-  const totalEvents = day.pickups.length + day.returns.length + day.holds.length;
+  const away = day.away ?? [];
+  const totalEvents = day.pickups.length + day.returns.length + away.length + day.holds.length;
+  const { wd, num } = dayLabelSplit(day.date);
+
+  // Per-card color dots: green = pickup, red = return, blue = away (matches v1 screenshot).
+  const dots: string[] = [];
+  if (day.pickups.length > 0) dots.push("#22c55e");
+  if (day.returns.length > 0) dots.push("#ef4444");
+  if (away.length > 0) dots.push("#3b82f6");
+  if (day.holds.length > 0) dots.push("#f59e0b");
 
   return (
     <button
@@ -556,63 +652,48 @@ function DayCard({
             ? "rgba(59,130,246,0.05)"
             : "rgba(14,17,28,0.35)",
         transform: isExpanded ? "scale(1.02)" : "scale(1)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "flex-start",
       }}
     >
-      {/* Date + Today pill */}
-      <div className="flex items-center gap-1.5 mb-1">
+      {/* Weekday (small, uppercase, muted) */}
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#8b8fa3]">
+        {wd}
+      </div>
+      {/* Date number — large */}
+      <div
+        className="text-2xl font-bold mt-0.5"
+        style={{ color: isToday ? "#3b82f6" : "#e4e6eb" }}
+      >
+        {num}
+      </div>
+      {isToday && (
         <span
-          className="text-xs font-semibold"
-          style={{ color: isToday ? "#3b82f6" : "#e4e6eb" }}
+          className="text-[9px] font-bold px-1.5 py-0.5 rounded-full mt-0.5"
+          style={{ background: "rgba(59,130,246,0.2)", color: "#3b82f6" }}
         >
-          {dayLabel(day.date)}
+          Today
         </span>
-        {isToday && (
-          <span
-            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
-            style={{ background: "rgba(59,130,246,0.2)", color: "#3b82f6" }}
-          >
-            Today
-          </span>
-        )}
-      </div>
+      )}
 
-      {/* Availability dot */}
-      <div className="mb-1">
-        <AvailDot pickups={day.pickups} returns={day.returns} holds={day.holds} />
-      </div>
+      {/* Color dots row */}
+      {dots.length > 0 && (
+        <div className="flex items-center gap-1 mt-2">
+          {dots.map((c, i) => (
+            <span
+              key={i}
+              className="inline-block w-2 h-2 rounded-full"
+              style={{ background: c }}
+            />
+          ))}
+        </div>
+      )}
 
-      {/* Mini event dots */}
-      <EventDots pickups={day.pickups} returns={day.returns} holds={day.holds} />
-
-      {/* Bottom: pickup/return count badges */}
-      <div className="flex gap-1 mt-auto pt-2 flex-wrap">
-        {day.pickups.length > 0 && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
-          >
-            ↑{day.pickups.length}
-          </span>
-        )}
-        {day.returns.length > 0 && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6" }}
-          >
-            ↓{day.returns.length}
-          </span>
-        )}
-        {day.holds.length > 0 && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
-          >
-            ●{day.holds.length}
-          </span>
-        )}
-        {totalEvents === 0 && (
-          <span className="text-[10px] text-[#8b8fa3]">—</span>
-        )}
+      {/* Count number below dots */}
+      <div className="mt-auto pt-2 text-[11px] text-[#8b8fa3] font-medium">
+        {totalEvents > 0 ? totalEvents : "—"}
       </div>
     </button>
   );
@@ -620,46 +701,50 @@ function DayCard({
 
 // ── Expanded drawer for a day ─────────────────────────────────────────────────
 function DayDrawer({ day }: { day: DayData }) {
-  const hasAny = day.pickups.length + day.returns.length + day.holds.length > 0;
+  const away = day.away ?? [];
+  const allBookings: ChipData[] = [...day.pickups, ...day.returns, ...away];
+  const bookingCount = allBookings.length;
+  const totalGross = allBookings.reduce((sum, b) => sum + (b.grossPaidGbp ?? 0), 0);
+  const hasAny = bookingCount + day.holds.length > 0;
+
   return (
     <div
-      className="w-full rounded-xl p-3 space-y-2"
+      className="w-full rounded-xl p-3 space-y-3"
       style={{
         background: "rgba(14,17,28,0.6)",
         border: "1px solid rgba(255,255,255,0.08)",
         backdropFilter: "blur(12px)",
       }}
     >
+      {/* Header: "Wednesday, 13 May — 5 bookings" */}
+      <div
+        className="flex items-baseline justify-between pb-2"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <span className="text-sm font-semibold text-[#e4e6eb]">
+          {fmtFullDate(day.date)}
+          {bookingCount > 0 && (
+            <span className="text-[#8b8fa3] font-normal">
+              {" "}— {bookingCount} booking{bookingCount === 1 ? "" : "s"}
+            </span>
+          )}
+        </span>
+      </div>
+
       {!hasAny && (
         <p className="text-xs text-[#8b8fa3] text-center py-2">No events this day</p>
       )}
 
-      {day.pickups.length > 0 && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-[#8b8fa3] mb-1.5 font-semibold">
-            Pickups ({day.pickups.length})
-          </div>
-          <div className="space-y-1.5">
-            {day.pickups.map((p) => (
-              <StripChip key={String(p.reservationId)} chip={p} type="pickup" />
-            ))}
-          </div>
+      {/* All bookings (pickups + returns + away) rendered uniformly */}
+      {allBookings.length > 0 && (
+        <div className="space-y-2">
+          {allBookings.map((b) => (
+            <BookingCard key={`${b.kind}-${String(b.reservationId)}`} chip={b} />
+          ))}
         </div>
       )}
 
-      {day.returns.length > 0 && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-[#8b8fa3] mb-1.5 font-semibold">
-            Returns ({day.returns.length})
-          </div>
-          <div className="space-y-1.5">
-            {day.returns.map((r) => (
-              <StripChip key={String(r.reservationId)} chip={r} type="return" />
-            ))}
-          </div>
-        </div>
-      )}
-
+      {/* Holds */}
       {day.holds.length > 0 && (
         <div>
           <div
@@ -687,6 +772,27 @@ function DayDrawer({ day }: { day: DayData }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Day summary footer */}
+      {bookingCount > 0 && (
+        <div
+          className="flex items-center gap-3 text-[11px] text-[#8b8fa3] pt-2"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          {day.pickups.length > 0 && (
+            <span>{day.pickups.length} pickup{day.pickups.length === 1 ? "" : "s"}</span>
+          )}
+          {day.returns.length > 0 && (
+            <span>{day.returns.length} return{day.returns.length === 1 ? "" : "s"}</span>
+          )}
+          {away.length > 0 && <span>{away.length} away</span>}
+          {totalGross > 0 && (
+            <span className="ml-auto font-bold" style={{ color: "#22c55e" }}>
+              {fmtGbp(totalGross)}
+            </span>
+          )}
         </div>
       )}
     </div>
