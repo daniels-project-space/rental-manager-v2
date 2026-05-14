@@ -875,7 +875,25 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
 
-  // ── Listing resolution cache (Hygglo title → resolved/expanded items) ────
+  // ── Listing manual overrides — highest-priority tier ────────
+  // Hand-curated mappings for the 1-2% of listings that consistently fool
+  // both the LLM and vision pass. Keyed by title_hash so any title edit
+  // automatically invalidates and falls back to LLM resolution.
+  listing_overrides: defineTable({
+    title_hash: v.string(),
+    sample_title: v.string(),
+    items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+    })),
+    note: v.optional(v.string()),
+    set_by: v.optional(v.string()),
+    set_at: v.number(),
+  })
+    .index("by_title_hash", ["title_hash"]),
+
+    // ── Listing resolution cache (Hygglo title → resolved/expanded items) ────
   //  Keyed by hash of titles so the LLM resolver short-circuits on identical
   //  Hygglo listings the user has already paid to resolve.
   listing_resolutions: defineTable({

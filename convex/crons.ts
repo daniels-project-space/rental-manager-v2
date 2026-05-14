@@ -127,4 +127,15 @@ crons.interval(
   { limit: 5 },
 );
 
+
+// ── Account profile-image sync — weekly. Re-scrapes each account's
+// Hygglo profile photo from a sample order detail. Right now we
+// hand-seeded once; this catches Daniel changing his avatar over time.
+crons.weekly(
+  "account profile image sync",
+  { dayOfWeek: "monday", hourUTC: 4, minuteUTC: 0 },
+  internal.sync_account_profiles.syncAccountProfiles,
+  {},
+);
+
 export default crons;

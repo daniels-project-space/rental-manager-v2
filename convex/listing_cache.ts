@@ -15,7 +15,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation } from "./_generated/server";
+import { internalQuery, internalMutation, mutation } from "./_generated/server";
 
 /** Stable hash for a sorted, normalised list of item-name strings.
  *  Convex actions+queries+mutations all need the same fn — kept inline so
@@ -265,5 +265,84 @@ export const backfillFromReservations = internalMutation({
       wrote++;
     }
     return { total: all.length, unique_listings: seen.size, wrote };
+  },
+});
+
+
+// ── Manual overrides — highest-priority tier ─────────────────────────
+
+export const lookupOverride = internalQuery({
+  args: { title_hash: v.string() },
+  handler: async (ctx, { title_hash }) => {
+    const row = await ctx.db
+      .query("listing_overrides")
+      .withIndex("by_title_hash", (q) => q.eq("title_hash", title_hash))
+      .first();
+    if (!row) return null;
+    return {
+      title_hash: row.title_hash,
+      items: row.items,
+      note: row.note,
+    };
+  },
+});
+
+/** Owner-facing mutation: set an override for a Hygglo listing.
+ *  Pass the items[] from a sample reservation (so the hash matches what
+ *  the resolver computes) and the canonical items the listing actually
+ *  contains. */
+export const setListingOverride = mutation({
+  args: {
+    title_hash: v.string(),
+    sample_title: v.string(),
+    items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+    })),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("listing_overrides")
+      .withIndex("by_title_hash", (q) => q.eq("title_hash", args.title_hash))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        sample_title: args.sample_title,
+        items: args.items,
+        note: args.note,
+        set_at: Date.now(),
+      });
+      return { action: "updated" as const, id: existing._id };
+    }
+    const id = await ctx.db.insert("listing_overrides", {
+      title_hash: args.title_hash,
+      sample_title: args.sample_title,
+      items: args.items,
+      note: args.note,
+      set_at: Date.now(),
+    });
+    return { action: "inserted" as const, id };
+  },
+});
+
+export const removeListingOverride = mutation({
+  args: { title_hash: v.string() },
+  handler: async (ctx, { title_hash }) => {
+    const existing = await ctx.db
+      .query("listing_overrides")
+      .withIndex("by_title_hash", (q) => q.eq("title_hash", title_hash))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
+    return { ok: true };
+  },
+});
+
+/** Helper for an admin UI: compute a title_hash from raw items input. */
+export const computeTitleHash = mutation({
+  args: { items: v.array(v.object({ item_name: v.string() })) },
+  handler: async (_ctx, { items }) => {
+    return { title_hash: titleHash(items) };
   },
 });

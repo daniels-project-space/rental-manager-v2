@@ -76,6 +76,45 @@ interface InventoryItem {
   notes?: string;
 }
 
+
+/** Lightweight title-to-categories classifier. We don't need accuracy — any
+ *  hit pulls items of that kind into the LLM prompt. Falls back to all items
+ *  when no keywords match. Items with kind in the matched-or-broad set are
+ *  always included. */
+function classifyCategories(title: string): Set<string> {
+  const lc = title.toLowerCase();
+  const out = new Set<string>();
+  const map: Record<string, RegExp> = {
+    camera: /(camera|body|mirrorless|cine\s*camera|fx3|fx6|fx30|a7|a7s|a7\s*iii|a7\s*iv|a7\s*v|bmpcc|c70|c200|c300|c500|gh5|gh6|mavic|drone)/,
+    lens: /(lens|lenses|mm|gmaster|g\s*master|gm|prime|zoom|anamorphic|wide|tele|fisheye|cine\s*lens|24-70|16-35|70-200|28-70|90mm|24mm|35mm|50mm|85mm)/,
+    audio: /(mic|microphone|audio|recorder|zoom\s*h|sennheiser|rode|lav|wireless\s*mic|boom|shotgun|tascam|dji\s*wireless|dji\s*mic)/,
+    lighting: /(light|lights|led|panel|softbox|forza|pavotube|aputure|nanlite|godox|c-stand|cstand|flag|silk|reflector|rgb\s*panel|rgb\s*led)/,
+    grip: /(tripod|stand|c-stand|cstand|monopod|gimbal|stabili[sz]er|slider|dolly|rig|cage|smallrig|tilta|rs2|rs3|rs\s*pro|crane|weeble|weebill)/,
+    audio_dj: /(dj|deck|controller|pioneer|rekordbox|serato|cdj|mixer|turntable|partybox|jbl|mackie|speaker|pa)/,
+    power: /(battery|batteries|v-mount|vmount|npf|np-f|np\s*f|power\s*station|jackery|ecoflow|anker|f2000)/,
+    monitor: /(monitor|atomos|ninja|small\s*hd|prores\s*recorder|recorder|hdmi|sdi\s*monitor)/,
+    transmission: /(transmit|transmitter|teradek|hollyland|mars|pyro|wireless\s*video|live\s*stream)/,
+    storage: /(card|cf\s*express|cfast|sd\s*card|ssd|tb\s*ssd|drive|samsung\s*t7|t9)/,
+    effects: /(smoke|fog|haze|smoke\s*ninja|smoke\s*machine|atmosphere|vfx)/,
+    projector: /(projector|viewsonic\s*projector|hdmi\s*projector|4k\s*projector)/,
+  };
+  for (const [cat, re] of Object.entries(map)) {
+    if (re.test(lc)) out.add(cat);
+  }
+  return out;
+}
+
+/** Return inventory subset relevant to the title. Falls back to the full
+ *  list when classifier finds no hits (safer than missing items). */
+function filterInventoryByCategory<T extends { kind?: string }>(inventory: T[], title: string): T[] {
+  const cats = classifyCategories(title);
+  if (cats.size === 0) return inventory; // no signal — send everything
+  // Always include items with no kind set (defensive — newer entries may lack it).
+  const filtered = inventory.filter((i) => !i.kind || cats.has(i.kind));
+  // If filtering drops too aggressively (< 8 items), revert to full list.
+  return filtered.length >= 8 ? filtered : inventory;
+}
+
 function modelPrompt(): string {
   return `You are a precise camera/photo equipment cataloguer for a film-rental business.
 
@@ -149,11 +188,63 @@ export const resolveReservation = action({
       return { ok: true, skipped: "fresh" };
     }
 
+    const tHash = titleHash(items);
+
+    // ── Manual override (highest-priority tier) ────────────────────
+    // If the owner has manually mapped this listing to a specific items
+    // list, use it verbatim. No cache check, no LLM call, no vision pass.
+    const override = await ctx.runQuery(internal.listing_cache.lookupOverride, {
+      title_hash: tHash,
+    });
+    if (override) {
+      // Owner-supplied override does not carry a confidence — set to 1.0.
+      const overrideResolved = override.items.map((x) => ({
+        item_id: x.item_id,
+        item_name_canonical: x.item_name_canonical,
+        confidence: 1.0,
+        qty: x.qty,
+      }));
+      // Expand bundles from override too.
+      const bundlesData = await ctx.runQuery(internal.item_resolver_queries.getBundlesWithItems, {});
+      type ExpandedItem = { item_id: string; item_name_canonical: string; qty: number; via_bundle?: string };
+      const expandedOverride: ExpandedItem[] = [];
+      const addOv = (id: string, name: string, qty: number, viaBundle?: string) => {
+        const ex = expandedOverride.find((e) => e.item_id === id);
+        if (ex) ex.qty += qty;
+        else expandedOverride.push({ item_id: id, item_name_canonical: name, qty, via_bundle: viaBundle });
+      };
+      for (const r of overrideResolved) {
+        const bundleHit = bundlesData.find(
+          (b: { bundle_name: string; bundle_id: string; items: Array<{ item_id?: string; item_name_canonical: string; qty: number }> }) =>
+            b.bundle_name === r.item_name_canonical,
+        );
+        if (bundleHit) {
+          for (const bi of bundleHit.items) {
+            if (!bi.item_id) continue;
+            addOv(bi.item_id, bi.item_name_canonical, bi.qty * r.qty, bundleHit.bundle_id);
+          }
+        } else {
+          addOv(r.item_id, r.item_name_canonical, r.qty);
+        }
+      }
+      await ctx.runMutation(internal.item_resolver_queries.setResolution, {
+        reservation_id,
+        resolved_items: overrideResolved as unknown as Array<{
+          item_id: never; item_name_canonical: string; confidence: number; qty: number;
+        }>,
+        expanded_items: expandedOverride as unknown as Array<{
+          item_id: never; item_name_canonical: string; qty: number; via_bundle?: never;
+        }>,
+        method: "manual",
+        input_hash: newHash,
+      });
+      return { ok: true, resolved: overrideResolved.length, skipped: "override" };
+    }
+
     // ── Listing-resolution cache ───────────────────────────────────
     // Same items[] → same Hygglo listing → reuse a previous resolution
     // without paying for another LLM call. The hash is title-only, so
     // any title-edit by the owner naturally invalidates.
-    const tHash = titleHash(items);
     const cached = await ctx.runQuery(internal.listing_cache.lookupByHash, { title_hash: tHash });
     if (cached) {
       await ctx.runMutation(internal.item_resolver_queries.setResolution, {
@@ -187,7 +278,7 @@ export const resolveReservation = action({
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
-          { role: "user", content: buildUserMessage(combinedTitle, inventory) },
+          { role: "user", content: buildUserMessage(combinedTitle, filterInventoryByCategory(inventory, combinedTitle)) },
         ],
       });
       // Validate item_ids against the inventory we sent (defensive — model can hallucinate)
