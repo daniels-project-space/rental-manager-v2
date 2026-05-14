@@ -1,5 +1,5 @@
 "use client";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
@@ -267,6 +267,189 @@ function MethodPill({
   );
 }
 
+// ── Live tick — forces re-render every `ms` while `active` is true. ─────────
+//  Used by the progress timeline so the now-marker creeps without needing a
+//  Convex re-fetch. Idle-rental cards never start the interval.
+function useTick(ms: number, active: boolean) {
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setNow((x) => x + 1), ms);
+    return () => clearInterval(id);
+  }, [active, ms]);
+}
+
+// ── Time formatting helpers used by the timeline ────────────────────────────
+function fmt12Short(time: string | null): string {
+  if (!time) return "TBD";
+  const m = time.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return time;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${min}${ampm}`;
+}
+function dayShort(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso + "T00:00:00").toLocaleString("en", { day: "numeric", month: "short" });
+}
+
+// ── Progress timeline ──────────────────────────────────────────────────────
+//  Replaces the flat 1-px bar with a richer ticker:
+//   ┌─────────────────────────────────────────────────────┐
+//   │ ▶ 11:00AM · 11 May          10:00AM · 13 May ◀     │
+//   │ ════════════●─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─│
+//   │ ● 1d 14h remaining                            45%   │
+//   └─────────────────────────────────────────────────────┘
+function ProgressTimeline({
+  chip,
+  progress,
+}: {
+  chip: ChipData;
+  progress: { pct: number; label: string; status: "upcoming" | "active" | "completed" };
+}) {
+  // Re-render once a minute while active so the marker moves.
+  useTick(60_000, progress.status === "active");
+
+  const isActive = progress.status === "active";
+  const isCompleted = progress.status === "completed";
+  const isUpcoming = progress.status === "upcoming";
+
+  const fillGradient = isCompleted
+    ? "linear-gradient(90deg, #16a34a 0%, #22c55e 100%)"
+    : isActive
+      ? "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)"
+      : "linear-gradient(90deg, rgba(107,114,128,0.4), rgba(107,114,128,0.4))";
+
+  const fillShadow = isActive
+    ? "0 0 10px rgba(59,130,246,0.55), inset 0 0 6px rgba(255,255,255,0.18)"
+    : isCompleted
+      ? "0 0 8px rgba(34,197,94,0.4)"
+      : "none";
+
+  const labelColor = isCompleted ? "#22c55e" : isActive ? "#60a5fa" : "#9ca3af";
+  const labelIcon = isCompleted ? "✓" : isActive ? "●" : "○";
+
+  return (
+    <div className="mt-2.5">
+      {/* Top: pickup ─── return endpoints */}
+      <div className="flex items-baseline justify-between text-[9px] font-medium uppercase tracking-wider mb-1.5">
+        <span className="text-emerald-300/90 flex items-center gap-1">
+          <span className="text-emerald-400">▶</span>
+          <span className="font-mono text-emerald-200">{fmt12Short(chip.pickupTime)}</span>
+          <span className="text-[#6b6f80]">·</span>
+          <span className="text-[#9ca3af]">{dayShort(chip.startDate)}</span>
+        </span>
+        <span className="text-violet-300/90 flex items-center gap-1">
+          <span className="text-[#9ca3af]">{dayShort(chip.endDate)}</span>
+          <span className="text-[#6b6f80]">·</span>
+          <span className="font-mono text-violet-200">{fmt12Short(chip.returnTime)}</span>
+          <span className="text-violet-400">◀</span>
+        </span>
+      </div>
+
+      {/* Bar + now marker */}
+      <div
+        className="relative h-2 rounded-full"
+        style={{
+          background: "rgba(255,255,255,0.06)",
+          boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)",
+        }}
+      >
+        {/* Filled portion */}
+        <div
+          className="absolute inset-y-0 left-0 rounded-full"
+          style={{
+            width: `${progress.pct}%`,
+            background: fillGradient,
+            boxShadow: fillShadow,
+            transition: "width 800ms cubic-bezier(0.16, 1, 0.3, 1)",
+          }}
+        />
+        {/* Shimmer overlay for active rentals */}
+        {isActive && (
+          <div
+            className="absolute inset-y-0 left-0 rounded-full pointer-events-none"
+            style={{
+              width: `${progress.pct}%`,
+              background:
+                "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 50%, transparent 100%)",
+              backgroundSize: "200% 100%",
+              animation: "rental-shimmer 2.2s linear infinite",
+              mixBlendMode: "overlay",
+            }}
+          />
+        )}
+        {/* Now marker — sits on top of bar at progress.pct */}
+        {isActive && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
+            style={{
+              left: `${progress.pct}%`,
+              width: 14,
+              height: 14,
+              transition: "left 800ms cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+          >
+            <div
+              className="w-full h-full rounded-full"
+              style={{
+                background: "#fff",
+                border: "2px solid #3b82f6",
+                boxShadow:
+                  "0 0 0 3px rgba(59,130,246,0.25), 0 0 12px rgba(59,130,246,0.7), 0 0 22px rgba(59,130,246,0.45)",
+                animation: "rental-now-pulse 1.6s ease-in-out infinite",
+              }}
+            />
+          </div>
+        )}
+        {/* Completed checkmark at right edge */}
+        {isCompleted && (
+          <div
+            className="absolute top-1/2 right-0 -translate-y-1/2 translate-x-1/3 flex items-center justify-center"
+            style={{ width: 18, height: 18 }}
+          >
+            <div
+              className="rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+              style={{
+                width: 18,
+                height: 18,
+                background: "linear-gradient(135deg, #22c55e, #16a34a)",
+                boxShadow: "0 0 0 2px rgba(34,197,94,0.25), 0 2px 6px rgba(34,197,94,0.4)",
+              }}
+            >
+              ✓
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom: status + percent */}
+      <div className="flex items-center justify-between mt-1.5 text-[10px]">
+        <span
+          className="font-medium flex items-center gap-1"
+          style={{ color: labelColor }}
+        >
+          <span className={isActive ? "animate-pulse" : ""}>{labelIcon}</span>
+          {progress.label}
+          {isUpcoming && chip.pickupTime && (
+            <span className="text-[#6b6f80] ml-1">
+              · pickup {fmt12Short(chip.pickupTime)}
+            </span>
+          )}
+        </span>
+        <span
+          className="font-mono text-[#6b6f80]"
+          style={{ letterSpacing: "0.5px" }}
+        >
+          {progress.pct.toString().padStart(2, "0")}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── V1-style rich booking card ───────────────────────────────────────────────
 function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
@@ -304,9 +487,6 @@ function BookingCard({ chip }: { chip: ChipData }) {
   const noteLines = splitNotes(chip.notes);
 
   // (Method pills rendered inline as <MethodPill /> per direction below.)
-
-  const progressColor =
-    progress.status === "completed" ? "#22c55e" : progress.status === "active" ? "#3b82f6" : "#6b7280";
 
   const renterDisplay =
     chip.renterName && chip.renterName !== "?"
@@ -440,25 +620,8 @@ function BookingCard({ chip }: { chip: ChipData }) {
           </div>
         )}
 
-        {/* Progress bar with label */}
-        {progress.label && (
-          <div className="mt-2">
-            <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${progress.pct}%`,
-                  background: progressColor,
-                  transition: "width 1s linear",
-                }}
-              />
-            </div>
-            <div className="flex items-center justify-between mt-1 text-[10px]">
-              <span style={{ color: progressColor }}>{progress.label}</span>
-              <span className="text-[#6b6f80]">{progress.pct}%</span>
-            </div>
-          </div>
-        )}
+        {/* Progress timeline — synced to actual pickup/return times, live ticks */}
+        {progress.label && <ProgressTimeline chip={chip} progress={progress} />}
 
         {/* Notes */}
         {noteLines.length > 0 && (

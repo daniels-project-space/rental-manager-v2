@@ -266,3 +266,29 @@
   cursor: zoom-in;
   border-radius: 12px;
 }
+
+/* ── Rental progress timeline animations ────────────────────────────────────
+ *  Used by CalendarStrip ProgressTimeline. The shimmer drifts diagonally
+ *  across the filled portion; the now-marker breathes to highlight its
+ *  position. Both are subtle — the goal is "alive" not "noisy". */
+@keyframes rental-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes rental-now-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 3px rgba(59,130,246,0.25),
+      0 0 12px rgba(59,130,246,0.7),
+      0 0 22px rgba(59,130,246,0.45);
+  }
+  50% {
+    transform: scale(1.18);
+    box-shadow:
+      0 0 0 5px rgba(59,130,246,0.18),
+      0 0 18px rgba(59,130,246,0.9),
+      0 0 32px rgba(59,130,246,0.55);
+  }
+}
