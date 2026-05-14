@@ -333,13 +333,18 @@ export const getLifetimeByMonth = query({
       ? allReservations.filter((r) => r.account_slug === accountSlug)
       : allReservations;
 
-    // Insurance claims grouped by month
+    // Insurance claims — only those EXPLICITLY credited to a month by the
+    // owner (stage='added_to_revenue') contribute to the lifetime chart.
+    // payout_amount_gbp is the recovered figure (may differ from amount_gbp).
+    // Source: pipeline in InsuranceClaimsDrawer.tsx → creditToRevenue mutation.
     const allClaims = await ctx.db.query("insurance_claims").collect();
     const claimsByMonth = new Map<string, number>();
     for (const c of allClaims) {
       if (accountSlug && c.account_slug !== accountSlug) continue;
-      const m = c.claim_date.slice(0, 7);
-      claimsByMonth.set(m, r2((claimsByMonth.get(m) ?? 0) + c.amount_gbp));
+      const credited = (c as any).credited_to_month as string | undefined;
+      const payout   = (c as any).payout_amount_gbp as number | undefined;
+      if (!credited || !payout) continue;
+      claimsByMonth.set(credited, r2((claimsByMonth.get(credited) ?? 0) + payout));
     }
 
     // Historical damage costs — overlay onto claimsByMonth if no tracked claim exists.
