@@ -367,6 +367,68 @@ export const getHoldsCount = query({
   },
 });
 
+/**
+ * Reservation detail — used by the click-to-expand modal in both
+ * CalendarStrip and WeeklyCalendar widgets. Returns everything needed
+ * to render the per-item dropdown (each item with its own image), pickup
+ * and return times + methods, notes, earnings, and renter name.
+ */
+export const getReservationDetail = query({
+  args: { reservationId: v.id("reservations") },
+  handler: async (ctx, { reservationId }) => {
+    const r = await ctx.db.get(reservationId);
+    if (!r) return null;
+
+    let renterName: string | null = null;
+    const rAny = r as {
+      renter_name?: string | null;
+      renter_id?: string | null;
+      pickup_time?: string | null;
+      return_time?: string | null;
+      pickup_method?: string | null;
+      return_method?: string | null;
+      notes?: string | null;
+      gross_paid_gbp?: number | null;
+      net_to_owner_gbp?: number | null;
+    };
+    if (rAny.renter_name) {
+      renterName = rAny.renter_name;
+    } else if (rAny.renter_id) {
+      const renter = await ctx.db.get(rAny.renter_id as Id<"renters">);
+      renterName = renter?.display_name ?? null;
+    }
+
+    const allItems = await ctx.db.query("items").collect();
+
+    const items = (r.items ?? []).map((i) => {
+      const matched = findItemByName(allItems, i.item_name);
+      return {
+        name: i.item_name,
+        imageUrl: matched?.image_url ?? null,
+        qty: i.qty ?? 1,
+      };
+    });
+
+    return {
+      reservationId: r._id,
+      accountSlug: r.account_slug,
+      status: r.status,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      renterName: renterName ?? "?",
+      pickupTime: rAny.pickup_time ?? null,
+      returnTime: rAny.return_time ?? null,
+      pickupMethod: rAny.pickup_method ?? null,
+      returnMethod: rAny.return_method ?? null,
+      notes: rAny.notes ?? null,
+      grossPaidGbp: rAny.gross_paid_gbp ?? null,
+      netToOwnerGbp: rAny.net_to_owner_gbp ?? null,
+      itemNames: items.map((i) => i.name),
+      items,
+    };
+  },
+});
+
 export const getWeeklyCalendar = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),

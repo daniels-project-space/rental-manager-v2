@@ -442,13 +442,35 @@ export default defineSchema({
     account_id: v.optional(v.id("accounts")),
     item_id: v.optional(v.id("items")),
     item_name_canonical: v.optional(v.string()),
-    amount_gbp: v.number(),
+    amount_gbp: v.number(),            // claimed value (loss estimate)
     claim_date: v.string(),            // ISO YYYY-MM-DD
     description: v.optional(v.string()),
+    // High-level status kept for backward compat. Stage is the new source of truth.
     status: v.string(),                // "open" | "settled" | "denied"
+    /** Pipeline stage — workflow position for this claim. */
+    stage: v.optional(v.union(
+      v.literal("case_opened"),
+      v.literal("in_for_repair"),
+      v.literal("quote_received"),
+      v.literal("payout_confirmation"),
+      v.literal("added_to_revenue"),
+      v.literal("denied"),            // terminal, mirrors status="denied"
+    )),
+    /** Append-only audit trail of stage transitions. */
+    stage_history: v.optional(v.array(v.object({
+      stage: v.string(),
+      at: v.number(),
+    }))),
+    /** What was actually paid (may differ from amount_gbp). Set at payout_confirmation. */
+    payout_amount_gbp: v.optional(v.number()),
+    /** Once credited, the YYYY-MM bucket on the lifetime chart that received the payout. */
+    credited_to_month: v.optional(v.string()),
+    /** Unix ms timestamp when the credit landed. */
+    credited_at: v.optional(v.number()),
     created_at: v.number(),
   }).index("by_account", ["account_slug"])
-    .index("by_claim_date", ["claim_date"]),
+    .index("by_claim_date", ["claim_date"])
+    .index("by_credited_month", ["credited_to_month"]),
 
   // ── Competitor listings (informational, optional) ───────────
   competitor_listings: defineTable({
