@@ -172,6 +172,46 @@ export const patchDanielVertusMonth = mutation({
   },
 });
 
+/**
+ * Patch ONLY { total_revenue_gbp, damage_costs_gbp, total_overall_made_gbp } on an existing row.
+ * Used to reseed Daniel's exact ground-truth monthly totals without touching
+ * dbcinema/leo/daniel/vertus per-account splits or business_expenses_gbp.
+ * If the row doesn't exist, inserts a minimal row with zeros for unset fields.
+ */
+export const patchOverallMonth = mutation({
+  args: {
+    month: v.string(),
+    total_revenue_gbp: v.number(),
+    damage_costs_gbp: v.number(),
+    total_overall_made_gbp: v.number(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("historical_revenue")
+      .withIndex("by_month", (q) => q.eq("month", args.month))
+      .first();
+    const patch = {
+      total_revenue_gbp: args.total_revenue_gbp,
+      damage_costs_gbp: args.damage_costs_gbp,
+      total_overall_made_gbp: args.total_overall_made_gbp,
+      ...(args.source && { source: args.source }),
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return { action: "updated", month: args.month };
+    }
+    await ctx.db.insert("historical_revenue", {
+      ...patch,
+      month: args.month,
+      business_expenses_gbp: 0,
+      source: args.source ?? "daniel-ground-truth",
+      created_at: Date.now(),
+    });
+    return { action: "inserted", month: args.month };
+  },
+});
+
 /** List all historical revenue rows ordered by month. */
 export const list = query({
   args: {},
