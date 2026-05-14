@@ -682,18 +682,34 @@ export const getLifetimeByMonth = query({
       forecast.push({ month: currentMonth, value, basis });
     }
 
-    // Future months: heavy seasonal weighting when prior-year data exists.
+    // MoM growth rate from up to last 6 completed months (geometric mean).
+    // Used so future-month MA fallbacks aren't flat — each month differs.
+    const last6 = completedRows.slice(-6);
+    let momGrowth = 0;
+    if (last6.length >= 2) {
+      const oldest = monthRev(last6[0]);
+      const latest = monthRev(last6[last6.length - 1]);
+      if (oldest > 0 && latest > 0) {
+        const periods = last6.length - 1;
+        const raw = Math.pow(latest / oldest, 1 / periods) - 1;
+        momGrowth = Math.max(-0.15, Math.min(0.2, raw));
+      }
+    }
+
+    // Future months: blend per-month seasonal with MoM-grown moving avg.
+    // Each future month gets a different growth multiplier i → i+1 → i+2.
     for (let i = 1; i <= 3; i++) {
       const fd = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const targetMonth = fd.toISOString().slice(0, 7);
       const seasonal = seasonalProjection(targetMonth);
+      const grownMa = Math.round(movingAvg * Math.pow(1 + momGrowth, i));
       let value: number;
       let basis: ForecastEntry["basis"];
       if (seasonal.sampleYears >= 1) {
-        value = Math.round(seasonal.value * 0.7 + movingAvg * 0.3);
+        value = Math.round(seasonal.value * 0.65 + grownMa * 0.35);
         basis = "blend";
       } else {
-        value = movingAvg;
+        value = grownMa;
         basis = "ma";
       }
       forecast.push({ month: targetMonth, value, basis });

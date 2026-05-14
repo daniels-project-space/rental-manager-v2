@@ -25,6 +25,7 @@ import type {
   ValueType,
   NameType,
 } from "recharts/types/component/DefaultTooltipContent";
+import type { TooltipContentProps } from "recharts";
 
 // V1 colour palette (matches /home/ubuntu/rental-manager/src/public/js/dashboard-core.js).
 // Order is bottom → top of the stack. Only segments that can crown the stack get radius.
@@ -94,7 +95,7 @@ export function LifetimeRevenue() {
 
   const toggle = (key: string) => setHidden((h) => ({ ...h, [key]: !h[key] }));
 
-  const data = raw?.months.map((row) => {
+  const rawData = raw?.months.map((row) => {
     const fc = raw.forecast.find((f) => f.month === row.month);
     const r = row as unknown as Record<string, number | undefined>;
     const realised = ACTUAL_KEYS.reduce((sum, k) => sum + (r[k] ?? 0), 0);
@@ -108,6 +109,17 @@ export function LifetimeRevenue() {
       predictedRemainder,
     };
   }) ?? [];
+
+  // To get elegant fade animations on legend toggles, we ZERO OUT hidden
+  // series instead of using Recharts' instant <Bar hide />. Bars then animate
+  // smoothly between current value ↔ 0 over animationDuration.
+  const data = rawData.map((row) => {
+    const out: Record<string, unknown> = { ...row };
+    for (const s of SERIES) {
+      if (hidden[s.key]) out[s.key] = 0;
+    }
+    return out as typeof row;
+  });
 
   const totalRevenue = raw?.totalRevenue ?? 0;
   const avgMonthly = raw?.avgMonthly ?? 0;
@@ -301,9 +313,65 @@ export function LifetimeRevenue() {
                 width={40}
               />
               <Tooltip
-                contentStyle={{ background: "rgba(14,17,28,0.95)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, fontSize: 12 }}
-                labelStyle={{ color: "#e4e6eb" }}
-                formatter={tooltipFmt as never}
+                cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                content={(props: TooltipContentProps<ValueType, NameType>) => {
+                  const { active, payload, label } = props;
+                  if (!active || !payload || payload.length === 0) return null;
+                  // Filter zero/null entries; sort biggest first; collapse the predicted &
+                  // cumulative-area duplicates the same series renders to keep tooltip tight.
+                  const seen = new Set<string>();
+                  const numValue = (p: { value?: ValueType }): number => {
+                    const x = p.value;
+                    if (typeof x === "number") return x;
+                    if (typeof x === "string") return parseFloat(x) || 0;
+                    return 0;
+                  };
+                  const rows = payload
+                    .filter((p) => {
+                      const v = numValue(p);
+                      if (!v) return false;
+                      const k = String(p.name ?? "");
+                      if (seen.has(k)) return false;
+                      seen.add(k);
+                      return true;
+                    })
+                    .sort((a, b) => numValue(b) - numValue(a));
+                  if (rows.length === 0) return null;
+                  return (
+                    <div
+                      style={{
+                        background: "rgba(14,17,28,0.95)",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        borderRadius: 8,
+                        fontSize: 12,
+                        padding: "8px 10px",
+                        minWidth: 180,
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+                      }}
+                    >
+                      <div style={{ color: "#e4e6eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
+                      {rows.map((p, i) => {
+                        const series = SERIES.find((s) => s.key === p.name);
+                        const niceLabel =
+                          p.name === "cumulative" ? "Cumulative" :
+                          p.name === "cumulative-area" ? null :
+                          p.name === "forecastLine" ? "Forecast" :
+                          p.name === "predictedRemainder" ? "Predicted remainder" :
+                          series?.label ?? String(p.name);
+                        if (niceLabel === null) return null;
+                        const dotColor = series?.color ?? (p.name === "cumulative" ? "#22c55e" : "#94a3b8");
+                        const v = numValue(p);
+                        return (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: "18px" }}>
+                            <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: dotColor }} />
+                            <span style={{ color: "#94a3b8", flex: 1 }}>{niceLabel}</span>
+                            <span style={{ color: "#e4e6eb", fontVariantNumeric: "tabular-nums" }}>£{v.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                }}
               />
               {/* Stacked bars — bottom to top per SERIES order. Only segments that can
                   cap the stack (aiBoost / damage / booked / pending / predictedRemainder)
@@ -325,14 +393,14 @@ export function LifetimeRevenue() {
                     radius={s.roundTop ? [4, 4, 0, 0] : 0}
                     maxBarSize={28}
                     isAnimationActive
-                    animationDuration={350}
-                    animationEasing="ease-out"
-                    hide={hidden[s.key] ?? false}
+                    animationDuration={650}
+                    animationEasing="ease-in-out"
                   />
                 );
               })}
-              {/* Cumulative area: gradient falloff under the green line. Rendered
-                  BEFORE the line so the line draws on top. */}
+              {/* Cumulative area: gradient falloff. Animation starts AFTER the line
+                  finishes drawing (animationBegin) so the gradient doesn't bloom
+                  ahead of the line stroke. */}
               <Area
                 yAxisId="left"
                 dataKey="cumulative"
@@ -341,7 +409,9 @@ export function LifetimeRevenue() {
                 stroke="none"
                 fill="url(#cumulative-area)"
                 isAnimationActive
-                animationDuration={800}
+                animationBegin={1100}
+                animationDuration={500}
+                animationEasing="ease-out"
                 hide={hidden.cumulative ?? false}
                 legendType="none"
               />
@@ -360,13 +430,14 @@ export function LifetimeRevenue() {
                   if (!isLast || cx == null || cy == null || payload?.cumulative == null) {
                     return <g key={index} />;
                   }
+                  // Gentle pulse: small amplitude, slow cadence — "alive" not flashy.
                   return (
                     <g key={index}>
-                      <circle cx={cx} cy={cy} r={6} fill="#22c55e" opacity={0.55}>
-                        <animate attributeName="r" values="6;14;6" dur="1.6s" repeatCount="indefinite" />
-                        <animate attributeName="opacity" values="0.55;0;0.55" dur="1.6s" repeatCount="indefinite" />
+                      <circle cx={cx} cy={cy} r={4} fill="#22c55e" opacity={0.4}>
+                        <animate attributeName="r"       values="4;8;4"     dur="2.6s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.4;0;0.4" dur="2.6s" repeatCount="indefinite" />
                       </circle>
-                      <circle cx={cx} cy={cy} r={3.5} fill="#22c55e" stroke="#0b0e18" strokeWidth={1.5} />
+                      <circle cx={cx} cy={cy} r={3} fill="#22c55e" stroke="#0b0e18" strokeWidth={1.5} />
                     </g>
                   );
                 }}
@@ -393,26 +464,24 @@ export function LifetimeRevenue() {
                     shape={(props: { cx?: number; cy?: number }) => {
                       const { cx, cy } = props;
                       if (cx == null || cy == null) return <g />;
-                      const w = 22;
+                      // Match bar width (maxBarSize 28 → ±16). Bright yellow line + glow + label.
+                      const w = 18;
+                      const fmtTarget = target >= 1000 ? "£" + (target / 1000).toFixed(1) + "k" : "£" + Math.round(target);
                       return (
                         <g>
                           <line
-                            x1={cx - w}
-                            x2={cx + w}
-                            y1={cy}
-                            y2={cy}
-                            stroke="#facc15"
-                            strokeWidth={2}
-                            strokeDasharray="4 3"
+                            x1={cx - w} x2={cx + w} y1={cy} y2={cy}
+                            stroke="#facc15" strokeWidth={2.5} strokeDasharray="5 3"
+                            style={{ filter: "drop-shadow(0 0 4px rgba(250,204,21,0.55))" }}
                           />
+                          <line x1={cx - w} x2={cx - w} y1={cy - 3} y2={cy + 3} stroke="#facc15" strokeWidth={2} />
+                          <line x1={cx + w} x2={cx + w} y1={cy - 3} y2={cy + 3} stroke="#facc15" strokeWidth={2} />
                           <text
-                            x={cx + w + 4}
-                            y={cy + 3}
-                            fill="#facc15"
-                            fontSize={9}
-                            fontWeight={600}
+                            x={cx + w + 5} y={cy + 3}
+                            fill="#facc15" fontSize={9.5} fontWeight={700}
+                            style={{ filter: "drop-shadow(0 0 3px rgba(0,0,0,0.6))" }}
                           >
-                            target
+                            target {fmtTarget}
                           </text>
                         </g>
                       );
