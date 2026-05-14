@@ -101,13 +101,28 @@ export function LifetimeRevenue() {
 
   const toggle = (key: string) => setHidden((h) => ({ ...h, [key]: !h[key] }));
 
+  // The current-month ghost bar uses the SAME target as Expected Monthly (single
+  // source of truth) and is also gated on day-of-month >= 7. Future months keep
+  // using the lifetime forecast so the chart still projects ahead.
+  const todayDayOfMonth = new Date().getDate();
+  const showCurrentMonthPrediction = todayDayOfMonth >= 7 && expectedMonthlyTarget > 0;
+  const rawCurrentMonth = (raw as { currentMonth?: string } | undefined)?.currentMonth;
+
   const rawData = raw?.months.map((row) => {
     const fc = raw.forecast.find((f) => f.month === row.month);
     const r = row as unknown as Record<string, number | undefined>;
     const realised = ACTUAL_KEYS.reduce((sum, k) => sum + (r[k] ?? 0), 0);
-    // Ghost "target" bar: gap between the projected total and what's already on the
-    // chart. Only meaningful for current + future months that have a forecast.
-    const predictedRemainder = fc ? Math.max(0, fc.value - realised) : 0;
+    // For the CURRENT month, use the Expected Monthly target (dashboard.ts) so the
+    // ghost bar and the target marker reference the same number. For other future
+    // months, fall back to the lifetime forecast.
+    let predictedRemainder = 0;
+    if (row.month === rawCurrentMonth) {
+      predictedRemainder = showCurrentMonthPrediction
+        ? Math.max(0, expectedMonthlyTarget - realised)
+        : 0;
+    } else if (fc) {
+      predictedRemainder = Math.max(0, fc.value - realised);
+    }
     return {
       ...row,
       label: fmtMonth(row.month),
