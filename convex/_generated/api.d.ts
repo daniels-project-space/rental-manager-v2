@@ -29,6 +29,8 @@ import type * as hygglo_inbox from "../hygglo_inbox.js";
 import type * as hygglo_poll_trigger from "../hygglo_poll_trigger.js";
 import type * as hygglo_ui from "../hygglo_ui.js";
 import type * as insurance_claims from "../insurance_claims.js";
+import type * as item_resolver from "../item_resolver.js";
+import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
 import type * as lib_reservations_views from "../lib/reservations/views.js";
@@ -86,6 +88,8 @@ declare const fullApi: ApiFromModules<{
   hygglo_poll_trigger: typeof hygglo_poll_trigger;
   hygglo_ui: typeof hygglo_ui;
   insurance_claims: typeof insurance_claims;
+  item_resolver: typeof item_resolver;
+  item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;
   "lib/reservations/predicates": typeof lib_reservations_predicates;
   "lib/reservations/views": typeof lib_reservations_views;
