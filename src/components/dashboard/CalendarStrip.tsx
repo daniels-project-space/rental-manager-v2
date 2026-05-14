@@ -286,29 +286,26 @@ function BookingCard({ chip }: { chip: ChipData }) {
       className="flex gap-3 p-2.5 rounded-lg"
       style={{ background: "rgba(255,255,255,0.03)", borderLeft: `3px solid ${color}` }}
     >
-      {/* Thumbnail */}
-      <div
-        className="w-14 h-14 rounded-lg flex-shrink-0 overflow-hidden"
-        style={{ background: "rgba(255,255,255,0.06)" }}
-      >
-        {chip.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={chip.imageUrl}
-            alt={items[0]?.name ?? ""}
-            className="w-full h-full object-cover"
-            loading="lazy"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          />
-        ) : (
-          <div
-            className="w-full h-full flex items-center justify-center text-base font-bold"
-            style={{ color, background: `${color}22` }}
-          >
-            {renterDisplay[0]?.toUpperCase() ?? "?"}
-          </div>
-        )}
-      </div>
+      {/* Thumbnail — rounded on the img itself so hover-zoom doesn't clip */}
+      {chip.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={chip.imageUrl}
+          alt={items[0]?.name ?? ""}
+          className="w-14 h-14 rounded-lg object-cover flex-shrink-0"
+          loading="lazy"
+          style={{ background: "rgba(255,255,255,0.06)" }}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        />
+      ) : (
+        <div
+          className="w-14 h-14 rounded-lg flex-shrink-0 flex items-center justify-center text-base font-bold"
+          style={{ color, background: `${color}22` }}
+          data-no-zoom
+        >
+          {renterDisplay[0]?.toUpperCase() ?? "?"}
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 min-w-0">
