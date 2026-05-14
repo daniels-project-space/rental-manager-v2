@@ -224,7 +224,9 @@ function ItemRow({ item }: { item: ChipItem }) {
 // ── V1-style rich booking card ───────────────────────────────────────────────
 function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
-  const [expanded, setExpanded] = useState(false);
+  const accounts = useQuery(api.accounts.list);
+  const accountMeta = (accounts as Array<{slug:string;display_name:string;profile_image_url:string|null}>|undefined)?.find((a) => a.slug === chip.accountSlug);
+// (item dropdown state removed — items now render as a single tile row)
 
   const kind = chip.kind ?? "pickup";
   const isLeo = chip.accountSlug === "leo";
@@ -317,15 +319,28 @@ function BookingCard({ chip }: { chip: ChipData }) {
           >
             {badgeText}
           </span>
-          <span
-            className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-            style={{
-              background: isLeo ? "rgba(168,85,247,0.18)" : "rgba(110,168,254,0.18)",
-              color: isLeo ? "#c084fc" : "#6ea8fe",
-            }}
-          >
-            {isLeo ? "Leo" : "DB"}
-          </span>
+          {accountMeta?.profile_image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={accountMeta.profile_image_url}
+              alt={accountMeta.display_name}
+              className="rounded-full object-cover flex-shrink-0"
+              style={{ width: 22, height: 22, border: `2px solid ${isLeo ? "#a855f7" : "#6ea8fe"}` }}
+              loading="lazy"
+              data-no-zoom
+              title={accountMeta.display_name}
+            />
+          ) : (
+            <span
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+              style={{
+                background: isLeo ? "rgba(168,85,247,0.18)" : "rgba(110,168,254,0.18)",
+                color: isLeo ? "#c084fc" : "#6ea8fe",
+              }}
+            >
+              {isLeo ? "Leo" : "DB"}
+            </span>
+          )}
           <span className="text-sm font-semibold text-[#e4e6eb] truncate">{renterDisplay}</span>
           {chip.grossPaidGbp != null && (
             <span className="ml-auto text-sm font-bold" style={{ color: "#22c55e" }}>
@@ -365,38 +380,28 @@ function BookingCard({ chip }: { chip: ChipData }) {
           )}
         </div>
 
-        {/* Item dropdown — per-item thumbnail + canonical name */}
+        {/* Items — horizontal tile row, hover-zoom each thumbnail */}
         {items.length > 0 && (
-          <div className="mt-1.5">
-            {items.length === 1 ? (
-              <ItemRow item={items[0]} />
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setExpanded((x) => !x)}
-                  className="w-full text-left text-[11px] px-2 py-1.5 rounded flex items-center gap-2 transition-colors hover:bg-white/[0.07]"
-                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}
-                >
-                  <ItemThumb item={items[0]} size={20} />
-                  <span className="text-[#e4e6eb] truncate flex-1">
-                    {items[0].name}
-                    {items[0].qty > 1 && (
-                      <span className="text-[#8b8fa3] ml-1">× {items[0].qty}</span>
-                    )}
-                  </span>
-                  <span className="text-[#8b8fa3] flex-shrink-0">+{items.length - 1}</span>
-                  <span className="text-[#8b8fa3] flex-shrink-0">{expanded ? "▴" : "▾"}</span>
-                </button>
-                {expanded && (
-                  <div className="mt-1 space-y-1">
-                    {items.slice(1).map((it, i) => (
-                      <ItemRow key={(it.itemId ?? "") + i} item={it} />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {items.map((it, i) => (
+              <div
+                key={(it.itemId ?? "") + i}
+                className="flex-shrink-0"
+                title={it.name + (it.qty > 1 ? ` × ${it.qty}` : "")}
+              >
+                <div className="relative">
+                  <ItemThumb item={it} size={36} />
+                  {it.qty > 1 && (
+                    <span
+                      className="absolute -top-1 -right-1 text-[9px] font-bold px-1 rounded-full"
+                      style={{ background: "#070910", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.18)" }}
+                    >
+                      ×{it.qty}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

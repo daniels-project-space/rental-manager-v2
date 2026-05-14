@@ -611,7 +611,10 @@ export const getStatsDrawerData = query({
       end_date: r.end_date ?? null,
       pickup_date: r.pickup_date ?? r.start_date ?? null,
       pickup_time: r.pickup_time ?? null,
+      return_date: (r as any).return_date ?? r.end_date ?? null,
       return_time: r.return_time ?? null,
+      pickup_method: r.pickup_method ?? null,
+      return_method: r.return_method ?? null,
       items: (r.items ?? []).map((i) => i.item_name),
       photo_url: (r.photos_urls ?? [])[0] ?? null,
       duration_days:

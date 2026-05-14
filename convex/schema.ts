@@ -11,6 +11,8 @@ export default defineSchema({
     display_name: v.string(),
     hygglo_seller_id: v.optional(v.string()),
     hygglo_username: v.optional(v.string()),
+    /** Hygglo profile photo. Seeded from /v4/my/orders/:id detail.users.me.profileImage. */
+    profile_image_url: v.optional(v.string()),
     notes: v.optional(v.string()),
     created_at: v.number(),
     updated_at: v.number(),

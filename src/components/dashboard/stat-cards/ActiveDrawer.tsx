@@ -12,7 +12,10 @@ interface Rental {
   end_date: string | null;
   pickup_date?: string | null;
   pickup_time?: string | null;
+  return_date?: string | null;
   return_time?: string | null;
+  pickup_method?: string | null;
+  return_method?: string | null;
   items: string[];
   photo_url?: string | null;
   duration_days?: number | null;
@@ -103,15 +106,43 @@ export function RentalRow({ r }: { r: Rental }) {
           {item}
           {more && <span className="text-slate-500">{more}</span>}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-sky-300">
-          {r.pickup_date && (
-            <span className="inline-flex items-center gap-1">
-              ↓{fmtTime(r.pickup_time) ?? "—"}, {fmtDate(r.pickup_date)}
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+          {(r.pickup_date || r.start_date) && (
+            <span
+              className="inline-flex items-center gap-1"
+              style={{ color: r.pickup_time ? "#60a5fa" : "#64748b" }}
+              title={r.pickup_method ? `pickup via ${r.pickup_method}` : undefined}
+            >
+              <span style={{ fontWeight: 700 }}>↓</span>
+              {r.pickup_time ? (
+                <span className="font-medium">{fmtTime(r.pickup_time)}</span>
+              ) : (
+                <span className="italic">no time</span>
+              )}
+              <span className="text-slate-500">·</span>
+              <span>{fmtDate((r.pickup_date ?? r.start_date) as string)}</span>
+              {r.pickup_method === "delivery" && (
+                <span className="text-[9px] px-1 rounded" style={{ background: "rgba(245,158,11,0.18)", color: "#fbbf24" }}>DEL</span>
+              )}
             </span>
           )}
-          {r.end_date && (
-            <span className="inline-flex items-center gap-1">
-              ↑{fmtTime(r.return_time) ?? "—"}, {fmtDate(r.end_date)}
+          {(r.return_date || r.end_date) && (
+            <span
+              className="inline-flex items-center gap-1"
+              style={{ color: r.return_time ? "#60a5fa" : "#64748b" }}
+              title={r.return_method ? `return via ${r.return_method}` : undefined}
+            >
+              <span style={{ fontWeight: 700 }}>↑</span>
+              {r.return_time ? (
+                <span className="font-medium">{fmtTime(r.return_time)}</span>
+              ) : (
+                <span className="italic">no time</span>
+              )}
+              <span className="text-slate-500">·</span>
+              <span>{fmtDate((r.return_date ?? r.end_date) as string)}</span>
+              {r.return_method === "delivery" && (
+                <span className="text-[9px] px-1 rounded" style={{ background: "rgba(245,158,11,0.18)", color: "#fbbf24" }}>DEL</span>
+              )}
             </span>
           )}
         </div>
