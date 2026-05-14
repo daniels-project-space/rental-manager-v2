@@ -167,221 +167,7 @@ function splitNotes(raw: string | null | undefined): string[] {
     .filter((s) => s.length > 1);
 }
 
-// Per-renter weekly timeline (V1 parity — renter rows + day columns).
-function getMondayIso(d: Date): string {
-  const x = new Date(d);
-  const day = x.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  x.setDate(x.getDate() + diff);
-  return x.toISOString().slice(0, 10);
-}
-function addDaysIso(iso: string, n: number): string {
-  const d = new Date(iso);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-function fmtTimeAmPm(t: string | null | undefined): string {
-  if (!t) return "";
-  const m = t.match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return t;
-  let h = parseInt(m[1], 10);
-  const min = m[2];
-  const ampm = h >= 12 ? "pm" : "am";
-  h = h % 12 || 12;
-  return `${h}:${min}${ampm}`;
-}
-function fmtWdNum(iso: string): { wd: string; num: number; isToday: boolean } {
-  const d = new Date(iso);
-  return {
-    wd: d.toLocaleString("en", { weekday: "short" }),
-    num: d.getDate(),
-    isToday: iso === TODAY_ISO(),
-  };
-}
 
-type TimelineRow = {
-  reservationId: string;
-  renterName: string;
-  accountSlug: string | null;
-  accountColor: string;
-  startDate: string;
-  endDate: string;
-  pickupTime: string | null;
-  returnTime: string | null;
-  pickupMethod: string | null;
-  returnMethod: string | null;
-  items: { name: string; imageUrl: string | null }[];
-};
-
-function WeekTimeline({ accountSlug }: { accountSlug: string | null }) {
-  const weekStart = getMondayIso(new Date());
-  const dates: string[] = Array.from({ length: 7 }, (_, i) => addDaysIso(weekStart, i));
-  const gantt = useQuery(api.calendar.getGanttWeek, {
-    weekStartIso: weekStart,
-    accountSlug,
-  });
-
-  const rows: TimelineRow[] = (() => {
-    if (!gantt) return [];
-    const map = new Map<string, TimelineRow>();
-    for (const item of gantt.items) {
-      for (const b of item.blocks) {
-        const id = String(b.reservation_id);
-        let row = map.get(id);
-        if (!row) {
-          row = {
-            reservationId: id,
-            renterName: b.renter_name ?? "?",
-            accountSlug: item.account_slug,
-            accountColor: resolveColor(item.account_color),
-            startDate: b.start_date as string,
-            endDate: b.end_date as string,
-            pickupTime: b.pickup_time ?? null,
-            returnTime: b.return_time ?? null,
-            pickupMethod: b.pickup_method ?? null,
-            returnMethod: b.return_method ?? null,
-            items: [],
-          };
-          map.set(id, row);
-        }
-        row.items.push({ name: item.item_name, imageUrl: item.image_url });
-      }
-    }
-    return Array.from(map.values()).sort((a, b) =>
-      a.startDate.localeCompare(b.startDate),
-    );
-  })();
-
-  if (gantt === undefined) return <SkeletonBlock className="h-32 w-full mt-3" />;
-  if (rows.length === 0) return null;
-
-  return (
-    <div
-      className="mt-3 rounded-xl overflow-hidden"
-      style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(14,17,28,0.4)" }}
-    >
-      <div
-        className="grid items-center text-[10px] uppercase tracking-wider text-[#8b8fa3]"
-        style={{ gridTemplateColumns: "minmax(180px,260px) repeat(7,minmax(0,1fr))" }}
-      >
-        <div className="px-3 py-2 font-semibold text-[#e4e6eb]">This week</div>
-        {dates.map((iso) => {
-          const { wd, num, isToday } = fmtWdNum(iso);
-          return (
-            <div
-              key={iso}
-              className="px-2 py-2 text-center"
-              style={{ color: isToday ? "#6ea8fe" : undefined }}
-            >
-              <div>{wd}</div>
-              <div className="text-[11px] mt-0.5" style={{ color: isToday ? "#6ea8fe" : "#e4e6eb" }}>
-                {num}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div>
-        {rows.map((row) => (
-          <RentalRowView key={row.reservationId} row={row} dates={dates} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RentalRowView({ row, dates }: { row: TimelineRow; dates: string[] }) {
-  const itemNames = row.items.map((i) => i.name).filter(Boolean);
-  const itemPreview =
-    itemNames.slice(0, 3).join(", ") +
-    (itemNames.length > 3 ? ` +${itemNames.length - 3}` : "");
-  const firstImage = row.items.find((i) => i.imageUrl)?.imageUrl ?? null;
-  const isPickupDelivery = row.pickupMethod === "delivery";
-  const isReturnDelivery = row.returnMethod === "delivery";
-
-  return (
-    <div
-      className="grid items-stretch text-xs border-t"
-      style={{
-        gridTemplateColumns: "minmax(180px,260px) repeat(7,minmax(0,1fr))",
-        borderColor: "rgba(255,255,255,0.05)",
-      }}
-    >
-      <div
-        className="flex items-center gap-2 px-2 py-1.5"
-        style={{ borderLeft: `3px solid ${row.accountColor}` }}
-        title={itemNames.join(", ")}
-      >
-        {firstImage ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={firstImage}
-            alt=""
-            className="w-7 h-7 rounded object-cover flex-shrink-0"
-            loading="lazy"
-          />
-        ) : (
-          <span
-            className="w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0"
-            style={{ background: `${row.accountColor}22`, color: row.accountColor }}
-          >
-            {row.renterName?.[0]?.toUpperCase() ?? "?"}
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="text-[12px] font-medium text-[#e4e6eb] truncate">{row.renterName}</div>
-          <div className="text-[10px] text-[#8b8fa3] truncate">{itemPreview}</div>
-        </div>
-      </div>
-      {dates.map((iso) => {
-        let kind: "pickup" | "return" | "away" | "both" | null = null;
-        if (iso === row.startDate && iso === row.endDate) kind = "both";
-        else if (iso === row.startDate) kind = "pickup";
-        else if (iso === row.endDate) kind = "return";
-        else if (iso > row.startDate && iso < row.endDate) kind = "away";
-        return (
-          <div
-            key={iso}
-            className="px-1 py-1.5 text-center text-[10px] flex items-center justify-center"
-            style={{
-              background:
-                kind === "pickup" || kind === "both"
-                  ? "rgba(34,197,94,0.10)"
-                  : kind === "return"
-                  ? "rgba(168,85,247,0.10)"
-                  : kind === "away"
-                  ? "rgba(255,255,255,0.03)"
-                  : "transparent",
-              borderLeft: "1px solid rgba(255,255,255,0.04)",
-            }}
-          >
-            {kind === "pickup" || kind === "both" ? (
-              <div className="text-emerald-300">
-                <span className="font-semibold uppercase tracking-wider text-[9px]">Pickup</span>
-                {row.pickupTime && (
-                  <div className="text-emerald-200/80 text-[10px]">{fmtTimeAmPm(row.pickupTime)}</div>
-                )}
-                {isPickupDelivery && <div className="text-amber-300 text-[10px]">🚚</div>}
-              </div>
-            ) : kind === "return" ? (
-              <div className="text-violet-300">
-                <span className="font-semibold uppercase tracking-wider text-[9px]">Return</span>
-                {row.returnTime && (
-                  <div className="text-violet-200/80 text-[10px]">{fmtTimeAmPm(row.returnTime)}</div>
-                )}
-                {isReturnDelivery && <div className="text-amber-300 text-[10px]">🚚</div>}
-              </div>
-            ) : kind === "away" ? (
-              <span className="text-[#525866]">—</span>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Single chip in the expanded drawer ───────────────────────────────────────
 // ── V1-style rich booking card ───────────────────────────────────────────────
 function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
@@ -817,7 +603,8 @@ export function CalendarStrip() {
     setExpandedDate((prev) => (prev === date ? null : date));
   }
 
-  const expandedDay = data?.find((d) => d.date === expandedDate) ?? null;
+  const expandedDay =
+    (data as DayData[] | undefined)?.find((d) => d.date === expandedDate) ?? null;
 
   return (
     <Card>
@@ -868,10 +655,10 @@ export function CalendarStrip() {
           className="flex gap-2 overflow-x-auto pb-1"
           style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
         >
-          {data.map((day) => (
+          {(data as DayData[]).map((day) => (
             <DayCard
               key={day.date}
-              day={day as DayData}
+              day={day}
               isToday={day.date === today}
               isExpanded={expandedDate === day.date}
               onClick={() => toggleDay(day.date)}
@@ -886,9 +673,6 @@ export function CalendarStrip() {
           <DayDrawer day={expandedDay as DayData} />
         </div>
       )}
-
-      {/* V1-style per-renter timeline strip — integrated into the same widget. */}
-      <WeekTimeline accountSlug={activeAccountSlug} />
 
       {/* Gantt overlay (lazy) */}
       {ganttOpen && (
