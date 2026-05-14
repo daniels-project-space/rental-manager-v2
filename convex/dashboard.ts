@@ -282,12 +282,19 @@ export const getStatsDrawerData = query({
       (r) => r.status !== "cancelled" && r.status !== "declined" && !r.is_obsolete,
     );
 
-    // V1 PARITY: dedupe by (renter, start_date, end_date) — V1 groups multi-item
-    // bookings into a single rental. We approximate via renter+dates key and keep
-    // the row with the largest net_to_owner_gbp.
+    // Dedup keyed on the row's true unique id when available (hygglo_order_id
+    // for polled rows, v1_rental_id for v1-imported rows). Falling back to a
+    // renter+dates composite is only safe for very old rows that lack both —
+    // otherwise legitimate separate orders by the same renter on the same dates
+    // get collapsed and we silently lose revenue. Hygglo poller audit showed
+    // 0 dupes by order_id; the renter+dates key was dropping ~£156/month.
     type ResRow = typeof allRes[number];
-    const dedupKey = (r: ResRow) =>
-      `${r.renter_id ?? r.renter_name ?? "?"}|${r.start_date ?? ""}|${r.end_date ?? ""}`;
+    const dedupKey = (r: ResRow) => {
+      if (r.hygglo_order_id) return `H:${r.hygglo_order_id}`;
+      if (r.v1_rental_id) return `V:${r.v1_rental_id}`;
+      // No stable id — fall back to renter+dates+account
+      return `F:${r.renter_id ?? r.renter_name ?? "?"}|${r.account_slug ?? "?"}|${r.start_date ?? ""}|${r.end_date ?? ""}`;
+    };
     const dedupRes = <T extends ResRow>(arr: T[]): T[] => {
       const seen = new Map<string, T>();
       for (const r of arr) {
@@ -301,9 +308,23 @@ export const getStatsDrawerData = query({
     const ongoingUniq = dedupRes(ongoingRentals);
     const upcomingUniq = dedupRes(upcomingRentals);
 
-    // Monthly confirmed bookings (deduped)
+    // Monthly confirmed bookings (deduped) — confirmed status only, used for the
+    // "still going" segments (done-via-date / active / upcoming).
     const monthConfirmedRentals = dedupRes(
       confirmedWithDates.filter((r) => {
+        const d = effectiveDateStr(r);
+        return d !== undefined && d >= monthStart && d <= monthEnd;
+      }),
+    );
+
+    // Monthly booked rentals = everything non-cancelled (confirmed OR completed)
+    // whose effective date falls in the month. v1 parity: a returned rental
+    // still counts toward "Month Confirmed" revenue.
+    const monthBookedRentals = dedupRes(
+      allRes.filter((r) => {
+        if (r.is_obsolete) return false;
+        if (r.status !== "confirmed" && r.status !== "completed") return false;
+        if (!r.start_date || !r.end_date) return false;
         const d = effectiveDateStr(r);
         return d !== undefined && d >= monthStart && d <= monthEnd;
       }),
@@ -403,15 +424,19 @@ export const getStatsDrawerData = query({
       by_account: byAccount,
     };
 
+    // Month revenue = all non-cancelled (confirmed + completed) net for the month.
+    // v1 parity: "Month Confirmed £X" is total booked, NOT just earned-by-today.
+    const monthBookedRevenue = monthBookedRentals.reduce((s, r) => s + netOf(r), 0);
+
     // ── card: monthly ────────────────────────────────────────────
     // Target = projected (current trend's end-of-month run-rate).
     const monthlyTarget = projected;
     const monthlyPct = monthlyTarget > 0
-      ? Math.round((monthTotal / monthlyTarget) * 100)
+      ? Math.round((monthBookedRevenue / monthlyTarget) * 100)
       : 0;
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
-      confirmed_revenue: Math.round(monthTotal * 100) / 100,
+      confirmed_revenue: Math.round(monthBookedRevenue * 100) / 100,
       projected,
       target_gbp: monthlyTarget,
       pct_of_target: Math.min(100, monthlyPct),
@@ -422,13 +447,21 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: confirmed ──────────────────────────────────────────
-    // Split this-month confirmed rentals into done / active / upcoming
-    // for the v1 4-segment breakdown bar.
-    const monthDone = monthConfirmedRentals.filter((r) => (r.end_date as string) < today);
-    const monthActive = monthConfirmedRentals.filter(
-      (r) => (r.start_date as string) <= today && (r.end_date as string) >= today,
+    // Split this-month booked rentals into done / active / upcoming for the v1
+    // 4-segment breakdown bar. A "completed" status row counts as done even if
+    // end_date is in the future (unlikely but possible).
+    const monthDone = monthBookedRentals.filter(
+      (r) => r.status === "completed" || (r.end_date as string) < today,
     );
-    const monthUpcoming = monthConfirmedRentals.filter((r) => (r.start_date as string) > today);
+    const monthActive = monthBookedRentals.filter(
+      (r) =>
+        r.status === "confirmed" &&
+        (r.start_date as string) <= today &&
+        (r.end_date as string) >= today,
+    );
+    const monthUpcoming = monthBookedRentals.filter(
+      (r) => r.status === "confirmed" && (r.start_date as string) > today,
+    );
     const monthPending = dedupRes(
       pendingRes.filter((r) => {
         const d = effectiveDateStr(r);
@@ -437,15 +470,15 @@ export const getStatsDrawerData = query({
     );
     const monthPendingValue = monthPending.reduce((s, r) => s + netOf(r), 0);
     const confirmed = {
-      month_count: monthConfirmedRentals.length,
-      month_revenue: Math.round(monthTotal * 100) / 100,
+      month_count: monthBookedRentals.length,
+      month_revenue: Math.round(monthBookedRevenue * 100) / 100,
       done_count: monthDone.length,
       active_count: monthActive.length,
       upcoming_count: monthUpcoming.length,
       pending_count: monthPending.length,
       pending_value_gbp: Math.round(monthPendingValue * 100) / 100,
       total_rentals: monthDone.length + monthActive.length + monthUpcoming.length + monthPending.length,
-      rentals: monthConfirmedRentals.slice(0, 15).map((r) => ({
+      rentals: monthBookedRentals.slice(0, 15).map((r) => ({
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
         renter_name: r.renter_name ?? null,
         start_date: r.start_date ?? null,

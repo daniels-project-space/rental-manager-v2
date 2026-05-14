@@ -359,8 +359,10 @@ export const adminFixStatusFromStep = mutation({
   handler: async (ctx) => {
     const rows = await ctx.db.query("reservations").collect();
     let fixed = 0;
-    const PENDING = new Set(["REQUEST", "APPROVED"]);
-    const PAID = new Set(["FUNDS_RESERVED", "VERIFIED", "BOOKED_AFTER_VERIFIED", "DELIVERED"]);
+    // v1 parity: APPROVED (owner accepted) is treated as confirmed, not pending.
+    // Only REQUEST (renter waiting on owner) is genuinely pending.
+    const PENDING = new Set(["REQUEST"]);
+    const PAID = new Set(["APPROVED", "FUNDS_RESERVED", "VERIFIED", "BOOKED_AFTER_VERIFIED", "DELIVERED"]);
     const COMPLETED = new Set(["RETURNED", "REVIEWED"]);
     const CANCELLED_STEPS = new Set(["CANCELED", "VERIFICATION_FAILED"]);
     for (const r of rows) {
