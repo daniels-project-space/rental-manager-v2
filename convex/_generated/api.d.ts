@@ -19,6 +19,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as dashboardLayout from "../dashboardLayout.js";
 import type * as dashboard_chat from "../dashboard_chat.js";
 import type * as dashboard_chat_context from "../dashboard_chat_context.js";
+import type * as dashboard_invariants from "../dashboard_invariants.js";
 import type * as demand from "../demand.js";
 import type * as denial_records from "../denial_records.js";
 import type * as health from "../health.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   dashboardLayout: typeof dashboardLayout;
   dashboard_chat: typeof dashboard_chat;
   dashboard_chat_context: typeof dashboard_chat_context;
+  dashboard_invariants: typeof dashboard_invariants;
   demand: typeof demand;
   denial_records: typeof denial_records;
   health: typeof health;

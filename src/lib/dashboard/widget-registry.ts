@@ -5,7 +5,6 @@ import { EarningsChart } from "@/components/dashboard/EarningsChart";
 import { LiveActivity } from "@/components/dashboard/LiveActivity";
 import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
 import { ReturnHub } from "@/components/dashboard/ReturnHub";
-import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
 import { ConversationFunnel } from "@/components/dashboard/ConversationFunnel";
 import { ItemRevenuePanel } from "@/components/dashboard/ItemRevenuePanel";
 import { TopBundles } from "@/components/dashboard/TopBundles";
@@ -38,7 +37,8 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "live-activity",       label: "Live Activity",          component: LiveActivity },
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
   { id: "return-hub",          label: "Return Hub",             component: ReturnHub },
-  { id: "weekly-calendar",     label: "Weekly Calendar",        component: WeeklyCalendar },
+  // weekly-calendar is intentionally NOT a dashboard widget — it lives only as
+  // an overlay (CalendarGantt) launched from CalendarStrip's 'Weekly View' button.
   { id: "conversation-funnel", label: "Conversation Funnel",    component: ConversationFunnel },
   { id: "item-revenue",        label: "Item Revenue",           component: ItemRevenuePanel },
   { id: "top-bundles",         label: "Top Bundles",            component: TopBundles },
