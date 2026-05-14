@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { STEP_PRIORITY } from "./order_step_semantics";
 
 // ── order_step helpers ────────────────────────────────────────
 
@@ -17,14 +18,13 @@ const VALID_ORDER_STEPS = new Set([
   "VERIFICATION_FAILED",
 ]);
 
-/** Steps where the renter has already paid. */
-export const PAID_ORDER_STEPS = [
-  "FUNDS_RESERVED",
-  "VERIFIED",
-  "BOOKED_AFTER_VERIFIED",
-  "DELIVERED",
-  "RETURNED",
-] as const;
+/**
+ * Steps where the renter has already paid. Re-exported from semantics module.
+ * FUNDS_RESERVED is NOT here: order_step stores the ACTIVE (next-to-do) step,
+ * so order_step=FUNDS_RESERVED means renter still needs to pay.
+ * See: convex/order_step_semantics.ts for full table.
+ */
+export { PAID_ORDER_STEPS } from "./order_step_semantics";
 
 /**
  * Extract the active order step from a raw Hygglo order object.
@@ -52,19 +52,7 @@ function extractActiveOrderStep(order: any): string | null | undefined {
   return key;
 }
 
-/** Priority map for order steps (higher = more advanced). */
-const STEP_PRIORITY: Record<string, number> = {
-  REVIEWED: 8,
-  RETURNED: 7,
-  DELIVERED: 6,
-  BOOKED_AFTER_VERIFIED: 5,
-  VERIFIED: 4,
-  FUNDS_RESERVED: 3,
-  APPROVED: 2,
-  REQUEST: 1,
-  CANCELED: 0,
-  VERIFICATION_FAILED: 0,
-};
+
 
 /**
  * Returns true when `incomingStep` is a regression vs. `storedStep`

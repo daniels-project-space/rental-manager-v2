@@ -82,12 +82,19 @@ function dayHeaders(weekStart: string): Array<{ label: string; iso: string }> {
 type StatusStyle = { bg: string; border: string; text: string; strikethrough?: boolean };
 
 function statusStyle(orderStep: string | null): StatusStyle {
+  // Colour scheme reflects the OWNER's view of action state:
+  //   amber  — renter action pending (request waiting OR payment pending)
+  //   pink   — paid + verifying (real pending — needs no owner action but worth surfacing)
+  //   blue   — confirmed/out (booked or in-progress)
+  //   green  — done (returned/reviewed)
+  //   grey   — cancelled/failed
   switch (orderStep) {
     case "REQUEST":
     case "APPROVED":
+    case "FUNDS_RESERVED":  // active=FUNDS_RESERVED means renter must pay
       return { bg: "rgba(245,158,11,0.18)", border: "#f59e0b", text: "#fbbf24" };
-    case "FUNDS_RESERVED":
-    case "VERIFIED":
+    case "VERIFIED":  // active=VERIFIED means paid + currently verifying
+      return { bg: "rgba(236,72,153,0.18)", border: "#ec4899", text: "#f472b6" };
     case "BOOKED_AFTER_VERIFIED":
       return { bg: "rgba(59,130,246,0.18)", border: "#3b82f6", text: "#60a5fa" };
     case "DELIVERED":
@@ -166,18 +173,20 @@ function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgre
   const showProgress =
     block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
 
-  // Renter label: use name if present, else order_step-derived fallback
+  // Renter label: use name if present, else order_step-derived fallback.
+  // order_step = ACTIVE (next-to-do) step — see src/lib/order_step_semantics.ts.
   function orderStepLabel(step: string | null): string {
     switch (step) {
-      case "REQUEST": return "Request";
-      case "APPROVED": return "Approved";
-      case "FUNDS_RESERVED": return "Booked";
-      case "VERIFIED": return "Verified";
+      case "REQUEST": return "Request";       // owner must accept
+      case "APPROVED":                          // renter must pay
+      case "FUNDS_RESERVED": return "Awaiting"; // renter must pay
+      case "VERIFIED": return "Verifying";   // paid, doing ID/doc check
       case "BOOKED_AFTER_VERIFIED": return "Confirmed";
       case "DELIVERED": return "Out";
-      case "RETURNED": return "Returned";
+      case "RETURNED": return "Returning";
       case "REVIEWED": return "Done";
       case "CANCELED": return "Cancelled";
+      case "VERIFICATION_FAILED": return "Failed";
       default: return "Booking";
     }
   }

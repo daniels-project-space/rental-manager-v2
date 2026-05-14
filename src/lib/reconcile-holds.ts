@@ -61,12 +61,16 @@ export interface ReconcileResult {
  * Steps where the renter has already paid (mirrors convex/hygglo.ts PAID_ORDER_STEPS).
  * Hardcoded here to keep this module free of Convex imports.
  */
+// FUNDS_RESERVED removed: order_step stores the ACTIVE (next-to-do) step,
+// so order_step=FUNDS_RESERVED means renter still needs to pay (escrow not
+// funded yet). Only VERIFIED+ steps imply the renter has paid.
+// See: src/lib/order_step_semantics.ts
 const PAID_STEPS = new Set([
-  "FUNDS_RESERVED",
   "VERIFIED",
   "BOOKED_AFTER_VERIFIED",
   "DELIVERED",
   "RETURNED",
+  "REVIEWED",
 ]);
 
 /** Steps that terminate a reservation — remove existing holds. */

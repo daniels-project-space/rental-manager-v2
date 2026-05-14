@@ -305,23 +305,14 @@ export const adminSetStatus = mutation({
 export const listPending = query({
   args: { accountSlug: v.optional(v.string()) },
   handler: async (ctx, { accountSlug }) => {
-    const allRows = await ctx.db.query("reservations").collect();
-    // Fix C: hard exclusion — if step is a paid step, never show as pending
-    const PAID_STEPS = new Set([
-      "FUNDS_RESERVED", "VERIFIED", "BOOKED_AFTER_VERIFIED",
-      "DELIVERED", "RETURNED", "REVIEWED",
-    ]);
+    // 'Pending' = renter has paid (escrow funded) AND is currently in document
+    // verification. order_step stores the ACTIVE (next-to-do) step, so the
+    // verification-in-progress state is order_step === 'VERIFIED'.
+    // See convex/order_step_semantics.ts for full semantics.
+    const allRows = await ctx.db.query('reservations').collect();
     let rows = allRows.filter((r) => {
       if (r.is_obsolete === true) return false;
-      // Hard exclusion: if step is paid, never pending
-      if (r.order_step && PAID_STEPS.has(r.order_step)) return false;
-      // Canonical: booking_status field directly from Hygglo (most accurate when present)
-      if ((r as any).booking_status === "pending_review") return true;
-      // Modern: status field set to pending_review by poller (sourceFilter="pending")
-      if (r.status === "pending_review" || r.status === "pending") return true;
-      // Fallback: explicit pending order_step (REQUEST = awaiting owner accept)
-      if (r.order_step === "REQUEST" || r.order_step === "APPROVED") return true;
-      return false;
+      return r.order_step === 'VERIFIED';
     });
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
@@ -330,15 +321,15 @@ export const listPending = query({
     const top = rows.slice(0, 20);
     const rentals = await Promise.all(
       top.map(async (r) => {
-        let renterName = "";
+        let renterName = '';
         if (r.renter_id) {
           const renter = await ctx.db.get(r.renter_id);
-          renterName = renter?.display_name ?? "";
+          renterName = renter?.display_name ?? '';
         }
         return {
           id: r._id,
           accountSlug: r.account_slug,
-          item: (r.items ?? []).map((i) => i.item_name).join(", "),
+          item: (r.items ?? []).map((i) => i.item_name).join(', '),
           renter: renterName,
           start_date: r.start_date,
           end_date: r.end_date,
