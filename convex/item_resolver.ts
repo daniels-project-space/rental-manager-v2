@@ -28,6 +28,7 @@ import { api, internal } from "./_generated/api";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
+import { titleHash, primaryBrand, brandMismatch } from "./listing_cache";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -148,6 +149,28 @@ export const resolveReservation = action({
       return { ok: true, skipped: "fresh" };
     }
 
+    // ── Listing-resolution cache ───────────────────────────────────
+    // Same items[] → same Hygglo listing → reuse a previous resolution
+    // without paying for another LLM call. The hash is title-only, so
+    // any title-edit by the owner naturally invalidates.
+    const tHash = titleHash(items);
+    const cached = await ctx.runQuery(internal.listing_cache.lookupByHash, { title_hash: tHash });
+    if (cached) {
+      await ctx.runMutation(internal.item_resolver_queries.setResolution, {
+        reservation_id,
+        resolved_items: cached.resolved_items as unknown as Array<{
+          item_id: never; item_name_canonical: string; confidence: number; qty: number;
+        }>,
+        expanded_items: cached.expanded_items as unknown as Array<{
+          item_id: never; item_name_canonical: string; qty: number; via_bundle?: never;
+        }>,
+        method: cached.resolution_method,
+        input_hash: newHash,
+      });
+      await ctx.runMutation(internal.listing_cache.incrementHit, { title_hash: tHash });
+      return { ok: true, resolved: cached.resolved_items.length, skipped: "cache hit" };
+    }
+
     const inventory = await ctx.runQuery(internal.item_resolver_queries.getInventoryForResolve, {});
 
     // Combine all titles in this reservation into a single prompt — Hygglo
@@ -190,6 +213,27 @@ export const resolveReservation = action({
             qty,
           };
         });
+      // Brand-integrity gate: drop any resolved item carrying a different
+      // brand than the title's primary brand. Catches AI cross-brand
+      // hallucinations (e.g. title=Canon, resolved=Sony GM lens).
+      const primary = primaryBrand(combinedTitle);
+      if (primary) {
+        const before = resolved.length;
+        resolved = resolved.filter((x) => {
+          if (brandMismatch(primary, x.item_name_canonical)) {
+            console.warn(
+              "[brand-gate] rejected",
+              x.item_name_canonical,
+              "because primary=" + primary,
+            );
+            return false;
+          }
+          return true;
+        });
+        if (resolved.length !== before) {
+          console.log("[brand-gate] dropped", before - resolved.length, "item(s); primary=" + primary);
+        }
+      }
     } catch (err) {
       console.error("[item-resolver] LLM call failed:", err);
       return { ok: false, skipped: "llm error" };
@@ -242,6 +286,26 @@ export const resolveReservation = action({
       }>,
       method: "llm",
       input_hash: newHash,
+    });
+
+    // Write-through to the listing-resolution cache so subsequent reservations
+    // for the same listing skip the LLM entirely.
+    await ctx.runMutation(internal.listing_cache.upsertResolution, {
+      title_hash: tHash,
+      sample_title: items[0]?.item_name?.slice(0, 200) ?? "",
+      resolved_items: resolved as unknown as Array<{
+        item_id: never;
+        item_name_canonical: string;
+        confidence: number;
+        qty?: number;
+      }>,
+      expanded_items: expanded as unknown as Array<{
+        item_id: never;
+        item_name_canonical: string;
+        qty: number;
+        via_bundle?: never;
+      }>,
+      resolution_method: "llm",
     });
     return { ok: true, resolved: resolved.length };
   },
