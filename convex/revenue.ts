@@ -359,8 +359,8 @@ export const getLifetimeByMonth = query({
     for (const res of filtered) {
       const dateStr = res.pickup_date ?? res.start_date;
       if (!dateStr) continue;
-      // v1 parity: exclude cancelled/declined rows from historical totals.
-      if (res.status === "cancelled" || res.status === "declined") continue;
+      // v1 parity: exclude cancelled/declined/pending rows from historical totals.
+      if (res.status === "cancelled" || res.status === "declined" || res.status === "pending_review" || res.status === "pending") continue;
       // v1 parity: rental_price in V1 == net-to-owner (post Hygglo fee).
       // Use net_to_owner_gbp here, not gross_paid_gbp, to match V1's chart units.
       const amount = res.net_to_owner_gbp ?? 0;
@@ -495,12 +495,14 @@ export const getLifetimeByMonth = query({
         // Per-account filter: zero out accounts not requested.
         // For retired accounts (daniel/vertus), also pull in hist columns that live polling skips.
         if (accountSlug === "dbcinema") {
-          // Always incorporate hist.dbcinema so pre-import months surface in the dbcinema-only view.
-          dbOrganic = (hist?.dbcinema !== undefined ? hist.dbcinema : 0) + dbRaw;
+          // Use hist.dbcinema when present (authoritative ground-truth); fall back to live dbRaw.
+          // Do NOT add hist + dbRaw together — that double-counts months covered by both sources.
+          dbOrganic = hist?.dbcinema !== undefined ? hist.dbcinema : dbRaw;
           leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "leo") {
-          // Always incorporate hist.leo so pre-import months surface in the leo-only view.
-          leoOrganic = (hist?.leo !== undefined ? hist.leo : 0) + leoRaw;
+          // Use hist.leo when present (authoritative ground-truth); fall back to live leoRaw.
+          // Do NOT add hist + leoRaw together — that double-counts months covered by both sources.
+          leoOrganic = hist?.leo !== undefined ? hist.leo : leoRaw;
           dbOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "daniel") {
           const histDaniel = hist?.daniel !== undefined ? hist.daniel : 0;
