@@ -245,3 +245,23 @@
 .drawer-panel {
   animation: slide-in-right 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+/* ── Dashboard image hover zoom ──────────────────────────────────────────────
+ *  Smooth scale + lift on any <img> inside a dashboard card. Opt-out by
+ *  adding `data-no-zoom` (logos, avatars where scaling would look weird).
+ *  Uses z-index so the zoomed image floats above neighbouring cells. */
+[data-dashboard-card] img:not([data-no-zoom]),
+.zoom-img {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease;
+  transform-origin: center;
+  will-change: transform;
+}
+
+[data-dashboard-card] img:not([data-no-zoom]):hover,
+.zoom-img:hover {
+  transform: scale(1.6);
+  z-index: 40;
+  position: relative;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  cursor: zoom-in;
+}

@@ -1,10 +1,21 @@
 "use client";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+
+// Lazy-load the full-week Gantt overlay so it doesn't bloat the initial bundle.
+const CalendarGantt = lazy(() =>
+  import("./CalendarGantt").catch(() => ({
+    default: () => (
+      <div className="p-6 text-center text-[#8b8fa3] text-sm">
+        Weekly Calendar overlay unavailable.
+      </div>
+    ),
+  })),
+);
 
 // ── Types inferred from convex/calendar.ts return shape ─────────────────────
 type ChipData = {
@@ -634,6 +645,7 @@ export function CalendarStrip() {
 
   // Auto-expand today on load so the drawer shows up without a click.
   const [expandedDate, setExpandedDate] = useState<string | null>(today);
+  const [ganttOpen, setGanttOpen] = useState(false);
 
   const data = useQuery(api.calendar.getCalendarStrip, {
     accountSlug: activeAccountSlug,
@@ -671,6 +683,17 @@ export function CalendarStrip() {
               Full
             </span>
           </div>
+          <button
+            onClick={() => setGanttOpen(true)}
+            className="text-xs px-3 py-1.5 rounded-lg transition-all duration-150 hover:bg-blue-500/10 hover:border-blue-400/60 active:scale-95"
+            style={{
+              border: "1px solid rgba(59,130,246,0.45)",
+              color: "#60a5fa",
+              fontWeight: 600,
+            }}
+          >
+            📅 Weekly View
+          </button>
         </div>
       </div>
 
@@ -705,6 +728,17 @@ export function CalendarStrip() {
         </div>
       )}
 
+      {/* Gantt overlay (lazy) */}
+      {ganttOpen && (
+        <Suspense fallback={<SkeletonBlock className="h-48 mt-3" />}>
+          <CalendarGantt
+            open={ganttOpen}
+            onClose={() => setGanttOpen(false)}
+            weekStartIso={today}
+            accountSlug={activeAccountSlug ?? undefined}
+          />
+        </Suspense>
+      )}
     </Card>
   );
 }

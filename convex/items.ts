@@ -719,3 +719,61 @@ export const backfillImagesFromResolved = mutation({
     return { total: targets.length, patched };
   },
 });
+
+/**
+ * Fuzzy backfill for items whose image_url is still null AFTER the
+ * resolver-based backfill ran. Walks every reservation, scores each one's
+ * `items[].item_name` against the unresolved inventory canon + aliases
+ * (case-insensitive substring match, min 5 chars), and patches the first
+ * /products/ photo URL it finds.
+ *
+ * Use when the LLM resolver hasn't reached an item yet — manual cron catch-up.
+ */
+export const backfillImagesFuzzy = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const allItems = await ctx.db.query("items").collect();
+    const targets = allItems.filter((i) => !i.image_url);
+    if (targets.length === 0) return { total: 0, patched: 0, scanned: 0 };
+
+    const allReservations = await ctx.db.query("reservations").collect();
+    const reservationsWithPhotos = allReservations.filter(
+      (r) => (r.photos_urls?.length ?? 0) > 0,
+    );
+
+    let patched = 0;
+    let scanned = 0;
+    for (const item of targets) {
+      scanned++;
+      const canon = (item.name_canonical ?? "").toLowerCase().trim();
+      const aliases = (item.aliases ?? []).map((a) => a.toLowerCase().trim());
+      if (canon.length < 5) continue;
+
+      const matchPhotos = (r: typeof allReservations[number]): string | null => {
+        const titles = (r.items ?? []).map((i) => (i.item_name ?? "").toLowerCase());
+        const hit = titles.some((t) => {
+          if (!t || t.length < 5) return false;
+          if (t === canon || t.includes(canon) || canon.includes(t)) return true;
+          for (const a of aliases) {
+            if (a.length < 5) continue;
+            if (t === a || t.includes(a) || a.includes(t)) return true;
+          }
+          return false;
+        });
+        if (!hit) return null;
+        const urls = r.photos_urls ?? [];
+        return urls.find((u: string) => u.includes("/products/")) ?? urls[0] ?? null;
+      };
+
+      let chosen: string | null = null;
+      for (const r of reservationsWithPhotos) {
+        chosen = matchPhotos(r);
+        if (chosen) break;
+      }
+      if (!chosen) continue;
+      await ctx.db.patch(item._id, { image_url: chosen, updated_at: Date.now() });
+      patched++;
+    }
+    return { total: targets.length, patched, scanned };
+  },
+});
