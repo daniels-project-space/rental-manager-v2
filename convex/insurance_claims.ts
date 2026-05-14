@@ -87,6 +87,58 @@ export const update = mutation({
   },
 });
 
+/**
+ * Stage helpers — stubs only. The InsuranceClaimsDrawer UI was checked in
+ * before its mutations were wired up; these patch the claim's `status` field
+ * so the UI compiles. Replace with proper pipeline logic when ready.
+ */
+export const advanceStage = mutation({
+  args: { id: v.id("insurance_claims") },
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return;
+    const order = ["opened", "repair", "quote", "payout", "added_to_revenue"];
+    const idx = Math.max(0, order.indexOf((row as { status?: string }).status ?? "opened"));
+    const next = order[Math.min(order.length - 1, idx + 1)];
+    await ctx.db.patch(id, { status: next });
+  },
+});
+
+export const revertStage = mutation({
+  args: { id: v.id("insurance_claims") },
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return;
+    const order = ["opened", "repair", "quote", "payout", "added_to_revenue"];
+    const idx = Math.max(0, order.indexOf((row as { status?: string }).status ?? "opened"));
+    const prev = order[Math.max(0, idx - 1)];
+    await ctx.db.patch(id, { status: prev });
+  },
+});
+
+export const markDenied = mutation({
+  args: { id: v.id("insurance_claims") },
+  handler: async (ctx, { id }) => {
+    await ctx.db.patch(id, { status: "denied" });
+  },
+});
+
+export const creditToRevenue = mutation({
+  args: {
+    id: v.id("insurance_claims"),
+    credited_to_month: v.string(), // "YYYY-MM"
+    payout_amount_gbp: v.number(),
+  },
+  handler: async (ctx, { id, credited_to_month, payout_amount_gbp }) => {
+    await ctx.db.patch(id, {
+      status: "added_to_revenue",
+      credited_to_month,
+      payout_amount_gbp,
+      credited_at: Date.now(),
+    } as Record<string, unknown>);
+  },
+});
+
 /** Delete a claim */
 export const remove = mutation({
   args: { id: v.id("insurance_claims") },

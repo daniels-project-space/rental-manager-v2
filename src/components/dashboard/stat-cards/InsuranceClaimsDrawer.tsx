@@ -207,7 +207,7 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
                   try {
                     await creditToRevenue({
                       id: c.id as Id<"insurance_claims">,
-                      month,
+                      credited_to_month: month,
                       payout_amount_gbp: payout,
                     });
                     setCreditingId(null);
