@@ -9,12 +9,14 @@
  */
 
 import type * as account_state from "../account_state.js";
+import type * as admin_migrate from "../admin_migrate.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
 import type * as calendar from "../calendar.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
+import type * as dashboardLayout from "../dashboardLayout.js";
 import type * as dashboard_chat from "../dashboard_chat.js";
 import type * as dashboard_chat_context from "../dashboard_chat_context.js";
 import type * as demand from "../demand.js";
@@ -60,12 +62,14 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
+  admin_migrate: typeof admin_migrate;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
   calendar: typeof calendar;
   crons: typeof crons;
   dashboard: typeof dashboard;
+  dashboardLayout: typeof dashboardLayout;
   dashboard_chat: typeof dashboard_chat;
   dashboard_chat_context: typeof dashboard_chat_context;
   demand: typeof demand;

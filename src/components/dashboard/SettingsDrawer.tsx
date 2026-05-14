@@ -3,6 +3,11 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useState } from "react";
 import { Drawer } from "@/components/ui/Drawer";
+import { useEditMode } from "@/lib/dashboard/edit-mode-context";
+import {
+  PANEL_WIDGETS,
+  STAT_WIDGETS,
+} from "@/lib/dashboard/widget-registry";
 
 const INPUT_STYLE = {
   background: "rgba(255,255,255,0.05)",
@@ -89,6 +94,20 @@ export function SettingsDrawer({ onClose }: Props) {
   const [pollingInput, setPollingInput] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveOk, setSaveOk] = useState(false);
+  const { editMode, toggleEditMode, layout } = useEditMode();
+
+  const hiddenPanelCount = PANEL_WIDGETS.filter((w) =>
+    layout.hiddenPanels.includes(w.id),
+  ).length;
+  const hiddenStatCount = STAT_WIDGETS.filter((w) =>
+    layout.hiddenStats.includes(w.id),
+  ).length;
+  const totalHidden = hiddenPanelCount + hiddenStatCount;
+
+  function handleEditDashboard() {
+    if (!editMode) toggleEditMode();
+    onClose();
+  }
 
   async function applyField(fields: Parameters<typeof updateSettings>[0]) {
     setSaveError("");
@@ -125,6 +144,33 @@ export function SettingsDrawer({ onClose }: Props) {
   return (
     <Drawer onClose={onClose} title="Settings">
       <div className="space-y-1">
+        {/* Dashboard customization — entry point for widget add/remove/reorder. */}
+        <div
+          className="mb-4 p-3 rounded-lg"
+          style={{
+            background: "rgba(59,130,246,0.08)",
+            border: "1px solid rgba(59,130,246,0.25)",
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <p className="text-sm font-medium text-[#e4e6eb]">Dashboard layout</p>
+            <button
+              type="button"
+              onClick={handleEditDashboard}
+              className="px-3 py-1.5 rounded-md text-xs font-medium"
+              style={{
+                background: "rgba(59,130,246,0.85)",
+                color: "#fff",
+              }}
+            >
+              ✎ Edit dashboard
+            </button>
+          </div>
+          <p className="text-xs" style={{ color: "#8b8fa3" }}>
+            Drag to reorder, × to hide, + to add. {totalHidden > 0 ? `${totalHidden} hidden.` : "All visible."}
+          </p>
+        </div>
+
         <div
           className="mb-4 px-3 py-2 rounded-lg text-xs"
           style={{
