@@ -596,24 +596,110 @@ export const getLifetimeByMonth = query({
         ? completedRows.reduce((worst, row) => (monthRev(row) < monthRev(worst) ? row : worst))
         : null;
 
-    // Forecast: weighted 3-month moving average → project next 3 months
-    const recent3 = completedRows.slice(-3);
-    let forecastBase = avgMonthly;
-    if (recent3.length === 3) {
-      forecastBase = Math.round(
-        monthRev(recent3[2]) * 0.5 + monthRev(recent3[1]) * 0.3 + monthRev(recent3[0]) * 0.2
-      );
-    } else if (recent3.length === 2) {
-      forecastBase = Math.round(monthRev(recent3[1]) * 0.6 + monthRev(recent3[0]) * 0.4);
-    } else if (recent3.length === 1) {
-      forecastBase = Math.round(monthRev(recent3[0]));
+    // ============================================================
+    // Smart forecast: blend month-to-date pace + seasonality (same
+    // month in prior years) + recent 3-month moving average.
+    // Current month is INCLUDED in the forecast array so the client
+    // can render an expected-ceiling marker on top of in-progress bars.
+    // ============================================================
+
+    // Lookup of historical revenue by month for seasonality scans.
+    const revByMonth = new Map<string, number>();
+    for (const r of rows) revByMonth.set(r.month, monthRev(r));
+
+    // Current-month month-to-date pace (extrapolate to full month).
+    const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dayOfMonth = now.getDate();
+    const currentRow = rows.find((r) => r.month === currentMonth);
+    const currentMonthSoFar = currentRow ? monthRev(currentRow) : 0;
+    const paceProjection =
+      dayOfMonth > 0
+        ? Math.round((currentMonthSoFar / dayOfMonth) * daysInCurrentMonth)
+        : currentMonthSoFar;
+
+    // Same month in up to 3 prior years; year-over-year growth factor applied
+    // when 2+ samples are available. Clamped 0.7x-1.5x to absorb outliers.
+    function seasonalProjection(targetMonth: string): { value: number; sampleYears: number } {
+      const parts = targetMonth.split("-");
+      const targetYear = parseInt(parts[0], 10);
+      const mm = parts[1];
+      const samples: number[] = [];
+      for (let y = 1; y <= 3; y++) {
+        const past = String(targetYear - y) + "-" + mm;
+        const v = revByMonth.get(past);
+        if (v !== undefined && v > 0) samples.push(v);
+      }
+      if (samples.length === 0) return { value: 0, sampleYears: 0 };
+      let projected = samples.reduce((a, b) => a + b, 0) / samples.length;
+      if (samples.length >= 2 && samples[1] > 0) {
+        const yoy = samples[0] / samples[1];
+        const clampedYoy = Math.max(0.7, Math.min(1.5, yoy));
+        projected = samples[0] * clampedYoy;
+      }
+      return { value: Math.round(projected), sampleYears: samples.length };
     }
 
-    const forecast: Array<{ month: string; value: number }> = [];
+    // Recent 3-month weighted moving average (existing logic kept as fallback).
+    const recent3 = completedRows.slice(-3);
+    let movingAvg = avgMonthly;
+    if (recent3.length === 3) {
+      movingAvg = Math.round(
+        monthRev(recent3[2]) * 0.5 + monthRev(recent3[1]) * 0.3 + monthRev(recent3[0]) * 0.2,
+      );
+    } else if (recent3.length === 2) {
+      movingAvg = Math.round(monthRev(recent3[1]) * 0.6 + monthRev(recent3[0]) * 0.4);
+    } else if (recent3.length === 1) {
+      movingAvg = Math.round(monthRev(recent3[0]));
+    }
+
+    type ForecastEntry = {
+      month: string;
+      value: number;
+      basis: "pace" | "seasonal" | "ma" | "blend";
+    };
+    const forecast: ForecastEntry[] = [];
+
+    // Current month: prefer a blend of pace + seasonal when both available.
+    {
+      const seasonal = seasonalProjection(currentMonth);
+      let value: number;
+      let basis: ForecastEntry["basis"];
+      if (seasonal.sampleYears >= 1 && currentMonthSoFar > 0) {
+        value = Math.round(paceProjection * 0.6 + seasonal.value * 0.4);
+        basis = "blend";
+      } else if (currentMonthSoFar > 0) {
+        value = paceProjection;
+        basis = "pace";
+      } else if (seasonal.sampleYears >= 1) {
+        value = seasonal.value;
+        basis = "seasonal";
+      } else {
+        value = movingAvg;
+        basis = "ma";
+      }
+      // Never project below what's already realised this month.
+      value = Math.max(value, currentMonthSoFar);
+      forecast.push({ month: currentMonth, value, basis });
+    }
+
+    // Future months: heavy seasonal weighting when prior-year data exists.
     for (let i = 1; i <= 3; i++) {
       const fd = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      forecast.push({ month: fd.toISOString().slice(0, 7), value: forecastBase });
+      const targetMonth = fd.toISOString().slice(0, 7);
+      const seasonal = seasonalProjection(targetMonth);
+      let value: number;
+      let basis: ForecastEntry["basis"];
+      if (seasonal.sampleYears >= 1) {
+        value = Math.round(seasonal.value * 0.7 + movingAvg * 0.3);
+        basis = "blend";
+      } else {
+        value = movingAvg;
+        basis = "ma";
+      }
+      forecast.push({ month: targetMonth, value, basis });
     }
+
+    const currentMonthTarget = forecast[0]?.value ?? movingAvg;
 
     return {
       months: rows,
@@ -628,6 +714,8 @@ export const getLifetimeByMonth = query({
       boostRate,
       aiActiveFrom: AI_ACTIVE_FROM,
       forecast,
+      currentMonthTarget,
+      currentMonth,
     };
   },
 });

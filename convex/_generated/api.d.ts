@@ -9,7 +9,6 @@
  */
 
 import type * as account_state from "../account_state.js";
-import type * as admin_migrate from "../admin_migrate.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
@@ -42,6 +41,7 @@ import type * as mv_top_earners from "../mv/top_earners.js";
 import type * as mv_upcoming_returns from "../mv/upcoming_returns.js";
 import type * as mv_utilization from "../mv/utilization.js";
 import type * as mv_refresh_locks from "../mv_refresh_locks.js";
+import type * as order_step_semantics from "../order_step_semantics.js";
 import type * as polling_runs from "../polling_runs.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as renters from "../renters.js";
@@ -62,7 +62,6 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
-  admin_migrate: typeof admin_migrate;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
@@ -95,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   "mv/upcoming_returns": typeof mv_upcoming_returns;
   "mv/utilization": typeof mv_utilization;
   mv_refresh_locks: typeof mv_refresh_locks;
+  order_step_semantics: typeof order_step_semantics;
   polling_runs: typeof polling_runs;
   pricing_catalog: typeof pricing_catalog;
   renters: typeof renters;

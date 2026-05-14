@@ -58,7 +58,7 @@ The briefing-context block above (--- LIVE BUSINESS CONTEXT (SNAPSHOT) ---) is a
 --- ORDER STEP SEMANTICS (READ FIRST - CRITICAL) ---
 
 Hygglo's API returns a steps[] funnel per order with each step having both
-`active` and `completed` flags. Our `order_step` column stores the
+"active" and "completed" flags. Our order_step column stores the
 ACTIVE (next-to-do) step - the action the renter currently needs to take -
 NOT the step they have reached. This is the most common source of misreading.
 

@@ -62,8 +62,8 @@ function isStepRegression(stored: string | null | undefined, incoming: string | 
   if (!stored || !incoming) return false;
   // CANCELED is always allowed through (terminal)
   if (incoming === "CANCELED") return false;
-  const storedPriority = STEP_PRIORITY[stored] ?? -1;
-  const incomingPriority = STEP_PRIORITY[incoming] ?? -1;
+  const storedPriority = (STEP_PRIORITY as Record<string, number>)[stored] ?? -1;
+  const incomingPriority = (STEP_PRIORITY as Record<string, number>)[incoming] ?? -1;
   return incomingPriority < storedPriority;
 }
 

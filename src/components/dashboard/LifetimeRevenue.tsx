@@ -12,12 +12,14 @@ import type { ClaimRow } from "@/components/modals/EditClaimModal";
 import {
   ResponsiveContainer,
   ComposedChart,
+  Area,
   Bar,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceDot,
 } from "recharts";
 import type {
   ValueType,
@@ -263,6 +265,12 @@ export function LifetimeRevenue() {
                   <rect width="14" height="14" fill="rgba(234,179,8,0.6)" />
                   <line x1="0" y1="0" x2="0" y2="14" stroke="rgba(255,255,255,0.55)" strokeWidth={3} />
                 </pattern>
+                {/* Cumulative area gradient — green fading to transparent below the line. */}
+                <linearGradient id="cumulative-area" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#22c55e" stopOpacity={0.42} />
+                  <stop offset="60%" stopColor="#22c55e" stopOpacity={0.12} />
+                  <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+                </linearGradient>
               </defs>
               <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" strokeDasharray="0" />
               <XAxis
@@ -299,7 +307,8 @@ export function LifetimeRevenue() {
               />
               {/* Stacked bars — bottom to top per SERIES order. Only segments that can
                   cap the stack (aiBoost / damage / booked / pending / predictedRemainder)
-                  get a rounded top, matching V1's borderRadius:3 selection. */}
+                  get a rounded top, matching V1's borderRadius:3 selection.
+                  Animated toggle: legend click → Recharts fades opacity over 350ms. */}
               {SERIES.map((s) => {
                 const isPredicted = s.key === "predictedRemainder";
                 return (
@@ -315,23 +324,102 @@ export function LifetimeRevenue() {
                     strokeDasharray={isPredicted ? "4 3" : undefined}
                     radius={s.roundTop ? [4, 4, 0, 0] : 0}
                     maxBarSize={28}
-                    isAnimationActive={false}
+                    isAnimationActive
+                    animationDuration={350}
+                    animationEasing="ease-out"
                     hide={hidden[s.key] ?? false}
                   />
                 );
               })}
-              {/* Cumulative — solid green line, left axis. */}
+              {/* Cumulative area: gradient falloff under the green line. Rendered
+                  BEFORE the line so the line draws on top. */}
+              <Area
+                yAxisId="left"
+                dataKey="cumulative"
+                name="cumulative-area"
+                type="monotone"
+                stroke="none"
+                fill="url(#cumulative-area)"
+                isAnimationActive
+                animationDuration={800}
+                hide={hidden.cumulative ?? false}
+                legendType="none"
+              />
+              {/* Cumulative — solid green line, left axis. Pulse dot only on the
+                  final data point to draw the eye to the latest cumulative value. */}
               <Line
                 yAxisId="left"
                 dataKey="cumulative"
                 name="cumulative"
                 type="monotone"
                 stroke="#22c55e"
-                strokeWidth={3}
-                dot={false}
+                strokeWidth={2.5}
+                dot={(props: { cx?: number; cy?: number; index?: number; payload?: { cumulative?: number | null } }) => {
+                  const { cx, cy, index, payload } = props;
+                  const isLast = index === data.length - 1;
+                  if (!isLast || cx == null || cy == null || payload?.cumulative == null) {
+                    return <g key={index} />;
+                  }
+                  return (
+                    <g key={index}>
+                      <circle cx={cx} cy={cy} r={6} fill="#22c55e" opacity={0.55}>
+                        <animate attributeName="r" values="6;14;6" dur="1.6s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.55;0;0.55" dur="1.6s" repeatCount="indefinite" />
+                      </circle>
+                      <circle cx={cx} cy={cy} r={3.5} fill="#22c55e" stroke="#0b0e18" strokeWidth={1.5} />
+                    </g>
+                  );
+                }}
                 activeDot={{ r: 5, fill: "#22c55e" }}
+                isAnimationActive
+                animationDuration={1200}
+                animationEasing="ease-out"
                 hide={hidden.cumulative ?? false}
               />
+              {/* Current-month expected ceiling: small dashed T-marker drawn at the
+                  projected total. Lets you see at-a-glance whether realised + booked
+                  + pending has already reached target. */}
+              {raw && (raw.currentMonthTarget ?? 0) > 0 && (() => {
+                const rawWithTarget = raw as typeof raw & { currentMonthTarget?: number; currentMonth?: string };
+                const target = rawWithTarget.currentMonthTarget ?? 0;
+                const currentLabel = data.find((d) => d.month === rawWithTarget.currentMonth)?.label;
+                if (!currentLabel || target <= 0) return null;
+                return (
+                  <ReferenceDot
+                    yAxisId="right"
+                    x={currentLabel}
+                    y={target}
+                    ifOverflow="extendDomain"
+                    shape={(props: { cx?: number; cy?: number }) => {
+                      const { cx, cy } = props;
+                      if (cx == null || cy == null) return <g />;
+                      const w = 22;
+                      return (
+                        <g>
+                          <line
+                            x1={cx - w}
+                            x2={cx + w}
+                            y1={cy}
+                            y2={cy}
+                            stroke="#facc15"
+                            strokeWidth={2}
+                            strokeDasharray="4 3"
+                          />
+                          <text
+                            x={cx + w + 4}
+                            y={cy + 3}
+                            fill="#facc15"
+                            fontSize={9}
+                            fontWeight={600}
+                          >
+                            target
+                          </text>
+                        </g>
+                      );
+                    }}
+                  />
+                );
+              })()}
             </ComposedChart>
           </ResponsiveContainer>
         )}
