@@ -27,48 +27,25 @@ export const getItemRevenueRanking = query({
     const pricingAll = await ctx.db.query("pricing_catalog").collect();
     const priceByCanonical = new Map(pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]));
 
-    // Build canonical name lookup from pricing_catalog keys (normalized for fuzzy match)
-    function normalizeKey(s: string): string {
-      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    }
-    const canonicalNames = Array.from(priceByCanonical.keys());
-
-    function matchCanonicalName(listingTitle: string): string {
-      const titleNorm = normalizeKey(listingTitle);
-      let best = listingTitle;
-      let bestScore = 0;
-      for (const canon of canonicalNames) {
-        const canonNorm = normalizeKey(canon);
-        if (titleNorm.includes(canonNorm) && canonNorm.length > bestScore) {
-          best = canon;
-          bestScore = canonNorm.length;
-        }
-      }
-      return best;
-    }
-
+    // LLM-resolved items: revenue attributed strictly to inventory items
+    // returned by item_resolver, never substring matched. Multi-item bundles
+    // split gross by pricing_catalog weights (equal split if no prices).
     const itemMap = new Map<string, { totalRevenue: number; rentalCount: number; totalDays: number }>();
     for (const r of reservations) {
-      const items = r.items ?? [];
+      const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
+      if (resolved.length === 0) continue;
       const gross = r.gross_paid_gbp ?? 0;
-      if (items.length === 0) continue;
-
-      // Resolve canonical names and prices
-      const canonNames = items.map((i) => matchCanonicalName(i.item_name));
-      const prices = canonNames.map((name) => priceByCanonical.get(name) ?? 0);
-      const priceSum = prices.reduce((s, p) => s + p, 0);
-
-      for (let idx = 0; idx < items.length; idx++) {
-        const canonName = canonNames[idx];
-        const share = priceSum > 0
-          ? gross * (prices[idx] / priceSum)
-          : gross / items.length;
-        const existing = itemMap.get(canonName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
+      const days = r.duration_days ?? 0;
+      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+      const priceSum = prices.reduce((a, b) => a + b, 0);
+      resolved.forEach((x, idx) => {
+        const share = priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+        const existing = itemMap.get(x.item_name_canonical) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
         existing.totalRevenue += share;
         existing.rentalCount += 1;
-        existing.totalDays += r.duration_days ?? 0;
-        itemMap.set(canonName, existing);
-      }
+        existing.totalDays += days;
+        itemMap.set(x.item_name_canonical, existing);
+      });
     }
 
     return Array.from(itemMap.entries())
@@ -181,40 +158,19 @@ export const getOutOfStockItems = query({
     const allItems = await ctx.db.query("items").collect();
     const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
 
-    // Build a normalized lookup map: simplified key -> canonical name
-    function normalize(s: string): string {
-      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    }
-
-    // Match a Hygglo listing title to a canonical item name
-    function matchCanonical(listingTitle: string, canonicalNames: string[]): string | null {
-      const titleNorm = normalize(listingTitle);
-      // Score each canonical name: how many of its tokens appear in the listing title
-      let best: string | null = null;
-      let bestScore = 0;
-      for (const canon of canonicalNames) {
-        const canonNorm = normalize(canon);
-        // If the canonical name (normalized) appears in the listing title, it is a match
-        if (titleNorm.includes(canonNorm) && canonNorm.length > bestScore) {
-          best = canon;
-          bestScore = canonNorm.length;
-        }
-      }
-      return best;
-    }
-
+    // resolved_items (LLM-driven) — strict item lookup, no substring fuzz.
     const canonicalNames = activeItems.map((i) => i.name_canonical);
-
+    const canonSet = new Set<string>(canonicalNames);
     const holdCounts = new Map<string, number>();
     const nextAvailMap = new Map<string, string>();
     for (const r of reservations) {
-      for (const item of r.items ?? []) {
-        const canon = matchCanonical(item.item_name, canonicalNames);
-        if (!canon) continue;
-        holdCounts.set(canon, (holdCounts.get(canon) ?? 0) + 1);
-        const existing = nextAvailMap.get(canon);
+      const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
+      for (const x of resolved) {
+        if (!canonSet.has(x.item_name_canonical)) continue;
+        holdCounts.set(x.item_name_canonical, (holdCounts.get(x.item_name_canonical) ?? 0) + 1);
+        const existing = nextAvailMap.get(x.item_name_canonical);
         if (!existing || (r.end_date && r.end_date > existing)) {
-          nextAvailMap.set(canon, r.end_date ?? endStr);
+          nextAvailMap.set(x.item_name_canonical, r.end_date ?? endStr);
         }
       }
     }

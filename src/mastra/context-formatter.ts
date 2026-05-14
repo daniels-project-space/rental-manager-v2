@@ -36,7 +36,30 @@ export function formatContext(
       `This block is a snapshot. For authoritative facts (pricing, availability, pending rentals, top earners) you MUST call the corresponding tool.`
   );
 
-  // ── TODAY'S SCHEDULE — grouped by orderId ───────────────────
+  // ── CRITICAL ALERTS ──────────────────────────────────────────
+  const alerts = (ctx as unknown as {
+    criticalAlerts?: {
+      conflictCount: number;
+      untrackedCount: number;
+      conflicts: Array<{ item_canonical: string; qty: number; overlap_count: number; conflict_start: string; renters: string[] }>;
+    };
+  }).criticalAlerts;
+  if (alerts && (alerts.conflictCount > 0 || alerts.untrackedCount > 0)) {
+    const lines: string[] = [];
+    lines.push("⚠ CRITICAL ALERTS — surface these to the user without being asked:");
+    if (alerts.conflictCount > 0) {
+      lines.push(`- ${alerts.conflictCount} DOUBLE-BOOKING(s) detected. We have fewer units than concurrent reservations.`);
+      for (const c of alerts.conflicts) {
+        lines.push(`  · ${c.item_canonical} (qty ${c.qty}, ${c.overlap_count} booked) — conflict from ${c.conflict_start}; renters: ${c.renters.join(", ")}`);
+      }
+    }
+    if (alerts.untrackedCount > 0) {
+      lines.push(`- ${alerts.untrackedCount} pending claim(s) reference items NOT in master inventory. Owner should review / add the item, or treat as untrackable.`);
+    }
+    parts.push(lines.join("\n"));
+  }
+
+    // ── TODAY'S SCHEDULE — grouped by orderId ───────────────────
   if (ctx.todaySchedule.entries.length > 0) {
     // Group entries by orderId
     const orderMap = new Map<

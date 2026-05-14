@@ -85,6 +85,17 @@ export type ContextBundle = {
     last6Months: MonthRevenue[];
   };
   bundlePricing: BundlePricingEntry[];
+  criticalAlerts: {
+    conflictCount: number;
+    untrackedCount: number;
+    conflicts: Array<{
+      item_canonical: string;
+      qty: number;
+      overlap_count: number;
+      conflict_start: string;
+      renters: string[];
+    }>;
+  };
 };
 
 export const getContextBundle = query({
@@ -335,6 +346,62 @@ export const getContextBundle = query({
       }))
       .sort((a, b) => b.daily_max - a.daily_max);
 
+    // ── CRITICAL ALERTS ─────────────────────────────────────
+    // Mirrors dashboard.getStatsDrawerData.conflicts but inline so the bot
+    // gets fresh double-booking signal in every briefing turn. resolved_items
+    // is set by item_resolver; rows without resolution are skipped.
+    const allItemsCtx = await ctx.db.query("items").collect();
+    const activeItemsCtx = allItemsCtx.filter((i) => i.status === "active" && !i.is_marketing_only);
+    const horizonEndCtx = addDays(today, 90);
+    type Rwi = { _id: string; start_date?: string; end_date?: string; resolved_items?: Array<{ item_id: string }>; renter_name?: string; status?: string; is_obsolete?: boolean };
+    const activeRes = (allReservations as Rwi[]).filter((r) =>
+      !r.is_obsolete &&
+      r.start_date !== undefined && r.end_date !== undefined &&
+      (r.status === "confirmed" || r.status === "pending_review")
+    );
+    const conflictsCtx: ContextBundle["criticalAlerts"]["conflicts"] = [];
+    for (const item of activeItemsCtx) {
+      if (item.qty < 1) continue;
+      const idStr = item._id as string;
+      const matches = activeRes.filter((r) => {
+        if ((r.start_date as string) > horizonEndCtx) return false;
+        return (r.resolved_items ?? []).some((x) => x.item_id === idStr);
+      });
+      if (matches.length <= item.qty) continue;
+      // sweep dates
+      const startDates = matches.map((m) => m.start_date as string);
+      const candidates = Array.from(new Set([today, ...startDates].filter((d) => d >= today && d <= horizonEndCtx))).sort();
+      let worst = 0;
+      let worstD = "";
+      for (const d of candidates) {
+        const c = matches.filter((m) => (m.start_date as string) <= d && (m.end_date as string) >= d).length;
+        if (c > worst) { worst = c; worstD = d; }
+      }
+      if (worst > item.qty && worstD) {
+        const overlapping = matches.filter((m) => (m.start_date as string) <= worstD && (m.end_date as string) >= worstD);
+        conflictsCtx.push({
+          item_canonical: item.name_canonical,
+          qty: item.qty,
+          overlap_count: worst,
+          conflict_start: worstD,
+          renters: overlapping.map((m) => m.renter_name ?? "Unknown"),
+        });
+      }
+    }
+    conflictsCtx.sort((a, b) => a.conflict_start.localeCompare(b.conflict_start));
+
+    // Untracked = pending_review reservations whose resolved_items is empty or non-inventory.
+    const activeItemIdSet = new Set<string>(activeItemsCtx.map((i) => i._id as string));
+    let untrackedCount = 0;
+    for (const r of allReservations) {
+      if (r.is_obsolete) continue;
+      if (r.status !== "pending_review") continue;
+      const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items;
+      if (resolved === undefined) continue; // resolver hasn't run — skip
+      const tracked = resolved.some((x) => activeItemIdSet.has(x.item_id));
+      if (!tracked) untrackedCount++;
+    }
+
     return {
       todaySchedule: { date: today, entries: todayEntries },
       blacklist: { count: blacklisted.length, names: blacklistNames },
@@ -362,6 +429,11 @@ export const getContextBundle = query({
         last6Months: last6,
       },
       bundlePricing,
+      criticalAlerts: {
+        conflictCount: conflictsCtx.length,
+        untrackedCount,
+        conflicts: conflictsCtx.slice(0, 5),
+      },
     };
   },
 });

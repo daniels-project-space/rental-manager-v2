@@ -452,7 +452,9 @@ export const getStatsDrawerData = query({
       ...pendingTracked,
     ];
     interface Conflict {
+      item_id: string;
       item_canonical: string;
+      item_image_url: string | null;
       qty: number;
       conflict_start: string;
       conflict_end: string;
@@ -522,7 +524,9 @@ export const getStatsDrawerData = query({
           .map((m) => m.r.end_date as string)
           .sort()[0];
         conflicts.push({
+          item_id: item._id as string,
           item_canonical: item.name_canonical,
+          item_image_url: (item as any).image_url ?? null,
           qty: item.qty,
           conflict_start: worstStart,
           conflict_end: earliestEnd,

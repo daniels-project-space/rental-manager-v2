@@ -12,7 +12,9 @@ interface ConflictReservation {
 }
 
 interface Conflict {
+  item_id: string;
   item_canonical: string;
+  item_image_url: string | null;
   qty: number;
   conflict_start: string;
   conflict_end: string;
@@ -126,14 +128,34 @@ function ConflictRow({ conflict }: { conflict: Conflict }) {
       className="rounded-lg p-2.5"
       style={{ background: "rgba(0,0,0,0.32)", border: "1px solid rgba(239,68,68,0.3)" }}
     >
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-1.5">
-        <span className="text-sm font-semibold text-rose-50">{conflict.item_canonical}</span>
-        <span className="text-[10px] uppercase tracking-wider text-rose-300 px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.3)" }}>
-          qty {conflict.qty} · {conflict.overlap_count} booked
-        </span>
-        <span className="text-[11px] text-rose-200">
-          conflict starts {fmtDate(conflict.conflict_start)}
-        </span>
+      <div className="flex items-start gap-2.5 mb-2">
+        {conflict.item_image_url ? (
+          <img
+            src={conflict.item_image_url}
+            alt={conflict.item_canonical}
+            className="flex-shrink-0 rounded-md object-cover"
+            style={{ width: 44, height: 44, border: "1px solid rgba(239,68,68,0.35)" }}
+            loading="lazy"
+          />
+        ) : (
+          <div
+            className="flex-shrink-0 flex items-center justify-center rounded-md text-[9px] text-rose-300"
+            style={{ width: 44, height: 44, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}
+          >
+            no img
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-sm font-semibold text-rose-50">{conflict.item_canonical}</span>
+            <span className="text-[10px] uppercase tracking-wider text-rose-300 px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.3)" }}>
+              qty {conflict.qty} · {conflict.overlap_count} booked
+            </span>
+          </div>
+          <div className="text-[11px] text-rose-200 mt-0.5">
+            conflict starts {fmtDate(conflict.conflict_start)}
+          </div>
+        </div>
       </div>
       <div className="space-y-1">
         {conflict.reservations.map((r) => {
