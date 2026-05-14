@@ -816,4 +816,15 @@ export default defineSchema({
     errorMessage: v.optional(v.string()),
     dismissedAt: v.optional(v.number()),       // operator marks an advisory as handled
   }).index("by_scannedAt", ["scannedAt"]),
+
+  // ── Dashboard Layout (per-user widget visibility + order) ──
+  // userId is a free-form string — "default" today, real user id when auth lands.
+  dashboardLayouts: defineTable({
+    userId: v.string(),
+    panelOrder: v.array(v.string()),
+    hiddenPanels: v.array(v.string()),
+    statOrder: v.array(v.string()),
+    hiddenStats: v.array(v.string()),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 });

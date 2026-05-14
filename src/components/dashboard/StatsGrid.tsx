@@ -1,11 +1,27 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { useQuery } from "convex/react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
+import { useEditMode } from "@/lib/dashboard/edit-mode-context";
+import { STAT_WIDGETS } from "@/lib/dashboard/widget-registry";
+import { EditableWidget } from "./EditableWidget";
 import ExpandableStatCard from "./ExpandableStatCard";
-// Wave 1 Task 4 drawer bodies — imported as-is; if parallel agent hasn't landed
-// these yet the typecheck will show missing-module errors (Wave 2 reconcile).
 import ActiveDrawer from "./stat-cards/ActiveDrawer";
 import EarningsDrawer from "./stat-cards/EarningsDrawer";
 import MonthlyDrawer from "./stat-cards/MonthlyDrawer";
@@ -32,7 +48,6 @@ function fmtGbpFull(n: number): string {
   return "£" + Math.round(n).toLocaleString("en-GB");
 }
 
-/** v1-style segmented bar: amber (ongoing) / violet (upcoming) / pink (pending). */
 function SegmentedBar({
   ongoing,
   upcoming,
@@ -53,7 +68,6 @@ function SegmentedBar({
   );
 }
 
-/** v1-style 4-segment bar: green (done) / amber (active) / violet (upcoming) / pink (pending). */
 function ConfirmedBar({
   done,
   active,
@@ -106,345 +120,379 @@ function StatsGridSkeleton() {
   );
 }
 
-/**
- * Wave 1 Stats Grid — accordion owner for 16 ExpandableStatCards.
- * Single card expanded at a time. Layout mirrors v1 6-col grid.
- *
- * Row 1: [active 2×1]  [earnings] [monthly] [confirmed]  [scanner]
- * Row 2: [ongoing 2×1] [upcoming 2×1]        [ai_boost]  [out_of_stock]
- * Row 3: [denied] [missed] [vacation] [sell_reco] [inventory_worth] [tax]
- * Row 4: [business_intel 2×1]
- */
+// Hero cards span 2 grid columns. Without an outer wrapper this is set on the
+// card itself; with EditableWidget wrapper the col-span must live on the wrapper.
+const HERO_IDS = new Set(["active", "ongoing", "upcoming", "business_intel"]);
+
 export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
+  const { layout, isStatHidden, reorderStats } = useEditMode();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const rawData = useQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
 
-  if (!rawData) return <StatsGridSkeleton />;
-  // Cast: dashboard.ts exposes new fields not yet in convex codegen types.
-  const data = rawData as any;
+  const cards = useMemo<Record<string, ReactElement> | null>(() => {
+    if (!rawData) return null;
+    const data = rawData as any;
+    const toggle = (id: string) =>
+      setExpandedId((prev) => (prev === id ? null : id));
 
-  const toggle = (id: string) =>
-    setExpandedId((prev) => (prev === id ? null : id));
+    return {
+      active: (
+        <ExpandableStatCard
+          id="active"
+          label="Active Rentals"
+          value={data.active.total}
+          valueColor="blue"
+          accentColor="blue"
+          hero
+          isExpanded={expandedId === "active"}
+          onToggle={() => toggle("active")}
+          subtitle={
+            <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+              <span className="inline-flex items-center gap-1 text-amber-300">
+                <Dot color="#f59e0b" />
+                <span className="font-semibold">{data.active.ongoing_count}</span> ongoing
+              </span>
+              <span className="text-slate-600">+</span>
+              <span className="inline-flex items-center gap-1 text-violet-300">
+                <Dot color="#a78bfa" />
+                <span className="font-semibold">{data.active.upcoming_count}</span> upcoming
+              </span>
+              {data.active.pending_count > 0 && (
+                <>
+                  <span className="text-slate-600">+</span>
+                  <span className="inline-flex items-center gap-1 text-pink-300">
+                    <Dot color="#ec4899" />
+                    <span className="font-semibold">{data.active.pending_count}</span> pending
+                  </span>
+                </>
+              )}
+            </span>
+          }
+          headerExtra={
+            <SegmentedBar
+              ongoing={data.active.ongoing_count}
+              upcoming={data.active.upcoming_count}
+              pending={data.active.pending_count}
+            />
+          }
+        >
+          <ActiveDrawer data={data.active as any} />
+        </ExpandableStatCard>
+      ),
+      earnings: (
+        <ExpandableStatCard
+          id="earnings"
+          label="Earnings"
+          value={fmtGbp(data.earnings.today)}
+          valueColor="green"
+          accentColor="green"
+          subtitle={`Week: ${fmtGbp(data.earnings.week)} net`}
+          isExpanded={expandedId === "earnings"}
+          onToggle={() => toggle("earnings")}
+        >
+          <EarningsDrawer data={data.earnings} />
+        </ExpandableStatCard>
+      ),
+      monthly: (
+        <ExpandableStatCard
+          id="monthly"
+          label="Expected Monthly"
+          value={fmtGbpFull(data.monthly.projected)}
+          valueColor="green"
+          accentColor="green"
+          subtitle={`£${Math.round(data.monthly.avg_daily_rate)}/day avg · ${data.monthly.days_remaining}d left`}
+          isExpanded={expandedId === "monthly"}
+          onToggle={() => toggle("monthly")}
+          headerExtra={
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-400">
+                  Confirmed: <span className="text-emerald-300 font-semibold">{fmtGbpFull(data.monthly.confirmed_revenue)}</span>
+                </span>
+                <span className="text-slate-400">
+                  <span className="text-emerald-300 font-semibold">{data.monthly.pct_of_target}%</span> of target
+                </span>
+              </div>
+              <ProgressBar pct={data.monthly.pct_of_target} />
+              <div className="text-[10px] text-slate-500">
+                £{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining} days left in month
+              </div>
+            </div>
+          }
+        >
+          <MonthlyDrawer data={data.monthly} />
+        </ExpandableStatCard>
+      ),
+      confirmed: (
+        <ExpandableStatCard
+          id="confirmed"
+          label="Month Confirmed"
+          value={fmtGbpFull(data.confirmed.month_revenue)}
+          valueColor="green"
+          accentColor="purple"
+          valueSuffix={
+            data.confirmed.pending_value_gbp > 0 ? (
+              <span className="text-pink-400">+{fmtGbpFull(data.confirmed.pending_value_gbp)}</span>
+            ) : undefined
+          }
+          subtitle={
+            <span className="block">
+              {data.confirmed.pending_count > 0 && (
+                <span className="block text-pink-400 text-[11px] font-medium leading-tight">pending</span>
+              )}
+              <span className="block text-slate-400 text-[11px] leading-tight mt-0.5">
+                {data.confirmed.done_count} done, {data.confirmed.active_count} active, {data.confirmed.upcoming_count} upcoming · {data.confirmed.total_rentals} rentals
+              </span>
+            </span>
+          }
+          isExpanded={expandedId === "confirmed"}
+          onToggle={() => toggle("confirmed")}
+          headerExtra={
+            <div className="space-y-1.5">
+              <ConfirmedBar
+                done={data.confirmed.done_count}
+                active={data.confirmed.active_count}
+                upcoming={data.confirmed.upcoming_count}
+                pending={data.confirmed.pending_count}
+              />
+              <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px]">
+                {data.confirmed.done_count > 0 && (
+                  <span className="inline-flex items-center gap-1 text-emerald-300"><Dot color="#22c55e" />{data.confirmed.done_count} done</span>
+                )}
+                {data.confirmed.active_count > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-300"><Dot color="#f59e0b" />{data.confirmed.active_count} active</span>
+                )}
+                {data.confirmed.upcoming_count > 0 && (
+                  <span className="inline-flex items-center gap-1 text-violet-300"><Dot color="#a78bfa" />{data.confirmed.upcoming_count} upcoming</span>
+                )}
+                {data.confirmed.pending_count > 0 && (
+                  <span className="inline-flex items-center gap-1 text-pink-300"><Dot color="#ec4899" />{data.confirmed.pending_count} pending</span>
+                )}
+              </div>
+            </div>
+          }
+        >
+          <ConfirmedDrawer data={data.confirmed as any} />
+        </ExpandableStatCard>
+      ),
+      scanner: (
+        <ExpandableStatCard
+          id="scanner"
+          label="Scanner"
+          value={data.scanner.last_run_succeeded ? "Active" : "Idle"}
+          valueColor="blue"
+          subtitle={
+            data.scanner.last_scan_at
+              ? `Last: ${new Date(data.scanner.last_scan_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+              : "No scan yet"
+          }
+          isExpanded={expandedId === "scanner"}
+          onToggle={() => toggle("scanner")}
+        >
+          <ScannerDrawer data={data.scanner} />
+        </ExpandableStatCard>
+      ),
+      ongoing: (
+        <ExpandableStatCard
+          id="ongoing"
+          label="Ongoing"
+          value={data.ongoing.count}
+          valueColor="amber"
+          hero
+          isExpanded={expandedId === "ongoing"}
+          onToggle={() => toggle("ongoing")}
+        >
+          <OngoingDrawer data={data.ongoing as any} />
+        </ExpandableStatCard>
+      ),
+      upcoming: (
+        <ExpandableStatCard
+          id="upcoming"
+          label="Upcoming"
+          value={data.upcoming.count}
+          valueColor="purple"
+          hero
+          isExpanded={expandedId === "upcoming"}
+          onToggle={() => toggle("upcoming")}
+        >
+          <UpcomingDrawer data={data.upcoming as any} />
+        </ExpandableStatCard>
+      ),
+      ai_boost: (
+        <ExpandableStatCard
+          id="ai_boost"
+          label="AI Boost"
+          value={fmtGbp(data.ai_boost.total_uplift_gbp)}
+          valueColor="green"
+          subtitle={`${data.ai_boost.breakdown.length} sources`}
+          isExpanded={expandedId === "ai_boost"}
+          onToggle={() => toggle("ai_boost")}
+        >
+          <AiBoostDrawer data={data.ai_boost} />
+        </ExpandableStatCard>
+      ),
+      out_of_stock: (
+        <ExpandableStatCard
+          id="out_of_stock"
+          label="Out of Stock"
+          value={data.out_of_stock.count}
+          valueColor={data.out_of_stock.count > 0 ? "red" : "green"}
+          accentColor={data.out_of_stock.count > 0 ? "red" : undefined}
+          subtitle="next 30 days"
+          isExpanded={expandedId === "out_of_stock"}
+          onToggle={() => toggle("out_of_stock")}
+        >
+          <OutOfStockDrawer data={data.out_of_stock} />
+        </ExpandableStatCard>
+      ),
+      denied_revenue: (
+        <ExpandableStatCard
+          id="denied_revenue"
+          label="Denied Revenue"
+          value={fmtGbp(data.denied_revenue.total_gbp)}
+          valueColor={data.denied_revenue.total_gbp > 0 ? "amber" : "blue"}
+          accentColor="amber"
+          subtitle={`${data.denied_revenue.items.length} denials (90d)`}
+          isExpanded={expandedId === "denied_revenue"}
+          onToggle={() => toggle("denied_revenue")}
+        >
+          <DeniedRevenueDrawer data={data.denied_revenue as any} />
+        </ExpandableStatCard>
+      ),
+      missed_revenue: (
+        <ExpandableStatCard
+          id="missed_revenue"
+          label="Missed Revenue"
+          value={fmtGbp(data.missed_revenue.total_gbp)}
+          valueColor="red"
+          accentColor="red"
+          isExpanded={expandedId === "missed_revenue"}
+          onToggle={() => toggle("missed_revenue")}
+        >
+          <MissedRevenueDrawer data={data.missed_revenue as any} />
+        </ExpandableStatCard>
+      ),
+      vacation: (
+        <ExpandableStatCard
+          id="vacation"
+          label="Vacation Mode"
+          value={data.vacation.active_blocks.length > 0 ? "On" : "Off"}
+          valueColor={data.vacation.active_blocks.length > 0 ? "amber" : "green"}
+          accentColor={data.vacation.active_blocks.length > 0 ? "amber" : undefined}
+          subtitle={`${data.vacation.active_blocks.length} block(s)`}
+          isExpanded={expandedId === "vacation"}
+          onToggle={() => toggle("vacation")}
+        >
+          <VacationDrawer data={data.vacation as any} />
+        </ExpandableStatCard>
+      ),
+      sell_reco: (
+        <ExpandableStatCard
+          id="sell_reco"
+          label="Sell Recommender"
+          value={data.sell_reco.recommendations.length > 0 ? data.sell_reco.recommendations.length : "—"}
+          valueColor="amber"
+          accentColor="amber"
+          subtitle="items to consider"
+          isExpanded={expandedId === "sell_reco"}
+          onToggle={() => toggle("sell_reco")}
+        >
+          <SellRecoDrawer data={data.sell_reco as any} />
+        </ExpandableStatCard>
+      ),
+      inventory_worth: (
+        <ExpandableStatCard
+          id="inventory_worth"
+          label="Inventory Worth"
+          value={fmtGbp(data.inventory_worth.total_gbp)}
+          valueColor="blue"
+          accentColor="blue"
+          subtitle="acquisition cost"
+          isExpanded={expandedId === "inventory_worth"}
+          onToggle={() => toggle("inventory_worth")}
+        >
+          <InventoryWorthDrawer data={data.inventory_worth} />
+        </ExpandableStatCard>
+      ),
+      tax: (
+        <ExpandableStatCard
+          id="tax"
+          label="UK Tax"
+          value={data.tax.years.length > 0 ? fmtGbp(data.tax.years[0].estimated_tax) : "—"}
+          valueColor="red"
+          accentColor="red"
+          subtitle={data.tax.years.length > 0 ? `${data.tax.years[0].year}` : "pending"}
+          isExpanded={expandedId === "tax"}
+          onToggle={() => toggle("tax")}
+        >
+          <TaxDrawer data={data.tax} />
+        </ExpandableStatCard>
+      ),
+      business_intel: (
+        <ExpandableStatCard
+          id="business_intel"
+          label="Business Intel"
+          value={data.business_intel.kpis.length > 0 ? `${data.business_intel.kpis.length} signals` : "—"}
+          valueColor="purple"
+          accentColor="purple"
+          hero
+          isExpanded={expandedId === "business_intel"}
+          onToggle={() => toggle("business_intel")}
+        >
+          <BusinessIntelDrawer data={data.business_intel} />
+        </ExpandableStatCard>
+      ),
+    };
+  }, [rawData, expandedId]);
+
+  if (!cards) return <StatsGridSkeleton />;
+
+  const visibleIds = layout.statOrder.filter(
+    (id) => cards[id] && !isStatHidden(id),
+  );
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIndex = layout.statOrder.indexOf(String(active.id));
+    const newIndex = layout.statOrder.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    reorderStats(arrayMove(layout.statOrder, oldIndex, newIndex));
+  };
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
-      {/* ── Row 1 ─────────────────────────────────────────────── */}
-
-      {/* active — 2×1 hero */}
-      <ExpandableStatCard
-        id="active"
-        label="Active Rentals"
-        value={data.active.total}
-        valueColor="blue"
-        accentColor="blue"
-        hero
-        isExpanded={expandedId === "active"}
-        onToggle={() => toggle("active")}
-        subtitle={
-          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-            <span className="inline-flex items-center gap-1 text-amber-300">
-              <Dot color="#f59e0b" />
-              <span className="font-semibold">{data.active.ongoing_count}</span> ongoing
-            </span>
-            <span className="text-slate-600">+</span>
-            <span className="inline-flex items-center gap-1 text-violet-300">
-              <Dot color="#a78bfa" />
-              <span className="font-semibold">{data.active.upcoming_count}</span> upcoming
-            </span>
-            {data.active.pending_count > 0 && (
-              <>
-                <span className="text-slate-600">+</span>
-                <span className="inline-flex items-center gap-1 text-pink-300">
-                  <Dot color="#ec4899" />
-                  <span className="font-semibold">{data.active.pending_count}</span> pending
-                </span>
-              </>
-            )}
-          </span>
-        }
-        headerExtra={
-          <SegmentedBar
-            ongoing={data.active.ongoing_count}
-            upcoming={data.active.upcoming_count}
-            pending={data.active.pending_count}
-          />
-        }
-      >
-        <ActiveDrawer data={data.active as any} />
-      </ExpandableStatCard>
-
-      {/* earnings */}
-      <ExpandableStatCard
-        id="earnings"
-        label="Earnings"
-        value={fmtGbp(data.earnings.today)}
-        valueColor="green"
-        accentColor="green"
-        subtitle={`Week: ${fmtGbp(data.earnings.week)} net`}
-        isExpanded={expandedId === "earnings"}
-        onToggle={() => toggle("earnings")}
-      >
-        <EarningsDrawer data={data.earnings} />
-      </ExpandableStatCard>
-
-      {/* monthly */}
-      <ExpandableStatCard
-        id="monthly"
-        label="Expected Monthly"
-        value={fmtGbpFull(data.monthly.projected)}
-        valueColor="green"
-        accentColor="green"
-        subtitle={`£${Math.round(data.monthly.avg_daily_rate)}/day avg · ${data.monthly.days_remaining}d left`}
-        isExpanded={expandedId === "monthly"}
-        onToggle={() => toggle("monthly")}
-        headerExtra={
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">
-                Confirmed: <span className="text-emerald-300 font-semibold">{fmtGbpFull(data.monthly.confirmed_revenue)}</span>
-              </span>
-              <span className="text-slate-400">
-                <span className="text-emerald-300 font-semibold">{data.monthly.pct_of_target}%</span> of target
-              </span>
-            </div>
-            <ProgressBar pct={data.monthly.pct_of_target} />
-            <div className="text-[10px] text-slate-500">
-              £{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining} days left in month
-            </div>
-          </div>
-        }
-      >
-        <MonthlyDrawer data={data.monthly} />
-      </ExpandableStatCard>
-
-      {/* confirmed */}
-      <ExpandableStatCard
-        id="confirmed"
-        label="Month Confirmed"
-        value={fmtGbpFull(data.confirmed.month_revenue)}
-        valueColor="green"
-        accentColor="purple"
-        valueSuffix={
-          data.confirmed.pending_value_gbp > 0 ? (
-            <span className="text-pink-400">+{fmtGbpFull(data.confirmed.pending_value_gbp)}</span>
-          ) : undefined
-        }
-        subtitle={
-          <span className="block">
-            {data.confirmed.pending_count > 0 && (
-              <span className="block text-pink-400 text-[11px] font-medium leading-tight">pending</span>
-            )}
-            <span className="block text-slate-400 text-[11px] leading-tight mt-0.5">
-              {data.confirmed.done_count} done, {data.confirmed.active_count} active, {data.confirmed.upcoming_count} upcoming · {data.confirmed.total_rentals} rentals
-            </span>
-          </span>
-        }
-        isExpanded={expandedId === "confirmed"}
-        onToggle={() => toggle("confirmed")}
-        headerExtra={
-          <div className="space-y-1.5">
-            <ConfirmedBar
-              done={data.confirmed.done_count}
-              active={data.confirmed.active_count}
-              upcoming={data.confirmed.upcoming_count}
-              pending={data.confirmed.pending_count}
-            />
-            <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px]">
-              {data.confirmed.done_count > 0 && (
-                <span className="inline-flex items-center gap-1 text-emerald-300"><Dot color="#22c55e" />{data.confirmed.done_count} done</span>
-              )}
-              {data.confirmed.active_count > 0 && (
-                <span className="inline-flex items-center gap-1 text-amber-300"><Dot color="#f59e0b" />{data.confirmed.active_count} active</span>
-              )}
-              {data.confirmed.upcoming_count > 0 && (
-                <span className="inline-flex items-center gap-1 text-violet-300"><Dot color="#a78bfa" />{data.confirmed.upcoming_count} upcoming</span>
-              )}
-              {data.confirmed.pending_count > 0 && (
-                <span className="inline-flex items-center gap-1 text-pink-300"><Dot color="#ec4899" />{data.confirmed.pending_count} pending</span>
-              )}
-            </div>
-          </div>
-        }
-      >
-        <ConfirmedDrawer data={data.confirmed as any} />
-      </ExpandableStatCard>
-
-      {/* scanner */}
-      <ExpandableStatCard
-        id="scanner"
-        label="Scanner"
-        value={data.scanner.last_run_succeeded ? "Active" : "Idle"}
-        valueColor="blue"
-        subtitle={
-          data.scanner.last_scan_at
-            ? `Last: ${new Date(data.scanner.last_scan_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
-            : "No scan yet"
-        }
-        isExpanded={expandedId === "scanner"}
-        onToggle={() => toggle("scanner")}
-      >
-        <ScannerDrawer data={data.scanner} />
-      </ExpandableStatCard>
-
-      {/* ── Row 2 ─────────────────────────────────────────────── */}
-
-      {/* ongoing — 2×1 hero */}
-      <ExpandableStatCard
-        id="ongoing"
-        label="Ongoing"
-        value={data.ongoing.count}
-        valueColor="amber"
-        hero
-        isExpanded={expandedId === "ongoing"}
-        onToggle={() => toggle("ongoing")}
-      >
-        <OngoingDrawer data={data.ongoing as any} />
-      </ExpandableStatCard>
-
-      {/* upcoming — 2×1 hero */}
-      <ExpandableStatCard
-        id="upcoming"
-        label="Upcoming"
-        value={data.upcoming.count}
-        valueColor="purple"
-        hero
-        isExpanded={expandedId === "upcoming"}
-        onToggle={() => toggle("upcoming")}
-      >
-        <UpcomingDrawer data={data.upcoming as any} />
-      </ExpandableStatCard>
-
-      {/* ai_boost */}
-      <ExpandableStatCard
-        id="ai_boost"
-        label="AI Boost"
-        value={fmtGbp(data.ai_boost.total_uplift_gbp)}
-        valueColor="green"
-        subtitle={`${data.ai_boost.breakdown.length} sources`}
-        isExpanded={expandedId === "ai_boost"}
-        onToggle={() => toggle("ai_boost")}
-      >
-        <AiBoostDrawer data={data.ai_boost} />
-      </ExpandableStatCard>
-
-      {/* out_of_stock */}
-      <ExpandableStatCard
-        id="out_of_stock"
-        label="Out of Stock"
-        value={data.out_of_stock.count}
-        valueColor={data.out_of_stock.count > 0 ? "red" : "green"}
-        accentColor={data.out_of_stock.count > 0 ? "red" : undefined}
-        subtitle="next 30 days"
-        isExpanded={expandedId === "out_of_stock"}
-        onToggle={() => toggle("out_of_stock")}
-      >
-        <OutOfStockDrawer data={data.out_of_stock} />
-      </ExpandableStatCard>
-
-      {/* ── Row 3 ─────────────────────────────────────────────── */}
-
-      {/* denied_revenue */}
-      <ExpandableStatCard
-        id="denied_revenue"
-        label="Denied Revenue"
-        value={fmtGbp(data.denied_revenue.total_gbp)}
-        valueColor={data.denied_revenue.total_gbp > 0 ? "amber" : "blue"}
-        accentColor="amber"
-        subtitle={`${data.denied_revenue.items.length} denials (90d)`}
-        isExpanded={expandedId === "denied_revenue"}
-        onToggle={() => toggle("denied_revenue")}
-      >
-        <DeniedRevenueDrawer data={data.denied_revenue as any} />
-      </ExpandableStatCard>
-
-      {/* missed_revenue */}
-      <ExpandableStatCard
-        id="missed_revenue"
-        label="Missed Revenue"
-        value={fmtGbp(data.missed_revenue.total_gbp)}
-        valueColor="red"
-        accentColor="red"
-        isExpanded={expandedId === "missed_revenue"}
-        onToggle={() => toggle("missed_revenue")}
-      >
-        <MissedRevenueDrawer data={data.missed_revenue as any} />
-      </ExpandableStatCard>
-
-      {/* vacation */}
-      <ExpandableStatCard
-        id="vacation"
-        label="Vacation Mode"
-        value={data.vacation.active_blocks.length > 0 ? "On" : "Off"}
-        valueColor={data.vacation.active_blocks.length > 0 ? "amber" : "green"}
-        accentColor={data.vacation.active_blocks.length > 0 ? "amber" : undefined}
-        subtitle={`${data.vacation.active_blocks.length} block(s)`}
-        isExpanded={expandedId === "vacation"}
-        onToggle={() => toggle("vacation")}
-      >
-        <VacationDrawer data={data.vacation as any} />
-      </ExpandableStatCard>
-
-      {/* sell_reco */}
-      <ExpandableStatCard
-        id="sell_reco"
-        label="Sell Recommender"
-        value={data.sell_reco.recommendations.length > 0 ? data.sell_reco.recommendations.length : "—"}
-        valueColor="amber"
-        accentColor="amber"
-        subtitle="items to consider"
-        isExpanded={expandedId === "sell_reco"}
-        onToggle={() => toggle("sell_reco")}
-      >
-        <SellRecoDrawer data={data.sell_reco as any} />
-      </ExpandableStatCard>
-
-      {/* inventory_worth */}
-      <ExpandableStatCard
-        id="inventory_worth"
-        label="Inventory Worth"
-        value={fmtGbp(data.inventory_worth.total_gbp)}
-        valueColor="blue"
-        accentColor="blue"
-        subtitle="acquisition cost"
-        isExpanded={expandedId === "inventory_worth"}
-        onToggle={() => toggle("inventory_worth")}
-      >
-        <InventoryWorthDrawer data={data.inventory_worth} />
-      </ExpandableStatCard>
-
-      {/* tax */}
-      <ExpandableStatCard
-        id="tax"
-        label="UK Tax"
-        value={data.tax.years.length > 0 ? fmtGbp(data.tax.years[0].estimated_tax) : "—"}
-        valueColor="red"
-        accentColor="red"
-        subtitle={data.tax.years.length > 0 ? `${data.tax.years[0].year}` : "pending"}
-        isExpanded={expandedId === "tax"}
-        onToggle={() => toggle("tax")}
-      >
-        <TaxDrawer data={data.tax} />
-      </ExpandableStatCard>
-
-      {/* ── Row 4 ─────────────────────────────────────────────── */}
-
-      {/* business_intel — 2×1 hero */}
-      <ExpandableStatCard
-        id="business_intel"
-        label="Business Intel"
-        value={data.business_intel.kpis.length > 0 ? `${data.business_intel.kpis.length} signals` : "—"}
-        valueColor="purple"
-        accentColor="purple"
-        hero
-        isExpanded={expandedId === "business_intel"}
-        onToggle={() => toggle("business_intel")}
-      >
-        <BusinessIntelDrawer data={data.business_intel} />
-      </ExpandableStatCard>
-    </div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
+          {visibleIds.map((id) => {
+            const label = STAT_WIDGETS.find((w) => w.id === id)?.label ?? id;
+            return (
+              <EditableWidget
+                key={id}
+                id={id}
+                kind="stat"
+                label={label}
+                className={HERO_IDS.has(id) ? "col-span-2" : ""}
+              >
+                {cards[id]}
+              </EditableWidget>
+            );
+          })}
+        </div>
+      </SortableContext>
+    </DndContext>
   );
 }
