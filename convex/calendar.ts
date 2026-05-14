@@ -336,7 +336,9 @@ export const getCalendarStrip = query({
         .map((r) => buildChip(r, "away"));
 
       const dayHolds = holds
-        .filter((h) => h.date === date)
+        // Drop status==="completed" holds — they're historical leftovers from
+        // past rentals, not active calendar blockers.
+        .filter((h) => h.date === date && h.status !== "completed")
         .map((h) => ({
           holdId: h._id,
           itemId: h.item_id,
@@ -617,7 +619,7 @@ export const getWeeklyCalendar = query({
             };
           }),
         holds: holds
-          .filter((h) => h.date === date)
+          .filter((h) => h.date === date && h.status !== "completed")
           .map((h) => ({
             holdId: h._id,
             itemId: h.item_id,
