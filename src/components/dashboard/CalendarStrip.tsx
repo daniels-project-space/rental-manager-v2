@@ -1,27 +1,22 @@
 "use client";
-import { lazy, Suspense, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
-// Lazy-import Gantt — won't fail if file doesn't exist yet
-const CalendarGantt = lazy(() =>
-  import("./CalendarGantt").catch(() => ({
-    default: () => (
-      <div className="p-6 text-center text-[#8b8fa3] text-sm">
-        Weekly Calendar coming soon.
-      </div>
-    ),
-  }))
-);
-
 // ── Types inferred from convex/calendar.ts return shape ─────────────────────
 type ChipData = {
   reservationId: string;
   kind?: "pickup" | "return" | "away";
-  itemNames: (string | undefined)[];
+  items: Array<{
+    itemId: string | null;
+    name: string;
+    imageUrl: string | null;
+    qty: number;
+    resolved: boolean;
+  }>;
   renterName: string;
   accountSlug: string | undefined;
   accountColor: string;
@@ -168,6 +163,53 @@ function splitNotes(raw: string | null | undefined): string[] {
 }
 
 
+// ── Per-item thumbnail + row helpers ─────────────────────────────────────────
+type ChipItem = ChipData["items"][number];
+
+function ItemThumb({ item, size = 28 }: { item: ChipItem; size?: number }) {
+  if (item.imageUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={item.imageUrl}
+        alt=""
+        className="rounded object-cover flex-shrink-0"
+        loading="lazy"
+        style={{ width: size, height: size }}
+        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+      />
+    );
+  }
+  return (
+    <div
+      className="rounded flex items-center justify-center flex-shrink-0 text-[10px]"
+      style={{
+        width: size,
+        height: size,
+        background: "rgba(255,255,255,0.04)",
+        color: "#6b6f80",
+      }}
+    >
+      —
+    </div>
+  );
+}
+
+function ItemRow({ item }: { item: ChipItem }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-1.5 rounded"
+      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+    >
+      <ItemThumb item={item} size={28} />
+      <span className="text-[11px] text-[#e4e6eb] truncate flex-1">{item.name}</span>
+      {item.qty > 1 && (
+        <span className="text-[10px] text-[#8b8fa3] flex-shrink-0">× {item.qty}</span>
+      )}
+    </div>
+  );
+}
+
 // ── V1-style rich booking card ───────────────────────────────────────────────
 function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
@@ -195,7 +237,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
         ? { background: "rgba(168,85,247,0.16)", color: "#c084fc", border: "1px solid rgba(168,85,247,0.3)" }
         : { background: "rgba(107,114,128,0.16)", color: "#9ca3af", border: "1px solid rgba(107,114,128,0.3)" };
 
-  const items = chip.itemNames.filter(Boolean) as string[];
+  const items = chip.items ?? [];
   const range = fmtRange(chip.startDate, chip.endDate);
   const pickupLabel = fmtTimeWithDate(chip.pickupTime, chip.startDate ?? null);
   const returnLabel = fmtTimeWithDate(chip.returnTime, chip.endDate ?? null);
@@ -242,7 +284,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={chip.imageUrl}
-            alt={items[0] ?? ""}
+            alt={items[0]?.name ?? ""}
             className="w-full h-full object-cover"
             loading="lazy"
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
@@ -315,42 +357,42 @@ function BookingCard({ chip }: { chip: ChipData }) {
           )}
         </div>
 
-        {/* Item dropdown */}
+        {/* Item dropdown — per-item thumbnail + canonical name */}
         {items.length > 0 && (
           <div className="mt-1.5">
             {items.length === 1 ? (
-              <span
-                className="inline-block text-[11px] px-2 py-1 rounded"
-                style={{ background: "rgba(255,255,255,0.05)", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.08)" }}
-              >
-                {items[0]}
-              </span>
+              <ItemRow item={items[0]} />
             ) : (
               <>
                 <button
                   type="button"
                   onClick={() => setExpanded((x) => !x)}
-                  className="text-[11px] px-2 py-1 rounded flex items-center gap-1.5 transition-colors"
-                  style={{ background: "rgba(255,255,255,0.05)", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.08)" }}
+                  className="w-full text-left text-[11px] px-2 py-1.5 rounded flex items-center gap-2 transition-colors hover:bg-white/[0.07]"
+                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}
                 >
-                  <span>{items[0]}</span>
-                  <span className="text-[#8b8fa3]">+{items.length - 1}</span>
-                  <span className="text-[#8b8fa3]">{expanded ? "▴" : "▾"}</span>
+                  <ItemThumb item={items[0]} size={20} />
+                  <span className="text-[#e4e6eb] truncate flex-1">
+                    {items[0].name}
+                    {items[0].qty > 1 && (
+                      <span className="text-[#8b8fa3] ml-1">× {items[0].qty}</span>
+                    )}
+                  </span>
+                  <span className="text-[#8b8fa3] flex-shrink-0">+{items.length - 1}</span>
+                  <span className="text-[#8b8fa3] flex-shrink-0">{expanded ? "▴" : "▾"}</span>
                 </button>
                 {expanded && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {items.slice(1).map((name, i) => (
-                      <span
-                        key={i}
-                        className="inline-block text-[11px] px-2 py-1 rounded"
-                        style={{ background: "rgba(255,255,255,0.04)", color: "#c9cdd5", border: "1px solid rgba(255,255,255,0.06)" }}
-                      >
-                        {name}
-                      </span>
+                  <div className="mt-1 space-y-1">
+                    {items.slice(1).map((it, i) => (
+                      <ItemRow key={(it.itemId ?? "") + i} item={it} />
                     ))}
                   </div>
                 )}
               </>
+            )}
+            {items.some((i) => !i.resolved) && (
+              <div className="mt-1 text-[9px] text-amber-300/70 italic">
+                Items pending resolution — names refresh within 5 min
+              </div>
             )}
           </div>
         )}
@@ -590,8 +632,8 @@ export function CalendarStrip() {
   const { activeAccountSlug } = useAccount();
   const today = TODAY_ISO();
 
-  const [expandedDate, setExpandedDate] = useState<string | null>(null);
-  const [ganttOpen, setGanttOpen] = useState(false);
+  // Auto-expand today on load so the drawer shows up without a click.
+  const [expandedDate, setExpandedDate] = useState<string | null>(today);
 
   const data = useQuery(api.calendar.getCalendarStrip, {
     accountSlug: activeAccountSlug,
@@ -629,17 +671,6 @@ export function CalendarStrip() {
               Full
             </span>
           </div>
-          <button
-            onClick={() => setGanttOpen(true)}
-            className="text-xs px-3 py-1.5 rounded-lg transition-all duration-150 hover:bg-blue-500/10 hover:border-blue-400/60 active:scale-95"
-            style={{
-              border: "1px solid rgba(59,130,246,0.45)",
-              color: "#60a5fa",
-              fontWeight: 600,
-            }}
-          >
-            📅 Weekly View
-          </button>
         </div>
       </div>
 
@@ -674,17 +705,6 @@ export function CalendarStrip() {
         </div>
       )}
 
-      {/* Gantt overlay (lazy) */}
-      {ganttOpen && (
-        <Suspense fallback={<SkeletonBlock className="h-48 mt-3" />}>
-          <CalendarGantt
-            open={ganttOpen}
-            onClose={() => setGanttOpen(false)}
-            weekStartIso={today}
-            accountSlug={activeAccountSlug ?? undefined}
-          />
-        </Suspense>
-      )}
     </Card>
   );
 }

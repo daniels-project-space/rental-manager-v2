@@ -14,6 +14,7 @@ import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
 import type * as calendar from "../calendar.js";
+import type * as conflict_dismissals from "../conflict_dismissals.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as dashboardLayout from "../dashboardLayout.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
   calendar: typeof calendar;
+  conflict_dismissals: typeof conflict_dismissals;
   crons: typeof crons;
   dashboard: typeof dashboard;
   dashboardLayout: typeof dashboardLayout;

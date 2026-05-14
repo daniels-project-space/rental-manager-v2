@@ -185,24 +185,79 @@ export const getCalendarStrip = query({
       })
     );
 
-    // Item image lookup for reservations — use findItemByName (3-tier fuzzy resolver)
+    // ── Inventory lookup ─────────────────────────────────────────────────────
+    // Load every item once so we can:
+    //  1. Look up canonical name + image by Id<"items"> (when LLM resolver has run)
+    //  2. Fall back to fuzzy name matching for raw Hygglo strings (resolver pending)
+    type ItemDoc = {
+      _id?: string;
+      name_canonical?: string;
+      name?: string;
+      aliases?: string[];
+      image_url?: string;
+    };
     const hasReservationItems = reservations.some((r) => (r.items ?? []).length > 0);
-    type ItemDoc = { name_canonical?: string; name?: string; aliases?: string[]; image_url?: string };
     let allItemsForStrip: ItemDoc[] = [];
+    const itemById = new Map<string, ItemDoc>();
     if (hasReservationItems) {
       const rawItems = await ctx.db.query("items").collect();
       allItemsForStrip = rawItems.map((item) => item as ItemDoc);
+      for (const it of allItemsForStrip) {
+        if (it._id) itemById.set(it._id, it);
+      }
     }
 
-    /** Resolve image URL for the first item in a reservation's items array.
-     *  Uses 3-tier fuzzy resolver: exact canonical → exact alias → substring. */
-    function resolveFirstImageUrl(items: Array<{ item_name?: string }> | undefined): string | null {
-      if (!items || items.length === 0) return null;
-      for (const i of items) {
-        const found = findItemByName(allItemsForStrip, i.item_name);
-        if (found) return found.image_url ?? null;
+    type ChipItem = {
+      itemId: string | null;
+      name: string;
+      imageUrl: string | null;
+      qty: number;
+      resolved: boolean;
+    };
+
+    /** Build per-item list for the booking card.
+     *  Prefers resolved_items (LLM-resolved, deconstructs sets); falls back to
+     *  raw Hygglo strings + fuzzy match while the resolver catches up. */
+    function buildItems(r: Doc<"reservations">): ChipItem[] {
+      const resolved = (r as { resolved_items?: Array<{
+        item_id: string;
+        item_name_canonical: string;
+        confidence: number;
+      }> }).resolved_items;
+
+      if (resolved && resolved.length > 0) {
+        // Aggregate duplicates from the resolver (same item appearing twice)
+        const counts = new Map<string, { entry: { item_id: string; item_name_canonical: string }; qty: number }>();
+        for (const ri of resolved) {
+          const existing = counts.get(ri.item_id);
+          if (existing) existing.qty += 1;
+          else counts.set(ri.item_id, { entry: ri, qty: 1 });
+        }
+        return Array.from(counts.values()).map(({ entry, qty }) => {
+          const doc = itemById.get(entry.item_id);
+          return {
+            itemId: entry.item_id,
+            name: doc?.name_canonical ?? entry.item_name_canonical,
+            imageUrl: doc?.image_url ?? null,
+            qty,
+            resolved: true,
+          };
+        });
       }
-      return null;
+
+      // Fallback: raw Hygglo strings + fuzzy image lookup. These titles can be
+      // SEO-slop multi-item descriptions; we keep them so the booking still
+      // surfaces something while the resolver runs (max 5 min lag).
+      return (r.items ?? []).map((i) => {
+        const found = findItemByName(allItemsForStrip, i.item_name);
+        return {
+          itemId: found?._id ?? null,
+          name: i.item_name,
+          imageUrl: found?.image_url ?? null,
+          qty: i.qty ?? 1,
+          resolved: false,
+        };
+      });
     }
 
     /** Build a rich chip for one reservation on a specific day. */
@@ -220,10 +275,12 @@ export const getCalendarStrip = query({
       const renterName =
         rType.renter_name ??
         (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?");
+      const items = buildItems(r);
+      const firstImage = items.find((i) => i.imageUrl)?.imageUrl ?? null;
       return {
         reservationId: r._id,
         kind,
-        itemNames: (r.items ?? []).map((i) => i.item_name),
+        items,
         renterName,
         accountSlug: r.account_slug,
         accountColor: r.account_slug === "leo" ? "purple" : "blue",
@@ -238,7 +295,7 @@ export const getCalendarStrip = query({
         grossPaidGbp: rType.gross_paid_gbp ?? null,
         netToOwnerGbp: rType.net_to_owner_gbp ?? null,
         notes: rType.notes ?? null,
-        imageUrl: resolveFirstImageUrl(r.items),
+        imageUrl: firstImage,
         progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
       };
     }
