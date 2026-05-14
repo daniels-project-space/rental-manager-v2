@@ -474,9 +474,9 @@ export const getMarketSearch = createTool({
   id: "get_market_search",
   description:
     "INTENT-ROUTING: 'what's new in [cinema cameras / lenses / lights]', 'is X popular', 'demand for [new gear]', 'should I buy [new product]', 'what just dropped', 'newest [item type]', 'market trends', 'reviews of [item]', 'compare X vs Y popularity'. " +
-    "Live web search via xAI Grok 4 with built-in browsing. Returns synthesized market intel with source URLs and a VERDICT line (strong buy / monitor / skip / need more data). " +
-    "Use this to gauge EXTERNAL demand for items NOT yet in your inventory. Pair with get_unmatched_demand (internal denials) + get_purchase_recommendations to build a full buy case. " +
-    "Results are cached 24h server-side — pass bypassCache=true to force a fresh fetch (rare, costs ~$0.25).",
+    "UK-localized Google search (last 12 months, gl=uk) via SerpAPI. Returns raw organic results, news_results, related searches, and any answer box — synthesize them in YOUR reply with bullet points and source URLs. " +
+    "When the user asks 'should I buy X', call this PLUS get_unmatched_demand (internal denials) + get_purchase_recommendations and combine all three into a verdict (strong buy / monitor / skip / need more data). " +
+    "Results cached 24h server-side. Pass bypassCache:true for a fresh fetch (rare).",
   inputSchema: z.object({
     query: z.string().describe("Free-form market question. Be specific: include model names, brands, and the comparison/timeframe."),
     focus: z

@@ -1,15 +1,21 @@
 /**
  * ──────────────────────────────────────────────────────────────────────────
- *  Market search via xAI Grok live browsing.
+ *  Market search via SerpAPI (Google) — UK-localized.
  * ──────────────────────────────────────────────────────────────────────────
  *
- *  The agent calls this to gauge external demand for new gear ("is the
+ *  Used by the chat agent to gauge external demand for new gear ("is the
  *  Sony A1 II hot right now?", "what cinema cameras dropped this quarter?",
- *  "compare RED Komodo Maxx vs BMPCC 6K G2 popularity"). Grok 4 native
- *  search_parameters does the browsing + citation collation; we cache
- *  results for 24h to keep cost bounded (~$0.25/search × N unique queries).
+ *  "compare RED Komodo Maxx vs BMPCC 6K G2"). Returns raw organic + news
+ *  results and related searches — the chat agent (also Grok) synthesizes
+ *  them in its own response, no extra LLM hop needed here.
  *
- *  Vault: XAI_API_KEY (same key used by item_resolver).
+ *  Note: an earlier version of this file used xAI's live-search parameter,
+ *  which xAI deprecated mid-2026 in favor of Agent Tools. SerpAPI is more
+ *  predictable + cheaper + we already have the key in the vault.
+ *
+ *  Vault: SERPAPI_KEY (service "serpapi").
+ *  Cost: SerpAPI free tier covers 100 searches/month; paid is $50/5k.
+ *  24h cache keyed on normalized query keeps repeat questions free.
  */
 
 "use node";
@@ -20,49 +26,71 @@ import { internal } from "./_generated/api";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
-async function getXaiKey(): Promise<string> {
-  if (process.env.XAI_API_KEY) return process.env.XAI_API_KEY;
+async function getSerpApiKey(): Promise<string> {
+  if (process.env.SERPAPI_KEY) return process.env.SERPAPI_KEY;
   const res = await fetch(VAULT_URL + "/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       path: "secrets:listByService",
-      args: { service: "xai" },
+      args: { service: "serpapi" },
       format: "json",
     }),
   });
   if (!res.ok) throw new Error("vault fetch failed: " + res.status);
   const data = (await res.json()) as { value?: Array<{ keyName: string; value: string }> };
   for (const s of data.value ?? []) {
-    if (s.keyName === "XAI_API_KEY") return s.value;
+    if (s.keyName === "SERPAPI_KEY") return s.value;
   }
-  throw new Error("XAI_API_KEY not found in vault");
+  throw new Error("SERPAPI_KEY not found in vault");
 }
 
 function normalizeQuery(q: string): string {
   return q.toLowerCase().trim().replace(/\s+/g, " ").slice(0, 240);
 }
 
-const SYSTEM_PROMPT = `You are a market intelligence analyst for a UK film & video equipment rental business.
-The user is the operator (Daniel or Leo) deciding what gear to buy or stock next.
-
-For every query:
-- Lead with WHAT'S NEW: items announced or released in the last 6-12 months.
-- Quantify popularity signals where possible: review counts (DPReview, B&H, Cinema5D, Newsshooter),
-  ShareGrid / KitSplit / Lensrentals listing counts, YouTube review view counts, forum thread density.
-- Identify RENTER demand: is this gear being asked for on UK rental marketplaces (Hygglo, Fat Llama,
-  Kit Hire UK)?
-- UK availability + GBP price ranges. If only US prices exist, note that.
-- Compare to incumbents already in the user's catalog (Sony FX3, BMPCC 6K Pro, DJI RS3, Aputure 600d
-  etc.) when relevant.
-- Note any model-disambiguator landmines (II vs III, Mk2 vs Mk3, G2 vs Pro).
-
-Format:
-- Tight bullet points, scannable.
-- Every claim with a citation [n] keyed to the citations array.
-- End with "VERDICT" line: one of "strong buy signal", "monitor", "skip", "need more data".`;
-
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+type Focus =
+  | "cameras"
+  | "lenses"
+  | "audio"
+  | "lighting"
+  | "gimbal"
+  | "monitor"
+  | "transmission"
+  | "general";
+
+/** Bias the query slightly by category so generic phrases stay focused. */
+function biasQuery(query: string, focus?: Focus): string {
+  if (!focus || focus === "general") return query;
+  const tags: Record<Exclude<Focus, "general">, string> = {
+    cameras: "cinema camera mirrorless",
+    lenses: "cinema lens",
+    audio: "shotgun microphone wireless audio recorder",
+    lighting: "LED light panel COB",
+    gimbal: "gimbal stabilizer",
+    monitor: "field monitor recorder",
+    transmission: "wireless video transmitter",
+  };
+  return `${query} ${tags[focus]}`;
+}
+
+type SerpOrganic = {
+  position?: number;
+  title: string;
+  snippet?: string;
+  link: string;
+  source?: string;
+  date?: string;
+};
+
+type SerpNews = {
+  title: string;
+  source?: string;
+  date?: string;
+  link: string;
+};
 
 export const marketSearch = action({
   args: {
@@ -89,14 +117,16 @@ export const marketSearch = action({
     cached?: boolean;
     query?: string;
     focus?: string | null;
-    answer?: string;
-    citations?: Array<{ url?: string; title?: string }>;
-    tokensIn?: number | null;
-    tokensOut?: number | null;
+    biasedQuery?: string;
+    organicResults?: SerpOrganic[];
+    newsResults?: SerpNews[];
+    relatedSearches?: string[];
+    answerBox?: string | null;
     generatedAt?: number;
     error?: string;
   }> => {
-    const norm = normalizeQuery(focus ? `${focus}|${query}` : query);
+    const biased = biasQuery(query, focus);
+    const norm = normalizeQuery(focus ? `${focus}|${biased}` : biased);
 
     if (!bypass_cache) {
       const cached: { result_json: string } | null = await ctx.runQuery(
@@ -107,10 +137,11 @@ export const marketSearch = action({
         const parsed = JSON.parse(cached.result_json) as {
           query: string;
           focus: string | null;
-          answer: string;
-          citations: Array<{ url?: string; title?: string }>;
-          tokensIn: number | null;
-          tokensOut: number | null;
+          biasedQuery: string;
+          organicResults: SerpOrganic[];
+          newsResults: SerpNews[];
+          relatedSearches: string[];
+          answerBox: string | null;
           generatedAt: number;
         };
         return { ok: true, cached: true, ...parsed };
@@ -119,66 +150,86 @@ export const marketSearch = action({
 
     let key: string;
     try {
-      key = await getXaiKey();
+      key = await getSerpApiKey();
     } catch (err) {
       return { ok: false, error: String(err) };
     }
 
-    const userMsg = focus
-      ? `Focus area: ${focus}\nUser query: ${query}`
-      : query;
-
-    const body = {
-      model: "grok-4",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userMsg },
-      ],
-      search_parameters: {
-        mode: "on",
-        max_search_results: 10,
-        return_citations: true,
-      },
-      temperature: 0.2,
-      max_tokens: 900,
-    } as const;
-
+    const params = new URLSearchParams({
+      engine: "google",
+      q: biased,
+      api_key: key,
+      num: "10",
+      gl: "uk",
+      hl: "en",
+      tbs: "qdr:y",                                // restrict to last year — "newest"
+    });
     let res: Response;
     try {
-      res = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify(body),
-      });
+      res = await fetch(`https://serpapi.com/search?${params}`);
     } catch (err) {
       return { ok: false, error: "fetch failed: " + String(err) };
     }
     if (!res.ok) {
       const errText = await res.text();
-      return { ok: false, error: `xAI ${res.status}: ${errText.slice(0, 240)}` };
+      return { ok: false, error: `SerpAPI ${res.status}: ${errText.slice(0, 240)}` };
     }
     const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      citations?: Array<{ url?: string; title?: string } | string>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      organic_results?: Array<{
+        position?: number;
+        title?: string;
+        snippet?: string;
+        link?: string;
+        source?: string;
+        date?: string;
+      }>;
+      news_results?: Array<{
+        title?: string;
+        source?: string;
+        date?: string;
+        link?: string;
+      }>;
+      related_searches?: Array<{ query?: string }>;
+      answer_box?: { snippet?: string; answer?: string };
+      error?: string;
     };
 
-    const answer = data?.choices?.[0]?.message?.content ?? "";
-    const rawCitations = data?.citations ?? [];
-    const citations = rawCitations.map((c) =>
-      typeof c === "string" ? { url: c } : c,
-    );
-    const usage = data?.usage ?? {};
+    if (data.error) return { ok: false, error: "SerpAPI: " + data.error };
+
+    const organicResults: SerpOrganic[] = (data.organic_results ?? [])
+      .filter((r) => r.title && r.link)
+      .slice(0, 10)
+      .map((r) => ({
+        position: r.position,
+        title: r.title!,
+        snippet: r.snippet ?? "",
+        link: r.link!,
+        source: r.source,
+        date: r.date,
+      }));
+    const newsResults: SerpNews[] = (data.news_results ?? [])
+      .filter((n) => n.title && n.link)
+      .slice(0, 6)
+      .map((n) => ({
+        title: n.title!,
+        source: n.source,
+        date: n.date,
+        link: n.link!,
+      }));
+    const relatedSearches = (data.related_searches ?? [])
+      .map((r) => r.query)
+      .filter((q): q is string => typeof q === "string")
+      .slice(0, 8);
+    const answerBox = data.answer_box?.snippet ?? data.answer_box?.answer ?? null;
+
     const result = {
       query,
       focus: focus ?? null,
-      answer,
-      citations,
-      tokensIn: usage.prompt_tokens ?? null,
-      tokensOut: usage.completion_tokens ?? null,
+      biasedQuery: biased,
+      organicResults,
+      newsResults,
+      relatedSearches,
+      answerBox,
       generatedAt: Date.now(),
     };
 
