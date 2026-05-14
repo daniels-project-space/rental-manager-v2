@@ -387,38 +387,43 @@ export const getStatsDrawerData = query({
     const pendingCount = pendingUniq.length;
     const pendingValueGbp = pendingUniq.reduce((s, r) => s + netOf(r), 0);
     const activeTotal = ongoingUniq.length + upcomingUniq.length;
-    // ── UNTRACKED ITEM DETECTION ────────────────────────────────
-    // A reservation is "untracked" when NONE of its items[] match an active
-    // master-inventory record. These shouldn't sit in the main pending bucket
-    // (we couldn't fulfil them anyway) — surface separately so the owner can
-    // either add the item to inventory or investigate.
-    function normaliseName(s: string): string {
-      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    // ── UNTRACKED ITEM DETECTION (LLM-resolved) ────────────────
+    // A reservation is "untracked" when its LLM-resolved items list is empty
+    // OR resolution hasn't run yet AND items[] is non-empty. This replaces
+    // the previous fuzzy substring matcher which conflated A7 II / A7 III
+    // (any model-number disambiguation). Resolution is owned by the action
+    // `item_resolver:resolveReservation` (see convex/item_resolver.ts) which
+    // calls Grok 4.3 with strict instructions to respect II/III/Mk2/Mk3 etc.
+    type ResolvedItem = { item_id: string; item_name_canonical: string; confidence: number };
+    function resolvedIdsOf(r: ResRow): Set<string> {
+      const arr = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
+      return new Set(arr.map((x) => x.item_id));
     }
-    const inventoryNorms: Array<{ canon: string; norm: string; qty: number }> = [];
-    for (const i of activeItems) {
-      const allNames = [i.name_canonical, ...(i.aliases ?? [])];
-      for (const n of allNames) {
-        if (n) inventoryNorms.push({ canon: i.name_canonical, norm: normaliseName(n), qty: i.qty });
+    function isResolved(r: ResRow): boolean {
+      return (r as { resolved_items?: ResolvedItem[] }).resolved_items !== undefined;
+    }
+    function isTracked(r: ResRow): boolean {
+      const ids = resolvedIdsOf(r);
+      if (ids.size === 0) return false;
+      // ids must reference an active item we currently have.
+      for (const id of ids) {
+        if (activeItemIds.has(id)) return true;
       }
+      return false;
     }
-    function reservationMatchesInventory(r: ResRow): { matches: boolean; canon: string | null } {
-      for (const ri of r.items ?? []) {
-        const rn = normaliseName(ri.item_name);
-        for (const inv of inventoryNorms) {
-          if (rn.includes(inv.norm) || (inv.norm.includes(rn) && rn.length > 3)) {
-            return { matches: true, canon: inv.canon };
-          }
-        }
-      }
-      return { matches: false, canon: null };
-    }
+    const activeItemIds = new Set<string>(activeItems.map((i) => i._id as string));
     const pendingTracked: typeof pendingUniq = [];
     const pendingUntracked: typeof pendingUniq = [];
+    const pendingUnresolved: typeof pendingUniq = []; // resolver hasn't run yet — count as tracked-by-default to avoid scaring the owner
     for (const r of pendingUniq) {
-      if (reservationMatchesInventory(r).matches) pendingTracked.push(r);
+      if (!isResolved(r as ResRow)) pendingUnresolved.push(r);
+      else if (isTracked(r as ResRow)) pendingTracked.push(r);
       else pendingUntracked.push(r);
     }
+    // Pending that are unresolved are counted as tracked optimistically — the
+    // resolver cron will reclassify them shortly. This keeps the headline
+    // pending number stable until the LLM has caught up.
+    pendingTracked.push(...pendingUnresolved);
     const untrackedPayload = {
       count: pendingUntracked.length,
       total_value_gbp: Math.round(pendingUntracked.reduce((s, r) => s + netOf(r), 0) * 100) / 100,
@@ -470,16 +475,15 @@ export const getStatsDrawerData = query({
         upcomingUniq.includes(r) ? "upcoming"
         : ongoingUniq.includes(r) ? "ongoing"
         : "pending";
+      const itemIdStr = item._id as string;
       for (const r of activeForConflicts) {
         if (!r.start_date || !r.end_date) continue;
         if ((r.start_date as string) > horizonEnd) continue;
-        // Item match: any of r.items must fuzzy-match this item
-        const itemNorms = [normaliseName(item.name_canonical), ...(item.aliases ?? []).map(normaliseName)];
-        const has = (r.items ?? []).some((ri) => {
-          const rn = normaliseName(ri.item_name);
-          return itemNorms.some((n) => rn.includes(n) || (n.includes(rn) && rn.length > 3));
-        });
-        if (!has) continue;
+        // Strict match via LLM-resolved item IDs — no substring fuzzy.
+        // If resolution hasn't run yet, the row is excluded from conflict
+        // detection (false-positive avoidance trumps false-negative).
+        const ids = resolvedIdsOf(r as ResRow);
+        if (!ids.has(itemIdStr)) continue;
         if (seenIds.has(r._id)) continue;
         seenIds.add(r._id);
         matchingRes.push({ r, kind: tag(r) });

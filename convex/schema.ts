@@ -259,6 +259,20 @@ export default defineSchema({
     return_at: v.optional(v.number()),              // ms epoch — actual handover end
     renter_name: v.optional(v.string()),            // denormalized from Hygglo otherPartName
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
+
+    /** LLM-resolved master-inventory items for this reservation.
+     *  Cleared on poll if items[] changes; re-populated by item_resolver action. */
+    resolved_items: v.optional(v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      confidence: v.number(),
+    }))),
+    /** Unix ms when the resolver last ran. */
+    resolution_at: v.optional(v.number()),
+    /** "llm" | "exact_match" | "manual" — provenance of the resolution. */
+    resolution_method: v.optional(v.string()),
+    /** Hash of items[].map(i=>i.item_name) when resolution_at was set. Used to invalidate. */
+    resolution_input_hash: v.optional(v.string()),
     /** ms epoch — bumped by the poller on every upsert so we can detect rows
      *  Hygglo has stopped returning (i.e. silently completed). */
     last_polled_at: v.optional(v.number()),

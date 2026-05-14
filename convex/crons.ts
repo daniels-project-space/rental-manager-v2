@@ -92,4 +92,15 @@ crons.interval(
   {},
 );
 
+
+// ── Item resolver — LLM-driven resolution of Hygglo titles → inventory IDs.
+// Runs every 5 min, resolves up to 15 unresolved reservations per cycle so
+// new poller writes get accurate item identification within minutes.
+crons.interval(
+  "item_resolver batch",
+  { minutes: 5 },
+  internal.item_resolver.resolveBatch,
+  { limit: 15 },
+);
+
 export default crons;
