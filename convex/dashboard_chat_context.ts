@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { effectiveDate, isConfirmedWithDates, isUpcoming } from "./lib/reservations/predicates";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -107,9 +108,7 @@ export const getContextBundle = query({
       renterNameById.set(r._id, r.display_name ?? "Unknown");
     }
 
-    // effectiveDate helper
-    const effectiveDate = (r: { pickup_date?: string; start_date?: string }) =>
-      r.pickup_date ?? r.start_date;
+    // effectiveDate imported from predicates
 
     // 1. TODAY'S SCHEDULE
     const todayEntries: TodayScheduleEntry[] = [];
@@ -195,14 +194,13 @@ export const getContextBundle = query({
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const daysElapsed = now.getDate();
     const dailyAvg = daysElapsed > 0 ? thisMonthRev / daysElapsed : 0;
+    // Use canonical isUpcoming predicate; window-clamp afterwards.
     const confirmedFuture = allReservations
       .filter(
         (r) =>
-          r.status === "confirmed" &&
-          r.start_date &&
-          r.start_date > today &&
-          r.start_date >= thisMonth.start &&
-          r.start_date <= thisMonth.end
+          isUpcoming(r as any, today) &&
+          (r.start_date as string) >= thisMonth.start &&
+          (r.start_date as string) <= thisMonth.end,
       )
       .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
     const projectedThisMonth = Math.round(
