@@ -335,8 +335,11 @@ export function LifetimeRevenue() {
                   const rows = payload
                     .filter((p) => {
                       const v = numValue(p);
-                      if (!v) return false;
+                      // Drop exact zeros AND tiny floats that would render as "£0".
+                      if (Math.round(v) === 0) return false;
                       const k = String(p.name ?? "");
+                      // Skip the cumulative-area duplicate row entirely.
+                      if (k === "cumulative-area") return false;
                       if (seen.has(k)) return false;
                       seen.add(k);
                       return true;
