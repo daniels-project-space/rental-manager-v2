@@ -231,10 +231,16 @@ export const getStatsDrawerData = query({
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
 
     // ── COLLECT 1: reservations ──────────────────────────────────
-    let allRes = await ctx.db.query("reservations").collect();
+    const allResRaw = await ctx.db.query("reservations").collect();
+    // Account-scoped view for per-card numbers (active, earnings, monthly, etc.)
+    let allRes = allResRaw;
     if (accountSlug) {
-      allRes = allRes.filter((r) => r.account_slug === accountSlug);
+      allRes = allResRaw.filter((r) => r.account_slug === accountSlug);
     }
+    // Cross-account view for double-booking detection — physical inventory
+    // is shared across accounts, so a conflict on shared gear must surface
+    // on every account's dashboard regardless of who owns the listing.
+    const allResCrossAccount = allResRaw;
 
     // ── COLLECT 2: items ─────────────────────────────────────────
     let allItems = await ctx.db.query("items").collect();
@@ -451,10 +457,28 @@ export const getStatsDrawerData = query({
     type ResWithItems = ResRow;
     const conflictHorizonDays = 90;
     const horizonEnd = new Date(Date.now() + conflictHorizonDays * 86400000).toISOString().slice(0, 10);
+
+    // Cross-account active reservations for conflict detection. Includes ALL
+    // accounts (not just the scoped one) so an A7 III booked by DB Cinema
+    // and an A7 III booked by Leo on the same day surface as ONE conflict
+    // on either dashboard page.
+    const ongoingCross = (allResCrossAccount as ResRow[]).filter((r) => isOngoing(r as ResRow, today));
+    const upcomingCross = (allResCrossAccount as ResRow[]).filter((r) => isUpcoming(r as ResRow, today));
+    const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => isPendingVerification(r as ResRow));
+    const dedupCross = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
+    const ongoingCrossUniq = dedupCross(ongoingCross);
+    const upcomingCrossUniq = dedupCross(upcomingCross);
+    const pendingCrossUniq = dedupCross(pendingCross);
+    // Pending-tracked equivalent for cross-account (filter to those whose
+    // resolved_items point at active inventory).
+    const pendingCrossTracked = pendingCrossUniq.filter((r) => {
+      const resolved = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
+      return resolved.some((x) => activeItemIds.has(x.item_id));
+    });
     const activeForConflicts: ResWithItems[] = [
-      ...ongoingUniq,
-      ...upcomingUniq,
-      ...pendingTracked,
+      ...ongoingCrossUniq,
+      ...upcomingCrossUniq,
+      ...pendingCrossTracked,
     ];
     interface Conflict {
       conflict_key: string;
@@ -480,8 +504,8 @@ export const getStatsDrawerData = query({
       const matchingRes: Array<{ r: ResWithItems; kind: "ongoing" | "upcoming" | "pending" }> = [];
       const seenIds = new Set<string>();
       const tag = (r: ResWithItems): "ongoing" | "upcoming" | "pending" =>
-        upcomingUniq.includes(r) ? "upcoming"
-        : ongoingUniq.includes(r) ? "ongoing"
+        upcomingCrossUniq.includes(r) ? "upcoming"
+        : ongoingCrossUniq.includes(r) ? "ongoing"
         : "pending";
       const itemIdStr = item._id as string;
       for (const r of activeForConflicts) {
@@ -537,6 +561,13 @@ export const getStatsDrawerData = query({
           .sort();
         const conflictKey = (item._id as string) + "|" + conflictReservationIds.join(",");
         if (dismissedKeys.has(conflictKey)) continue;
+        // Per-account view: only surface conflicts that involve at least one
+        // reservation in the scoped account. On 'All' (accountSlug=null) every
+        // conflict shows.
+        if (accountSlug) {
+          const involves = overlappingSet.some(({ r }) => r.account_slug === accountSlug);
+          if (!involves) continue;
+        }
 
         conflicts.push({
           conflict_key: conflictKey,

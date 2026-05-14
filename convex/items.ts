@@ -85,29 +85,17 @@ export const getItemCycles = query({
     const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
     const activeCanonicals = activeItems.map((i) => i.name_canonical);
 
-    function normKey(s: string): string {
-      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    }
-    function matchCanon(listingTitle: string): string | null {
-      const tNorm = normKey(listingTitle);
-      let best: string | null = null;
-      let bestScore = 0;
-      for (const canon of activeCanonicals) {
-        const cNorm = normKey(canon);
-        if (tNorm.includes(cNorm) && cNorm.length > bestScore) {
-          best = canon;
-          bestScore = cNorm.length;
-        }
-      }
-      return best;
-    }
-
+    // LLM-resolved items only — strict per-id match (no substring matching).
+    const activeCanonSet = new Set<string>(activeCanonicals);
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
-      for (const item of r.items ?? []) {
-        const canon = matchCanon(item.item_name);
-        if (!canon) continue;
-        rentalDaysMap.set(canon, (rentalDaysMap.get(canon) ?? 0) + (r.duration_days ?? 0));
+      const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
+      for (const x of resolved) {
+        if (!activeCanonSet.has(x.item_name_canonical)) continue;
+        rentalDaysMap.set(
+          x.item_name_canonical,
+          (rentalDaysMap.get(x.item_name_canonical) ?? 0) + (r.duration_days ?? 0),
+        );
       }
     }
 
