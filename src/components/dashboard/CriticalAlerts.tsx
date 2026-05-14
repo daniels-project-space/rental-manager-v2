@@ -66,12 +66,34 @@ export function CriticalAlerts({ conflicts, untracked }: Props) {
           70%  { box-shadow: 0 0 0 14px rgba(239,68,68,0),   inset 0 0 0 1px rgba(239,68,68,0.4); }
           100% { box-shadow: 0 0 0 0   rgba(239,68,68,0),   inset 0 0 0 1px rgba(239,68,68,0.4); }
         }
+        /* Stronger pulse when collapsed — bigger ring spread, faster, layered. */
+        @keyframes pulseRingStrong {
+          0%   { box-shadow: 0 0 0 0   rgba(239,68,68,0.85),
+                              0 0 0 0   rgba(239,68,68,0.55),
+                              inset 0 0 0 2px rgba(239,68,68,0.7); }
+          60%  { box-shadow: 0 0 0 12px rgba(239,68,68,0.0),
+                              0 0 0 22px rgba(239,68,68,0.0),
+                              inset 0 0 0 2px rgba(239,68,68,0.7); }
+          100% { box-shadow: 0 0 0 0    rgba(239,68,68,0.0),
+                              0 0 0 0    rgba(239,68,68,0.0),
+                              inset 0 0 0 2px rgba(239,68,68,0.7); }
+        }
         @keyframes pulseDot {
           0%, 100% { transform: scale(1);   opacity: 1; }
           50%      { transform: scale(1.4); opacity: 0.6; }
         }
-        .pulse-ring { animation: pulseRing 2s ease-out infinite; }
-        .pulse-dot  { animation: pulseDot 1.2s ease-in-out infinite; }
+        @keyframes pulseDotStrong {
+          0%, 100% { transform: scale(1);   opacity: 1;   box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
+          50%      { transform: scale(1.85); opacity: 0.55; box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+        }
+        @keyframes alertGlow {
+          0%, 100% { filter: brightness(1); }
+          50%      { filter: brightness(1.18); }
+        }
+        .pulse-ring        { animation: pulseRing 2s ease-out infinite; }
+        .pulse-ring-strong { animation: pulseRingStrong 1.1s ease-out infinite, alertGlow 1.1s ease-in-out infinite; }
+        .pulse-dot         { animation: pulseDot 1.2s ease-in-out infinite; }
+        .pulse-dot-strong  { animation: pulseDotStrong 0.9s ease-in-out infinite; }
       `}</style>
 
       <div className="space-y-2 mb-3">
@@ -90,7 +112,7 @@ function ConflictsBanner({ conflicts }: { conflicts: Conflict[] }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div
-      className="pulse-ring rounded-xl p-3"
+      className={(expanded ? "pulse-ring" : "pulse-ring-strong") + " rounded-xl p-3"}
       style={{
         background: "linear-gradient(135deg, rgba(239,68,68,0.16), rgba(190,18,60,0.12))",
         border: "1px solid rgba(239,68,68,0.45)",
@@ -101,8 +123,8 @@ function ConflictsBanner({ conflicts }: { conflicts: Conflict[] }) {
         className="w-full flex items-center gap-2 text-left"
       >
         <span
-          className="pulse-dot inline-block flex-shrink-0"
-          style={{ width: 10, height: 10, borderRadius: 9999, background: "#ef4444" }}
+          className={(expanded ? "pulse-dot" : "pulse-dot-strong") + " inline-block flex-shrink-0"}
+          style={{ width: expanded ? 10 : 12, height: expanded ? 10 : 12, borderRadius: 9999, background: "#ef4444" }}
         />
         <div className="flex-1 min-w-0">
           <div className="text-[11px] uppercase tracking-wider font-bold text-rose-200">
