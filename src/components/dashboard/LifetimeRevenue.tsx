@@ -31,6 +31,7 @@ const SERIES = [
   { key: "dbcinemaOrganic",    label: "DB Cinema",          color: "#6366f1", fill: "url(#grad-dbcinema)", roundTop: false },
   { key: "leoOrganic",         label: "Leo Adams",          color: "#a855f7", fill: "url(#grad-leo)",      roundTop: false },
   { key: "aiBoost",            label: "AI Boost",           color: "#22c55e", fill: "url(#grad-ai)",       roundTop: true  },
+  { key: "damageClaims",       label: "Claims",             color: "#ffffff", fill: "url(#grad-damage)",   roundTop: true  },
   { key: "bookedNext",         label: "Booked (next mo)",   color: "#94a3b8", fill: "url(#grad-booked)",   roundTop: true  },
   { key: "pendingNext",        label: "Pending (next mo)",  color: "#eab308", fill: "url(#pending-stripe)",roundTop: true  },
   { key: "predictedRemainder", label: "Predicted",          color: "#94a3b8", fill: "url(#grad-predicted)",roundTop: true  },
@@ -66,6 +67,7 @@ const ACTUAL_KEYS = [
   "dbcinemaOrganic",
   "leoOrganic",
   "aiBoost",
+  "damageClaims",
   "bookedNext",
   "pendingNext",
 ] as const;
@@ -238,6 +240,10 @@ export function LifetimeRevenue() {
                 <linearGradient id="grad-ai" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#4ade80" stopOpacity={0.9} />
                   <stop offset="100%" stopColor="#15803d" stopOpacity={0.8} />
+                </linearGradient>
+                <linearGradient id="grad-damage" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity={0.85} />
+                  <stop offset="100%" stopColor="#cbd5e1" stopOpacity={0.65} />
                 </linearGradient>
                 <linearGradient id="grad-booked" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#cbd5e1" stopOpacity={0.7} />
