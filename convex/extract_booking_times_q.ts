@@ -91,10 +91,12 @@ export const listNeedingExtraction = internalQuery({
 
     const out: typeof candidates[number]["_id"][] = [];
     for (const r of candidates) {
-      // Cheap pre-filter: skip if extraction ran recently AND we have at least one time stored.
+      // Skip if extraction ran in the last hour — the action's transcript-hash
+      // guard inside the action handles the precise dedup. Some chats have no
+      // time content yet (renter hasn't picked a slot), so the absence of
+      // pickup_time isn't a reason to re-run.
       const extractedAt = (r as { times_extracted_at?: number }).times_extracted_at;
-      const hasAnyTime = !!r.pickup_time || !!r.return_time;
-      if (extractedAt && hasAnyTime && Date.now() - extractedAt < 3600 * 1000) continue;
+      if (extractedAt && Date.now() - extractedAt < 3600 * 1000) continue;
       out.push(r._id);
       if (out.length >= limit) break;
     }

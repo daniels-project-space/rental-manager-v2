@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { api } from "./_generated/api";
 import { v } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
 
@@ -135,9 +136,10 @@ export const upsertMessages = mutation({
     account_slug: v.string(),
     messages: messageArgs,
   },
-  handler: async (ctx, { account_slug, messages }): Promise<{ inserted: number; skipped: number }> => {
+  handler: async (ctx, { account_slug, messages }): Promise<{ inserted: number; skipped: number; scheduled_extractions: number }> => {
     let inserted = 0;
     let skipped = 0;
+    const changedThreads = new Set<string>();
     for (const msg of messages) {
       const existing = await ctx.db
         .query("hygglo_messages")
@@ -161,8 +163,28 @@ export const upsertMessages = mutation({
         raw: msg.raw,
       });
       inserted++;
+      changedThreads.add(msg.thread_id);
     }
-    return { inserted, skipped };
+
+    // Schedule a booking-time extraction for each reservation whose thread
+    // received new messages. The action runs in a separate Convex task —
+    // doesn't block this mutation. Idempotent via transcript_hash inside
+    // extract_booking_times.
+    let scheduled = 0;
+    for (const threadId of changedThreads) {
+      const reservation = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId))
+        .first();
+      if (!reservation) continue;
+      if (reservation.is_obsolete) continue;
+      if (!reservation.start_date || !reservation.end_date) continue;
+      await ctx.scheduler.runAfter(0, api.extract_booking_times.extractForReservation, {
+        reservation_id: reservation._id,
+      });
+      scheduled++;
+    }
+    return { inserted, skipped, scheduled_extractions: scheduled };
   },
 });
 
