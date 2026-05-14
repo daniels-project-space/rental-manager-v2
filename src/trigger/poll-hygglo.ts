@@ -73,7 +73,7 @@ type OrderDetail = {
   };
   items?: Array<{ name?: string; type?: string }>;
   /** Steps array — present on the per-order detail endpoint (/v4/my/orders/:id). */
-  steps?: Array<{ key: string; active: boolean }>;
+  steps?: Array<{ key: string; active?: boolean; completed?: boolean; failure?: boolean }>;
 };
 
 type OrderReservationPayload = {

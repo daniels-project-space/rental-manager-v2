@@ -4,7 +4,6 @@ import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { useState } from "react";
 import { SettingsDrawer } from "@/components/dashboard/SettingsDrawer";
-import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 
 const ACCOUNTS = [
   { slug: null, label: "All" },
@@ -16,7 +15,6 @@ export function HeaderBar() {
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const settings = useQuery(api.settings.get);
   const [showSettings, setShowSettings] = useState(false);
-  const { editMode, toggleEditMode } = useEditMode();
 
   return (
     <>
@@ -65,16 +63,6 @@ export function HeaderBar() {
               Read-only
             </span>
           )}
-          <button
-            onClick={toggleEditMode}
-            className="transition-colors text-base"
-            style={{ color: editMode ? "#3b82f6" : "#8b8fa3" }}
-            aria-label="Edit dashboard"
-            aria-pressed={editMode}
-            title={editMode ? "Exit edit mode" : "Edit dashboard layout"}
-          >
-            ✎
-          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors text-base"

@@ -9,6 +9,7 @@
  */
 
 import type * as account_state from "../account_state.js";
+import type * as admin_migrate from "../admin_migrate.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
@@ -61,6 +62,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
+  admin_migrate: typeof admin_migrate;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
