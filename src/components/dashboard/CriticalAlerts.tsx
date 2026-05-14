@@ -87,7 +87,7 @@ export function CriticalAlerts({ conflicts, untracked }: Props) {
 }
 
 function ConflictsBanner({ conflicts }: { conflicts: Conflict[] }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   return (
     <div
       className="pulse-ring rounded-xl p-3"
