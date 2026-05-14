@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { effectiveDate } from "./lib/reservations/predicates";
 
 /**
  * W18 AI Investment Insights — deterministic aggregations from real data.
@@ -31,14 +32,14 @@ export const getInsights = query({
 
     const rolling30Revenue = allReservations
       .filter((r) => {
-        const d = r.pickup_date ?? r.start_date;
+        const d = effectiveDate(r as any);
         return d !== undefined && d >= thirtyDaysAgoStr2 && d <= todayStr2;
       })
       .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
 
     const prior30Revenue = allReservations
       .filter((r) => {
-        const d = r.pickup_date ?? r.start_date;
+        const d = effectiveDate(r as any);
         return d !== undefined && d >= sixtyDaysAgoStr2 && d < thirtyDaysAgoStr2;
       })
       .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);

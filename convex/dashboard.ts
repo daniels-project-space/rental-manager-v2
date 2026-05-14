@@ -443,17 +443,23 @@ export const getStatsDrawerData = query({
     // Split this-month booked rentals into done / active / upcoming for the v1
     // 4-segment breakdown bar. A "completed" status row counts as done even if
     // end_date is in the future (unlikely but possible).
+    // Month Confirmed split into done / active / upcoming. Composed from the
+    // canonical isConfirmedWithDates/isUpcoming predicates so the count moves
+    // in lockstep with the Active Rentals card when semantics shift. "active"
+    // here is stricter than isOngoing — Month Confirmed only highlights
+    // strictly current rentals (end >= today), whereas isOngoing also keeps
+    // overdue/never-returned rows visible.
     const monthDone = monthBookedRentals.filter(
       (r) => r.status === "completed" || (r.end_date as string) < today,
     );
     const monthActive = monthBookedRentals.filter(
       (r) =>
-        r.status === "confirmed" &&
+        isConfirmedWithDates(r as ResRow) &&
         (r.start_date as string) <= today &&
         (r.end_date as string) >= today,
     );
-    const monthUpcoming = monthBookedRentals.filter(
-      (r) => r.status === "confirmed" && (r.start_date as string) > today,
+    const monthUpcoming = monthBookedRentals.filter((r) =>
+      isUpcoming(r as ResRow, today),
     );
     const monthPending = dedupRes(
       pendingRes.filter((r) => {

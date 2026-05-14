@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { effectiveDate, isLive } from "./lib/reservations/predicates";
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -27,14 +28,17 @@ export const getEarningsByPeriod = query({
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
     }
-    // Exclude cancelled/unconfirmed reservations (v1 parity: only confirmed/completed)
-    rows = rows.filter((r) => r.status !== "cancelled" && r.status !== "denied");
+    // Exclude cancelled/declined/obsolete reservations. Earlier code used the
+    // typo "denied" (matched zero rows because schema enum is "declined");
+    // canonicalised via isLive from predicates so revenue, dashboard and chat
+    // all use the same definition.
+    rows = rows.filter(isLive);
 
     const buckets = new Map<string, { revenue: number; bookings: number }>();
 
     for (const r of rows) {
       // BF-06: use pickup_date if available, fall back to start_date
-      const dateStr = r.pickup_date ?? r.start_date;
+      const dateStr = effectiveDate(r as any);
       if (!dateStr) continue;
       // Cap to current month — don't show future months in the earnings chart
       const effectiveMo = dateStr.slice(0, 7);
@@ -368,7 +372,7 @@ export const getLifetimeByMonth = query({
     });
 
     for (const res of dedupedFiltered) {
-      const dateStr = res.pickup_date ?? res.start_date;
+      const dateStr = effectiveDate(res as any);
       if (!dateStr) continue;
       if (res.is_obsolete) continue;
       if (res.status === "cancelled" || res.status === "declined") continue;
@@ -537,7 +541,7 @@ export const getLifetimeByMonth = query({
 
       const count = !isFuture
         ? dedupedFiltered.filter((r) => {
-            const d = r.pickup_date ?? r.start_date;
+            const d = effectiveDate(r as any);
             if (!d || d.slice(0, 7) !== mo) return false;
             if (r.is_obsolete) return false;
             if (r.status === "cancelled" || r.status === "declined") return false;
