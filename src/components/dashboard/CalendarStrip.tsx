@@ -221,6 +221,52 @@ function ItemRow({ item }: { item: ChipItem }) {
   );
 }
 
+// Distinct method pills — courier truck for delivery, handshake for
+// collection, gear-icon for unknown. Pickup pills are teal-tinted; return
+// pills are violet-tinted, so even when both are present you can tell the
+// direction without reading the label.
+function MethodPill({
+  direction,
+  method,
+}: {
+  direction: "pickup" | "return";
+  method: string;
+}) {
+  const isDelivery = method === "delivery";
+  const isCollection = method === "collection";
+  const tone =
+    direction === "pickup"
+      ? { bg: "rgba(34,197,94,0.12)", color: "#22c55e", border: "rgba(34,197,94,0.32)" }
+      : { bg: "rgba(168,85,247,0.12)", color: "#c084fc", border: "rgba(168,85,247,0.32)" };
+  // Delivery is louder: amber regardless of direction, bold border.
+  const deliveryTone = {
+    bg: "rgba(245,158,11,0.22)",
+    color: "#fbbf24",
+    border: "rgba(245,158,11,0.55)",
+  };
+  const t = isDelivery ? deliveryTone : tone;
+  const icon = isDelivery ? "🚚" : isCollection ? "🤝" : "❓";
+  const label =
+    direction === "pickup" ? "Pickup" : "Return";
+  const verb = isDelivery ? "delivered" : isCollection ? "collected" : "unknown";
+  const dirArrow = direction === "pickup" ? "↓" : "↑";
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide"
+      style={{
+        background: t.bg,
+        color: t.color,
+        border: `1px solid ${t.border}`,
+      }}
+      title={`${label} ${verb}`}
+    >
+      <span style={{ fontWeight: 700, opacity: 0.7 }}>{dirArrow}</span>
+      <span style={{ fontSize: 12, lineHeight: 1 }}>{icon}</span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
 // ── V1-style rich booking card ───────────────────────────────────────────────
 function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
@@ -257,21 +303,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
   const progress = computeProgress(chip.startDate, chip.endDate, chip.pickupTime, chip.returnTime);
   const noteLines = splitNotes(chip.notes);
 
-  // Collection / delivery tag
-  let collectionTag: { text: string; tone: "delivery" | "collection" } | null = null;
-  if (isPickupDelivery && isReturnDelivery) {
-    collectionTag = { text: "🚚 Delivery (both ways)", tone: "delivery" };
-  } else if (isPickupDelivery) {
-    collectionTag = { text: "🚚 Delivery: pickup", tone: "delivery" };
-  } else if (isReturnDelivery) {
-    collectionTag = { text: "🚚 Delivery: return", tone: "delivery" };
-  } else if (chip.pickupMethod === "collection" && chip.returnMethod === "collection") {
-    collectionTag = { text: "Collection (both ways)", tone: "collection" };
-  } else if (chip.pickupMethod === "collection") {
-    collectionTag = { text: "Pickup: collection", tone: "collection" };
-  } else if (chip.returnMethod === "collection") {
-    collectionTag = { text: "Return: collection", tone: "collection" };
-  }
+  // (Method pills rendered inline as <MethodPill /> per direction below.)
 
   const progressColor =
     progress.status === "completed" ? "#22c55e" : progress.status === "active" ? "#3b82f6" : "#6b7280";
@@ -285,8 +317,15 @@ function BookingCard({ chip }: { chip: ChipData }) {
 
   return (
     <div
-      className="flex gap-3 p-2.5 rounded-lg"
-      style={{ background: "rgba(255,255,255,0.03)", borderLeft: `3px solid ${color}` }}
+      className="flex gap-3 p-3 rounded-xl transition-colors hover:bg-white/[0.05]"
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(20,24,40,0.65) 0%, rgba(14,17,28,0.45) 100%)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderLeft: `4px solid ${color}`,
+        boxShadow:
+          "0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 18px rgba(0,0,0,0.32)",
+      }}
     >
       {/* Thumbnail — rounded on the img itself so hover-zoom doesn't clip */}
       {chip.imageUrl ? (
@@ -366,17 +405,13 @@ function BookingCard({ chip }: { chip: ChipData }) {
               </span>
             </>
           )}
-          {collectionTag && (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full"
-              style={
-                collectionTag.tone === "delivery"
-                  ? { background: "rgba(245,158,11,0.12)", color: "#fbbf24" }
-                  : { background: "rgba(255,255,255,0.06)", color: "#9ca3af" }
-              }
-            >
-              {collectionTag.text}
-            </span>
+          {/* Method pills — pickup vs return, each clearly distinct.
+              Delivery = amber truck pill; Collection = teal handshake pill. */}
+          {chip.pickupMethod && (
+            <MethodPill direction="pickup" method={chip.pickupMethod} />
+          )}
+          {chip.returnMethod && (
+            <MethodPill direction="return" method={chip.returnMethod} />
           )}
         </div>
 
@@ -573,7 +608,7 @@ function DayDrawer({ day }: { day: DayData }) {
 
       {/* All bookings (pickups + returns + away) rendered uniformly */}
       {allBookings.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {allBookings.map((b) => (
             <BookingCard key={`${b.kind}-${String(b.reservationId)}`} chip={b} />
           ))}
