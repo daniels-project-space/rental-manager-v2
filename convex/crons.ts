@@ -115,4 +115,16 @@ crons.interval(
   { limit: 10 },
 );
 
+
+// ── Vision resolver — Grok vision pass over LLM-resolved kit-style
+// reservations. Catches kit-lens / accessory items hidden in the photo
+// that the text-only resolver missed. Tight 5-per-cycle cap (vision costs
+// ~10x text).
+crons.interval(
+  "vision_resolver augment",
+  { minutes: 15 },
+  internal.vision_resolver.augmentBatch,
+  { limit: 5 },
+);
+
 export default crons;
