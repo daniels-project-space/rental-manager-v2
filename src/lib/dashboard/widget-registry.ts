@@ -60,6 +60,7 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "monthly",         label: "Monthly" },
   { id: "confirmed",       label: "Confirmed" },
   { id: "scanner",         label: "Scanner" },
+  { id: "insurance",       label: "Insurance Claims" },
   { id: "ongoing",         label: "Ongoing" },
   { id: "upcoming",        label: "Upcoming" },
   { id: "ai_boost",        label: "AI Boost" },

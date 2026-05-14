@@ -576,11 +576,12 @@ export const getLifetimeByMonth = query({
       });
     }
 
+    // Include the current (partial) month in totals for BOTH per-account and
+    // all-accounts views — the chart shows the bar for it, so the header total
+    // must include it. Otherwise users see the bar but no £ attribution.
     const completedRows = rows.filter(
       (row) =>
-        // For all-accounts view: exclude current month (in-progress, incomplete aggregate).
-        // For per-account view: include current month so confirmed bookings count toward lifetime total.
-        (accountSlug ? row.month <= currentMonth : row.month < currentMonth) &&
+        row.month <= currentMonth &&
         row.dbcinemaOrganic + row.leoOrganic + row.danielOrganic + row.vertusOrganic + row.aiBoost + row.damageClaims > 0
     );
 

@@ -319,8 +319,30 @@ export const upsertOrderAsReservation = mutation({
     };
 
     if (existing) {
-      // Skip rows with v1_rental_id — historical import is authoritative.
-      if (existing.v1_rental_id) return { action: "skipped" };
+      // Historical-import rows (v1_rental_id set) used to be unconditionally
+      // skipped. That locked in undercounted nets when V1 import sourced from
+      // `rental` (one price per rental) instead of `booking` (sum of per-item
+      // line nets). Now we allow ONLY the net/gross fields to be corrected
+      // when the live Hygglo poller sees a materially HIGHER value
+      // (≥ £10 OR ≥ 10% increase). Other fields stay frozen on imported rows.
+      if (existing.v1_rental_id) {
+        const storedNet = existing.net_to_owner_gbp ?? 0;
+        const incomingNet = args.net_to_owner_gbp ?? 0;
+        const diff = incomingNet - storedNet;
+        const isMaterialIncrease =
+          diff >= 10 || (storedNet > 0 && diff / storedNet >= 0.1);
+        if (!isMaterialIncrease) return { action: "skipped" };
+        await ctx.db.patch(existing._id, {
+          net_to_owner_gbp: incomingNet,
+          ...(args.gross_paid_gbp !== undefined && {
+            gross_paid_gbp: args.gross_paid_gbp,
+          }),
+        });
+        console.info(
+          `[hygglo] v1_rental_id ${existing.v1_rental_id}: net corrected £${storedNet.toFixed(2)} → £${incomingNet.toFixed(2)}`,
+        );
+        return { action: "updated" };
+      }
 
       // ── step-priority dedup ──────────────────────────────────
       const storedStep = (existing as any).order_step ?? null;

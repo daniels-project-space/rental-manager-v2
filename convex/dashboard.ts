@@ -260,6 +260,15 @@ export const getStatsDrawerData = query({
       .withIndex("by_source", (q) => q.eq("source", "hygglo_poller"))
       .first();
 
+    // ── COLLECT 6: insurance_claims (account-scoped) ──────────────
+    let claimRows = accountSlug
+      ? await ctx.db
+          .query("insurance_claims")
+          .withIndex("by_account", (q) => q.eq("account_slug", accountSlug))
+          .collect()
+      : await ctx.db.query("insurance_claims").collect();
+    claimRows = claimRows.slice().sort((a, b) => (a.claim_date < b.claim_date ? 1 : a.claim_date > b.claim_date ? -1 : 0));
+
     // ────────────────────────────────────────────────────────────
     // Derived sets from reservations
     // ────────────────────────────────────────────────────────────
@@ -512,6 +521,42 @@ export const getStatsDrawerData = query({
           days_until: daysUntil,
         };
       }),
+    };
+
+    // ── card: insurance_claims (W22 — pinned to-do list of cases) ─
+    // "Open" cases need owner action; "settled" or "denied" are terminal.
+    // Sums by status surface both pending workload (open count + amount) and
+    // outcomes (settled total YTD).
+    const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+    let openCount = 0;
+    let openAmount = 0;
+    let settledCountYTD = 0;
+    let settledAmountYTD = 0;
+    let deniedCountYTD = 0;
+    for (const c of claimRows) {
+      if (c.status === "open") { openCount++; openAmount += c.amount_gbp; continue; }
+      if (c.claim_date >= yearStart) {
+        if (c.status === "settled") { settledCountYTD++; settledAmountYTD += c.amount_gbp; }
+        else if (c.status === "denied") { deniedCountYTD++; }
+      }
+    }
+    const insurance = {
+      open_count: openCount,
+      open_amount_gbp: Math.round(openAmount * 100) / 100,
+      settled_count_ytd: settledCountYTD,
+      settled_amount_ytd_gbp: Math.round(settledAmountYTD * 100) / 100,
+      denied_count_ytd: deniedCountYTD,
+      total_count: claimRows.length,
+      claims: claimRows.slice(0, 50).map((c) => ({
+        id: c._id as string,
+        accountSlug: c.account_slug ?? null,
+        itemNameCanonical: c.item_name_canonical ?? null,
+        amountGbp: c.amount_gbp,
+        claimDate: c.claim_date,
+        description: c.description ?? null,
+        status: c.status,
+        createdAt: c.created_at,
+      })),
     };
 
     // ── card: scanner ─────────────────────────────────────────────
@@ -791,6 +836,7 @@ export const getStatsDrawerData = query({
       ongoing: ongoingCard,
       upcoming: upcomingCard,
       scanner,
+      insurance,
       denied_revenue,
       missed_revenue,
       ai_boost,

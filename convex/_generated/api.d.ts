@@ -9,6 +9,7 @@
  */
 
 import type * as account_state from "../account_state.js";
+import type * as admin_backfill_net from "../admin_backfill_net.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
@@ -29,6 +30,7 @@ import type * as hygglo_ui from "../hygglo_ui.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as items from "../items.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
+import type * as lib_reservations_views from "../lib/reservations/views.js";
 import type * as lost_revenue from "../lost_revenue.js";
 import type * as memories from "../memories.js";
 import type * as model_upgrade_scans from "../model_upgrade_scans.js";
@@ -63,6 +65,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
+  admin_backfill_net: typeof admin_backfill_net;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
@@ -83,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   insurance_claims: typeof insurance_claims;
   items: typeof items;
   "lib/reservations/predicates": typeof lib_reservations_predicates;
+  "lib/reservations/views": typeof lib_reservations_views;
   lost_revenue: typeof lost_revenue;
   memories: typeof memories;
   model_upgrade_scans: typeof model_upgrade_scans;

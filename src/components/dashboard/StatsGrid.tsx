@@ -29,6 +29,7 @@ import ConfirmedDrawer from "./stat-cards/ConfirmedDrawer";
 import OngoingDrawer from "./stat-cards/OngoingDrawer";
 import UpcomingDrawer from "./stat-cards/UpcomingDrawer";
 import ScannerDrawer from "./stat-cards/ScannerDrawer";
+import InsuranceClaimsDrawer from "./stat-cards/InsuranceClaimsDrawer";
 import DeniedRevenueDrawer from "./stat-cards/DeniedRevenueDrawer";
 import MissedRevenueDrawer from "./stat-cards/MissedRevenueDrawer";
 import AiBoostDrawer from "./stat-cards/AiBoostDrawer";
@@ -299,6 +300,26 @@ export function StatsGrid() {
           onToggle={() => toggle("scanner")}
         >
           <ScannerDrawer data={data.scanner} />
+        </ExpandableStatCard>
+      ),
+      insurance: (
+        <ExpandableStatCard
+          id="insurance"
+          label="Insurance Claims"
+          value={data.insurance.open_count}
+          valueColor={data.insurance.open_count > 0 ? "amber" : "green"}
+          accentColor={data.insurance.open_count > 0 ? "amber" : "green"}
+          subtitle={
+            data.insurance.open_count > 0
+              ? `£${Math.round(data.insurance.open_amount_gbp).toLocaleString("en-GB")} at risk · ${data.insurance.settled_count_ytd} settled YTD`
+              : data.insurance.total_count > 0
+                ? `All clear · ${data.insurance.settled_count_ytd} settled YTD`
+                : "No claims yet"
+          }
+          isExpanded={expandedId === "insurance"}
+          onToggle={() => toggle("insurance")}
+        >
+          <InsuranceClaimsDrawer data={data.insurance} />
         </ExpandableStatCard>
       ),
       ongoing: (

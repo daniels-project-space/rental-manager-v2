@@ -1,14 +1,10 @@
 "use client";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
-import { ClaimsRecordingModal } from "@/components/modals/ClaimsRecordingModal";
-import { EditClaimModal } from "@/components/modals/EditClaimModal";
-import type { ClaimRow } from "@/components/modals/EditClaimModal";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -35,7 +31,6 @@ const SERIES = [
   { key: "dbcinemaOrganic",    label: "DB Cinema",          color: "#6366f1", fill: "url(#grad-dbcinema)", roundTop: false },
   { key: "leoOrganic",         label: "Leo Adams",          color: "#a855f7", fill: "url(#grad-leo)",      roundTop: false },
   { key: "aiBoost",            label: "AI Boost",           color: "#22c55e", fill: "url(#grad-ai)",       roundTop: true  },
-  { key: "damageClaims",       label: "Claims",             color: "#ffffff", fill: "url(#grad-damage)",   roundTop: true  },
   { key: "bookedNext",         label: "Booked (next mo)",   color: "#94a3b8", fill: "url(#grad-booked)",   roundTop: true  },
   { key: "pendingNext",        label: "Pending (next mo)",  color: "#eab308", fill: "url(#pending-stripe)",roundTop: true  },
   { key: "predictedRemainder", label: "Predicted",          color: "#94a3b8", fill: "url(#grad-predicted)",roundTop: true  },
@@ -71,27 +66,14 @@ const ACTUAL_KEYS = [
   "dbcinemaOrganic",
   "leoOrganic",
   "aiBoost",
-  "damageClaims",
   "bookedNext",
   "pendingNext",
 ] as const;
 
-const STATUS_COLOR: Record<string, string> = {
-  open: "#f59e0b",
-  settled: "#22c55e",
-  denied: "#ef4444",
-};
-
 export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
-  const [showClaimsModal, setShowClaimsModal] = useState(false);
-  const [claimsOpen, setClaimsOpen] = useState(false);
-  const [editingClaim, setEditingClaim] = useState<ClaimRow | null>(null);
-  const deleteClaim = useMutation(api.insurance_claims.remove);
-
   const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug });
-  const recentClaims = useQuery(api.insurance_claims.list, { accountSlug: activeAccountSlug ?? undefined });
   // Single source of truth for the current-month target: the Expected Monthly
   // stat card (data.monthly.target_gbp). The lifetime chart mirrors that value
   // so the two widgets cannot disagree.
@@ -147,13 +129,6 @@ export function LifetimeRevenue() {
   const strongest = raw?.strongestMonth;
   const weakest = raw?.weakestMonth;
   const boostPct = Math.round((raw?.boostRate ?? 0) * 100);
-  const topClaims = (recentClaims ?? []).slice(0, 10);
-
-  async function handleDeleteClaim(id: Id<"insurance_claims">) {
-    if (!window.confirm("Delete this claim? This cannot be undone.")) return;
-    await deleteClaim({ id });
-  }
-
   return (
     <>
       <Card className="relative overflow-hidden">
@@ -162,17 +137,7 @@ export function LifetimeRevenue() {
           style={{ background: "radial-gradient(ellipse at top left, rgba(34,197,94,0.08) 0%, transparent 60%)" }}
         />
 
-        <CardHeader
-          title="Lifetime Revenue"
-          actions={
-            <button
-              onClick={() => setShowClaimsModal(true)}
-              style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "rgba(255,255,255,0.08)", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.15)" }}
-            >
-              + Claim
-            </button>
-          }
-        />
+        <CardHeader title="Lifetime Revenue" />
 
         {/* Stats bar */}
         {raw !== undefined && (
@@ -273,10 +238,6 @@ export function LifetimeRevenue() {
                 <linearGradient id="grad-ai" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#4ade80" stopOpacity={0.9} />
                   <stop offset="100%" stopColor="#15803d" stopOpacity={0.8} />
-                </linearGradient>
-                <linearGradient id="grad-damage" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#ffffff" stopOpacity={0.85} />
-                  <stop offset="100%" stopColor="#cbd5e1" stopOpacity={0.65} />
                 </linearGradient>
                 <linearGradient id="grad-booked" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#cbd5e1" stopOpacity={0.7} />
@@ -522,48 +483,7 @@ export function LifetimeRevenue() {
           </ResponsiveContainer>
         )}
 
-        {/* Recent Claims */}
-        <div className="mt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 12 }}>
-          <button
-            className="flex items-center gap-1.5 text-xs font-medium w-full text-left"
-            style={{ color: "#8b8fa3" }}
-            onClick={() => setClaimsOpen((o) => !o)}
-          >
-            <span style={{ transform: claimsOpen ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", fontSize: 10 }}>&#9658;</span>
-            Recent Claims
-            {recentClaims !== undefined && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px]" style={{ background: "rgba(255,255,255,0.08)", color: "#e4e6eb" }}>
-                {topClaims.length}
-              </span>
-            )}
-          </button>
-          {claimsOpen && (
-            <div className="mt-2 space-y-1">
-              {recentClaims === undefined && <SkeletonBlock className="h-8 w-full rounded" />}
-              {recentClaims !== undefined && topClaims.length === 0 && (
-                <p className="text-xs text-[#8b8fa3] py-2">No claims recorded.</p>
-              )}
-              {topClaims.map((c) => (
-                <div key={c.id as string} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs text-[#e4e6eb] truncate block">{c.claimDate} &bull; {c.itemNameCanonical ?? "no item"} &bull; £{c.amountGbp.toFixed(2)}</span>
-                    <span className="text-[10px]" style={{ color: STATUS_COLOR[c.status] ?? "#8b8fa3" }}>{c.status}{c.accountSlug ? " · " + c.accountSlug : ""}</span>
-                  </div>
-                  <button onClick={() => setEditingClaim({ id: c.id, accountSlug: c.accountSlug, itemNameCanonical: c.itemNameCanonical, amountGbp: c.amountGbp, claimDate: c.claimDate, description: c.description, status: c.status })} className="text-[#8b8fa3] hover:text-[#e4e6eb] px-1 text-sm" title="Edit">&#9998;</button>
-                  <button onClick={() => handleDeleteClaim(c.id)} className="text-[#8b8fa3] hover:text-[#ef4444] px-1 text-sm" title="Delete">&#x2715;</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </Card>
-
-      {showClaimsModal && (
-        <ClaimsRecordingModal onClose={() => setShowClaimsModal(false)} />
-      )}
-      {editingClaim && (
-        <EditClaimModal claim={editingClaim} onClose={() => setEditingClaim(null)} />
-      )}
     </>
   );
 }
