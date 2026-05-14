@@ -16,6 +16,7 @@ interface Rental {
   return_time?: string | null;
   pickup_method?: string | null;
   return_method?: string | null;
+  item_tiles?: Array<{ name: string; image_url: string | null; qty: number }>;
   items: string[];
   photo_url?: string | null;
   duration_days?: number | null;
@@ -102,10 +103,51 @@ export function RentalRow({ r }: { r: Rental }) {
             {r.account_slug}
           </span>
         </div>
-        <div className="text-[11px] text-slate-400 truncate">
-          {item}
-          {more && <span className="text-slate-500">{more}</span>}
-        </div>
+        {/* Item tiles row — every item in the rental, with its image. */}
+        {r.item_tiles && r.item_tiles.length > 0 ? (
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {r.item_tiles.map((t, i) => (
+              <div
+                key={t.name + i}
+                className="relative flex-shrink-0"
+                title={t.name + (t.qty > 1 ? ` × ${t.qty}` : "")}
+              >
+                {t.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={t.image_url}
+                    alt={t.name}
+                    className="rounded object-cover"
+                    style={{ width: 32, height: 32, background: "rgba(255,255,255,0.04)" }}
+                    loading="lazy"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div
+                    className="flex items-center justify-center rounded text-[8px]"
+                    style={{ width: 32, height: 32, background: "rgba(255,255,255,0.04)", color: "#6b6f80" }}
+                  >
+                    {t.name.split(/\s+/)[0].slice(0,3).toUpperCase()}
+                  </div>
+                )}
+                {t.qty > 1 && (
+                  <span
+                    className="absolute -top-1 -right-1 text-[9px] font-bold px-1 rounded-full"
+                    style={{ background: "#070910", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.18)" }}
+                  >
+                    ×{t.qty}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          // Fallback to plain text when no resolved items yet (resolver still running).
+          <div className="text-[11px] text-slate-400 truncate">
+            {item}
+            {more && <span className="text-slate-500">{more}</span>}
+          </div>
+        )}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
           {(r.pickup_date || r.start_date) && (
             <span

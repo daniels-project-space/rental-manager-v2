@@ -603,6 +603,30 @@ export const getStatsDrawerData = query({
       return Math.max(1, Math.round(ms / 86400000) + 1);
     };
 
+    // Inventory image lookup for the multi-tile item row in Active Rentals.
+    // Match strictly via resolved_items[].item_id — no fuzzy substring matching.
+    const itemImageById = new Map<string, { name: string; image_url: string | null }>();
+    for (const it of activeItems) {
+      itemImageById.set(it._id as string, {
+        name: it.name_canonical,
+        image_url: (it as { image_url?: string }).image_url ?? null,
+      });
+    }
+    const buildItemTiles = (r: ResRow): Array<{ name: string; image_url: string | null; qty: number }> => {
+      const resolved = ((r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string; confidence: number }> }).resolved_items) ?? [];
+      // Count duplicates: same item_id appearing multiple times → bump qty.
+      const counts = new Map<string, { name: string; image_url: string | null; qty: number }>();
+      for (const rx of resolved) {
+        const inv = itemImageById.get(rx.item_id);
+        const name = inv?.name ?? rx.item_name_canonical;
+        const image_url = inv?.image_url ?? null;
+        const existing = counts.get(rx.item_id);
+        if (existing) existing.qty++;
+        else counts.set(rx.item_id, { name, image_url, qty: 1 });
+      }
+      return Array.from(counts.values());
+    };
+
     const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => ({
       reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
       renter_name: r.renter_name ?? null,
@@ -622,6 +646,7 @@ export const getStatsDrawerData = query({
         (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
       net_gbp: r.net_to_owner_gbp ?? null,
       order_step: r.order_step ?? null,
+      item_tiles: buildItemTiles(r),
       kind,
       is_ongoing: kind === "ongoing",
     });
