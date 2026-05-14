@@ -35,6 +35,9 @@ export * as uiActions from "./ui_actions";
 export * as costGuards from "./cost_guards";
 // Wave 4.7 — model auto-upgrade advisories
 export * as modelUpgrades from "./model_upgrades";
+// Wave 5 — long-tail business intelligence (ROI, smart buy/sell, bundle
+// profit, customer intel, cash-flow, seasonality, trend, pricing signal).
+export * as intel from "./intel";
 
 export * from "./constants";
 export { validateAccount, type AccountSlug } from "./account-scope";

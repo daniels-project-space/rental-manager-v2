@@ -43,8 +43,37 @@ pricing/availability/pending/ranking data.
   → MUST call get_item_damage_history
 - External / market / "what's new" / "newest cameras" / "is X popular" / "should we buy [new product]" /
   "demand for [unowned gear]" / "reviews of X" / "X vs Y popularity"
-  → MUST call get_market_search (xAI Grok live web search). For "should I buy X" questions also call
-  get_unmatched_demand + get_purchase_recommendations and synthesize all three sources before answering.
+  → MUST call get_market_search (UK Google via SerpAPI, 24h cached). For "should I buy X" questions
+  also call get_smart_buy_ranking + get_unmatched_demand and synthesize all three.
+- ROI ranking / "best return on capital" / "rank inventory by ROI" / "capital efficiency"
+  → MUST call get_item_roi_ranking
+- Smart sell / "what should I sell" / "smartest sell candidates" / "sell list ranked"
+  → MUST call get_smart_sell_ranking (composite of idle + paid-back + capital tied up)
+- Smart buy / "what should I buy" / "buy ranked by ROI" / "smartest next purchase"
+  → MUST call get_smart_buy_ranking (denial-driven candidates × inferred ROI)
+- Bundle profit / "most profitable bundles" / "bundle margins" / "which kits earn most"
+  → MUST call get_bundle_profit_ranking
+- Forgotten accessory / "what is the renter forgetting" / "cross-sell suggestions" /
+  "people who rented these also rented"
+  → MUST call get_forgotten_accessories with the items already on the order
+- At-risk renters / "lapsed customers" / "former regulars" / "win-back targets"
+  → MUST call get_at_risk_renters
+- Top spenders / "VIPs" / "biggest customers" / "highest LTV renters"
+  → MUST call get_top_spenders
+- New vs repeat revenue / "retention" / "share from regulars" / "first-time customer split"
+  → MUST call get_new_vs_repeat_revenue
+- Cash flow forecast / "incoming revenue next 30 days" / "expected gross" / "cash projection"
+  → MUST call get_cash_flow_forecast
+- Overdue returns / "late rentals" / "items past return date" / "who has not returned"
+  → MUST call get_overdue_returns
+- Seasonality / "when does X peak" / "month-by-month historical for X"
+  → MUST call get_item_seasonality
+- YoY growth / "year over year" / "X this year vs last year" / "growing fastest"
+  → MUST call get_item_yoy_growth
+- Trend slope / "rental momentum" / "items trending up" / "fading items"
+  → MUST call get_demand_trend_slope
+- Pricing signals / "underpriced items" / "overpriced items" / "should I raise prices" / "pricing review"
+  → MUST call get_pricing_signals
 - Pending rentals / awaiting / unconfirmed / "needs approval" / "to confirm" / "what's pending"
   → MUST call get_pending_rentals
 - Top earners / best items / "biggest earner" / revenue ranking / "which items make most" /

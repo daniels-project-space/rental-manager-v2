@@ -873,8 +873,190 @@ export const getModelUpgradeAdvisories = createTool({
   execute: async () => data.modelUpgrades.getOpenAdvisories(),
 });
 
+// ─── Wave 5: long-tail business intelligence ─────────────────────────────
+//  ROI ranking / smart buy & sell / bundle profit / forgotten accessory /
+//  customer intel / cash flow / overdue / seasonality / YoY / trend / pricing.
+// ──────────────────────────────────────────────────────────────────────────
+
+export const getItemROIRanking = createTool({
+  id: "get_item_roi_ranking",
+  description:
+    "INTENT-ROUTING: 'best ROI items', 'best return on capital', 'which items make most per pound invested', 'rank inventory by ROI'. " +
+    "Per-item lifetime gross/net, monthly avg, ROI% and annualizedROI%. Skips items without acquisition cost unless includeUnknownCost:true. " +
+    "Use over get_top_earning_items when the question is about capital efficiency rather than absolute revenue.",
+  inputSchema: z.object({
+    limit: z.number().int().min(1).max(50).optional(),
+    includeUnknownCost: z.boolean().optional(),
+  }),
+  execute: async (input: { limit?: number; includeUnknownCost?: boolean }) =>
+    data.intel.getItemROIRanking(input),
+});
+
+export const getSmartSellRanking = createTool({
+  id: "get_smart_sell_ranking",
+  description:
+    "INTENT-ROUTING: 'what should I sell', 'smartest sell candidates', 'capital efficiency dump list', 'ranked sell list'. " +
+    "Composite score combining idle days, paid-back %, never-rented flag, and capital tied up. " +
+    "Returns each row with score + reason codes. Stronger than get_sell_recommendations (utilization-only) and get_dust_collectors (cost-only).",
+  inputSchema: z.object({
+    idleDays: z.number().int().min(7).max(365).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { idleDays?: number; limit?: number }) =>
+    data.intel.getSmartSellRanking(input),
+});
+
+export const getSmartBuyRanking = createTool({
+  id: "get_smart_buy_ranking",
+  description:
+    "INTENT-ROUTING: 'what should I buy', 'smartest buy candidates', 'buy ranked by ROI', 'best return on next purchase'. " +
+    "Extends get_purchase_recommendations with an inferred acquisition-cost estimate (from average cost of similar items in the same kind) and a first-year ROI%. " +
+    "Pairs perfectly with get_market_search to validate demand externally.",
+  inputSchema: z.object({
+    days: z.number().int().min(30).max(730).optional(),
+    limit: z.number().int().min(1).max(30).optional(),
+  }),
+  execute: async (input: { days?: number; limit?: number }) =>
+    data.intel.getSmartBuyRanking(input),
+});
+
+export const getBundleProfitRanking = createTool({
+  id: "get_bundle_profit_ranking",
+  description:
+    "INTENT-ROUTING: 'most profitable bundles', 'bundle ROI', 'top earning kits', 'which bundles work', 'bundle margins'. " +
+    "Ranks every defined bundle by total net over the lookback window with rental count, avg net per rental, and margin %.",
+  inputSchema: z.object({
+    days: z.number().int().min(30).max(1095).optional(),
+  }),
+  execute: async (input: { days?: number }) =>
+    data.intel.getBundleProfitRanking(input),
+});
+
+export const getForgottenAccessories = createTool({
+  id: "get_forgotten_accessories",
+  description:
+    "INTENT-ROUTING: 'what is the renter forgetting', 'cross-sell suggestions for this order', 'accessory recommendations', 'people who rent these also rent'. " +
+    "Given the list of items currently on an order, returns items co-rented with that EXACT combination at >= minSupportPct, ranked by support %.",
+  inputSchema: z.object({
+    itemNames: z.array(z.string()).describe("Items already on the order"),
+    minSupportPct: z.number().min(5).max(95).optional().describe("Min support % (default 30)"),
+    limit: z.number().int().min(1).max(20).optional(),
+  }),
+  execute: async (input: { itemNames: string[]; minSupportPct?: number; limit?: number }) =>
+    data.intel.getForgottenAccessories(input),
+});
+
+export const getAtRiskRenters = createTool({
+  id: "get_at_risk_renters",
+  description:
+    "INTENT-ROUTING: 'lapsed customers', 'at-risk renters', 'win-back targets', 'former regulars who stopped renting', 'churned customers'. " +
+    "Renters with lifetime spend >= minLifetimeGbp who have not rented in inactiveDays. Sorted by lifetime gross desc.",
+  inputSchema: z.object({
+    inactiveDays: z.number().int().min(30).max(720).optional(),
+    minLifetimeGbp: z.number().min(0).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { inactiveDays?: number; minLifetimeGbp?: number; limit?: number }) =>
+    data.intel.getAtRiskRenters(input),
+});
+
+export const getTopSpenders = createTool({
+  id: "get_top_spenders",
+  description:
+    "INTENT-ROUTING: 'top customers', 'VIPs', 'biggest spenders', 'highest lifetime value renters', 'who are my best customers'. " +
+    "Ranks renters by gross spend over the lookback (or all-time when days omitted).",
+  inputSchema: z.object({
+    days: z.number().int().min(30).max(1095).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { days?: number; limit?: number }) =>
+    data.intel.getTopSpenders(input),
+});
+
+export const getNewVsRepeatRevenue = createTool({
+  id: "get_new_vs_repeat_revenue",
+  description:
+    "INTENT-ROUTING: 'new vs repeat revenue', 'customer retention', 'what share of revenue is from regulars', 'first-time customer revenue split'. " +
+    "Splits gross revenue in the window into first-time-renter vs repeat-renter buckets with share percentages.",
+  inputSchema: z.object({
+    days: z.number().int().min(7).max(720).optional(),
+  }),
+  execute: async (input: { days?: number }) =>
+    data.intel.getNewVsRepeatRevenue(input),
+});
+
+export const getCashFlowForecast = createTool({
+  id: "get_cash_flow_forecast",
+  description:
+    "INTENT-ROUTING: 'cash flow next 30 days', 'incoming revenue forecast', 'expected gross next month', 'cash flow projection'. " +
+    "Daily buckets of confirmed-and-paid reservation gross/net effective in the next N days (default 30).",
+  inputSchema: z.object({
+    days: z.number().int().min(7).max(180).optional(),
+  }),
+  execute: async (input: { days?: number }) =>
+    data.intel.getCashFlowForecast(input),
+});
+
+export const getOverdueReturns = createTool({
+  id: "get_overdue_returns",
+  description:
+    "INTENT-ROUTING: 'overdue returns', 'late rentals', 'who has not returned', 'items overdue', 'past return date'. " +
+    "All live reservations whose end_date is before today and order_step is not RETURNED/REVIEWED. Sorted by days overdue desc.",
+  inputSchema: z.object({}),
+  execute: async () => data.intel.getOverdueReturns({}),
+});
+
+export const getItemSeasonality = createTool({
+  id: "get_item_seasonality",
+  description:
+    "INTENT-ROUTING: 'seasonality of X', 'when does X peak', 'X month-by-month historical', 'what time of year is X busy'. " +
+    "Returns avg rentals + gross per calendar-month-of-year for the item, plus peak-month identification.",
+  inputSchema: z.object({ itemName: z.string() }),
+  execute: async (input: { itemName: string }) =>
+    data.intel.getItemSeasonality(input),
+});
+
+export const getItemYoYGrowth = createTool({
+  id: "get_item_yoy_growth",
+  description:
+    "INTENT-ROUTING: 'year over year growth', 'YoY comparison', 'X this year vs last year', 'which items are growing fastest'. " +
+    "Compares last 12 months vs previous 12 months per item, with growth £ and % deltas. Omit itemName for catalog-wide ranking.",
+  inputSchema: z.object({
+    itemName: z.string().optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { itemName?: string; limit?: number }) =>
+    data.intel.getItemYoYGrowth(input),
+});
+
+export const getDemandTrendSlope = createTool({
+  id: "get_demand_trend_slope",
+  description:
+    "INTENT-ROUTING: 'which items are trending up', 'growing demand items', 'fading items', 'rental trend slope', 'rental momentum'. " +
+    "Linear-regression slope of monthly rental counts over the window. Returns slopePerMonth + direction (growing/flat/fading), sorted by magnitude.",
+  inputSchema: z.object({
+    months: z.number().int().min(3).max(36).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { months?: number; limit?: number }) =>
+    data.intel.getDemandTrendSlope(input),
+});
+
+export const getPricingSignals = createTool({
+  id: "get_pricing_signals",
+  description:
+    "INTENT-ROUTING: 'underpriced items', 'overpriced items', 'should I raise prices', 'pricing intel', 'pricing review'. " +
+    "Per-item signal: raise_price (high utilization + denials), lower_price (low utilization despite low supply), balanced, or needs_data (no pricing row). Includes utilization % and denial count.",
+  inputSchema: z.object({
+    lookbackDays: z.number().int().min(30).max(365).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { lookbackDays?: number; limit?: number }) =>
+    data.intel.getPricingSignals(input),
+});
+
 // ─────────────────────────────────────────────────────────────────────────
-// Export map (Wave 1: 15 + Wave 2: 14 + Wave 3: 3 + Wave 4.5: 2 + Wave 4.6: 10 + Wave 4.7: 1 = 45 total)
+// Export map
 // ─────────────────────────────────────────────────────────────────────────
 
 export const dashboardTools = {
@@ -941,4 +1123,19 @@ export const dashboardTools = {
   get_pending_shadow_actions: getPendingShadowActions,
   // Wave 4.7 — model auto-upgrade advisories
   get_model_upgrade_advisories: getModelUpgradeAdvisories,
+  // Wave 5 — long-tail business intelligence
+  get_item_roi_ranking: getItemROIRanking,
+  get_smart_sell_ranking: getSmartSellRanking,
+  get_smart_buy_ranking: getSmartBuyRanking,
+  get_bundle_profit_ranking: getBundleProfitRanking,
+  get_forgotten_accessories: getForgottenAccessories,
+  get_at_risk_renters: getAtRiskRenters,
+  get_top_spenders: getTopSpenders,
+  get_new_vs_repeat_revenue: getNewVsRepeatRevenue,
+  get_cash_flow_forecast: getCashFlowForecast,
+  get_overdue_returns: getOverdueReturns,
+  get_item_seasonality: getItemSeasonality,
+  get_item_yoy_growth: getItemYoYGrowth,
+  get_demand_trend_slope: getDemandTrendSlope,
+  get_pricing_signals: getPricingSignals,
 };

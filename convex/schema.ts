@@ -120,35 +120,6 @@ export default defineSchema({
     qty: v.number(),
   }).index("by_bundle", ["bundle_id"]).index("by_item", ["item_id"]),
 
-  // ── Listing resolution cache ────────────────────────────────
-  // Hygglo listings are reused across many orders (the same camera kit
-  // ad can be rented by 50 different renters). Cache the resolver output
-  // by a hash of the items[] titles so we pay for the LLM call once per
-  // unique listing shape, not once per reservation. Vision-augmented
-  // resolutions also write here so they propagate to future polls.
-  listing_resolutions: defineTable({
-    title_hash: v.string(),               // sha256 of normalised items[].item_name list
-    sample_title: v.string(),             // first item_name for debug/admin UI
-    resolved_items: v.array(v.object({
-      item_id: v.id("items"),
-      item_name_canonical: v.string(),
-      confidence: v.number(),
-      qty: v.optional(v.number()),
-    })),
-    expanded_items: v.array(v.object({
-      item_id: v.id("items"),
-      item_name_canonical: v.string(),
-      qty: v.number(),
-      via_bundle: v.optional(v.id("bundles")),
-    })),
-    resolution_method: v.string(),        // "llm" | "llm+vision" | "manual"
-    hit_count: v.number(),                // how many reservations reused this entry
-    last_used_at: v.number(),
-    created_at: v.number(),
-  })
-    .index("by_title_hash", ["title_hash"])
-    .index("by_method", ["resolution_method"]),
-
   // ── Marketing redirects ──────────────────────────────────────
   marketing_redirects: defineTable({
     marketing_name: v.string(),
@@ -903,6 +874,30 @@ export default defineSchema({
     hiddenStats: v.array(v.string()),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
+
+  // ── Listing resolution cache (Hygglo title → resolved/expanded items) ────
+  //  Keyed by hash of titles so the LLM resolver short-circuits on identical
+  //  Hygglo listings the user has already paid to resolve.
+  listing_resolutions: defineTable({
+    title_hash: v.string(),
+    sample_title: v.string(),
+    resolved_items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      confidence: v.number(),
+      qty: v.optional(v.number()),
+    })),
+    expanded_items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+      via_bundle: v.optional(v.id("bundles")),
+    })),
+    resolution_method: v.string(),
+    hit_count: v.number(),
+    last_used_at: v.number(),
+    created_at: v.number(),
+  }).index("by_title_hash", ["title_hash"]),
 
   // ── market_search 24h cache (Grok live-search results) ────────────────────
   market_search_cache: defineTable({
