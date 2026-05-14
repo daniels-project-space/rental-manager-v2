@@ -9,6 +9,7 @@
  */
 
 import type * as account_state from "../account_state.js";
+import type * as accounts from "../accounts.js";
 import type * as admin_backfill_net from "../admin_backfill_net.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
@@ -23,6 +24,8 @@ import type * as dashboard_chat_context from "../dashboard_chat_context.js";
 import type * as dashboard_invariants from "../dashboard_invariants.js";
 import type * as demand from "../demand.js";
 import type * as denial_records from "../denial_records.js";
+import type * as extract_booking_times from "../extract_booking_times.js";
+import type * as extract_booking_times_q from "../extract_booking_times_q.js";
 import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
 import type * as hygglo from "../hygglo.js";
@@ -60,6 +63,7 @@ import type * as seed_inventory from "../seed/inventory.js";
 import type * as seed_settings from "../seed/settings.js";
 import type * as settings from "../settings.js";
 import type * as sync_state from "../sync_state.js";
+import type * as tax from "../tax.js";
 
 import type {
   ApiFromModules,
@@ -69,6 +73,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
+  accounts: typeof accounts;
   admin_backfill_net: typeof admin_backfill_net;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
@@ -83,6 +88,8 @@ declare const fullApi: ApiFromModules<{
   dashboard_invariants: typeof dashboard_invariants;
   demand: typeof demand;
   denial_records: typeof denial_records;
+  extract_booking_times: typeof extract_booking_times;
+  extract_booking_times_q: typeof extract_booking_times_q;
   health: typeof health;
   historical_revenue: typeof historical_revenue;
   hygglo: typeof hygglo;
@@ -120,6 +127,7 @@ declare const fullApi: ApiFromModules<{
   "seed/settings": typeof seed_settings;
   settings: typeof settings;
   sync_state: typeof sync_state;
+  tax: typeof tax;
 }>;
 
 /**

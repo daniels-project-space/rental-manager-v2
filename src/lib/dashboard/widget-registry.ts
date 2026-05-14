@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { StatsGrid } from "@/components/dashboard/StatsGrid";
 import { LifetimeRevenue } from "@/components/dashboard/LifetimeRevenue";
 import { EarningsChart } from "@/components/dashboard/EarningsChart";
+import { TaxSummary } from "@/components/dashboard/TaxSummary";
 import { LiveActivity } from "@/components/dashboard/LiveActivity";
 import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
 import { ReturnHub } from "@/components/dashboard/ReturnHub";
@@ -34,6 +35,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "stats-grid",          label: "Stats Grid",             component: StatsGrid },
   { id: "lifetime",            label: "Lifetime Revenue",       component: LifetimeRevenue },
   { id: "earnings-chart",      label: "Earnings Chart",         component: EarningsChart },
+  { id: "tax-summary",         label: "Tax Summary",            component: TaxSummary },
   { id: "live-activity",       label: "Live Activity",          component: LiveActivity },
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
   { id: "return-hub",          label: "Return Hub",             component: ReturnHub },
