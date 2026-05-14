@@ -205,11 +205,8 @@ export async function getTopEarningItems(input?: {
 
 /**
  * V1 source: src/revenue/revenue.service.ts:1911 getItemEarningsHistory
- * Strategy: compose from getItemRevenueRanking with a 1-year range and surface
- * the chosen item only. If item not found, returns empty history (no error).
- *
- * Wave 2.5 follow-up: a server-side per-item monthly aggregator would deliver
- * true monthly granularity. Stub with single-bucket result for now.
+ * Returns real per-month buckets for the item over the requested range,
+ * powered by convex.items.getItemMonthlyEarnings (Wave 2.5 - shipped).
  */
 export async function getItemEarningsHistory(input: {
   itemName: string;
@@ -220,45 +217,52 @@ export async function getItemEarningsHistory(input: {
     const convex = getConvex();
     const accountSlug = validateAccount(input.account);
     const days = rangeToDays(input.range);
-    const [ranking, syncState] = await Promise.all([
-      convex.query(anyApi.items.getItemRevenueRanking, { accountSlug, days }),
+    // Map day range to months (1, 3, 6, 12, 24, 36); default 12.
+    const months =
+      days <= 31 ? 1 :
+      days <= 92 ? 3 :
+      days <= 183 ? 6 :
+      days <= 366 ? 12 :
+      days <= 731 ? 24 : 36;
+    const [resp, syncState] = await Promise.all([
+      convex.query(anyApi.items.getItemMonthlyEarnings, {
+        item_name: input.itemName,
+        months,
+        account_slug: accountSlug ?? undefined,
+      }),
       getSyncState(),
     ]);
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const target = norm(input.itemName);
-    const row = (
-      ranking as Array<{
-        name: string;
-        totalRevenue: number;
-        rentalCount: number;
-        avgValue: number;
-        totalDays: number;
-      }>
-    ).find(
-      (r) => norm(r.name).includes(target) || target.includes(norm(r.name)),
-    );
+    const r = resp as
+      | { ok: true; item: { name: string }; monthly: Array<{ month: string; grossGbp: number; netGbp: number; rentalCount: number; totalDays: number }>; totals: { grossGbp: number; netGbp: number; rentalCount: number; totalDays: number } }
+      | { ok: false; error: string; item_name: string };
+    if (!r.ok) {
+      return wrap({
+        data: { ok: false as const, itemName: input.itemName, range: input.range ?? "30d", history: [] },
+        source: "convex.items.getItemMonthlyEarnings (not found)",
+        syncState,
+      });
+    }
     return wrap({
       data: {
         ok: true as const,
-        itemName: input.itemName,
+        itemName: r.item.name,
         range: input.range ?? "30d",
-        history: row
-          ? [
-              {
-                period: input.range ?? "30d",
-                revenue: row.totalRevenue,
-                rentalCount: row.rentalCount,
-                avgValue: row.avgValue,
-                totalDays: row.totalDays,
-              },
-            ]
-          : [],
+        months,
+        totals: r.totals,
+        history: r.monthly.map((m) => ({
+          period: m.month,
+          revenue: m.grossGbp,
+          netRevenue: m.netGbp,
+          rentalCount: m.rentalCount,
+          totalDays: m.totalDays,
+          avgValue:
+            m.rentalCount > 0
+              ? Math.round((m.grossGbp / m.rentalCount) * 100) / 100
+              : 0,
+        })),
       },
-      source: "convex.items.getItemRevenueRanking (per-item filtered)",
+      source: "convex.items.getItemMonthlyEarnings",
       syncState,
-      extraCaveats: [
-        "Per-period breakdown is collapsed to a single bucket — Wave 2.5 will add a dedicated convex.items.getItemEarningsHistory query for true monthly granularity.",
-      ],
     });
   } catch (err) {
     return { ok: false as const, error: toError(err) };

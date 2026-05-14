@@ -308,6 +308,45 @@ export const getItemCycle = createTool({
     data.revenue.getItemCycle(input),
 });
 
+export const getItemSchedule = createTool({
+  id: "get_item_schedule",
+  description:
+    "INTENT-ROUTING: 'when is X free', 'available after what time', 'free window for X', 'is X open tonight', 'when can I rent X next', 'X back by when'. " +
+    "Returns per-day timeline for the item over a date range INCLUDING intra-day free intervals computed from pickup_time/return_time. " +
+    "Use this (NOT check_availability) when the question involves time-of-day, after-X-pm, or next-available windows. " +
+    "Returns { days: [{ date, status, blocks[{startTime, endTime, renterName}], freeAfter, freeUntil, summary }], nextAvailableAt }.",
+  inputSchema: z.object({
+    itemName: z.string(),
+    fromDate: z.string().describe("YYYY-MM-DD inclusive; defaults to today"),
+    toDate: z.string().describe("YYYY-MM-DD inclusive; defaults to fromDate + 14 days"),
+    ...accountField,
+  }),
+  execute: async (input: {
+    itemName: string;
+    fromDate: string;
+    toDate: string;
+    account?: "leo" | "dbcinema";
+  }) => data.catalog.getItemSchedule(input),
+});
+
+export const getItemMonthlyEarnings = createTool({
+  id: "get_item_monthly_earnings",
+  description:
+    "INTENT-ROUTING: 'monthly revenue for X', 'X earnings by month', 'how is X doing month-over-month', 'X performance over the last year', 'per-month breakdown for X'. " +
+    "Returns real per-month gross/net/rental_count buckets for the item (default 12 months). " +
+    "Use this when the user wants finer granularity than get_item_earnings_history's single bucket.",
+  inputSchema: z.object({
+    itemName: z.string(),
+    months: z.number().int().min(1).max(36).optional(),
+    ...accountField,
+  }),
+  execute: async (input: {
+    itemName: string;
+    months?: number;
+    account?: "leo" | "dbcinema";
+  }) => data.catalog.getItemMonthlyEarnings(input),
+});
+
 export const getTaxSummary = createTool({
   id: "get_tax_summary",
   description:
@@ -737,6 +776,8 @@ export const dashboardTools = {
   get_revenue_summary: getRevenueSummary,
   get_top_bundles: getTopBundles,
   get_item_cycle: getItemCycle,
+  get_item_schedule: getItemSchedule,
+  get_item_monthly_earnings: getItemMonthlyEarnings,
   get_tax_summary: getTaxSummary,
   get_lost_revenue: getLostRevenue,
   get_unmatched_demand: getUnmatchedDemand,

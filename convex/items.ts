@@ -765,3 +765,365 @@ export const backfillImagesFuzzy = mutation({
     return { total: targets.length, patched, scanned };
   },
 });
+
+// ─── Item Schedule (with time-of-day awareness) ─────────────────────────────
+//  Used by the chat agent to answer questions like "is the FX3 free today
+//  after 7pm?" and "when is the BMPCC next available?". Walks confirmed
+//  reservations whose date range overlaps [from, to], pulls the LLM-extracted
+//  pickup_time / return_time strings, and builds a per-day timeline with
+//  free intervals computed in HH:MM.
+// ────────────────────────────────────────────────────────────────────────────
+
+function normName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function resolveItem<T extends { name_canonical?: string; aliases?: string[]; status?: string; is_marketing_only?: boolean }>(
+  items: T[],
+  itemName: string,
+): T | null {
+  const q = normName(itemName);
+  let best: T | null = null;
+  let bestScore = 0;
+  for (const i of items) {
+    if (i.status !== "active" || i.is_marketing_only) continue;
+    const cn = normName(i.name_canonical ?? "");
+    let score = cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
+    if (score === 0) {
+      const aliasHit = (i.aliases ?? []).some((a) => {
+        const an = normName(a);
+        return an === q || an.includes(q) || (q.includes(an) && an.length > 3);
+      });
+      if (aliasHit) score = 1;
+    }
+    if (score > bestScore) { best = i; bestScore = score; }
+  }
+  return best;
+}
+
+function addDateIso(iso: string, days: number): string {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function fmt12(t: string | null | undefined): string | null {
+  if (!t) return null;
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return t;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${min} ${ampm}`;
+}
+
+/**
+ * Per-item daily schedule with intra-day free-window inference.
+ *
+ * Returns one entry per day in [fromDate, toDate]:
+ *   { date, status: "free" | "partial" | "fully_booked", blocks: [{startTime, endTime, renterName}],
+ *     freeAfter, freeUntil, nextAvailableAt }
+ *
+ * "Available after 7 PM" answers are produced by the agent reading `freeAfter`.
+ */
+export const getItemSchedule = query({
+  args: {
+    item_name: v.string(),
+    from_date: v.string(),                  // YYYY-MM-DD inclusive
+    to_date: v.string(),                    // YYYY-MM-DD inclusive
+    account_slug: v.optional(v.string()),
+  },
+  handler: async (ctx, { item_name, from_date, to_date, account_slug }) => {
+    const allItems = await ctx.db.query("items").collect();
+    const item = resolveItem(allItems, item_name);
+    if (!item) return { ok: false as const, error: "Item not found" as const, item_name };
+
+    // Reservations whose date range overlaps [from_date, to_date]
+    const allRes = await ctx.db.query("reservations").collect();
+    type Rich = typeof allRes[number] & {
+      pickup_time?: string;
+      return_time?: string;
+      renter_name?: string;
+      resolved_items?: Array<{ item_id: string; item_name_canonical: string }>;
+    };
+
+    // Match via resolved_items (strict id) — falls back to canonical/alias fuzz.
+    // Capture locals so the inner function sees narrowed (non-null) types.
+    const itemId = item._id;
+    const canon = normName(item.name_canonical);
+    const aliasNorms = (item.aliases ?? []).map(normName);
+    function rentalMentionsItem(r: Rich): boolean {
+      if (r.resolved_items?.some((x) => x.item_id === itemId)) return true;
+      // Fallback: substring match on raw Hygglo titles.
+      return (r.items ?? []).some((ri) => {
+        const rn = normName(ri.item_name);
+        if (rn.includes(canon) || (canon.includes(rn) && rn.length > 3)) return true;
+        return aliasNorms.some((an) => rn.includes(an) || (an.includes(rn) && rn.length > 3));
+      });
+    }
+
+    const matched = allRes.filter((r) => {
+      const rr = r as Rich;
+      if (!rr.start_date || !rr.end_date) return false;
+      if (rr.start_date > to_date || rr.end_date < from_date) return false;
+      if (!isPaidWithV1Legacy(rr as any)) return false;
+      if (account_slug && rr.account_slug !== account_slug) return false;
+      return rentalMentionsItem(rr);
+    }) as Rich[];
+
+    // Build renter name map for any rentals missing renter_name denorm.
+    const renterIds = [...new Set(matched.filter((r) => r.renter_id && !r.renter_name).map((r) => r.renter_id as string))];
+    const renterMap = new Map<string, string>();
+    await Promise.all(
+      renterIds.map(async (rid) => {
+        const renter = (await ctx.db.get(rid as never)) as { display_name?: string } | null;
+        if (renter) renterMap.set(rid, renter.display_name ?? "?");
+      }),
+    );
+    function renterOf(r: Rich): string {
+      return r.renter_name ?? (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?");
+    }
+
+    // Walk each day and assemble intra-day intervals.
+    const days: Array<{
+      date: string;
+      status: "free" | "partial" | "fully_booked";
+      blocks: Array<{ startTime: string | null; endTime: string | null; startTime12: string | null; endTime12: string | null; renterName: string; reservationId: string }>;
+      freeAfter: string | null;
+      freeUntil: string | null;
+      nextAvailableAt: string | null;
+      summary: string;
+    }> = [];
+
+    const qty_total = item.qty ?? 1;
+    let cursor = from_date;
+    while (cursor <= to_date) {
+      const dayRentals = matched.filter((r) => cursor >= (r.start_date as string) && cursor <= (r.end_date as string));
+      const peakHeld = dayRentals.length; // each rental counts as 1 unit held
+      const blocks: typeof days[number]["blocks"] = [];
+      let freeAfter: string | null = null;
+      let freeUntil: string | null = null;
+
+      for (const r of dayRentals) {
+        const isFirstDay = cursor === r.start_date;
+        const isLastDay = cursor === r.end_date;
+        // Block window for this rental on this day:
+        // - first day starts at pickup_time, otherwise 00:00
+        // - last day ends at return_time, otherwise 23:59
+        const startTime = isFirstDay ? r.pickup_time ?? null : "00:00";
+        const endTime = isLastDay ? r.return_time ?? null : "23:59";
+        blocks.push({
+          startTime,
+          endTime,
+          startTime12: fmt12(startTime),
+          endTime12: fmt12(endTime),
+          renterName: renterOf(r),
+          reservationId: r._id,
+        });
+      }
+
+      // Compute free windows ONLY if there's spare capacity (peakHeld < qty_total)
+      // OR all blocks on this day are at the edges (single block w/ known start/end times).
+      // Simplification: if qty_total > 1 and not fully held, it's available all day.
+      let status: "free" | "partial" | "fully_booked";
+      if (peakHeld === 0) {
+        status = "free";
+        freeAfter = "00:00";
+        freeUntil = "23:59";
+      } else if (peakHeld < qty_total) {
+        status = "partial";
+        freeAfter = "00:00";
+        freeUntil = "23:59";
+      } else {
+        // All units held. See if the last unit returns within the day → free after.
+        const lastUnitReleases = dayRentals
+          .filter((r) => r.end_date === cursor && r.return_time)
+          .map((r) => r.return_time as string)
+          .sort()
+          .pop();
+        const firstUnitStarts = dayRentals
+          .filter((r) => r.start_date === cursor && r.pickup_time)
+          .map((r) => r.pickup_time as string)
+          .sort()[0];
+        if (lastUnitReleases && (!firstUnitStarts || lastUnitReleases < firstUnitStarts)) {
+          // Free between lastUnitReleases and (firstUnitStarts || 23:59)
+          status = "partial";
+          freeAfter = lastUnitReleases;
+          freeUntil = firstUnitStarts ?? "23:59";
+        } else if (firstUnitStarts && !lastUnitReleases) {
+          // Free until firstUnitStarts
+          status = "partial";
+          freeAfter = "00:00";
+          freeUntil = firstUnitStarts;
+        } else {
+          status = "fully_booked";
+        }
+      }
+
+      const summary = (() => {
+        if (status === "free") return "Free all day";
+        if (status === "fully_booked") return `Fully booked (${peakHeld}/${qty_total})`;
+        if (freeAfter && freeUntil && freeAfter !== "00:00" && freeUntil !== "23:59")
+          return `Free between ${fmt12(freeAfter)} – ${fmt12(freeUntil)}`;
+        if (freeAfter && freeAfter !== "00:00") return `Free after ${fmt12(freeAfter)}`;
+        if (freeUntil && freeUntil !== "23:59") return `Free until ${fmt12(freeUntil)}`;
+        return `Partially held (${peakHeld}/${qty_total} units out)`;
+      })();
+
+      days.push({
+        date: cursor,
+        status,
+        blocks,
+        freeAfter,
+        freeUntil,
+        nextAvailableAt: null, // populated below
+        summary,
+      });
+      cursor = addDateIso(cursor, 1);
+    }
+
+    // Compute "nextAvailableAt" — first time after now when the item is free
+    const now = new Date();
+    const todayIso = now.toISOString().slice(0, 10);
+    let nextAvailableAt: string | null = null;
+    for (const d of days) {
+      if (d.status === "free" || d.status === "partial") {
+        if (d.date > todayIso) {
+          nextAvailableAt = `${d.date} ${d.freeAfter ? fmt12(d.freeAfter) ?? "" : ""}`.trim();
+          break;
+        }
+        if (d.date === todayIso && d.freeAfter) {
+          const hm = d.freeAfter.match(/^(\d{1,2}):(\d{2})/);
+          if (hm) {
+            const slot = new Date(now);
+            slot.setHours(parseInt(hm[1], 10), parseInt(hm[2], 10), 0, 0);
+            if (slot > now) {
+              nextAvailableAt = `today ${fmt12(d.freeAfter)}`;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      ok: true as const,
+      item: {
+        id: item._id,
+        name: item.name_canonical,
+        qty_total,
+      },
+      from_date,
+      to_date,
+      nextAvailableAt,
+      days,
+      source: "reservations+items (with pickup_time / return_time)" as const,
+    };
+  },
+});
+
+// ─── Per-item monthly earnings ──────────────────────────────────────────────
+//  Replaces the single-bucket stub on data.revenue.getItemEarningsHistory.
+//  Returns up to `months` worth of per-month gross/net/count buckets, using
+//  the same pricing-weighted revenue split as getItemRevenueRanking.
+// ────────────────────────────────────────────────────────────────────────────
+
+export const getItemMonthlyEarnings = query({
+  args: {
+    item_name: v.string(),
+    months: v.optional(v.number()),         // default 12
+    account_slug: v.optional(v.string()),
+  },
+  handler: async (ctx, { item_name, months, account_slug }) => {
+    const n = months ?? 12;
+    const allItems = await ctx.db.query("items").collect();
+    const item = resolveItem(allItems, item_name);
+    if (!item) return { ok: false as const, error: "Item not found" as const, item_name };
+
+    // Window: last N calendar months
+    const today = new Date();
+    const fromDate = new Date(today.getFullYear(), today.getMonth() - (n - 1), 1)
+      .toISOString()
+      .slice(0, 10);
+
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", fromDate))
+      .collect();
+    if (account_slug) {
+      reservations = reservations.filter((r) => r.account_slug === account_slug);
+    }
+    reservations = reservations.filter((r) => isPaidWithV1Legacy(r as any));
+
+    const pricingAll = await ctx.db.query("pricing_catalog").collect();
+    const priceByCanonical = new Map(
+      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
+    );
+
+    // Init 12 month buckets
+    type Bucket = { month: string; grossGbp: number; netGbp: number; rentalCount: number; totalDays: number };
+    const buckets = new Map<string, Bucket>();
+    for (let i = 0; i < n; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - (n - 1 - i), 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      buckets.set(key, { month: key, grossGbp: 0, netGbp: 0, rentalCount: 0, totalDays: 0 });
+    }
+
+    for (const r of reservations) {
+      const resolved = (r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string }> }).resolved_items ?? [];
+      if (resolved.length === 0) continue;
+      const hit = resolved.find((x) => x.item_id === item._id);
+      if (!hit) continue;
+
+      const eff = (r.pickup_date ?? r.start_date) as string | undefined;
+      if (!eff) continue;
+      const key = eff.slice(0, 7);
+      const bucket = buckets.get(key);
+      if (!bucket) continue; // outside window
+
+      const gross = r.gross_paid_gbp ?? 0;
+      const net = r.net_to_owner_gbp ?? 0;
+      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+      const priceSum = prices.reduce((a, b) => a + b, 0);
+      const myPrice = priceByCanonical.get(hit.item_name_canonical) ?? 0;
+      const share = priceSum > 0 ? myPrice / priceSum : 1 / resolved.length;
+
+      bucket.grossGbp += gross * share;
+      bucket.netGbp += net * share;
+      bucket.rentalCount += 1;
+      bucket.totalDays += r.duration_days ?? 0;
+    }
+
+    const monthly = Array.from(buckets.values()).map((b) => ({
+      ...b,
+      grossGbp: Math.round(b.grossGbp * 100) / 100,
+      netGbp: Math.round(b.netGbp * 100) / 100,
+    }));
+
+    const totals = monthly.reduce(
+      (acc, b) => ({
+        grossGbp: acc.grossGbp + b.grossGbp,
+        netGbp: acc.netGbp + b.netGbp,
+        rentalCount: acc.rentalCount + b.rentalCount,
+        totalDays: acc.totalDays + b.totalDays,
+      }),
+      { grossGbp: 0, netGbp: 0, rentalCount: 0, totalDays: 0 },
+    );
+
+    return {
+      ok: true as const,
+      item: { id: item._id, name: item.name_canonical },
+      months: n,
+      window: { from: fromDate, to: today.toISOString().slice(0, 10) },
+      monthly,
+      totals: {
+        grossGbp: Math.round(totals.grossGbp * 100) / 100,
+        netGbp: Math.round(totals.netGbp * 100) / 100,
+        rentalCount: totals.rentalCount,
+        totalDays: totals.totalDays,
+      },
+      source: "reservations.resolved_items + pricing_catalog" as const,
+    };
+  },
+});

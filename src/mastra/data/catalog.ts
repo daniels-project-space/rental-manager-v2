@@ -129,3 +129,59 @@ export async function checkCompatibility(input: {
     return { ok: false as const, error: toError(err) };
   }
 }
+
+// ─── Item schedule (time-of-day availability) ───────────────────────────────
+export async function getItemSchedule(input: {
+  itemName: string;
+  fromDate?: string;
+  toDate?: string;
+  account?: "leo" | "dbcinema" | null;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const today = new Date().toISOString().slice(0, 10);
+    const fromDate = input.fromDate ?? today;
+    // Default window: 14 days from fromDate.
+    const toDate =
+      input.toDate ??
+      (() => {
+        const d = new Date(fromDate + "T00:00:00Z");
+        d.setUTCDate(d.getUTCDate() + 14);
+        return d.toISOString().slice(0, 10);
+      })();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.getItemSchedule, {
+        item_name: input.itemName,
+        from_date: fromDate,
+        to_date: toDate,
+        account_slug: input.account ?? undefined,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.getItemSchedule", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
+
+// ─── Per-item monthly earnings (real buckets) ───────────────────────────────
+export async function getItemMonthlyEarnings(input: {
+  itemName: string;
+  months?: number;
+  account?: "leo" | "dbcinema" | null;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.getItemMonthlyEarnings, {
+        item_name: input.itemName,
+        months: input.months,
+        account_slug: input.account ?? undefined,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.getItemMonthlyEarnings", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}

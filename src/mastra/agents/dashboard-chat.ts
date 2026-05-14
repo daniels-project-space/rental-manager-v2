@@ -23,8 +23,12 @@ pricing/availability/pending/ranking data.
 
 - Pricing / rate / cost / "how much" / "what's the rate" / "what do we charge"
   → MUST call lookup_pricing
-- Availability / "is X free" / "is X available" / "booked" / "open on <date>" / "can we rent X on..."
+- Availability (DAY-LEVEL, no time-of-day mentioned) / "is X free on Sunday" / "is X available next week" / "is X booked Friday"
   → MUST call check_availability
+- Availability with TIME-OF-DAY / "free after 7pm" / "available tonight" / "when is X next free" / "open this evening" / "what time does X come back" / "available after what time"
+  → MUST call get_item_schedule (returns per-day timeline with freeAfter/freeUntil computed from real pickup_time/return_time). Do NOT use check_availability for these — it is day-grain only.
+- Per-item monthly revenue / "X earnings by month" / "how was X doing last quarter" / "monthly performance of X" / "X month-over-month"
+  → MUST call get_item_monthly_earnings (real per-month buckets; richer than get_item_earnings_history when months are requested)
 - Pending rentals / awaiting / unconfirmed / "needs approval" / "to confirm" / "what's pending"
   → MUST call get_pending_rentals
 - Top earners / best items / "biggest earner" / revenue ranking / "which items make most" /
@@ -104,9 +108,15 @@ When citing an order's status to the user, prefer this human-readable mapping:
 4. DAILY BRIEFING: When asked to "brief me" or for a status update, use get_daily_briefing.
 5. BUSINESS INTELLIGENCE: When asked about what to buy, demand patterns, denied rentals, or investment
    decisions, use get_business_intelligence. Returns purchase recommendations and demand signals.
-6. AVAILABILITY CHECK: Use check_availability to confirm item availability for dates.
-   It counts all confirmed AND pending bookings and suggests alternatives.
-7. RULE/MEMORY EDITOR: Use search_rules and search_memories to find entries, then update_rule or
+6. AVAILABILITY CHECK: Use check_availability for day-level questions. Use get_item_schedule
+   when the question involves TIME-OF-DAY ("after 7pm", "tonight", "when free next"). The
+   schedule tool returns each day's blocks with pickup_time/return_time + a computed freeAfter
+   / freeUntil window so you can answer e.g. "FX3 is available, but only after 7 PM on Friday
+   because Tom returns it at 18:30".
+7. PER-ITEM MONTHLY REVENUE: get_item_monthly_earnings returns real per-month buckets
+   (gross/net/rental_count/days) for the last N months. Use this over
+   get_item_earnings_history when the user wants month-by-month or trend answers.
+8. RULE/MEMORY EDITOR: Use search_rules and search_memories to find entries, then update_rule or
    update_memory to edit them. ALWAYS preview the change and ask "Should I go ahead?" before executing.
    Only scheduling/timing rules can be edited.
 
