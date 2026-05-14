@@ -5,8 +5,6 @@ import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-import { ReservationDetailModal } from "@/components/dashboard/ReservationDetailModal";
-import type { Id } from "../../../convex/_generated/dataModel";
 
 function getMonday(date: Date): string {
   const d = new Date(date);
@@ -83,7 +81,7 @@ type Reservation = NonNullable<
 export function WeeklyCalendar() {
   const { activeAccountSlug } = useAccount();
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
-  const [openResId, setOpenResId] = useState<Id<"reservations"> | null>(null);
+  const [openRes, setOpenRes] = useState<Reservation | null>(null);
 
   const data = useQuery(api.calendar.getWeeklyCalendar, {
     accountSlug: activeAccountSlug,
@@ -194,7 +192,7 @@ export function WeeklyCalendar() {
                         return (
                           <button
                             key={String(r.reservationId)}
-                            onClick={() => setOpenResId(r.reservationId as Id<"reservations">)}
+                            onClick={() => setOpenRes(r)}
                             className="text-left text-xs rounded px-1 py-0.5 transition-colors hover:brightness-125"
                             style={{
                               borderLeft: `3px solid ${color}`,
@@ -243,17 +241,165 @@ export function WeeklyCalendar() {
         )}
       </Card>
 
-      {openResId && (
-        <ReservationDetailModal
-          reservationId={openResId}
-          onClose={() => setOpenResId(null)}
-        />
+      {openRes && (
+        <ReservationDetailModal reservation={openRes} onClose={() => setOpenRes(null)} />
       )}
     </>
   );
 }
 
-// Legacy inline modal removed in favour of the shared ReservationDetailModal.
-function _RemovedInlineModalStub() {
-  return null;
+function ReservationDetailModal({
+  reservation: r,
+  onClose,
+}: {
+  reservation: Reservation;
+  onClose: () => void;
+}) {
+  const color = accountColor(r.accountSlug);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-lg rounded-2xl border bg-[#0b0e18] shadow-2xl overflow-hidden"
+        style={{ borderColor: "rgba(255,255,255,0.1)", maxHeight: "85dvh" }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-start justify-between px-4 py-3 border-b"
+          style={{ borderColor: "rgba(255,255,255,0.08)" }}
+        >
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className="text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded"
+                style={{ background: `${color}22`, color }}
+              >
+                {r.accountSlug ?? "all"}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                {r.status.replace("_", " ")}
+              </span>
+            </div>
+            <h3 className="text-base font-semibold text-slate-100">{r.renterName}</h3>
+            <p className="text-xs text-slate-400">{fmtRange(r.startDate!, r.endDate!)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-white text-xl leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          className="overflow-y-auto p-4 space-y-4"
+          style={{ maxHeight: "calc(85dvh - 65px)" }}
+        >
+          {/* Times + methods */}
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div
+              className="rounded-lg p-2.5"
+              style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)" }}
+            >
+              <div className="text-[10px] uppercase tracking-wider text-emerald-300 mb-1">
+                Pickup
+              </div>
+              <div className="text-slate-200 font-medium">{fmtTime(r.pickupTime)}</div>
+              {r.pickupMethod && (
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  {r.pickupMethod === "delivery" ? "🚚 Delivery" : "Self pickup"}
+                </div>
+              )}
+            </div>
+            <div
+              className="rounded-lg p-2.5"
+              style={{ background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.2)" }}
+            >
+              <div className="text-[10px] uppercase tracking-wider text-violet-300 mb-1">
+                Return
+              </div>
+              <div className="text-slate-200 font-medium">{fmtTime(r.returnTime)}</div>
+              {r.returnMethod && (
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  {r.returnMethod === "delivery" ? "🚚 Delivery" : "Self return"}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Earnings */}
+          {(r.grossPaidGbp ?? r.netToOwnerGbp) != null && (
+            <div className="flex items-center justify-between text-xs px-2.5 py-2 rounded-lg border border-white/5">
+              <span className="text-slate-400">Earnings</span>
+              <span className="text-slate-200 font-medium">
+                <span className="text-emerald-300">{fmtGbp(r.netToOwnerGbp)}</span>
+                {r.grossPaidGbp != null && (
+                  <span className="text-slate-500 ml-2">net · {fmtGbp(r.grossPaidGbp)} gross</span>
+                )}
+              </span>
+            </div>
+          )}
+
+          {/* Items */}
+          <section>
+            <h4 className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">
+              Items ({r.items?.length ?? r.itemNames.length})
+            </h4>
+            <ul className="space-y-1.5">
+              {(r.items ?? r.itemNames.map((name) => ({ name, imageUrl: null, qty: 1 }))).map(
+                (it, idx) => (
+                  <li
+                    key={idx}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-white/5 hover:bg-white/[0.03]"
+                  >
+                    {it.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={it.imageUrl}
+                        alt=""
+                        className="w-10 h-10 rounded object-cover flex-shrink-0"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div
+                        className="w-10 h-10 rounded flex-shrink-0 flex items-center justify-center text-[10px] text-slate-500"
+                        style={{ background: "rgba(255,255,255,0.04)" }}
+                      >
+                        no img
+                      </div>
+                    )}
+                    <span className="text-sm text-slate-200 flex-1 truncate">{it.name}</span>
+                    {it.qty != null && it.qty > 1 && (
+                      <span className="text-[11px] text-slate-400">×{it.qty}</span>
+                    )}
+                  </li>
+                ),
+              )}
+            </ul>
+          </section>
+
+          {/* Notes */}
+          {r.notes && r.notes.trim().length > 0 && (
+            <section>
+              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Notes</h4>
+              <p
+                className="text-xs text-slate-300 whitespace-pre-wrap px-2.5 py-2 rounded-lg"
+                style={{ background: "rgba(255,255,255,0.03)" }}
+              >
+                {r.notes}
+              </p>
+            </section>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }

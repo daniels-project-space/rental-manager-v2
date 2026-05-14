@@ -555,10 +555,6 @@ export const getStatsDrawerData = query({
         claimDate: c.claim_date,
         description: c.description ?? null,
         status: c.status,
-        stage: ((c as any).stage as string | undefined) ?? null,
-        payoutAmountGbp: ((c as any).payout_amount_gbp as number | undefined) ?? null,
-        creditedToMonth: ((c as any).credited_to_month as string | undefined) ?? null,
-        creditedAt: ((c as any).credited_at as number | undefined) ?? null,
         createdAt: c.created_at,
       })),
     };

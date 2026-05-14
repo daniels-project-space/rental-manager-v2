@@ -11,8 +11,6 @@ import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-import { ReservationDetailModal } from "@/components/dashboard/ReservationDetailModal";
-import type { Id } from "../../../convex/_generated/dataModel";
 
 // Lazy-import Gantt — won't fail if file doesn't exist yet
 const CalendarGantt = lazy(() =>
@@ -175,11 +173,9 @@ function ProgressBar({
 function StripChip({
   chip,
   type,
-  onSelect,
 }: {
   chip: ChipData;
   type: "pickup" | "return";
-  onSelect?: (reservationId: string) => void;
 }) {
   const color = resolveColor(chip.accountColor);
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -244,10 +240,8 @@ function StripChip({
     chip.status === "DELIVERED";
 
   return (
-    <button
-      type="button"
-      onClick={() => onSelect?.(chip.reservationId)}
-      className="flex gap-2.5 p-2 rounded-lg w-full text-left transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+    <div
+      className="flex gap-2.5 p-2 rounded-lg"
       style={{ background: "rgba(255,255,255,0.03)", borderLeft: `3px solid ${color}` }}
     >
       {/* Thumbnail */}
@@ -309,7 +303,7 @@ function StripChip({
           <ProgressBar progressPercent={chip.progressPercent!} barRef={setBarRef} />
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -411,13 +405,7 @@ function DayCard({
 }
 
 // ── Expanded drawer for a day ─────────────────────────────────────────────────
-function DayDrawer({
-  day,
-  onSelectReservation,
-}: {
-  day: DayData;
-  onSelectReservation?: (reservationId: string) => void;
-}) {
+function DayDrawer({ day }: { day: DayData }) {
   const hasAny = day.pickups.length + day.returns.length + day.holds.length > 0;
   return (
     <div
@@ -439,12 +427,7 @@ function DayDrawer({
           </div>
           <div className="space-y-1.5">
             {day.pickups.map((p) => (
-              <StripChip
-                key={String(p.reservationId)}
-                chip={p}
-                type="pickup"
-                onSelect={onSelectReservation}
-              />
+              <StripChip key={String(p.reservationId)} chip={p} type="pickup" />
             ))}
           </div>
         </div>
@@ -457,12 +440,7 @@ function DayDrawer({
           </div>
           <div className="space-y-1.5">
             {day.returns.map((r) => (
-              <StripChip
-                key={String(r.reservationId)}
-                chip={r}
-                type="return"
-                onSelect={onSelectReservation}
-              />
+              <StripChip key={String(r.reservationId)} chip={r} type="return" />
             ))}
           </div>
         </div>
@@ -508,7 +486,6 @@ export function CalendarStrip() {
 
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [ganttOpen, setGanttOpen] = useState(false);
-  const [openResId, setOpenResId] = useState<Id<"reservations"> | null>(null);
 
   const data = useQuery(api.calendar.getCalendarStrip, {
     accountSlug: activeAccountSlug,
@@ -586,18 +563,8 @@ export function CalendarStrip() {
       {/* Inline expanded drawer — below the strip */}
       {expandedDay && (
         <div className="mt-2">
-          <DayDrawer
-            day={expandedDay as DayData}
-            onSelectReservation={(id) => setOpenResId(id as Id<"reservations">)}
-          />
+          <DayDrawer day={expandedDay as DayData} />
         </div>
-      )}
-
-      {openResId && (
-        <ReservationDetailModal
-          reservationId={openResId}
-          onClose={() => setOpenResId(null)}
-        />
       )}
 
       {/* Gantt overlay (lazy) */}
