@@ -39,6 +39,7 @@ import SellRecoDrawer from "./stat-cards/SellRecoDrawer";
 import InventoryWorthDrawer from "./stat-cards/InventoryWorthDrawer";
 import TaxDrawer from "./stat-cards/TaxDrawer";
 import BusinessIntelDrawer from "./stat-cards/BusinessIntelDrawer";
+import { CriticalAlerts } from "./CriticalAlerts";
 
 function fmtGbp(n: number): string {
   if (n >= 1000) return "£" + (n / 1000).toFixed(1) + "k";
@@ -491,13 +492,18 @@ export function StatsGrid() {
   };
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
-    >
-      <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
+    <>
+      <CriticalAlerts
+        conflicts={(rawData as any)?.conflicts ?? []}
+        untracked={(rawData as any)?.untracked ?? { count: 0, total_value_gbp: 0, reservations: [] }}
+      />
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
           {visibleIds.map((id) => {
             const label = STAT_WIDGETS.find((w) => w.id === id)?.label ?? id;
             return (
@@ -512,8 +518,9 @@ export function StatsGrid() {
               </EditableWidget>
             );
           })}
-        </div>
-      </SortableContext>
-    </DndContext>
+          </div>
+        </SortableContext>
+      </DndContext>
+    </>
   );
 }

@@ -387,6 +387,161 @@ export const getStatsDrawerData = query({
     const pendingCount = pendingUniq.length;
     const pendingValueGbp = pendingUniq.reduce((s, r) => s + netOf(r), 0);
     const activeTotal = ongoingUniq.length + upcomingUniq.length;
+    // ── UNTRACKED ITEM DETECTION ────────────────────────────────
+    // A reservation is "untracked" when NONE of its items[] match an active
+    // master-inventory record. These shouldn't sit in the main pending bucket
+    // (we couldn't fulfil them anyway) — surface separately so the owner can
+    // either add the item to inventory or investigate.
+    function normaliseName(s: string): string {
+      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    const inventoryNorms: Array<{ canon: string; norm: string; qty: number }> = [];
+    for (const i of activeItems) {
+      const allNames = [i.name_canonical, ...(i.aliases ?? [])];
+      for (const n of allNames) {
+        if (n) inventoryNorms.push({ canon: i.name_canonical, norm: normaliseName(n), qty: i.qty });
+      }
+    }
+    function reservationMatchesInventory(r: ResRow): { matches: boolean; canon: string | null } {
+      for (const ri of r.items ?? []) {
+        const rn = normaliseName(ri.item_name);
+        for (const inv of inventoryNorms) {
+          if (rn.includes(inv.norm) || (inv.norm.includes(rn) && rn.length > 3)) {
+            return { matches: true, canon: inv.canon };
+          }
+        }
+      }
+      return { matches: false, canon: null };
+    }
+    const pendingTracked: typeof pendingUniq = [];
+    const pendingUntracked: typeof pendingUniq = [];
+    for (const r of pendingUniq) {
+      if (reservationMatchesInventory(r).matches) pendingTracked.push(r);
+      else pendingUntracked.push(r);
+    }
+    const untrackedPayload = {
+      count: pendingUntracked.length,
+      total_value_gbp: Math.round(pendingUntracked.reduce((s, r) => s + netOf(r), 0) * 100) / 100,
+      reservations: pendingUntracked.slice(0, 10).map((r) => ({
+        reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
+        renter_name: r.renter_name ?? null,
+        account_slug: r.account_slug ?? "",
+        start_date: r.start_date ?? null,
+        end_date: r.end_date ?? null,
+        items: (r.items ?? []).map((i) => i.item_name),
+        net_gbp: r.net_to_owner_gbp ?? null,
+      })),
+    };
+
+    // ── DOUBLE-BOOKING DETECTION ────────────────────────────────
+    // For each active item with qty>=1, scan ongoing+upcoming+pending(tracked)
+    // reservations covering the next 90 days. If overlapping reservations on
+    // ANY day exceed qty, surface a conflict. The first overlapping date is
+    // reported; the full conflicting reservation set is included.
+    type ResWithItems = ResRow;
+    const conflictHorizonDays = 90;
+    const horizonEnd = new Date(Date.now() + conflictHorizonDays * 86400000).toISOString().slice(0, 10);
+    const activeForConflicts: ResWithItems[] = [
+      ...ongoingUniq,
+      ...upcomingUniq,
+      ...pendingTracked,
+    ];
+    interface Conflict {
+      item_canonical: string;
+      qty: number;
+      conflict_start: string;
+      conflict_end: string;
+      overlap_count: number;
+      reservations: Array<{
+        reservation_id: string;
+        kind: "ongoing" | "upcoming" | "pending";
+        renter_name: string | null;
+        account_slug: string;
+        start_date: string;
+        end_date: string;
+      }>;
+    }
+    const conflicts: Conflict[] = [];
+    for (const item of activeItems) {
+      if (item.qty < 1) continue;
+      const matchingRes: Array<{ r: ResWithItems; kind: "ongoing" | "upcoming" | "pending" }> = [];
+      const seenIds = new Set<string>();
+      const tag = (r: ResWithItems): "ongoing" | "upcoming" | "pending" =>
+        upcomingUniq.includes(r) ? "upcoming"
+        : ongoingUniq.includes(r) ? "ongoing"
+        : "pending";
+      for (const r of activeForConflicts) {
+        if (!r.start_date || !r.end_date) continue;
+        if ((r.start_date as string) > horizonEnd) continue;
+        // Item match: any of r.items must fuzzy-match this item
+        const itemNorms = [normaliseName(item.name_canonical), ...(item.aliases ?? []).map(normaliseName)];
+        const has = (r.items ?? []).some((ri) => {
+          const rn = normaliseName(ri.item_name);
+          return itemNorms.some((n) => rn.includes(n) || (n.includes(rn) && rn.length > 3));
+        });
+        if (!has) continue;
+        if (seenIds.has(r._id)) continue;
+        seenIds.add(r._id);
+        matchingRes.push({ r, kind: tag(r) });
+      }
+      if (matchingRes.length <= item.qty) continue;
+
+      // Sweep dates within horizon, count concurrency per day.
+      const todayIso = today;
+      let worstStart = "";
+      let worstCount = 0;
+      let worstEnd = "";
+      const scanFrom = todayIso;
+      const scanTo = horizonEnd;
+      const startDates = matchingRes.map((m) => m.r.start_date as string);
+      const endDates = matchingRes.map((m) => m.r.end_date as string);
+      const candidates = Array.from(
+        new Set<string>([scanFrom, ...startDates, ...endDates].filter((d) => d >= scanFrom && d <= scanTo)),
+      ).sort();
+      for (const d of candidates) {
+        const overlapping = matchingRes.filter(
+          (m) => (m.r.start_date as string) <= d && (m.r.end_date as string) >= d,
+        );
+        if (overlapping.length > worstCount) {
+          worstCount = overlapping.length;
+          worstStart = d;
+          // Find run of consecutive days at >=worstCount
+          worstEnd = d;
+        }
+      }
+      if (worstCount > item.qty && worstStart) {
+        // Compute the inclusive range these reservations all share
+        const overlappingSet = matchingRes.filter(
+          (m) => (m.r.start_date as string) <= worstStart && (m.r.end_date as string) >= worstStart,
+        );
+        const earliestEnd = overlappingSet
+          .map((m) => m.r.end_date as string)
+          .sort()[0];
+        conflicts.push({
+          item_canonical: item.name_canonical,
+          qty: item.qty,
+          conflict_start: worstStart,
+          conflict_end: earliestEnd,
+          overlap_count: worstCount,
+          reservations: overlappingSet.map(({ r, kind }) => ({
+            reservation_id: (r.v1_rental_id ?? r.hygglo_order_id ?? r._id) as string,
+            kind,
+            renter_name: r.renter_name ?? null,
+            account_slug: r.account_slug ?? "",
+            start_date: r.start_date as string,
+            end_date: r.end_date as string,
+          })),
+        });
+      }
+    }
+    // Sort conflicts: earliest start first (most urgent at top)
+    conflicts.sort((a, b) => a.conflict_start.localeCompare(b.conflict_start));
+
+    // Update pending count to exclude untracked rows so the headline number
+    // reflects actionable pending verifications only.
+    const pendingTrackedCount = pendingTracked.length;
+    const pendingTrackedValue = pendingTracked.reduce((s, r) => s + netOf(r), 0);
+
 
     const daysBetween = (a: string, b: string): number => {
       const ms = Date.parse(b) - Date.parse(a);
@@ -416,7 +571,7 @@ export const getStatsDrawerData = query({
     const activeRentals = [
       ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
       ...upcomingUniq.map((r) => mapRental(r, "upcoming")),
-      ...pendingUniq.map((r) => mapRental(r, "pending")),
+      ...pendingTracked.map((r) => mapRental(r, "pending")),
     ].slice(0, 30);
 
     // ── card: earnings ───────────────────────────────────────────
@@ -826,10 +981,15 @@ export const getStatsDrawerData = query({
         total: activeTotal,
         ongoing_count: ongoingUniq.length,
         upcoming_count: upcomingUniq.length,
-        pending_count: pendingCount,
-        pending_value_gbp: Math.round(pendingValueGbp * 100) / 100,
+        pending_count: pendingTrackedCount,
+        pending_value_gbp: Math.round(pendingTrackedValue * 100) / 100,
         rentals: activeRentals,
       },
+      // Pinned critical alerts — surfaced at the top of the dashboard.
+      // conflicts: item has qty < concurrent reservations in next 90d.
+      // untracked: paid+verifying rows whose items aren't in master inventory.
+      conflicts,
+      untracked: untrackedPayload,
       earnings,
       monthly,
       confirmed,
