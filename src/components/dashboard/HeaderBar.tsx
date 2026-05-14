@@ -14,6 +14,22 @@ const ACCOUNTS = [
 export function HeaderBar() {
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const settings = useQuery(api.settings.get);
+  // Global freshness signal — sourced from sync_state via dashboard.getStatsDrawerData.
+  // (the Scanner card already reads the same field; this surfaces it in the header
+  // so every widget gets an at-a-glance "how live is this dashboard" cue.)
+  const stats = useQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug }) as any;
+  const lastScanAt: number | null = stats?.scanner?.last_scan_at ?? null;
+  const staleMin = lastScanAt ? Math.round((Date.now() - lastScanAt) / 60_000) : null;
+  const freshnessLabel =
+    staleMin === null ? null :
+    staleMin <= 1 ? "Just now" :
+    staleMin < 60 ? `${staleMin} min ago` :
+    `${Math.round(staleMin / 60)} h ago`;
+  const freshnessTone =
+    staleMin === null ? "#8b8fa3" :
+    staleMin <= 10  ? "#22c55e" :
+    staleMin <= 30  ? "#f59e0b" :
+                      "#ef4444";
   const [showSettings, setShowSettings] = useState(false);
 
   return (
@@ -58,6 +74,16 @@ export function HeaderBar() {
         </nav>
 
         <div className="flex items-center gap-3">
+          {freshnessLabel && (
+            <span
+              className="hidden sm:inline text-[11px] px-2 py-0.5 rounded-full border"
+              style={{ background: `${freshnessTone}1a`, color: freshnessTone, borderColor: `${freshnessTone}55` }}
+              title={lastScanAt ? `Last Hygglo poll: ${new Date(lastScanAt).toLocaleString()}` : "Sync state unknown"}
+            >
+              <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: 9999, background: freshnessTone, marginRight: 6, verticalAlign: "middle" }} />
+              {freshnessLabel}
+            </span>
+          )}
           {settings?.read_only_mode && (
             <span className="hidden md:inline text-xs px-2 py-0.5 rounded bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/30">
               Read-only
