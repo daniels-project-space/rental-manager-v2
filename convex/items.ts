@@ -668,3 +668,54 @@ export const checkCompat = query({
     return { compatible, reason, evidence };
   },
 });
+
+
+/**
+ * Backfill items.image_url using LLM-resolved item references on reservations.
+ * For each item with image_url unset, walks reservations whose resolved_items
+ * point to it and uses the first non-empty photos_urls[0] / first /products/
+ * URL as the canonical image. No fuzzy matching.
+ */
+export const backfillImagesFromResolved = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const allItems = await ctx.db.query("items").collect();
+    const targets = allItems.filter((i) => !i.image_url);
+    if (targets.length === 0) return { total: 0, patched: 0 };
+
+    const allReservations = await ctx.db.query("reservations").collect();
+    // index reservations by resolved item_id
+    const resByItemId = new Map<string, typeof allReservations>();
+    for (const r of allReservations) {
+      const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items ?? [];
+      if (resolved.length === 0) continue;
+      if (!r.photos_urls || r.photos_urls.length === 0) continue;
+      for (const x of resolved) {
+        const list = resByItemId.get(x.item_id) ?? [];
+        list.push(r);
+        resByItemId.set(x.item_id, list);
+      }
+    }
+
+    let patched = 0;
+    for (const item of targets) {
+      const matchingRes = resByItemId.get(item._id as string);
+      if (!matchingRes || matchingRes.length === 0) continue;
+      // Prefer a /products/ URL (CDN canonical), else first URL.
+      let chosen: string | undefined;
+      for (const r of matchingRes) {
+        const urls = r.photos_urls ?? [];
+        const product = urls.find((u: string) => u.includes("/products/"));
+        if (product) { chosen = product; break; }
+      }
+      if (!chosen) {
+        const first = matchingRes.find((r) => (r.photos_urls ?? []).length > 0);
+        chosen = first?.photos_urls?.[0];
+      }
+      if (!chosen) continue;
+      await ctx.db.patch(item._id, { image_url: chosen, updated_at: Date.now() });
+      patched++;
+    }
+    return { total: targets.length, patched };
+  },
+});
