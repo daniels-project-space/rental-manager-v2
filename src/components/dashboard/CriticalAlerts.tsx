@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "convex/react";
+import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 
 interface ConflictReservation {
   reservation_id: string;
@@ -12,6 +15,7 @@ interface ConflictReservation {
 }
 
 interface Conflict {
+  conflict_key: string;
   item_id: string;
   item_canonical: string;
   item_image_url: string | null;
@@ -123,6 +127,24 @@ function ConflictsBanner({ conflicts }: { conflicts: Conflict[] }) {
 }
 
 function ConflictRow({ conflict }: { conflict: Conflict }) {
+  const dismiss = useMutation(api.conflict_dismissals.dismissConflict);
+  const [resolving, setResolving] = useState(false);
+  async function onResolve() {
+    if (resolving) return;
+    setResolving(true);
+    try {
+      await dismiss({
+        conflict_key: conflict.conflict_key,
+        item_id: conflict.item_id as Id<"items">,
+        reservation_ids: conflict.reservations.map((r) => r.reservation_id),
+        note: undefined,
+      });
+      // The dashboard query is reactive — once the mutation lands, this card
+      // disappears from props on the next render. No local hide state needed.
+    } finally {
+      setResolving(false);
+    }
+  }
   return (
     <div
       className="rounded-lg p-2.5"
@@ -156,6 +178,19 @@ function ConflictRow({ conflict }: { conflict: Conflict }) {
             conflict starts {fmtDate(conflict.conflict_start)}
           </div>
         </div>
+        <button
+          onClick={onResolve}
+          disabled={resolving}
+          className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors disabled:opacity-40"
+          style={{
+            background: "rgba(34,197,94,0.15)",
+            color: "#4ade80",
+            border: "1px solid rgba(34,197,94,0.4)",
+          }}
+          title="Mark resolved — banner removes this conflict. Reappears if the reservation set changes."
+        >
+          {resolving ? "…" : "Mark resolved ✓"}
+        </button>
       </div>
       <div className="space-y-1">
         {conflict.reservations.map((r) => {

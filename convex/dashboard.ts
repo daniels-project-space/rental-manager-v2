@@ -269,6 +269,11 @@ export const getStatsDrawerData = query({
       : await ctx.db.query("insurance_claims").collect();
     claimRows = claimRows.slice().sort((a, b) => (a.claim_date < b.claim_date ? 1 : a.claim_date > b.claim_date ? -1 : 0));
 
+    // ── COLLECT 7: conflict_dismissals (owner-resolved alerts) ────
+    const dismissedKeys = new Set<string>(
+      (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
+    );
+
     // ────────────────────────────────────────────────────────────
     // Derived sets from reservations
     // ────────────────────────────────────────────────────────────
@@ -452,6 +457,7 @@ export const getStatsDrawerData = query({
       ...pendingTracked,
     ];
     interface Conflict {
+      conflict_key: string;
       item_id: string;
       item_canonical: string;
       item_image_url: string | null;
@@ -523,7 +529,17 @@ export const getStatsDrawerData = query({
         const earliestEnd = overlappingSet
           .map((m) => m.r.end_date as string)
           .sort()[0];
+        // Stable conflict identity: item_id + sorted reservation IDs.
+        // If any reservation set member changes, the key changes too — a
+        // dismissal of the OLD shape does not suppress a NEW shape.
+        const conflictReservationIds = overlappingSet
+          .map(({ r }) => (r.v1_rental_id ?? r.hygglo_order_id ?? (r._id as string)))
+          .sort();
+        const conflictKey = (item._id as string) + "|" + conflictReservationIds.join(",");
+        if (dismissedKeys.has(conflictKey)) continue;
+
         conflicts.push({
+          conflict_key: conflictKey,
           item_id: item._id as string,
           item_canonical: item.name_canonical,
           item_image_url: (item as any).image_url ?? null,

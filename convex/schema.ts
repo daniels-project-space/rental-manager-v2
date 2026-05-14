@@ -464,6 +464,18 @@ export default defineSchema({
   }).index("by_account", ["account_slug"])
     .index("by_claim_date", ["claim_date"]),
 
+  // ── Conflict dismissals — per-event flags so an owner can suppress
+  // a known double-booking from the banner. Keyed by a hash of item_id +
+  // sorted reservation IDs, so a NEW conflict (new reservation joins or
+  // any reservation cancels/reschedules) ignores the dismissal.
+  conflict_dismissals: defineTable({
+    conflict_key: v.string(),         // "item_id|sorted reservation_ids"
+    item_id: v.id("items"),
+    reservation_ids: v.array(v.string()),
+    note: v.optional(v.string()),
+    dismissed_at: v.number(),
+  }).index("by_key", ["conflict_key"]),
+
   // ── Competitor listings (informational, optional) ───────────
   competitor_listings: defineTable({
     listing_id: v.string(),
