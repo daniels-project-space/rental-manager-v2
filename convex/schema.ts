@@ -72,6 +72,9 @@ export default defineSchema({
     delivery_notes: v.optional(v.string()),
     replacement_cost_gbp: v.optional(v.number()),
     acquisition_cost_gbp: v.optional(v.number()),
+    // Unix ms when Leo bought this unit. Used by getItemPayback to project
+    // break-even. Falls back to items._creationTime when unknown.
+    acquired_at: v.optional(v.number()),
     is_marketing_only: v.boolean(),
     status: v.string(),               // "active" | "inactive" | "marketing_only" | "archived"
     description_source: v.optional(v.string()),
@@ -273,6 +276,17 @@ export default defineSchema({
       item_id: v.id("items"),
       item_name_canonical: v.string(),
       confidence: v.number(),
+      qty: v.optional(v.number()),
+    }))),
+    /** After bundle decomposition: every physical item this reservation
+     *  occupies. A reservation that resolves to {FX3 Cinematic Kit, qty:1}
+     *  expands to {FX3, 24-70 GM, RS3 Pro, Atomos, ND filter} each qty:1.
+     *  Conflict + out-of-stock + sell-reco read this, not resolved_items. */
+    expanded_items: v.optional(v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+      via_bundle: v.optional(v.id("bundles")),   // set when expanded from a kit
     }))),
     /** Unix ms when the resolver last ran. */
     resolution_at: v.optional(v.number()),
