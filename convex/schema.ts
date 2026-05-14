@@ -241,10 +241,15 @@ export default defineSchema({
       v.literal("CANCELED"),
       v.literal("VERIFICATION_FAILED"),
     )),
-    pickup_time: v.optional(v.string()),           // "HH:MM" or free-text from chat extraction
-    return_time: v.optional(v.string()),
-    pickup_method: v.optional(v.string()),         // "delivery" | "self_pickup" | etc
+    pickup_time: v.optional(v.string()),           // "HH:MM" — LLM-extracted from owner-renter chat
+    return_time: v.optional(v.string()),           // "HH:MM"
+    return_date: v.optional(v.string()),           // ISO date — may differ from end_date (e.g. morning after)
+    pickup_method: v.optional(v.string()),         // "delivery" | "collection" | "unknown"
     return_method: v.optional(v.string()),
+    /** Hash of the last N messages used for time extraction. If unchanged, skip the LLM call. */
+    times_transcript_hash: v.optional(v.string()),
+    /** When the extractor last ran successfully for this reservation. */
+    times_extracted_at: v.optional(v.number()),
     photos_urls: v.optional(v.array(v.string())),  // raw Hygglo CDN URLs
     pickup_arrival_confirmed: v.optional(v.boolean()),
     is_obsolete: v.optional(v.boolean()),           // mirrors Hygglo filter=obsolete
