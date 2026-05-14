@@ -268,9 +268,14 @@ export const getStatsDrawerData = query({
         r.end_date !== undefined,
     );
 
-    // Active = ongoing + upcoming (from confirmed set)
+    // Active = ongoing + upcoming (from confirmed set).
+    // ongoing = gear is out today or overdue (start has happened); upcoming =
+    // gear not yet picked up (start is future). We deliberately drop the
+    // end>=today constraint on ongoing so DELIVERED rentals whose end_date
+    // has passed but owner hasn't yet marked RETURNED still appear as
+    // ongoing/overdue — mirrors Hygglo's filter=future bucket.
     const ongoingRentals = confirmedWithDates.filter(
-      (r) => (r.start_date as string) <= today && (r.end_date as string) >= today,
+      (r) => (r.start_date as string) <= today,
     );
     const upcomingRentals = confirmedWithDates.filter(
       (r) => (r.start_date as string) > today,

@@ -259,6 +259,11 @@ export default defineSchema({
     return_at: v.optional(v.number()),              // ms epoch — actual handover end
     renter_name: v.optional(v.string()),            // denormalized from Hygglo otherPartName
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
+    /** ms epoch — bumped by the poller on every upsert so we can detect rows
+     *  Hygglo has stopped returning (i.e. silently completed). */
+    last_polled_at: v.optional(v.number()),
+    /** Last Hygglo filter the row was seen in: "pending" | "current" | "future" | "obsolete". */
+    source_filter: v.optional(v.string()),
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])

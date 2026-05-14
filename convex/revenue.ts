@@ -356,13 +356,27 @@ export const getLifetimeByMonth = query({
     let bookedNextTotal = 0;
     let pendingNextTotal = 0;
 
-    for (const res of filtered) {
+    // Dedup by Hygglo order id (the real unique key) — collapsing on
+    // renter+dates was dropping legitimate separate orders.
+    const seenOrderIds = new Set<string>();
+    const dedupedFiltered = filtered.filter((r) => {
+      const id = r.hygglo_order_id ?? r.v1_rental_id;
+      if (!id) return true; // no stable id → keep
+      if (seenOrderIds.has(id)) return false;
+      seenOrderIds.add(id);
+      return true;
+    });
+
+    for (const res of dedupedFiltered) {
       const dateStr = res.pickup_date ?? res.start_date;
       if (!dateStr) continue;
-      // v1 parity: exclude cancelled/declined/pending rows from historical totals.
-      if (res.status === "cancelled" || res.status === "declined" || res.status === "pending_review" || res.status === "pending") continue;
-      // v1 parity: rental_price in V1 == net-to-owner (post Hygglo fee).
-      // Use net_to_owner_gbp here, not gross_paid_gbp, to match V1's chart units.
+      if (res.is_obsolete) continue;
+      if (res.status === "cancelled" || res.status === "declined") continue;
+      // Past/current-month bars represent realised revenue — only count
+      // confirmed (FUNDS_RESERVED+ per the source-filter rule) or completed.
+      // Pending_review (APPROVED / unverified) is shown ONLY in the next-month
+      // "Pending" overlay, never as historical revenue.
+      const isPending = res.status === "pending_review" || res.status === "pending";
       const amount = res.net_to_owner_gbp ?? 0;
       const slug = res.account_slug ?? "dbcinema";
       const isFutureRes = dateStr.slice(0, 7) > currentMonth;
@@ -370,12 +384,14 @@ export const getLifetimeByMonth = query({
       if (isFutureRes) {
         const futureMo = (res.start_date ?? dateStr).slice(0, 7);
         if (futureMo === nextMonthKey) {
-          if (res.status === "confirmed") bookedNextTotal = r2(bookedNextTotal + amount);
-          else if (res.status === "pending_review" || res.status === "pending")
-            pendingNextTotal = r2(pendingNextTotal + amount);
+          if (!isPending) bookedNextTotal = r2(bookedNextTotal + amount);
+          else pendingNextTotal = r2(pendingNextTotal + amount);
         }
         continue;
       }
+
+      // Past + current month: exclude pending — it isn't paid revenue.
+      if (isPending) continue;
 
       const key = dateStr.slice(0, 7);
       if (slug === "leo") {
@@ -495,14 +511,12 @@ export const getLifetimeByMonth = query({
         // Per-account filter: zero out accounts not requested.
         // For retired accounts (daniel/vertus), also pull in hist columns that live polling skips.
         if (accountSlug === "dbcinema") {
-          // Use hist.dbcinema when present (authoritative ground-truth); fall back to live dbRaw.
-          // Do NOT add hist + dbRaw together — that double-counts months covered by both sources.
-          dbOrganic = hist?.dbcinema !== undefined ? hist.dbcinema : dbRaw;
+          // Always incorporate hist.dbcinema so pre-import months surface in the dbcinema-only view.
+          dbOrganic = (hist?.dbcinema !== undefined ? hist.dbcinema : 0) + dbRaw;
           leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "leo") {
-          // Use hist.leo when present (authoritative ground-truth); fall back to live leoRaw.
-          // Do NOT add hist + leoRaw together — that double-counts months covered by both sources.
-          leoOrganic = hist?.leo !== undefined ? hist.leo : leoRaw;
+          // Always incorporate hist.leo so pre-import months surface in the leo-only view.
+          leoOrganic = (hist?.leo !== undefined ? hist.leo : 0) + leoRaw;
           dbOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "daniel") {
           const histDaniel = hist?.daniel !== undefined ? hist.daniel : 0;
@@ -522,9 +536,13 @@ export const getLifetimeByMonth = query({
       cumulative = r2(cumulative + monthTotal);
 
       const count = !isFuture
-        ? filtered.filter((r) => {
+        ? dedupedFiltered.filter((r) => {
             const d = r.pickup_date ?? r.start_date;
-            return d && d.slice(0, 7) === mo && (r.gross_paid_gbp ?? 0) > 0;
+            if (!d || d.slice(0, 7) !== mo) return false;
+            if (r.is_obsolete) return false;
+            if (r.status === "cancelled" || r.status === "declined") return false;
+            if (r.status === "pending_review" || r.status === "pending") return false;
+            return (r.gross_paid_gbp ?? 0) > 0 || (r.net_to_owner_gbp ?? 0) > 0;
           }).length
         : 0;
 

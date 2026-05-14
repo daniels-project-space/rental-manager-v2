@@ -97,17 +97,26 @@ const messageArgs = v.array(
  */
 function deriveStatusFromStep(
   step: string | null | undefined,
-  sourceFilterFallback: string | null | undefined
+  sourceFilter: string | null | undefined
 ): "confirmed" | "pending_review" | "completed" | "cancelled" {
+  // Hygglo's API filter is THE ground-truth bucket — verified by direct
+  // /v4/my/orders inspection. filter=pending always includes any unpaid step
+  // (REQUEST, APPROVED, and FUNDS_RESERVED — Stripe pre-auth is NOT capture).
+  // Mapping the step locally was wrong: it disagreed with Hygglo whenever a
+  // FUNDS_RESERVED row was awaiting verification.
+  if (sourceFilter === "obsolete") return "cancelled";
+  if (sourceFilter === "pending") return "pending_review";
+  if (sourceFilter === "current") {
+    // current = "in/just-finished this rental window". RETURNED rows are done.
+    return step === "RETURNED" || step === "REVIEWED" ? "completed" : "confirmed";
+  }
+  if (sourceFilter === "future") return "confirmed";
+  // Unknown source — fall back to step-based heuristic.
   switch (step) {
     case "REQUEST":
-      // Renter requested, owner hasn't acted.
     case "APPROVED":
-      // v1 parity (app.service.ts): owner accepted but renter hasn't paid yet
-      // is a "phantom" — money isn't locked in until FUNDS_RESERVED. Treat as
-      // pending so it doesn't inflate confirmed revenue or "upcoming" counts.
-      return "pending_review";
     case "FUNDS_RESERVED":
+      return "pending_review";
     case "VERIFIED":
     case "BOOKED_AFTER_VERIFIED":
     case "DELIVERED":
@@ -119,11 +128,7 @@ function deriveStatusFromStep(
     case "VERIFICATION_FAILED":
       return "cancelled";
     default:
-      // No step → fall back to filter-derived
-      if (sourceFilterFallback === "obsolete") return "cancelled";
-      if (sourceFilterFallback === "pending") return "pending_review";
-      if (sourceFilterFallback === "current" || sourceFilterFallback === "future") return "confirmed";
-      return "pending_review"; // safe default
+      return "pending_review";
   }
 }
 
@@ -302,6 +307,8 @@ export const upsertOrderAsReservation = mutation({
       account_slug: args.account_slug,
       hygglo_order_id: args.hygglo_order_id,
       status: incomingStatus,
+      source_filter: args.sourceFilter,
+      last_polled_at: now,
       start_date: args.start_date,
       end_date: args.end_date,
       gross_paid_gbp: args.gross_paid_gbp,
@@ -343,20 +350,14 @@ export const upsertOrderAsReservation = mutation({
         return { action: "updated" };
       }
 
-      // ── status downgrade guard (Fix B) ────────────────────────
-      // Never downgrade: confirmed→pending_review, completed→confirmed
-      // Cancellation (priority 3) always allowed through.
-      const STATUS_PRIORITY: Record<string, number> = {
-        pending_review: 0,
-        confirmed: 1,
-        completed: 2,
-        cancelled: 3,
-      };
-      const currentStatus = existing.status ?? "pending_review";
-      const finalStatus =
-        (STATUS_PRIORITY[incomingStatus] ?? 0) >= (STATUS_PRIORITY[currentStatus] ?? 0)
-          ? incomingStatus
-          : currentStatus;
+      // The poller fetches all four Hygglo filters every cycle, so each row
+      // either appears in exactly one filter or is missing. The sourceFilter
+      // is therefore authoritative for the current bucket and we trust the
+      // freshly-derived status verbatim. (The old priority-guard was rolling
+      // back legitimate downgrades, e.g. confirmed→pending_review when a
+      // renter let their Stripe hold lapse and Hygglo moved them back to
+      // filter=pending.)
+      const finalStatus = incomingStatus;
 
       const stepPatch =
         incomingStep !== undefined ? { order_step: incomingStep } : {};

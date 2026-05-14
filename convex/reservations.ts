@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
@@ -377,6 +377,65 @@ export const adminFixStatusFromStep = mutation({
       }
     }
     return { total: rows.length, fixed };
+  },
+});
+
+/**
+ * Mark status=confirmed rows whose end_date passed more than 1 day ago as
+ * completed. Hygglo drops these orders from all filters once they wrap up,
+ * so the poller never sees them again — but our local copy keeps the old
+ * "confirmed" status forever, inflating the Active widget's ongoing count.
+ * Idempotent. Safe to run on every cron after the poll.
+ */
+/** Internal-cron variant of adminCompleteStaleConfirmed (same body). */
+export const completeStaleConfirmedCron = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const dateCutoff = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const freshThreshold = Date.now() - 2 * 60 * 60 * 1000;
+    const rows = await ctx.db.query("reservations").collect();
+    let completed = 0;
+    for (const r of rows) {
+      if (r.status !== "confirmed") continue;
+      if (r.is_obsolete) continue;
+      if (!r.end_date) continue;
+      if ((r.end_date as string) >= dateCutoff) continue;
+      const lastPolled =
+        (r as { last_polled_at?: number }).last_polled_at ??
+        (r as { _creationTime?: number })._creationTime ??
+        0;
+      if (lastPolled >= freshThreshold) continue;
+      await ctx.db.patch(r._id, { status: "completed" });
+      completed++;
+    }
+    return { total: rows.length, completed };
+  },
+});
+
+export const adminCompleteStaleConfirmed = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const dateCutoff = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    // last_polled_at older than 2 hours → Hygglo dropped the row from every
+    // filter and the poller stopped refreshing it. Two hours is roughly four
+    // poll cycles, giving plenty of buffer for a single missed run.
+    const freshThreshold = Date.now() - 2 * 60 * 60 * 1000;
+    const rows = await ctx.db.query("reservations").collect();
+    let completed = 0;
+    for (const r of rows) {
+      if (r.status !== "confirmed") continue;
+      if (r.is_obsolete) continue;
+      if (!r.end_date) continue;
+      if ((r.end_date as string) >= dateCutoff) continue;
+      const lastPolled =
+        (r as { last_polled_at?: number }).last_polled_at ??
+        (r as { _creationTime?: number })._creationTime ??
+        0;
+      if (lastPolled >= freshThreshold) continue; // poller saw it recently
+      await ctx.db.patch(r._id, { status: "completed" });
+      completed++;
+    }
+    return { total: rows.length, completed, dateCutoff, freshThreshold };
   },
 });
 

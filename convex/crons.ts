@@ -83,4 +83,13 @@ crons.interval(
   internal.hygglo_poll_trigger.triggerWorkflow,
 );
 
+// Demote stale-confirmed rows (Hygglo dropped them from every filter) to
+// completed so they stop appearing as ongoing/overdue in the Active widget.
+crons.interval(
+  "complete stale-confirmed reservations",
+  { minutes: 7 },
+  internal.reservations.completeStaleConfirmedCron,
+  {},
+);
+
 export default crons;
