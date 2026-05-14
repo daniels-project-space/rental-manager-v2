@@ -116,7 +116,7 @@ export const hyggloUiAction = task({
   machine: { preset: "medium-1x" },
   queue: accountQueue,
   run: async (payload: HyggloUiActionPayload, { ctx }): Promise<HyggloUiActionResult> => {
-    const convexUrl = process.env.CONVEX_URL ?? "https://exciting-lion-29.convex.cloud";
+    const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
     const convex = new ConvexHttpClient(convexUrl);
     const { correlationId, accountSlug, action } = payload;
 
