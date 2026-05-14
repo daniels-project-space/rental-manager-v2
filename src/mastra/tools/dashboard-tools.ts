@@ -470,6 +470,28 @@ export const getItemDamageHistory = createTool({
     data.catalog.getItemDamageHistory(input),
 });
 
+export const getMarketSearch = createTool({
+  id: "get_market_search",
+  description:
+    "INTENT-ROUTING: 'what's new in [cinema cameras / lenses / lights]', 'is X popular', 'demand for [new gear]', 'should I buy [new product]', 'what just dropped', 'newest [item type]', 'market trends', 'reviews of [item]', 'compare X vs Y popularity'. " +
+    "Live web search via xAI Grok 4 with built-in browsing. Returns synthesized market intel with source URLs and a VERDICT line (strong buy / monitor / skip / need more data). " +
+    "Use this to gauge EXTERNAL demand for items NOT yet in your inventory. Pair with get_unmatched_demand (internal denials) + get_purchase_recommendations to build a full buy case. " +
+    "Results are cached 24h server-side — pass bypassCache=true to force a fresh fetch (rare, costs ~$0.25).",
+  inputSchema: z.object({
+    query: z.string().describe("Free-form market question. Be specific: include model names, brands, and the comparison/timeframe."),
+    focus: z
+      .enum(["cameras", "lenses", "audio", "lighting", "gimbal", "monitor", "transmission", "general"])
+      .optional()
+      .describe("Category hint to bias the analyst's lens"),
+    bypassCache: z.boolean().optional(),
+  }),
+  execute: async (input: {
+    query: string;
+    focus?: "cameras" | "lenses" | "audio" | "lighting" | "gimbal" | "monitor" | "transmission" | "general";
+    bypassCache?: boolean;
+  }) => data.catalog.getMarketSearch(input),
+});
+
 export const getLostRevenue = createTool({
   id: "get_lost_revenue",
   description:
@@ -888,6 +910,8 @@ export const dashboardTools = {
   get_kit_affinity: getKitAffinity,
   get_dust_collectors: getDustCollectors,
   get_item_damage_history: getItemDamageHistory,
+  // External market intelligence (xAI Grok live web search, 24h cache)
+  get_market_search: getMarketSearch,
   get_lost_revenue: getLostRevenue,
   get_unmatched_demand: getUnmatchedDemand,
   get_substitution_patterns: getSubstitutionPatterns,

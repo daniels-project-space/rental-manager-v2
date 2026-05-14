@@ -317,3 +317,41 @@ export async function getItemDamageHistory(input: {
     return { ok: false as const, error: toError(err) };
   }
 }
+
+// ─── Market search (xAI Grok live web browsing, 24h cache) ─────────────────
+
+type MarketFocus =
+  | "cameras"
+  | "lenses"
+  | "audio"
+  | "lighting"
+  | "gimbal"
+  | "monitor"
+  | "transmission"
+  | "general";
+
+export async function getMarketSearch(input: {
+  query: string;
+  focus?: MarketFocus;
+  bypassCache?: boolean;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    // Actions live on the same client; the typed wrapper expects mutation/query
+    // shapes, so we cast loosely here.
+    const data = await (convex as unknown as {
+      action: (ref: unknown, args: unknown) => Promise<unknown>;
+    }).action(anyApi.market_search.marketSearch, {
+      query: input.query,
+      focus: input.focus,
+      bypass_cache: input.bypassCache,
+    });
+    return wrap({
+      data,
+      source: "xAI Grok live search (24h cached)",
+      syncState: await getSyncState(),
+    });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}

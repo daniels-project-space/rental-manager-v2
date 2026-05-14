@@ -14,6 +14,7 @@ import type * as admin_backfill_net from "../admin_backfill_net.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as bundles from "../bundles.js";
+import type * as bundles_seed from "../bundles_seed.js";
 import type * as calendar from "../calendar.js";
 import type * as conflict_dismissals from "../conflict_dismissals.js";
 import type * as crons from "../crons.js";
@@ -39,6 +40,8 @@ import type * as items from "../items.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
 import type * as lib_reservations_views from "../lib/reservations/views.js";
 import type * as lost_revenue from "../lost_revenue.js";
+import type * as market_search from "../market_search.js";
+import type * as market_search_cache from "../market_search_cache.js";
 import type * as memories from "../memories.js";
 import type * as model_upgrade_scans from "../model_upgrade_scans.js";
 import type * as mv__helpers from "../mv/_helpers.js";
@@ -64,6 +67,7 @@ import type * as seed_settings from "../seed/settings.js";
 import type * as settings from "../settings.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
+import type * as vision_resolver from "../vision_resolver.js";
 
 import type {
   ApiFromModules,
@@ -78,6 +82,7 @@ declare const fullApi: ApiFromModules<{
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   bundles: typeof bundles;
+  bundles_seed: typeof bundles_seed;
   calendar: typeof calendar;
   conflict_dismissals: typeof conflict_dismissals;
   crons: typeof crons;
@@ -103,6 +108,8 @@ declare const fullApi: ApiFromModules<{
   "lib/reservations/predicates": typeof lib_reservations_predicates;
   "lib/reservations/views": typeof lib_reservations_views;
   lost_revenue: typeof lost_revenue;
+  market_search: typeof market_search;
+  market_search_cache: typeof market_search_cache;
   memories: typeof memories;
   model_upgrade_scans: typeof model_upgrade_scans;
   "mv/_helpers": typeof mv__helpers;
@@ -128,6 +135,7 @@ declare const fullApi: ApiFromModules<{
   settings: typeof settings;
   sync_state: typeof sync_state;
   tax: typeof tax;
+  vision_resolver: typeof vision_resolver;
 }>;
 
 /**

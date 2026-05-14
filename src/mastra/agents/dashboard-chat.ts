@@ -41,6 +41,10 @@ pricing/availability/pending/ranking data.
   → MUST call get_dust_collectors
 - Damage / claims / "broken items" / "incident history" / "fragile gear" / "claims on X"
   → MUST call get_item_damage_history
+- External / market / "what's new" / "newest cameras" / "is X popular" / "should we buy [new product]" /
+  "demand for [unowned gear]" / "reviews of X" / "X vs Y popularity"
+  → MUST call get_market_search (xAI Grok live web search). For "should I buy X" questions also call
+  get_unmatched_demand + get_purchase_recommendations and synthesize all three sources before answering.
 - Pending rentals / awaiting / unconfirmed / "needs approval" / "to confirm" / "what's pending"
   → MUST call get_pending_rentals
 - Top earners / best items / "biggest earner" / revenue ranking / "which items make most" /

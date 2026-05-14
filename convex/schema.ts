@@ -874,4 +874,12 @@ export default defineSchema({
     hiddenStats: v.array(v.string()),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
+
+  // ── market_search 24h cache (Grok live-search results) ────────────────────
+  market_search_cache: defineTable({
+    query_norm: v.string(),     // lowercase trimmed query (with optional focus prefix)
+    result_json: v.string(),    // serialized response
+    fetched_at: v.number(),
+    expires_at: v.number(),
+  }).index("by_query_norm", ["query_norm"]),
 });
