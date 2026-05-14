@@ -101,10 +101,12 @@ function deriveStatusFromStep(
 ): "confirmed" | "pending_review" | "completed" | "cancelled" {
   switch (step) {
     case "REQUEST":
-      // Renter requested, owner hasn't acted — the only real "pending" state.
-      return "pending_review";
+      // Renter requested, owner hasn't acted.
     case "APPROVED":
-      // Owner accepted; renter pays next. v1 parity: treat as confirmed.
+      // v1 parity (app.service.ts): owner accepted but renter hasn't paid yet
+      // is a "phantom" — money isn't locked in until FUNDS_RESERVED. Treat as
+      // pending so it doesn't inflate confirmed revenue or "upcoming" counts.
+      return "pending_review";
     case "FUNDS_RESERVED":
     case "VERIFIED":
     case "BOOKED_AFTER_VERIFIED":
