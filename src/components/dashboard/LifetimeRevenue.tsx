@@ -92,6 +92,12 @@ export function LifetimeRevenue() {
 
   const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug });
   const recentClaims = useQuery(api.insurance_claims.list, { accountSlug: activeAccountSlug ?? undefined });
+  // Single source of truth for the current-month target: the Expected Monthly
+  // stat card (data.monthly.target_gbp). The lifetime chart mirrors that value
+  // so the two widgets cannot disagree.
+  const stats = useQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug });
+  const expectedMonthlyTarget = (stats as { monthly?: { target_gbp?: number } } | undefined)
+    ?.monthly?.target_gbp ?? 0;
 
   const toggle = (key: string) => setHidden((h) => ({ ...h, [key]: !h[key] }));
 
@@ -450,10 +456,15 @@ export function LifetimeRevenue() {
               {/* Current-month expected ceiling: small dashed T-marker drawn at the
                   projected total. Lets you see at-a-glance whether realised + booked
                   + pending has already reached target. */}
-              {raw && (raw.currentMonthTarget ?? 0) > 0 && (() => {
-                const rawWithTarget = raw as typeof raw & { currentMonthTarget?: number; currentMonth?: string };
-                const target = rawWithTarget.currentMonthTarget ?? 0;
-                const currentLabel = data.find((d) => d.month === rawWithTarget.currentMonth)?.label;
+              {raw && expectedMonthlyTarget > 0 && (() => {
+                // Target marker only appears once the current month is ≥7 days in
+                // — before that there isn't enough month-to-date data to make the
+                // projection meaningful, and the marker would be misleading.
+                const dayOfMonth = new Date().getDate();
+                if (dayOfMonth < 7) return null;
+                const rawWithMonth = raw as typeof raw & { currentMonth?: string };
+                const target = expectedMonthlyTarget;
+                const currentLabel = data.find((d) => d.month === rawWithMonth.currentMonth)?.label;
                 if (!currentLabel || target <= 0) return null;
                 return (
                   <ReferenceDot

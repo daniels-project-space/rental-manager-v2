@@ -1,14 +1,19 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import {
+  dedupByLogicalRental,
+  effectiveDate,
+  isConfirmedWithDates,
+  isOngoing,
+  isPendingVerification,
+  isUpcoming,
+  netOf,
+} from "./lib/reservations/predicates";
 
-// ── Helper: derive effective date (pickup_date takes priority per BF-06) ──
-const effectiveDateStr = (r: { pickup_date?: string; start_date?: string }): string | undefined =>
-  r.pickup_date ?? r.start_date;
+// Local alias so existing call sites that name the helper *Str stay working.
+const effectiveDateStr = effectiveDate;
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
-
-const effectiveDate = (r: { pickup_date?: string; start_date?: string }): string | undefined =>
-  r.pickup_date ?? r.start_date;
 
 const isoWeekBounds = () => {
   const now = new Date();
@@ -274,41 +279,16 @@ export const getStatsDrawerData = query({
     // end>=today constraint on ongoing so DELIVERED rentals whose end_date
     // has passed but owner hasn't yet marked RETURNED still appear as
     // ongoing/overdue — mirrors Hygglo's filter=future bucket.
-    const ongoingRentals = confirmedWithDates.filter(
-      (r) => (r.start_date as string) <= today,
-    );
-    const upcomingRentals = confirmedWithDates.filter(
-      (r) => (r.start_date as string) > today,
-    );
+    type ResRow = typeof allRes[number];
+    const dedupRes = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
 
-    // V1 PARITY: revenue uses net_to_owner_gbp (already net of platform fee),
-    // excludes cancelled/declined. Mirrors fix/lifetime-revenue-chart-data pattern.
+    const ongoingRentals = allRes.filter((r) => isOngoing(r as ResRow, today));
+    const upcomingRentals = allRes.filter((r) => isUpcoming(r as ResRow, today));
+
+    // "Paid" = live (not cancelled/declined/obsolete). Revenue candidate pool.
     const paidRes = allRes.filter(
       (r) => r.status !== "cancelled" && r.status !== "declined" && !r.is_obsolete,
     );
-
-    // Dedup keyed on the row's true unique id when available (hygglo_order_id
-    // for polled rows, v1_rental_id for v1-imported rows). Falling back to a
-    // renter+dates composite is only safe for very old rows that lack both —
-    // otherwise legitimate separate orders by the same renter on the same dates
-    // get collapsed and we silently lose revenue. Hygglo poller audit showed
-    // 0 dupes by order_id; the renter+dates key was dropping ~£156/month.
-    type ResRow = typeof allRes[number];
-    const dedupKey = (r: ResRow) => {
-      if (r.hygglo_order_id) return `H:${r.hygglo_order_id}`;
-      if (r.v1_rental_id) return `V:${r.v1_rental_id}`;
-      // No stable id — fall back to renter+dates+account
-      return `F:${r.renter_id ?? r.renter_name ?? "?"}|${r.account_slug ?? "?"}|${r.start_date ?? ""}|${r.end_date ?? ""}`;
-    };
-    const dedupRes = <T extends ResRow>(arr: T[]): T[] => {
-      const seen = new Map<string, T>();
-      for (const r of arr) {
-        const k = dedupKey(r);
-        const ex = seen.get(k);
-        if (!ex || ((r.net_to_owner_gbp ?? 0) > (ex.net_to_owner_gbp ?? 0))) seen.set(k, r);
-      }
-      return Array.from(seen.values());
-    };
 
     const ongoingUniq = dedupRes(ongoingRentals);
     const upcomingUniq = dedupRes(upcomingRentals);
@@ -352,7 +332,7 @@ export const getStatsDrawerData = query({
       return d >= monthStart && d <= monthEnd;
     });
 
-    const netOf = (r: ResRow) => r.net_to_owner_gbp ?? 0;
+    // netOf imported from predicates.
     const todayTotal = todayEarned.reduce((s, r) => s + netOf(r), 0);
     const weekTotal = weekEarned.reduce((s, r) => s + netOf(r), 0);
     const monthTotal = monthEarned.reduce((s, r) => s + netOf(r), 0);
@@ -393,9 +373,7 @@ export const getStatsDrawerData = query({
     //   order_step === VERIFIED         → renter is currently verifying (paid ✓)    ← PENDING
     //   order_step === BOOKED_AFTER_VERIFIED → verified, awaiting handover          — confirmed
     //   later steps → already booked / out / done
-    const pendingRes = allRes.filter(
-      (r) => r.order_step === "VERIFIED" && !r.is_obsolete,
-    );
+    const pendingRes = allRes.filter((r) => isPendingVerification(r as ResRow));
     const pendingUniq = dedupRes(pendingRes);
     const pendingCount = pendingUniq.length;
     const pendingValueGbp = pendingUniq.reduce((s, r) => s + netOf(r), 0);
