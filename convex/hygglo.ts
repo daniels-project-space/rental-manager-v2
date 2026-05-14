@@ -27,54 +27,29 @@ export const PAID_ORDER_STEPS = [
 ] as const;
 
 /**
- * Extract the HIGHEST COMPLETED order step — the actual progress the renter has
- * reached. NOT the active step, which is the next-to-do.
- *
- * Hygglo's steps[] gives BOTH `completed` and `active` per step:
- *   completed=true  → step is done
- *   active=true     → step currently in progress (next-to-do)
- * Previously we stored the active step, which made FUNDS_RESERVED look like
- * "paid" when it actually meant "waiting for renter to pay" (the renter's
- * next action). The highest completed step gives the truthful state:
- *   highest=REQUEST           → renter requested, owner hasn't accepted
- *   highest=APPROVED          → owner accepted, renter hasn't paid
- *   highest=FUNDS_RESERVED    → paid, in verification stage
- *   highest=VERIFIED          → verified, awaiting handover
- *   highest=BOOKED_AFTER_VERIFIED → booked
- *   highest=DELIVERED         → gear out with renter
- *   highest=RETURNED          → gear returned
- *
- * If all completed steps are CANCELED/VERIFICATION_FAILED, surfaces that as
- * a terminal step.
- *
+ * Extract the active order step from a raw Hygglo order object.
  * Looks at:
  *   - `order.steps[]`          — direct detail response from /v4/my/orders/:id
  *   - `order.detail.steps[]`   — v1 wrapper shape (detail nested under .detail)
  *   - `order._detail.steps[]`  — v1 wrapper shape (detail nested under ._detail)
- * Returns null when the step array is absent or no step is completed.
+ * Returns null when the step array is absent or no step is active.
  * Logs a warning and returns undefined for unrecognised step keys.
+ * NOTE: "active" = the NEXT-TO-DO step (renter's current action). This is
+ * intentional because downstream logic (deriveStatusFromStep, ongoing/upcoming
+ * filters) all assume active-step semantics. For "have they reached step X?"
+ * questions, look at step-priority predecessors of order_step.
  */
 function extractActiveOrderStep(order: any): string | null | undefined {
   const steps = order?.steps ?? order?.detail?.steps ?? order?._detail?.steps;
   if (!Array.isArray(steps)) return null;
-
-  // Pick highest-priority step with completed===true.
-  // Fallback: if NO step is completed, return null (renter hasn't started anything).
-  let bestKey: string | null = null;
-  let bestPriority = -1;
-  let anyUnknown = false;
-  for (const s of steps as Array<{ key: string; completed?: boolean; failure?: boolean }>) {
-    if (s?.completed !== true) continue;
-    if (!VALID_ORDER_STEPS.has(s.key)) { anyUnknown = true; continue; }
-    const pri = STEP_PRIORITY[s.key] ?? -1;
-    if (pri > bestPriority) { bestPriority = pri; bestKey = s.key; }
-  }
-  if (bestKey) return bestKey;
-  if (anyUnknown) {
-    console.warn(`[hygglo] Order has only unrecognised completed steps`);
+  const active = steps.find((s: any) => s?.active === true);
+  if (!active) return null;
+  const key: string = active?.key;
+  if (!VALID_ORDER_STEPS.has(key)) {
+    console.warn(`[hygglo] Unrecognised order_step key: "${key}" — storing undefined`);
     return undefined;
   }
-  return null;
+  return key;
 }
 
 /** Priority map for order steps (higher = more advanced). */

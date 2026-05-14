@@ -384,14 +384,17 @@ export const getStatsDrawerData = query({
     // V1 PARITY: count unique rentals; expose ongoing/upcoming/pending split
     // for segmented bar visualisation.
     //
-    // "Pending" = renter has paid (escrow funds reserved) and is in the
-    // ID/document verification stage. Hygglo's order_step semantics:
-    //   REQUEST          → owner hasn't accepted (NOT pending here)
-    //   APPROVED         → owner accepted, renter hasn't paid (NOT pending here)
-    //   FUNDS_RESERVED   → paid, awaiting verification ← THIS is pending
-    //   VERIFIED / BOOKED_AFTER_VERIFIED → already a real confirmed booking
+    // "Pending" = renter has paid (escrow funds reserved) AND is currently in
+    // the ID/document verification stage. order_step represents the renter's
+    // NEXT-TO-DO step. So:
+    //   order_step === REQUEST          → owner needs to accept (renter waiting)  — not pending
+    //   order_step === APPROVED         → renter needs to accept owner's terms     — not pending
+    //   order_step === FUNDS_RESERVED   → renter needs to pay (not paid yet)        — not pending
+    //   order_step === VERIFIED         → renter is currently verifying (paid ✓)    ← PENDING
+    //   order_step === BOOKED_AFTER_VERIFIED → verified, awaiting handover          — confirmed
+    //   later steps → already booked / out / done
     const pendingRes = allRes.filter(
-      (r) => r.order_step === "FUNDS_RESERVED" && !r.is_obsolete,
+      (r) => r.order_step === "VERIFIED" && !r.is_obsolete,
     );
     const pendingUniq = dedupRes(pendingRes);
     const pendingCount = pendingUniq.length;
