@@ -24,16 +24,18 @@ import type {
   NameType,
 } from "recharts/types/component/DefaultTooltipContent";
 
-// Stack order (bottom → top): Daniel → Vertus → DB Cinema → Leo → AI Boost → Claims → Booked next → Pending next
+// V1 colour palette (matches /home/ubuntu/rental-manager/src/public/js/dashboard-core.js).
+// Order is bottom → top of the stack. Only segments that can crown the stack get radius.
 const SERIES = [
-  { key: "danielOrganic",   label: "Daniel (retired)", color: "#f59e0b", fill: "rgba(245,158,11,0.7)" },
-  { key: "vertusOrganic",   label: "Vertus (retired)", color: "#10b981", fill: "rgba(16,185,129,0.7)" },
-  { key: "dbcinemaOrganic", label: "DB Cinema",        color: "#3b82f6", fill: "rgba(59,130,246,0.7)" },
-  { key: "leoOrganic",      label: "Leo Adams",        color: "#a855f7", fill: "rgba(168,85,247,0.7)" },
-  { key: "aiBoost",         label: "AI Boost",         color: "#22c55e", fill: "rgba(34,197,94,0.5)" },
-  { key: "damageClaims",    label: "Claims",           color: "#ef4444", fill: "rgba(239,68,68,0.6)" },
-  { key: "bookedNext",      label: "Booked (next mo)", color: "#6ea8fe", fill: "rgba(110,168,254,0.55)" },
-  { key: "pendingNext",     label: "Pending (next mo)",color: "#eab308", fill: "rgba(234,179,8,0.45)" },
+  { key: "danielOrganic",      label: "Daniel (retired)",  color: "#f97316", fill: "url(#grad-daniel)",   roundTop: false },
+  { key: "vertusOrganic",      label: "Vertus (retired)",  color: "#8b5a2b", fill: "url(#grad-vertus)",   roundTop: false },
+  { key: "dbcinemaOrganic",    label: "DB Cinema",          color: "#6366f1", fill: "url(#grad-dbcinema)", roundTop: false },
+  { key: "leoOrganic",         label: "Leo Adams",          color: "#a855f7", fill: "url(#grad-leo)",      roundTop: false },
+  { key: "aiBoost",            label: "AI Boost",           color: "#22c55e", fill: "url(#grad-ai)",       roundTop: true  },
+  { key: "damageClaims",       label: "Claims",             color: "#ffffff", fill: "url(#grad-damage)",   roundTop: true  },
+  { key: "bookedNext",         label: "Booked (next mo)",   color: "#94a3b8", fill: "url(#grad-booked)",   roundTop: true  },
+  { key: "pendingNext",        label: "Pending (next mo)",  color: "#eab308", fill: "url(#pending-stripe)",roundTop: true  },
+  { key: "predictedRemainder", label: "Predicted",          color: "#94a3b8", fill: "url(#grad-predicted)",roundTop: true  },
 ] as const;
 
 
@@ -54,9 +56,22 @@ function tooltipFmt(value: ValueType, name: NameType): [string, string] {
   const label =
     name === "cumulative" ? "Cumulative" :
     name === "forecastLine" ? "Forecast" :
+    name === "predictedRemainder" ? "Predicted remainder" :
     series?.label ?? String(name);
   return ["£" + v.toFixed(2), label];
 }
+
+// Series counted toward "how much of the predicted total is already realised".
+const ACTUAL_KEYS = [
+  "danielOrganic",
+  "vertusOrganic",
+  "dbcinemaOrganic",
+  "leoOrganic",
+  "aiBoost",
+  "damageClaims",
+  "bookedNext",
+  "pendingNext",
+] as const;
 
 const STATUS_COLOR: Record<string, string> = {
   open: "#f59e0b",
@@ -79,7 +94,17 @@ export function LifetimeRevenue() {
 
   const data = raw?.months.map((row) => {
     const fc = raw.forecast.find((f) => f.month === row.month);
-    return { ...row, label: fmtMonth(row.month), forecastLine: fc ? fc.value : null };
+    const r = row as unknown as Record<string, number | undefined>;
+    const realised = ACTUAL_KEYS.reduce((sum, k) => sum + (r[k] ?? 0), 0);
+    // Ghost "target" bar: gap between the projected total and what's already on the
+    // chart. Only meaningful for current + future months that have a forecast.
+    const predictedRemainder = fc ? Math.max(0, fc.value - realised) : 0;
+    return {
+      ...row,
+      label: fmtMonth(row.month),
+      forecastLine: fc ? fc.value : null,
+      predictedRemainder,
+    };
   }) ?? [];
 
   const totalRevenue = raw?.totalRevenue ?? 0;
@@ -191,6 +216,54 @@ export function LifetimeRevenue() {
         ) : (
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <defs>
+                {/* Per-series vertical gradients — lighter at top of bar, darker at base.
+                    Gives bars a depth/sheen instead of flat rgba. */}
+                <linearGradient id="grad-daniel" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#c2410c" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="grad-vertus" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#b07a4a" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#5c3a1c" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="grad-dbcinema" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#818cf8" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#4338ca" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="grad-leo" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#c084fc" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#7e22ce" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="grad-ai" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#4ade80" stopOpacity={0.9} />
+                  <stop offset="100%" stopColor="#15803d" stopOpacity={0.8} />
+                </linearGradient>
+                <linearGradient id="grad-damage" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity={0.85} />
+                  <stop offset="100%" stopColor="#cbd5e1" stopOpacity={0.65} />
+                </linearGradient>
+                <linearGradient id="grad-booked" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#cbd5e1" stopOpacity={0.7} />
+                  <stop offset="100%" stopColor="#64748b" stopOpacity={0.55} />
+                </linearGradient>
+                {/* Ghost "predicted" bar — very low opacity slate, dashed border drawn on the Bar itself. */}
+                <linearGradient id="grad-predicted" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#94a3b8" stopOpacity={0.22} />
+                  <stop offset="100%" stopColor="#475569" stopOpacity={0.12} />
+                </linearGradient>
+                {/* Pending = V1's caution-tape pattern: translucent yellow tile + white diagonal stripes. */}
+                <pattern
+                  id="pending-stripe"
+                  patternUnits="userSpaceOnUse"
+                  width="14"
+                  height="14"
+                  patternTransform="rotate(-45)"
+                >
+                  <rect width="14" height="14" fill="rgba(234,179,8,0.6)" />
+                  <line x1="0" y1="0" x2="0" y2="14" stroke="rgba(255,255,255,0.55)" strokeWidth={3} />
+                </pattern>
+              </defs>
               <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" strokeDasharray="0" />
               <XAxis
                 dataKey="label"
@@ -224,22 +297,30 @@ export function LifetimeRevenue() {
                 labelStyle={{ color: "#e4e6eb" }}
                 formatter={tooltipFmt as never}
               />
-              {/* Stacked bars — bottom to top per spec */}
-              {SERIES.map((s) => (
-                <Bar
-                  key={s.key}
-                  yAxisId="right"
-                  dataKey={s.key}
-                  name={s.key}
-                  stackId="monthly"
-                  fill={s.fill}
-                  stroke={s.color}
-                  strokeWidth={0}
-                  maxBarSize={24}
-                  hide={hidden[s.key] ?? false}
-                />
-              ))}
-              {/* Cumulative — solid green line, left axis */}
+              {/* Stacked bars — bottom to top per SERIES order. Only segments that can
+                  cap the stack (aiBoost / damage / booked / pending / predictedRemainder)
+                  get a rounded top, matching V1's borderRadius:3 selection. */}
+              {SERIES.map((s) => {
+                const isPredicted = s.key === "predictedRemainder";
+                return (
+                  <Bar
+                    key={s.key}
+                    yAxisId="right"
+                    dataKey={s.key}
+                    name={s.key}
+                    stackId="monthly"
+                    fill={s.fill}
+                    stroke={isPredicted ? s.color : "none"}
+                    strokeWidth={isPredicted ? 1 : 0}
+                    strokeDasharray={isPredicted ? "4 3" : undefined}
+                    radius={s.roundTop ? [4, 4, 0, 0] : 0}
+                    maxBarSize={28}
+                    isAnimationActive={false}
+                    hide={hidden[s.key] ?? false}
+                  />
+                );
+              })}
+              {/* Cumulative — solid green line, left axis. */}
               <Line
                 yAxisId="left"
                 dataKey="cumulative"
@@ -250,19 +331,6 @@ export function LifetimeRevenue() {
                 dot={false}
                 activeDot={{ r: 5, fill: "#22c55e" }}
                 hide={hidden.cumulative ?? false}
-              />
-              {/* Forecast — gray dashed line, right axis */}
-              <Line
-                yAxisId="right"
-                dataKey="forecastLine"
-                name="forecastLine"
-                type="monotone"
-                stroke="#94a3b8"
-                strokeWidth={2}
-                strokeDasharray="5 5"
-                dot={false}
-                activeDot={{ r: 4, fill: "#94a3b8" }}
-                connectNulls={false}
               />
             </ComposedChart>
           </ResponsiveContainer>
