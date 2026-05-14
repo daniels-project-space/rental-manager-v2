@@ -24,7 +24,7 @@
 
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
@@ -178,7 +178,13 @@ export const resolveReservation = action({
 
     await ctx.runMutation(internal.item_resolver_queries.setResolution, {
       reservation_id,
-      resolved_items: resolved,
+      // `item_id` is a string from the LLM output; the mutation expects an Id<"items">.
+      // Cast at the boundary — the runtime validator on the mutation enforces the id shape.
+      resolved_items: resolved as unknown as Array<{
+        item_id: never;
+        item_name_canonical: string;
+        confidence: number;
+      }>,
       method: "llm",
       input_hash: newHash,
     });
@@ -192,27 +198,29 @@ export const resolveReservation = action({
  */
 export const resolveBatch = internalAction({
   args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
-    const ids = await ctx.runQuery(internal.item_resolver_queries.listUnresolved, {
-      limit: limit ?? 20,
-    });
+  handler: async (
+    ctx,
+    { limit },
+  ): Promise<{ ids: number; resolved: number; skipped: number }> => {
+    const ids: Array<string> = await ctx.runQuery(
+      internal.item_resolver_queries.listUnresolved,
+      { limit: limit ?? 15 },
+    );
     let resolved = 0;
     let skipped = 0;
     for (const id of ids) {
-      const res = await ctx.runAction(internal.item_resolver.resolveReservationInternal, {
-        reservation_id: id,
-      });
-      if (res.ok) resolved++;
-      else skipped++;
+      try {
+        const res: { ok: boolean; reason?: string } = await ctx.runAction(
+          api.item_resolver.resolveReservation,
+          { reservation_id: id as never },
+        );
+        if (res.ok) resolved++;
+        else skipped++;
+      } catch (err) {
+        console.error("[item-resolver batch] failed for", id, err);
+        skipped++;
+      }
     }
     return { ids: ids.length, resolved, skipped };
-  },
-});
-
-// Internal alias so we can call from another action in the same module.
-export const resolveReservationInternal = internalAction({
-  args: { reservation_id: v.id("reservations") },
-  handler: async (ctx, args): Promise<{ ok: boolean; resolved?: number; skipped?: string }> => {
-    return await ctx.runAction(internal.item_resolver.resolveReservation as any, args);
   },
 });
