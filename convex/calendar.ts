@@ -409,8 +409,11 @@ export const getWeeklyCalendar = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
+    // Calendar shows confirmed AND pending_review (awaiting payment / verification)
+    // but never obsolete/cancelled rows. Status derivation upstream ensures
+    // obsolete→cancelled, so the is_obsolete check is defence-in-depth.
     reservations = reservations.filter(
-      (r) => r.status === "confirmed" || r.status === "pending_review"
+      (r) => !r.is_obsolete && (r.status === "confirmed" || r.status === "pending_review")
     );
 
     const holds: Doc<"calendar_holds">[] = [];
@@ -436,6 +439,25 @@ export const getWeeklyCalendar = query({
       );
     }
 
+    // Renter name lookup (denorm + fallback to renters table).
+    const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];
+    const renterMap = new Map<string, string>();
+    await Promise.all(
+      renterIds.map(async (rid) => {
+        const renter = await ctx.db.get(rid);
+        if (renter) renterMap.set(rid, renter.display_name ?? "?");
+      }),
+    );
+
+    // Items table for per-item image lookups (fuzzy by name).
+    const allItemsWeekly = await ctx.db.query("items").collect();
+
+    function imageForItemName(name: string | undefined): string | null {
+      if (!name) return null;
+      const it = findItemByName(allItemsWeekly, name);
+      return it?.image_url ?? null;
+    }
+
     return {
       days: dates.map((date) => ({
         date,
@@ -445,16 +467,61 @@ export const getWeeklyCalendar = query({
               r.start_date !== undefined &&
               r.end_date !== undefined &&
               r.start_date <= date &&
-              r.end_date >= date
+              r.end_date >= date,
           )
-          .map((r) => ({
-            reservationId: r._id,
-            itemNames: (r.items ?? []).map((i) => i.item_name),
-            accountSlug: r.account_slug,
-            status: r.status,
-            startDate: r.start_date,
-            endDate: r.end_date,
-          })),
+          .map((r) => {
+            const rType = r as {
+              pickup_time?: string | null;
+              return_time?: string | null;
+              pickup_method?: string | null;
+              return_method?: string | null;
+              notes?: string | null;
+              gross_paid_gbp?: number | null;
+              net_to_owner_gbp?: number | null;
+              renter_name?: string | null;
+            };
+            const itemNames = (r.items ?? []).map((i) => i.item_name);
+            const items = (r.items ?? []).map((i) => ({
+              name: i.item_name,
+              imageUrl: imageForItemName(i.item_name),
+              qty: i.qty ?? 1,
+            }));
+            const isPickupDay = r.start_date === date;
+            const isReturnDay = r.end_date === date && r.start_date !== date;
+            const isAwayDay = r.start_date! < date && r.end_date! > date;
+            return {
+              reservationId: r._id,
+              itemNames,
+              items,
+              accountSlug: r.account_slug,
+              status: r.status,
+              startDate: r.start_date,
+              endDate: r.end_date,
+              renterName:
+                rType.renter_name ??
+                (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?"),
+              pickupTime: rType.pickup_time ?? null,
+              returnTime: rType.return_time ?? null,
+              pickupMethod: rType.pickup_method ?? null,
+              returnMethod: rType.return_method ?? null,
+              notes: rType.notes ?? null,
+              grossPaidGbp: rType.gross_paid_gbp ?? null,
+              netToOwnerGbp: rType.net_to_owner_gbp ?? null,
+              dayType: isPickupDay
+                ? ("pickup" as const)
+                : isReturnDay
+                ? ("return" as const)
+                : isAwayDay
+                ? ("away" as const)
+                : ("pickup" as const),
+              progressPercent: chipProgress(
+                r.start_date,
+                r.end_date,
+                rType.pickup_time,
+                rType.return_time,
+              ),
+            };
+          }),
         holds: holds
           .filter((h) => h.date === date)
           .map((h) => ({
@@ -519,8 +586,11 @@ export const getGanttWeek = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
+    // Calendar shows confirmed AND pending_review (awaiting payment / verification)
+    // but never obsolete/cancelled rows. Status derivation upstream ensures
+    // obsolete→cancelled, so the is_obsolete check is defence-in-depth.
     reservations = reservations.filter(
-      (r) => r.status === "confirmed" || r.status === "pending_review"
+      (r) => !r.is_obsolete && (r.status === "confirmed" || r.status === "pending_review")
     );
 
     // --- Renter name lookup ---

@@ -115,7 +115,7 @@ describe("computeHoldsForReservations", () => {
   it("records unmatched item names and generates no holds for them", () => {
     const res = makeRes({
       _id: "res_004",
-      order_step: "FUNDS_RESERVED",
+      order_step: "VERIFIED",
       start_date: "2025-06-16",
       end_date: "2025-06-16",
       items: [{ item_name: "Invisible Widget" }],

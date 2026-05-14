@@ -57,24 +57,13 @@ export interface ReconcileResult {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/**
- * Steps where the renter has already paid (mirrors convex/hygglo.ts PAID_ORDER_STEPS).
- * Hardcoded here to keep this module free of Convex imports.
- */
-// FUNDS_RESERVED removed: order_step stores the ACTIVE (next-to-do) step,
-// so order_step=FUNDS_RESERVED means renter still needs to pay (escrow not
-// funded yet). Only VERIFIED+ steps imply the renter has paid.
-// See: src/lib/order_step_semantics.ts
-const PAID_STEPS = new Set([
-  "VERIFIED",
-  "BOOKED_AFTER_VERIFIED",
-  "DELIVERED",
-  "RETURNED",
-  "REVIEWED",
-]);
+import { PAID_ORDER_STEPS, DEAD_ORDER_STEPS } from "./order_step_semantics";
 
-/** Steps that terminate a reservation — remove existing holds. */
-const DEAD_STEPS = new Set(["CANCELED", "VERIFICATION_FAILED"]);
+// Source-of-truth sets sourced from the canonical predicate module so any
+// semantics change in predicates.ts (e.g. the active-step fix on 2026-05-14)
+// propagates here without a separate edit.
+const PAID_STEPS = new Set<string>(PAID_ORDER_STEPS);
+const DEAD_STEPS = new Set<string>(DEAD_ORDER_STEPS);
 
 /** Steps that mark a hold as "completed" rather than "confirmed". */
 const COMPLETED_STEPS = new Set(["RETURNED", "REVIEWED"]);

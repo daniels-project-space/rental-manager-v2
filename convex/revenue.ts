@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { effectiveDate, isLive } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isLive } from "./lib/reservations/predicates";
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -360,16 +360,11 @@ export const getLifetimeByMonth = query({
     let bookedNextTotal = 0;
     let pendingNextTotal = 0;
 
-    // Dedup by Hygglo order id (the real unique key) — collapsing on
-    // renter+dates was dropping legitimate separate orders.
-    const seenOrderIds = new Set<string>();
-    const dedupedFiltered = filtered.filter((r) => {
-      const id = r.hygglo_order_id ?? r.v1_rental_id;
-      if (!id) return true; // no stable id → keep
-      if (seenOrderIds.has(id)) return false;
-      seenOrderIds.add(id);
-      return true;
-    });
+    // Dedup by canonical logical-rental key (hygglo_order_id > v1_rental_id
+    // > renter+dates+account composite). Collisions keep the row with the
+    // highest net_to_owner_gbp — revenue-safe vs the prior "keep first".
+    // Shared with dashboard.getStatsDrawerData via dedupByLogicalRental.
+    const dedupedFiltered = dedupByLogicalRental(filtered as any) as typeof filtered;
 
     for (const res of dedupedFiltered) {
       const dateStr = effectiveDate(res as any);

@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { PAID_ORDER_STEPS } from "./hygglo";
+import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
 
 /**
  * W10 Item Revenue Panel - ranked list by revenue over a period
@@ -168,11 +168,9 @@ export const getOutOfStockItems = query({
       .collect();
     reservations = reservations.filter(
       (r) =>
-        r.status === "confirmed" &&
-        r.start_date !== undefined &&
-        r.end_date !== undefined &&
-        r.start_date <= endStr &&
-        r.end_date >= today
+        isConfirmedWithDates(r as any) &&
+        (r.start_date as string) <= endStr &&
+        (r.end_date as string) >= today
     );
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
@@ -515,7 +513,6 @@ export const checkAvailability = query({
     // Keeps counts correct during brief window when calendar_holds lag reservations.
     // Excludes REQUEST/APPROVED/pending_review — only PAID_ORDER_STEPS or
     // legacy status="confirmed" (no order_step).
-    const paidSet = new Set<string>(PAID_ORDER_STEPS);
     const canonNorm = norm(item.name_canonical);
     const aliasNorms = (item.aliases ?? []).map(norm);
 
@@ -528,14 +525,11 @@ export const checkAvailability = query({
     const allReservations = await ctx.db.query("reservations").collect();
     const resCountByDate = new Map<string, number>();
     for (const r of allReservations) {
-      if (r.is_obsolete === true) continue;
       if (!r.start_date || !r.end_date) continue;
       if (r.start_date > end_date || r.end_date < start_date) continue;
-      // Only paid steps or legacy confirmed; REQUEST/APPROVED/pending_review excluded
-      const isPaid =
-        (r.order_step != null && paidSet.has(r.order_step)) ||
-        (r.order_step == null && r.status === "confirmed");
-      if (!isPaid) continue;
+      // Canonical paid+legacy predicate (see convex/lib/reservations/predicates.ts).
+      // Excludes REQUEST/APPROVED/FUNDS_RESERVED-active (renter still owes payment).
+      if (!isPaidWithV1Legacy(r as any)) continue;
       if (!(r.items ?? []).some((ri) => resMatchesItem(ri.item_name))) continue;
       for (const date of dates) {
         if (date >= r.start_date && date <= r.end_date) {
