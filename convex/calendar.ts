@@ -1,6 +1,11 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
+import {
+  isConfirmedWithDates,
+  dedupByLogicalRental,
+  type ReservationRow,
+} from "./lib/reservations/predicates";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,10 +118,12 @@ export const getCalendarStrip = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
-    // Show confirmed + pending_review, never obsolete/cancelled (parity with getGanttWeek).
-    reservations = reservations.filter(
-      (r) => !r.is_obsolete && (r.status === "confirmed" || r.status === "pending_review")
-    );
+    // Calendar mirrors the Active Rentals tab: only confirmed bookings with
+    // dates set, deduped per logical rental. Drops pending_review (awaiting
+    // payment), obsolete, cancelled, declined.
+    reservations = dedupByLogicalRental(
+      (reservations as ReservationRow[]).filter(isConfirmedWithDates),
+    ) as typeof reservations;
 
     // Renter lookups
     const renterIds = [
@@ -497,12 +504,11 @@ export const getWeeklyCalendar = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
-    // Calendar shows confirmed AND pending_review (awaiting payment / verification)
-    // but never obsolete/cancelled rows. Status derivation upstream ensures
-    // obsolete→cancelled, so the is_obsolete check is defence-in-depth.
-    reservations = reservations.filter(
-      (r) => !r.is_obsolete && (r.status === "confirmed" || r.status === "pending_review")
-    );
+    // Calendar mirrors the Active Rentals tab — confirmed bookings with
+    // dates, deduped per logical rental.
+    reservations = dedupByLogicalRental(
+      (reservations as ReservationRow[]).filter(isConfirmedWithDates),
+    ) as typeof reservations;
 
     const holds: Doc<"calendar_holds">[] = [];
     if (accountSlug) {
@@ -674,12 +680,11 @@ export const getGanttWeek = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
-    // Calendar shows confirmed AND pending_review (awaiting payment / verification)
-    // but never obsolete/cancelled rows. Status derivation upstream ensures
-    // obsolete→cancelled, so the is_obsolete check is defence-in-depth.
-    reservations = reservations.filter(
-      (r) => !r.is_obsolete && (r.status === "confirmed" || r.status === "pending_review")
-    );
+    // Calendar mirrors the Active Rentals tab — confirmed bookings with
+    // dates, deduped per logical rental.
+    reservations = dedupByLogicalRental(
+      (reservations as ReservationRow[]).filter(isConfirmedWithDates),
+    ) as typeof reservations;
 
     // --- Renter name lookup ---
     const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];

@@ -397,11 +397,6 @@ function BookingCard({ chip }: { chip: ChipData }) {
                 )}
               </>
             )}
-            {items.some((i) => !i.resolved) && (
-              <div className="mt-1 text-[9px] text-amber-300/70 italic">
-                Items pending resolution — names refresh within 5 min
-              </div>
-            )}
           </div>
         )}
 
