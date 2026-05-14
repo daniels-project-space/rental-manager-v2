@@ -44,13 +44,21 @@ export const setResolution = internalMutation({
       item_id: v.id("items"),
       item_name_canonical: v.string(),
       confidence: v.number(),
+      qty: v.optional(v.number()),
     })),
+    expanded_items: v.optional(v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+      via_bundle: v.optional(v.id("bundles")),
+    }))),
     method: v.string(),
     input_hash: v.string(),
   },
-  handler: async (ctx, { reservation_id, resolved_items, method, input_hash }) => {
+  handler: async (ctx, { reservation_id, resolved_items, expanded_items, method, input_hash }) => {
     await ctx.db.patch(reservation_id, {
       resolved_items,
+      expanded_items,
       resolution_at: Date.now(),
       resolution_method: method,
       resolution_input_hash: input_hash,
@@ -81,5 +89,38 @@ export const listUnresolved = internalQuery({
     // Newest first — most likely to be visible on the dashboard right now.
     need.sort((a, b) => b.created - a.created);
     return need.slice(0, limit).map((n) => n.id);
+  },
+});
+
+
+/** Returns every bundle with its bundle_items joined. Used by the
+ *  item_resolver action to expand kit listings into physical components. */
+export const getBundlesWithItems = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const bundles = await ctx.db.query("bundles").collect();
+    const out: Array<{
+      bundle_id: string;
+      slug: string;
+      bundle_name: string;
+      items: Array<{ item_id: string | undefined; item_name_canonical: string; qty: number }>;
+    }> = [];
+    for (const b of bundles) {
+      const items = await ctx.db
+        .query("bundle_items")
+        .withIndex("by_bundle", (q) => q.eq("bundle_id", b._id))
+        .collect();
+      out.push({
+        bundle_id: b._id as string,
+        slug: b.slug,
+        bundle_name: b.bundle_name,
+        items: items.map((i) => ({
+          item_id: i.item_id as string | undefined,
+          item_name_canonical: i.item_name_canonical,
+          qty: i.qty,
+        })),
+      });
+    }
+    return out;
   },
 });

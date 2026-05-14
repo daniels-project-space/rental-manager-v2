@@ -59,6 +59,7 @@ const RESOLUTION_SCHEMA = z.object({
   resolved_items: z.array(z.object({
     item_id: z.string().describe("Convex Id of the inventory item exactly as supplied"),
     item_name_canonical: z.string(),
+    qty: z.number().int().min(1).default(1).describe("Number of physical units rented. Look for 2x, 3x, (3x) etc. Default 1."),
     confidence: z.number().min(0).max(1).describe("How sure you are (1.0 = certain, 0.0 = guess)"),
     matched_phrase: z.string().describe("The phrase in the title that triggered this match — for audit"),
   })),
@@ -93,7 +94,11 @@ CRITICAL RULES:
    resolved items: A7 III, 24-70mm GM, Atomos Ninja V (if present in inventory).
 4. If an item mentioned in the title is NOT in inventory, add it to
    unresolved_phrases — do not invent or substitute a "close" inventory item.
-5. Confidence: 1.0 only when the model number / disambiguator is unambiguous
+5. QUANTITY: extract integer qty per item. "2x Sony A7" / "3× Pavotube" /
+   "(2x) LED panels" → qty:2 / qty:3 / qty:2. Default qty:1 when not specified.
+   IMPORTANT: never collapse two physical units into qty:1 by listing the item
+   only once. Two of the same item = one resolved entry with qty:2.
+6. Confidence: 1.0 only when the model number / disambiguator is unambiguous
    in the title. 0.6-0.9 for partial matches. < 0.5 means you're guessing —
    skip it.
 
@@ -152,7 +157,7 @@ export const resolveReservation = action({
       i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name,
     ).join("\n");
 
-    let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number }> = [];
+    let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }> = [];
     try {
       const result = await generateObject({
         model: (await getXai())("grok-4.3"),
@@ -166,24 +171,74 @@ export const resolveReservation = action({
       const validIds = new Set(inventory.map((i: InventoryItem) => i._id));
       resolved = result.object.resolved_items
         .filter((r) => validIds.has(r.item_id) && r.confidence >= 0.5)
-        .map((r) => ({
-          item_id: r.item_id,
-          item_name_canonical: r.item_name_canonical,
-          confidence: r.confidence,
-        }));
+        .map((r) => {
+          let qty = Math.max(1, Math.floor(r.qty ?? 1));
+          // Fallback qty: scan the combined title for "Nx phrase" near the matched phrase.
+          if (qty === 1 && r.matched_phrase) {
+            const phrase = r.matched_phrase.toLowerCase();
+            const idx = combinedTitle.toLowerCase().indexOf(phrase);
+            if (idx > 0) {
+              const before = combinedTitle.slice(Math.max(0, idx - 8), idx);
+              const m = /(\d+)\s*[x×]/i.exec(before);
+              if (m) qty = Math.max(qty, parseInt(m[1], 10));
+            }
+          }
+          return {
+            item_id: r.item_id,
+            item_name_canonical: r.item_name_canonical,
+            confidence: r.confidence,
+            qty,
+          };
+        });
     } catch (err) {
       console.error("[item-resolver] LLM call failed:", err);
       return { ok: false, skipped: "llm error" };
     }
 
+    // Bundle expansion — if a resolved item matches a bundle's bundle_name,
+    // replace it with its component bundle_items so conflict / out-of-stock /
+    // sell-reco can reason at the physical-item level.
+    const bundlesData = await ctx.runQuery(internal.item_resolver_queries.getBundlesWithItems, {});
+    type ExpandedItem = { item_id: string; item_name_canonical: string; qty: number; via_bundle?: string };
+    const expanded: ExpandedItem[] = [];
+    function addExpanded(itemId: string, name: string, qty: number, viaBundleId?: string) {
+      const existing = expanded.find((e) => e.item_id === itemId);
+      if (existing) existing.qty += qty;
+      else expanded.push({
+        item_id: itemId,
+        item_name_canonical: name,
+        qty,
+        via_bundle: viaBundleId,
+      });
+    }
+    for (const r of resolved) {
+      const bundleHit = bundlesData.find(
+        (b: { bundle_name: string; bundle_id: string; items: Array<{ item_id?: string; item_name_canonical: string; qty: number }> }) =>
+          b.bundle_name === r.item_name_canonical,
+      );
+      if (bundleHit) {
+        for (const bi of bundleHit.items) {
+          if (!bi.item_id) continue;
+          addExpanded(bi.item_id, bi.item_name_canonical, bi.qty * r.qty, bundleHit.bundle_id);
+        }
+      } else {
+        addExpanded(r.item_id, r.item_name_canonical, r.qty);
+      }
+    }
+
     await ctx.runMutation(internal.item_resolver_queries.setResolution, {
       reservation_id,
-      // `item_id` is a string from the LLM output; the mutation expects an Id<"items">.
-      // Cast at the boundary — the runtime validator on the mutation enforces the id shape.
       resolved_items: resolved as unknown as Array<{
         item_id: never;
         item_name_canonical: string;
         confidence: number;
+        qty: number;
+      }>,
+      expanded_items: expanded as unknown as Array<{
+        item_id: never;
+        item_name_canonical: string;
+        qty: number;
+        via_bundle?: never;
       }>,
       method: "llm",
       input_hash: newHash,

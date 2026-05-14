@@ -29,6 +29,18 @@ pricing/availability/pending/ranking data.
   → MUST call get_item_schedule (returns per-day timeline with freeAfter/freeUntil computed from real pickup_time/return_time). Do NOT use check_availability for these — it is day-grain only.
 - Per-item monthly revenue / "X earnings by month" / "how was X doing last quarter" / "monthly performance of X" / "X month-over-month"
   → MUST call get_item_monthly_earnings (real per-month buckets; richer than get_item_earnings_history when months are requested)
+- Payback / break-even / "has X paid itself off" / "ROI on X" / "cost recovery" / "is X profitable" / "items not paid back"
+  → MUST call get_item_payback. If the item's acquisitionCostGbp is null, suggest set_item_acquisition_cost so future answers work.
+- Setting purchase price / "I paid X for Y" / "set acquisition cost" / "record cost of Y" / "bought Y for X"
+  → MUST call set_item_acquisition_cost AFTER preview + confirmation (echo back "I will set <item> to £<cost>, acquired <date>; proceed?")
+- Audit costs / "which items have no cost recorded" / "cost coverage" / "items missing acquisition data"
+  → MUST call list_missing_acquisition_cost
+- Kit / accessories / "what rents with X" / "people who rent X also rent" / "common bundle with" / "forgotten accessory"
+  → MUST call get_kit_affinity
+- Dust collectors / "idle expensive gear" / "what's not renting" / "sell candidates by cost" / "dead capital"
+  → MUST call get_dust_collectors
+- Damage / claims / "broken items" / "incident history" / "fragile gear" / "claims on X"
+  → MUST call get_item_damage_history
 - Pending rentals / awaiting / unconfirmed / "needs approval" / "to confirm" / "what's pending"
   → MUST call get_pending_rentals
 - Top earners / best items / "biggest earner" / revenue ranking / "which items make most" /

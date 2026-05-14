@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
 
 /**
@@ -1124,6 +1125,404 @@ export const getItemMonthlyEarnings = query({
         totalDays: totals.totalDays,
       },
       source: "reservations.resolved_items + pricing_catalog" as const,
+    };
+  },
+});
+
+// ─── Acquisition cost write + audit ─────────────────────────────────────────
+
+/**
+ * Set acquisition cost (and optionally acquired_at) for an item by name or id.
+ * Used by the chat agent when Leo says "I paid £4200 for the FX3" so future
+ * payback/ROI tools have data to work with.
+ */
+export const setItemAcquisition = mutation({
+  args: {
+    item_name: v.optional(v.string()),
+    item_id: v.optional(v.id("items")),
+    cost_gbp: v.number(),
+    acquired_at: v.optional(v.number()),         // unix ms; omit if unknown
+    replacement_cost_gbp: v.optional(v.number()),
+  },
+  handler: async (ctx, { item_name, item_id, cost_gbp, acquired_at, replacement_cost_gbp }) => {
+    if (!item_id && !item_name) {
+      return { ok: false as const, error: "Provide item_id or item_name" };
+    }
+    let target: Doc<"items"> | null = null;
+    if (item_id) {
+      target = await ctx.db.get(item_id);
+    } else {
+      const all = await ctx.db.query("items").collect();
+      target = resolveItem(all, item_name!) as Doc<"items"> | null;
+    }
+    if (!target) return { ok: false as const, error: "Item not found" };
+
+    const patch: Partial<Doc<"items">> = { acquisition_cost_gbp: cost_gbp };
+    if (acquired_at !== undefined) patch.acquired_at = acquired_at;
+    if (replacement_cost_gbp !== undefined) patch.replacement_cost_gbp = replacement_cost_gbp;
+    patch.updated_at = Date.now();
+    await ctx.db.patch(target._id, patch);
+    return {
+      ok: true as const,
+      item: { id: target._id, name: target.name_canonical },
+      patched: patch,
+    };
+  },
+});
+
+/**
+ * Audit: list active items missing acquisition_cost_gbp. Helps the chat agent
+ * say "you have 14 items without a recorded cost — want me to walk through them?"
+ */
+export const listItemsMissingAcquisition = query({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("items").collect();
+    const missing = all
+      .filter((i) => i.status === "active" && !i.is_marketing_only && (i.acquisition_cost_gbp ?? 0) === 0)
+      .map((i) => ({
+        itemId: i._id,
+        name: i.name_canonical,
+        qty: i.qty,
+        kind: i.kind,
+        replacementCostGbp: i.replacement_cost_gbp ?? null,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const totalActive = all.filter((i) => i.status === "active" && !i.is_marketing_only).length;
+    return {
+      missingCount: missing.length,
+      totalActive,
+      coveragePct: totalActive > 0 ? Math.round(((totalActive - missing.length) / totalActive) * 100) : 0,
+      items: missing,
+    };
+  },
+});
+
+// ─── Per-item payback / break-even ──────────────────────────────────────────
+
+/**
+ * Payback status: cumulative lifetime gross vs acquisition cost.
+ * - Pass item_name for one item, or omit for top N (default 20) all-items view.
+ * - Returns acquisition cost, total earnings, paid_back_pct, last rental,
+ *   monthsOwned, monthlyAvg, projectedPaybackDate (when not yet paid back).
+ */
+export const getItemPayback = query({
+  args: {
+    item_name: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { item_name, limit }) => {
+    const allItems = await ctx.db.query("items").collect();
+    const active = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+
+    // Pre-compute per-item gross from resolved_items.
+    const reservations = await ctx.db.query("reservations").collect();
+    const grossByItemId = new Map<string, { gross: number; lastDate: string }>();
+    for (const r of reservations) {
+      if (!isPaidWithV1Legacy(r as any)) continue;
+      const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items ?? [];
+      if (resolved.length === 0) continue;
+      const eff = (r as { pickup_date?: string }).pickup_date ?? r.start_date;
+      if (!eff) continue;
+      const share = (r.gross_paid_gbp ?? 0) / resolved.length;
+      for (const x of resolved) {
+        const cur = grossByItemId.get(x.item_id) ?? { gross: 0, lastDate: "" };
+        cur.gross += share;
+        if (eff > cur.lastDate) cur.lastDate = eff;
+        grossByItemId.set(x.item_id, cur);
+      }
+    }
+
+    function buildRow(i: typeof allItems[number]) {
+      const stats = grossByItemId.get(i._id) ?? { gross: 0, lastDate: "" };
+      const acquired = (i as { acquired_at?: number }).acquired_at ?? i.created_at;
+      const monthsOwned = Math.max(1, (Date.now() - acquired) / (1000 * 60 * 60 * 24 * 30));
+      const cost = i.acquisition_cost_gbp ?? null;
+      const paidBackPct = cost && cost > 0 ? (stats.gross / cost) * 100 : null;
+      const monthlyAvg = stats.gross / monthsOwned;
+      let projectedPaybackMonths: number | null = null;
+      let status: "paid_back" | "on_track" | "slow" | "unknown_cost" = "unknown_cost";
+      if (cost && cost > 0) {
+        if (stats.gross >= cost) {
+          status = "paid_back";
+        } else if (monthlyAvg > 0) {
+          projectedPaybackMonths = (cost - stats.gross) / monthlyAvg;
+          status = projectedPaybackMonths <= 24 ? "on_track" : "slow";
+        } else {
+          status = "slow";
+        }
+      }
+      return {
+        itemId: i._id,
+        name: i.name_canonical,
+        qty: i.qty,
+        acquisitionCostGbp: cost,
+        lifetimeGrossGbp: Math.round(stats.gross * 100) / 100,
+        paidBackPct: paidBackPct === null ? null : Math.round(paidBackPct * 10) / 10,
+        monthsOwned: Math.round(monthsOwned * 10) / 10,
+        monthlyAvgGbp: Math.round(monthlyAvg * 100) / 100,
+        projectedPaybackMonths:
+          projectedPaybackMonths === null ? null : Math.round(projectedPaybackMonths * 10) / 10,
+        lastRentalDate: stats.lastDate || null,
+        status,
+      };
+    }
+
+    if (item_name) {
+      const it = resolveItem(active, item_name);
+      if (!it) return { ok: false as const, error: "Item not found", item_name };
+      return { ok: true as const, mode: "single" as const, item: buildRow(it) };
+    }
+
+    const rows = active
+      .map(buildRow)
+      .sort((a, b) => {
+        // Items missing cost go to the bottom so the useful rows come first.
+        if (a.acquisitionCostGbp === null && b.acquisitionCostGbp !== null) return 1;
+        if (b.acquisitionCostGbp === null && a.acquisitionCostGbp !== null) return -1;
+        return (b.paidBackPct ?? -1) - (a.paidBackPct ?? -1);
+      })
+      .slice(0, limit ?? 20);
+    return { ok: true as const, mode: "ranked" as const, rows };
+  },
+});
+
+// ─── Kit affinity (co-rental pairs) ─────────────────────────────────────────
+
+/**
+ * Most-co-rented items with the target item. Helps suggest bundles + flag
+ * forgotten accessories.
+ * Returns: { item, pairs: [{itemId, name, coOccurrences, supportPct, lastSeen}] }
+ *  - supportPct = co_count / total_rentals_of_target
+ */
+export const getKitAffinity = query({
+  args: {
+    item_name: v.string(),
+    min_support: v.optional(v.number()),         // min co-occurrence (default 2)
+    days: v.optional(v.number()),                // lookback; default 365
+  },
+  handler: async (ctx, { item_name, min_support, days }) => {
+    const minSupport = min_support ?? 2;
+    const lookbackDays = days ?? 365;
+
+    const allItems = await ctx.db.query("items").collect();
+    const target = resolveItem(allItems.filter((i) => i.status === "active" && !i.is_marketing_only), item_name);
+    if (!target) return { ok: false as const, error: "Item not found", item_name };
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - lookbackDays);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    const reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+      .collect();
+
+    const itemById = new Map<string, typeof allItems[number]>();
+    for (const i of allItems) itemById.set(i._id as string, i);
+
+    let totalRentalsOfTarget = 0;
+    const coCount = new Map<string, { count: number; lastSeen: string }>();
+    for (const r of reservations) {
+      if (!isPaidWithV1Legacy(r as any)) continue;
+      const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items ?? [];
+      const ids = resolved.map((x) => x.item_id);
+      if (!ids.includes(target._id as string)) continue;
+      totalRentalsOfTarget++;
+      const eff = (r as { pickup_date?: string }).pickup_date ?? r.start_date ?? "";
+      for (const otherId of ids) {
+        if (otherId === target._id) continue;
+        const cur = coCount.get(otherId) ?? { count: 0, lastSeen: "" };
+        cur.count++;
+        if (eff > cur.lastSeen) cur.lastSeen = eff;
+        coCount.set(otherId, cur);
+      }
+    }
+
+    const pairs = Array.from(coCount.entries())
+      .filter(([, v]) => v.count >= minSupport)
+      .map(([id, v]) => {
+        const it = itemById.get(id);
+        return {
+          itemId: id,
+          name: it?.name_canonical ?? id,
+          kind: it?.kind ?? null,
+          coOccurrences: v.count,
+          supportPct:
+            totalRentalsOfTarget > 0 ? Math.round((v.count / totalRentalsOfTarget) * 1000) / 10 : 0,
+          lastSeen: v.lastSeen || null,
+        };
+      })
+      .sort((a, b) => b.coOccurrences - a.coOccurrences);
+
+    return {
+      ok: true as const,
+      item: { id: target._id, name: target.name_canonical },
+      totalRentalsOfTarget,
+      lookbackDays,
+      pairs,
+    };
+  },
+});
+
+// ─── Dust collectors (high-value idle items) ────────────────────────────────
+
+/**
+ * Items not rented in the last `idle_days` window, sorted by acquisition cost
+ * descending (high-cost dust first). Backs sell-recommender narrative.
+ */
+export const getDustCollectors = query({
+  args: {
+    idle_days: v.optional(v.number()),           // default 60
+    min_cost_gbp: v.optional(v.number()),        // default 200 to focus on real money
+  },
+  handler: async (ctx, { idle_days, min_cost_gbp }) => {
+    const idleDays = idle_days ?? 60;
+    const minCost = min_cost_gbp ?? 200;
+
+    const allItems = await ctx.db.query("items").collect();
+    const active = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - idleDays);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    // Find last-rental date per item (using resolved_items strict match).
+    const reservations = await ctx.db.query("reservations").collect();
+    const lastRentalByItemId = new Map<string, string>();
+    for (const r of reservations) {
+      if (!isPaidWithV1Legacy(r as any)) continue;
+      const eff = (r as { pickup_date?: string }).pickup_date ?? r.start_date;
+      if (!eff) continue;
+      const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items ?? [];
+      for (const x of resolved) {
+        const cur = lastRentalByItemId.get(x.item_id) ?? "";
+        if (eff > cur) lastRentalByItemId.set(x.item_id, eff);
+      }
+    }
+
+    const dust = active
+      .map((i) => {
+        const cost = i.acquisition_cost_gbp ?? 0;
+        const last = lastRentalByItemId.get(i._id as string) ?? "";
+        const isIdle = !last || last < cutoffStr;
+        return {
+          itemId: i._id,
+          name: i.name_canonical,
+          qty: i.qty,
+          acquisitionCostGbp: cost || null,
+          replacementCostGbp: i.replacement_cost_gbp ?? null,
+          lastRentalDate: last || null,
+          idle: isIdle,
+        };
+      })
+      .filter((r) => r.idle && (r.acquisitionCostGbp ?? 0) >= minCost)
+      .sort((a, b) => (b.acquisitionCostGbp ?? 0) - (a.acquisitionCostGbp ?? 0));
+
+    const totalDustCostGbp = dust.reduce((s, r) => s + (r.acquisitionCostGbp ?? 0), 0);
+    return {
+      ok: true as const,
+      idleDays,
+      minCostGbp: minCost,
+      count: dust.length,
+      totalDustCostGbp: Math.round(totalDustCostGbp),
+      items: dust,
+    };
+  },
+});
+
+// ─── Damage / claim history per item ────────────────────────────────────────
+
+export const getItemDamageHistory = query({
+  args: {
+    item_name: v.optional(v.string()),
+    days: v.optional(v.number()),                 // default 365
+    limit: v.optional(v.number()),                // top N when listing all
+  },
+  handler: async (ctx, { item_name, days, limit }) => {
+    const lookbackDays = days ?? 365;
+    const cutoff = Date.now() - lookbackDays * 86400 * 1000;
+    const claims = await ctx.db.query("insurance_claims").collect();
+    const recent = claims.filter(
+      (c) => new Date(c.claim_date + "T00:00:00Z").getTime() >= cutoff,
+    );
+
+    const allItems = await ctx.db.query("items").collect();
+    if (item_name) {
+      const it = resolveItem(allItems, item_name);
+      if (!it) return { ok: false as const, error: "Item not found", item_name };
+      const myClaims = recent.filter(
+        (c) =>
+          c.item_id === it._id ||
+          (c.item_name_canonical &&
+            normName(c.item_name_canonical) === normName(it.name_canonical)),
+      );
+      const totalGbp = myClaims.reduce((s, c) => s + (c.amount_gbp ?? 0), 0);
+      return {
+        ok: true as const,
+        mode: "single" as const,
+        item: { id: it._id, name: it.name_canonical },
+        lookbackDays,
+        claimCount: myClaims.length,
+        totalGbp: Math.round(totalGbp * 100) / 100,
+        openCount: myClaims.filter((c) => c.status === "open").length,
+        settledCount: myClaims.filter((c) => c.status === "settled").length,
+        deniedCount: myClaims.filter((c) => c.status === "denied").length,
+        claims: myClaims
+          .map((c) => ({
+            claimId: c._id,
+            date: c.claim_date,
+            amountGbp: c.amount_gbp,
+            status: c.status,
+            description: c.description ?? null,
+          }))
+          .sort((a, b) => b.date.localeCompare(a.date)),
+      };
+    }
+
+    // Top items by total claim £ in window.
+    const byItemId = new Map<string, { count: number; totalGbp: number; name: string }>();
+    const byCanonName = new Map<string, { count: number; totalGbp: number }>();
+    for (const c of recent) {
+      const amt = c.amount_gbp ?? 0;
+      if (c.item_id) {
+        const it = allItems.find((i) => i._id === c.item_id);
+        const cur = byItemId.get(c.item_id) ?? {
+          count: 0,
+          totalGbp: 0,
+          name: it?.name_canonical ?? "(unknown)",
+        };
+        cur.count++;
+        cur.totalGbp += amt;
+        byItemId.set(c.item_id, cur);
+      } else if (c.item_name_canonical) {
+        const key = c.item_name_canonical;
+        const cur = byCanonName.get(key) ?? { count: 0, totalGbp: 0 };
+        cur.count++;
+        cur.totalGbp += amt;
+        byCanonName.set(key, cur);
+      }
+    }
+    const rows = [
+      ...Array.from(byItemId.values()).map((v) => ({
+        name: v.name,
+        claimCount: v.count,
+        totalGbp: Math.round(v.totalGbp * 100) / 100,
+      })),
+      ...Array.from(byCanonName.entries()).map(([name, v]) => ({
+        name,
+        claimCount: v.count,
+        totalGbp: Math.round(v.totalGbp * 100) / 100,
+      })),
+    ].sort((a, b) => b.totalGbp - a.totalGbp).slice(0, limit ?? 20);
+
+    return {
+      ok: true as const,
+      mode: "ranked" as const,
+      lookbackDays,
+      totalClaims: recent.length,
+      totalGbp: Math.round(recent.reduce((s, c) => s + (c.amount_gbp ?? 0), 0) * 100) / 100,
+      rows,
     };
   },
 });

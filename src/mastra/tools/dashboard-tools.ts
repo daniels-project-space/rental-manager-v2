@@ -368,6 +368,108 @@ export const getTaxSummary = createTool({
   }) => data.revenue.getTaxSummary(input),
 });
 
+// ─── Acquisition-cost + per-item economics ─────────────────────────────────
+
+export const setItemAcquisitionCost = createTool({
+  id: "set_item_acquisition_cost",
+  description:
+    "WRITE: record what Leo paid for an item. INTENT-ROUTING: 'I paid X for the FX3', 'set acquisition cost', 'record purchase price', 'I bought X for Y'. " +
+    "ALWAYS preview the change ('I will set <name> acquisition cost to £<cost>, acquired <date> — proceed?') and require confirmation before calling. " +
+    "After this runs, get_item_payback and the buy/sell weighing tools will produce ROI numbers for this item.",
+  inputSchema: z.object({
+    itemName: z.string().optional(),
+    itemId: z.string().optional(),
+    costGbp: z.number().describe("Cost in GBP (e.g. 4200 for £4,200)"),
+    acquiredDate: z
+      .string()
+      .optional()
+      .describe("YYYY-MM-DD when the unit was purchased; omit if unknown"),
+    replacementCostGbp: z
+      .number()
+      .optional()
+      .describe("Current replacement cost in GBP (only set if explicitly told)"),
+  }),
+  execute: async (input: {
+    itemName?: string;
+    itemId?: string;
+    costGbp: number;
+    acquiredDate?: string;
+    replacementCostGbp?: number;
+  }) =>
+    data.catalog.setItemAcquisition({
+      itemName: input.itemName,
+      itemId: input.itemId,
+      costGbp: input.costGbp,
+      acquiredAtIso: input.acquiredDate,
+      replacementCostGbp: input.replacementCostGbp,
+    }),
+});
+
+export const listMissingAcquisitionCost = createTool({
+  id: "list_missing_acquisition_cost",
+  description:
+    "INTENT-ROUTING: 'which items have no cost recorded', 'how complete is my cost data', 'inventory cost coverage'. Audit list of active items missing acquisition_cost_gbp.",
+  inputSchema: z.object({}),
+  execute: async () => data.catalog.listItemsMissingAcquisition(),
+});
+
+export const getItemPayback = createTool({
+  id: "get_item_payback",
+  description:
+    "INTENT-ROUTING: 'has X paid itself off', 'how close is X to break-even', 'payback status', 'cost recovery on X', 'which items have not paid for themselves'. " +
+    "Per-item or top-N view of acquisition cost vs cumulative lifetime gross, with paid_back_pct, monthly_avg, and projected payback months. " +
+    "Items without acquisition_cost return status='unknown_cost' — suggest running set_item_acquisition_cost for those.",
+  inputSchema: z.object({
+    itemName: z.string().optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { itemName?: string; limit?: number }) =>
+    data.catalog.getItemPayback(input),
+});
+
+export const getKitAffinity = createTool({
+  id: "get_kit_affinity",
+  description:
+    "INTENT-ROUTING: 'what rents with X', 'common bundle with X', 'kit pairings for X', 'forgotten accessory', 'people who rented X also rented'. " +
+    "Co-rental analysis: returns items most often rented alongside the target item with co-occurrence count + support % over the lookback window. " +
+    "Use this to suggest bundle compositions, surface forgotten accessories, or analyze cross-sell.",
+  inputSchema: z.object({
+    itemName: z.string(),
+    minSupport: z.number().int().min(1).max(20).optional().describe("Min co-occurrences (default 2)"),
+    days: z.number().int().min(30).max(1095).optional().describe("Lookback days (default 365)"),
+  }),
+  execute: async (input: { itemName: string; minSupport?: number; days?: number }) =>
+    data.catalog.getKitAffinity(input),
+});
+
+export const getDustCollectors = createTool({
+  id: "get_dust_collectors",
+  description:
+    "INTENT-ROUTING: 'what is not renting', 'idle expensive gear', 'dust collectors', 'sell candidates ranked by cost', 'which items are dead weight'. " +
+    "Returns items not rented in the last N days, sorted by acquisition cost descending, with total capital tied up. " +
+    "Stronger than get_sell_recommendations when Leo cares about £ tied up vs just utilization %.",
+  inputSchema: z.object({
+    idleDays: z.number().int().min(7).max(365).optional().describe("Idle window (default 60)"),
+    minCostGbp: z.number().min(0).optional().describe("Min acquisition cost to include (default 200)"),
+  }),
+  execute: async (input: { idleDays?: number; minCostGbp?: number }) =>
+    data.catalog.getDustCollectors(input),
+});
+
+export const getItemDamageHistory = createTool({
+  id: "get_item_damage_history",
+  description:
+    "INTENT-ROUTING: 'damage history for X', 'claims on X', 'how often does X break', 'which items have the most claims', 'fragile items', 'incident log'. " +
+    "Per-item insurance claim aggregation from the insurance_claims table. Pass itemName for a single-item history, or omit for a top-N ranked list by total £ claimed.",
+  inputSchema: z.object({
+    itemName: z.string().optional(),
+    days: z.number().int().min(30).max(1095).optional().describe("Lookback days (default 365)"),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  execute: async (input: { itemName?: string; days?: number; limit?: number }) =>
+    data.catalog.getItemDamageHistory(input),
+});
+
 export const getLostRevenue = createTool({
   id: "get_lost_revenue",
   description:
@@ -779,6 +881,13 @@ export const dashboardTools = {
   get_item_schedule: getItemSchedule,
   get_item_monthly_earnings: getItemMonthlyEarnings,
   get_tax_summary: getTaxSummary,
+  // Acquisition cost + per-item economics
+  set_item_acquisition_cost: setItemAcquisitionCost,
+  list_missing_acquisition_cost: listMissingAcquisitionCost,
+  get_item_payback: getItemPayback,
+  get_kit_affinity: getKitAffinity,
+  get_dust_collectors: getDustCollectors,
+  get_item_damage_history: getItemDamageHistory,
   get_lost_revenue: getLostRevenue,
   get_unmatched_demand: getUnmatchedDemand,
   get_substitution_patterns: getSubstitutionPatterns,

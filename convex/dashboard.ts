@@ -405,10 +405,25 @@ export const getStatsDrawerData = query({
     // (any model-number disambiguation). Resolution is owned by the action
     // `item_resolver:resolveReservation` (see convex/item_resolver.ts) which
     // calls Grok 4.3 with strict instructions to respect II/III/Mk2/Mk3 etc.
-    type ResolvedItem = { item_id: string; item_name_canonical: string; confidence: number };
+    type ExpandedItem = { item_id: string; item_name_canonical: string; qty: number; via_bundle?: string };
+    type ResolvedItem = { item_id: string; item_name_canonical: string; confidence: number; qty?: number };
+    /** Expanded-items map for conflict / untracked / sell-reco. Falls back to
+     *  resolved_items when bundle expansion hasn't run yet (the resolver
+     *  cron will populate expanded_items shortly after a new poll). */
+    function expandedIdsOf(r: ResRow): Map<string, number> {
+      const expanded = ((r as { expanded_items?: ExpandedItem[] }).expanded_items) ?? [];
+      if (expanded.length > 0) {
+        const m = new Map<string, number>();
+        for (const x of expanded) m.set(x.item_id, (m.get(x.item_id) ?? 0) + x.qty);
+        return m;
+      }
+      const resolved = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
+      const m = new Map<string, number>();
+      for (const x of resolved) m.set(x.item_id, (m.get(x.item_id) ?? 0) + (x.qty ?? 1));
+      return m;
+    }
     function resolvedIdsOf(r: ResRow): Set<string> {
-      const arr = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
-      return new Set(arr.map((x) => x.item_id));
+      return new Set(expandedIdsOf(r).keys());
     }
     function isResolved(r: ResRow): boolean {
       return (r as { resolved_items?: ResolvedItem[] }).resolved_items !== undefined;
@@ -472,8 +487,9 @@ export const getStatsDrawerData = query({
     // Pending-tracked equivalent for cross-account (filter to those whose
     // resolved_items point at active inventory).
     const pendingCrossTracked = pendingCrossUniq.filter((r) => {
-      const resolved = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
-      return resolved.some((x) => activeItemIds.has(x.item_id));
+      const ids = expandedIdsOf(r as ResRow);
+      for (const id of ids.keys()) if (activeItemIds.has(id)) return true;
+      return false;
     });
     const activeForConflicts: ResWithItems[] = [
       ...ongoingCrossUniq,
@@ -512,15 +528,21 @@ export const getStatsDrawerData = query({
         if (!r.start_date || !r.end_date) continue;
         if ((r.start_date as string) > horizonEnd) continue;
         // Strict match via LLM-resolved item IDs — no substring fuzzy.
-        // If resolution hasn't run yet, the row is excluded from conflict
-        // detection (false-positive avoidance trumps false-negative).
-        const ids = resolvedIdsOf(r as ResRow);
-        if (!ids.has(itemIdStr)) continue;
+        const idsToQty = expandedIdsOf(r as ResRow);
+        const q = idsToQty.get(itemIdStr);
+        if (!q || q < 1) continue;
         if (seenIds.has(r._id)) continue;
         seenIds.add(r._id);
         matchingRes.push({ r, kind: tag(r) });
       }
-      if (matchingRes.length <= item.qty) continue;
+      // Concurrent qty SUM is what matters. A reservation holding 2× of the item
+      // counts as 2 toward overlap.
+      const sumQty = (rows: typeof matchingRes): number => {
+        let total = 0;
+        for (const { r } of rows) total += expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0;
+        return total;
+      };
+      if (sumQty(matchingRes) <= item.qty) continue;
 
       // Sweep dates within horizon, count concurrency per day.
       const todayIso = today;
@@ -538,10 +560,13 @@ export const getStatsDrawerData = query({
         const overlapping = matchingRes.filter(
           (m) => (m.r.start_date as string) <= d && (m.r.end_date as string) >= d,
         );
-        if (overlapping.length > worstCount) {
-          worstCount = overlapping.length;
+        const qtySum = overlapping.reduce(
+          (s, m) => s + (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0),
+          0,
+        );
+        if (qtySum > worstCount) {
+          worstCount = qtySum;
           worstStart = d;
-          // Find run of consecutive days at >=worstCount
           worstEnd = d;
         }
       }
@@ -613,16 +638,22 @@ export const getStatsDrawerData = query({
       });
     }
     const buildItemTiles = (r: ResRow): Array<{ name: string; image_url: string | null; qty: number }> => {
-      const resolved = ((r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string; confidence: number }> }).resolved_items) ?? [];
-      // Count duplicates: same item_id appearing multiple times → bump qty.
+      // Prefer expanded_items (bundle-decomposed). Fall back to resolved_items
+      // when the resolver hasn't run yet on this reservation.
+      const expanded = ((r as { expanded_items?: Array<{ item_id: string; item_name_canonical: string; qty: number }> }).expanded_items) ?? [];
+      const source: Array<{ item_id: string; item_name_canonical: string; qty: number }> =
+        expanded.length > 0
+          ? expanded
+          : (((r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }> }).resolved_items) ?? [])
+              .map((x) => ({ item_id: x.item_id, item_name_canonical: x.item_name_canonical, qty: x.qty ?? 1 }));
       const counts = new Map<string, { name: string; image_url: string | null; qty: number }>();
-      for (const rx of resolved) {
-        const inv = itemImageById.get(rx.item_id);
-        const name = inv?.name ?? rx.item_name_canonical;
+      for (const x of source) {
+        const inv = itemImageById.get(x.item_id);
+        const name = inv?.name ?? x.item_name_canonical;
         const image_url = inv?.image_url ?? null;
-        const existing = counts.get(rx.item_id);
-        if (existing) existing.qty++;
-        else counts.set(rx.item_id, { name, image_url, qty: 1 });
+        const existing = counts.get(x.item_id);
+        if (existing) existing.qty += x.qty;
+        else counts.set(x.item_id, { name, image_url, qty: x.qty });
       }
       return Array.from(counts.values());
     };

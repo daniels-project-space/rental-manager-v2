@@ -185,3 +185,135 @@ export async function getItemMonthlyEarnings(input: {
     return { ok: false as const, error: toError(err) };
   }
 }
+
+// ─── Acquisition cost write + audit ─────────────────────────────────────────
+
+export async function setItemAcquisition(input: {
+  itemName?: string;
+  itemId?: string;
+  costGbp: number;
+  acquiredAtIso?: string;             // YYYY-MM-DD; we'll convert to ms
+  replacementCostGbp?: number;
+}): Promise<Result<unknown> | { ok: false; error: string }> {
+  try {
+    const convex = getConvex();
+    const acquiredAt = input.acquiredAtIso
+      ? new Date(input.acquiredAtIso + "T00:00:00Z").getTime()
+      : undefined;
+    const data = await convex.mutation(anyApi.items.setItemAcquisition, {
+      item_name: input.itemName,
+      item_id: input.itemId,
+      cost_gbp: input.costGbp,
+      acquired_at: acquiredAt,
+      replacement_cost_gbp: input.replacementCostGbp,
+    });
+    return wrap({
+      data,
+      source: "convex.items.setItemAcquisition (mutation)",
+      syncState: await getSyncState(),
+    });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
+
+export async function listItemsMissingAcquisition(): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.listItemsMissingAcquisition, {}),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.listItemsMissingAcquisition", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
+
+// ─── Payback / break-even ───────────────────────────────────────────────────
+
+export async function getItemPayback(input: {
+  itemName?: string;
+  limit?: number;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.getItemPayback, {
+        item_name: input.itemName,
+        limit: input.limit,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.getItemPayback", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
+
+// ─── Kit affinity ───────────────────────────────────────────────────────────
+
+export async function getKitAffinity(input: {
+  itemName: string;
+  minSupport?: number;
+  days?: number;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.getKitAffinity, {
+        item_name: input.itemName,
+        min_support: input.minSupport,
+        days: input.days,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.getKitAffinity", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
+
+// ─── Dust collectors ────────────────────────────────────────────────────────
+
+export async function getDustCollectors(input: {
+  idleDays?: number;
+  minCostGbp?: number;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.getDustCollectors, {
+        idle_days: input.idleDays,
+        min_cost_gbp: input.minCostGbp,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.getDustCollectors", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
+
+// ─── Damage / claim history ─────────────────────────────────────────────────
+
+export async function getItemDamageHistory(input: {
+  itemName?: string;
+  days?: number;
+  limit?: number;
+}): Promise<Result<unknown>> {
+  try {
+    const convex = getConvex();
+    const [data, syncState] = await Promise.all([
+      convex.query(anyApi.items.getItemDamageHistory, {
+        item_name: input.itemName,
+        days: input.days,
+        limit: input.limit,
+      }),
+      getSyncState(),
+    ]);
+    return wrap({ data, source: "convex.items.getItemDamageHistory", syncState });
+  } catch (err) {
+    return { ok: false as const, error: toError(err) };
+  }
+}
