@@ -24,14 +24,15 @@ import type {
   NameType,
 } from "recharts/types/component/DefaultTooltipContent";
 
-// Stack order: Daniel (retired) → Vertus (retired) → DB Cinema organic →
-// Leo Adams organic → AI Boost → Claims → Booked next → Pending next
+// Stack order (bottom → top): Daniel → Vertus → DB Cinema → Leo → AI Boost → Claims → Booked next → Pending next
 const SERIES = [
-  { key: "dbcinemaOrganic", label: "DB Cinema",        color: "#8b6dff", fill: "rgba(139,109,255,0.7)" },
-  { key: "leoOrganic",      label: "Leo Adams",        color: "#ef4444", fill: "rgba(239,68,68,0.7)" },
+  { key: "danielOrganic",   label: "Daniel (retired)", color: "#f59e0b", fill: "rgba(245,158,11,0.7)" },
+  { key: "vertusOrganic",   label: "Vertus (retired)", color: "#10b981", fill: "rgba(16,185,129,0.7)" },
+  { key: "dbcinemaOrganic", label: "DB Cinema",        color: "#3b82f6", fill: "rgba(59,130,246,0.7)" },
+  { key: "leoOrganic",      label: "Leo Adams",        color: "#a855f7", fill: "rgba(168,85,247,0.7)" },
   { key: "aiBoost",         label: "AI Boost",         color: "#22c55e", fill: "rgba(34,197,94,0.5)" },
-  { key: "damageClaims",    label: "Claims",           color: "#ffffff", fill: "rgba(255,255,255,0.6)" },
-  { key: "bookedNext",      label: "Booked (next mo)", color: "#3b82f6", fill: "rgba(59,130,246,0.55)" },
+  { key: "damageClaims",    label: "Claims",           color: "#ef4444", fill: "rgba(239,68,68,0.6)" },
+  { key: "bookedNext",      label: "Booked (next mo)", color: "#6ea8fe", fill: "rgba(110,168,254,0.55)" },
   { key: "pendingNext",     label: "Pending (next mo)",color: "#eab308", fill: "rgba(234,179,8,0.45)" },
 ] as const;
 

@@ -219,3 +219,39 @@ export const list = query({
     return await ctx.db.query("historical_revenue").collect();
   },
 });
+
+/**
+ * Recompute daniel_revenue_gbp + vertus_revenue_gbp for ALL historical rows
+ * using v1's authoritative formula:
+ *   net = total_overall_made_gbp - damage_costs_gbp
+ *   capped = min(dbcinema_revenue_gbp + leo_revenue_gbp, net)  [capped so tracked ≤ net]
+ *   remainder = max(0, net - capped)
+ *   daniel = round(remainder / 2, 2)
+ *   vertus  = round(remainder - daniel, 2)
+ * Patches every row in place. Idempotent.
+ */
+export const recomputeDanielVertusAll = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("historical_revenue").collect();
+    const results: { month: string; daniel: number; vertus: number; action: string }[] = [];
+    for (const row of rows) {
+      const overall = (row as unknown as Record<string, number>).total_overall_made_gbp ?? 0;
+      const damage = (row as unknown as Record<string, number>).damage_costs_gbp ?? 0;
+      const dbc = (row as unknown as Record<string, number>).dbcinema_revenue_gbp ?? 0;
+      const leo = (row as unknown as Record<string, number>).leo_revenue_gbp ?? 0;
+      const net = overall - damage;
+      const tracked = dbc + leo;
+      const capped = net > 0 ? Math.min(tracked, net) : 0;
+      const remainder = Math.max(0, net - capped);
+      const daniel = Math.round(remainder / 2 * 100) / 100;
+      const vertus = Math.round((remainder - daniel) * 100) / 100;
+      await ctx.db.patch(row._id, {
+        daniel_revenue_gbp: daniel,
+        vertus_revenue_gbp: vertus,
+      });
+      results.push({ month: row.month, daniel, vertus, action: "patched" });
+    }
+    return results;
+  },
+});
