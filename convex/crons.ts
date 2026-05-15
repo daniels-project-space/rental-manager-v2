@@ -103,6 +103,17 @@ crons.interval(
   { limit: 15 },
 );
 
+// ── Notes-only backfill — for v1-imported reservations that came with
+// items=[] but a rich `notes` description. Runs slower than the main
+// resolver to spread LLM cost; naturally idles once the pool is empty
+// (listUnresolved returns nothing). Each call resolves up to 10 rows.
+crons.interval(
+  "item_resolver notes backfill",
+  { minutes: 15 },
+  internal.item_resolver.resolveBatch,
+  { limit: 10, include_notes_only: true },
+);
+
 
 // ── Booking-time extractor — LLM reads owner-renter chat → pickup_time /
 // return_time / pickup_date / return_date / methods on each reservation.
