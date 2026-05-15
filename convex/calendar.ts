@@ -6,6 +6,10 @@ import {
   dedupByLogicalRental,
   type ReservationRow,
 } from "./lib/reservations/predicates";
+import {
+  resolveImageForReservationItem,
+  buildSharedImageBlacklist,
+} from "./lib/imageResolution";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -17,10 +21,15 @@ function parseTime(date: string, time: string): number {
 }
 
 /**
- * 3-tier item name resolver.
+ * 2-tier item name resolver.
  * Tier 1: exact canonical match (case-insensitive)
  * Tier 2: exact alias match (case-insensitive)
- * Tier 3: substring match — item_name ⊆ canonical OR canonical ⊆ item_name (min 5 chars)
+ *
+ * NOTE: Tier-3 substring fallback was removed (Phase 8 fix per FIX-DESIGN 4.4).
+ * Substring matching caused cross-item collisions (e.g. "70-200" matched both
+ * lens variants), producing wrong-image bugs. The new image-resolution path
+ * (`resolveImageForReservationItem`) supersedes name-based image lookups by
+ * relying on per-reservation `image_hints` populated at poll time.
  */
 function findItemByName<T extends { name_canonical?: string; name?: string; aliases?: string[] }>(
   items: T[],
@@ -34,21 +43,6 @@ function findItemByName<T extends { name_canonical?: string; name?: string; alia
   // Tier 2: exact alias
   m = items.find((i) => (i.aliases ?? []).some((a) => a.toLowerCase() === lower));
   if (m) return m;
-  // Tier 3: substring (only when name is reasonably long)
-  if (lower.length >= 5) {
-    m = items.find((i) => {
-      const canon = (i.name_canonical ?? i.name ?? "").toLowerCase();
-      return canon && (canon.includes(lower) || lower.includes(canon));
-    });
-    if (m) return m;
-    m = items.find((i) =>
-      (i.aliases ?? []).some((a) => {
-        const al = a.toLowerCase();
-        return al.length >= 5 && (al.includes(lower) || lower.includes(al));
-      })
-    );
-    if (m) return m;
-  }
   return null;
 }
 
@@ -203,16 +197,15 @@ export const getCalendarStrip = query({
       aliases?: string[];
       image_url?: string;
     };
-    const hasReservationItems = reservations.some((r) => (r.items ?? []).length > 0);
-    let allItemsForStrip: ItemDoc[] = [];
+    // Load items table once (used for both name-resolution fallback AND for
+    // the shared-image blacklist guard inside the resolver).
+    const rawItemsForStrip = await ctx.db.query("items").collect();
+    const allItemsForStrip: ItemDoc[] = rawItemsForStrip.map((item) => item as ItemDoc);
     const itemById = new Map<string, ItemDoc>();
-    if (hasReservationItems) {
-      const rawItems = await ctx.db.query("items").collect();
-      allItemsForStrip = rawItems.map((item) => item as ItemDoc);
-      for (const it of allItemsForStrip) {
-        if (it._id) itemById.set(it._id, it);
-      }
+    for (const it of allItemsForStrip) {
+      if (it._id) itemById.set(it._id, it);
     }
+    const sharedBlacklist = buildSharedImageBlacklist(allItemsForStrip);
 
     type ChipItem = {
       itemId: string | null;
@@ -224,8 +217,19 @@ export const getCalendarStrip = query({
 
     /** Build per-item list for the booking card.
      *  Prefers resolved_items (LLM-resolved, deconstructs sets); falls back to
-     *  raw Hygglo strings + fuzzy match while the resolver catches up. */
+     *  raw Hygglo strings + fuzzy match while the resolver catches up.
+     *  Image resolution goes through `resolveImageForReservationItem` which
+     *  consults the reservation's per-item `image_hints` BEFORE falling back
+     *  to the (potentially globally-shared) items.image_url. */
     function buildItems(r: Doc<"reservations">): ChipItem[] {
+      const imageHints = ((r as { image_hints?: Array<{
+        item_name: string;
+        item_name_normalised: string;
+        image_url: string;
+        source: "hygglo_per_item" | "hygglo_order" | "manual_override";
+        captured_at: number;
+      }> }).image_hints) ?? [];
+
       const resolved = (r as { resolved_items?: Array<{
         item_id: string;
         item_name_canonical: string;
@@ -234,7 +238,7 @@ export const getCalendarStrip = query({
 
       if (resolved && resolved.length > 0) {
         // Aggregate duplicates from the resolver (same item appearing twice)
-        const counts = new Map<string, { entry: { item_id: string; item_name_canonical: string }; qty: number }>();
+        const counts = new Map<string, { entry: { item_id: string; item_name_canonical: string; confidence: number }; qty: number }>();
         for (const ri of resolved) {
           const existing = counts.get(ri.item_id);
           if (existing) existing.qty += 1;
@@ -242,10 +246,18 @@ export const getCalendarStrip = query({
         }
         return Array.from(counts.values()).map(({ entry, qty }) => {
           const doc = itemById.get(entry.item_id);
+          const renderName = doc?.name_canonical ?? entry.item_name_canonical;
+          const resolved = resolveImageForReservationItem({
+            imageHints,
+            itemName: renderName,
+            itemsTableEntry: doc,
+            resolvedConfidence: entry.confidence,
+            sharedBlacklist,
+          });
           return {
             itemId: entry.item_id,
-            name: doc?.name_canonical ?? entry.item_name_canonical,
-            imageUrl: doc?.image_url ?? null,
+            name: renderName,
+            imageUrl: resolved.url,
             qty,
             resolved: true,
           };
@@ -255,16 +267,43 @@ export const getCalendarStrip = query({
       // Fallback: raw Hygglo strings + fuzzy image lookup. These titles can be
       // SEO-slop multi-item descriptions; we keep them so the booking still
       // surfaces something while the resolver runs (max 5 min lag).
-      return (r.items ?? []).map((i) => {
+      // Dedup by item_id so a single item appearing twice collapses to one
+      // tile with qty=2; rows with NULL item_id (no fuzzy match) stay separate
+      // so they render as distinct placeholder tiles instead of collapsing
+      // under the `undefined` key.
+      const fallbackTiles: ChipItem[] = [];
+      const fallbackById = new Map<string, ChipItem>();
+      for (const i of r.items ?? []) {
         const found = findItemByName(allItemsForStrip, i.item_name);
-        return {
+        const resolvedImg = resolveImageForReservationItem({
+          imageHints,
+          itemName: i.item_name,
+          itemsTableEntry: found ?? undefined,
+          resolvedConfidence: undefined,
+          sharedBlacklist,
+        });
+        const tile: ChipItem = {
           itemId: found?._id ?? null,
           name: i.item_name,
-          imageUrl: found?.image_url ?? null,
+          imageUrl: resolvedImg.url,
           qty: i.qty ?? 1,
           resolved: false,
         };
-      });
+        if (found?._id) {
+          const existing = fallbackById.get(found._id);
+          if (existing) {
+            existing.qty += tile.qty;
+          } else {
+            fallbackById.set(found._id, tile);
+            fallbackTiles.push(tile);
+          }
+        } else {
+          // No item_id — keep as a distinct placeholder tile, do NOT collapse
+          // multiple null-id rows into a single "undefined" key.
+          fallbackTiles.push(tile);
+        }
+      }
+      return fallbackTiles;
     }
 
     /** Build a rich chip for one reservation on a specific day. */
@@ -283,7 +322,19 @@ export const getCalendarStrip = query({
         rType.renter_name ??
         (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?");
       const items = buildItems(r);
-      const firstImage = items.find((i) => i.imageUrl)?.imageUrl ?? null;
+      // Per-tile multi-image: collect distinct image URLs (preserve order),
+      // capped at 4 for the chip’s 1/2/4 grid layout. Single `imageUrl` is
+      // retained for backward-compat (existing UI reads it as a fallback).
+      const distinctImages: string[] = [];
+      const seenImages = new Set<string>();
+      for (const it of items) {
+        if (it.imageUrl && !seenImages.has(it.imageUrl)) {
+          seenImages.add(it.imageUrl);
+          distinctImages.push(it.imageUrl);
+          if (distinctImages.length >= 4) break;
+        }
+      }
+      const firstImage = distinctImages[0] ?? null;
       return {
         reservationId: r._id,
         kind,
@@ -303,6 +354,7 @@ export const getCalendarStrip = query({
         netToOwnerGbp: rType.net_to_owner_gbp ?? null,
         notes: rType.notes ?? null,
         imageUrl: firstImage,
+        multi_item_image_urls: distinctImages.length > 1 ? distinctImages : null,
         progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
       };
     }
@@ -547,11 +599,26 @@ export const getWeeklyCalendar = query({
 
     // Items table for per-item image lookups (fuzzy by name).
     const allItemsWeekly = await ctx.db.query("items").collect();
+    const sharedBlacklistWeekly = buildSharedImageBlacklist(allItemsWeekly);
 
-    function imageForItemName(name: string | undefined): string | null {
-      if (!name) return null;
-      const it = findItemByName(allItemsWeekly, name);
-      return it?.image_url ?? null;
+    type WeeklyImageHint = {
+      item_name: string;
+      item_name_normalised: string;
+      image_url: string;
+      source: "hygglo_per_item" | "hygglo_order" | "manual_override";
+      captured_at: number;
+    };
+
+    function imageForItem(itemName: string | undefined, hints: WeeklyImageHint[]): string | null {
+      if (!itemName) return null;
+      const it = findItemByName(allItemsWeekly, itemName);
+      return resolveImageForReservationItem({
+        imageHints: hints,
+        itemName,
+        itemsTableEntry: it ?? undefined,
+        resolvedConfidence: undefined,
+        sharedBlacklist: sharedBlacklistWeekly,
+      }).url;
     }
 
     return {
@@ -577,9 +644,10 @@ export const getWeeklyCalendar = query({
               renter_name?: string | null;
             };
             const itemNames = (r.items ?? []).map((i) => i.item_name);
+            const hintsForR = ((r as { image_hints?: WeeklyImageHint[] }).image_hints) ?? [];
             const items = (r.items ?? []).map((i) => ({
               name: i.item_name,
-              imageUrl: imageForItemName(i.item_name),
+              imageUrl: imageForItem(i.item_name, hintsForR),
               qty: i.qty ?? 1,
             }));
             const isPickupDay = r.start_date === date;
@@ -698,9 +766,18 @@ export const getGanttWeek = query({
       })
     );
 
-    // --- Items table: load all for fuzzy resolver ---
+    // --- Items table: load all for fuzzy resolver + shared-blacklist guard ---
     type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string };
     const allItems = (await ctx.db.query("items").collect()) as GanttItemDoc[];
+    const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
+
+    type GanttImageHint = {
+      item_name: string;
+      item_name_normalised: string;
+      image_url: string;
+      source: "hygglo_per_item" | "hygglo_order" | "manual_override";
+      captured_at: number;
+    };
 
     // --- Collect unique items referenced across reservations ---
     // Key: item_name string (from reservation.items[])
@@ -719,6 +796,40 @@ export const getGanttWeek = query({
       const matchingRes = reservations.filter((r) =>
         (r.items ?? []).some((i) => i.item_name === itemName)
       );
+
+      // Image source: walk matching reservations and pick the first hit from
+      // the resolver — the resolver itself prefers per-reservation hints over
+      // the (potentially globally-shared) items.image_url.
+      // Look up the canonical name from the items table for the resolver query;
+      // hint matching uses the verbatim Hygglo string as well as the canonical.
+      let resolvedImageUrl: string | null = null;
+      for (const r of matchingRes) {
+        const hints = ((r as { image_hints?: GanttImageHint[] }).image_hints) ?? [];
+        const tileName = iDoc?.name_canonical ?? iDoc?.name ?? itemName;
+        const out = resolveImageForReservationItem({
+          imageHints: hints,
+          itemName: tileName,
+          itemsTableEntry: iDoc ?? undefined,
+          resolvedConfidence: undefined,
+          sharedBlacklist: sharedBlacklistGantt,
+        });
+        if (out.url) {
+          resolvedImageUrl = out.url;
+          break;
+        }
+        // If the canonical name didn't hit, try the raw item_name as a hint key
+        const out2 = resolveImageForReservationItem({
+          imageHints: hints,
+          itemName,
+          itemsTableEntry: iDoc ?? undefined,
+          resolvedConfidence: undefined,
+          sharedBlacklist: sharedBlacklistGantt,
+        });
+        if (out2.url) {
+          resolvedImageUrl = out2.url;
+          break;
+        }
+      }
 
       const blocks = matchingRes.map((r) => {
         const rType = r as {
@@ -745,7 +856,7 @@ export const getGanttWeek = query({
       return {
         item_id: (iDoc?._id ?? null) as string | null,
         item_name: itemName,
-        image_url: iDoc?.image_url ?? null,
+        image_url: resolvedImageUrl,
         account_slug: iDoc?.account_slug ?? null,
         account_color: (iDoc?.account_slug === "leo" ? "purple" : "blue") as "purple" | "blue",
         blocks,

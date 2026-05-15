@@ -40,7 +40,10 @@ export function ItemROIPanel() {
     limit: 100,
     include_unknown_cost: includeUnknown,
   });
-  const data: Row[] | undefined = raw as Row[] | undefined;
+  const data: Row[] | undefined =
+    raw === undefined
+      ? undefined
+      : ((raw as { rows?: Row[] }).rows ?? []);
   const visible = data ? (showAll ? data : data.slice(0, 12)) : [];
 
   return (

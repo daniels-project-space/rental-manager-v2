@@ -44,7 +44,10 @@ export function LostRevenueBuyPanel() {
   const [days, setDays] = useState<number>(180);
   const [showAll, setShowAll] = useState(false);
   const raw = useQuery(api.intel.getSmartBuyRanking, { days, limit: 50 });
-  const data: Row[] | undefined = raw as Row[] | undefined;
+  const data: Row[] | undefined =
+    raw === undefined
+      ? undefined
+      : ((raw as { rows?: Row[] }).rows ?? []);
   const visible = data ? (showAll ? data : data.slice(0, 10)) : [];
 
   const dayOpts = [

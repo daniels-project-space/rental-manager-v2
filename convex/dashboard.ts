@@ -11,6 +11,109 @@ import {
   isUpcoming,
   netOf,
 } from "./lib/reservations/predicates";
+import {
+  resolveImageForReservationItem,
+  buildSharedImageBlacklist,
+  type ImageHint,
+} from "./lib/imageResolution";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
+// Lifted out of getStatsDrawerData / getNextRentals to eliminate the previous
+// duplication. Routes every image through resolveImageForReservationItem so
+// catalogue-level cross-pollination (Pass-1 root cause) cannot leak into
+// dashboard widgets.
+// ─────────────────────────────────────────────────────────────────────────────
+type TileSourceItem = {
+  item_id?: string | null;
+  item_name_canonical: string;
+  qty?: number;
+};
+type ResolvedItemEntry = {
+  item_id?: string | null;
+  item_name_canonical: string;
+  qty?: number;
+  confidence?: number;
+};
+export type ItemTile = {
+  name: string;
+  image_url: string | null;
+  qty: number;
+};
+
+/**
+ * Build the per-tile array for one reservation row using the
+ * resolveImageForReservationItem resolver. Null/undefined item_ids are NOT
+ * collapsed into a single bucket — they are emitted as separate placeholder
+ * tiles keyed by `__null_<index>` so unresolved items render individually
+ * rather than disappearing into one merged row.
+ */
+export function buildItemTilesShared(args: {
+  reservation: {
+    image_hints?: ImageHint[] | null;
+    expanded_items?: Array<TileSourceItem> | null;
+    resolved_items?: Array<ResolvedItemEntry> | null;
+  };
+  itemImageById: Map<string, { name: string; image_url: string | null }>;
+  sharedBlacklist: Set<string>;
+}): ItemTile[] {
+  const { reservation, itemImageById, sharedBlacklist } = args;
+  const imageHints: ImageHint[] = reservation.image_hints ?? [];
+  const resolved: ResolvedItemEntry[] = reservation.resolved_items ?? [];
+
+  // Confidence lookup keyed by item_id (only resolved entries have it).
+  const confidenceById = new Map<string, number>();
+  for (const ri of resolved) {
+    if (ri.item_id != null && typeof ri.confidence === "number") {
+      confidenceById.set(ri.item_id, ri.confidence);
+    }
+  }
+
+  // Prefer expanded_items (bundle-decomposed). Fall back to resolved_items
+  // when the resolver hasn't run yet on this reservation.
+  const expanded: TileSourceItem[] = reservation.expanded_items ?? [];
+  const source: TileSourceItem[] =
+    expanded.length > 0
+      ? expanded
+      : resolved.map((x) => ({
+          item_id: x.item_id ?? null,
+          item_name_canonical: x.item_name_canonical,
+          qty: x.qty ?? 1,
+        }));
+
+  // Dedup by item_id; null/undefined item_ids get a unique synthetic key per
+  // row so they stay as distinct placeholder tiles instead of merging into
+  // one bogus "undefined" bucket.
+  const counts = new Map<string, ItemTile>();
+  source.forEach((x, idx) => {
+    const hasItemId = x.item_id != null && x.item_id !== "";
+    const dedupKey = hasItemId ? (x.item_id as string) : `__null_${idx}`;
+    const inv = hasItemId ? itemImageById.get(x.item_id as string) : undefined;
+    const name = inv?.name ?? x.item_name_canonical;
+
+    const itemsTableEntry = inv ? { image_url: inv.image_url } : undefined;
+    const resolvedConfidence = hasItemId
+      ? confidenceById.get(x.item_id as string)
+      : undefined;
+
+    const resolved = resolveImageForReservationItem({
+      imageHints,
+      itemName: name,
+      itemsTableEntry,
+      resolvedConfidence,
+      sharedBlacklist,
+    });
+
+    const qty = x.qty ?? 1;
+    const existing = counts.get(dedupKey);
+    if (existing) {
+      existing.qty += qty;
+    } else {
+      counts.set(dedupKey, { name, image_url: resolved.url, qty });
+    }
+  });
+  return Array.from(counts.values());
+}
 
 // Local alias so existing call sites that name the helper *Str stay working.
 const effectiveDateStr = effectiveDate;
@@ -639,26 +742,18 @@ export const getStatsDrawerData = query({
         image_url: (it as { image_url?: string }).image_url ?? null,
       });
     }
-    const buildItemTiles = (r: ResRow): Array<{ name: string; image_url: string | null; qty: number }> => {
-      // Prefer expanded_items (bundle-decomposed). Fall back to resolved_items
-      // when the resolver hasn't run yet on this reservation.
-      const expanded = ((r as { expanded_items?: Array<{ item_id: string; item_name_canonical: string; qty: number }> }).expanded_items) ?? [];
-      const source: Array<{ item_id: string; item_name_canonical: string; qty: number }> =
-        expanded.length > 0
-          ? expanded
-          : (((r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }> }).resolved_items) ?? [])
-              .map((x) => ({ item_id: x.item_id, item_name_canonical: x.item_name_canonical, qty: x.qty ?? 1 }));
-      const counts = new Map<string, { name: string; image_url: string | null; qty: number }>();
-      for (const x of source) {
-        const inv = itemImageById.get(x.item_id);
-        const name = inv?.name ?? x.item_name_canonical;
-        const image_url = inv?.image_url ?? null;
-        const existing = counts.get(x.item_id);
-        if (existing) existing.qty += x.qty;
-        else counts.set(x.item_id, { name, image_url, qty: x.qty });
-      }
-      return Array.from(counts.values());
-    };
+    // Phase 9 / FIX-DESIGN §4.5: build the shared-image blacklist once for
+    // the whole query so the resolver can guard the items_table fallback
+    // against globally-aliased URLs (Pass-1 root cause).
+    const sharedBlacklist = buildSharedImageBlacklist(
+      allItems.map((it) => ({ image_url: (it as { image_url?: string | null }).image_url ?? null })),
+    );
+    const buildItemTiles = (r: ResRow): ItemTile[] =>
+      buildItemTilesShared({
+        reservation: r as Parameters<typeof buildItemTilesShared>[0]["reservation"],
+        itemImageById,
+        sharedBlacklist,
+      });
 
     const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => ({
       reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
@@ -1166,9 +1261,9 @@ export const getStatsDrawerData = query({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Next Rentals widget query - pickups + returns for a target day.
-// Decision: REPLICATE buildItemTiles/mapRental logic inline (rather than lift)
-// because buildItemTiles closes over itemImageById built inside getStatsDrawerData;
-// lifting would require refactoring 3 closures. Inline keeps blast radius minimal.
+// Phase 9 / FIX-DESIGN §4.5: now uses the shared `buildItemTilesShared`
+// helper (top of file) instead of the previously-duplicated
+// `buildItemTilesLocal`. Single source of truth eliminates drift.
 // ─────────────────────────────────────────────────────────────────────────────
 export const getNextRentals = query({
   args: {
@@ -1191,7 +1286,8 @@ export const getNextRentals = query({
         r.end_date !== undefined,
     );
 
-    // Build item-image lookup once (replicated from getStatsDrawerData).
+    // Build item-image lookup + shared-image blacklist once for this query.
+    // Both feed the shared `buildItemTilesShared` helper (top of file).
     const items = await ctx.db.query("items").collect();
     const itemImageById = new Map<string, { name: string; image_url: string | null }>();
     for (const it of items) {
@@ -1201,28 +1297,16 @@ export const getNextRentals = query({
         image_url: ((it as { image_url?: string | null }).image_url) ?? null,
       });
     }
+    const sharedBlacklist = buildSharedImageBlacklist(
+      items.map((it) => ({ image_url: (it as { image_url?: string | null }).image_url ?? null })),
+    );
 
-    const buildItemTilesLocal = (
-      r: any,
-    ): Array<{ name: string; image_url: string | null; qty: number }> => {
-      const expanded =
-        (r as { expanded_items?: Array<{ item_id: string; item_name_canonical: string; qty: number }> }).expanded_items ?? [];
-      const source: Array<{ item_id: string; item_name_canonical: string; qty: number }> =
-        expanded.length > 0
-          ? expanded
-          : ((r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }> }).resolved_items ?? [])
-              .map((x) => ({ item_id: x.item_id, item_name_canonical: x.item_name_canonical, qty: x.qty ?? 1 }));
-      const counts = new Map<string, { name: string; image_url: string | null; qty: number }>();
-      for (const x of source) {
-        const inv = itemImageById.get(x.item_id);
-        const name = inv?.name ?? x.item_name_canonical;
-        const image_url = inv?.image_url ?? null;
-        const existing = counts.get(x.item_id);
-        if (existing) existing.qty += x.qty;
-        else counts.set(x.item_id, { name, image_url, qty: x.qty });
-      }
-      return Array.from(counts.values());
-    };
+    const buildItemTilesLocal = (r: any): ItemTile[] =>
+      buildItemTilesShared({
+        reservation: r as Parameters<typeof buildItemTilesShared>[0]["reservation"],
+        itemImageById,
+        sharedBlacklist,
+      });
 
     const mapForWire = (r: any, role: "pickup" | "return") => ({
       reservation_id: r.hygglo_order_id ?? r.v1_rental_id ?? (r._id as string),

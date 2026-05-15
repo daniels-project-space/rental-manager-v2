@@ -18,6 +18,7 @@ import { HeaderBar } from "@/components/dashboard/HeaderBar";
 import { EditModeBar } from "@/components/dashboard/EditModeBar";
 import { AddWidgetDrawer } from "@/components/dashboard/AddWidgetDrawer";
 import { EditableWidget } from "@/components/dashboard/EditableWidget";
+import { WidgetErrorBoundary } from "@/components/dashboard/WidgetErrorBoundary";
 import { PANEL_WIDGETS } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 
@@ -62,7 +63,9 @@ export default function DashboardPage() {
             {visiblePanels.map(({ id, label, component: Component }) => (
               <div key={id} className="mb-4">
                 <EditableWidget id={id} kind="panel" label={label}>
-                  <Component />
+                  <WidgetErrorBoundary label={label}>
+                    <Component />
+                  </WidgetErrorBoundary>
                 </EditableWidget>
               </div>
             ))}

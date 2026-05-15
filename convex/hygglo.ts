@@ -226,7 +226,90 @@ export const getRecentMessages = query({
 const orderItemArgs = v.object({
   item_name: v.string(),
   qty: v.optional(v.number()),
+  /** Per-item image URLs from Hygglo detail.items[i].image.{*Url}.
+   *  Wave-5: poller MUST forward this so we can write per-item image_hints. */
+  image: v.optional(v.object({
+    url: v.optional(v.string()),
+    originalUrl: v.optional(v.string()),
+    largeUrl: v.optional(v.string()),
+    mediumUrl: v.optional(v.string()),
+    thumbnailUrl: v.optional(v.string()),
+  })),
 });
+
+// ── Wave-5 image-hint helpers ──────────────────────────────────
+
+/** Stable normalisation: lowercase, collapse whitespace, strip stock punctuation.
+ *  Inlined here to avoid a cross-phase dep on convex/lib/imageResolution.ts
+ *  (added in Phase 7). MUST stay in sync with the lib version. */
+function normaliseItemNameLocal(s: string): string {
+  return s.toLowerCase()
+    .replace(/[\s\-_/]+/g, " ")
+    .replace(/[^\p{L}\p{N} ]+/gu, "")
+    .trim();
+}
+
+type HyggloImageHint = {
+  item_name: string;
+  item_name_normalised: string;
+  image_url: string;
+  source: "hygglo_per_item" | "hygglo_order" | "manual_override";
+  captured_at: number;
+};
+
+/**
+ * Build per-item image hints from the incoming Hygglo items[].
+ * Preference order per item: largeUrl > originalUrl > url > mediumUrl > thumbnailUrl.
+ * If a per-item image is absent, falls back to the positional entry from the
+ * order-level photos_urls and tags the hint as "hygglo_order" so the backfill
+ * action can identify and re-process legacy rows.
+ */
+function buildImageHintsFromHyggloItems(
+  items: Array<{
+    item_name: string;
+    image?: {
+      url?: string;
+      originalUrl?: string;
+      largeUrl?: string;
+      mediumUrl?: string;
+      thumbnailUrl?: string;
+    };
+  }>,
+  fallbackOrderPhotos: string[] | undefined,
+  now: number,
+): HyggloImageHint[] {
+  const hints: HyggloImageHint[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it?.item_name) continue;
+    const img = it.image ?? {};
+    const perItem =
+      img.largeUrl ?? img.originalUrl ?? img.url ?? img.mediumUrl ?? img.thumbnailUrl ?? null;
+    if (perItem) {
+      hints.push({
+        item_name: it.item_name,
+        item_name_normalised: normaliseItemNameLocal(it.item_name),
+        image_url: perItem,
+        source: "hygglo_per_item",
+        captured_at: now,
+      });
+      continue;
+    }
+    // Legacy fallback — order-level photo. Positional first, then any /products/ URL.
+    const positional = fallbackOrderPhotos?.[i];
+    const productLike = (fallbackOrderPhotos ?? []).find((u) => u.includes("/products/"));
+    const fallback = positional ?? productLike ?? fallbackOrderPhotos?.[0];
+    if (!fallback) continue;
+    hints.push({
+      item_name: it.item_name,
+      item_name_normalised: normaliseItemNameLocal(it.item_name),
+      image_url: fallback,
+      source: "hygglo_order",
+      captured_at: now,
+    });
+  }
+  return hints;
+}
 
 /**
  * Public mutation called by poll-hygglo-inbox after each order fetch.
@@ -382,7 +465,8 @@ export const upsertOrderAsReservation = mutation({
         );
         // Still apply non-step fields (dates, amounts) but preserve order_step.
         await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
-        await populateItemImagesInline(ctx, args.items, photos_urls);
+        const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
+        await ctx.db.patch(existing._id, { image_hints: hintsRegression });
         return { action: "updated" };
       }
 
@@ -403,58 +487,26 @@ export const upsertOrderAsReservation = mutation({
         ...stepPatch,
         ...obsoleteFields,
       });
-      await populateItemImagesInline(ctx, args.items, photos_urls);
+      const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
+      await ctx.db.patch(existing._id, { image_hints: hintsUpdate });
       return { action: "updated" };
     }
 
     // ── INSERT ────────────────────────────────────────────────
     const stepInsert =
       incomingStep !== undefined ? { order_step: incomingStep } : {};
+    const hintsInsert = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
     await ctx.db.insert("reservations", {
       ...baseFields,
       ...stepInsert,
       ...obsoleteFields,
+      ...(hintsInsert.length > 0 && { image_hints: hintsInsert }),
       created_at: now,
     });
-
-    // ── Populate item images from photos_urls (inline — mutations can't call runMutation) ──
-    await populateItemImagesInline(ctx, args.items, photos_urls);
 
     return { action: "inserted" };
   },
 });
-
-/**
- * Shared helper: for each reservation item, if the matching items-table row has no
- * image_url yet, patch it with the first /products/ URL (or first URL) from photos_urls.
- * Called inline from upsertOrderAsReservation (mutations cannot call runMutation).
- */
-async function populateItemImagesInline(
-  ctx: { db: any },
-  reservationItems: { item_name: string; qty?: number }[],
-  photos_urls: string[] | undefined,
-): Promise<void> {
-  if (!photos_urls || photos_urls.length === 0) return;
-  if (!reservationItems || reservationItems.length === 0) return;
-
-  const candidate = photos_urls.find((u) => u.includes("/products/")) ?? photos_urls[0];
-  if (!candidate) return;
-
-  const allItems: any[] = await ctx.db.query("items").collect();
-
-  for (const ri of reservationItems) {
-    if (!ri.item_name) continue;
-    const lowerName = ri.item_name.toLowerCase();
-    const item = allItems.find(
-      (i: any) =>
-        i.name_canonical?.toLowerCase() === lowerName ||
-        (i.aliases ?? []).some((a: string) => a.toLowerCase() === lowerName),
-    );
-    if (item && !item.image_url) {
-      await ctx.db.patch(item._id, { image_url: candidate });
-    }
-  }
-}
 
 // ── Renter upsert (batch) ─────────────────────────────────────
 
