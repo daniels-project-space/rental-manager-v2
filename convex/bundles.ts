@@ -7,30 +7,24 @@ import { v } from "convex/values";
  */
 
 function matchToBundle(
-  itemNames: string[],
-  bundles: Array<{ name: string; items: string[] }>
+  canonicalItems: string[],
+  bundles: Array<{ name: string; items: string[] }>,
 ): string | null {
-  const freq = new Map<string, number>();
-  for (const name of itemNames) {
-    const key = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-    freq.set(key, (freq.get(key) ?? 0) + 1);
-  }
+  // Strict canonical-name match against bundle definitions. canonicalItems
+  // come from resolved_items[].item_name_canonical — already disambiguated
+  // by the LLM resolver. Picks the largest bundle whose components are all
+  // present in canonicalItems (with required qty).
+  const have = new Map<string, number>();
+  for (const n of canonicalItems) have.set(n, (have.get(n) ?? 0) + 1);
   let bestMatch: string | null = null;
   let bestLength = 0;
   const sorted = [...bundles].sort((a, b) => b.items.length - a.items.length);
   for (const bundle of sorted) {
     const required = new Map<string, number>();
-    for (const item of bundle.items) {
-      const key = item.toLowerCase().replace(/[^a-z0-9]/g, "");
-      required.set(key, (required.get(key) ?? 0) + 1);
-    }
+    for (const it of bundle.items) required.set(it, (required.get(it) ?? 0) + 1);
     let matches = true;
-    for (const [reqKey, count] of required.entries()) {
-      let found = 0;
-      for (const [rKey, rCount] of freq.entries()) {
-        if (rKey.includes(reqKey) || reqKey.includes(rKey)) found += rCount;
-      }
-      if (found < count) { matches = false; break; }
+    for (const [reqName, reqCount] of required.entries()) {
+      if ((have.get(reqName) ?? 0) < reqCount) { matches = false; break; }
     }
     if (matches && bundle.items.length > bestLength) {
       bestMatch = bundle.name;
@@ -79,9 +73,15 @@ export const getTopBundles = query({
     );
     const byBundle = new Map<string, { revenue: number; count: number; totalDays: number; items: string[] }>();
     for (const res of reservations) {
-      const itemNames = (res.items ?? []).map((i: { item_name: string }) => i.item_name);
-      if (itemNames.length < 2) continue;
-      const bundleName = matchToBundle(itemNames, bundleDefs);
+      // Use resolved_items canonical names (no fuzzy match) so 'A7 II Kit'
+      // and 'A7 III Kit' don't collide.
+      type ResolverEntry = { item_name_canonical: string };
+      const expanded = ((res as { expanded_items?: ResolverEntry[] }).expanded_items) ?? [];
+      const resolved = ((res as { resolved_items?: ResolverEntry[] }).resolved_items) ?? [];
+      const source = expanded.length > 0 ? expanded : resolved;
+      const canonicalItems = source.map((x) => x.item_name_canonical);
+      if (canonicalItems.length < 2) continue;
+      const bundleName = matchToBundle(canonicalItems, bundleDefs);
       if (!bundleName) continue;
       const gross = res.gross_paid_gbp ?? 0;
       const dur = res.duration_days ?? 0;

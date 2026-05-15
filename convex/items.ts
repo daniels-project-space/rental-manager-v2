@@ -3,6 +3,29 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
 
+// ─── Shared resolver-output reader ─────────────────────────────────────
+// Prefers expanded_items (bundle-decomposed, per-physical qty). Falls back
+// to resolved_items + qty:1 when expansion has not run yet on the row.
+// Strict id-only — no fuzzy substring matching.
+type ResolverItem = { item_id: string; item_name_canonical: string; qty: number };
+function readResolverItems(r: {
+  expanded_items?: Array<{ item_id: string; item_name_canonical: string; qty: number }>;
+  resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
+}): ResolverItem[] {
+  if (r.expanded_items && r.expanded_items.length > 0) {
+    return r.expanded_items.map((x) => ({
+      item_id: x.item_id,
+      item_name_canonical: x.item_name_canonical,
+      qty: x.qty,
+    }));
+  }
+  return (r.resolved_items ?? []).map((x) => ({
+    item_id: x.item_id,
+    item_name_canonical: x.item_name_canonical,
+    qty: x.qty ?? 1,
+  }));
+}
+
 /**
  * W10 Item Revenue Panel - ranked list by revenue over a period
  */
@@ -204,32 +227,20 @@ export const getSellRecommendations = query({
 
     const allItems = await ctx.db.query("items").collect();
     const activeGroups = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
-    const sellCanonicals = activeGroups.map((i) => i.name_canonical);
+    const sellCanonSet = new Set<string>(activeGroups.map((i) => i.name_canonical));
 
-    function normSell(s: string): string {
-      return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    }
-    function matchSellCanon(listingTitle: string): string | null {
-      const tNorm = normSell(listingTitle);
-      let best: string | null = null;
-      let bestScore = 0;
-      for (const canon of sellCanonicals) {
-        const cNorm = normSell(canon);
-        if (tNorm.includes(cNorm) && cNorm.length > bestScore) {
-          best = canon;
-          bestScore = cNorm.length;
-        }
-      }
-      return best;
-    }
-
-    // Build rental-days per canonical name from reservation items[] with fuzzy matching
+    // Build rental-days per canonical name from LLM-resolved + bundle-expanded
+    // items only. Strict id-based match (no substring fuzz, no A7-II↔A7-III
+    // confusion). Qty multiplied through so 2× per reservation counts twice.
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
-      for (const item of r.items ?? []) {
-        const canon = matchSellCanon(item.item_name);
-        if (!canon) continue;
-        rentalDaysMap.set(canon, (rentalDaysMap.get(canon) ?? 0) + (r.duration_days ?? 0));
+      const items = readResolverItems(r);
+      for (const x of items) {
+        if (!sellCanonSet.has(x.item_name_canonical)) continue;
+        rentalDaysMap.set(
+          x.item_name_canonical,
+          (rentalDaysMap.get(x.item_name_canonical) ?? 0) + (r.duration_days ?? 0) * x.qty,
+        );
       }
     }
 
@@ -455,30 +466,23 @@ export const checkAvailability = query({
     }
 
     // ── Step 5: Reservation cross-check (transition safety) ──────────────
-    // Keeps counts correct during brief window when calendar_holds lag reservations.
-    // Excludes REQUEST/APPROVED/pending_review — only PAID_ORDER_STEPS or
-    // legacy status="confirmed" (no order_step).
-    const canonNorm = norm(item.name_canonical);
-    const aliasNorms = (item.aliases ?? []).map(norm);
-
-    function resMatchesItem(resItemName: string): boolean {
-      const rn = norm(resItemName);
-      if (rn.includes(canonNorm) || (canonNorm.includes(rn) && rn.length > 3)) return true;
-      return aliasNorms.some((an) => rn.includes(an) || (an.includes(rn) && rn.length > 3));
-    }
-
+    // Counts active reservations referencing this specific item via LLM-
+    // resolved item_id (no fuzzy match — A7 II vs A7 III stays distinct).
+    // Used to keep counts correct during the brief window when
+    // calendar_holds lag reservations.
+    const itemIdStr = item._id as string;
     const allReservations = await ctx.db.query("reservations").collect();
     const resCountByDate = new Map<string, number>();
     for (const r of allReservations) {
       if (!r.start_date || !r.end_date) continue;
       if (r.start_date > end_date || r.end_date < start_date) continue;
-      // Canonical paid+legacy predicate (see convex/lib/reservations/predicates.ts).
-      // Excludes REQUEST/APPROVED/FUNDS_RESERVED-active (renter still owes payment).
       if (!isPaidWithV1Legacy(r as any)) continue;
-      if (!(r.items ?? []).some((ri) => resMatchesItem(ri.item_name))) continue;
+      const resolved = readResolverItems(r);
+      const match = resolved.find((x) => x.item_id === itemIdStr);
+      if (!match) continue;
       for (const date of dates) {
         if (date >= r.start_date && date <= r.end_date) {
-          resCountByDate.set(date, (resCountByDate.get(date) ?? 0) + 1);
+          resCountByDate.set(date, (resCountByDate.get(date) ?? 0) + match.qty);
         }
       }
     }
