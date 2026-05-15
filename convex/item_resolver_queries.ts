@@ -497,3 +497,65 @@ export const admin_writeVisionAugmentation = mutation({
     return { ok: true };
   },
 });
+
+/**
+ * Paginated deletion of v1-imported reservations. SAFETY: defaults to
+ * dryRun=true. Run admin_purgeV1Reservations({}) first to see counts.
+ *
+ * Pre-requisite: export-v1-to-r2 Trigger task has run AND R2 snapshots
+ * + by_item / by_renter / by_month / totals indexes exist (verify in
+ * R2 console at cold/v1/...). Mastra wrappers will then merge R2 data
+ * into chat answers when R2_LIFETIME_MERGE=true.
+ *
+ * Use limit ≤ 200 per call to stay under Convex transaction limits.
+ */
+export const admin_purgeV1Reservations = mutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { dryRun, limit }) => {
+    const isDry = dryRun !== false; // default true (safety)
+    const cap = Math.min(Math.max(1, limit ?? 100), 200);
+
+    // Use the by_v1_rental_id index. Convex "gt" on a string index
+    // reliably returns rows whose v1_rental_id is set (UUIDs sort > '').
+    const candidates = await ctx.db
+      .query("reservations")
+      .withIndex("by_v1_rental_id", (q) => q.gt("v1_rental_id", ""))
+      .take(cap);
+
+    if (isDry) {
+      // Cheap secondary count via a wider index probe.
+      const all = await ctx.db
+        .query("reservations")
+        .withIndex("by_v1_rental_id", (q) => q.gt("v1_rental_id", ""))
+        .collect();
+      return {
+        ok: true,
+        dryRun: true,
+        wouldDeleteThisCall: candidates.length,
+        wouldDeleteTotal: all.length,
+        sample: candidates.slice(0, 3).map((r) => ({
+          v1_rental_id: r.v1_rental_id,
+          status: r.status,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          gross_paid_gbp: r.gross_paid_gbp,
+        })),
+      };
+    }
+
+    let purged = 0;
+    for (const r of candidates) {
+      await ctx.db.delete(r._id);
+      purged++;
+    }
+    return {
+      ok: true,
+      dryRun: false,
+      purgedThisCall: purged,
+      hint: purged === cap ? "more rows remain — call again" : "pool empty",
+    };
+  },
+});

@@ -8,6 +8,7 @@ import "server-only";
 import { anyApi } from "convex/server";
 import { getConvex, toError } from "./client";
 import { getSyncState, wrap, type ToolEnvelope } from "./envelope";
+import { cachedIndex } from "../../lib/r2-cold-storage";
 import {
   PRICING_MULTIDAY_MULTIPLIER,
   PRICING_MULTIDAY_THRESHOLD,
@@ -165,6 +166,88 @@ export async function getItemSchedule(input: {
 }
 
 // ─── Per-item monthly earnings (real buckets) ───────────────────────────────
+
+interface R2ItemAgg {
+  itemId: string;
+  itemNameCanonical: string;
+  totalGross: number;
+  totalNet: number;
+  rentalCount: number;
+  totalDays: number;
+  byMonth: Record<string, number>;
+}
+
+interface ConvexMonthly {
+  ok: boolean;
+  item?: { id: string; name: string };
+  monthly?: Array<{ month: string; grossGbp: number; netGbp: number; rentalCount: number; totalDays: number }>;
+  totals?: { grossGbp: number; netGbp: number; rentalCount: number; totalDays: number };
+  window?: { from: string; to: string };
+}
+
+/**
+ * Merge R2 lifetime byMonth (v1 era) into Convex monthly result.
+ * Only runs when R2_LIFETIME_MERGE=true AND the R2 by_item index exists
+ * AND it has an entry for this item. Otherwise returns Convex result
+ * untouched.
+ */
+async function mergeWithR2(itemId: string | undefined, convexResult: ConvexMonthly): Promise<ConvexMonthly> {
+  if (process.env.R2_LIFETIME_MERGE !== "true") return convexResult;
+  if (!itemId) return convexResult;
+  if (!convexResult.ok || !convexResult.monthly) return convexResult;
+
+  const r2Index = await cachedIndex<Record<string, R2ItemAgg>>("by_item");
+  if (!r2Index || !r2Index[itemId]) return convexResult;
+  const r2Item = r2Index[itemId];
+
+  // Build a month → bucket map from Convex result.
+  type Bucket = { month: string; grossGbp: number; netGbp: number; rentalCount: number; totalDays: number };
+  const merged = new Map<string, Bucket>();
+  for (const m of convexResult.monthly) {
+    merged.set(m.month, { ...m });
+  }
+
+  // Fold R2's byMonth into the map. R2 entries cover v1-era months that
+  // Convex no longer has (post-purge); for any month already in Convex
+  // we trust Convex (post-purge data) and DO NOT add R2 again.
+  // R2 only carries gross + we keep its share — net derived as 64% of
+  // gross matching the OWNER_SHARE constant.
+  const OWNER_SHARE = 0.64;
+  for (const [month, gross] of Object.entries(r2Item.byMonth)) {
+    if (merged.has(month)) continue; // already in Convex (post-purge)
+    merged.set(month, {
+      month,
+      grossGbp: gross,
+      netGbp: Math.round(gross * OWNER_SHARE * 100) / 100,
+      rentalCount: 0, // unknown at month granularity in R2
+      totalDays: 0,
+    });
+  }
+
+  // Sort chronologically.
+  const monthly = Array.from(merged.values()).sort((a, b) => a.month.localeCompare(b.month));
+  const totals = monthly.reduce(
+    (acc, b) => ({
+      grossGbp: acc.grossGbp + b.grossGbp,
+      netGbp: acc.netGbp + b.netGbp,
+      rentalCount: acc.rentalCount + b.rentalCount,
+      totalDays: acc.totalDays + b.totalDays,
+    }),
+    { grossGbp: 0, netGbp: 0, rentalCount: 0, totalDays: 0 },
+  );
+
+  return {
+    ...convexResult,
+    monthly,
+    totals: {
+      grossGbp: Math.round(totals.grossGbp * 100) / 100,
+      netGbp: Math.round(totals.netGbp * 100) / 100,
+      rentalCount: totals.rentalCount,
+      totalDays: totals.totalDays,
+    },
+  };
+}
+
 export async function getItemMonthlyEarnings(input: {
   itemName: string;
   months?: number;
@@ -172,7 +255,7 @@ export async function getItemMonthlyEarnings(input: {
 }): Promise<Result<unknown>> {
   try {
     const convex = getConvex();
-    const [data, syncState] = await Promise.all([
+    const [convexRaw, syncState] = await Promise.all([
       convex.query(anyApi.items.getItemMonthlyEarnings, {
         item_name: input.itemName,
         months: input.months,
@@ -180,7 +263,17 @@ export async function getItemMonthlyEarnings(input: {
       }),
       getSyncState(),
     ]);
-    return wrap({ data, source: "convex.items.getItemMonthlyEarnings", syncState });
+    const convexResult = convexRaw as ConvexMonthly;
+    const itemId = convexResult.item?.id;
+    const merged = await mergeWithR2(itemId, convexResult);
+    return wrap({
+      data: merged,
+      source:
+        process.env.R2_LIFETIME_MERGE === "true"
+          ? "convex.items.getItemMonthlyEarnings + r2.by_item"
+          : "convex.items.getItemMonthlyEarnings",
+      syncState,
+    });
   } catch (err) {
     return { ok: false as const, error: toError(err) };
   }
