@@ -14,6 +14,7 @@ import type * as admin_backfill_net from "../admin_backfill_net.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
+import type * as backfill_hygglo_images from "../backfill_hygglo_images.js";
 import type * as bundles from "../bundles.js";
 import type * as bundles_seed from "../bundles_seed.js";
 import type * as calendar from "../calendar.js";
@@ -93,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   audit_snapshot: typeof audit_snapshot;
+  backfill_hygglo_images: typeof backfill_hygglo_images;
   bundles: typeof bundles;
   bundles_seed: typeof bundles_seed;
   calendar: typeof calendar;

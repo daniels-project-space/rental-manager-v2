@@ -778,23 +778,14 @@ export const getStatsDrawerData = query({
 
     // Inventory image lookup for the multi-tile item row in Active Rentals.
     // Match strictly via resolved_items[].item_id — no fuzzy substring matching.
+    // Phase 11.2: historical hygglo_items[].image_url=null rows are now patched
+    // by the backfill_hygglo_images mutation, so no name-based fallback needed.
     const itemImageById = new Map<string, { name: string; image_url: string | null }>();
-    // PASS-11.1 (2026-05-15): name-normalised fallback lookup for historic
-    // hygglo_items[] rows whose image_url is null (pre-PASS-10 poller fix).
-    // Strict normalised-name equality — no fuzzy substring matching.
-    const normalizeName = (s: string): string =>
-      s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const itemImageByName = new Map<string, string | null>();
     for (const it of activeItems) {
       itemImageById.set(it._id as string, {
         name: it.name_canonical,
         image_url: (it as { image_url?: string }).image_url ?? null,
       });
-      const invUrl = (it as { image_url?: string | null }).image_url ?? null;
-      if (invUrl) {
-        const key = normalizeName(it.name_canonical);
-        if (key && !itemImageByName.has(key)) itemImageByName.set(key, invUrl);
-      }
     }
     // Phase 9 / FIX-DESIGN §4.5: build the shared-image blacklist once for
     // the whole query so the resolver can guard the items_table fallback
@@ -842,10 +833,8 @@ export const getStatsDrawerData = query({
           // PASS-11.1: Hygglo image_url remains authoritative when present.
           // When null (historic rows pre-PASS-10), try strict name-normalised
           // fallback against the inventory items table before giving up.
-          let url: string | null = h.image_url ?? null;
-          if (!url) {
-            url = itemImageByName.get(normalizeName(h.name)) ?? null;
-          }
+          // Phase 11.2: historical null image_urls patched at-rest by backfill.
+          const url: string | null = h.image_url ?? null;
           if (url) {
             const ex = tilesByImage.get(url);
             if (ex) {
