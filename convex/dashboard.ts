@@ -746,6 +746,34 @@ export const getStatsDrawerData = query({
       }),
     );
     const monthPendingValue = monthPending.reduce((s, r) => s + netOf(r), 0);
+    // Daily buckets keyed by YYYY-MM-DD for the current month. Used by the
+    // ConfirmedDrawer chart. Each rental contributes to exactly one bucket
+    // based on effectiveDateStr (pickup_date ?? start_date); revenue is netOf.
+    const lastDay = parseInt(monthEnd.slice(8, 10), 10);
+    type DailyBucket = { date: string; day: number; done: number; active: number; upcoming: number; pending: number; revenue: number };
+    const daily: DailyBucket[] = [];
+    const yyyymm = monthStart.slice(0, 8);
+    for (let d = 1; d <= lastDay; d++) {
+      const dateStr = yyyymm + String(d).padStart(2, "0");
+      daily.push({ date: dateStr, day: d, done: 0, active: 0, upcoming: 0, pending: 0, revenue: 0 });
+    }
+    const idxOf = (dateStr: string | undefined): number => {
+      if (!dateStr || dateStr < monthStart || dateStr > monthEnd) return -1;
+      return parseInt(dateStr.slice(8, 10), 10) - 1;
+    };
+    const bumpBucket = (r: ResRow, key: "done" | "active" | "upcoming" | "pending") => {
+      const i = idxOf(effectiveDateStr(r));
+      if (i < 0) return;
+      daily[i][key] += 1;
+      daily[i].revenue += netOf(r);
+    };
+    for (const r of monthDone) bumpBucket(r as ResRow, "done");
+    for (const r of monthActive) bumpBucket(r as ResRow, "active");
+    for (const r of monthUpcoming) bumpBucket(r as ResRow, "upcoming");
+    for (const r of monthPending) bumpBucket(r as ResRow, "pending");
+    for (const b of daily) b.revenue = Math.round(b.revenue * 100) / 100;
+
+    const todayDay = parseInt(today.slice(8, 10), 10);
     const confirmed = {
       month_count: monthBookedRentals.length,
       month_revenue: Math.round(monthBookedRevenue * 100) / 100,
@@ -755,6 +783,9 @@ export const getStatsDrawerData = query({
       pending_count: monthPending.length,
       pending_value_gbp: Math.round(monthPendingValue * 100) / 100,
       total_rentals: monthDone.length + monthActive.length + monthUpcoming.length + monthPending.length,
+      today_day: today >= monthStart && today <= monthEnd ? todayDay : null,
+      month_label: monthStart,
+      daily_breakdown: daily,
       rentals: monthBookedRentals.slice(0, 15).map((r) => ({
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
         renter_name: r.renter_name ?? null,
