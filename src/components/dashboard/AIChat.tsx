@@ -38,9 +38,27 @@ export function AIChat() {
     scrollToBottom();
   }, [messages, streamDraft, scrollToBottom]);
 
+  // Clear the local streaming bubble once the persisted assistant row arrives.
+  // A turn appends both the user message and the assistant message to the
+  // server, so we wait for messages.length to grow by >=2 from baseline.
+  useEffect(() => {
+    if (!streamDraft) return;
+    if (streaming) return;
+    const len = messages?.length ?? 0;
+    if (len >= baselineCountRef.current + 2) {
+      setStreamDraft("");
+    }
+  }, [messages, streaming, streamDraft]);
+
+  // Tracks how many persisted messages existed when the current turn started.
+  // We keep the streaming bubble on screen until messages.length grows enough
+  // to include the assistant's persisted row (avoids mid-stream flicker).
+  const baselineCountRef = useRef<number>(0);
+
   async function handleSend() {
     const text = draft.trim();
     if (!text || streaming) return;
+    baselineCountRef.current = messages?.length ?? 0;
     setDraft("");
     setStreaming(true);
     setStreamDraft("");
@@ -56,6 +74,7 @@ export function AIChat() {
       if (res.status === 429) {
         const retryAfter = res.headers.get("Retry-After") ?? "60";
         setStreamError("Rate limit reached. Try again in " + retryAfter + "s.");
+        setStreamDraft("");
         return;
       }
 
@@ -74,7 +93,10 @@ export function AIChat() {
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const payload = line.slice(6).trim();
-          if (payload === "[DONE]") { setStreamDraft(""); break; }
+          // [DONE] signals end-of-stream — do NOT clear streamDraft here; a
+          // useEffect below clears it once the persisted assistant message
+          // lands in `messages`, so the bubble never vanishes mid-flight.
+          if (payload === "[DONE]") break;
           try {
             const parsed = JSON.parse(payload) as { text?: string; error?: string };
             if (parsed.error) {
@@ -89,9 +111,9 @@ export function AIChat() {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[AIChat] stream error:", err);
       setStreamError("Connection error: " + msg);
+      setStreamDraft("");
     } finally {
       setStreaming(false);
-      setStreamDraft("");
     }
   }
 
