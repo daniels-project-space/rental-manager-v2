@@ -1542,8 +1542,8 @@ const KIND_LABELS: Record<string, string> = {
 const labelFor = (k: string): string =>
   KIND_LABELS[k] ?? (k.charAt(0).toUpperCase() + k.slice(1));
 
-const CATEGORY_PALETTE = ["#6ea8fe", "#22c55e", "#a78bfa", "#f59e0b", "#ef4444", "#06b6d4"];
-const OTHER_COLOR = "#8b8fa3";
+const CATEGORY_PALETTE = ["#60a5fa", "#34d399", "#a78bfa", "#fbbf24", "#f87171", "#22d3ee"];
+const OTHER_COLOR = "#cbd5e1";
 
 type ResolverItem = { item_id: string; item_name_canonical: string; qty: number };
 
@@ -1796,7 +1796,7 @@ export const getRentalVolumeKindBreakdown = query({
       .filter((e) => e.count > 0 || e.revenue > 0)
       .sort((a, b) => b.revenue - a.revenue);
 
-    const PALETTE = ["#6ea8fe", "#22c55e", "#a78bfa", "#f59e0b", "#ef4444", "#06b6d4", "#8b8fa3"];
+    const PALETTE = ["#60a5fa", "#34d399", "#a78bfa", "#fbbf24", "#f87171", "#22d3ee"];
     const top = entries.slice(0, 10);
     const rest = entries.slice(10);
     const items_out: ItemSlice[] = top.map((e, i) => ({
@@ -1812,7 +1812,7 @@ export const getRentalVolumeKindBreakdown = query({
           name: "Other items",
           count: otherCount,
           revenue: Math.round(otherRevenue * 100) / 100,
-          color: "#8b8fa3",
+          color: "#cbd5e1",
         });
       }
     }
@@ -1908,7 +1908,7 @@ export const getRentalVolumeOtherSubKinds = query({
 
     // Same split as main query: top 6 stay top, rest = "Other".
     const rest = entries.slice(6);
-    const PALETTE = ["#6ea8fe", "#22c55e", "#a78bfa", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#14b8a6", "#eab308", "#8b5cf6", "#f97316", "#10b981", "#3b82f6", "#d946ef", "#84cc16", "#8b8fa3"];
+    const PALETTE = ["#60a5fa", "#34d399", "#a78bfa", "#fbbf24", "#f87171", "#22d3ee", "#ec4899", "#14b8a6", "#eab308", "#8b5cf6", "#f97316", "#10b981", "#3b82f6", "#d946ef", "#84cc16", "#cbd5e1"];
     const slices = rest.map((e, i) => ({
       kind: e.kind,
       label: e.label,
