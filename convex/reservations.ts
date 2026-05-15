@@ -12,13 +12,14 @@ export const getRecentActivity = query({
     limit: v.number(),
   },
   handler: async (ctx, { accountSlug, limit }) => {
-    // OPEN_INDEX_NEED: index by _creationTime DESC would avoid full scan here.
-    let rows = await ctx.db.query("reservations").collect();
+    // Newest-first ordering on _creationTime is Convex's default; take(N)
+    // stops after N matching rows instead of scanning the full table.
+    // When account-scoped, we over-fetch 4x and post-filter (cheap).
+    const overFetch = accountSlug ? limit * 4 : limit;
+    let rows = await ctx.db.query("reservations").order("desc").take(overFetch);
     if (accountSlug) {
-      rows = rows.filter((r) => r.account_slug === accountSlug);
+      rows = rows.filter((r) => r.account_slug === accountSlug).slice(0, limit);
     }
-    rows.sort((a, b) => b._creationTime - a._creationTime);
-    rows = rows.slice(0, limit);
 
     return rows.map((r) => ({
       id: r._id,
