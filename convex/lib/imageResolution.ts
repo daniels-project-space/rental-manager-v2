@@ -16,6 +16,7 @@ export type ImageHint = {
 };
 
 export type ResolvedImageSource =
+  | "bank"
   | "hint_exact"
   | "hint_normalised"
   | "items_table"
@@ -91,6 +92,7 @@ export function buildSharedImageBlacklist(
  * Resolve a rendering image for one (reservation, item) pair.
  *
  * Resolution order (first hit wins):
+ *   0. listing_images bank (account_slug, product_id)       -> 1.00, bank
  *   1. `imageHints` exact match on `item_name`              -> 1.00, hint_exact
  *   2. `imageHints` match on normalised name                -> 0.95, hint_normalised
  *   3. `itemsTableEntry.image_url` IF resolverConfidence>=0.8
@@ -103,6 +105,9 @@ export function resolveImageForReservationItem(args: {
   itemsTableEntry?: { image_url?: string | null } | null;
   resolvedConfidence?: number | null;
   sharedBlacklist: Set<string>;
+  bankByProduct?: Map<string, string>;
+  accountSlug?: string | null;
+  productId?: number | null;
 }): ResolvedImage {
   const {
     imageHints,
@@ -110,7 +115,24 @@ export function resolveImageForReservationItem(args: {
     itemsTableEntry,
     resolvedConfidence,
     sharedBlacklist,
+    bankByProduct,
+    accountSlug,
+    productId,
   } = args;
+
+  // 0. listing_images bank — product_id-keyed canonical photo. Stable PK,
+  //    immune to PASS-9 cross-rental name aliasing. Wins outright.
+  if (
+    bankByProduct &&
+    accountSlug &&
+    productId !== null &&
+    productId !== undefined
+  ) {
+    const bankUrl = bankByProduct.get(`${accountSlug}#${productId}`);
+    if (bankUrl) {
+      return { url: bankUrl, source: "bank", confidence: 1.0 };
+    }
+  }
 
   // 1. Exact item_name match.
   const exact = imageHints.find((h) => h.item_name === itemName);

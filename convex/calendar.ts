@@ -8,6 +8,8 @@ import {
 } from "./lib/reservations/predicates";
 import {
   resolveImageForReservationItem,
+  // bank-aware helpers below also rely on this type
+  // (no extra imports needed — Phase 13.2)
   buildSharedImageBlacklist,
 } from "./lib/imageResolution";
 
@@ -64,6 +66,33 @@ function chipProgress(
   if (now >= endMs) return 100;  // completed
   const pct = ((now - startMs) / (endMs - startMs)) * 100;
   return Math.max(1, Math.min(99, Math.round(pct)));
+}
+
+// Phase 13.2: strict-index helper. Matches expanded_items[i].item_id to
+// hygglo_items[i].product_id when array lengths align. Returns null on
+// mismatch (kit listings) — safer than guessing, never produces a wrong image.
+function productIdForItemInReservation(
+  r: { hygglo_items?: Array<{ product_id?: number }>; expanded_items?: Array<{ item_id?: string }>; resolved_items?: Array<{ item_id?: string }> },
+  itemId: string,
+): number | null {
+  const hi = r.hygglo_items ?? [];
+  const ei = r.expanded_items ?? r.resolved_items ?? [];
+  if (hi.length === 0 || ei.length === 0) return null;
+  if (hi.length !== ei.length) return null;
+  const idx = ei.findIndex((x) => x?.item_id === itemId);
+  if (idx < 0) return null;
+  return hi[idx]?.product_id ?? null;
+}
+
+// Exact-string match against the raw Hygglo title for fallback paths
+// (resolved_items hasn't run yet, or item-name-keyed caller).
+function productIdForItemNameInReservation(
+  r: { hygglo_items?: Array<{ name?: string; product_id?: number }> },
+  itemName: string,
+): number | null {
+  const hi = r.hygglo_items ?? [];
+  const hit = hi.find((h) => h?.name === itemName);
+  return hit?.product_id ?? null;
 }
 
 /**
@@ -207,6 +236,13 @@ export const getCalendarStrip = query({
     }
     const sharedBlacklist = buildSharedImageBlacklist(allItemsForStrip);
 
+    // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
+    const listingImagesAllStrip = await ctx.db.query("listing_images").collect();
+    const bankByProductStrip = new Map<string, string>();
+    for (const li of listingImagesAllStrip) {
+      bankByProductStrip.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+    }
+
     type ChipItem = {
       itemId: string | null;
       name: string;
@@ -253,6 +289,9 @@ export const getCalendarStrip = query({
             itemsTableEntry: doc,
             resolvedConfidence: entry.confidence,
             sharedBlacklist,
+            bankByProduct: bankByProductStrip,
+            accountSlug: (r as { account_slug?: string }).account_slug ?? null,
+            productId: productIdForItemInReservation(r as Parameters<typeof productIdForItemInReservation>[0], entry.item_id),
           });
           return {
             itemId: entry.item_id,
@@ -281,6 +320,9 @@ export const getCalendarStrip = query({
           itemsTableEntry: found ?? undefined,
           resolvedConfidence: undefined,
           sharedBlacklist,
+          bankByProduct: bankByProductStrip,
+          accountSlug: (r as { account_slug?: string }).account_slug ?? null,
+          productId: productIdForItemNameInReservation(r as Parameters<typeof productIdForItemNameInReservation>[0], i.item_name),
         });
         const tile: ChipItem = {
           itemId: found?._id ?? null,
@@ -609,15 +651,30 @@ export const getWeeklyCalendar = query({
       captured_at: number;
     };
 
-    function imageForItem(itemName: string | undefined, hints: WeeklyImageHint[]): string | null {
+    // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
+    const listingImagesAllWeekly = await ctx.db.query("listing_images").collect();
+    const bankByProductWeekly = new Map<string, string>();
+    for (const li of listingImagesAllWeekly) {
+      bankByProductWeekly.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+    }
+
+    function imageForItem(
+      itemName: string | undefined,
+      hints: WeeklyImageHint[],
+      r?: { hygglo_items?: Array<{ name?: string; product_id?: number }>; account_slug?: string },
+    ): string | null {
       if (!itemName) return null;
       const it = findItemByName(allItemsWeekly, itemName);
+      const productId = r ? productIdForItemNameInReservation(r, itemName) : null;
       return resolveImageForReservationItem({
         imageHints: hints,
         itemName,
         itemsTableEntry: it ?? undefined,
         resolvedConfidence: undefined,
         sharedBlacklist: sharedBlacklistWeekly,
+        bankByProduct: bankByProductWeekly,
+        accountSlug: r?.account_slug ?? null,
+        productId,
       }).url;
     }
 
@@ -771,6 +828,13 @@ export const getGanttWeek = query({
     const allItems = (await ctx.db.query("items").collect()) as GanttItemDoc[];
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
 
+    // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
+    const listingImagesAllGantt = await ctx.db.query("listing_images").collect();
+    const bankByProductGantt = new Map<string, string>();
+    for (const li of listingImagesAllGantt) {
+      bankByProductGantt.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+    }
+
     type GanttImageHint = {
       item_name: string;
       item_name_normalised: string;
@@ -806,12 +870,17 @@ export const getGanttWeek = query({
       for (const r of matchingRes) {
         const hints = ((r as { image_hints?: GanttImageHint[] }).image_hints) ?? [];
         const tileName = iDoc?.name_canonical ?? iDoc?.name ?? itemName;
+        const rAny = r as Parameters<typeof productIdForItemNameInReservation>[0] & { account_slug?: string };
+        const pidByItemName = productIdForItemNameInReservation(rAny, itemName);
         const out = resolveImageForReservationItem({
           imageHints: hints,
           itemName: tileName,
           itemsTableEntry: iDoc ?? undefined,
           resolvedConfidence: undefined,
           sharedBlacklist: sharedBlacklistGantt,
+          bankByProduct: bankByProductGantt,
+          accountSlug: rAny.account_slug ?? null,
+          productId: pidByItemName,
         });
         if (out.url) {
           resolvedImageUrl = out.url;
@@ -824,6 +893,9 @@ export const getGanttWeek = query({
           itemsTableEntry: iDoc ?? undefined,
           resolvedConfidence: undefined,
           sharedBlacklist: sharedBlacklistGantt,
+          bankByProduct: bankByProductGantt,
+          accountSlug: rAny.account_slug ?? null,
+          productId: pidByItemName,
         });
         if (out2.url) {
           resolvedImageUrl = out2.url;
