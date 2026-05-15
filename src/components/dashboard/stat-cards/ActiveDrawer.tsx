@@ -19,6 +19,8 @@ export interface Rental {
   item_tiles?: Array<{ name: string; image_url: string | null; qty: number }>;
   items: string[];
   photo_url?: string | null;
+  master_image_url?: string | null;
+  item_names_summary?: string | null;
   duration_days?: number | null;
   net_gbp?: number | null;
   order_step?: string | null;
@@ -60,19 +62,23 @@ export function RentalRow({ r }: { r: Rental }) {
   const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
   const s = SECTION[kind];
   const pill = ACCOUNT_PILL[r.account_slug] ?? { bg: "bg-slate-800 border border-slate-700", text: "text-slate-300" };
-  const item = r.items[0] ?? "(no item)";
-  const more = r.items.length > 1 ? ` +${r.items.length - 1}` : "";
+  // PASS-6: v1-style summary. Backend now sends item_names_summary
+  // ("Sony FX3 +4 more") and master_image_url. Falls back to legacy
+  // photo_url + items[] if the API hasn't redeployed yet.
+  const summary = r.item_names_summary
+    ?? ((r.items[0] ?? "(no item)") + (r.items.length > 1 ? ` +${r.items.length - 1} more` : ""));
+  const masterImg = r.master_image_url ?? r.photo_url ?? null;
 
   return (
     <div
       className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
     >
-      {/* Thumbnail */}
+      {/* Master Thumbnail — v1 pattern (one 50×50 photo per rental) */}
       <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-md bg-slate-900/60 ring-1 ring-slate-800">
-        {r.photo_url ? (
+        {masterImg ? (
           <Image
-            src={r.photo_url}
-            alt={item}
+            src={masterImg}
+            alt={summary}
             fill
             sizes="56px"
             className="object-cover"
@@ -103,51 +109,10 @@ export function RentalRow({ r }: { r: Rental }) {
             {r.account_slug}
           </span>
         </div>
-        {/* Item tiles row — every item in the rental, with its image. */}
-        {r.item_tiles && r.item_tiles.length > 0 ? (
-          <div className="mt-0.5 flex flex-wrap gap-1">
-            {r.item_tiles.map((t, i) => (
-              <div
-                key={t.name + i}
-                className="relative flex-shrink-0"
-                title={t.name + (t.qty > 1 ? ` × ${t.qty}` : "")}
-              >
-                {t.image_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={t.image_url}
-                    alt={t.name}
-                    className="rounded object-cover"
-                    style={{ width: 32, height: 32, background: "rgba(255,255,255,0.04)" }}
-                    loading="lazy"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                  />
-                ) : (
-                  <div
-                    className="flex items-center justify-center rounded text-[8px]"
-                    style={{ width: 32, height: 32, background: "rgba(255,255,255,0.04)", color: "#6b6f80" }}
-                  >
-                    {t.name.split(/\s+/)[0].slice(0,3).toUpperCase()}
-                  </div>
-                )}
-                {t.qty > 1 && (
-                  <span
-                    className="absolute -top-1 -right-1 text-[9px] font-bold px-1 rounded-full"
-                    style={{ background: "#070910", color: "#e4e6eb", border: "1px solid rgba(255,255,255,0.18)" }}
-                  >
-                    ×{t.qty}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          // Fallback to plain text when no resolved items yet (resolver still running).
-          <div className="text-[11px] text-slate-400 truncate">
-            {item}
-            {more && <span className="text-slate-500">{more}</span>}
-          </div>
-        )}
+        {/* Item names — v1 pattern. One text line ("Sony FX3 +4 more"). */}
+        <div className="mt-0.5 text-[11px] text-slate-300 truncate" title={summary}>
+          {summary}
+        </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
           {(r.pickup_date || r.start_date) && (
             <span
