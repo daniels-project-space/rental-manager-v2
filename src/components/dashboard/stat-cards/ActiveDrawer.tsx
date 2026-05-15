@@ -62,11 +62,15 @@ export function RentalRow({ r }: { r: Rental }) {
   const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
   const s = SECTION[kind];
   const pill = ACCOUNT_PILL[r.account_slug] ?? { bg: "bg-slate-800 border border-slate-700", text: "text-slate-300" };
-  // PASS-6: v1-style summary. Backend now sends item_names_summary
-  // ("Sony FX3 +4 more") and master_image_url. Falls back to legacy
-  // photo_url + items[] if the API hasn't redeployed yet.
+  // PASS-7: v1-faithful multi-item display.
+  // Backend (convex/dashboard.ts mapRental) ships `item_names_summary` as
+  // the FULL comma-separated list of distinct items (with " ×N" suffix when
+  // qty > 1, INSURANCE filtered). We render it verbatim — no truncation —
+  // matching v1's `r.items.join(", ")` at dashboard-mobile.html:1275.
+  // The legacy fallback (build from r.items[]) covers stale API responses
+  // during deploys; it now joins ALL names rather than emitting "+N more".
   const summary = r.item_names_summary
-    ?? ((r.items[0] ?? "(no item)") + (r.items.length > 1 ? ` +${r.items.length - 1} more` : ""));
+    ?? (r.items.length > 0 ? r.items.join(", ") : "(no item)");
   const masterImg = r.master_image_url ?? r.photo_url ?? null;
 
   return (
@@ -109,8 +113,15 @@ export function RentalRow({ r }: { r: Rental }) {
             {r.account_slug}
           </span>
         </div>
-        {/* Item names — v1 pattern. One text line ("Sony FX3 +4 more"). */}
-        <div className="mt-0.5 text-[11px] text-slate-300 truncate" title={summary}>
+        {/* Item names — v1 pattern (PASS-7).
+            Full comma-separated list, wraps to multiple lines.
+            v1: r.items.join(', ') with white-space:nowrap+ellipsis on mobile.
+            We allow wrap on desktop drawer (more vertical room) but cap to
+            2 lines via line-clamp so a 12-item rental doesn't blow up the row. */}
+        <div
+          className="mt-0.5 text-[11px] leading-snug text-slate-300 line-clamp-2 break-words"
+          title={summary}
+        >
           {summary}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">

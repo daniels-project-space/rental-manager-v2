@@ -1032,7 +1032,13 @@ export const getItemMonthlyEarnings = query({
     }
 
     for (const r of reservations) {
-      const resolved = (r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string }> }).resolved_items ?? [];
+      const resolved = (r as {
+        resolved_items?: Array<{
+          item_id: string;
+          item_name_canonical: string;
+          revenue_gbp?: number;
+        }>;
+      }).resolved_items ?? [];
       if (resolved.length === 0) continue;
       const hit = resolved.find((x) => x.item_id === item._id);
       if (!hit) continue;
@@ -1045,10 +1051,20 @@ export const getItemMonthlyEarnings = query({
 
       const gross = r.gross_paid_gbp ?? 0;
       const net = r.net_to_owner_gbp ?? 0;
-      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
-      const priceSum = prices.reduce((a, b) => a + b, 0);
-      const myPrice = priceByCanonical.get(hit.item_name_canonical) ?? 0;
-      const share = priceSum > 0 ? myPrice / priceSum : 1 / resolved.length;
+
+      // Per-item revenue: v1 migration carries authoritative revenue_gbp
+      // per resolved_item (matches v1 chat answers exactly). When absent
+      // (LLM-resolved rows), fall back to pricing-weighted share, or equal
+      // split when no prices are recorded.
+      let share: number;
+      if (hit.revenue_gbp !== undefined && gross > 0) {
+        share = hit.revenue_gbp / gross;
+      } else {
+        const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+        const priceSum = prices.reduce((a, b) => a + b, 0);
+        const myPrice = priceByCanonical.get(hit.item_name_canonical) ?? 0;
+        share = priceSum > 0 ? myPrice / priceSum : 1 / resolved.length;
+      }
 
       bucket.grossGbp += gross * share;
       bucket.netGbp += net * share;

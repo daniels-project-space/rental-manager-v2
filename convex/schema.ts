@@ -293,6 +293,11 @@ export default defineSchema({
       item_name_canonical: v.string(),
       confidence: v.number(),
       qty: v.optional(v.number()),
+      // Per-item revenue attribution from the original source. Set by the
+      // v1-Postgres migration (carries v1's authoritative per-row revenue
+      // share so v2 chat answers match v1's answers). When absent, the
+      // chat query falls back to proportional split via pricing_catalog.
+      revenue_gbp: v.optional(v.number()),
     }))),
     /** After bundle decomposition: every physical item this reservation
      *  occupies. A reservation that resolves to {FX3 Cinematic Kit, qty:1}

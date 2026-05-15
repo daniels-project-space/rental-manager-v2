@@ -801,12 +801,37 @@ export const getStatsDrawerData = query({
       ) ?? null;
       const masterImageUrl =
         productPhoto ?? tiles.find((t) => t.image_url)?.image_url ?? null;
-      const itemNames = tiles.length > 0
-        ? tiles.map((t) => t.name)
-        : (r.items ?? []).map((i) => i.item_name);
-      const firstItem = itemNames[0] ?? "(no item)";
-      const extra = itemNames.length > 1 ? ` +${itemNames.length - 1} more` : "";
-      const itemNamesSummary = firstItem + extra;
+      // PASS-7: v1-faithful multi-item display.
+      // v1 (dashboard-mobile.html line 1275) renders r.items.join(', ')
+      // — the FULL list, comma-separated, no truncation. We replicate.
+      // 1. Source = tiles (bundle-decomposed) when available, else r.items.
+      // 2. Filter out INSURANCE (it's a synthetic add-on, not a real item).
+      // 3. Dedup by (name) preserving order; qty stays accumulated by tiles.
+      // 4. Append " ×N" when qty > 1.
+      const isInsurance = (n: string) =>
+        /insurance/i.test(n) || /\binsur\b/i.test(n);
+      type NamedItem = { name: string; qty: number; image_url: string | null };
+      const rawItems: NamedItem[] = tiles.length > 0
+        ? tiles.map((t) => ({ name: t.name, qty: t.qty, image_url: t.image_url }))
+        : (r.items ?? []).map((i) => ({
+            name: i.item_name,
+            qty: 1,
+            image_url: null,
+          }));
+      const seenNames = new Set<string>();
+      const itemsForDisplay: NamedItem[] = [];
+      for (const it of rawItems) {
+        if (!it.name || isInsurance(it.name)) continue;
+        const key = it.name.trim().toLowerCase();
+        if (seenNames.has(key)) continue;
+        seenNames.add(key);
+        itemsForDisplay.push(it);
+      }
+      const formatItem = (it: NamedItem) =>
+        it.qty > 1 ? `${it.name} \u00d7${it.qty}` : it.name;
+      const itemNamesSummary = itemsForDisplay.length > 0
+        ? itemsForDisplay.map(formatItem).join(", ")
+        : "(no item)";
       return {
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
         renter_name: r.renter_name ?? null,

@@ -5,7 +5,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation } from "./_generated/server";
+import { internalQuery, internalMutation, mutation } from "./_generated/server";
 
 export const getReservationForResolve = internalQuery({
   args: { reservation_id: v.id("reservations") },
@@ -53,6 +53,7 @@ export const setResolution = internalMutation({
       item_name_canonical: v.string(),
       confidence: v.number(),
       qty: v.optional(v.number()),
+      revenue_gbp: v.optional(v.number()),
     })),
     expanded_items: v.optional(v.array(v.object({
       item_id: v.id("items"),
@@ -72,6 +73,53 @@ export const setResolution = internalMutation({
       resolution_input_hash: input_hash,
     });
     return { ok: true };
+  },
+});
+
+/**
+ * Public migration mutation: write resolved_items for a v1-imported
+ * reservation, identified by v1_rental_id. Used by the one-time Python
+ * migration that ports v1's per-row revenue attribution
+ * (booking.item_name + booking.revenue) into v2's reservation rows so chat
+ * answers like "how much has X earned" match v1's numbers verbatim.
+ *
+ * Public (not internal) so the migration script can call it via HTTP. No
+ * auth gate beyond Convex's standard URL-scoped access — this writes only
+ * resolved_items / resolution_method metadata, never financial state.
+ */
+export const admin_setResolutionByV1Id = mutation({
+  args: {
+    v1_rental_id: v.string(),
+    resolved_items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      confidence: v.number(),
+      qty: v.optional(v.number()),
+      revenue_gbp: v.optional(v.number()),
+    })),
+    method: v.optional(v.string()),
+  },
+  handler: async (ctx, { v1_rental_id, resolved_items, method }) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_v1_rental_id", (q) => q.eq("v1_rental_id", v1_rental_id))
+      .collect();
+    if (rows.length === 0) return { ok: false, reason: "reservation not found" };
+    let patched = 0;
+    for (const r of rows) {
+      const hash = resolved_items
+        .map((x) => x.item_name_canonical + ":" + (x.qty ?? 1))
+        .sort()
+        .join("|");
+      await ctx.db.patch(r._id, {
+        resolved_items,
+        resolution_at: Date.now(),
+        resolution_method: method ?? "v1_migration",
+        resolution_input_hash: "v1:" + hash,
+      });
+      patched++;
+    }
+    return { ok: true, patched };
   },
 });
 
