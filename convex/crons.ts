@@ -81,7 +81,7 @@ crons.interval(
 // the cron registered is harmless.
 crons.interval(
   "hygglo_poll workflow",
-  { minutes: 5 },
+  { minutes: 15 },
   internal.hygglo_poll_trigger.triggerWorkflow,
 );
 
