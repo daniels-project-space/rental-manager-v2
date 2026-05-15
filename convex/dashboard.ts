@@ -3,8 +3,10 @@ import { v } from "convex/values";
 import {
   dedupByLogicalRental,
   effectiveDate,
+  inDateRange,
   isConfirmedWithDates,
   isOngoing,
+  isPaidWithV1Legacy,
   isPendingVerification,
   isUpcoming,
   netOf,
@@ -686,7 +688,14 @@ export const getStatsDrawerData = query({
       ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
       ...upcomingUniq.map((r) => mapRental(r, "upcoming")),
       ...pendingTracked.map((r) => mapRental(r, "pending")),
-    ].slice(0, 30);
+    ]
+      .sort((a, b) => {
+        const ad = a.start_date ?? "";
+        const bd = b.start_date ?? "";
+        if (ad !== bd) return ad.localeCompare(bd);
+        return (a.pickup_time ?? "99:99").localeCompare(b.pickup_time ?? "99:99");
+      })
+      .slice(0, 30);
 
     // ── card: earnings ───────────────────────────────────────────
     const earnings = {
@@ -1151,6 +1160,298 @@ export const getStatsDrawerData = query({
       inventory_worth,
       tax,
       business_intel,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Next Rentals widget query - pickups + returns for a target day.
+// Decision: REPLICATE buildItemTiles/mapRental logic inline (rather than lift)
+// because buildItemTiles closes over itemImageById built inside getStatsDrawerData;
+// lifting would require refactoring 3 closures. Inline keeps blast radius minimal.
+// ─────────────────────────────────────────────────────────────────────────────
+export const getNextRentals = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    day: v.union(v.literal("today"), v.literal("tomorrow")),
+  },
+  handler: async (ctx, { accountSlug, day }) => {
+    const now = new Date();
+    const baseToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = day === "today" ? baseToday : new Date(baseToday.getTime() + 86400000);
+    const targetDate = target.toISOString().slice(0, 10);
+
+    let rows = await ctx.db.query("reservations").collect();
+    if (accountSlug) rows = rows.filter((r) => r.account_slug === accountSlug);
+    const confirmed = rows.filter(
+      (r) =>
+        r.status === "confirmed" &&
+        !r.is_obsolete &&
+        r.start_date !== undefined &&
+        r.end_date !== undefined,
+    );
+
+    // Build item-image lookup once (replicated from getStatsDrawerData).
+    const items = await ctx.db.query("items").collect();
+    const itemImageById = new Map<string, { name: string; image_url: string | null }>();
+    for (const it of items) {
+      const id = (it as { item_id?: string }).item_id ?? (it._id as unknown as string);
+      itemImageById.set(id, {
+        name: (it as { name?: string }).name ?? "",
+        image_url: ((it as { image_url?: string | null }).image_url) ?? null,
+      });
+    }
+
+    const buildItemTilesLocal = (
+      r: any,
+    ): Array<{ name: string; image_url: string | null; qty: number }> => {
+      const expanded =
+        (r as { expanded_items?: Array<{ item_id: string; item_name_canonical: string; qty: number }> }).expanded_items ?? [];
+      const source: Array<{ item_id: string; item_name_canonical: string; qty: number }> =
+        expanded.length > 0
+          ? expanded
+          : ((r as { resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }> }).resolved_items ?? [])
+              .map((x) => ({ item_id: x.item_id, item_name_canonical: x.item_name_canonical, qty: x.qty ?? 1 }));
+      const counts = new Map<string, { name: string; image_url: string | null; qty: number }>();
+      for (const x of source) {
+        const inv = itemImageById.get(x.item_id);
+        const name = inv?.name ?? x.item_name_canonical;
+        const image_url = inv?.image_url ?? null;
+        const existing = counts.get(x.item_id);
+        if (existing) existing.qty += x.qty;
+        else counts.set(x.item_id, { name, image_url, qty: x.qty });
+      }
+      return Array.from(counts.values());
+    };
+
+    const mapForWire = (r: any, role: "pickup" | "return") => ({
+      reservation_id: r.hygglo_order_id ?? r.v1_rental_id ?? (r._id as string),
+      renter_name: r.renter_name ?? null,
+      account_slug: r.account_slug,
+      start_date: r.start_date ?? null,
+      end_date: r.end_date ?? null,
+      pickup_date: r.pickup_date ?? r.start_date ?? null,
+      pickup_time: r.pickup_time ?? null,
+      return_date: r.return_date ?? r.end_date ?? null,
+      return_time: r.return_time ?? null,
+      pickup_method: r.pickup_method ?? null,
+      return_method: r.return_method ?? null,
+      items: (r.items ?? []).map((i: any) => i.item_name),
+      photo_url: (r.photos_urls ?? [])[0] ?? null,
+      net_gbp: r.net_to_owner_gbp ?? null,
+      duration_days: r.duration_days ?? null,
+      role,
+      item_tiles: buildItemTilesLocal(r),
+    });
+
+    const pickups = confirmed
+      .filter((r) => (r.pickup_date ?? r.start_date) === targetDate)
+      .map((r) => mapForWire(r, "pickup"))
+      .sort((a, b) =>
+        (a.pickup_time ?? "99:99").localeCompare(b.pickup_time ?? "99:99"),
+      );
+
+    const returns = confirmed
+      .filter((r) => ((r as any).return_date ?? r.end_date) === targetDate)
+      .map((r) => mapForWire(r, "return"))
+      .sort((a, b) =>
+        (a.return_time ?? "99:99").localeCompare(b.return_time ?? "99:99"),
+      );
+
+    // For each pickup, find returns within ±60min on the same target day.
+    const timeToMin = (t: string | null): number | null => {
+      if (!t || t.length < 5) return null;
+      const h = parseInt(t.slice(0, 2), 10);
+      const m = parseInt(t.slice(3, 5), 10);
+      if (Number.isNaN(h) || Number.isNaN(m)) return null;
+      return h * 60 + m;
+    };
+
+    const pickupsWithReturns = pickups.map((p) => {
+      const pt = timeToMin(p.pickup_time);
+      if (pt === null) return { ...p, concurrent_returns: [] as typeof returns };
+      const matched = returns.filter((rt) => {
+        const rtm = timeToMin(rt.return_time);
+        return rtm !== null && Math.abs(rtm - pt) <= 60;
+      });
+      return { ...p, concurrent_returns: matched };
+    });
+
+    const pairedReturnIds = new Set(
+      pickupsWithReturns.flatMap((p) =>
+        p.concurrent_returns.map((r) => r.reservation_id),
+      ),
+    );
+    const unpairedReturns = returns.filter(
+      (r) => !pairedReturnIds.has(r.reservation_id),
+    );
+
+    return {
+      targetDate,
+      pickups: pickupsWithReturns,
+      unpairedReturns,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Category Rental-Volume Pie widget — this-month deduped confirmed reservations
+// grouped by item.kind. Returns both count and revenue per kind. Top 6 + Other.
+// Reuses isConfirmedWithDates / isPaidWithV1Legacy / inDateRange / netOf /
+// dedupByLogicalRental from predicates. Revenue split across resolver items
+// weighted by (pricing_catalog daily_price_min * qty); equal split fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const KIND_LABELS: Record<string, string> = {
+  camera: "Cameras", lens: "Lenses", drone: "Drones", audio: "Audio",
+  lighting: "Lighting", grip: "Grip", gimbal: "Gimbals", monitor: "Monitors",
+  transmission: "Transmission", accessory: "Accessories", smoke_fx: "Smoke/FX",
+  dj_audio: "DJ Audio", power: "Power", storage_card: "Storage", support: "Support",
+  motion: "Motion", stabilizer: "Stabilizers", video: "Video", effects: "Effects",
+  bundle: "Bundles", unknown: "Unknown", other: "Other",
+};
+const labelFor = (k: string): string =>
+  KIND_LABELS[k] ?? (k.charAt(0).toUpperCase() + k.slice(1));
+
+const CATEGORY_PALETTE = ["#6ea8fe", "#22c55e", "#a78bfa", "#f59e0b", "#ef4444", "#06b6d4"];
+const OTHER_COLOR = "#8b8fa3";
+
+type ResolverItem = { item_id: string; item_name_canonical: string; qty: number };
+
+/** Prefer expanded_items (bundle-decomposed); fall back to resolved_items. */
+function readResolverItems(r: {
+  expanded_items?: Array<{ item_id: string; item_name_canonical: string; qty: number }>;
+  resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
+}): ResolverItem[] {
+  const expanded = r.expanded_items ?? [];
+  if (expanded.length > 0) {
+    return expanded.map((x) => ({
+      item_id: x.item_id,
+      item_name_canonical: x.item_name_canonical,
+      qty: x.qty,
+    }));
+  }
+  const resolved = r.resolved_items ?? [];
+  return resolved.map((x) => ({
+    item_id: x.item_id,
+    item_name_canonical: x.item_name_canonical,
+    qty: x.qty ?? 1,
+  }));
+}
+
+export const getRentalVolumeByCategory = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: async (ctx, { accountSlug }) => {
+    const { monthStart, monthEnd } = monthBounds();
+
+    // Pull reservations starting this month onward, then scope/filter.
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", monthStart))
+      .collect();
+    if (accountSlug) {
+      reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    }
+
+    // Keep paid/confirmed rows whose effective date lands in this month.
+    const kept = reservations.filter(
+      (r) =>
+        (isConfirmedWithDates(r) || isPaidWithV1Legacy(r)) &&
+        inDateRange(r, monthStart, monthEnd),
+    );
+
+    const deduped = dedupByLogicalRental(kept);
+
+    // Item kind lookup.
+    const items = await ctx.db.query("items").collect();
+    const itemKind = new Map<string, string>();
+    for (const it of items) itemKind.set(it._id as string, it.kind);
+
+    // Pricing catalog for revenue split weights.
+    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const pricing = new Map<string, number>();
+    for (const p of pricingRows) pricing.set(p.item_name_canonical, p.daily_price_min);
+
+    const countByKind = new Map<string, number>();
+    const revenueByKind = new Map<string, number>();
+
+    for (const r of deduped) {
+      const resolved = readResolverItems(
+        r as { expanded_items?: any; resolved_items?: any },
+      );
+      if (resolved.length === 0) continue;
+
+      // Counts.
+      for (const x of resolved) {
+        const k = itemKind.get(x.item_id) ?? "unknown";
+        countByKind.set(k, (countByKind.get(k) ?? 0) + x.qty);
+      }
+
+      // Revenue split: weight by (price * qty); equal share fallback.
+      const net = netOf(r);
+      const weights = resolved.map(
+        (x) => (pricing.get(x.item_name_canonical) ?? 0) * x.qty,
+      );
+      const wSum = weights.reduce((a, b) => a + b, 0);
+      resolved.forEach((x, i) => {
+        const share = wSum > 0 ? (net * weights[i]) / wSum : net / resolved.length;
+        const k = itemKind.get(x.item_id) ?? "unknown";
+        revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
+      });
+    }
+
+    // Assemble entries (any kind with count>0 OR revenue>0).
+    const kinds = new Set<string>([...countByKind.keys(), ...revenueByKind.keys()]);
+    const entries = Array.from(kinds)
+      .map((k) => ({
+        kind: k,
+        label: labelFor(k),
+        count: countByKind.get(k) ?? 0,
+        revenue: revenueByKind.get(k) ?? 0,
+      }))
+      .filter((e) => e.count > 0 || e.revenue > 0)
+      .sort((a, b) => b.count - a.count);
+
+    // Pre-truncation totals.
+    const totals = {
+      count: entries.reduce((s, e) => s + e.count, 0),
+      revenue: Math.round(entries.reduce((s, e) => s + e.revenue, 0) * 100) / 100,
+    };
+
+    // Top 6 + Other.
+    const top = entries.slice(0, 6);
+    const rest = entries.slice(6);
+    const slices: Array<{
+      kind: string;
+      label: string;
+      count: number;
+      revenue: number;
+      color: string;
+    }> = top.map((e, i) => ({
+      kind: e.kind,
+      label: e.label,
+      count: e.count,
+      revenue: Math.round(e.revenue * 100) / 100,
+      color: CATEGORY_PALETTE[i] ?? OTHER_COLOR,
+    }));
+    if (rest.length > 0) {
+      const otherCount = rest.reduce((s, e) => s + e.count, 0);
+      const otherRevenue = rest.reduce((s, e) => s + e.revenue, 0);
+      if (otherCount > 0 || otherRevenue > 0) {
+        slices.push({
+          kind: "other",
+          label: "Other",
+          count: otherCount,
+          revenue: Math.round(otherRevenue * 100) / 100,
+          color: OTHER_COLOR,
+        });
+      }
+    }
+
+    return {
+      slices,
+      totals,
+      month: monthStart.slice(0, 7),
     };
   },
 });
