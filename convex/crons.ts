@@ -124,16 +124,16 @@ crons.interval(
 */
 
 
-// ── Booking-time extractor — LLM reads owner-renter chat → pickup_time /
-// return_time / pickup_date / return_date / methods on each reservation.
-// Hygglo's API never exposes these; we negotiate them in chat.
-// 10 min cadence; up to 10 reservations per cycle (LLM cost guard).
+// ── Booking-time extractor — LIFTED TO TRIGGER.DEV ────────────
+// Now lives at src/trigger/extract-booking-times.ts :: extractBookingTimesTask.
+/*
 crons.interval(
   "booking_time_extractor batch",
   { minutes: 30 },
   internal.extract_booking_times.extractBatch,
   { limit: 10 },
 );
+*/
 
 
 // ── Vision resolver — LIFTED TO TRIGGER.DEV ───────────────────
