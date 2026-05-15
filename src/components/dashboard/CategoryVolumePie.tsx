@@ -336,7 +336,7 @@ export function CategoryVolumePieBody({
                   paddingAngle={3}
                   cornerRadius={6}
                   labelLine={false}
-                  label={renderMiddleLabel}
+                  label={subDrillKind ? false : renderMiddleLabel}
                   legendType="none"
                   isAnimationActive={true}
                   animationDuration={400}

@@ -1797,25 +1797,12 @@ export const getRentalVolumeKindBreakdown = query({
       .sort((a, b) => b.revenue - a.revenue);
 
     const PALETTE = ["#60a5fa", "#34d399", "#a78bfa", "#fbbf24", "#f87171", "#22d3ee"];
-    const top = entries.slice(0, 10);
-    const rest = entries.slice(10);
-    const items_out: ItemSlice[] = top.map((e, i) => ({
+    // Show each item individually (no "Other items" bucket). Cap at top-15 by
+    // revenue to keep middle-ring labels readable.
+    const items_out: ItemSlice[] = entries.slice(0, 15).map((e, i) => ({
       ...e,
       color: PALETTE[i % PALETTE.length],
     }));
-    if (rest.length > 0) {
-      const otherCount = rest.reduce((s, e) => s + e.count, 0);
-      const otherRevenue = rest.reduce((s, e) => s + e.revenue, 0);
-      if (otherCount > 0 || otherRevenue > 0) {
-        items_out.push({
-          itemId: "__other__",
-          name: "Other items",
-          count: otherCount,
-          revenue: Math.round(otherRevenue * 100) / 100,
-          color: "#cbd5e1",
-        });
-      }
-    }
 
     const totals = {
       count: items_out.reduce((s, e) => s + e.count, 0),
