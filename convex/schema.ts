@@ -256,6 +256,22 @@ export default defineSchema({
     /** When the extractor last ran successfully for this reservation. */
     times_extracted_at: v.optional(v.number()),
     photos_urls: v.optional(v.array(v.string())),  // raw Hygglo CDN URLs
+    /** Wave-5 image-accuracy fix.
+     *  Per-item Hygglo image hints captured at poll time (positionally aligned
+     *  with `items[]`). Authoritative source for widget thumbnails — never
+     *  derived from the global items.image_url, which is shared across rentals
+     *  and corrupts neighbouring items. */
+    image_hints: v.optional(v.array(v.object({
+      item_name: v.string(),                 // Hygglo's items[i].name verbatim
+      item_name_normalised: v.string(),      // lowercased + collapsed whitespace
+      image_url: v.string(),                 // best per-item URL (large > original > url > medium > thumbnail)
+      source: v.union(
+        v.literal("hygglo_per_item"),        // items[i].image.* (preferred)
+        v.literal("hygglo_order"),           // fallback to order-level photos_urls (legacy poll path)
+        v.literal("manual_override"),        // future: owner-set in admin UI
+      ),
+      captured_at: v.number(),               // ms
+    }))),
     pickup_arrival_confirmed: v.optional(v.boolean()),
     is_obsolete: v.optional(v.boolean()),           // mirrors Hygglo filter=obsolete
     obsolete_reason: v.optional(v.union(

@@ -3,6 +3,15 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
 
+// Re-export image-resolution helpers for backward compatibility — other widget
+// files may import from `./items` or `./lib/imageResolution` directly.
+// Per FIX-DESIGN §4.3 (Phase 7).
+export {
+  resolveImageForReservationItem,
+  buildSharedImageBlacklist,
+  normaliseItemName,
+} from "./lib/imageResolution";
+
 // ─── Shared resolver-output reader ─────────────────────────────────────
 // Prefers expanded_items (bundle-decomposed, per-physical qty). Falls back
 // to resolved_items + qty:1 when expansion has not run yet on the row.
@@ -713,63 +722,10 @@ export const backfillImagesFromResolved = mutation({
   },
 });
 
-/**
- * Fuzzy backfill for items whose image_url is still null AFTER the
- * resolver-based backfill ran. Walks every reservation, scores each one's
- * `items[].item_name` against the unresolved inventory canon + aliases
- * (case-insensitive substring match, min 5 chars), and patches the first
- * /products/ photo URL it finds.
- *
- * Use when the LLM resolver hasn't reached an item yet — manual cron catch-up.
- */
-export const backfillImagesFuzzy = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const allItems = await ctx.db.query("items").collect();
-    const targets = allItems.filter((i) => !i.image_url);
-    if (targets.length === 0) return { total: 0, patched: 0, scanned: 0 };
-
-    const allReservations = await ctx.db.query("reservations").collect();
-    const reservationsWithPhotos = allReservations.filter(
-      (r) => (r.photos_urls?.length ?? 0) > 0,
-    );
-
-    let patched = 0;
-    let scanned = 0;
-    for (const item of targets) {
-      scanned++;
-      const canon = (item.name_canonical ?? "").toLowerCase().trim();
-      const aliases = (item.aliases ?? []).map((a) => a.toLowerCase().trim());
-      if (canon.length < 5) continue;
-
-      const matchPhotos = (r: typeof allReservations[number]): string | null => {
-        const titles = (r.items ?? []).map((i) => (i.item_name ?? "").toLowerCase());
-        const hit = titles.some((t) => {
-          if (!t || t.length < 5) return false;
-          if (t === canon || t.includes(canon) || canon.includes(t)) return true;
-          for (const a of aliases) {
-            if (a.length < 5) continue;
-            if (t === a || t.includes(a) || a.includes(t)) return true;
-          }
-          return false;
-        });
-        if (!hit) return null;
-        const urls = r.photos_urls ?? [];
-        return urls.find((u: string) => u.includes("/products/")) ?? urls[0] ?? null;
-      };
-
-      let chosen: string | null = null;
-      for (const r of reservationsWithPhotos) {
-        chosen = matchPhotos(r);
-        if (chosen) break;
-      }
-      if (!chosen) continue;
-      await ctx.db.patch(item._id, { image_url: chosen, updated_at: Date.now() });
-      patched++;
-    }
-    return { total: targets.length, patched, scanned };
-  },
-});
+// `backfillImagesFuzzy` removed (Phase 7 / FIX-DESIGN §4.3): substring matching
+// against unrelated reservations was the secondary cross-item-photo
+// contamination path. Replaced by per-reservation `image_hints` written at
+// poll time + `resolveImageForReservationItem` at read time.
 
 // ─── Item Schedule (with time-of-day awareness) ─────────────────────────────
 //  Used by the chat agent to answer questions like "is the FX3 free today

@@ -20,8 +20,9 @@ interface VaultSecret {
 }
 
 /**
- * Fetch all secrets for a Hygglo account service (e.g. `hygglo-dbcinema`,
- * `hygglo-leo`) from the project-hub vault.
+ * Fetch all secrets for a vault service (e.g. `hygglo`, `hygglo-dbcinema`,
+ * `hygglo-leo`). Indexes both `keyName` AND any `aliases` so callers can
+ * look up by either canonical key or alias.
  *
  * Throws on non-200. Returns a key→value map (NOT logged).
  */
@@ -40,9 +41,12 @@ export async function getVaultSecrets(
   if (!res.ok) {
     throw new Error(`Vault fetch failed for ${service}: ${res.status}`);
   }
-  const data = (await res.json()) as { value: VaultSecret[] };
+  const data = (await res.json()) as { value: Array<VaultSecret & { aliases?: string[] }> };
   const out: Record<string, string> = {};
-  for (const s of data.value ?? []) out[s.keyName] = s.value;
+  for (const s of data.value ?? []) {
+    out[s.keyName] = s.value;
+    for (const a of s.aliases ?? []) out[a] = s.value;
+  }
   return out;
 }
 
@@ -106,24 +110,73 @@ export function hyggloAuthHeaders(token: string): Record<string, string> {
   };
 }
 
+// Fallback for HYGGLO_CLIENT_SECRET when vault has no entry — matches
+// the constant baked into src/trigger/poll-hygglo.ts and scripts/audit
+// /ground-truth.mjs (Hygglo's published ngHyggloApp client secret).
+const HYGGLO_CLIENT_SECRET_FALLBACK =
+  "lQVS05DGy9SQdAEInEPqTMK3aktEfSc7iupC7BYM4JY=";
+
 /**
  * Convenience: resolve the (email, password, clientSecret) for an account
- * from the vault. The vault stores them under service `hygglo-<slug>`
- * with keys HYGGLO_EMAIL / HYGGLO_PASSWORD / HYGGLO_CLIENT_SECRET.
+ * from the vault.
+ *
+ * Lookup order (matches src/trigger/poll-hygglo.ts which already works):
+ *   1. service `hygglo` (combined), keys HYGGLO_<SLUG>_EMAIL / HYGGLO_<SLUG>_PASSWORD
+ *   2. service `hygglo-<slug>` (per-account), keys HYGGLO_EMAIL / HYGGLO_PASSWORD
+ *      and aliases HYGGLO_<SLUG>_EMAIL / HYGGLO_<SLUG>_PASSWORD
+ *   3. clientSecret: vault key HYGGLO_CLIENT_SECRET from either service,
+ *      else falls back to the hardcoded Hygglo-web constant.
  */
 export async function getAccountCredentials(accountSlug: string): Promise<{
   email: string;
   password: string;
   clientSecret: string;
 }> {
-  const secrets = await getVaultSecrets(`hygglo-${accountSlug}`);
-  const email = secrets.HYGGLO_EMAIL;
-  const password = secrets.HYGGLO_PASSWORD;
-  const clientSecret = secrets.HYGGLO_CLIENT_SECRET;
-  if (!email || !password || !clientSecret) {
+  const SLUG = accountSlug.toUpperCase();
+  let email: string | undefined;
+  let password: string | undefined;
+  let clientSecret: string | undefined;
+
+  // Step 1: combined `hygglo` service.
+  try {
+    const combined = await getVaultSecrets("hygglo");
+    email = combined[`HYGGLO_${SLUG}_EMAIL`];
+    password =
+      combined[`HYGGLO_${SLUG}_PASSWORD`] ?? combined[`HYGGLO_${SLUG}_PASS`];
+    clientSecret = combined["HYGGLO_CLIENT_SECRET"];
+  } catch {
+    // ignore — fall through to per-account service
+  }
+
+  // Step 2: per-account `hygglo-<slug>` service (with USER/PASS aliases).
+  if (!email || !password) {
+    try {
+      const perAccount = await getVaultSecrets(`hygglo-${accountSlug}`);
+      email =
+        email ??
+        perAccount.HYGGLO_EMAIL ??
+        perAccount[`HYGGLO_${SLUG}_EMAIL`] ??
+        perAccount.HYGGLO_USER ??
+        perAccount[`HYGGLO_${SLUG}_USER`];
+      password =
+        password ??
+        perAccount.HYGGLO_PASSWORD ??
+        perAccount[`HYGGLO_${SLUG}_PASSWORD`] ??
+        perAccount.HYGGLO_PASS ??
+        perAccount[`HYGGLO_${SLUG}_PASS`];
+      clientSecret = clientSecret ?? perAccount.HYGGLO_CLIENT_SECRET;
+    } catch {
+      // ignore — final check below
+    }
+  }
+
+  clientSecret = clientSecret ?? HYGGLO_CLIENT_SECRET_FALLBACK;
+
+  if (!email || !password) {
     throw new Error(
       `Missing Hygglo credentials in vault for ${accountSlug} ` +
-        `(needs HYGGLO_EMAIL, HYGGLO_PASSWORD, HYGGLO_CLIENT_SECRET).`,
+        `(checked service "hygglo" keys HYGGLO_${SLUG}_EMAIL/PASSWORD and ` +
+        `service "hygglo-${accountSlug}" keys HYGGLO_EMAIL/PASSWORD).`,
     );
   }
   return { email, password, clientSecret };
