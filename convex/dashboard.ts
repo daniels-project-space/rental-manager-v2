@@ -183,7 +183,16 @@ export const getSummary = query({
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().slice(0, 10);
 
-    let allReservations = await ctx.db.query("reservations").collect();
+    // Indexed read — getSummary only references current-and-future
+    // reservations + last-365d revenue. Drops ~1767 → ~250.
+    const summaryCutoff = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 365);
+      return d.toISOString().slice(0, 10);
+    })();
+    let allReservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", summaryCutoff))
+      .collect();
     if (accountSlug) {
       allReservations = allReservations.filter((r) => r.account_slug === accountSlug);
     }
@@ -361,16 +370,24 @@ export const getStatsDrawerData = query({
     // ── Next-30-day window for out-of-stock calc ─────────────────
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
 
-    // ── COLLECT 1: reservations ──────────────────────────────────
-    const allResRaw = await ctx.db.query("reservations").collect();
+    // ── COLLECT 1: reservations (indexed last 365d) ──────────────
+    // Stat cards display current month + active + earnings (today/week/month).
+    // YTD + lifetime-trend widgets pull their own MV/lifetime data; this
+    // query never returns pre-365d totals. Indexed read drops ~1767 → ~250.
+    const dashCutoff = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 365);
+      return d.toISOString().slice(0, 10);
+    })();
+    const allResRaw = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", dashCutoff))
+      .collect();
     // Account-scoped view for per-card numbers (active, earnings, monthly, etc.)
     let allRes = allResRaw;
     if (accountSlug) {
       allRes = allResRaw.filter((r) => r.account_slug === accountSlug);
     }
-    // Cross-account view for double-booking detection — physical inventory
-    // is shared across accounts, so a conflict on shared gear must surface
-    // on every account's dashboard regardless of who owns the listing.
+    // Cross-account view for double-booking detection.
     const allResCrossAccount = allResRaw;
 
     // ── COLLECT 2: items ─────────────────────────────────────────
@@ -762,11 +779,22 @@ export const getStatsDrawerData = query({
     // Inventory image lookup for the multi-tile item row in Active Rentals.
     // Match strictly via resolved_items[].item_id — no fuzzy substring matching.
     const itemImageById = new Map<string, { name: string; image_url: string | null }>();
+    // PASS-11.1 (2026-05-15): name-normalised fallback lookup for historic
+    // hygglo_items[] rows whose image_url is null (pre-PASS-10 poller fix).
+    // Strict normalised-name equality — no fuzzy substring matching.
+    const normalizeName = (s: string): string =>
+      s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const itemImageByName = new Map<string, string | null>();
     for (const it of activeItems) {
       itemImageById.set(it._id as string, {
         name: it.name_canonical,
         image_url: (it as { image_url?: string }).image_url ?? null,
       });
+      const invUrl = (it as { image_url?: string | null }).image_url ?? null;
+      if (invUrl) {
+        const key = normalizeName(it.name_canonical);
+        if (key && !itemImageByName.has(key)) itemImageByName.set(key, invUrl);
+      }
     }
     // Phase 9 / FIX-DESIGN §4.5: build the shared-image blacklist once for
     // the whole query so the resolver can guard the items_table fallback
@@ -811,20 +839,27 @@ export const getStatsDrawerData = query({
         const noImage: string[] = [];
         for (const h of hItems) {
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-          if (h.image_url) {
-            const ex = tilesByImage.get(h.image_url);
+          // PASS-11.1: Hygglo image_url remains authoritative when present.
+          // When null (historic rows pre-PASS-10), try strict name-normalised
+          // fallback against the inventory items table before giving up.
+          let url: string | null = h.image_url ?? null;
+          if (!url) {
+            url = itemImageByName.get(normalizeName(h.name)) ?? null;
+          }
+          if (url) {
+            const ex = tilesByImage.get(url);
             if (ex) {
               ex.qty += q;
               ex.names_in_group.push(h.name);
               if (h.name.length < ex.name.length) ex.name = h.name;
             } else {
-              tilesByImage.set(h.image_url, {
-                image_url: h.image_url,
+              tilesByImage.set(url, {
+                image_url: url,
                 name: h.name,
                 names_in_group: [h.name],
                 qty: q,
               });
-              tileOrderH.push(h.image_url);
+              tileOrderH.push(url);
             }
           } else {
             noImage.push(h.name);
@@ -1512,7 +1547,16 @@ export const getNextRentals = query({
     const target = day === "today" ? baseToday : new Date(baseToday.getTime() + 86400000);
     const targetDate = target.toISOString().slice(0, 10);
 
-    let rows = await ctx.db.query("reservations").collect();
+    // Indexed read — only need rows whose start_date is within ~30 days
+    // of target. Drops ~1767 → ~30.
+    const nextCutoff = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      return d.toISOString().slice(0, 10);
+    })();
+    let rows = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", nextCutoff))
+      .collect();
     if (accountSlug) rows = rows.filter((r) => r.account_slug === accountSlug);
     const confirmed = rows.filter(
       (r) =>
