@@ -406,17 +406,6 @@ export const getStatsDrawerData = query({
       bankByProduct.set(`${li.account_slug}#${li.product_id}`, li.image_url);
     }
 
-    // Phase 12.3 safety-net fallback: name-normalised lookup against
-    // inventory items. Only fires when both bank and h.image_url miss.
-    const normHyggloName = (s: string) =>
-      s.toLowerCase().replace(/\[[^\]]+\]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-    const itemImgByName = new Map<string, string>();
-    for (const it of allItems) {
-      const url = (it as { image_url?: string | null }).image_url;
-      if (!url) continue;
-      itemImgByName.set(normHyggloName(it.name_canonical), url);
-    }
-
     // ── COLLECT 3: denial_records ────────────────────────────────
     let denialRows = await ctx.db.query("denial_records").collect();
     if (accountSlug) {
@@ -850,27 +839,18 @@ export const getStatsDrawerData = query({
         const noImage: string[] = [];
         for (const h of hItems) {
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-          // Phase 12.3 image source priority:
-          //   1. listing_images bank (account_slug, product_id) — stable PK win.
-          //   2. hygglo_items[i].image_url — poller-written, may be null.
-          //   3. items table by normalised name — last-resort safety net.
-          //   4. null → noImage[] pill.
+          // Phase 12.3 (revised 2026-05-15 23:15): correctness > coverage.
+          // Previous name-substring fallback aliased the wrong listing image
+          // for kit rentals. Removed entirely — only the bank and the per-row
+          // hygglo image_url are trusted now. Missing images stay missing
+          // until the poller refreshes the row with product_id.
+          //   1. listing_images bank (account_slug, product_id) — trusted.
+          //   2. hygglo_items[i].image_url — per-row poller snapshot.
+          //   3. null → noImage[] pill.
           const bankUrl = h.product_id
             ? bankByProduct.get(`${r.account_slug}#${h.product_id}`)
             : undefined;
-          let url: string | null = bankUrl ?? h.image_url ?? null;
-          if (!url) {
-            const nh = normHyggloName(h.name);
-            url = itemImgByName.get(nh) ?? null;
-            if (!url) {
-              for (const [canonNorm, candidate] of itemImgByName) {
-                if (canonNorm.length >= 4 && nh.includes(canonNorm)) {
-                  url = candidate;
-                  break;
-                }
-              }
-            }
-          }
+          const url: string | null = bankUrl ?? h.image_url ?? null;
           if (url) {
             const ex = tilesByImage.get(url);
             if (ex) {
