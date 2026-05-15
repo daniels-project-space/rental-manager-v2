@@ -1087,3 +1087,126 @@ export const getPricingSignals = query({
     return { ok: true as const, lookbackDays: lookback, rows: rows.slice(0, limit ?? 30) };
   },
 });
+
+const FUNNEL_ACTIVE_STEPS = new Set(["REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"]);
+const FUNNEL_CONFIRMED_STEPS = new Set(["BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED"]);
+const FUNNEL_STEP_LABEL: Record<string, string> = {
+  REQUEST: "Awaiting owner accept",
+  APPROVED: "Awaiting renter payment",
+  FUNDS_RESERVED: "Awaiting renter payment",
+  VERIFIED: "Verifying renter",
+  BOOKED_AFTER_VERIFIED: "Booked",
+  DELIVERED: "Out with renter",
+  RETURNED: "Returned",
+  REVIEWED: "Complete",
+};
+
+export const getVerificationFunnel = query({
+  args: {
+    ageThresholdHours: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { ageThresholdHours, limit }) => {
+    const threshold = (ageThresholdHours ?? 12) * 3600 * 1000;
+    const now = Date.now();
+    const all = await ctx.db.query("reservations").collect();
+
+    // 1. Stalled orders (active step + age over threshold).
+    type Stalled = {
+      reservation_id: string;
+      hygglo_order_id: string | null;
+      account_slug: string;
+      renter_name: string | null;
+      start_date: string | null;
+      end_date: string | null;
+      gross_paid_gbp: number | null;
+      net_to_owner_gbp: number | null;
+      current_step: string;
+      step_label: string;
+      first_seen_at: number;
+      age_hours: number;
+      photos_urls: string[];
+    };
+    const stalled: Stalled[] = [];
+
+    // 2. Distribution count per step (currently active).
+    const distribution: Record<string, number> = {};
+
+    // 3. Confirmed-order elapsed sample for median computation.
+    type Sample = { hours: number };
+    const confirmedSample: Sample[] = [];
+
+    for (const r of all) {
+      const step = (r as any).order_step as string | undefined;
+      if (!step) continue;
+      if (r.is_obsolete) continue;
+      const firstSeen = r._creationTime ?? 0;
+      const ageHours = (now - firstSeen) / 3600_000;
+
+      if (FUNNEL_ACTIVE_STEPS.has(step)) {
+        distribution[step] = (distribution[step] ?? 0) + 1;
+        if (ageHours * 3600_000 >= threshold) {
+          stalled.push({
+            reservation_id: (r as any).v1_rental_id ?? r.hygglo_order_id ?? (r._id as string),
+            hygglo_order_id: r.hygglo_order_id ?? null,
+            account_slug: r.account_slug ?? "",
+            renter_name: r.renter_name ?? null,
+            start_date: r.start_date ?? null,
+            end_date: r.end_date ?? null,
+            gross_paid_gbp: r.gross_paid_gbp ?? null,
+            net_to_owner_gbp: r.net_to_owner_gbp ?? null,
+            current_step: step,
+            step_label: FUNNEL_STEP_LABEL[step] ?? step,
+            first_seen_at: firstSeen,
+            age_hours: Math.round(ageHours * 10) / 10,
+            photos_urls: (r as any).photos_urls ?? [],
+          });
+        }
+      } else if (FUNNEL_CONFIRMED_STEPS.has(step)) {
+        distribution[step] = (distribution[step] ?? 0) + 1;
+        // Elapsed = first_seen → now. Imperfect (we don't know exactly when
+        // it crossed into CONFIRMED) but a reasonable median for the cohort
+        // since most orders confirm within hours of being polled.
+        const startMs = firstSeen;
+        const confirmedAtMs = (r as { times_extracted_at?: number }).times_extracted_at ?? now;
+        const elapsedH = Math.max(0, (confirmedAtMs - startMs) / 3600_000);
+        // Only count reasonable values (filter out obvious outliers and
+        // historical rows from v1 imports that have weird timestamps).
+        if (elapsedH >= 0 && elapsedH < 24 * 14) {
+          confirmedSample.push({ hours: elapsedH });
+        }
+      }
+    }
+
+    // Median + p25 + p75 across the confirmed sample
+    confirmedSample.sort((a, b) => a.hours - b.hours);
+    const pct = (p: number): number => {
+      if (confirmedSample.length === 0) return 0;
+      const idx = Math.min(
+        confirmedSample.length - 1,
+        Math.floor(p * confirmedSample.length),
+      );
+      return Math.round(confirmedSample[idx].hours * 10) / 10;
+    };
+
+    stalled.sort((a, b) => b.age_hours - a.age_hours);
+
+    return {
+      now,
+      threshold_hours: ageThresholdHours ?? 12,
+      stalled: stalled.slice(0, limit ?? 30),
+      stalled_total: stalled.length,
+      stalled_potential_revenue_gbp: Math.round(
+        stalled.reduce((s, r) => s + (r.net_to_owner_gbp ?? 0), 0) * 100,
+      ) / 100,
+      distribution,
+      timing: {
+        sample_size: confirmedSample.length,
+        median_hours_to_confirm: pct(0.5),
+        p25_hours: pct(0.25),
+        p75_hours: pct(0.75),
+        p90_hours: pct(0.9),
+      },
+    };
+  },
+});
