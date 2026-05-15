@@ -3,9 +3,22 @@ import "server-only";
 import { Agent } from "@mastra/core/agent";
 import { createXai } from "@ai-sdk/xai";
 import { dashboardTools } from "../tools/dashboard-tools";
+import { routerTools } from "../tools/router-tools";
 import { GROK_CHAT_MODEL } from "../../lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
+
+/**
+ * Router-tools env flag. When `MASTRA_ROUTER_TOOLS` is truthy
+ * ("1" / "true" / "on" / "yes") the agent binds the 12 coarse-grained
+ * router tools instead of the 68-tool legacy surface. Off by default —
+ * Wave 2 rollout is opt-in until parity testing completes. The legacy
+ * surface remains registered alongside.
+ */
+const ROUTER_TOOLS_ON = (() => {
+  const v = (process.env.MASTRA_ROUTER_TOOLS ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on" || v === "yes";
+})();
 
 /**
  * Static system prompt base. Exported so the API route can compose it
@@ -45,5 +58,10 @@ export const dashboardChatAgent = new Agent({
   name: "dashboard-chat",
   instructions: SYSTEM_PROMPT_BASE,
   model: xai(GROK_CHAT_MODEL),
-  tools: dashboardTools,
+  // Wave 2 — flag-gated tool surface. Router tools bind when
+  // MASTRA_ROUTER_TOOLS is on; otherwise the legacy 68-tool set ships
+  // as before. System-prompt rewrite for router mode lands in Task 4.
+  tools: ROUTER_TOOLS_ON
+    ? (routerTools as unknown as typeof dashboardTools)
+    : dashboardTools,
 });

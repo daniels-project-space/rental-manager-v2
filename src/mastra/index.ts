@@ -15,6 +15,18 @@ import { dashboardChatAgent } from "./agents/dashboard-chat";
 import { aiDecisionAgent } from "./agents/ai-decision";
 import { hyggloPollWorkflow } from "./workflows/hygglo_poll";
 
+// Wave 2 — router-tools rollout (env-flag gated). Importing both surfaces
+// here keeps them discoverable to the Mastra runtime regardless of which
+// set the agent currently binds. The agent picks the active set via
+// `MASTRA_ROUTER_TOOLS` (see agents/dashboard-chat.ts).
+//
+// Tree-shake guard: referencing both modules prevents bundlers from
+// dropping the unused branch when the flag is toggled at deploy time.
+import { dashboardTools } from "./tools/dashboard-tools";
+import { routerTools } from "./tools/router-tools";
+void dashboardTools;
+void routerTools;
+
 export const mastra = new Mastra({
   agents: { dashboardChatAgent, aiDecisionAgent },
   workflows: { hyggloPollWorkflow },

@@ -11,6 +11,7 @@
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as admin_backfill_net from "../admin_backfill_net.js";
+import type * as admin_migrate from "../admin_migrate.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
@@ -91,6 +92,7 @@ declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
   accounts: typeof accounts;
   admin_backfill_net: typeof admin_backfill_net;
+  admin_migrate: typeof admin_migrate;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   audit_snapshot: typeof audit_snapshot;
