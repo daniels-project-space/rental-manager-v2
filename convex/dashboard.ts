@@ -398,6 +398,14 @@ export const getStatsDrawerData = query({
     }
     const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
 
+    // Phase 12.3: listing_images bank — product_id-keyed canonical photos.
+    // Fetched once here, looked up per-rental in mapRental.useHygglo branch.
+    const listingImagesRaw = await ctx.db.query("listing_images").collect();
+    const bankByProduct = new Map<string, string>(); // key: `${account_slug}#${product_id}` → image_url
+    for (const li of listingImagesRaw) {
+      bankByProduct.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+    }
+
     // ── COLLECT 3: denial_records ────────────────────────────────
     let denialRows = await ctx.db.query("denial_records").collect();
     if (accountSlug) {
@@ -811,6 +819,7 @@ export const getStatsDrawerData = query({
             image_url: string | null;
             type: string;
             qty?: number;
+            product_id?: number;
           }>
         | undefined;
       const useHygglo = Array.isArray(hyggloItemsRaw) && hyggloItemsRaw.length > 0;
@@ -830,11 +839,14 @@ export const getStatsDrawerData = query({
         const noImage: string[] = [];
         for (const h of hItems) {
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-          // PASS-11.1: Hygglo image_url remains authoritative when present.
-          // When null (historic rows pre-PASS-10), try strict name-normalised
-          // fallback against the inventory items table before giving up.
-          // Phase 11.2: historical null image_urls patched at-rest by backfill.
-          const url: string | null = h.image_url ?? null;
+          // Phase 12.3: bank lookup (product_id → image_url) is primary
+          // source of truth. Falls back to hygglo_items[i].image_url and
+          // then null. Fixes cross-rental aliasing (Michelle's Atomos
+          // showing a GM 24-70 Bundle image, Pass-9 root cause).
+          const bankUrl = h.product_id
+            ? bankByProduct.get(`${r.account_slug}#${h.product_id}`)
+            : undefined;
+          const url: string | null = bankUrl ?? h.image_url ?? null;
           if (url) {
             const ex = tilesByImage.get(url);
             if (ex) {
@@ -896,116 +908,22 @@ export const getStatsDrawerData = query({
           is_ongoing: kind === "ongoing",
         };
       }
-      // ── Fallback (Pass-8 path): image_hints + global items table ──
-      // PASS-6 (2026-05-15): v1-style master thumb + text summary.
-      // Previously emitted one tile per item, falling back to a 3-letter
-      // abbreviation placeholder when no image resolved. Result looked bad
-      // (rows of "ANA ANA ANA ANA PL" placeholders) AND duplicated images
-      // when 2+ items in the SAME reservation shared an image_url (e.g.
-      // Craig Wilson — two Sony items mapping to the same Sony product
-      // photo because items.image_url is shared by name_canonical).
-      //
-      // v1 (rental-manager/src/public/dashboard-mobile.html lines 2107-2113)
-      // shows ONE 50×50 master photo per rental + a text line of item
-      // names. master = first photos_urls entry containing "/products/"
-      // (filters out renter profile pictures).
-      const tiles = buildItemTiles(r);
-      const photosUrls = (r.photos_urls ?? []) as string[];
-      const productPhoto = photosUrls.find(
-        (u) => typeof u === "string" && u.includes("/products/"),
-      ) ?? null;
-      const masterImageUrl =
-        productPhoto ?? tiles.find((t) => t.image_url)?.image_url ?? null;
-      // PASS-7: v1-faithful multi-item display.
-      // v1 (dashboard-mobile.html line 1275) renders r.items.join(', ')
-      // — the FULL list, comma-separated, no truncation. We replicate.
-      // 1. Source = tiles (bundle-decomposed) when available, else r.items.
-      // 2. Filter out INSURANCE (it's a synthetic add-on, not a real item).
-      // 3. Dedup by (name) preserving order; qty stays accumulated by tiles.
-      // 4. Append " ×N" when qty > 1.
+      // ── Fallback path: no hygglo_items[] ──
+      // Phase 12.3: REMOVED the items.image_url cross-match block (Pass-8/9
+      // root cause — global-aliased URLs leaked into dashboard tiles, e.g.
+      // Michelle's Atomos pulling a GM 24-70 Bundle image). The product_id
+      // bank populated by the poller is the new source of truth. Rentals
+      // without hygglo_items[] (legacy v1 imports) emit no tiles — names
+      // go into the text-pill fallback (extra_text_items) and the bank
+      // fills in over time as the poller re-touches them.
       const isInsurance = (n: string) =>
         /insurance/i.test(n) || /\binsur\b/i.test(n);
-      type NamedItem = { name: string; qty: number; image_url: string | null };
-      const rawItems: NamedItem[] = tiles.length > 0
-        ? tiles.map((t) => ({ name: t.name, qty: t.qty, image_url: t.image_url }))
-        : (r.items ?? []).map((i) => ({
-            name: i.item_name,
-            qty: 1,
-            image_url: null,
-          }));
-      const seenNames = new Set<string>();
-      const itemsForDisplay: NamedItem[] = [];
-      for (const it of rawItems) {
-        if (!it.name || isInsurance(it.name)) continue;
-        const key = it.name.trim().toLowerCase();
-        if (seenNames.has(key)) continue;
-        seenNames.add(key);
-        itemsForDisplay.push(it);
-      }
-      const formatItem = (it: NamedItem) =>
-        it.qty > 1 ? `${it.name} \u00d7${it.qty}` : it.name;
-      const itemNamesSummary = itemsForDisplay.length > 0
-        ? itemsForDisplay.map(formatItem).join(", ")
+      const fallbackNames = (r.items ?? [])
+        .map((i) => i.item_name)
+        .filter((n) => n && !isInsurance(n));
+      const itemNamesSummary = fallbackNames.length > 0
+        ? fallbackNames.join(", ")
         : "(no item)";
-
-      // PASS-8 (2026-05-15): dedup tiles by image_url, NOT by item name.
-      // Rationale (user, verbatim): "Joe Cowie doesn't need the individual
-      // Remus lenses shown, bc the image shows all 4 already but should
-      // show the e mount adapter. Michelle needs to show the Atomos Ninja
-      // and so on". Items that share a Hygglo source image were bundled
-      // by the lister — one photo covers them. Items with DISTINCT images
-      // each deserve their own tile.
-      //
-      // Algorithm:
-      //  1. Group itemsForDisplay by image_url. Items with image_url = null
-      //     are NOT grouped (each becomes an entry in extra_text_items).
-      //  2. Each group collapses to one tile {image_url, name, names_in_group, qty}.
-      //  3. Reorder: tile containing the master productPhoto first; rest
-      //     preserve original item order.
-      //  4. INSURANCE items already filtered above.
-      type DedupTile = {
-        image_url: string;
-        name: string;
-        names_in_group: string[];
-        qty: number;
-      };
-      const tilesByUrl = new Map<string, DedupTile>();
-      const tileOrder: string[] = [];
-      const extra_text_items: string[] = [];
-      for (const it of itemsForDisplay) {
-        if (!it.image_url) {
-          extra_text_items.push(it.name);
-          continue;
-        }
-        const existing = tilesByUrl.get(it.image_url);
-        if (existing) {
-          existing.qty += it.qty;
-          existing.names_in_group.push(it.name);
-          // Keep the shortest name as primary (better alt-text)
-          if (it.name.length < existing.name.length) existing.name = it.name;
-        } else {
-          tilesByUrl.set(it.image_url, {
-            image_url: it.image_url,
-            name: it.name,
-            names_in_group: [it.name],
-            qty: it.qty,
-          });
-          tileOrder.push(it.image_url);
-        }
-      }
-      // Reorder so the master photo tile (if matched) is first.
-      if (masterImageUrl && tilesByUrl.has(masterImageUrl)) {
-        const idx = tileOrder.indexOf(masterImageUrl);
-        if (idx > 0) {
-          tileOrder.splice(idx, 1);
-          tileOrder.unshift(masterImageUrl);
-        }
-      }
-      const item_image_tiles: DedupTile[] = tileOrder.map(
-        (u) => tilesByUrl.get(u) as DedupTile,
-      );
-      const effectiveMaster =
-        item_image_tiles[0]?.image_url ?? masterImageUrl ?? null;
 
       return {
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
@@ -1020,20 +938,17 @@ export const getStatsDrawerData = query({
         pickup_method: r.pickup_method ?? null,
         return_method: r.return_method ?? null,
         items: (r.items ?? []).map((i) => i.item_name),
-        photo_url: effectiveMaster,
-        master_image_url: effectiveMaster,
+        photo_url: null,
+        master_image_url: null,
         item_names_summary: itemNamesSummary,
-        // PASS-8: distinct-image tiles (deduped by image_url) + items with
-        // no image as text-pill list.
-        item_image_tiles,
-        extra_text_items,
+        item_image_tiles: [] as Array<{ image_url: string; name: string; names_in_group: string[]; qty: number }>,
+        extra_text_items: fallbackNames,
         duration_days:
           r.duration_days ??
           (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
         net_gbp: r.net_to_owner_gbp ?? null,
         order_step: r.order_step ?? null,
-        // item_tiles preserved for backward compat. Active Drawer ignores it.
-        item_tiles: tiles,
+        item_tiles: [] as Array<{ name: string; qty: number; image_url: string | null }>,
         kind,
         is_ongoing: kind === "ongoing",
       };

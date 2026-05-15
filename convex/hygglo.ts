@@ -1,5 +1,5 @@
 import { mutation, query } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
 
@@ -527,6 +527,11 @@ export const upsertOrderAsReservation = mutation({
         const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
         const hyggloItemsRegression = buildHyggloItems(args.items);
         await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
+        // Phase 12.2: write-through to product_id-keyed image bank.
+        await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
+          account_slug: args.account_slug,
+          items: hyggloItemsRegression,
+        });
         return { action: "updated" };
       }
 
@@ -550,6 +555,11 @@ export const upsertOrderAsReservation = mutation({
       const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
       const hyggloItemsUpdate = buildHyggloItems(args.items);
       await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
+      // Phase 12.2: write-through to product_id-keyed image bank.
+      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
+        account_slug: args.account_slug,
+        items: hyggloItemsUpdate,
+      });
       return { action: "updated" };
     }
 
@@ -566,6 +576,13 @@ export const upsertOrderAsReservation = mutation({
       ...(hyggloItemsInsert.length > 0 && { hygglo_items: hyggloItemsInsert }),
       created_at: now,
     });
+    // Phase 12.2: write-through to product_id-keyed image bank.
+    if (hyggloItemsInsert.length > 0) {
+      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
+        account_slug: args.account_slug,
+        items: hyggloItemsInsert,
+      });
+    }
 
     return { action: "inserted" };
   },

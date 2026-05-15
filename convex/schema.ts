@@ -985,4 +985,25 @@ export default defineSchema({
     fetched_at: v.number(),
     expires_at: v.number(),
   }).index("by_query_norm", ["query_norm"]),
+
+  // ── Phase 12: product_id-keyed listing image bank ────────────────────────
+  // Stable mapping product_id -> canonical image URL. Decouples display from
+  // per-rental snapshot so historic rentals get correct photos automatically.
+  // Fix once, fixes everywhere. See: /root/listing-image-bank-investigation.md
+  listing_images: defineTable({
+    product_id: v.number(),            // Hygglo's stable numeric product ID — PK semantics
+    slug: v.optional(v.string()),       // /p/<slug> for backfill scraping later
+    account_slug: v.string(),           // separate listings on same product_id across accounts
+    image_url: v.string(),              // canonical photo URL
+    name_at_capture: v.string(),        // listing title at time of last write — drift debugging
+    source: v.union(
+      v.literal("hygglo_api"),
+      v.literal("hygglo_scrape"),
+      v.literal("manual"),
+    ),
+    captured_at: v.number(),
+    r2_key: v.optional(v.string()),     // optional R2 mirror (phase 12.4)
+  }).index("by_product", ["product_id"])
+    .index("by_account_product", ["account_slug", "product_id"])
+    .index("by_slug", ["slug"]),
 });
