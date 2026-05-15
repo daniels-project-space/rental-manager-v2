@@ -2,9 +2,9 @@
 
 import Image from "next/image";
 
-type Kind = "ongoing" | "upcoming" | "pending";
+export type Kind = "ongoing" | "upcoming" | "pending";
 
-interface Rental {
+export interface Rental {
   reservation_id: string;
   renter_name: string | null;
   account_slug: string;
@@ -37,21 +37,21 @@ interface Props {
   };
 }
 
-const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
+export const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
   dbcinema: { bg: "bg-blue-900/60 border border-blue-500/30", text: "text-blue-200" },
   leo:      { bg: "bg-amber-900/40 border border-amber-500/30", text: "text-amber-200" },
 };
 
-const SECTION: Record<Kind, { label: string; color: string; bg: string; border: string; ring: string }> = {
+export const SECTION: Record<Kind, { label: string; color: string; bg: string; border: string; ring: string }> = {
   ongoing:  { label: "ONGOING",  color: "#f59e0b", bg: "bg-amber-500/5",  border: "border-amber-500/20",  ring: "shadow-[inset_3px_0_0_#f59e0b]" },
   upcoming: { label: "UPCOMING", color: "#a78bfa", bg: "bg-violet-500/5", border: "border-violet-500/20", ring: "shadow-[inset_3px_0_0_#a78bfa]" },
   pending:  { label: "PENDING",  color: "#ec4899", bg: "bg-pink-500/5",   border: "border-pink-500/20",   ring: "shadow-[inset_3px_0_0_#ec4899]" },
 };
 
-const fmtDate = (d: string) =>
+export const fmtDate = (d: string) =>
   new Intl.DateTimeFormat("en-GB", { month: "short", day: "numeric" }).format(new Date(d));
 
-const fmtTime = (t?: string | null) => {
+export const fmtTime = (t?: string | null) => {
   if (!t) return null;
   return t.length >= 5 ? t.slice(0, 5) : t;
 };
@@ -207,7 +207,12 @@ export default function ActiveDrawer({ data }: Props) {
     groups[k].push(r);
   }
   for (const k of Object.keys(groups) as Kind[]) {
-    groups[k].sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""));
+    groups[k].sort((a, b) => {
+      const ad = a.start_date ?? "";
+      const bd = b.start_date ?? "";
+      if (ad !== bd) return ad.localeCompare(bd);
+      return (a.pickup_time ?? "99:99").localeCompare(b.pickup_time ?? "99:99");
+    });
   }
 
   const sections: Array<{ kind: Kind; count: number }> = [

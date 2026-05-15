@@ -5,6 +5,7 @@ import { EarningsChart } from "@/components/dashboard/EarningsChart";
 import { TaxSummary } from "@/components/dashboard/TaxSummary";
 import { LiveActivity } from "@/components/dashboard/LiveActivity";
 import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
+import { NextRentals } from "@/components/dashboard/NextRentals";
 import { ReturnHub } from "@/components/dashboard/ReturnHub";
 import { ConversationFunnel } from "@/components/dashboard/ConversationFunnel";
 import { ItemRevenuePanel } from "@/components/dashboard/ItemRevenuePanel";
@@ -22,6 +23,7 @@ import { AIChat } from "@/components/dashboard/AIChat";
 import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
 import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
+import { CategoryVolumePie } from "@/components/dashboard/CategoryVolumePie";
 
 export type PanelWidget = {
   id: string;
@@ -41,6 +43,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "tax-summary",         label: "Tax Summary",            component: TaxSummary },
   { id: "live-activity",       label: "Live Activity",          component: LiveActivity },
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
+  { id: "next-rentals",        label: "Next Rentals",           component: NextRentals },
   { id: "return-hub",          label: "Return Hub",             component: ReturnHub },
   // weekly-calendar is intentionally NOT a dashboard widget — it lives only as
   // an overlay (CalendarGantt) launched from CalendarStrip's 'Weekly View' button.
@@ -60,6 +63,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "item-roi",            label: "Item ROI",              component: ItemROIPanel },
   { id: "lost-revenue-buy",    label: "Lost Revenue · Buy",    component: LostRevenueBuyPanel },
   { id: "verification-funnel", label: "Verification Funnel",   component: VerificationFunnelPanel },
+  { id: "category-volume",     label: "Category Volume (this month)", component: CategoryVolumePie },
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
