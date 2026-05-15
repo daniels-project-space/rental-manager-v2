@@ -417,8 +417,13 @@ export function createHydrationLayer(
   }
 
   function invalidate(key: StaticTable | "all"): void {
-    if (key === "all") T1_CACHE.clear();
-    else T1_CACHE.delete(key);
+    if (key === "all") {
+      T1_CACHE.clear();
+      T1_INFLIGHT.clear();
+    } else {
+      T1_CACHE.delete(key);
+      T1_INFLIGHT.delete(key);
+    }
   }
 
   // ── T2 — memoize ──────────────────────────────────────────────────────
@@ -720,4 +725,5 @@ export function createHydrationLayer(
 // Test-only: clear shared T1 cache between tests.
 export function __resetT1CacheForTests(): void {
   T1_CACHE.clear();
+  T1_INFLIGHT.clear();
 }
