@@ -151,4 +151,15 @@ crons.weekly(
   {},
 );
 
+// ── Phase 10.7 — Demand-Loss Classifier sweep.
+// Picks up newly-obsolete rows from the Hygglo poller and assigns
+// demand_loss_class within an hour. Idempotent; small batch keeps
+// per-cycle cost flat. See convex/demand_loss.ts.
+crons.interval(
+  "classify-obsolete-demand-loss",
+  { hours: 1 },
+  internal.demand_loss.classifyObsoleteReservations,
+  { limit: 100 },
+);
+
 export default crons;

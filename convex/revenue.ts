@@ -877,19 +877,70 @@ export const getMissedAndDeniedByCategory = query({
       gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + gapLoss);
     }
 
+    // 3b. Demand-Loss path — Phase 10.5. Pull obsolete reservations classified
+    // as genuine_demand within the cutoff window. Each row contributes its
+    // demand_loss_estimated_gbp to a per-kind bucket. Kind lookup mirrors the
+    // denials path: resolved_items[0].item_id → name_canonical → unknown.
+    let demandRows = await ctx.db
+      .query("reservations")
+      .withIndex("by_demand_loss_class", (q) =>
+        q.eq("demand_loss_class", "genuine_demand"),
+      )
+      .collect();
+    if (accountSlug) {
+      demandRows = demandRows.filter((r) => r.account_slug === accountSlug);
+    }
+    demandRows = demandRows.filter((r) => r._creationTime >= cutoffMs);
+
+    const demandByKind = new Map<string, number>();
+    let totalDemandLost = 0;
+    for (const r of demandRows) {
+      const est = r.demand_loss_estimated_gbp ?? 0;
+      if (est <= 0) continue;
+      totalDemandLost += est;
+      let kind: string | undefined;
+      const resolved = (r.resolved_items ?? [])[0];
+      if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
+      if (!kind && resolved?.item_name_canonical) {
+        kind = nameToKind.get(resolved.item_name_canonical);
+      }
+      if (!kind) {
+        const firstRaw = (r.items ?? [])[0];
+        if (firstRaw?.item_name) kind = nameToKind.get(firstRaw.item_name);
+      }
+      if (!kind) kind = "unknown";
+      demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + est);
+    }
+
     // 4. Combine per-kind totals.
     const allKinds = new Set<string>([
       ...deniedByKind.keys(),
       ...gapByKind.keys(),
+      ...demandByKind.keys(),
     ]);
-    type Combined = { kind: string; missed: number; denied: number; gap: number; count: number };
+    type Combined = {
+      kind: string;
+      missed: number;
+      denied: number;
+      gap: number;
+      demandLost: number;
+      count: number;
+    };
     const combined: Combined[] = [];
     for (const k of allKinds) {
       const d = deniedByKind.get(k) ?? { revenue: 0, count: 0 };
       const g = gapByKind.get(k) ?? 0;
-      const missed = d.revenue + g;
+      const dem = demandByKind.get(k) ?? 0;
+      const missed = d.revenue + g + dem;
       if (missed <= 0) continue;
-      combined.push({ kind: k, missed: r2(missed), denied: r2(d.revenue), gap: r2(g), count: d.count });
+      combined.push({
+        kind: k,
+        missed: r2(missed),
+        denied: r2(d.revenue),
+        gap: r2(g),
+        demandLost: r2(dem),
+        count: d.count,
+      });
     }
     combined.sort((a, b) => b.missed - a.missed);
 
@@ -897,13 +948,14 @@ export const getMissedAndDeniedByCategory = query({
     const top = combined.slice(0, 6);
     const rest = combined.slice(6);
     const outerSlices: Array<{
-      kind: string; label: string; missed: number; denied: number; gap: number; revenue: number; color: string;
+      kind: string; label: string; missed: number; denied: number; gap: number; demandLost: number; revenue: number; color: string;
     }> = top.map((c, i) => ({
       kind: c.kind,
       label: missedLabelFor(c.kind),
       missed: c.missed,
       denied: c.denied,
       gap: c.gap,
+      demandLost: c.demandLost,
       revenue: c.missed,
       color: MISSED_PALETTE[i] ?? MISSED_PALETTE[MISSED_PALETTE.length - 1],
     }));
@@ -911,12 +963,14 @@ export const getMissedAndDeniedByCategory = query({
       const oMissed = rest.reduce((s, c) => s + c.missed, 0);
       const oDenied = rest.reduce((s, c) => s + c.denied, 0);
       const oGap = rest.reduce((s, c) => s + c.gap, 0);
+      const oDemand = rest.reduce((s, c) => s + c.demandLost, 0);
       outerSlices.push({
         kind: "other",
         label: "Other",
         missed: r2(oMissed),
         denied: r2(oDenied),
         gap: r2(oGap),
+        demandLost: r2(oDemand),
         revenue: r2(oMissed),
         color: MISSED_OTHER_COLOR,
       });
@@ -928,6 +982,7 @@ export const getMissedAndDeniedByCategory = query({
         missed: r2(unmatchedRevenue),
         denied: r2(unmatchedRevenue),
         gap: 0,
+        demandLost: 0,
         revenue: r2(unmatchedRevenue),
         color: MISSED_UNMATCHED_COLOR,
       });
@@ -992,6 +1047,7 @@ export const getMissedAndDeniedByCategory = query({
           missed: r2(totalMissed),
           denied: r2(totalDeniedRevenue),
           gap: r2(totalGap),
+          demandLost: r2(totalDemandLost),
         },
       },
       denied: {

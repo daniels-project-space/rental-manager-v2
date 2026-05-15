@@ -36,8 +36,8 @@ type MissedData = {
   days: number;
   periodStart: string;
   missed: {
-    slices: Array<{ kind: string; label: string; missed: number; denied: number; gap: number; revenue: number; color: string }>;
-    totals: { missed: number; denied: number; gap: number };
+    slices: Array<{ kind: string; label: string; missed: number; denied: number; gap: number; demandLost: number; revenue: number; color: string }>;
+    totals: { missed: number; denied: number; gap: number; demandLost: number };
   };
   denied: {
     slices: Array<{ kind: string; label: string; denied: number; revenue: number; count: number; color: string }>;
@@ -47,6 +47,8 @@ type MissedData = {
 };
 
 type View = "earned" | "missed";
+// Phase 10.6 — component filter for Missed mode. "all" = legacy behavior.
+type MissedComponent = "all" | "denied" | "gap" | "demand";
 
 type CategoryVolumePieBodyProps = {
   accountSlug: string | null;
@@ -108,9 +110,13 @@ export function CategoryVolumePieBody({
   const [drillKind, setDrillKind] = useState<string | null>(null);
   const [subDrillKind, setSubDrillKind] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<boolean>(true);
+  // Phase 10.6 — component filter for Missed mode (All/Denials/Gaps/Demand).
+  const [missedComponent, setMissedComponent] = useState<MissedComponent>("all");
 
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [days]);
   useEffect(() => { setSubDrillKind(null); }, [drillKind]);
+  // Reset filter when switching out of Missed mode.
+  useEffect(() => { if (view !== "missed") setMissedComponent("all"); }, [view]);
 
   const isMissed = view === "missed";
   // Force £ in missed mode (count is meaningless for missed-revenue).
@@ -243,7 +249,7 @@ export function CategoryVolumePieBody({
           <span className="text-xs text-[#8b8fa3]">
             {isMissed ? (
               missedData
-                ? `£${missedData.missed.totals.missed.toFixed(0)} missed · £${missedData.denied.totals.denied.toFixed(0)} denied · ${days}d${missedData.unmatchedDenials.revenue > 0 ? ` + £${missedData.unmatchedDenials.revenue.toFixed(0)} unmatched` : ""}`
+                ? `£${missedData.missed.totals.missed.toFixed(0)} · £${missedData.denied.totals.denied.toFixed(0)} denied · £${missedData.missed.totals.gap.toFixed(0)} gap · £${missedData.missed.totals.demandLost.toFixed(0)} demand · ${days}d${missedData.unmatchedDenials.revenue > 0 ? ` + £${missedData.unmatchedDenials.revenue.toFixed(0)} unmatched` : ""}`
                 : periodLabel
             ) : subDrillKind ? (
               <>
@@ -299,6 +305,37 @@ export function CategoryVolumePieBody({
               </button>
             ))}
           </div>
+          {/* Phase 10.6 — component filter pill (Missed mode only). */}
+          {isMissed && (
+            <div className="flex gap-1">
+              {(
+                [
+                  { val: "all", label: "All" },
+                  { val: "denied", label: "Denials" },
+                  { val: "gap", label: "Gaps" },
+                  { val: "demand", label: "Demand" },
+                ] as const
+              ).map((c) => {
+                const active = missedComponent === c.val;
+                return (
+                  <button
+                    key={c.val}
+                    onClick={() => setMissedComponent(c.val)}
+                    className="px-2 py-0.5 text-xs rounded transition-colors"
+                    style={{
+                      background: active ? "rgba(245,158,11,0.18)" : "transparent",
+                      color: active ? "#f59e0b" : "#8b8fa3",
+                      border: active
+                        ? "1px solid rgba(245,158,11,0.35)"
+                        : "1px solid transparent",
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div className="flex gap-1">
             {periodOpts.map((p) => (
               <button
@@ -343,7 +380,39 @@ export function CategoryVolumePieBody({
           <SkeletonBlock className={`h-[${CHART_HEIGHT}px] w-full`} />
         ) : missedData.missed.slices.length === 0 ? (
           <EmptyState message={`No missed revenue in ${periodLabel.toLowerCase()}`} icon="📉" />
-        ) : (
+        ) : (() => {
+          // Phase 10.6 — per-component filtering.
+          // "all" → outer = total missed (legacy), inner = denied (legacy).
+          // "denied"/"gap"/"demand" → outer recomputed for that component only,
+          // inner mirrors that component (gap/demand inner replaces denied).
+          type OuterSlice = (typeof missedData.missed.slices)[number];
+          const compKey: "missed" | "denied" | "gap" | "demandLost" =
+            missedComponent === "all" ? "missed"
+            : missedComponent === "denied" ? "denied"
+            : missedComponent === "gap" ? "gap"
+            : "demandLost";
+          const filteredOuter: OuterSlice[] = missedComponent === "all"
+            ? missedData.missed.slices
+            : missedData.missed.slices
+                .map((s) => ({ ...s, missed: s[compKey], revenue: s[compKey] }))
+                .filter((s) => s.missed > 0);
+
+          // Inner ring data: "all" or "denied" uses the denied breakdown; "gap"
+          // and "demand" use that component's per-kind breakdown via outer.
+          const innerDataAll = missedData.denied.slices;
+          const innerData = missedComponent === "all" || missedComponent === "denied"
+            ? innerDataAll
+            : filteredOuter.map((s) => ({
+                kind: s.kind,
+                label: s.label,
+                denied: s[compKey],
+                revenue: s[compKey],
+                count: 0,
+                color: s.color,
+              }));
+          const innerKey: "denied" = "denied";
+
+          return (
           <div
             className="px-16"
             style={{
@@ -353,7 +422,7 @@ export function CategoryVolumePieBody({
             <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
               <PieChart>
                 <Pie
-                  data={missedData.missed.slices}
+                  data={filteredOuter}
                   dataKey="missed"
                   nameKey="label"
                   cx="50%"
@@ -369,7 +438,7 @@ export function CategoryVolumePieBody({
                   animationEasing="ease-out"
                   style={{ cursor: "default" }}
                 >
-                  {missedData.missed.slices.map((s) => (
+                  {filteredOuter.map((s) => (
                     <Cell
                       key={s.kind}
                       fill={s.color}
@@ -380,10 +449,10 @@ export function CategoryVolumePieBody({
                     />
                   ))}
                 </Pie>
-                {missedData.denied.slices.length > 0 && (
+                {innerData.length > 0 && (
                   <Pie
-                    data={missedData.denied.slices}
-                    dataKey="denied"
+                    data={innerData}
+                    dataKey={innerKey}
                     nameKey="label"
                     cx="50%"
                     cy="50%"
@@ -398,7 +467,7 @@ export function CategoryVolumePieBody({
                     animationDuration={400}
                     animationEasing="ease-out"
                   >
-                    {missedData.denied.slices.map((s) => (
+                    {innerData.map((s) => (
                       <Cell
                         key={`d-${s.kind}`}
                         fill={s.color}
@@ -419,14 +488,28 @@ export function CategoryVolumePieBody({
                   }}
                   formatter={(value, _name, item) => {
                     const n = Number(value) || 0;
-                    const p = (item as { payload?: { label?: string } })?.payload;
-                    return [`£${n.toFixed(0)}`, p?.label ?? ""];
+                    const p = (item as { payload?: OuterSlice })?.payload;
+                    if (!p) return [`£${n.toFixed(0)}`, ""];
+                    // Outer slice in "all" mode: show three-component split.
+                    const hasSplit =
+                      missedComponent === "all" &&
+                      typeof p.denied === "number" &&
+                      typeof p.gap === "number" &&
+                      typeof p.demandLost === "number";
+                    if (hasSplit) {
+                      return [
+                        `£${n.toFixed(0)}: £${p.denied.toFixed(0)} denials + £${p.gap.toFixed(0)} gap + £${p.demandLost.toFixed(0)} demand`,
+                        p.label ?? "",
+                      ];
+                    }
+                    return [`£${n.toFixed(0)}`, p.label ?? ""];
                   }}
                 />
               </PieChart>
             </ResponsiveContainer>
           </div>
-        )
+          );
+        })()
       ) : data === undefined ? (
         <SkeletonBlock className={`h-[${CHART_HEIGHT}px] w-full`} />
       ) : data.slices.length === 0 ? (

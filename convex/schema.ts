@@ -332,6 +332,19 @@ export default defineSchema({
     last_polled_at: v.optional(v.number()),
     /** Last Hygglo filter the row was seen in: "pending" | "current" | "future" | "obsolete". */
     source_filter: v.optional(v.string()),
+    // Phase 10.1 — Demand-Loss Classifier. Populated by classifyObsoleteReservations
+    // for rows where is_obsolete === true. Optional/backward compatible.
+    demand_loss_class: v.optional(
+      v.union(
+        v.literal("genuine_demand"),
+        v.literal("renter_walked"),
+        v.literal("unbooked"),
+        v.literal("duplicate_of_denial"),
+        v.literal("unknown"),
+      ),
+    ),
+    demand_loss_classified_at: v.optional(v.number()),
+    demand_loss_estimated_gbp: v.optional(v.number()),
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
@@ -340,7 +353,8 @@ export default defineSchema({
     .index("by_account_slug", ["account_slug"])
     .index("by_start_date", ["start_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])
-    .index("by_hygglo_order_id", ["hygglo_order_id"]),
+    .index("by_hygglo_order_id", ["hygglo_order_id"])
+    .index("by_demand_loss_class", ["demand_loss_class"]),
 
   calendar_holds: defineTable({
     item_id: v.id("items"),
