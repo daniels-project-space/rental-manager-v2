@@ -374,3 +374,126 @@ export const admin_resolveBatchWrite = mutation({
     return { ok: true, patched };
   },
 });
+
+// ───────────────────────────────────────────────────────────────────────
+// Vision-resolver Trigger.dev orchestration surface.
+// Lifted to src/trigger/vision-resolve.ts. Single bundled query +
+// per-call merge mutation. Vision Grok holds Convex actions open the
+// longest of any LLM call (~8-15s per call) — biggest action-runtime
+// saver after the text resolver.
+// ───────────────────────────────────────────────────────────────────────
+
+export const admin_getVisionBatchInputs = query({
+  args: { limit: v.number() },
+  handler: async (ctx, { limit }) => {
+    // Mirrors listNeedingVision selection logic.
+    const KIT_RE = /(kit|set|complete|full|bundle|package|cinematic|production)|\+/i;
+    const all = await ctx.db.query("reservations").collect();
+    type Row = (typeof all)[number] & {
+      items?: Array<{ item_name: string }>;
+      photos_urls?: string[];
+      resolved_items?: Array<{
+        item_id: string;
+        item_name_canonical: string;
+        confidence: number;
+        qty?: number;
+        revenue_gbp?: number;
+      }>;
+      resolution_at?: number;
+      resolution_method?: string | null;
+      resolution_input_hash?: string;
+    };
+    const candidates: Array<{ row: Row; ts: number }> = [];
+    for (const r of all as Row[]) {
+      if (r.is_obsolete) continue;
+      if (!r.hygglo_order_id) continue;
+      if ((r.photos_urls?.length ?? 0) === 0) continue;
+      if ((r.resolution_method ?? null) !== "llm") continue;
+      const title = (r.items ?? []).map((i) => i.item_name).join(" + ");
+      if (!KIT_RE.test(title)) continue;
+      candidates.push({ row: r, ts: r.resolution_at ?? r._creationTime });
+    }
+    candidates.sort((a, b) => b.ts - a.ts);
+    const picks = candidates.slice(0, limit);
+
+    // Inventory + bundles (shared with text resolver — same source of truth)
+    const allItems = await ctx.db.query("items").collect();
+    const inventory = allItems
+      .filter((i) => i.status === "active" && !i.is_marketing_only)
+      .map((i) => ({
+        _id: i._id as string,
+        name_canonical: i.name_canonical,
+        aliases: i.aliases ?? [],
+        kind: i.kind,
+        notes: i.notes,
+      }));
+    const bundleDocs = await ctx.db.query("bundles").collect();
+    const allBundleItems = await ctx.db.query("bundle_items").collect();
+    const itemById = new Map(allItems.map((i) => [i._id as string, i]));
+    const bundles = bundleDocs.map((b) => {
+      const its = allBundleItems
+        .filter((bi) => bi.bundle_id === b._id)
+        .map((bi) => {
+          const item = bi.item_id ? itemById.get(bi.item_id as string) : null;
+          return {
+            item_id: item?._id as string | undefined,
+            item_name_canonical: item?.name_canonical ?? "",
+            qty: bi.qty,
+          };
+        })
+        .filter((x) => x.item_id);
+      return { bundle_id: b._id as string, bundle_name: b.bundle_name, items: its };
+    });
+
+    const work = picks.map(({ row }) => ({
+      id: row._id as string,
+      photos_urls: (row.photos_urls ?? []).slice(0, 6), // cost cap mirrors action
+      title: (row.items ?? []).map((i) => i.item_name).join(" + "),
+      already_resolved: (row.resolved_items ?? []).map((x) => ({
+        item_id: x.item_id,
+        item_name_canonical: x.item_name_canonical,
+        confidence: x.confidence,
+        qty: x.qty ?? 1,
+      })),
+      resolution_input_hash: row.resolution_input_hash ?? "",
+    }));
+
+    return { candidates: work, inventory, bundles };
+  },
+});
+
+/**
+ * Single-reservation merge: append vision-detected items into resolved_items,
+ * re-expand bundles, persist with method="llm+vision". One mutation per
+ * Trigger run (called inside the batch loop). Public — same access scope
+ * as admin_resolveBatchWrite.
+ */
+export const admin_writeVisionAugmentation = mutation({
+  args: {
+    reservation_id: v.id("reservations"),
+    resolved_items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      confidence: v.number(),
+      qty: v.optional(v.number()),
+      revenue_gbp: v.optional(v.number()),
+    })),
+    expanded_items: v.optional(v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+      via_bundle: v.optional(v.id("bundles")),
+    }))),
+    input_hash: v.string(),
+  },
+  handler: async (ctx, { reservation_id, resolved_items, expanded_items, input_hash }) => {
+    await ctx.db.patch(reservation_id, {
+      resolved_items,
+      expanded_items,
+      resolution_at: Date.now(),
+      resolution_method: "llm+vision",
+      resolution_input_hash: input_hash,
+    });
+    return { ok: true };
+  },
+});

@@ -136,16 +136,18 @@ crons.interval(
 );
 
 
-// ── Vision resolver — Grok vision pass over LLM-resolved kit-style
-// reservations. Catches kit-lens / accessory items hidden in the photo
-// that the text-only resolver missed. Tight 5-per-cycle cap (vision costs
-// ~10x text).
+// ── Vision resolver — LIFTED TO TRIGGER.DEV ───────────────────
+// Now lives at src/trigger/vision-resolve.ts :: visionResolveTask.
+// Vision Grok holds Convex actions open ~8-15s × 5 calls = up to 75s
+// of action time per cycle. Trigger.dev free-tier compute avoids that.
+/*
 crons.interval(
   "vision_resolver augment",
   { minutes: 60 },
   internal.vision_resolver.augmentBatch,
   { limit: 5 },
 );
+*/
 
 
 // ── Account profile-image sync — weekly. Re-scrapes each account's
