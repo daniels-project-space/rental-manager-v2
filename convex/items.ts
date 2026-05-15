@@ -512,11 +512,58 @@ export const checkAvailability = query({
     const blocked_dates = dates.filter((d) => (heldByDate.get(d) ?? 0) >= qty_total);
     const owner_unavailable_dates = Array.from(ownerUnavailDates).sort();
 
+    // ── Alternatives: when unavailable, find same-kind items that ARE free
+    // in the requested window. Matches v1 chat behaviour
+    // ("Sony FX3 not available. Alternatives: A7 V, A7 III, A7 II").
+    type Alternative = {
+      id: string;
+      name: string;
+      kind?: string;
+      qty_total: number;
+      peak_held: number;
+      qty_available_min: number;
+    };
+    let alternatives: Alternative[] = [];
+    if (!available && item.kind) {
+      const sameKind = allItems.filter(
+        (i) => i.kind === item.kind && i._id !== item._id
+                && i.status === "active" && !i.is_marketing_only && (i.qty ?? 1) >= 1,
+      );
+      for (const alt of sameKind) {
+        const altQty = alt.qty ?? 1;
+        let altPeak = 0;
+        for (const date of dates) {
+          const holds = await ctx.db
+            .query("calendar_holds")
+            .withIndex("by_item_date", (q2) =>
+              q2.eq("item_id", alt._id).eq("date", date),
+            )
+            .collect();
+          const filtered = holds.filter((h) => h.status && HOLD_STATUSES.has(h.status));
+          const heldThatDay = filtered.reduce((sum, h) => sum + (h.qty_held ?? 1), 0);
+          if (heldThatDay > altPeak) altPeak = heldThatDay;
+          if (altPeak >= altQty) break; // already exhausted, skip remaining dates
+        }
+        if (altPeak < altQty) {
+          alternatives.push({
+            id: alt._id as string,
+            name: alt.name_canonical,
+            kind: alt.kind,
+            qty_total: altQty,
+            peak_held: altPeak,
+            qty_available_min: altQty - altPeak,
+          });
+        }
+        if (alternatives.length >= 3) break;
+      }
+    }
+
     return {
       ok: true as const,
       item: {
         id: item._id,
         name: item.name_canonical,
+        kind: item.kind,
         // items table has no account_slug; echoing caller's preference for context only
         account_slug: account_slug ?? null,
         qty_total,
@@ -525,6 +572,7 @@ export const checkAvailability = query({
       peak_held,
       blocked_dates,
       owner_unavailable_dates,
+      alternatives,
       date_range: { start_date, end_date },
       source: "calendar_holds+reservations" as const,
     };
