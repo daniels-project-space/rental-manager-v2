@@ -58,7 +58,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "message required" }, { status: 400 });
   }
 
-  const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+  // Must match the dashboard's read deployment (src/lib/convex.ts) — Vercel's
+  // NEXT_PUBLIC_CONVEX_URL points to exciting-lion-29, but the dashboard reads
+  // from hearty-oyster-600. Using the wrong URL silently writes chat messages
+  // to a deployment the UI never queries → "chat doesn't answer".
+  const CONVEX_URL =
+    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
+  const convex = new ConvexHttpClient(CONVEX_URL);
   const turnStart = Date.now();
 
   // 1. Persist user message

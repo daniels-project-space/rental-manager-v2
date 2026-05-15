@@ -30,6 +30,9 @@ export const appendMessage = mutation({
     tool_name: v.optional(v.string()),
     tool_call_id: v.optional(v.string()),
     metadata: v.optional(v.string()),
+    // Optional override for backfill/migration scripts that need to preserve
+    // historical timestamps. New chat turns always omit this.
+    created_at: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const thread_id = args.thread_id ?? "dashboard";
@@ -40,7 +43,7 @@ export const appendMessage = mutation({
       tool_name: args.tool_name,
       tool_call_id: args.tool_call_id,
       metadata: args.metadata,
-      created_at: Date.now(),
+      created_at: args.created_at ?? Date.now(),
     });
     return id;
   },
