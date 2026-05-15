@@ -5,7 +5,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, mutation } from "./_generated/server";
+import { internalQuery, internalMutation, mutation, query } from "./_generated/server";
 
 export const getReservationForResolve = internalQuery({
   args: { reservation_id: v.id("reservations") },
@@ -229,5 +229,148 @@ export const listNeedingVision = internalQuery({
     }
     candidates.sort((a, b) => b.ts - a.ts);
     return candidates.slice(0, limit).map((c) => c.id);
+  },
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// Trigger.dev orchestration surface.
+// The item-resolver action is lifted to src/trigger/resolve-items.ts to
+// stop billing Convex action runtime for long Grok calls. The Trigger
+// task calls these public queries/mutations via HTTP.
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Public bundle: returns everything the resolver needs for one batch.
+ * Cuts HTTP round-trips per batch from ~5 to 1.
+ *
+ *   - unresolved: the reservations to process (already hash-skipping fresh ones)
+ *   - inventory:  all active inventory items
+ *   - bundles:    bundle definitions for expansion
+ *   - cache:      pre-fetched cache hits per title_hash (where available)
+ *   - overrides:  manual mapping table by title_hash
+ */
+export const admin_getResolverBatchInputs = query({
+  args: { limit: v.number(), include_notes_only: v.optional(v.boolean()) },
+  handler: async (ctx, { limit, include_notes_only }) => {
+    // Reuse the same logic as listUnresolved
+    const all = await ctx.db.query("reservations").collect();
+    type Item = { item_name: string; qty?: number };
+    type Reservation = (typeof all)[number] & {
+      items?: Item[];
+      notes?: string | null;
+      resolution_input_hash?: string;
+      resolved_items?: unknown;
+    };
+    const need: Array<{
+      id: string;
+      items: Item[];
+      notes: string | null;
+      photos_urls: string[];
+    }> = [];
+    for (const rRaw of all) {
+      const r = rRaw as Reservation;
+      if (r.is_obsolete) continue;
+      const hasItems = (r.items?.length ?? 0) > 0;
+      const notes = r.notes;
+      const hasNotes =
+        notes !== undefined && notes !== null && notes.trim().length > 0;
+      if (!hasItems && !(include_notes_only === true && hasNotes)) continue;
+      const items: Item[] = hasItems
+        ? (r.items as Item[])
+        : [{ item_name: (notes as string).trim() }];
+      const currentHash = items.map((i) => i.item_name).sort().join("|");
+      if (r.resolved_items !== undefined && r.resolution_input_hash === currentHash) continue;
+      need.push({
+        id: r._id as string,
+        items,
+        notes: notes ?? null,
+        photos_urls: ((r as { photos_urls?: string[] }).photos_urls ?? []),
+      });
+      if (need.length >= limit) break;
+    }
+    const sliced = need.slice(0, limit);
+
+    // Inventory snapshot
+    const allItems = await ctx.db.query("items").collect();
+    const inventory = allItems
+      .filter((i) => i.status === "active" && !i.is_marketing_only)
+      .map((i) => ({
+        _id: i._id as string,
+        name_canonical: i.name_canonical,
+        aliases: i.aliases ?? [],
+        kind: i.kind,
+        notes: i.notes,
+      }));
+
+    // Bundle definitions (joined with bundle_items)
+    const bundleDocs = await ctx.db.query("bundles").collect();
+    const allBundleItems = await ctx.db.query("bundle_items").collect();
+    const itemById = new Map(allItems.map((i) => [i._id as string, i]));
+    const bundles = bundleDocs.map((b) => {
+      const its = allBundleItems
+        .filter((bi) => bi.bundle_id === b._id)
+        .map((bi) => {
+          const item = bi.item_id ? itemById.get(bi.item_id as string) : null;
+          return {
+            item_id: item?._id as string | undefined,
+            item_name_canonical: item?.name_canonical ?? "",
+            qty: bi.qty,
+          };
+        })
+        .filter((x) => x.item_id);
+      return {
+        bundle_id: b._id as string,
+        bundle_name: b.bundle_name,
+        items: its,
+      };
+    });
+
+    return {
+      unresolved: sliced,
+      inventory,
+      bundles,
+    };
+  },
+});
+
+/**
+ * Public batch-write mutation: persists resolution results for multiple
+ * reservations in one call. Each result includes resolved_items + expanded_items
+ * + method + input_hash, exactly mirroring the original action's writes.
+ */
+export const admin_resolveBatchWrite = mutation({
+  args: {
+    results: v.array(v.object({
+      reservation_id: v.id("reservations"),
+      resolved_items: v.array(v.object({
+        item_id: v.id("items"),
+        item_name_canonical: v.string(),
+        confidence: v.number(),
+        qty: v.optional(v.number()),
+        revenue_gbp: v.optional(v.number()),
+      })),
+      expanded_items: v.optional(v.array(v.object({
+        item_id: v.id("items"),
+        item_name_canonical: v.string(),
+        qty: v.number(),
+        via_bundle: v.optional(v.id("bundles")),
+      }))),
+      method: v.string(),
+      input_hash: v.string(),
+    })),
+  },
+  handler: async (ctx, { results }) => {
+    let patched = 0;
+    for (const r of results) {
+      await ctx.db.patch(r.reservation_id, {
+        resolved_items: r.resolved_items,
+        expanded_items: r.expanded_items,
+        resolution_at: Date.now(),
+        resolution_method: r.method,
+        resolution_input_hash: r.input_hash,
+      });
+      patched++;
+    }
+    return { ok: true, patched };
   },
 });

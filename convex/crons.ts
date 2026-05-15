@@ -95,26 +95,33 @@ crons.interval(
 );
 
 
-// ── Item resolver — LLM-driven resolution of Hygglo titles → inventory IDs.
-// Runs every 5 min, resolves up to 15 unresolved reservations per cycle so
-// new poller writes get accurate item identification within minutes.
+// ── Item resolver — LIFTED TO TRIGGER.DEV ──────────────────────
+// Now lives at src/trigger/resolve-items.ts :: resolveItemsTask.
+// Convex action runtime was billed for every Grok call (3-8s × 15
+// resolutions per batch × 96 runs/day = ~2-3 hrs/day of action time).
+// Trigger.dev free-tier compute is materially cheaper for long LLM jobs.
+// To re-enable here, uncomment the block below AND disable the
+// Trigger schedule. They share the same input_hash idempotency, so
+// running both is wasteful (double-LLM) but not corrupting.
+/*
 crons.interval(
   "item_resolver batch",
   { minutes: 15 },
   internal.item_resolver.resolveBatch,
   { limit: 15 },
 );
+*/
 
-// ── Notes-only backfill — for v1-imported reservations that came with
-// items=[] but a rich `notes` description. Runs slower than the main
-// resolver to spread LLM cost; naturally idles once the pool is empty
-// (listUnresolved returns nothing). Each call resolves up to 10 rows.
+// ── Notes-only backfill — LIFTED TO TRIGGER.DEV ───────────────
+// Now lives at src/trigger/resolve-items.ts :: resolveItemsNotesBackfillTask.
+/*
 crons.interval(
   "item_resolver notes backfill",
   { minutes: 60 },
   internal.item_resolver.resolveBatch,
   { limit: 10, include_notes_only: true },
 );
+*/
 
 
 // ── Booking-time extractor — LLM reads owner-renter chat → pickup_time /
