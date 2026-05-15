@@ -11,12 +11,15 @@ export const getMessages = query({
   handler: async (ctx, args) => {
     const thread_id = args.thread_id ?? "dashboard";
     const limit = args.limit ?? 50;
+    // Latest N messages, returned in ascending (oldest-first) order for the
+    // UI. order("asc").take(N) silently returned the OLDEST 50 once the
+    // thread exceeded 50 rows, so new turns never appeared in the chat.
     const rows = await ctx.db
       .query("dashboard_chat_messages")
       .withIndex("by_thread_and_time", (q) => q.eq("thread_id", thread_id))
-      .order("asc")
+      .order("desc")
       .take(limit);
-    return rows;
+    return rows.reverse();
   },
 });
 
