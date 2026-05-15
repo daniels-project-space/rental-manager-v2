@@ -129,16 +129,24 @@ export function isEarned(r: ReservationRow, today: string): boolean {
 
 /**
  * Paid-for-revenue check WITH v1 legacy fallback. Rows imported from v1
- * (Postgres rental table) have no order_step but trustworthy status —
- * treat status==="confirmed" as paid in that case. Used by items.ts
- * for utilization / cycle counts.
+ * (Postgres rental table) have no order_step but trustworthy status — the
+ * v1 importer set status="completed" on every historical paid rental
+ * (1490 of 1490 v1 imports), so we must accept both "confirmed" (in-
+ * progress) AND "completed" (finished) here. Previously only
+ * "confirmed" passed, which silently dropped 99.4% of historical
+ * revenue from every per-item earnings / ROI / payback / dust-collector
+ * / kit-affinity query (audit: items.ts, intel.ts call sites).
+ * Used by items.ts and intel.ts for revenue + utilization + cycle counts.
+ * Currently-active queries upstream-filter by date range, so accepting
+ * "completed" here doesn't leak historic rentals into "out of stock
+ * today" style checks.
  */
 export function isPaidWithV1Legacy(r: ReservationRow): boolean {
   if (r.is_obsolete) return false;
   if (r.order_step) {
     return (["VERIFIED","BOOKED_AFTER_VERIFIED","DELIVERED","RETURNED","REVIEWED"] as string[]).includes(r.order_step);
   }
-  return r.status === "confirmed";
+  return r.status === "confirmed" || r.status === "completed";
 }
 
 /** Account scope filter. Passes a single-account predicate when slug given. */
