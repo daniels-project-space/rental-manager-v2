@@ -95,7 +95,11 @@ export const refresh = internalMutation({
     const startedAt = Date.now();
     const today = todayISO();
     const cutoff = isoDaysAgo(30);
-    const reservations = await ctx.db.query("reservations").collect();
+    // Indexed read — only rentals whose start_date is within the 30-day
+    // window. Drops ~1767 rows → ~80 rows per refresh.
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
     const items = await ctx.db.query("items").collect();
 
     const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
@@ -115,7 +119,11 @@ export const refreshOne = internalMutation({
     const startedAt = Date.now();
     const today = todayISO();
     const cutoff = isoDaysAgo(30);
-    const reservations = await ctx.db.query("reservations").collect();
+    // Indexed read — only rentals whose start_date is within the 30-day
+    // window. Drops ~1767 rows → ~80 rows per refresh.
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
     const items = await ctx.db.query("items").collect();
     for (const acc of [account, ACCOUNT_ALL]) {
       await recomputeForAccount(ctx, acc, startedAt, reservations, items, today, cutoff);

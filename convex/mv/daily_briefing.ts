@@ -12,7 +12,7 @@
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
-import { getAccountSlugs, upsertSingleton, todayISO, ACCOUNT_ALL } from "./_helpers";
+import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
 
 type ItemTotal = { name: string; gbp: number; count: number };
 
@@ -103,7 +103,14 @@ export const refresh = internalMutation({
   handler: async (ctx, { account }) => {
     const startedAt = Date.now();
     const today = todayISO();
-    const reservations = await ctx.db.query("reservations").collect();
+    // 90-day rolling window. daily_briefing reports today's earnings +
+    // active rentals (start_date<=today<=end_date) + 'this month' counters.
+    // Anything older than 90 days can't appear in those buckets. Indexed
+    // read drops ~1767 rows → ~200 rows per refresh.
+    const cutoff = isoDaysAgo(90);
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
 
     const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
     let rowsAffected = 0;
@@ -130,7 +137,10 @@ export const refreshOne = internalMutation({
   handler: async (ctx, { account }) => {
     const startedAt = Date.now();
     const today = todayISO();
-    const reservations = await ctx.db.query("reservations").collect();
+    const cutoff = isoDaysAgo(90);
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
 
     let rowsAffected = 0;
     for (const acc of [account, ACCOUNT_ALL]) {

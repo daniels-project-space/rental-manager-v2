@@ -9,6 +9,32 @@ import { formatContext } from "../../../mastra/context-formatter";
 import { GROK_CHAT_MODEL } from "../../../lib/ai-models";
 import type { AgentExecutionOptionsBase } from "@mastra/core/agent";
 
+// ── Context-bundle cache (cost control) ────────────────────────────────
+// getContextBundle does 6 full table scans on Convex (reservations,
+// renters, bundles, pricing, historical_revenue, items). Per-chat-turn
+// freshness is overkill — bursty conversations were burning ~60 scans/min.
+// 60s TTL slashes that to at most 1 fetch/minute regardless of chat volume.
+const BUNDLE_TTL_MS = 60_000;
+type BundleVal = Awaited<ReturnType<ConvexHttpClient["query"]>>;
+const bundleCache: { value: BundleVal | null; expiresAt: number } = {
+  value: null,
+  expiresAt: 0,
+};
+
+async function getCachedBundle(convex: ConvexHttpClient): Promise<BundleVal> {
+  const now = Date.now();
+  if (bundleCache.value !== null && now < bundleCache.expiresAt) {
+    return bundleCache.value;
+  }
+  const fresh = await convex.query(
+    api.dashboard_chat_context.getContextBundle,
+    {},
+  );
+  bundleCache.value = fresh;
+  bundleCache.expiresAt = now + BUNDLE_TTL_MS;
+  return fresh;
+}
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -84,7 +110,7 @@ export async function POST(req: Request) {
   let composedInstructions: string = SYSTEM_PROMPT_BASE;
   try {
     const [bundle, syncState] = await Promise.all([
-      convex.query(api.dashboard_chat_context.getContextBundle, {}),
+      getCachedBundle(convex),
       convex.query(api.sync_state.get, { source: "hygglo_poller" }),
     ]);
     const ctxStr = formatContext(bundle, { syncState, generatedAt: Date.now() });

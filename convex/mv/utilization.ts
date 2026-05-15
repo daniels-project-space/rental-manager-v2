@@ -20,7 +20,12 @@ export const refresh = internalMutation({
     const weekAgo = isoDaysAgo(7);
 
     const items = await ctx.db.query("items").collect();
-    const reservations = await ctx.db.query("reservations").collect();
+    // 30-day rolling window. Utilisation is computed over a recent period;
+    // older rentals don't affect today's snapshot.
+    const cutoff = isoDaysAgo(30);
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
 
     const targets = targetAccount ? [targetAccount, ACCOUNT_ALL] : getAccountSlugs();
     let rowsAffected = 0;
