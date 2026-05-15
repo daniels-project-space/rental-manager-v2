@@ -787,11 +787,15 @@ export const getMissedAndDeniedByCategory = query({
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     const periodStart = cutoffStr;
 
-    // 1. Build name → kind map from items (one collect).
+    // 1. Build kind maps from items. Phase 9.2: prefer item_id FK (resolved
+    //    at write time by the LLM) over name_canonical string matching.
     const allItems = await ctx.db.query("items").collect();
     const nameToKind = new Map<string, string>();
+    const idToKind = new Map<string, string>();
     for (const it of allItems) {
-      if (it.name_canonical) nameToKind.set(it.name_canonical, it.kind ?? "unknown");
+      const kind = it.kind ?? "unknown";
+      if (it.name_canonical) nameToKind.set(it.name_canonical, kind);
+      idToKind.set(it._id, kind);
     }
 
     // pricing fallback for denial value
@@ -826,7 +830,12 @@ export const getMissedAndDeniedByCategory = query({
       }
       totalDeniedRevenue += estimatedValue;
 
-      const kind = d.item_name ? nameToKind.get(d.item_name) : undefined;
+      // Kind lookup priority: FK (item_id) → canonical name → unmatched.
+      // Phase 9.2 — new denials land here via the LLM resolver; the name path
+      // is the fallback for historical rows where item_id is still null.
+      let kind: string | undefined;
+      if (d.item_id) kind = idToKind.get(d.item_id);
+      if (!kind && d.item_name) kind = nameToKind.get(d.item_name);
       if (!kind) {
         unmatchedRevenue += estimatedValue;
         unmatchedCount += 1;

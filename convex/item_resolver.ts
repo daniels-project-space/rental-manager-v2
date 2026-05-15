@@ -49,14 +49,14 @@ async function getXaiKeyFromVault(): Promise<string> {
 
 // Built lazily on first call so the module loads without env access.
 let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
+export async function getXai() {
   if (_xai) return _xai;
   const key = await getXaiKeyFromVault();
   _xai = createXai({ apiKey: key });
   return _xai;
 }
 
-const RESOLUTION_SCHEMA = z.object({
+export const RESOLUTION_SCHEMA = z.object({
   resolved_items: z.array(z.object({
     item_id: z.string().describe("Convex Id of the inventory item exactly as supplied"),
     item_name_canonical: z.string(),
@@ -106,7 +106,7 @@ function classifyCategories(title: string): Set<string> {
 
 /** Return inventory subset relevant to the title. Falls back to the full
  *  list when classifier finds no hits (safer than missing items). */
-function filterInventoryByCategory<T extends { kind?: string }>(inventory: T[], title: string): T[] {
+export function filterInventoryByCategory<T extends { kind?: string }>(inventory: T[], title: string): T[] {
   const cats = classifyCategories(title);
   if (cats.size === 0) return inventory; // no signal — send everything
   // Always include items with no kind set (defensive — newer entries may lack it).
@@ -115,7 +115,7 @@ function filterInventoryByCategory<T extends { kind?: string }>(inventory: T[], 
   return filtered.length >= 8 ? filtered : inventory;
 }
 
-function modelPrompt(): string {
+export function modelPrompt(): string {
   return `You are a precise camera/photo equipment cataloguer for a film-rental business.
 
 You will receive a Hygglo listing title (which often bundles multiple physical items)
@@ -146,7 +146,7 @@ Output strict JSON matching the schema. Use the exact item_id value supplied
 for each inventory entry — these are Convex IDs and must round-trip verbatim.`;
 }
 
-function buildUserMessage(title: string, inv: InventoryItem[]): string {
+export function buildUserMessage(title: string, inv: InventoryItem[]): string {
   const inventoryBlock = inv
     .map((i) => {
       const aliases = (i.aliases ?? []).length > 0 ? ` | aliases: ${i.aliases!.join(", ")}` : "";
