@@ -436,7 +436,21 @@ export default defineSchema({
     estimated_value: v.optional(v.number()),
     notes: v.optional(v.string()),
     created_at: v.number(),
-  }).index("by_account", ["account_id"]).index("by_reason", ["reason"]),
+    // Clean "Brand Model" extracted from the listing title via LLM. Used
+    // by getSmartBuyRanking so the chat returns 'Sony FX6' instead of
+    // 'Sony fx6 4k cinema camera + 24-70 gm + tripod...'. canonicalized_at
+    // gates re-runs after item_name edits.
+    canonical_product: v.optional(v.string()),
+    canonical_brand: v.optional(v.string()),
+    canonical_kind: v.optional(v.string()),
+    canonicalized_at: v.optional(v.number()),
+    // Phase 9.2 — FK resolved at write time via existing LLM item resolver.
+    // Enables Missed-Revenue pie to group denials by inventory item kind
+    // instead of dumping them into a single "Unmatched" slice.
+    item_id: v.optional(v.id("items")),
+    item_resolved_at: v.optional(v.number()),
+    item_resolution_confidence: v.optional(v.number()),
+  }).index("by_account", ["account_id"]).index("by_reason", ["reason"]).index("by_item", ["item_id"]),
 
   // ── Audit log ────────────────────────────────────────────────
   audit_log: defineTable({

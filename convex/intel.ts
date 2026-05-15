@@ -269,17 +269,37 @@ export const getSmartBuyRanking = query({
     const windowDays = days ?? 180;
     const cutoff = Date.now() - windowDays * 86_400 * 1000;
 
-    // Denials in window → candidate demand
+    // Denials in window → candidate demand.
+    // Group by LLM-canonicalised product when available ("Sony FX6")
+    // instead of the raw listing title ("Sony FX6 4K cinema camera + 24-70 GM + tripod...")
+    // so the chat returns clean ranked items. Falls back to normName for any
+    // denial that hasn't been canonicalised yet.
     const denials = await ctx.db.query("denial_records").collect();
-    type Agg = { displayName: string; requestCount: number; lostGbp: number };
+    type Agg = { displayName: string; brand?: string; kind?: string; requestCount: number; lostGbp: number };
     const byNorm = new Map<string, Agg>();
     for (const r of denials) {
       if (r.created_at < cutoff) continue;
       if (!r.item_name) continue;
-      const k = normName(r.item_name);
-      const cur = byNorm.get(k) ?? { displayName: r.item_name, requestCount: 0, lostGbp: 0 };
+      const dr = r as {
+        item_name?: string;
+        canonical_product?: string;
+        canonical_brand?: string;
+        canonical_kind?: string;
+        estimated_value?: number;
+      };
+      const display = dr.canonical_product ?? dr.item_name ?? "?";
+      const k = dr.canonical_product
+        ? "c:" + dr.canonical_product.toLowerCase().trim()
+        : "r:" + normName(dr.item_name ?? "");
+      const cur = byNorm.get(k) ?? {
+        displayName: display,
+        brand: dr.canonical_brand,
+        kind: dr.canonical_kind,
+        requestCount: 0,
+        lostGbp: 0,
+      };
       cur.requestCount += 1;
-      cur.lostGbp += typeof r.estimated_value === "number" ? r.estimated_value : 0;
+      cur.lostGbp += typeof dr.estimated_value === "number" ? dr.estimated_value : 0;
       byNorm.set(k, cur);
     }
 
