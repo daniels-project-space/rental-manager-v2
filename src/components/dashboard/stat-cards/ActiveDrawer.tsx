@@ -17,6 +17,15 @@ export interface Rental {
   pickup_method?: string | null;
   return_method?: string | null;
   item_tiles?: Array<{ name: string; image_url: string | null; qty: number }>;
+  // PASS-8: distinct-image tiles (deduped by image_url). First entry = master.
+  item_image_tiles?: Array<{
+    image_url: string;
+    name: string;
+    names_in_group: string[];
+    qty: number;
+  }>;
+  // PASS-8: items with no resolved image (rendered as small text pills).
+  extra_text_items?: string[];
   items: string[];
   photo_url?: string | null;
   master_image_url?: string | null;
@@ -71,18 +80,33 @@ export function RentalRow({ r }: { r: Rental }) {
   // during deploys; it now joins ALL names rather than emitting "+N more".
   const summary = r.item_names_summary
     ?? (r.items.length > 0 ? r.items.join(", ") : "(no item)");
-  const masterImg = r.master_image_url ?? r.photo_url ?? null;
+  // PASS-8: prefer item_image_tiles[0] (distinct-image dedup output) for
+  // the master thumb. Fall back to legacy master_image_url for stale API.
+  const imageTiles = r.item_image_tiles ?? [];
+  const masterImg =
+    imageTiles[0]?.image_url ?? r.master_image_url ?? r.photo_url ?? null;
+  const masterAlt = imageTiles[0]?.name ?? summary;
+  // Additional distinct-image tiles (skip master). Cap at 4 visible + "+N".
+  const additionalTiles = imageTiles.slice(1);
+  const MAX_VISIBLE_ADDL = 4;
+  const visibleAddl = additionalTiles.slice(0, MAX_VISIBLE_ADDL);
+  const hiddenAddlCount = Math.max(0, additionalTiles.length - MAX_VISIBLE_ADDL);
+  // Items with no image — rendered as small text pills (up to 3 + "+N").
+  const extraText = r.extra_text_items ?? [];
+  const MAX_PILLS = 3;
+  const visiblePills = extraText.slice(0, MAX_PILLS);
+  const hiddenPillCount = Math.max(0, extraText.length - MAX_PILLS);
 
   return (
     <div
       className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
     >
-      {/* Master Thumbnail — v1 pattern (one 50×50 photo per rental) */}
+      {/* Master Thumbnail — v1 pattern (one 56×56 photo per rental) */}
       <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-md bg-slate-900/60 ring-1 ring-slate-800">
         {masterImg ? (
           <Image
             src={masterImg}
-            alt={summary}
+            alt={masterAlt}
             fill
             sizes="56px"
             className="object-cover"
@@ -113,13 +137,59 @@ export function RentalRow({ r }: { r: Rental }) {
             {r.account_slug}
           </span>
         </div>
-        {/* Item names — v1 pattern (PASS-7).
-            Full comma-separated list, wraps to multiple lines.
-            v1: r.items.join(', ') with white-space:nowrap+ellipsis on mobile.
-            We allow wrap on desktop drawer (more vertical room) but cap to
-            2 lines via line-clamp so a 12-item rental doesn't blow up the row. */}
+        {/* PASS-8: additional distinct-image tiles (deduped by image_url).
+            Rendered when >1 distinct images exist for the rental. Each tile
+            is 40x40, rounded, hover-title shows all collapsed item names. */}
+        {(visibleAddl.length > 0 || visiblePills.length > 0) && (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            {visibleAddl.map((t) => (
+              <div
+                key={t.image_url}
+                className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-md bg-slate-900/60 ring-1 ring-slate-800"
+                title={t.names_in_group.join(", ")}
+              >
+                <Image
+                  src={t.image_url}
+                  alt={t.name}
+                  fill
+                  sizes="40px"
+                  className="object-cover"
+                  unoptimized
+                />
+              </div>
+            ))}
+            {hiddenAddlCount > 0 && (
+              <span
+                className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-slate-800/60 text-[10px] font-semibold text-slate-300 ring-1 ring-slate-700"
+                title={additionalTiles
+                  .slice(MAX_VISIBLE_ADDL)
+                  .flatMap((t) => t.names_in_group)
+                  .join(", ")}
+              >
+                +{hiddenAddlCount}
+              </span>
+            )}
+            {visiblePills.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center px-1.5 py-0.5 text-[10px] text-slate-400 border border-slate-700 rounded"
+                title={name}
+              >
+                {name}
+              </span>
+            ))}
+            {hiddenPillCount > 0 && (
+              <span className="inline-flex items-center px-1 py-0.5 text-[10px] text-slate-400 border border-slate-700 rounded">
+                +{hiddenPillCount}
+              </span>
+            )}
+          </div>
+        )}
+        {/* PASS-8: single-line summary (was 2-line in PASS-7).
+            Distinct-image tiles above now carry the visual signal;
+            this text line is for scan + screen readers. */}
         <div
-          className="mt-0.5 text-[11px] leading-snug text-slate-300 line-clamp-2 break-words"
+          className="mt-0.5 text-[11px] leading-snug text-slate-300 truncate"
           title={summary}
         >
           {summary}

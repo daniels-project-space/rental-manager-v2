@@ -832,6 +832,66 @@ export const getStatsDrawerData = query({
       const itemNamesSummary = itemsForDisplay.length > 0
         ? itemsForDisplay.map(formatItem).join(", ")
         : "(no item)";
+
+      // PASS-8 (2026-05-15): dedup tiles by image_url, NOT by item name.
+      // Rationale (user, verbatim): "Joe Cowie doesn't need the individual
+      // Remus lenses shown, bc the image shows all 4 already but should
+      // show the e mount adapter. Michelle needs to show the Atomos Ninja
+      // and so on". Items that share a Hygglo source image were bundled
+      // by the lister — one photo covers them. Items with DISTINCT images
+      // each deserve their own tile.
+      //
+      // Algorithm:
+      //  1. Group itemsForDisplay by image_url. Items with image_url = null
+      //     are NOT grouped (each becomes an entry in extra_text_items).
+      //  2. Each group collapses to one tile {image_url, name, names_in_group, qty}.
+      //  3. Reorder: tile containing the master productPhoto first; rest
+      //     preserve original item order.
+      //  4. INSURANCE items already filtered above.
+      type DedupTile = {
+        image_url: string;
+        name: string;
+        names_in_group: string[];
+        qty: number;
+      };
+      const tilesByUrl = new Map<string, DedupTile>();
+      const tileOrder: string[] = [];
+      const extra_text_items: string[] = [];
+      for (const it of itemsForDisplay) {
+        if (!it.image_url) {
+          extra_text_items.push(it.name);
+          continue;
+        }
+        const existing = tilesByUrl.get(it.image_url);
+        if (existing) {
+          existing.qty += it.qty;
+          existing.names_in_group.push(it.name);
+          // Keep the shortest name as primary (better alt-text)
+          if (it.name.length < existing.name.length) existing.name = it.name;
+        } else {
+          tilesByUrl.set(it.image_url, {
+            image_url: it.image_url,
+            name: it.name,
+            names_in_group: [it.name],
+            qty: it.qty,
+          });
+          tileOrder.push(it.image_url);
+        }
+      }
+      // Reorder so the master photo tile (if matched) is first.
+      if (masterImageUrl && tilesByUrl.has(masterImageUrl)) {
+        const idx = tileOrder.indexOf(masterImageUrl);
+        if (idx > 0) {
+          tileOrder.splice(idx, 1);
+          tileOrder.unshift(masterImageUrl);
+        }
+      }
+      const item_image_tiles: DedupTile[] = tileOrder.map(
+        (u) => tilesByUrl.get(u) as DedupTile,
+      );
+      const effectiveMaster =
+        item_image_tiles[0]?.image_url ?? masterImageUrl ?? null;
+
       return {
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
         renter_name: r.renter_name ?? null,
@@ -845,9 +905,13 @@ export const getStatsDrawerData = query({
         pickup_method: r.pickup_method ?? null,
         return_method: r.return_method ?? null,
         items: (r.items ?? []).map((i) => i.item_name),
-        photo_url: masterImageUrl,
-        master_image_url: masterImageUrl,
+        photo_url: effectiveMaster,
+        master_image_url: effectiveMaster,
         item_names_summary: itemNamesSummary,
+        // PASS-8: distinct-image tiles (deduped by image_url) + items with
+        // no image as text-pill list.
+        item_image_tiles,
+        extra_text_items,
         duration_days:
           r.duration_days ??
           (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
@@ -1764,6 +1828,104 @@ export const getRentalVolumeKindBreakdown = query({
       kind,
       kindLabel: labelFor(kind),
       items: items_out,
+      totals,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-kinds of the "Other" bucket: rolls the same dataset as
+// getRentalVolumeByCategory but only over the kinds that were NOT in the top-6.
+// Same isLive/dedup/effectiveDate filters so totals reconcile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getRentalVolumeOtherSubKinds = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    days: v.optional(v.number()),
+  },
+  handler: async (ctx, { accountSlug, days }) => {
+    const effectiveDays = typeof days === "number" ? days : 30;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - effectiveDays);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+      .collect();
+    if (accountSlug) {
+      reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    }
+    reservations = reservations.filter(isLive);
+    reservations = dedupByLogicalRental(reservations);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    reservations = reservations.filter((r) => {
+      const d = effectiveDate(r);
+      return d !== undefined && d >= cutoffStr && d <= todayStr;
+    });
+
+    const pricingAll = await ctx.db.query("pricing_catalog").collect();
+    const priceByCanonical = new Map<string, number>(
+      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
+    );
+
+    const items = await ctx.db.query("items").collect();
+    const kindById = new Map<string, string>();
+    for (const it of items) kindById.set(it._id as string, it.kind);
+
+    const countByKind = new Map<string, number>();
+    const revenueByKind = new Map<string, number>();
+
+    for (const r of reservations) {
+      const resolved =
+        (r as {
+          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
+        }).resolved_items ?? [];
+      if (resolved.length === 0) continue;
+      const gross = r.gross_paid_gbp ?? 0;
+      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+      const priceSum = prices.reduce((a, b) => a + b, 0);
+      resolved.forEach((x, idx) => {
+        const share =
+          priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+        const k = kindById.get(x.item_id) ?? "unknown";
+        countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
+        revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
+      });
+    }
+
+    const kinds = new Set<string>([...countByKind.keys(), ...revenueByKind.keys()]);
+    const entries = Array.from(kinds)
+      .map((k) => ({
+        kind: k,
+        label: labelFor(k),
+        count: countByKind.get(k) ?? 0,
+        revenue: revenueByKind.get(k) ?? 0,
+      }))
+      .filter((e) => e.count > 0 || e.revenue > 0)
+      .sort((a, b) => b.count - a.count);
+
+    // Same split as main query: top 6 stay top, rest = "Other".
+    const rest = entries.slice(6);
+    const PALETTE = ["#6ea8fe", "#22c55e", "#a78bfa", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#14b8a6", "#eab308", "#8b5cf6", "#f97316", "#10b981", "#3b82f6", "#d946ef", "#84cc16", "#8b8fa3"];
+    const slices = rest.map((e, i) => ({
+      kind: e.kind,
+      label: e.label,
+      count: e.count,
+      revenue: Math.round(e.revenue * 100) / 100,
+      color: PALETTE[i % PALETTE.length],
+    }));
+
+    const totals = {
+      count: slices.reduce((s, e) => s + e.count, 0),
+      revenue: Math.round(slices.reduce((s, e) => s + e.revenue, 0) * 100) / 100,
+    };
+
+    return {
+      days: effectiveDays,
+      periodStart: cutoffStr,
+      slices,
       totals,
     };
   },
