@@ -32,6 +32,22 @@ type OtherSubKinds = {
   totals: { count: number; revenue: number };
 };
 
+type MissedData = {
+  days: number;
+  periodStart: string;
+  missed: {
+    slices: Array<{ kind: string; label: string; missed: number; denied: number; gap: number; revenue: number; color: string }>;
+    totals: { missed: number; denied: number; gap: number };
+  };
+  denied: {
+    slices: Array<{ kind: string; label: string; denied: number; revenue: number; count: number; color: string }>;
+    totals: { denied: number; count: number };
+  };
+  unmatchedDenials: { revenue: number; count: number };
+};
+
+type View = "earned" | "missed";
+
 type CategoryVolumePieBodyProps = {
   accountSlug: string | null;
   alwaysOpen?: boolean;
@@ -88,6 +104,7 @@ export function CategoryVolumePieBody({
 }: CategoryVolumePieBodyProps) {
   const [days, setDays] = useState<Days>(30);
   const [metric, setMetric] = useState<Metric>("count");
+  const [view, setView] = useState<View>("earned");
   const [drillKind, setDrillKind] = useState<string | null>(null);
   const [subDrillKind, setSubDrillKind] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<boolean>(true);
@@ -95,9 +112,18 @@ export function CategoryVolumePieBody({
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [days]);
   useEffect(() => { setSubDrillKind(null); }, [drillKind]);
 
+  const isMissed = view === "missed";
+  // Force £ in missed mode (count is meaningless for missed-revenue).
+  const effectiveMetric: Metric = isMissed ? "revenue" : metric;
+
   const data = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug, days }) as
     | CatVolData
     | undefined;
+
+  const missedData = useQuery(
+    api.revenue.getMissedAndDeniedByCategory,
+    isMissed ? { accountSlug, days } : "skip",
+  ) as MissedData | undefined;
 
   const breakdown = useQuery(
     api.dashboard.getRentalVolumeKindBreakdown,
@@ -212,10 +238,14 @@ export function CategoryVolumePieBody({
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[10px] text-slate-400 uppercase tracking-wider">
-            Category Mix
+            {isMissed ? "Missed Revenue" : "Category Mix"}
           </span>
           <span className="text-xs text-[#8b8fa3]">
-            {subDrillKind ? (
+            {isMissed ? (
+              missedData
+                ? `£${missedData.missed.totals.missed.toFixed(0)} missed · £${missedData.denied.totals.denied.toFixed(0)} denied · ${days}d${missedData.unmatchedDenials.revenue > 0 ? ` + £${missedData.unmatchedDenials.revenue.toFixed(0)} unmatched` : ""}`
+                : periodLabel
+            ) : subDrillKind ? (
               <>
                 <button
                   onClick={() => setSubDrillKind(null)}
@@ -244,6 +274,32 @@ export function CategoryVolumePieBody({
         </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-1">
+            {(["earned", "missed"] as const).map((vw) => (
+              <button
+                key={vw}
+                onClick={() => {
+                  setView(vw);
+                  setDrillKind(null);
+                  setSubDrillKind(null);
+                }}
+                className="text-xs px-2 py-0.5 rounded transition-colors"
+                style={{
+                  background: view === vw
+                    ? (vw === "earned" ? "rgba(96,165,250,0.15)" : "rgba(245,158,11,0.18)")
+                    : "transparent",
+                  color: view === vw
+                    ? (vw === "earned" ? "#60a5fa" : "#f59e0b")
+                    : "#8b8fa3",
+                  border: view === vw
+                    ? `1px solid ${vw === "earned" ? "rgba(96,165,250,0.3)" : "rgba(245,158,11,0.35)"}`
+                    : "1px solid transparent",
+                }}
+              >
+                {vw === "earned" ? "Earned" : "Missed"}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1">
             {periodOpts.map((p) => (
               <button
                 key={p.val}
@@ -258,24 +314,120 @@ export function CategoryVolumePieBody({
             ))}
           </div>
           <div className="flex gap-1">
-            {metricOpts.map((m) => (
-              <button
-                key={m.val}
-                onClick={() => setMetric(m.val)}
-                className="px-2 py-0.5 text-xs rounded transition-colors"
-                style={{
-                  background: metric === m.val ? "rgba(110,168,254,0.15)" : "transparent",
-                  color: metric === m.val ? "#6ea8fe" : "#8b8fa3",
-                  border: metric === m.val ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
-                }}
-              >{m.label}</button>
-            ))}
+            {metricOpts.map((m) => {
+              const disabled = isMissed && m.val === "count";
+              const active = effectiveMetric === m.val;
+              return (
+                <button
+                  key={m.val}
+                  onClick={() => { if (!disabled) setMetric(m.val); }}
+                  disabled={disabled}
+                  className="px-2 py-0.5 text-xs rounded transition-colors"
+                  style={{
+                    background: active ? "rgba(110,168,254,0.15)" : "transparent",
+                    color: active ? "#6ea8fe" : "#8b8fa3",
+                    border: active ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
+                    opacity: disabled ? 0.4 : 1,
+                    cursor: disabled ? "not-allowed" : "pointer",
+                  }}
+                >{m.label}</button>
+              );
+            })}
           </div>
           {chevron}
         </div>
       </div>
 
-      {data === undefined ? (
+      {isMissed ? (
+        missedData === undefined ? (
+          <SkeletonBlock className={`h-[${CHART_HEIGHT}px] w-full`} />
+        ) : missedData.missed.slices.length === 0 ? (
+          <EmptyState message={`No missed revenue in ${periodLabel.toLowerCase()}`} icon="📉" />
+        ) : (
+          <div
+            className="px-16"
+            style={{
+              background: "radial-gradient(circle at 50% 50%, rgba(245,158,11,0.06) 0%, transparent 60%)",
+            }}
+          >
+            <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+              <PieChart>
+                <Pie
+                  data={missedData.missed.slices}
+                  dataKey="missed"
+                  nameKey="label"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={OUTER_INNER}
+                  outerRadius={OUTER_OUTER}
+                  paddingAngle={4}
+                  cornerRadius={6}
+                  labelLine={false}
+                  label={makeLeaderLabel("revenue", "label", 14)}
+                  isAnimationActive={true}
+                  animationDuration={400}
+                  animationEasing="ease-out"
+                  style={{ cursor: "default" }}
+                >
+                  {missedData.missed.slices.map((s) => (
+                    <Cell
+                      key={s.kind}
+                      fill={s.color}
+                      style={{
+                        filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
+                        transition: "fill-opacity 220ms ease",
+                      }}
+                    />
+                  ))}
+                </Pie>
+                {missedData.denied.slices.length > 0 && (
+                  <Pie
+                    data={missedData.denied.slices}
+                    dataKey="denied"
+                    nameKey="label"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={MIDDLE_INNER}
+                    outerRadius={MIDDLE_OUTER}
+                    paddingAngle={3}
+                    cornerRadius={6}
+                    labelLine={false}
+                    label={false}
+                    legendType="none"
+                    isAnimationActive={true}
+                    animationDuration={400}
+                    animationEasing="ease-out"
+                  >
+                    {missedData.denied.slices.map((s) => (
+                      <Cell
+                        key={`d-${s.kind}`}
+                        fill={s.color}
+                        style={{
+                          filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
+                          transition: "fill-opacity 220ms ease",
+                        }}
+                      />
+                    ))}
+                  </Pie>
+                )}
+                <Tooltip
+                  contentStyle={{
+                    background: "rgba(14,17,28,0.95)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 6,
+                    fontSize: 12,
+                  }}
+                  formatter={(value, _name, item) => {
+                    const n = Number(value) || 0;
+                    const p = (item as { payload?: { label?: string } })?.payload;
+                    return [`£${n.toFixed(0)}`, p?.label ?? ""];
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      ) : data === undefined ? (
         <SkeletonBlock className={`h-[${CHART_HEIGHT}px] w-full`} />
       ) : data.slices.length === 0 ? (
         <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />
@@ -414,7 +566,7 @@ export function CategoryVolumePieBody({
         </div>
       )}
 
-      {data && data.slices.length > 0 && (
+      {!isMissed && data && data.slices.length > 0 && (
         <div className="grid grid-cols-2 gap-3 pt-3 border-t border-white/5">
           <div>
             <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Rentals</div>
@@ -426,6 +578,23 @@ export function CategoryVolumePieBody({
             <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Revenue</div>
             <div className="text-lg font-bold" style={{ color: "#22c55e" }}>
               £{data.totals.revenue.toFixed(0)}
+            </div>
+          </div>
+        </div>
+      )}
+      {isMissed && missedData && missedData.missed.slices.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-white/5">
+          <div>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Missed</div>
+            <div className="text-lg font-bold" style={{ color: "#f59e0b" }}>
+              £{missedData.missed.totals.missed.toFixed(0)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Denied Revenue</div>
+            <div className="text-lg font-bold" style={{ color: "#ef4444" }}>
+              £{missedData.denied.totals.denied.toFixed(0)}
+              <span className="text-xs ml-1 text-[#8b8fa3] font-normal">({missedData.denied.totals.count})</span>
             </div>
           </div>
         </div>

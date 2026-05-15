@@ -749,3 +749,253 @@ export const getLifetimeByMonth = query({
 function r2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+/**
+ * Phase 9.1 — Missed/Denied by Category (two-ring pie data).
+ *
+ * Outer ring: total missed (denials + idle-gap) per kind.
+ * Inner ring: denials only per kind (same kinds order as outer).
+ * 7th "Unmatched" slice for denial rows whose item_name doesn't resolve.
+ *
+ * Reuses the algorithm from getMissedRevenue verbatim, grouping by kind.
+ */
+const MISSED_KIND_LABELS: Record<string, string> = {
+  camera: "Cameras", lens: "Lenses", drone: "Drones", audio: "Audio",
+  lighting: "Lighting", grip: "Grip", gimbal: "Gimbals", monitor: "Monitors",
+  transmission: "Transmission", accessory: "Accessories", smoke_fx: "Smoke/FX",
+  dj_audio: "DJ Audio", power: "Power", storage_card: "Storage", support: "Support",
+  motion: "Motion", stabilizer: "Stabilizers", video: "Video", effects: "Effects",
+  bundle: "Bundles", unknown: "Unknown", other: "Other",
+};
+const MISSED_PALETTE = ["#fde047", "#fbbf24", "#f59e0b", "#fb923c", "#f97316", "#ef4444"];
+const MISSED_OTHER_COLOR = "#7f1d1d";
+const MISSED_UNMATCHED_COLOR = "#94a3b8";
+
+function missedLabelFor(k: string): string {
+  return MISSED_KIND_LABELS[k] ?? (k.charAt(0).toUpperCase() + k.slice(1));
+}
+
+export const getMissedAndDeniedByCategory = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    days: v.number(),
+  },
+  handler: async (ctx, { accountSlug, days }) => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffMs = cutoff.getTime();
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const periodStart = cutoffStr;
+
+    // 1. Build name → kind map from items (one collect).
+    const allItems = await ctx.db.query("items").collect();
+    const nameToKind = new Map<string, string>();
+    for (const it of allItems) {
+      if (it.name_canonical) nameToKind.set(it.name_canonical, it.kind ?? "unknown");
+    }
+
+    // pricing fallback for denial value
+    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const priceByName = new Map(
+      pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
+    );
+
+    // 2. Denials path — same logic/value-fallback as getMissedRevenue.
+    let denials = await ctx.db.query("denial_records").collect();
+    if (accountSlug) {
+      const accountRow = await ctx.db
+        .query("accounts")
+        .withIndex("by_slug", (q) => q.eq("slug", accountSlug as string))
+        .first();
+      if (accountRow) {
+        denials = denials.filter((d) => d.account_id === accountRow._id);
+      }
+    }
+    denials = denials.filter((d) => d.created_at >= cutoffMs);
+
+    const deniedByKind = new Map<string, { revenue: number; count: number }>();
+    let unmatchedRevenue = 0;
+    let unmatchedCount = 0;
+    let totalDeniedRevenue = 0;
+
+    for (const d of denials) {
+      let estimatedValue = d.estimated_value ?? 0;
+      if (estimatedValue === 0 && d.item_name) {
+        const dp = priceByName.get(d.item_name);
+        if (dp) estimatedValue = dp * 2;
+      }
+      totalDeniedRevenue += estimatedValue;
+
+      const kind = d.item_name ? nameToKind.get(d.item_name) : undefined;
+      if (!kind) {
+        unmatchedRevenue += estimatedValue;
+        unmatchedCount += 1;
+        continue;
+      }
+      const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
+      slot.revenue += estimatedValue;
+      slot.count += 1;
+      deniedByKind.set(kind, slot);
+    }
+
+    // 3. Idle-gap path — same algorithm as getMissedRevenue, grouped by kind.
+    let allResForGap = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+      .collect();
+    if (accountSlug) {
+      allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
+    }
+
+    const rentalDaysPerItem = new Map<string, number>();
+    for (const r of allResForGap) {
+      for (const item of r.items ?? []) {
+        rentalDaysPerItem.set(
+          item.item_name,
+          (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0),
+        );
+      }
+    }
+
+    const gapByKind = new Map<string, number>();
+    for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
+      const idleDays = Math.max(0, days - Math.min(rentalDays, days));
+      if (idleDays <= 0) continue;
+      const dailyRate = priceByName.get(itemName);
+      if (!dailyRate) continue;
+      const gapLoss = idleDays * dailyRate;
+      const kind = nameToKind.get(itemName) ?? "unknown";
+      gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + gapLoss);
+    }
+
+    // 4. Combine per-kind totals.
+    const allKinds = new Set<string>([
+      ...deniedByKind.keys(),
+      ...gapByKind.keys(),
+    ]);
+    type Combined = { kind: string; missed: number; denied: number; gap: number; count: number };
+    const combined: Combined[] = [];
+    for (const k of allKinds) {
+      const d = deniedByKind.get(k) ?? { revenue: 0, count: 0 };
+      const g = gapByKind.get(k) ?? 0;
+      const missed = d.revenue + g;
+      if (missed <= 0) continue;
+      combined.push({ kind: k, missed: r2(missed), denied: r2(d.revenue), gap: r2(g), count: d.count });
+    }
+    combined.sort((a, b) => b.missed - a.missed);
+
+    // 5. Top-6 + Other for outer ring.
+    const top = combined.slice(0, 6);
+    const rest = combined.slice(6);
+    const outerSlices: Array<{
+      kind: string; label: string; missed: number; denied: number; gap: number; revenue: number; color: string;
+    }> = top.map((c, i) => ({
+      kind: c.kind,
+      label: missedLabelFor(c.kind),
+      missed: c.missed,
+      denied: c.denied,
+      gap: c.gap,
+      revenue: c.missed,
+      color: MISSED_PALETTE[i] ?? MISSED_PALETTE[MISSED_PALETTE.length - 1],
+    }));
+    if (rest.length > 0) {
+      const oMissed = rest.reduce((s, c) => s + c.missed, 0);
+      const oDenied = rest.reduce((s, c) => s + c.denied, 0);
+      const oGap = rest.reduce((s, c) => s + c.gap, 0);
+      outerSlices.push({
+        kind: "other",
+        label: "Other",
+        missed: r2(oMissed),
+        denied: r2(oDenied),
+        gap: r2(oGap),
+        revenue: r2(oMissed),
+        color: MISSED_OTHER_COLOR,
+      });
+    }
+    if (unmatchedRevenue > 0) {
+      outerSlices.push({
+        kind: "unmatched",
+        label: "Unmatched",
+        missed: r2(unmatchedRevenue),
+        denied: r2(unmatchedRevenue),
+        gap: 0,
+        revenue: r2(unmatchedRevenue),
+        color: MISSED_UNMATCHED_COLOR,
+      });
+    }
+
+    // 6. Inner ring — denied only, same order as outer for visual alignment.
+    const innerSlices: Array<{ kind: string; label: string; denied: number; revenue: number; count: number; color: string }> = [];
+    const restKinds = new Set(rest.map((c) => c.kind));
+    for (const o of outerSlices) {
+      if (o.kind === "unmatched") {
+        if (unmatchedRevenue > 0) {
+          innerSlices.push({
+            kind: "unmatched",
+            label: "Unmatched",
+            denied: r2(unmatchedRevenue),
+            revenue: r2(unmatchedRevenue),
+            count: unmatchedCount,
+            color: MISSED_UNMATCHED_COLOR,
+          });
+        }
+        continue;
+      }
+      if (o.kind === "other") {
+        const oDenied = rest.reduce((s, c) => s + c.denied, 0);
+        const oCount = rest.reduce((s, c) => s + c.count, 0);
+        if (oDenied > 0) {
+          innerSlices.push({
+            kind: "other",
+            label: "Other",
+            denied: r2(oDenied),
+            revenue: r2(oDenied),
+            count: oCount,
+            color: MISSED_OTHER_COLOR,
+          });
+        }
+        continue;
+      }
+      const c = combined.find((cc) => cc.kind === o.kind);
+      if (!c || c.denied <= 0) continue;
+      innerSlices.push({
+        kind: c.kind,
+        label: missedLabelFor(c.kind),
+        denied: c.denied,
+        revenue: c.denied,
+        count: c.count,
+        color: o.color,
+      });
+      // suppress unused-var warning
+      void restKinds;
+    }
+
+    const totalMissed = combined.reduce((s, c) => s + c.missed, 0) + unmatchedRevenue;
+    const totalGap = combined.reduce((s, c) => s + c.gap, 0);
+    const totalDeniedCount = denials.length;
+
+    return {
+      days,
+      periodStart,
+      missed: {
+        slices: outerSlices,
+        totals: {
+          missed: r2(totalMissed),
+          denied: r2(totalDeniedRevenue),
+          gap: r2(totalGap),
+        },
+      },
+      denied: {
+        slices: innerSlices,
+        totals: {
+          denied: r2(totalDeniedRevenue),
+          count: totalDeniedCount,
+        },
+      },
+      unmatchedDenials: {
+        revenue: r2(unmatchedRevenue),
+        count: unmatchedCount,
+      },
+    };
+  },
+});
