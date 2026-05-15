@@ -11,6 +11,7 @@
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as admin_backfill_net from "../admin_backfill_net.js";
+import type * as admin_migrate from "../admin_migrate.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
@@ -69,6 +70,7 @@ import type * as mv_refresh_locks from "../mv_refresh_locks.js";
 import type * as order_step_semantics from "../order_step_semantics.js";
 import type * as polling_runs from "../polling_runs.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
+import type * as refresh_hygglo_orders from "../refresh_hygglo_orders.js";
 import type * as renters from "../renters.js";
 import type * as reservations from "../reservations.js";
 import type * as revenue from "../revenue.js";
@@ -92,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
   accounts: typeof accounts;
   admin_backfill_net: typeof admin_backfill_net;
+  admin_migrate: typeof admin_migrate;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   audit_snapshot: typeof audit_snapshot;
@@ -150,6 +153,7 @@ declare const fullApi: ApiFromModules<{
   order_step_semantics: typeof order_step_semantics;
   polling_runs: typeof polling_runs;
   pricing_catalog: typeof pricing_catalog;
+  refresh_hygglo_orders: typeof refresh_hygglo_orders;
   renters: typeof renters;
   reservations: typeof reservations;
   revenue: typeof revenue;

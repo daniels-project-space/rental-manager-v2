@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
@@ -551,5 +551,102 @@ export const listPendingWithoutDecision = query({
       if (!decided) out.push(r);
     }
     return out;
+  },
+});
+
+/**
+ * Phase 12.4 — patch hygglo_items[] / image_hints[] / photos_urls on an
+ * existing reservation row by hygglo_order_id. Used by
+ * refresh_hygglo_orders.refreshActiveStuckOrders to repopulate stuck rows
+ * without going through upsertOrderAsReservation (which re-writes
+ * `items: args.items` and trips the strict schema validator when the items
+ * carry the PASS-10 `image` / `type` / `product_id` / `slug` shape).
+ *
+ * Also fires the listing_images write-through so the dashboard image bank
+ * picks up product_ids on the same beat.
+ */
+export const patchHyggloItemsByOrderId = internalMutation({
+  args: {
+    account_slug: v.string(),
+    hygglo_order_id: v.string(),
+    hygglo_items: v.array(
+      v.object({
+        name: v.string(),
+        image_url: v.union(v.string(), v.null()),
+        type: v.string(),
+        qty: v.optional(v.number()),
+        product_id: v.optional(v.number()),
+        slug: v.optional(v.string()),
+      }),
+    ),
+    image_hints: v.optional(
+      v.array(
+        v.object({
+          item_name: v.string(),
+          item_name_normalised: v.string(),
+          image_url: v.string(),
+          source: v.union(
+            v.literal("hygglo_per_item"),
+            v.literal("hygglo_order"),
+            v.literal("manual_override"),
+          ),
+          captured_at: v.number(),
+        }),
+      ),
+    ),
+    photos_urls: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) =>
+        q.eq("hygglo_order_id", args.hygglo_order_id),
+      )
+      .collect();
+    let patched = 0;
+    for (const r of rows) {
+      if (r.account_slug && r.account_slug !== args.account_slug) continue;
+      const patch: Record<string, unknown> = {
+        hygglo_items: args.hygglo_items,
+        last_polled_at: Date.now(),
+      };
+      if (args.image_hints && args.image_hints.length > 0)
+        patch.image_hints = args.image_hints;
+      if (args.photos_urls && args.photos_urls.length > 0)
+        patch.photos_urls = args.photos_urls;
+      await ctx.db.patch(r._id, patch);
+      patched++;
+    }
+    return { rows: rows.length, patched };
+  },
+});
+
+/**
+ * Phase 12.4 — list ACTIVE reservations whose hygglo_items[] are missing
+ * product_id (i.e. rows polled before PASS-10 landed). Used by
+ * refresh_hygglo_orders.refreshActiveStuckOrders.
+ */
+export const listStuckActive = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = await ctx.db.query("reservations").collect();
+    return rows
+      .filter((r) => {
+        if (r.status !== "confirmed") return false;
+        if (r.is_obsolete === true) return false;
+        if (!r.end_date || (r.end_date as string) < today) return false;
+        if (!r.hygglo_order_id || !r.account_slug) return false;
+        const hi = (r as any).hygglo_items as Array<any> | undefined;
+        if (!Array.isArray(hi) || hi.length === 0) return false;
+        return hi.some(
+          (h) => h == null || h.product_id == null || h.image_url == null,
+        );
+      })
+      .map((r) => ({
+        _id: r._id,
+        hygglo_order_id: r.hygglo_order_id as string,
+        account_slug: r.account_slug as string,
+      }));
   },
 });
