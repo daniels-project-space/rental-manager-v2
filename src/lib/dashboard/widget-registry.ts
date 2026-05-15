@@ -23,7 +23,6 @@ import { AIChat } from "@/components/dashboard/AIChat";
 import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
 import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
-import { CategoryVolumePie } from "@/components/dashboard/CategoryVolumePie";
 
 export type PanelWidget = {
   id: string;
@@ -63,7 +62,6 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "item-roi",            label: "Item ROI",              component: ItemROIPanel },
   { id: "lost-revenue-buy",    label: "Lost Revenue · Buy",    component: LostRevenueBuyPanel },
   { id: "verification-funnel", label: "Verification Funnel",   component: VerificationFunnelPanel },
-  { id: "category-volume",     label: "Category Volume (this month)", component: CategoryVolumePie },
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
@@ -84,6 +82,7 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "inventory_worth", label: "Inventory Worth" },
   { id: "tax",             label: "Tax" },
   { id: "business_intel",  label: "Business Intel" },
+  { id: "category_volume", label: "Category Volume" },
 ];
 
 export const DEFAULT_PANEL_ORDER = PANEL_WIDGETS.map((w) => w.id);

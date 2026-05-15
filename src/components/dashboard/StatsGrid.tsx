@@ -40,6 +40,7 @@ import InventoryWorthDrawer from "./stat-cards/InventoryWorthDrawer";
 import TaxDrawer from "./stat-cards/TaxDrawer";
 import BusinessIntelDrawer from "./stat-cards/BusinessIntelDrawer";
 import { CriticalAlerts } from "./CriticalAlerts";
+import { CategoryVolumePieBody } from "./CategoryVolumePie";
 
 function fmtGbp(n: number): string {
   if (n >= 1000) return "£" + (n / 1000).toFixed(1) + "k";
@@ -112,6 +113,37 @@ function Dot({ color }: { color: string }) {
   return <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />;
 }
 
+function MiniDonut({ slices }: { slices: Array<{ color: string; count: number }> }) {
+  const total = slices.reduce((s, x) => s + x.count, 0);
+  if (total === 0) return null;
+  const r = 14, cx = 18, cy = 18, stroke = 4;
+  let acc = 0;
+  const C = 2 * Math.PI * r;
+  return (
+    <svg width="36" height="36" viewBox="0 0 36 36" className="mt-1">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={stroke} />
+      {slices.map((s, i) => {
+        const frac = s.count / total;
+        const dash = `${frac * C} ${C}`;
+        const offset = -acc * C;
+        acc += frac;
+        return (
+          <circle
+            key={i}
+            cx={cx} cy={cy} r={r}
+            fill="none"
+            stroke={s.color}
+            strokeWidth={stroke}
+            strokeDasharray={dash}
+            strokeDashoffset={offset}
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function StatsGridSkeleton() {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
@@ -139,6 +171,7 @@ export function StatsGrid() {
   const rawData = useQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
+  const categoryVolume = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug: activeAccountSlug });
 
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
     if (!rawData) return null;
@@ -473,8 +506,35 @@ export function StatsGrid() {
           <BusinessIntelDrawer data={data.business_intel} />
         </ExpandableStatCard>
       ),
+      category_volume: (
+        <ExpandableStatCard
+          id="category_volume"
+          label="Category Mix"
+          value={
+            categoryVolume === undefined
+              ? "—"
+              : (categoryVolume.slices[0]?.label ?? "—")
+          }
+          valueColor="purple"
+          accentColor="purple"
+          subtitle={
+            categoryVolume === undefined
+              ? "loading…"
+              : `${fmtGbp(categoryVolume.totals.revenue)} net · ${categoryVolume.totals.count} rentals`
+          }
+          isExpanded={expandedId === "category_volume"}
+          onToggle={() => toggle("category_volume")}
+          headerExtra={
+            categoryVolume && categoryVolume.slices.length > 0 ? (
+              <MiniDonut slices={categoryVolume.slices} />
+            ) : null
+          }
+        >
+          <CategoryVolumePieBody data={categoryVolume} />
+        </ExpandableStatCard>
+      ),
     };
-  }, [rawData, expandedId]);
+  }, [rawData, expandedId, categoryVolume]);
 
   if (!cards) return <StatsGridSkeleton />;
 

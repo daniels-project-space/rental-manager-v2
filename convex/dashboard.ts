@@ -53,6 +53,7 @@ export function buildItemTilesShared(args: {
     image_hints?: ImageHint[] | null;
     expanded_items?: Array<TileSourceItem> | null;
     resolved_items?: Array<ResolvedItemEntry> | null;
+    photos_urls?: string[] | null;
   };
   itemImageById: Map<string, { name: string; image_url: string | null }>;
   sharedBlacklist: Set<string>;
@@ -60,6 +61,24 @@ export function buildItemTilesShared(args: {
   const { reservation, itemImageById, sharedBlacklist } = args;
   const imageHints: ImageHint[] = reservation.image_hints ?? [];
   const resolved: ResolvedItemEntry[] = reservation.resolved_items ?? [];
+
+  // v1-parity fallback (filtered to product images only). When per-item
+  // resolution returns null we fill from `photos_urls` so the user sees a
+  // meaningful image instead of grey placeholders. We round-robin through
+  // ALL available product photos to avoid the "5 identical Blazar lens
+  // tiles" symptom (Joe Cowie / Kemi Adeeko bug — see PASS4_JOWE.md).
+  // Profile avatars (/profiles/) are excluded so we never render a renter's
+  // selfie as an item image.
+  const productPhotos: string[] = (reservation.photos_urls ?? []).filter(
+    (u) => typeof u === "string" && u.includes("/products/"),
+  );
+  let fallbackIdx = 0;
+  const nextFallback = (): string | null => {
+    if (productPhotos.length === 0) return null;
+    const url = productPhotos[fallbackIdx % productPhotos.length];
+    fallbackIdx++;
+    return url;
+  };
 
   // Confidence lookup keyed by item_id (only resolved entries have it).
   const confidenceById = new Map<string, number>();
@@ -104,12 +123,21 @@ export function buildItemTilesShared(args: {
       sharedBlacklist,
     });
 
+    // v1-parity: when per-item resolution gave us nothing, fall back to a
+    // photo from photos_urls (round-robin across the rental's product
+    // photos). Each unresolved item gets a different photo when possible,
+    // so a 5-item rental with 3 photos shows 3 distinct images + 2 repeats
+    // rather than 5 grey placeholders or 5 identical photos. UI still
+    // distinguishes items via the `title` attribute (full item name on
+    // hover) and the per-item alt text.
+    const finalUrl = resolved.url ?? nextFallback();
+
     const qty = x.qty ?? 1;
     const existing = counts.get(dedupKey);
     if (existing) {
       existing.qty += qty;
     } else {
-      counts.set(dedupKey, { name, image_url: resolved.url, qty });
+      counts.set(dedupKey, { name, image_url: finalUrl, qty });
     }
   });
   return Array.from(counts.values());
