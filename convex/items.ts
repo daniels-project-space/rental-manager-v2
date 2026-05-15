@@ -73,11 +73,16 @@ export const getItemRevenueRanking = query({
       const priceSum = prices.reduce((a, b) => a + b, 0);
       resolved.forEach((x, idx) => {
         const share = priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
-        const existing = itemMap.get(x.item_name_canonical) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
+        // Strip " [kind]" tag that some LLM-resolved rows captured into the
+        // canonical name (the model copied the inventory listing format).
+        // Without this, Sony FX3 (v1 migrated) and "Sony FX3 [camera]"
+        // (LLM) appear as separate rows in the ranking.
+        const cleanName = x.item_name_canonical.replace(/\s*\[[^\]]+\]\s*$/, "");
+        const existing = itemMap.get(cleanName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
         existing.totalRevenue += share;
         existing.rentalCount += 1;
         existing.totalDays += days;
-        itemMap.set(x.item_name_canonical, existing);
+        itemMap.set(cleanName, existing);
       });
     }
 
@@ -1193,7 +1198,7 @@ export const getItemPayback = query({
 
     // Pre-compute per-item gross from resolved_items.
     const reservations = await ctx.db.query("reservations").collect();
-    const grossByItemId = new Map<string, { gross: number; lastDate: string }>();
+    const grossByItemId = new Map<string, { gross: number; lastDate: string; firstDate: string }>();
     for (const r of reservations) {
       if (!isPaidWithV1Legacy(r as any)) continue;
       const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items ?? [];
@@ -1202,16 +1207,28 @@ export const getItemPayback = query({
       if (!eff) continue;
       const share = (r.gross_paid_gbp ?? 0) / resolved.length;
       for (const x of resolved) {
-        const cur = grossByItemId.get(x.item_id) ?? { gross: 0, lastDate: "" };
+        const cur = grossByItemId.get(x.item_id) ?? { gross: 0, lastDate: "", firstDate: "" };
         cur.gross += share;
         if (eff > cur.lastDate) cur.lastDate = eff;
+        if (!cur.firstDate || eff < cur.firstDate) cur.firstDate = eff;
         grossByItemId.set(x.item_id, cur);
       }
     }
 
     function buildRow(i: typeof allItems[number]) {
-      const stats = grossByItemId.get(i._id) ?? { gross: 0, lastDate: "" };
-      const acquired = (i as { acquired_at?: number }).acquired_at ?? i.created_at;
+      const stats = grossByItemId.get(i._id) ?? { gross: 0, lastDate: "", firstDate: "" };
+      // Prefer explicit acquired_at; otherwise use earliest rental date as a
+      // proxy (Convex created_at is the *import* time which is recent and
+      // would understate monthsOwned by years).
+      const earliestRental = (stats as { firstDate?: string }).firstDate;
+      let acquired = (i as { acquired_at?: number }).acquired_at;
+      if (acquired === undefined) {
+        if (earliestRental) {
+          acquired = new Date(earliestRental).getTime();
+        } else {
+          acquired = i.created_at;
+        }
+      }
       const monthsOwned = Math.max(1, (Date.now() - acquired) / (1000 * 60 * 60 * 24 * 30));
       const cost = i.acquisition_cost_gbp ?? null;
       const paidBackPct = cost && cost > 0 ? (stats.gross / cost) * 100 : null;

@@ -303,16 +303,23 @@ export const adminSetStatus = mutation({
 // many "pending_review" orders have order_step=APPROVED already — renter approved by owner
 // but renter hasn't paid yet).
 export const listPending = query({
-  args: { accountSlug: v.optional(v.string()) },
-  handler: async (ctx, { accountSlug }) => {
-    // 'Pending' = renter has paid (escrow funded) AND is currently in document
-    // verification. order_step stores the ACTIVE (next-to-do) step, so the
-    // verification-in-progress state is order_step === 'VERIFIED'.
+  args: {
+    accountSlug: v.optional(v.string()),
+    // verified_only=true keeps the strict dashboard semantics (escrow paid +
+    // verifying). Default false matches chat expectations: "what's pending"
+    // means the whole pre-handover pipeline (REQUEST / APPROVED /
+    // FUNDS_RESERVED / VERIFIED). v1 chat returned ~15 items here; v2 was
+    // returning 0 because nothing happens to be in VERIFIED right now.
+    verified_only: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, verified_only }) => {
     // See convex/order_step_semantics.ts for full semantics.
+    const PIPELINE = new Set(["REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"]);
     const allRows = await ctx.db.query('reservations').collect();
     let rows = allRows.filter((r) => {
       if (r.is_obsolete === true) return false;
-      return r.order_step === 'VERIFIED';
+      if (verified_only === true) return r.order_step === "VERIFIED";
+      return r.order_step !== undefined && PIPELINE.has(r.order_step);
     });
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
@@ -334,6 +341,7 @@ export const listPending = query({
           start_date: r.start_date,
           end_date: r.end_date,
           gross: r.gross_paid_gbp ?? 0,
+          order_step: r.order_step ?? null,
         };
       })
     );
