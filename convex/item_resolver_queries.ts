@@ -15,7 +15,13 @@ export const getReservationForResolve = internalQuery({
     return {
       _id: r._id,
       items: r.items ?? [],
+      // v1 imports came in with items=[] but a rich `notes` field carrying
+      // the listing description (e.g. "Sony fx3 + 24-70mm + tripod + rode").
+      // The resolver uses this as a fallback title when items[] is empty so
+      // historical revenue can still be attributed to specific inventory.
+      notes: (r as any).notes ?? null,
       hygglo_order_id: r.hygglo_order_id ?? null,
+      hygglo_listing_id: (r as any).hygglo_listing_id ?? null,
       photos_urls: (r as any).photos_urls ?? [],
       resolved_items: (r as any).resolved_items ?? undefined,
       resolution_input_hash: (r as any).resolution_input_hash ?? undefined,
@@ -75,20 +81,28 @@ export const setResolution = internalMutation({
  * Stale check is computed inline (cheap — items is small) by hashing items[].
  */
 export const listUnresolved = internalQuery({
-  args: { limit: v.number() },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.number(), include_notes_only: v.optional(v.boolean()) },
+  handler: async (ctx, { limit, include_notes_only }) => {
     const all = await ctx.db.query("reservations").collect();
     const need: { id: typeof all[number]["_id"]; created: number }[] = [];
     for (const r of all) {
-      if (!r.items || r.items.length === 0) continue;
       if (r.is_obsolete) continue;
-      const currentHash = (r.items ?? []).map((i) => i.item_name).sort().join("|");
+      const hasItems = (r.items?.length ?? 0) > 0;
+      const notes = (r as any).notes as string | undefined;
+      const hasNotes = notes !== undefined && notes !== null && notes.trim().length > 0;
+      // Default behaviour (poller path): only consider rows with items[].
+      // Backfill path passes include_notes_only=true to also pick up v1
+      // imports whose listing description sits in `notes`.
+      if (!hasItems && !(include_notes_only === true && hasNotes)) continue;
+
+      const currentHash = hasItems
+        ? (r.items ?? []).map((i) => i.item_name).sort().join("|")
+        : `notes:${(notes ?? "").trim()}`;
       const stored = (r as any).resolution_input_hash;
       const resolved = (r as any).resolved_items;
       if (resolved !== undefined && stored === currentHash) continue;
       need.push({ id: r._id, created: r._creationTime });
     }
-    // Newest first — most likely to be visible on the dashboard right now.
     need.sort((a, b) => b.created - a.created);
     return need.slice(0, limit).map((n) => n.id);
   },

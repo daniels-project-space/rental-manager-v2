@@ -173,7 +173,20 @@ export const resolveReservation = action({
       reservation_id,
     });
     if (!res) return { ok: false, skipped: "not found" };
-    const items = res.items ?? [];
+    // Decide what title to resolve against. Poller-synced reservations carry
+    // items[] with each item's listing title. v1-imported rows came in with
+    // items=[] but a rich `notes` field that carries the bundle description.
+    // Fall back to notes so historic revenue can be attributed (the v1
+    // imports represent £150k+ of unresolved revenue otherwise stuck at £0
+    // for every per-item query).
+    type ResolverItem = { item_name: string; qty?: number };
+    const itemsFromDb = (res.items ?? []) as ResolverItem[];
+    const notes = (res as { notes?: string | null }).notes ?? "";
+    const items: ResolverItem[] = itemsFromDb.length > 0
+      ? itemsFromDb
+      : (notes.trim().length > 0
+          ? [{ item_name: notes.trim(), qty: 1 }]
+          : []);
     if (items.length === 0) {
       await ctx.runMutation(internal.item_resolver_queries.setResolution, {
         reservation_id,
@@ -407,14 +420,14 @@ export const resolveReservation = action({
  * Resolves up to `limit` reservations whose resolution is missing or stale.
  */
 export const resolveBatch = internalAction({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), include_notes_only: v.optional(v.boolean()) },
   handler: async (
     ctx,
-    { limit },
+    { limit, include_notes_only },
   ): Promise<{ ids: number; resolved: number; skipped: number }> => {
     const ids: Array<string> = await ctx.runQuery(
       internal.item_resolver_queries.listUnresolved,
-      { limit: limit ?? 15 },
+      { limit: limit ?? 15, include_notes_only },
     );
     let resolved = 0;
     let skipped = 0;
