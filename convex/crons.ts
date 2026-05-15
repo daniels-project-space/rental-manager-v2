@@ -3,13 +3,15 @@
  *
  * Refresh intervals tuned per MV staleness tolerance:
  *
- *   daily_briefing       5 min   most-stale-sensitive — drives chat "what
- *                                happened today" surface; must look live.
- *   top_earners_30d     15 min   30-day window changes slowly; 15 min is plenty.
- *   purchase_signals    30 min   30d denial aggregation — slow-moving.
- *   churn_risk          60 min   renter behaviour shifts over weeks.
- *   utilization_today   15 min   per-item snapshot; updates as bookings flow in.
- *   upcoming_returns    10 min   needs to feel fresh after each poll cycle.
+ *   daily_briefing      15 min   tolerated stale window per chat-UX testing.
+ *   top_earners_30d     60 min   30-day window barely changes hourly.
+ *   purchase_signals   120 min   denial aggregation, slow-moving.
+ *   churn_risk         360 min   renter behaviour shifts over weeks.
+ *   utilization_today   60 min   widget reads MV; refresh as bookings flow.
+ *   upcoming_returns    30 min   refreshes after every poll cycle.
+ *
+ * Cost: cron cadences widened ~3x on 2026-05-15 to cut Convex bandwidth
+ * (was ~3.5M reservations-row reads/day from crons alone).
  *
  * All MV refreshers run as `internalMutation` (no external network calls,
  * so action wrappers are unnecessary for crons — direct mutation is faster).
@@ -24,42 +26,42 @@ const crons = cronJobs();
 // rest-param signature `OptionalRestArgs<FuncRef>` resolves.
 crons.interval(
   "daily_briefing refresh",
-  { minutes: 5 },
+  { minutes: 15 },
   internal.mv.daily_briefing.refresh,
   {},
 );
 
 crons.interval(
   "top_earners_30d refresh",
-  { minutes: 15 },
+  { minutes: 60 },
   internal.mv.top_earners.refresh,
   {},
 );
 
 crons.interval(
   "purchase_signals refresh",
-  { minutes: 30 },
+  { minutes: 120 },
   internal.mv.purchase_signals.refresh,
   {},
 );
 
 crons.interval(
   "churn_risk_renters refresh",
-  { minutes: 60 },
+  { minutes: 360 },
   internal.mv.churn_risk.refresh,
   {},
 );
 
 crons.interval(
   "utilization_today refresh",
-  { minutes: 15 },
+  { minutes: 60 },
   internal.mv.utilization.refresh,
   {},
 );
 
 crons.interval(
   "upcoming_returns refresh",
-  { minutes: 10 },
+  { minutes: 30 },
   internal.mv.upcoming_returns.refresh,
   {},
 );
@@ -79,7 +81,7 @@ crons.interval(
 // the cron registered is harmless.
 crons.interval(
   "hygglo_poll workflow",
-  { minutes: 3 },
+  { minutes: 5 },
   internal.hygglo_poll_trigger.triggerWorkflow,
 );
 
@@ -87,7 +89,7 @@ crons.interval(
 // completed so they stop appearing as ongoing/overdue in the Active widget.
 crons.interval(
   "complete stale-confirmed reservations",
-  { minutes: 7 },
+  { minutes: 60 },
   internal.reservations.completeStaleConfirmedCron,
   {},
 );
@@ -98,7 +100,7 @@ crons.interval(
 // new poller writes get accurate item identification within minutes.
 crons.interval(
   "item_resolver batch",
-  { minutes: 5 },
+  { minutes: 15 },
   internal.item_resolver.resolveBatch,
   { limit: 15 },
 );
@@ -109,7 +111,7 @@ crons.interval(
 // (listUnresolved returns nothing). Each call resolves up to 10 rows.
 crons.interval(
   "item_resolver notes backfill",
-  { minutes: 15 },
+  { minutes: 60 },
   internal.item_resolver.resolveBatch,
   { limit: 10, include_notes_only: true },
 );
@@ -121,7 +123,7 @@ crons.interval(
 // 10 min cadence; up to 10 reservations per cycle (LLM cost guard).
 crons.interval(
   "booking_time_extractor batch",
-  { minutes: 10 },
+  { minutes: 30 },
   internal.extract_booking_times.extractBatch,
   { limit: 10 },
 );
@@ -133,7 +135,7 @@ crons.interval(
 // ~10x text).
 crons.interval(
   "vision_resolver augment",
-  { minutes: 15 },
+  { minutes: 60 },
   internal.vision_resolver.augmentBatch,
   { limit: 5 },
 );
