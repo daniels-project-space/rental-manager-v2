@@ -1415,11 +1415,14 @@ export const getKitAffinity = query({
 export const getDustCollectors = query({
   args: {
     idle_days: v.optional(v.number()),           // default 60
-    min_cost_gbp: v.optional(v.number()),        // default 200 to focus on real money
+    min_cost_gbp: v.optional(v.number()),        // default 0 (was 200 — hid cheap dust)
   },
   handler: async (ctx, { idle_days, min_cost_gbp }) => {
     const idleDays = idle_days ?? 60;
-    const minCost = min_cost_gbp ?? 200;
+    // Default 0 (not 200): v1 chat surfaces cheap dust like Cinebloom
+    // filters and CF Express cards. The cost gate hid those. Caller can
+    // still pass min_cost_gbp explicitly for capital-tied-up filtering.
+    const minCost = min_cost_gbp ?? 0;
 
     const allItems = await ctx.db.query("items").collect();
     const active = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
@@ -1428,37 +1431,56 @@ export const getDustCollectors = query({
     cutoff.setDate(cutoff.getDate() - idleDays);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    // Find last-rental date per item (using resolved_items strict match).
+    // Find last-rental date + lifetime rental count + net per item (using
+    // resolved_items strict match).
     const reservations = await ctx.db.query("reservations").collect();
-    const lastRentalByItemId = new Map<string, string>();
+    const statsByItemId = new Map<string, { lastDate: string; rentalCount: number; lifetimeNet: number }>();
     for (const r of reservations) {
       if (!isPaidWithV1Legacy(r as any)) continue;
       const eff = (r as { pickup_date?: string }).pickup_date ?? r.start_date;
       if (!eff) continue;
-      const resolved = (r as { resolved_items?: Array<{ item_id: string }> }).resolved_items ?? [];
+      const resolved = (r as {
+        resolved_items?: Array<{ item_id: string; revenue_gbp?: number }>;
+      }).resolved_items ?? [];
+      const share = resolved.length > 0
+        ? ((r as { net_to_owner_gbp?: number }).net_to_owner_gbp ?? 0) / resolved.length
+        : 0;
       for (const x of resolved) {
-        const cur = lastRentalByItemId.get(x.item_id) ?? "";
-        if (eff > cur) lastRentalByItemId.set(x.item_id, eff);
+        const cur = statsByItemId.get(x.item_id) ?? { lastDate: "", rentalCount: 0, lifetimeNet: 0 };
+        if (eff > cur.lastDate) cur.lastDate = eff;
+        cur.rentalCount += 1;
+        cur.lifetimeNet += x.revenue_gbp !== undefined ? x.revenue_gbp : share;
+        statsByItemId.set(x.item_id, cur);
       }
     }
 
     const dust = active
       .map((i) => {
         const cost = i.acquisition_cost_gbp ?? 0;
-        const last = lastRentalByItemId.get(i._id as string) ?? "";
-        const isIdle = !last || last < cutoffStr;
+        const stats = statsByItemId.get(i._id as string) ?? { lastDate: "", rentalCount: 0, lifetimeNet: 0 };
+        const isIdle = !stats.lastDate || stats.lastDate < cutoffStr;
         return {
           itemId: i._id,
           name: i.name_canonical,
+          kind: i.kind,
           qty: i.qty,
           acquisitionCostGbp: cost || null,
           replacementCostGbp: i.replacement_cost_gbp ?? null,
-          lastRentalDate: last || null,
+          lastRentalDate: stats.lastDate || null,
+          rentalCount: stats.rentalCount,
+          lifetimeNetGbp: Math.round(stats.lifetimeNet * 100) / 100,
+          neverRented: stats.rentalCount === 0,
           idle: isIdle,
         };
       })
       .filter((r) => r.idle && (r.acquisitionCostGbp ?? 0) >= minCost)
-      .sort((a, b) => (b.acquisitionCostGbp ?? 0) - (a.acquisitionCostGbp ?? 0));
+      // Sort: never-rented first (likely true dust), then by lowest rental count,
+      // then by highest cost (capital tied up).
+      .sort((a, b) => {
+        if (a.neverRented !== b.neverRented) return a.neverRented ? -1 : 1;
+        if (a.rentalCount !== b.rentalCount) return a.rentalCount - b.rentalCount;
+        return (b.acquisitionCostGbp ?? 0) - (a.acquisitionCostGbp ?? 0);
+      });
 
     const totalDustCostGbp = dust.reduce((s, r) => s + (r.acquisitionCostGbp ?? 0), 0);
     return {
@@ -1466,6 +1488,7 @@ export const getDustCollectors = query({
       idleDays,
       minCostGbp: minCost,
       count: dust.length,
+      neverRentedCount: dust.filter((d) => d.neverRented).length,
       totalDustCostGbp: Math.round(totalDustCostGbp),
       items: dust,
     };
