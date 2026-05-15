@@ -1,10 +1,9 @@
 "use client";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
 
 type Metric = "count" | "revenue";
@@ -17,38 +16,65 @@ export type CatVolData = {
   totals: { count: number; revenue: number };
 };
 
+type KindBreakdown = {
+  days: number;
+  periodStart: string;
+  kind: string;
+  kindLabel: string;
+  items: Array<{ itemId: string; name: string; count: number; revenue: number; color: string }>;
+  totals: { count: number; revenue: number };
+};
+
 export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | null }) {
   const [days, setDays] = useState<Days>(30);
   const [metric, setMetric] = useState<Metric>("count");
+  const [drillKind, setDrillKind] = useState<string | null>(null);
+
+  // Reset drill state when period changes — different period = different slices.
+  useEffect(() => { setDrillKind(null); }, [days]);
 
   const data = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug, days }) as
     | CatVolData
     | undefined;
 
+  const breakdown = useQuery(
+    api.dashboard.getRentalVolumeKindBreakdown,
+    drillKind ? { accountSlug, days, kind: drillKind } : "skip",
+  ) as KindBreakdown | undefined;
+
   const periodOpts: { label: string; val: Days }[] = [
-    { label: "30d", val: 30 },
-    { label: "90d", val: 90 },
-    { label: "1y", val: 365 },
+    { label: "30d", val: 30 }, { label: "90d", val: 90 }, { label: "1y", val: 365 },
   ];
-
   const metricOpts: { label: string; val: Metric }[] = [
-    { label: "Count", val: "count" },
-    { label: "£", val: "revenue" },
+    { label: "Count", val: "count" }, { label: "£", val: "revenue" },
   ];
-
   const periodLabel = days === 365 ? "Last year" : `Last ${days} days`;
 
-  if (data === undefined) {
-    return <SkeletonBlock className="h-[220px] w-full" />;
-  }
-  if (data.slices.length === 0) {
+  if (data === undefined) return <SkeletonBlock className="h-[220px] w-full" />;
+  if (data.slices.length === 0)
     return <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />;
-  }
+
+  const drillLabel = drillKind
+    ? data.slices.find((s) => s.kind === drillKind)?.label ?? drillKind
+    : null;
 
   return (
     <>
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <span className="text-xs text-[#8b8fa3]">{periodLabel}</span>
+        <span className="text-xs text-[#8b8fa3]">
+          {drillKind ? (
+            <button
+              onClick={() => setDrillKind(null)}
+              className="hover:text-white transition-colors"
+              style={{ color: "#6ea8fe" }}
+            >
+              ← All categories
+            </button>
+          ) : (
+            periodLabel
+          )}
+          {drillKind && <span className="ml-2 text-white/70">/ {drillLabel}</span>}
+        </span>
         <div className="flex items-center gap-2">
           <div className="flex gap-1">
             {periodOpts.map((p) => (
@@ -61,9 +87,7 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
                   color: days === p.val ? "#6ea8fe" : "#8b8fa3",
                   border: days === p.val ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
                 }}
-              >
-                {p.label}
-              </button>
+              >{p.label}</button>
             ))}
           </div>
           <div className="flex gap-1">
@@ -77,9 +101,7 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
                   color: metric === m.val ? "#6ea8fe" : "#8b8fa3",
                   border: metric === m.val ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
                 }}
-              >
-                {m.label}
-              </button>
+              >{m.label}</button>
             ))}
           </div>
         </div>
@@ -91,14 +113,38 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
             data={data.slices}
             dataKey={metric}
             nameKey="label"
-            innerRadius={50}
+            innerRadius={60}
             outerRadius={90}
             paddingAngle={2}
+            onClick={(_e, idx: number) => {
+              const slice = data.slices[idx];
+              if (slice) setDrillKind((prev) => (prev === slice.kind ? null : slice.kind));
+            }}
+            style={{ cursor: "pointer" }}
           >
             {data.slices.map((s) => (
-              <Cell key={s.kind} fill={s.color} />
+              <Cell
+                key={s.kind}
+                fill={s.color}
+                opacity={drillKind && drillKind !== s.kind ? 0.33 : 1}
+              />
             ))}
           </Pie>
+          {drillKind && breakdown && breakdown.items.length > 0 && (
+            <Pie
+              data={breakdown.items}
+              dataKey={metric}
+              nameKey="name"
+              innerRadius={30}
+              outerRadius={55}
+              paddingAngle={1}
+              legendType="none"
+            >
+              {breakdown.items.map((it, i) => (
+                <Cell key={it.itemId ?? i} fill={it.color} />
+              ))}
+            </Pie>
+          )}
           <Tooltip
             contentStyle={{
               background: "rgba(14,17,28,0.95)",
@@ -108,10 +154,11 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
             }}
             formatter={(value, _name, item) => {
               const n = Number(value) || 0;
-              const label = (item as { payload?: { label?: string } })?.payload?.label ?? "";
+              const p = (item as { payload?: { label?: string; name?: string } })?.payload;
+              const tipLabel = p?.label ?? p?.name ?? "";
               return metric === "count"
-                ? [`${n} rentals`, label]
-                : [`£${n.toFixed(0)}`, label];
+                ? [`${n} rentals`, tipLabel]
+                : [`£${n.toFixed(0)}`, tipLabel];
             }}
           />
           <Legend
@@ -119,8 +166,12 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
             align="center"
             wrapperStyle={{ fontSize: 11, color: "#9ca3af" }}
             formatter={(value, entry) => {
-              const p = (entry as { payload?: { count?: number; revenue?: number } } | undefined)?.payload;
-              if (!p) return value as string;
+              // Only outer-ring (kind slices) carry label/count/revenue; for the
+              // inner ring Recharts auto-emits its own legend entries which we
+              // ignore in the formatter (return value as-is). To prevent inner
+              // entries from polluting, we filter by presence of `label`.
+              const p = (entry as { payload?: { label?: string; count?: number; revenue?: number } } | undefined)?.payload;
+              if (!p || p.label === undefined) return value as string;
               return metric === "count"
                 ? `${value} (${p.count ?? 0})`
                 : `${value} (£${(p.revenue ?? 0).toFixed(0)})`;

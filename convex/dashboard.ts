@@ -4,6 +4,7 @@ import {
   dedupByLogicalRental,
   effectiveDate,
   isConfirmedWithDates,
+  isLive,
   isOngoing,
   isPaidWithV1Legacy,
   isPendingVerification,
@@ -780,29 +781,59 @@ export const getStatsDrawerData = query({
         sharedBlacklist,
       });
 
-    const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => ({
-      reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
-      renter_name: r.renter_name ?? null,
-      account_slug: r.account_slug ?? "",
-      start_date: r.start_date ?? null,
-      end_date: r.end_date ?? null,
-      pickup_date: r.pickup_date ?? r.start_date ?? null,
-      pickup_time: r.pickup_time ?? null,
-      return_date: (r as any).return_date ?? r.end_date ?? null,
-      return_time: r.return_time ?? null,
-      pickup_method: r.pickup_method ?? null,
-      return_method: r.return_method ?? null,
-      items: (r.items ?? []).map((i) => i.item_name),
-      photo_url: (r.photos_urls ?? [])[0] ?? null,
-      duration_days:
-        r.duration_days ??
-        (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
-      net_gbp: r.net_to_owner_gbp ?? null,
-      order_step: r.order_step ?? null,
-      item_tiles: buildItemTiles(r),
-      kind,
-      is_ongoing: kind === "ongoing",
-    });
+    const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => {
+      // PASS-6 (2026-05-15): v1-style master thumb + text summary.
+      // Previously emitted one tile per item, falling back to a 3-letter
+      // abbreviation placeholder when no image resolved. Result looked bad
+      // (rows of "ANA ANA ANA ANA PL" placeholders) AND duplicated images
+      // when 2+ items in the SAME reservation shared an image_url (e.g.
+      // Craig Wilson — two Sony items mapping to the same Sony product
+      // photo because items.image_url is shared by name_canonical).
+      //
+      // v1 (rental-manager/src/public/dashboard-mobile.html lines 2107-2113)
+      // shows ONE 50×50 master photo per rental + a text line of item
+      // names. master = first photos_urls entry containing "/products/"
+      // (filters out renter profile pictures).
+      const tiles = buildItemTiles(r);
+      const photosUrls = (r.photos_urls ?? []) as string[];
+      const productPhoto = photosUrls.find(
+        (u) => typeof u === "string" && u.includes("/products/"),
+      ) ?? null;
+      const masterImageUrl =
+        productPhoto ?? tiles.find((t) => t.image_url)?.image_url ?? null;
+      const itemNames = tiles.length > 0
+        ? tiles.map((t) => t.name)
+        : (r.items ?? []).map((i) => i.item_name);
+      const firstItem = itemNames[0] ?? "(no item)";
+      const extra = itemNames.length > 1 ? ` +${itemNames.length - 1} more` : "";
+      const itemNamesSummary = firstItem + extra;
+      return {
+        reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
+        renter_name: r.renter_name ?? null,
+        account_slug: r.account_slug ?? "",
+        start_date: r.start_date ?? null,
+        end_date: r.end_date ?? null,
+        pickup_date: r.pickup_date ?? r.start_date ?? null,
+        pickup_time: r.pickup_time ?? null,
+        return_date: (r as any).return_date ?? r.end_date ?? null,
+        return_time: r.return_time ?? null,
+        pickup_method: r.pickup_method ?? null,
+        return_method: r.return_method ?? null,
+        items: (r.items ?? []).map((i) => i.item_name),
+        photo_url: masterImageUrl,
+        master_image_url: masterImageUrl,
+        item_names_summary: itemNamesSummary,
+        duration_days:
+          r.duration_days ??
+          (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
+        net_gbp: r.net_to_owner_gbp ?? null,
+        order_step: r.order_step ?? null,
+        // item_tiles preserved for backward compat. Active Drawer ignores it.
+        item_tiles: tiles,
+        kind,
+        is_ongoing: kind === "ongoing",
+      };
+    };
 
     const activeRentals = [
       ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
@@ -1471,6 +1502,15 @@ export const getRentalVolumeByCategory = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
+    // Match revenue.ts semantics: drop cancelled/declined/obsolete, then
+    // collapse v1/Hygglo duplicates, then restrict to effectiveDate window.
+    reservations = reservations.filter(isLive);
+    reservations = dedupByLogicalRental(reservations);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    reservations = reservations.filter((r) => {
+      const d = effectiveDate(r);
+      return d !== undefined && d >= cutoffStr && d <= todayStr;
+    });
 
     // Pricing catalog for revenue split weights (canonical → daily_price_min).
     const pricingAll = await ctx.db.query("pricing_catalog").collect();
@@ -1556,6 +1596,149 @@ export const getRentalVolumeByCategory = query({
       days: effectiveDays,
       periodStart: cutoffStr,
       slices,
+      totals,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drill-down: items within a kind (or items in the "other" merged bucket)
+// for the same period/account as getRentalVolumeByCategory. Single-level.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getRentalVolumeKindBreakdown = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    days: v.number(),
+    kind: v.string(),
+  },
+  handler: async (ctx, { accountSlug, days, kind }) => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+      .collect();
+    if (accountSlug) {
+      reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    }
+    reservations = reservations.filter(isLive);
+    reservations = dedupByLogicalRental(reservations);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    reservations = reservations.filter((r) => {
+      const d = effectiveDate(r);
+      return d !== undefined && d >= cutoffStr && d <= todayStr;
+    });
+
+    const pricingAll = await ctx.db.query("pricing_catalog").collect();
+    const priceByCanonical = new Map<string, number>(
+      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
+    );
+
+    const items = await ctx.db.query("items").collect();
+    const kindById = new Map<string, { kind: string; name: string }>();
+    for (const it of items) {
+      kindById.set(it._id as string, {
+        kind: it.kind,
+        name: (it as { name_canonical?: string }).name_canonical ?? it.kind,
+      });
+    }
+
+    // First pass: count by kind to determine the top-6/other split, mirroring
+    // the main query so "other" drill-down resolves to the same set.
+    const countByKind = new Map<string, number>();
+    for (const r of reservations) {
+      const resolved =
+        (r as {
+          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
+        }).resolved_items ?? [];
+      for (const x of resolved) {
+        const k = kindById.get(x.item_id)?.kind ?? "unknown";
+        countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
+      }
+    }
+    const rankedKinds = Array.from(countByKind.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([k]) => k);
+    const topKinds = new Set(rankedKinds.slice(0, 6));
+    const otherKinds = new Set(rankedKinds.slice(6));
+
+    const isInTargetSet = (k: string): boolean => {
+      if (kind === "other") return otherKinds.has(k);
+      return k === kind;
+    };
+
+    // Second pass: split each row's gross across ALL resolved items (to keep
+    // attribution math identical to the main query), then keep only the
+    // in-target items.
+    const itemCount = new Map<string, number>();
+    const itemRevenue = new Map<string, number>();
+    for (const r of reservations) {
+      const resolved =
+        (r as {
+          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
+        }).resolved_items ?? [];
+      if (resolved.length === 0) continue;
+      const gross = r.gross_paid_gbp ?? 0;
+      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+      const priceSum = prices.reduce((a, b) => a + b, 0);
+      resolved.forEach((x, idx) => {
+        const k = kindById.get(x.item_id)?.kind ?? "unknown";
+        if (!isInTargetSet(k)) return;
+        const share =
+          priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+        itemCount.set(x.item_id, (itemCount.get(x.item_id) ?? 0) + (x.qty ?? 1));
+        itemRevenue.set(x.item_id, (itemRevenue.get(x.item_id) ?? 0) + share);
+      });
+    }
+
+    type ItemSlice = { itemId: string; name: string; count: number; revenue: number; color: string };
+    const allIds = new Set<string>([...itemCount.keys(), ...itemRevenue.keys()]);
+    const entries: ItemSlice[] = Array.from(allIds)
+      .map((id) => ({
+        itemId: id,
+        name: kindById.get(id)?.name ?? id,
+        count: itemCount.get(id) ?? 0,
+        revenue: Math.round((itemRevenue.get(id) ?? 0) * 100) / 100,
+        color: "",
+      }))
+      .filter((e) => e.count > 0 || e.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const PALETTE = ["#6ea8fe", "#22c55e", "#a78bfa", "#f59e0b", "#ef4444", "#06b6d4", "#8b8fa3"];
+    const top = entries.slice(0, 10);
+    const rest = entries.slice(10);
+    const items_out: ItemSlice[] = top.map((e, i) => ({
+      ...e,
+      color: PALETTE[i % PALETTE.length],
+    }));
+    if (rest.length > 0) {
+      const otherCount = rest.reduce((s, e) => s + e.count, 0);
+      const otherRevenue = rest.reduce((s, e) => s + e.revenue, 0);
+      if (otherCount > 0 || otherRevenue > 0) {
+        items_out.push({
+          itemId: "__other__",
+          name: "Other items",
+          count: otherCount,
+          revenue: Math.round(otherRevenue * 100) / 100,
+          color: "#8b8fa3",
+        });
+      }
+    }
+
+    const totals = {
+      count: items_out.reduce((s, e) => s + e.count, 0),
+      revenue: Math.round(items_out.reduce((s, e) => s + e.revenue, 0) * 100) / 100,
+    };
+
+    return {
+      days,
+      periodStart: cutoffStr,
+      kind,
+      kindLabel: labelFor(kind),
+      items: items_out,
       totals,
     };
   },
