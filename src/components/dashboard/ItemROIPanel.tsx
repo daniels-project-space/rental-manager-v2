@@ -11,9 +11,9 @@ type Row = {
   name: string;
   kind?: string;
   qty: number;
-  lifetimeNet: number;
-  lifetimeGross: number;
-  cost: number | null;
+  lifetimeNetGbp: number;
+  lifetimeGrossGbp: number;
+  acquisitionCostGbp: number | null;
   monthsOwned: number;
   roiPct: number | null;
   annualizedROIPct: number | null;
@@ -43,7 +43,7 @@ export function ItemROIPanel() {
   const data: Row[] | undefined =
     raw === undefined
       ? undefined
-      : ((raw as { rows?: Row[] }).rows ?? []);
+      : ((raw as unknown as { rows?: Row[] }).rows ?? []);
   const visible = data ? (showAll ? data : data.slice(0, 12)) : [];
 
   return (
@@ -80,8 +80,8 @@ export function ItemROIPanel() {
             {visible.map((r) => {
               const t = tone(r.roiPct);
               const payback =
-                r.cost && r.lifetimeNet > 0 && r.monthsOwned > 0
-                  ? r.cost / (r.lifetimeNet / r.monthsOwned)
+                r.acquisitionCostGbp && r.lifetimeNetGbp > 0 && r.monthsOwned > 0
+                  ? r.acquisitionCostGbp / (r.lifetimeNetGbp / r.monthsOwned)
                   : null;
               return (
                 <div
@@ -96,11 +96,11 @@ export function ItemROIPanel() {
                     </div>
                   </div>
                   <div className="col-span-2 text-right text-xs text-slate-300 tabular-nums">
-                    {r.cost ? fmtGbp(r.cost) : <span className="text-slate-600">—</span>}
+                    {r.acquisitionCostGbp ? fmtGbp(r.acquisitionCostGbp) : <span className="text-slate-600">—</span>}
                     <div className="text-[10px] text-slate-500">cost</div>
                   </div>
                   <div className="col-span-2 text-right text-xs text-emerald-300 tabular-nums">
-                    {fmtGbp(r.lifetimeNet)}
+                    {fmtGbp(r.lifetimeNetGbp)}
                     <div className="text-[10px] text-slate-500">net</div>
                   </div>
                   <div className="col-span-3 text-right">

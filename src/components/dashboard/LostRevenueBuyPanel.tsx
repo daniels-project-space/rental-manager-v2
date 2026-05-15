@@ -47,7 +47,7 @@ export function LostRevenueBuyPanel() {
   const data: Row[] | undefined =
     raw === undefined
       ? undefined
-      : ((raw as { rows?: Row[] }).rows ?? []);
+      : ((raw as unknown as { rows?: Row[] }).rows ?? []);
   const visible = data ? (showAll ? data : data.slice(0, 10)) : [];
 
   const dayOpts = [

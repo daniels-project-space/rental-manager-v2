@@ -33,7 +33,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 
 const URL = 'https://rental-manager-v2-nu.vercel.app';
-const OUT = '/tmp/rm-v2-audit/pass-1';
+const OUT = process.env.AUDIT_OUT || '/tmp/rm-v2-audit/pass-1';
 
 async function probeImgsIn(page, selector) {
   return page.evaluate((sel) => {
