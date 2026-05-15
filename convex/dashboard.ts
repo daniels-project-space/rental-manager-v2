@@ -406,6 +406,17 @@ export const getStatsDrawerData = query({
       bankByProduct.set(`${li.account_slug}#${li.product_id}`, li.image_url);
     }
 
+    // Phase 12.3 safety-net fallback: name-normalised lookup against
+    // inventory items. Only fires when both bank and h.image_url miss.
+    const normHyggloName = (s: string) =>
+      s.toLowerCase().replace(/\[[^\]]+\]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const itemImgByName = new Map<string, string>();
+    for (const it of allItems) {
+      const url = (it as { image_url?: string | null }).image_url;
+      if (!url) continue;
+      itemImgByName.set(normHyggloName(it.name_canonical), url);
+    }
+
     // ── COLLECT 3: denial_records ────────────────────────────────
     let denialRows = await ctx.db.query("denial_records").collect();
     if (accountSlug) {
@@ -839,14 +850,27 @@ export const getStatsDrawerData = query({
         const noImage: string[] = [];
         for (const h of hItems) {
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-          // Phase 12.3: bank lookup (product_id → image_url) is primary
-          // source of truth. Falls back to hygglo_items[i].image_url and
-          // then null. Fixes cross-rental aliasing (Michelle's Atomos
-          // showing a GM 24-70 Bundle image, Pass-9 root cause).
+          // Phase 12.3 image source priority:
+          //   1. listing_images bank (account_slug, product_id) — stable PK win.
+          //   2. hygglo_items[i].image_url — poller-written, may be null.
+          //   3. items table by normalised name — last-resort safety net.
+          //   4. null → noImage[] pill.
           const bankUrl = h.product_id
             ? bankByProduct.get(`${r.account_slug}#${h.product_id}`)
             : undefined;
-          const url: string | null = bankUrl ?? h.image_url ?? null;
+          let url: string | null = bankUrl ?? h.image_url ?? null;
+          if (!url) {
+            const nh = normHyggloName(h.name);
+            url = itemImgByName.get(nh) ?? null;
+            if (!url) {
+              for (const [canonNorm, candidate] of itemImgByName) {
+                if (canonNorm.length >= 4 && nh.includes(canonNorm)) {
+                  url = candidate;
+                  break;
+                }
+              }
+            }
+          }
           if (url) {
             const ex = tilesByImage.get(url);
             if (ex) {
