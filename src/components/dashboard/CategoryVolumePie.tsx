@@ -1,7 +1,6 @@
 "use client";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -9,56 +8,80 @@ import { useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
 
 type Metric = "count" | "revenue";
+type Days = 30 | 90 | 365;
 
 export type CatVolData = {
+  days: number;
+  periodStart: string;
   slices: Array<{ kind: string; label: string; count: number; revenue: number; color: string }>;
   totals: { count: number; revenue: number };
-  month: string;
 };
 
-function formatMonth(ym: string): string {
-  if (!ym || !ym.includes("-")) return ym || "";
-  const [y, m] = ym.split("-");
-  const year = parseInt(y);
-  const monthIdx = parseInt(m) - 1;
-  if (isNaN(year) || isNaN(monthIdx)) return ym;
-  return new Date(year, monthIdx).toLocaleString("en", { month: "long", year: "numeric" });
-}
-
-export function CategoryVolumePieBody({ data }: { data: CatVolData | undefined }) {
+export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | null }) {
+  const [days, setDays] = useState<Days>(30);
   const [metric, setMetric] = useState<Metric>("count");
+
+  const data = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug, days }) as
+    | CatVolData
+    | undefined;
+
+  const periodOpts: { label: string; val: Days }[] = [
+    { label: "30d", val: 30 },
+    { label: "90d", val: 90 },
+    { label: "1y", val: 365 },
+  ];
 
   const metricOpts: { label: string; val: Metric }[] = [
     { label: "Count", val: "count" },
     { label: "£", val: "revenue" },
   ];
 
+  const periodLabel = days === 365 ? "Last year" : `Last ${days} days`;
+
   if (data === undefined) {
     return <SkeletonBlock className="h-[220px] w-full" />;
   }
   if (data.slices.length === 0) {
-    return <EmptyState message="No rentals yet this month" icon="📊" />;
+    return <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />;
   }
 
   return (
     <>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-[#8b8fa3]">{formatMonth(data.month)}</span>
-        <div className="flex gap-1">
-          {metricOpts.map((m) => (
-            <button
-              key={m.val}
-              onClick={() => setMetric(m.val)}
-              className="px-2 py-0.5 text-xs rounded transition-colors"
-              style={{
-                background: metric === m.val ? "rgba(110,168,254,0.15)" : "transparent",
-                color: metric === m.val ? "#6ea8fe" : "#8b8fa3",
-                border: metric === m.val ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <span className="text-xs text-[#8b8fa3]">{periodLabel}</span>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {periodOpts.map((p) => (
+              <button
+                key={p.val}
+                onClick={() => setDays(p.val)}
+                className="px-2 py-0.5 text-xs rounded transition-colors"
+                style={{
+                  background: days === p.val ? "rgba(110,168,254,0.15)" : "transparent",
+                  color: days === p.val ? "#6ea8fe" : "#8b8fa3",
+                  border: days === p.val ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1">
+            {metricOpts.map((m) => (
+              <button
+                key={m.val}
+                onClick={() => setMetric(m.val)}
+                className="px-2 py-0.5 text-xs rounded transition-colors"
+                style={{
+                  background: metric === m.val ? "rgba(110,168,254,0.15)" : "transparent",
+                  color: metric === m.val ? "#6ea8fe" : "#8b8fa3",
+                  border: metric === m.val ? "1px solid rgba(110,168,254,0.3)" : "1px solid transparent",
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -121,18 +144,5 @@ export function CategoryVolumePieBody({ data }: { data: CatVolData | undefined }
         </div>
       </div>
     </>
-  );
-}
-
-export function CategoryVolumePie() {
-  const { activeAccountSlug } = useAccount();
-  const data = useQuery(api.dashboard.getRentalVolumeByCategory, {
-    accountSlug: activeAccountSlug,
-  });
-  return (
-    <Card>
-      <CardHeader title="Category Volume" />
-      <CategoryVolumePieBody data={data} />
-    </Card>
   );
 }

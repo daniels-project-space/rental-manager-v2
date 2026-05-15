@@ -3,7 +3,6 @@ import { v } from "convex/values";
 import {
   dedupByLogicalRental,
   effectiveDate,
-  inDateRange,
   isConfirmedWithDates,
   isOngoing,
   isPaidWithV1Legacy,
@@ -62,23 +61,25 @@ export function buildItemTilesShared(args: {
   const imageHints: ImageHint[] = reservation.image_hints ?? [];
   const resolved: ResolvedItemEntry[] = reservation.resolved_items ?? [];
 
-  // v1-parity fallback (filtered to product images only). When per-item
-  // resolution returns null we fill from `photos_urls` so the user sees a
-  // meaningful image instead of grey placeholders. We round-robin through
-  // ALL available product photos to avoid the "5 identical Blazar lens
-  // tiles" symptom (Joe Cowie / Kemi Adeeko bug — see PASS4_JOWE.md).
-  // Profile avatars (/profiles/) are excluded so we never render a renter's
-  // selfie as an item image.
-  const productPhotos: string[] = (reservation.photos_urls ?? []).filter(
-    (u) => typeof u === "string" && u.includes("/products/"),
-  );
-  let fallbackIdx = 0;
-  const nextFallback = (): string | null => {
-    if (productPhotos.length === 0) return null;
-    const url = productPhotos[fallbackIdx % productPhotos.length];
-    fallbackIdx++;
-    return url;
-  };
+  // PASS-5 fix (2026-05-15): The Pass-4 round-robin fallback CAUSED visual
+  // duplication on the live dashboard. When a rental had M items but only
+  // N<M product photos (e.g. Isiaq Adeyemi: 3 items, 1 photo → 3 identical
+  // tiles; Christian Asante: 4 items, 1 photo → 4 identical tiles), every
+  // unresolved item got assigned the SAME repeating photo from the round
+  // robin. User reported "items duplicating multiple times" because tiles
+  // looked identical even though `alt` text differed.
+  //
+  // We now keep `image_url = null` when the per-item resolver returns null.
+  // The frontend (ActiveDrawer.tsx, CalendarStrip, etc.) already renders a
+  // distinctive 3-letter abbreviation placeholder for null URLs, which is
+  // unique per item name and avoids the duplicate-photo illusion. This is
+  // closer to v1 behavior (v1 showed "Item × qty" text with no per-item
+  // image; the abbrev tile is a strict UX improvement).
+  //
+  // photos_urls is still received in args for forward compat / debugging
+  // but is intentionally NOT used to manufacture fallback tile images.
+  // (referenced once for typecheck — the field is preserved in the API.)
+  void reservation.photos_urls;
 
   // Confidence lookup keyed by item_id (only resolved entries have it).
   const confidenceById = new Map<string, number>();
@@ -123,14 +124,10 @@ export function buildItemTilesShared(args: {
       sharedBlacklist,
     });
 
-    // v1-parity: when per-item resolution gave us nothing, fall back to a
-    // photo from photos_urls (round-robin across the rental's product
-    // photos). Each unresolved item gets a different photo when possible,
-    // so a 5-item rental with 3 photos shows 3 distinct images + 2 repeats
-    // rather than 5 grey placeholders or 5 identical photos. UI still
-    // distinguishes items via the `title` attribute (full item name on
-    // hover) and the per-item alt text.
-    const finalUrl = resolved.url ?? nextFallback();
+    // PASS-5 fix: no round-robin fallback. Null URLs render as per-item
+    // abbreviation placeholders in the frontend, which are unique per item
+    // name and never look duplicated.
+    const finalUrl = resolved.url ?? null;
 
     const qty = x.qty ?? 1;
     const existing = counts.get(dedupKey);
@@ -1452,62 +1449,57 @@ function readResolverItems(r: {
 }
 
 export const getRentalVolumeByCategory = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
-    const { monthStart, monthEnd } = monthBounds();
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    days: v.optional(v.number()),
+  },
+  handler: async (ctx, { accountSlug, days }) => {
+    // Rolling window matching getItemRevenueRanking (convex/items.ts:31-89).
+    // Gross-based, pricing_catalog-weighted split across resolved_items.
+    // PASS-5: `days` made optional (frontend was not passing it, which
+    // crashed the entire Stats Grid via error boundary and hid the
+    // Active Drawer).
+    const effectiveDays = typeof days === "number" ? days : 30;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - effectiveDays);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    // Pull reservations starting this month onward, then scope/filter.
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", monthStart))
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
       .collect();
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
-    // Keep paid/confirmed rows whose effective date lands in this month.
-    const kept = reservations.filter(
-      (r) =>
-        (isConfirmedWithDates(r) || isPaidWithV1Legacy(r)) &&
-        inDateRange(r, monthStart, monthEnd),
+    // Pricing catalog for revenue split weights (canonical → daily_price_min).
+    const pricingAll = await ctx.db.query("pricing_catalog").collect();
+    const priceByCanonical = new Map<string, number>(
+      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
     );
 
-    const deduped = dedupByLogicalRental(kept);
-
-    // Item kind lookup.
+    // Item kind lookup (_id → kind).
     const items = await ctx.db.query("items").collect();
-    const itemKind = new Map<string, string>();
-    for (const it of items) itemKind.set(it._id as string, it.kind);
-
-    // Pricing catalog for revenue split weights.
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
-    const pricing = new Map<string, number>();
-    for (const p of pricingRows) pricing.set(p.item_name_canonical, p.daily_price_min);
+    const kindById = new Map<string, string>();
+    for (const it of items) kindById.set(it._id as string, it.kind);
 
     const countByKind = new Map<string, number>();
     const revenueByKind = new Map<string, number>();
 
-    for (const r of deduped) {
-      const resolved = readResolverItems(
-        r as { expanded_items?: any; resolved_items?: any },
-      );
+    for (const r of reservations) {
+      const resolved =
+        (r as {
+          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
+        }).resolved_items ?? [];
       if (resolved.length === 0) continue;
-
-      // Counts.
-      for (const x of resolved) {
-        const k = itemKind.get(x.item_id) ?? "unknown";
-        countByKind.set(k, (countByKind.get(k) ?? 0) + x.qty);
-      }
-
-      // Revenue split: weight by (price * qty); equal share fallback.
-      const net = netOf(r);
-      const weights = resolved.map(
-        (x) => (pricing.get(x.item_name_canonical) ?? 0) * x.qty,
-      );
-      const wSum = weights.reduce((a, b) => a + b, 0);
-      resolved.forEach((x, i) => {
-        const share = wSum > 0 ? (net * weights[i]) / wSum : net / resolved.length;
-        const k = itemKind.get(x.item_id) ?? "unknown";
+      const gross = r.gross_paid_gbp ?? 0;
+      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+      const priceSum = prices.reduce((a, b) => a + b, 0);
+      resolved.forEach((x, idx) => {
+        const share =
+          priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+        const k = kindById.get(x.item_id) ?? "unknown";
+        countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
         revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
       });
     }
@@ -1549,7 +1541,7 @@ export const getRentalVolumeByCategory = query({
     if (rest.length > 0) {
       const otherCount = rest.reduce((s, e) => s + e.count, 0);
       const otherRevenue = rest.reduce((s, e) => s + e.revenue, 0);
-      if (otherCount > 0 || otherRevenue > 0) {
+      if (otherCount > 0) {
         slices.push({
           kind: "other",
           label: "Other",
@@ -1561,9 +1553,10 @@ export const getRentalVolumeByCategory = query({
     }
 
     return {
+      days: effectiveDays,
+      periodStart: cutoffStr,
       slices,
       totals,
-      month: monthStart.slice(0, 7),
     };
   },
 });

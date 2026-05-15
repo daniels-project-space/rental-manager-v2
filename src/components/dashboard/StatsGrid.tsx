@@ -171,7 +171,10 @@ export function StatsGrid() {
   const rawData = useQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
-  const categoryVolume = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug: activeAccountSlug });
+  const categoryVolume = useQuery(api.dashboard.getRentalVolumeByCategory, {
+    accountSlug: activeAccountSlug,
+    days: 30,
+  });
 
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
     if (!rawData) return null;
@@ -520,7 +523,7 @@ export function StatsGrid() {
           subtitle={
             categoryVolume === undefined
               ? "loading…"
-              : `${fmtGbp(categoryVolume.totals.revenue)} net · ${categoryVolume.totals.count} rentals`
+              : `${fmtGbp(categoryVolume.totals.revenue)} · ${categoryVolume.totals.count} rentals · 30d`
           }
           isExpanded={expandedId === "category_volume"}
           onToggle={() => toggle("category_volume")}
@@ -530,7 +533,7 @@ export function StatsGrid() {
             ) : null
           }
         >
-          <CategoryVolumePieBody data={categoryVolume} />
+          <CategoryVolumePieBody accountSlug={activeAccountSlug} />
         </ExpandableStatCard>
       ),
     };
