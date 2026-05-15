@@ -37,6 +37,8 @@ type HyggloDetailItem = {
     largeUrl?: string;
     mediumUrl?: string;
     thumbnailUrl?: string;
+    // PASS-10: Hygglo's actual key on /v4/my/orders/{id}.items[].image.
+    fullSizeUrl?: string;
   };
 };
 
@@ -51,7 +53,13 @@ type HyggloItemRow = {
 
 function pickPerItemUrl(img: HyggloDetailItem["image"]): string | null {
   if (!img) return null;
-  return img.largeUrl ?? img.url ?? img.mediumUrl ?? img.thumbnailUrl ?? img.originalUrl ?? null;
+  // PASS-10: prefer fullSizeUrl (Hygglo's real key). Legacy *Url keys kept
+  // in chain for forward-compat. thumbnailUrl is last-resort.
+  return (
+    img.fullSizeUrl ??
+    img.largeUrl ?? img.url ?? img.mediumUrl ?? img.originalUrl ??
+    img.thumbnailUrl ?? null
+  );
 }
 
 function buildHyggloItems(detailItems: HyggloDetailItem[]): HyggloItemRow[] {
@@ -67,10 +75,15 @@ function buildHyggloItems(detailItems: HyggloDetailItem[]): HyggloItemRow[] {
     }));
 }
 
-/** Already-backfilled: hygglo_items present AND non-empty. */
+/** Already-backfilled: hygglo_items present, non-empty AND has at least one
+ *  item with a real image_url. PASS-10: rows whose every item.image_url is
+ *  null are stale (Pass-9 mapping missed fullSizeUrl) and must be re-processed.
+ */
 function alreadyBackfilled(row: Doc<"reservations">): boolean {
   const hi = (row as any).hygglo_items;
-  return Array.isArray(hi) && hi.length > 0;
+  if (!Array.isArray(hi) || hi.length === 0) return false;
+  const anyImaged = hi.some((it: any) => typeof it?.image_url === "string" && it.image_url.length > 0);
+  return anyImaged;
 }
 
 // ── Internal query: paginated list of candidates ─────────────────────────

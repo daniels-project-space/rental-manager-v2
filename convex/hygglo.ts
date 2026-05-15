@@ -234,6 +234,8 @@ const orderItemArgs = v.object({
     largeUrl: v.optional(v.string()),
     mediumUrl: v.optional(v.string()),
     thumbnailUrl: v.optional(v.string()),
+    // PASS-10: Hygglo's actual /v4/my/orders/{id}.items[].image schema.
+    fullSizeUrl: v.optional(v.string()),
   })),
   /** PASS-9: extra raw Hygglo per-item fields forwarded for hygglo_items[]. */
   type: v.optional(v.string()),
@@ -254,6 +256,7 @@ function buildHyggloItems(
       largeUrl?: string;
       mediumUrl?: string;
       thumbnailUrl?: string;
+      fullSizeUrl?: string;
     };
     type?: string;
     product_id?: number;
@@ -271,8 +274,13 @@ function buildHyggloItems(
     .filter((i) => i?.type !== "INSURANCE")
     .map((i) => {
       const img = i.image ?? {};
+      // PASS-10: Hygglo returns fullSizeUrl + thumbnailUrl on items[].image.
+      // The other *Url keys are forwarded for forward-compat but in practice
+      // are always undefined. Prefer fullSizeUrl > legacy keys > thumbnailUrl.
       const image_url =
-        img.largeUrl ?? img.url ?? img.mediumUrl ?? img.thumbnailUrl ?? img.originalUrl ?? null;
+        img.fullSizeUrl ??
+        img.largeUrl ?? img.url ?? img.mediumUrl ?? img.originalUrl ??
+        img.thumbnailUrl ?? null;
       return {
         name: String(i.item_name ?? ""),
         image_url: image_url as string | null,
@@ -320,6 +328,7 @@ function buildImageHintsFromHyggloItems(
       largeUrl?: string;
       mediumUrl?: string;
       thumbnailUrl?: string;
+      fullSizeUrl?: string;
     };
   }>,
   fallbackOrderPhotos: string[] | undefined,
@@ -330,8 +339,11 @@ function buildImageHintsFromHyggloItems(
     const it = items[i];
     if (!it?.item_name) continue;
     const img = it.image ?? {};
+    // PASS-10: fullSizeUrl is what Hygglo actually returns; legacy *Url keys
+    // remain in the preference chain for forward-compat.
     const perItem =
-      img.largeUrl ?? img.originalUrl ?? img.url ?? img.mediumUrl ?? img.thumbnailUrl ?? null;
+      img.fullSizeUrl ?? img.largeUrl ?? img.originalUrl ?? img.url ??
+      img.mediumUrl ?? img.thumbnailUrl ?? null;
     if (perItem) {
       hints.push({
         item_name: it.item_name,

@@ -93,6 +93,7 @@ type OrderReservationPayload = {
       largeUrl?: string;
       mediumUrl?: string;
       thumbnailUrl?: string;
+      fullSizeUrl?: string;
     };
     type?: string;
     product_id?: number;
@@ -350,6 +351,10 @@ async function scrapeAccount(
                 largeUrl: i.image.largeUrl,
                 mediumUrl: i.image.mediumUrl,
                 thumbnailUrl: i.image.thumbnailUrl,
+                // PASS-10: Hygglo's /v4/my/orders/{id}.items[].image actually returns
+                // `fullSizeUrl` + `thumbnailUrl` only. Forward fullSizeUrl so the
+                // poller can populate hygglo_items[].image_url.
+                fullSizeUrl: i.image.fullSizeUrl,
               }
             : undefined,
           type: typeof i.type === "string" ? i.type : undefined,
