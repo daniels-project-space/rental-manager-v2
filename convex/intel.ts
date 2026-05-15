@@ -575,26 +575,46 @@ export const getTopSpenders = query({
     for (const r of allRenters) renterById.set(r._id as string, r);
 
     const reservations = await ctx.db.query("reservations").collect();
-    const aggByRenter = new Map<string, { gross: number; net: number; count: number }>();
+    // Aggregate by renter_id when available (linked to renters doc); else by
+    // renter_name text. v1 imports often have only renter_name after the
+    // backfill, so falling back keeps them in the ranking instead of
+    // dropping ~1432 historical rentals.
+    const aggByKey = new Map<string, { gross: number; net: number; count: number; renterId: string | null; displayName: string }>();
     for (const r of reservations) {
-      if (!r.renter_id) continue;
       if (!isLive(r as any)) continue;
       const eff = effectiveDate(r as any);
       if (!eff) continue;
       if (cutoffIso && eff < cutoffIso) continue;
-      const cur = aggByRenter.get(r.renter_id as string) ?? { gross: 0, net: 0, count: 0 };
+
+      const renterId = (r.renter_id as string | undefined) ?? null;
+      const renterNameText = (r as { renter_name?: string }).renter_name ?? null;
+      let key: string;
+      let displayName: string;
+      if (renterId) {
+        key = "id:" + renterId;
+        displayName = ""; // resolved later via renterById
+      } else if (renterNameText && renterNameText.trim().length > 0) {
+        const norm = renterNameText.trim().toLowerCase();
+        key = "name:" + norm;
+        displayName = renterNameText.trim();
+      } else {
+        continue; // anonymous, skip
+      }
+
+      const cur = aggByKey.get(key) ?? { gross: 0, net: 0, count: 0, renterId, displayName };
       cur.gross += (r as { gross_paid_gbp?: number }).gross_paid_gbp ?? 0;
       cur.net += (r as { net_to_owner_gbp?: number }).net_to_owner_gbp ?? 0;
       cur.count += 1;
-      aggByRenter.set(r.renter_id as string, cur);
+      aggByKey.set(key, cur);
     }
+    const aggByRenter = aggByKey;
 
     const rows = Array.from(aggByRenter.entries())
-      .map(([renterId, agg]) => {
-        const rt = renterById.get(renterId);
+      .map(([key, agg]) => {
+        const rt = agg.renterId ? renterById.get(agg.renterId) : undefined;
         return {
-          renterId,
-          displayName: rt?.display_name ?? "?",
+          renterId: agg.renterId,
+          displayName: rt?.display_name ?? agg.displayName ?? "?",
           email: rt?.email ?? null,
           rentalCount: agg.count,
           grossGbp: Math.round(agg.gross * 100) / 100,

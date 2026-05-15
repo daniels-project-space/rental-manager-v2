@@ -77,6 +77,26 @@ export const setResolution = internalMutation({
 });
 
 /**
+ * Public migration mutation: set renter_name on a v1-imported reservation
+ * by v1_rental_id. Used by the v1 Postgres → Convex backfill so top-spender
+ * and at-risk-renter queries can aggregate the historical cohort.
+ */
+export const admin_setRenterNameByV1Id = mutation({
+  args: { v1_rental_id: v.string(), renter_name: v.string() },
+  handler: async (ctx, { v1_rental_id, renter_name }) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_v1_rental_id", (q) => q.eq("v1_rental_id", v1_rental_id))
+      .collect();
+    if (rows.length === 0) return { ok: false, reason: "reservation not found" };
+    for (const r of rows) {
+      await ctx.db.patch(r._id, { renter_name });
+    }
+    return { ok: true, patched: rows.length };
+  },
+});
+
+/**
  * Public migration mutation: write resolved_items for a v1-imported
  * reservation, identified by v1_rental_id. Used by the one-time Python
  * migration that ports v1's per-row revenue attribution
