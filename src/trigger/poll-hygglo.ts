@@ -84,7 +84,20 @@ type OrderReservationPayload = {
   gross_paid_gbp?: number;
   net_to_owner_gbp?: number;
   currency?: string;
-  items: Array<{ item_name: string; qty?: number }>;
+  items: Array<{
+    item_name: string;
+    qty?: number;
+    image?: {
+      url?: string;
+      originalUrl?: string;
+      largeUrl?: string;
+      mediumUrl?: string;
+      thumbnailUrl?: string;
+    };
+    type?: string;
+    product_id?: number;
+    slug?: string;
+  }>;
   duration_days?: number;
   sourceFilter: string;
   renter_name?: string;
@@ -327,7 +340,22 @@ async function scrapeAccount(
       const currency = detail.price?.currency ?? "GBP";
       const orderItems = (detail.items ?? [])
         .filter((i) => i.type !== "INSURANCE")
-        .map((i) => ({ item_name: i.name ?? "Unknown item" }));
+        .map((i: any) => ({
+          item_name: i.name ?? "Unknown item",
+          qty: typeof i.qty === "number" ? i.qty : undefined,
+          image: i?.image
+            ? {
+                url: i.image.url,
+                originalUrl: i.image.originalUrl,
+                largeUrl: i.image.largeUrl,
+                mediumUrl: i.image.mediumUrl,
+                thumbnailUrl: i.image.thumbnailUrl,
+              }
+            : undefined,
+          type: typeof i.type === "string" ? i.type : undefined,
+          product_id: typeof i.productId === "number" ? i.productId : undefined,
+          slug: typeof i.slug === "string" ? i.slug : undefined,
+        }));
       const start = new Date(startUTC);
       const end = new Date(endUTC);
       const durationDays = Math.round((end.getTime() - start.getTime()) / 86400000);

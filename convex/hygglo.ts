@@ -235,7 +235,54 @@ const orderItemArgs = v.object({
     mediumUrl: v.optional(v.string()),
     thumbnailUrl: v.optional(v.string()),
   })),
+  /** PASS-9: extra raw Hygglo per-item fields forwarded for hygglo_items[]. */
+  type: v.optional(v.string()),
+  product_id: v.optional(v.number()),
+  slug: v.optional(v.string()),
 });
+
+/** PASS-9: build authoritative per-rental items snapshot from incoming Hygglo items.
+ *  This is the SOURCE OF TRUTH for dashboard tile imagery (never matches against
+ *  the global items table for image purposes). Skips INSURANCE rows. */
+function buildHyggloItems(
+  items: Array<{
+    item_name: string;
+    qty?: number;
+    image?: {
+      url?: string;
+      originalUrl?: string;
+      largeUrl?: string;
+      mediumUrl?: string;
+      thumbnailUrl?: string;
+    };
+    type?: string;
+    product_id?: number;
+    slug?: string;
+  }>,
+): Array<{
+  name: string;
+  image_url: string | null;
+  type: string;
+  qty?: number;
+  product_id?: number;
+  slug?: string;
+}> {
+  return (items ?? [])
+    .filter((i) => i?.type !== "INSURANCE")
+    .map((i) => {
+      const img = i.image ?? {};
+      const image_url =
+        img.largeUrl ?? img.url ?? img.mediumUrl ?? img.thumbnailUrl ?? img.originalUrl ?? null;
+      return {
+        name: String(i.item_name ?? ""),
+        image_url: image_url as string | null,
+        type: String(i.type ?? ""),
+        qty: typeof i.qty === "number" ? i.qty : undefined,
+        product_id: typeof i.product_id === "number" ? i.product_id : undefined,
+        slug: i.slug ? String(i.slug) : undefined,
+      };
+    });
+}
 
 // ── Wave-5 image-hint helpers ──────────────────────────────────
 
@@ -466,7 +513,8 @@ export const upsertOrderAsReservation = mutation({
         // Still apply non-step fields (dates, amounts) but preserve order_step.
         await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
         const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-        await ctx.db.patch(existing._id, { image_hints: hintsRegression });
+        const hyggloItemsRegression = buildHyggloItems(args.items);
+        await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
         return { action: "updated" };
       }
 
@@ -488,7 +536,8 @@ export const upsertOrderAsReservation = mutation({
         ...obsoleteFields,
       });
       const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-      await ctx.db.patch(existing._id, { image_hints: hintsUpdate });
+      const hyggloItemsUpdate = buildHyggloItems(args.items);
+      await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
       return { action: "updated" };
     }
 
@@ -496,11 +545,13 @@ export const upsertOrderAsReservation = mutation({
     const stepInsert =
       incomingStep !== undefined ? { order_step: incomingStep } : {};
     const hintsInsert = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
+    const hyggloItemsInsert = buildHyggloItems(args.items);
     await ctx.db.insert("reservations", {
       ...baseFields,
       ...stepInsert,
       ...obsoleteFields,
       ...(hintsInsert.length > 0 && { image_hints: hintsInsert }),
+      ...(hyggloItemsInsert.length > 0 && { hygglo_items: hyggloItemsInsert }),
       created_at: now,
     });
 

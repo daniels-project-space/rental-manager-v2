@@ -272,6 +272,18 @@ export default defineSchema({
       ),
       captured_at: v.number(),               // ms
     }))),
+    /** PASS-9: raw Hygglo per-rental items array — AUTHORITATIVE for dashboard
+     *  tile imagery. Bypasses any cross-rental matching against the global
+     *  items table (which mis-bound Michelle's Atomos Ninja V to a GM bundle
+     *  image). Populated by poller and backfill from detail.items[]. */
+    hygglo_items: v.optional(v.array(v.object({
+      name: v.string(),
+      image_url: v.union(v.string(), v.null()),
+      type: v.string(),
+      qty: v.optional(v.number()),
+      product_id: v.optional(v.number()),
+      slug: v.optional(v.string()),
+    }))),
     pickup_arrival_confirmed: v.optional(v.boolean()),
     is_obsolete: v.optional(v.boolean()),           // mirrors Hygglo filter=obsolete
     obsolete_reason: v.optional(v.union(

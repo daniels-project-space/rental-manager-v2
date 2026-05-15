@@ -47,6 +47,7 @@ import type * as lost_revenue from "../lost_revenue.js";
 import type * as market_search from "../market_search.js";
 import type * as market_search_cache from "../market_search_cache.js";
 import type * as memories from "../memories.js";
+import type * as migrations_backfill_hygglo_items from "../migrations/backfill_hygglo_items.js";
 import type * as migrations_backfill_image_hints from "../migrations/backfill_image_hints.js";
 import type * as model_upgrade_scans from "../model_upgrade_scans.js";
 import type * as mv__helpers from "../mv/_helpers.js";
@@ -121,6 +122,7 @@ declare const fullApi: ApiFromModules<{
   market_search: typeof market_search;
   market_search_cache: typeof market_search_cache;
   memories: typeof memories;
+  "migrations/backfill_hygglo_items": typeof migrations_backfill_hygglo_items;
   "migrations/backfill_image_hints": typeof migrations_backfill_image_hints;
   model_upgrade_scans: typeof model_upgrade_scans;
   "mv/_helpers": typeof mv__helpers;

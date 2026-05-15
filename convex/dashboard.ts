@@ -782,6 +782,97 @@ export const getStatsDrawerData = query({
       });
 
     const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => {
+      // PASS-9 (2026-05-15): raw Hygglo per-rental items[] are AUTHORITATIVE.
+      // The poller writes detail.items[] verbatim into r.hygglo_items. We use
+      // that directly — never cross-match against the global items table —
+      // to fix Michelle's Atomos showing a GM 24-70 Bundle image.
+      const hyggloItemsRaw = (r as any).hygglo_items as
+        | Array<{
+            name: string;
+            image_url: string | null;
+            type: string;
+            qty?: number;
+          }>
+        | undefined;
+      const useHygglo = Array.isArray(hyggloItemsRaw) && hyggloItemsRaw.length > 0;
+      if (useHygglo) {
+        // INSURANCE already filtered at poll time but defensive-filter here too.
+        const hItems = hyggloItemsRaw!.filter(
+          (h) => h?.name && h.type !== "INSURANCE",
+        );
+        type HygTile = {
+          image_url: string;
+          name: string;
+          names_in_group: string[];
+          qty: number;
+        };
+        const tilesByImage = new Map<string, HygTile>();
+        const tileOrderH: string[] = [];
+        const noImage: string[] = [];
+        for (const h of hItems) {
+          const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+          if (h.image_url) {
+            const ex = tilesByImage.get(h.image_url);
+            if (ex) {
+              ex.qty += q;
+              ex.names_in_group.push(h.name);
+              if (h.name.length < ex.name.length) ex.name = h.name;
+            } else {
+              tilesByImage.set(h.image_url, {
+                image_url: h.image_url,
+                name: h.name,
+                names_in_group: [h.name],
+                qty: q,
+              });
+              tileOrderH.push(h.image_url);
+            }
+          } else {
+            noImage.push(h.name);
+          }
+        }
+        const item_image_tiles_h = tileOrderH.map(
+          (u) => tilesByImage.get(u) as HygTile,
+        );
+        const master_image_url_h = item_image_tiles_h[0]?.image_url ?? null;
+        const item_names_summary_h = hItems
+          .map((i) => (i.qty && i.qty > 1 ? `${i.name} \u00d7${i.qty}` : i.name))
+          .join(", ");
+
+        return {
+          reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
+          renter_name: r.renter_name ?? null,
+          account_slug: r.account_slug ?? "",
+          start_date: r.start_date ?? null,
+          end_date: r.end_date ?? null,
+          pickup_date: r.pickup_date ?? r.start_date ?? null,
+          pickup_time: r.pickup_time ?? null,
+          return_date: (r as any).return_date ?? r.end_date ?? null,
+          return_time: r.return_time ?? null,
+          pickup_method: r.pickup_method ?? null,
+          return_method: r.return_method ?? null,
+          items: hItems.map((i) => i.name),
+          photo_url: master_image_url_h,
+          master_image_url: master_image_url_h,
+          item_names_summary: item_names_summary_h.length > 0 ? item_names_summary_h : "(no item)",
+          item_image_tiles: item_image_tiles_h,
+          extra_text_items: noImage,
+          duration_days:
+            r.duration_days ??
+            (r.start_date && r.end_date
+              ? daysBetween(r.start_date as string, r.end_date as string)
+              : null),
+          net_gbp: r.net_to_owner_gbp ?? null,
+          order_step: r.order_step ?? null,
+          item_tiles: item_image_tiles_h.map((t) => ({
+            name: t.name,
+            qty: t.qty,
+            image_url: t.image_url,
+          })),
+          kind,
+          is_ongoing: kind === "ongoing",
+        };
+      }
+      // ── Fallback (Pass-8 path): image_hints + global items table ──
       // PASS-6 (2026-05-15): v1-style master thumb + text summary.
       // Previously emitted one tile per item, falling back to a 3-letter
       // abbreviation placeholder when no image resolved. Result looked bad
