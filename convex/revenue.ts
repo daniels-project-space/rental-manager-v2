@@ -176,7 +176,12 @@ export const getMissedRevenue = query({
     gapLosses.sort((a, b) => b.estimatedGapLoss - a.estimatedGapLoss);
 
     const gapTotal = gapLosses.reduce((s, g) => s + g.estimatedGapLoss, 0);
-    const totalMissed = denialTotal + gapTotal;
+    // Headline 'total missed' is denials only (concrete demand we declined).
+    // Idle-gap is informational — it assumes 100% utilization as baseline,
+    // which inflates the number 3-5x vs realistic targets. v1 chat reports
+    // denials + unavailable as 'lost revenue', NOT idle capacity. Keeping
+    // gapTotal separate so the agent can mention it without combining.
+    const totalMissed = denialTotal;
 
     return {
       totalMissed,
