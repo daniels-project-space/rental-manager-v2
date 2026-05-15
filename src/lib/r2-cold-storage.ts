@@ -87,8 +87,30 @@ export async function putReservationSnapshot(
   return key;
 }
 
+// ── Snapshot envelope (used by Wave 2 writers) ──────────────────────────
+
+export interface SnapshotEnvelope<T> {
+  generatedAt: number;
+  data: T;
+}
+export function wrapSnapshot<T>(data: T): SnapshotEnvelope<T> {
+  return { generatedAt: Date.now(), data };
+}
+
+// ── Aggregate index key union ────────────────────────────────────────────
+
+type AggregateIndexKey =
+  | "by_item"
+  | "by_renter"
+  | "by_month"
+  | "totals"
+  | "intel_rankings"
+  | "daily_briefing"
+  | "top_renters"
+  | "inventory_overview";
+
 export async function putAggregateIndex(
-  indexName: "by_item" | "by_renter" | "by_month" | "totals",
+  indexName: AggregateIndexKey,
   payload: unknown,
 ): Promise<string> {
   const { creds, s3 } = await getS3();
@@ -106,7 +128,7 @@ export async function putAggregateIndex(
 }
 
 export async function getAggregateIndex<T = unknown>(
-  indexName: "by_item" | "by_renter" | "by_month" | "totals",
+  indexName: AggregateIndexKey,
 ): Promise<T | null> {
   const { creds, s3 } = await getS3();
   const { GetObjectCommand } = await import("@aws-sdk/client-s3");
@@ -129,7 +151,7 @@ const indexCache = new Map<string, { value: unknown; expiresAt: number }>();
 const INDEX_TTL_MS = 5 * 60_000;
 
 export async function cachedIndex<T>(
-  indexName: "by_item" | "by_renter" | "by_month" | "totals",
+  indexName: AggregateIndexKey,
 ): Promise<T | null> {
   const now = Date.now();
   const hit = indexCache.get(indexName);
