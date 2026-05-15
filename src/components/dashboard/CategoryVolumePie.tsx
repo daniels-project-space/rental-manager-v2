@@ -4,7 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useEffect, useState } from "react";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 
 type Metric = "count" | "revenue";
 type Days = 30 | 90 | 365;
@@ -25,12 +25,49 @@ type KindBreakdown = {
   totals: { count: number; revenue: number };
 };
 
-export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | null }) {
+type CategoryVolumePieBodyProps = {
+  accountSlug: string | null;
+  /** When true, renders without any wrapping card chrome — used by the always-open
+   *  hero tile in StatsGrid. Currently informational only (no collapse UI exists). */
+  alwaysOpen?: boolean;
+};
+
+function makeLeaderLabel(metric: Metric, textKey: "label" | "name", offset: number) {
+  return function renderLeaderLabel(props: any) {
+    const { cx, cy, midAngle, outerRadius, fill, payload, value } = props;
+    const RAD = Math.PI / 180;
+    const sin = Math.sin(-RAD * midAngle);
+    const cos = Math.cos(-RAD * midAngle);
+    const sx = cx + outerRadius * cos;
+    const sy = cy + outerRadius * sin;
+    const mx = cx + (outerRadius + offset) * cos;
+    const my = cy + (outerRadius + offset) * sin;
+    const ex = mx + (cos >= 0 ? 1 : -1) * 18;
+    const textAnchor = cos >= 0 ? "start" : "end";
+    const text = (payload?.[textKey] ?? "") as string;
+    const valText = metric === "count"
+      ? `${value} rentals`
+      : `£${Number(value || 0).toFixed(0)}`;
+    const tx = ex + (cos >= 0 ? 4 : -4);
+    return (
+      <g>
+        <path d={`M${sx},${sy}L${mx},${my}L${ex},${my}`} stroke={fill} strokeWidth={1} fill="none" />
+        <circle cx={ex} cy={my} r={2} fill={fill} />
+        <text x={tx} y={my} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={11}>{text}</text>
+        <text x={tx} y={my + 12} textAnchor={textAnchor} dominantBaseline="middle" fill="#8b8fa3" fontSize={10}>{valText}</text>
+      </g>
+    );
+  };
+}
+
+export function CategoryVolumePieBody({
+  accountSlug,
+  alwaysOpen: _alwaysOpen,
+}: CategoryVolumePieBodyProps) {
   const [days, setDays] = useState<Days>(30);
   const [metric, setMetric] = useState<Metric>("count");
   const [drillKind, setDrillKind] = useState<string | null>(null);
 
-  // Reset drill state when period changes — different period = different slices.
   useEffect(() => { setDrillKind(null); }, [days]);
 
   const data = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug, days }) as
@@ -50,31 +87,35 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
   ];
   const periodLabel = days === 365 ? "Last year" : `Last ${days} days`;
 
-  if (data === undefined) return <SkeletonBlock className="h-[220px] w-full" />;
-  if (data.slices.length === 0)
-    return <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />;
-
-  const drillLabel = drillKind
+  const drillLabel = drillKind && data
     ? data.slices.find((s) => s.kind === drillKind)?.label ?? drillKind
     : null;
+
+  const renderOuterLabel = makeLeaderLabel(metric, "label", 14);
+  const renderInnerLabel = makeLeaderLabel(metric, "name", 10);
 
   return (
     <>
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <span className="text-xs text-[#8b8fa3]">
-          {drillKind ? (
-            <button
-              onClick={() => setDrillKind(null)}
-              className="hover:text-white transition-colors"
-              style={{ color: "#6ea8fe" }}
-            >
-              ← All categories
-            </button>
-          ) : (
-            periodLabel
-          )}
-          {drillKind && <span className="ml-2 text-white/70">/ {drillLabel}</span>}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider">
+            Category Mix
+          </span>
+          <span className="text-xs text-[#8b8fa3]">
+            {drillKind ? (
+              <button
+                onClick={() => setDrillKind(null)}
+                className="hover:text-white transition-colors"
+                style={{ color: "#6ea8fe" }}
+              >
+                ← All categories
+              </button>
+            ) : (
+              periodLabel
+            )}
+            {drillKind && <span className="ml-2 text-white/70">/ {drillLabel}</span>}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-1">
             {periodOpts.map((p) => (
@@ -107,93 +148,95 @@ export function CategoryVolumePieBody({ accountSlug }: { accountSlug: string | n
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={240}>
-        <PieChart>
-          <Pie
-            data={data.slices}
-            dataKey={metric}
-            nameKey="label"
-            innerRadius={60}
-            outerRadius={90}
-            paddingAngle={2}
-            onClick={(_e, idx: number) => {
-              const slice = data.slices[idx];
-              if (slice) setDrillKind((prev) => (prev === slice.kind ? null : slice.kind));
-            }}
-            style={{ cursor: "pointer" }}
-          >
-            {data.slices.map((s) => (
-              <Cell
-                key={s.kind}
-                fill={s.color}
-                opacity={drillKind && drillKind !== s.kind ? 0.33 : 1}
+      {data === undefined ? (
+        <SkeletonBlock className="h-[320px] w-full" />
+      ) : data.slices.length === 0 ? (
+        <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />
+      ) : (
+        <div className="px-16">
+          <ResponsiveContainer width="100%" height={320}>
+            <PieChart>
+              <Pie
+                data={data.slices}
+                dataKey={metric}
+                nameKey="label"
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={90}
+                paddingAngle={2}
+                labelLine={false}
+                label={renderOuterLabel}
+                onClick={(_e, idx: number) => {
+                  const slice = data.slices[idx];
+                  if (slice) setDrillKind((prev) => (prev === slice.kind ? null : slice.kind));
+                }}
+                style={{ cursor: "pointer" }}
+              >
+                {data.slices.map((s) => (
+                  <Cell
+                    key={s.kind}
+                    fill={s.color}
+                    fillOpacity={drillKind ? 0.4 : 1}
+                  />
+                ))}
+              </Pie>
+              {drillKind && breakdown && breakdown.items.length > 0 && (
+                <Pie
+                  data={breakdown.items}
+                  dataKey={metric}
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={30}
+                  outerRadius={55}
+                  paddingAngle={1}
+                  labelLine={false}
+                  label={renderInnerLabel}
+                  legendType="none"
+                >
+                  {breakdown.items.map((it, i) => (
+                    <Cell key={it.itemId ?? i} fill={it.color} />
+                  ))}
+                </Pie>
+              )}
+              <Tooltip
+                contentStyle={{
+                  background: "rgba(14,17,28,0.95)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                }}
+                formatter={(value, _name, item) => {
+                  const n = Number(value) || 0;
+                  const p = (item as { payload?: { label?: string; name?: string } })?.payload;
+                  const tipLabel = p?.label ?? p?.name ?? "";
+                  return metric === "count"
+                    ? [`${n} rentals`, tipLabel]
+                    : [`£${n.toFixed(0)}`, tipLabel];
+                }}
               />
-            ))}
-          </Pie>
-          {drillKind && breakdown && breakdown.items.length > 0 && (
-            <Pie
-              data={breakdown.items}
-              dataKey={metric}
-              nameKey="name"
-              innerRadius={30}
-              outerRadius={55}
-              paddingAngle={1}
-              legendType="none"
-            >
-              {breakdown.items.map((it, i) => (
-                <Cell key={it.itemId ?? i} fill={it.color} />
-              ))}
-            </Pie>
-          )}
-          <Tooltip
-            contentStyle={{
-              background: "rgba(14,17,28,0.95)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 6,
-              fontSize: 12,
-            }}
-            formatter={(value, _name, item) => {
-              const n = Number(value) || 0;
-              const p = (item as { payload?: { label?: string; name?: string } })?.payload;
-              const tipLabel = p?.label ?? p?.name ?? "";
-              return metric === "count"
-                ? [`${n} rentals`, tipLabel]
-                : [`£${n.toFixed(0)}`, tipLabel];
-            }}
-          />
-          <Legend
-            verticalAlign="bottom"
-            align="center"
-            wrapperStyle={{ fontSize: 11, color: "#9ca3af" }}
-            formatter={(value, entry) => {
-              // Only outer-ring (kind slices) carry label/count/revenue; for the
-              // inner ring Recharts auto-emits its own legend entries which we
-              // ignore in the formatter (return value as-is). To prevent inner
-              // entries from polluting, we filter by presence of `label`.
-              const p = (entry as { payload?: { label?: string; count?: number; revenue?: number } } | undefined)?.payload;
-              if (!p || p.label === undefined) return value as string;
-              return metric === "count"
-                ? `${value} (${p.count ?? 0})`
-                : `${value} (£${(p.revenue ?? 0).toFixed(0)})`;
-            }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 gap-3 pt-3 border-t border-white/5">
-        <div>
-          <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Rentals</div>
-          <div className="text-lg font-bold" style={{ color: "#6ea8fe" }}>
-            {data.totals.count}
+      {data && data.slices.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-white/5">
+          <div>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Rentals</div>
+            <div className="text-lg font-bold" style={{ color: "#6ea8fe" }}>
+              {data.totals.count}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Revenue</div>
+            <div className="text-lg font-bold" style={{ color: "#22c55e" }}>
+              £{data.totals.revenue.toFixed(0)}
+            </div>
           </div>
         </div>
-        <div>
-          <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Total Revenue</div>
-          <div className="text-lg font-bold" style={{ color: "#22c55e" }}>
-            £{data.totals.revenue.toFixed(0)}
-          </div>
-        </div>
-      </div>
+      )}
     </>
   );
 }

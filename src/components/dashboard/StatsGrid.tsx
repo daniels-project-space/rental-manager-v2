@@ -113,37 +113,6 @@ function Dot({ color }: { color: string }) {
   return <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />;
 }
 
-function MiniDonut({ slices }: { slices: Array<{ color: string; count: number }> }) {
-  const total = slices.reduce((s, x) => s + x.count, 0);
-  if (total === 0) return null;
-  const r = 14, cx = 18, cy = 18, stroke = 4;
-  let acc = 0;
-  const C = 2 * Math.PI * r;
-  return (
-    <svg width="36" height="36" viewBox="0 0 36 36" className="mt-1">
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={stroke} />
-      {slices.map((s, i) => {
-        const frac = s.count / total;
-        const dash = `${frac * C} ${C}`;
-        const offset = -acc * C;
-        acc += frac;
-        return (
-          <circle
-            key={i}
-            cx={cx} cy={cy} r={r}
-            fill="none"
-            stroke={s.color}
-            strokeWidth={stroke}
-            strokeDasharray={dash}
-            strokeDashoffset={offset}
-            transform={`rotate(-90 ${cx} ${cy})`}
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
 function StatsGridSkeleton() {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
@@ -156,7 +125,7 @@ function StatsGridSkeleton() {
 
 // Hero cards span 2 grid columns. Without an outer wrapper this is set on the
 // card itself; with EditableWidget wrapper the col-span must live on the wrapper.
-const HERO_IDS = new Set(["active", "ongoing", "upcoming", "business_intel"]);
+const HERO_IDS = new Set(["active", "ongoing", "upcoming", "business_intel", "category_volume"]);
 
 export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
@@ -171,11 +140,6 @@ export function StatsGrid() {
   const rawData = useQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
-  const categoryVolume = useQuery(api.dashboard.getRentalVolumeByCategory, {
-    accountSlug: activeAccountSlug,
-    days: 30,
-  });
-
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
     if (!rawData) return null;
     const data = rawData as any;
@@ -510,34 +474,21 @@ export function StatsGrid() {
         </ExpandableStatCard>
       ),
       category_volume: (
-        <ExpandableStatCard
-          id="category_volume"
-          label="Category Mix"
-          value={
-            categoryVolume === undefined
-              ? "—"
-              : (categoryVolume.slices[0]?.label ?? "—")
-          }
-          valueColor="purple"
-          accentColor="purple"
-          subtitle={
-            categoryVolume === undefined
-              ? "loading…"
-              : `${fmtGbp(categoryVolume.totals.revenue)} · ${categoryVolume.totals.count} rentals · 30d`
-          }
-          isExpanded={expandedId === "category_volume"}
-          onToggle={() => toggle("category_volume")}
-          headerExtra={
-            categoryVolume && categoryVolume.slices.length > 0 ? (
-              <MiniDonut slices={categoryVolume.slices} />
-            ) : null
-          }
+        <div
+          className="stat-card"
+          style={{
+            background: "rgba(14,17,28,0.35)",
+            backdropFilter: "blur(24px) saturate(1.5)",
+            borderRadius: 16,
+            padding: 16,
+            borderLeft: "3px solid #a78bfa",
+          }}
         >
-          <CategoryVolumePieBody accountSlug={activeAccountSlug} />
-        </ExpandableStatCard>
+          <CategoryVolumePieBody accountSlug={activeAccountSlug} alwaysOpen />
+        </div>
       ),
     };
-  }, [rawData, expandedId, categoryVolume]);
+  }, [rawData, expandedId, activeAccountSlug]);
 
   if (!cards) return <StatsGridSkeleton />;
 
