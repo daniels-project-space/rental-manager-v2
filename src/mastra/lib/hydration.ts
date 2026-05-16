@@ -18,6 +18,7 @@
  * deferred work documented at the bottom of that file.
  */
 import { createHash } from "node:crypto";
+import { load as dldrLoad, type LoadFn } from "dldr";
 
 // ── Tier source taxonomy ────────────────────────────────────────────────
 
@@ -303,14 +304,46 @@ export function createHydrationLayer(
   // T2 per-instance state — dies when this layer instance is GC'd
   // (i.e. when the chat turn's runtimeContext is released).
   const t2Memo = new Map<string, Promise<HydrationResult<unknown>>>();
-  const pending: {
-    [K in EntityTable]?: {
-      ids: Set<string>;
-      callbacks: Array<(rows: Array<Record<string, unknown>>) => void>;
-      errCallbacks: Array<(err: unknown) => void>;
-      scheduled: boolean;
+
+  // dldr requires a per-instance, per-table batch loader function. Identity
+  // of this function is the batch key inside dldr's WeakMap — re-creating it
+  // each layer instance is what makes batches die with the turn (no global
+  // leakage). Chunking by `batchLimit` happens INSIDE the loader since dldr
+  // hands us all deduped keys at once. dldr returns values positionally; we
+  // rebuild a lookup by `_id`/`id` from the fetcher rows.
+  const t2BatchLoaders: { [K in EntityTable]?: LoadFn<Record<string, unknown> | null, string> } = {};
+  const getBatchLoader = (
+    table: EntityTable,
+  ): LoadFn<Record<string, unknown> | null, string> => {
+    const existing = t2BatchLoaders[table];
+    if (existing) return existing;
+    const fn: LoadFn<Record<string, unknown> | null, string> = async (keys) => {
+      const fetcher = entityFetchers[table];
+      if (!fetcher) {
+        throw new Error(
+          `hydration: no entity fetcher configured for "${table}"`,
+        );
+      }
+      const chunks: string[][] = [];
+      for (let i = 0; i < keys.length; i += batchLimit) {
+        chunks.push(keys.slice(i, i + batchLimit));
+      }
+      const groups = await Promise.all(chunks.map((chunk) => fetcher(chunk)));
+      const flat = groups.flat();
+      const lookup = new Map<string, Record<string, unknown>>();
+      for (const row of flat) {
+        const idKey =
+          (typeof row._id === "string" ? row._id : undefined) ??
+          (typeof row.id === "string" ? row.id : undefined);
+        if (idKey) lookup.set(idKey, row);
+      }
+      // dldr requires output length == input length. Missing rows → null;
+      // loadByIds() filters nulls before resolving.
+      return keys.map((k) => lookup.get(k) ?? null);
     };
-  } = {};
+    t2BatchLoaders[table] = fn;
+    return fn;
+  };
 
   // Per-turn cache for sync_state lookups — read once per (turn, source).
   const syncStateCache = new Map<
@@ -529,35 +562,13 @@ export function createHydrationLayer(
     return promise as Promise<HydrationResult<T>>;
   }
 
-  // ── T2 — DataLoader batch ─────────────────────────────────────────────
-
-  function flushBatch(table: EntityTable): void {
-    const slot = pending[table];
-    if (!slot) return;
-    pending[table] = undefined;
-    const ids = Array.from(slot.ids);
-    const fetcher = entityFetchers[table];
-    if (!fetcher) {
-      const err = new Error(
-        `hydration: no entity fetcher configured for "${table}"`,
-      );
-      for (const cb of slot.errCallbacks) cb(err);
-      return;
-    }
-    // Cap at batchLimit; chunk the rest.
-    const chunks: string[][] = [];
-    for (let i = 0; i < ids.length; i += batchLimit) {
-      chunks.push(ids.slice(i, i + batchLimit));
-    }
-    Promise.all(chunks.map((chunk) => fetcher(chunk)))
-      .then((groups) => {
-        const flat = groups.flat();
-        for (const cb of slot.callbacks) cb(flat);
-      })
-      .catch((err) => {
-        for (const cb of slot.errCallbacks) cb(err);
-      });
-  }
+  // ── T2 — DataLoader batch (delegated to dldr) ─────────────────────────
+  //
+  // Public `loadByIds` signature unchanged. Internally each requested id is
+  // dispatched through `dldr.load(loader, id)`. dldr coalesces all calls
+  // sharing the same loader fn into one microtask-flushed batch and dedupes
+  // identical keys for us. Per-table loader fns live on this instance only,
+  // so batches never leak across turns.
 
   async function loadByIds(
     table: EntityTable,
@@ -580,61 +591,33 @@ export function createHydrationLayer(
         ),
       };
     }
-    return new Promise<HydrationResult<Array<Record<string, unknown>>>>(
-      (resolve, reject) => {
-        let slot = pending[table];
-        if (!slot) {
-          slot = {
-            ids: new Set<string>(),
-            callbacks: [],
-            errCallbacks: [],
-            scheduled: false,
-          };
-          pending[table] = slot;
-        }
-        for (const id of requested) slot.ids.add(id);
-        slot.callbacks.push((rows) => {
-          const lookup = new Map<string, Record<string, unknown>>();
-          for (const row of rows) {
-            const idKey =
-              (typeof row._id === "string" ? row._id : undefined) ??
-              (typeof row.id === "string" ? row.id : undefined);
-            if (idKey) lookup.set(idKey, row);
-          }
-          const ordered = requested
-            .map((id) => lookup.get(id))
-            .filter((r): r is Record<string, unknown> => Boolean(r));
-          getSyncState(syncSources[table])
-            .then((sync) => {
-              const fetchedAt = now();
-              const coverage =
-                requested.length === 0 ? 1 : ordered.length / requested.length;
-              resolve({
-                data: ordered,
-                meta: buildMeta(
-                  {
-                    tier: 2,
-                    label: "t2.batch",
-                    table,
-                    fetchedAt,
-                    cached: false,
-                  },
-                  sync,
-                  [],
-                  undefined,
-                  coverage < 1 ? coverage : undefined,
-                ),
-              });
-            })
-            .catch(reject);
-        });
-        slot.errCallbacks.push(reject);
-        if (!slot.scheduled) {
-          slot.scheduled = true;
-          queueMicrotask(() => flushBatch(table));
-        }
-      },
+    const loader = getBatchLoader(table);
+    const rows = await Promise.all(
+      requested.map((id) => dldrLoad<Record<string, unknown> | null, string>(loader, id)),
     );
+    const ordered = rows.filter(
+      (r): r is Record<string, unknown> => r !== null && r !== undefined,
+    );
+    const sync = await getSyncState(syncSources[table]);
+    const fetchedAt = now();
+    const coverage =
+      requested.length === 0 ? 1 : ordered.length / requested.length;
+    return {
+      data: ordered,
+      meta: buildMeta(
+        {
+          tier: 2,
+          label: "t2.batch",
+          table,
+          fetchedAt,
+          cached: false,
+        },
+        sync,
+        [],
+        undefined,
+        coverage < 1 ? coverage : undefined,
+      ),
+    };
   }
 
   // ── T3 — R2 snapshot loader with fallback chain ───────────────────────
