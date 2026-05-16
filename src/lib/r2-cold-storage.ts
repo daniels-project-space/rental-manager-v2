@@ -27,6 +27,11 @@
 // Vault + S3Client logic lives in `src/mastra/lib/r2-client.ts` so this
 // helper and `src/lib/hygglo-ui-r2.ts` share one memoized client per process.
 import { getR2 } from "../mastra/lib/r2-client";
+// Static imports — dynamic `await import("@aws-sdk/client-s3")` patterns
+// were minified by Convex's bundler such that the destructured constructor
+// became `s`/`t`, then `new s(...)` threw "is not a constructor" inside
+// snapshot_jobs handlers. Static imports survive minification.
+import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 
 async function getS3() {
   const { s3, bucket, publicBase, endpoint } = await getR2();
@@ -74,7 +79,6 @@ export async function putReservationSnapshot(
 ): Promise<string> {
   if (!row.v1_rental_id) throw new Error("v1_rental_id required");
   const { creds, s3 } = await getS3();
-  const { PutObjectCommand } = await import("@aws-sdk/client-s3");
   const key = `cold/v1/reservations/by-rental-id/${row.v1_rental_id}.json`;
   await s3.send(
     new PutObjectCommand({
@@ -125,7 +129,6 @@ export async function putAggregateIndex(
   payload: unknown,
 ): Promise<string> {
   const { creds, s3 } = await getS3();
-  const { PutObjectCommand } = await import("@aws-sdk/client-s3");
   const key = `cold/v1/indexes/${indexName}.json`;
   await s3.send(
     new PutObjectCommand({
@@ -142,7 +145,6 @@ export async function getAggregateIndex<T = unknown>(
   indexName: AggregateIndexKey,
 ): Promise<T | null> {
   const { creds, s3 } = await getS3();
-  const { GetObjectCommand } = await import("@aws-sdk/client-s3");
   const key = `cold/v1/indexes/${indexName}.json`;
   try {
     const resp = await s3.send(
@@ -236,7 +238,6 @@ async function loadArchiveBlob<T>(
   if (hit && hit.expiresAt > now) return hit.rows as T[];
 
   const { creds, s3 } = await getS3();
-  const { GetObjectCommand } = await import("@aws-sdk/client-s3");
   const { gunzipSync } = await import("zlib");
   const key = `cold/archive/${table}/${dateKey}.jsonl.gz`;
 

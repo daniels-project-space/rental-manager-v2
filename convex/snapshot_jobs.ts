@@ -21,8 +21,16 @@ import {
   getAggregateIndex,
 } from "../src/lib/r2-cold-storage";
 
+// CONVEX_CLOUD_URL is auto-injected by Convex into every action runtime.
+// CONVEX_URL / NEXT_PUBLIC_CONVEX_URL are NOT set in prod env, so without
+// the CONVEX_CLOUD_URL fallback `fetch("/api/query", ...)` threw a URL
+// parse error inside snapshotInventoryOverview (only handler that issues
+// HTTP queries; the other 3 use ctx.runQuery and were unaffected).
 const CONVEX_URL =
-  process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
+  process.env.CONVEX_URL ??
+  process.env.NEXT_PUBLIC_CONVEX_URL ??
+  process.env.CONVEX_CLOUD_URL ??
+  "";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 1. snapshotIntelRankings — every 4h

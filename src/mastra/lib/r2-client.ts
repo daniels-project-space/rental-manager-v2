@@ -14,7 +14,7 @@
  * Credentials and S3Client are memoized at module scope (one fetch per
  * Vercel / Node process cold start).
  */
-import type { S3Client } from "@aws-sdk/client-s3";
+import { S3Client } from "@aws-sdk/client-s3";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -32,23 +32,37 @@ let credsPromise: Promise<R2Creds> | null = null;
 let clientPromise: Promise<S3Client> | null = null;
 
 async function loadCredsFromVault(): Promise<R2Creds> {
-  const vaultKey = process.env.PROJECT_HUB_VAULT_KEY ?? "";
-  const res = await fetch(`${VAULT_URL}/api/run/secrets/listByService`, {
+  // Uses the public `/api/query` endpoint (no auth) — same pattern as
+  // src/trigger/poll-hygglo.ts. The previous `/api/run/secrets/listByService`
+  // path required PROJECT_HUB_VAULT_KEY which is not set in prod Convex env,
+  // causing "vault r2: 400" errors from convex/snapshot_jobs.ts.
+  // Service is "cloudflare" (not "cloudflare-r2") per project-hub vault.
+  const res = await fetch(`${VAULT_URL}/api/query`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${vaultKey}`,
-    },
-    body: JSON.stringify({ service: "cloudflare-r2" }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: "secrets:listByService",
+      args: { service: "cloudflare" },
+      format: "json",
+    }),
   });
   if (!res.ok) throw new Error(`vault r2: ${res.status}`);
   const data = (await res.json()) as {
-    value: Array<{ keyName: string; value: string }>;
+    status?: string;
+    value?: Array<{ keyName: string; value: string }>;
+    errorMessage?: string;
   };
+  if (data.status && data.status !== "success") {
+    throw new Error(`vault r2 query failed: ${data.errorMessage ?? "unknown"}`);
+  }
+  const rows = data.value ?? [];
   const lookup = (k: string) =>
-    data.value.find((s) => s.keyName === k)?.value ?? "";
+    rows.find((s) => s.keyName === k)?.value ?? "";
+  const accountId = lookup("R2_ACCOUNT_ID");
   return {
-    endpoint: lookup("R2_ENDPOINT"),
+    endpoint:
+      lookup("R2_ENDPOINT") ||
+      (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : ""),
     accessKeyId: lookup("R2_ACCESS_KEY_ID"),
     secretAccessKey: lookup("R2_SECRET_ACCESS_KEY"),
     bucket: lookup("R2_BUCKET") || "rental-manager-v2",
@@ -78,8 +92,11 @@ export async function getS3Client(): Promise<S3Client> {
   if (!clientPromise) {
     clientPromise = (async () => {
       const creds = await getCreds();
-      const { S3Client: S3 } = await import("@aws-sdk/client-s3");
-      const client = new S3({
+      // Use the top-level static import; dynamic import + destructured alias
+      // (`const { S3Client: S3 } = await import(...)`) was being minified to
+      // `t` in the Convex bundle and threw "t is not a constructor" inside
+      // snapshot_jobs handlers. Static import resolves cleanly.
+      const client = new S3Client({
         endpoint: creds.endpoint,
         region: "auto",
         credentials: {
