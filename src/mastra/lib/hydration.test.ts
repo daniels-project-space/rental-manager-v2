@@ -247,6 +247,70 @@ describe("hydration T3 fallback chain", () => {
   });
 });
 
+describe("hydration T3 envelope + invalidateSnapshot (Phase 1c)", () => {
+  it("parses generatedAt from envelope payload", async () => {
+    const envelope = { generatedAt: 12345, data: { x: 1 } };
+    const r2Loader: R2IndexLoader = vi.fn(async () => envelope);
+    const cx = makeConvex({});
+    const hydrate = createHydrationLayer({
+      convex: cx.client,
+      r2Loader,
+    });
+    const result = await hydrate.loadSnapshot<{ x: number }>("intel_rankings");
+    expect(result.data).toEqual({ x: 1 });
+    expect((result.data as { x: number }).x).toBe(1);
+    expect(result.meta.source.fetchedAt).toBe(12345);
+    expect(result.meta.source.tier).toBe(3);
+    expect(result.meta.source.label).toBe("t3.r2-snapshot");
+  });
+
+  it("surfaces snapshot_unavailable_<key> caveat when R2 throws and falls through", async () => {
+    const r2Loader: R2IndexLoader = vi.fn(async () => {
+      const err = new Error("404 NoSuchKey");
+      throw err;
+    });
+    const mvLoader = vi.fn(async () => null);
+    const liveLoader = vi.fn(async () => null);
+    const cx = makeConvex({});
+    const hydrate = createHydrationLayer({
+      convex: cx.client,
+      r2Loader,
+      mvLoader,
+      liveLoader,
+    });
+    const result = await hydrate.loadSnapshot("daily_briefing");
+    expect(result.meta.caveats).toContain("snapshot_unavailable_daily_briefing");
+    expect(result.meta.fallbackChain).toEqual([
+      "t3.r2-snapshot",
+      "t3.r2-then-mv",
+      "convex.live",
+    ]);
+    expect(r2Loader).toHaveBeenCalledTimes(1);
+    expect(mvLoader).toHaveBeenCalledTimes(1);
+    expect(liveLoader).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidateSnapshot busts the layer-local T3 cache", async () => {
+    let r2HitCount = 0;
+    const r2Loader: R2IndexLoader = vi.fn(async () => {
+      r2HitCount++;
+      return { generatedAt: 555, data: { renters: ["r1"] } };
+    });
+    const cx = makeConvex({});
+    const hydrate = createHydrationLayer({
+      convex: cx.client,
+      r2Loader,
+    });
+    await hydrate.loadSnapshot("top_renters");
+    await hydrate.loadSnapshot("top_renters");
+    // Second call served from layer-local cache.
+    expect(r2HitCount).toBe(1);
+    hydrate.invalidateSnapshot("top_renters");
+    await hydrate.loadSnapshot("top_renters");
+    expect(r2HitCount).toBe(2);
+  });
+});
+
 describe("hydration lineage envelope", () => {
   it("populates _source / meta on all three tiers", async () => {
     const cx = makeConvex({ "items.listActive": [{ _id: "x" }] });

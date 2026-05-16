@@ -75,7 +75,39 @@ export type EntityTable = "renters" | "reservations" | "denials" | "orders";
 
 // ── R2 snapshot indexes (T3) ────────────────────────────────────────────
 
-export type R2IndexName = "by_item" | "by_renter" | "by_month" | "totals";
+/**
+ * Legacy v1 keys (raw payload, no envelope) + Phase 1c keys (wrapped via
+ * `wrapSnapshot` in `r2-cold-storage.ts` → `{generatedAt, data}`).
+ *
+ * Detection happens at runtime in `loadSnapshot`: presence of a numeric
+ * `generatedAt` + a `data` field means the new envelope shape; absence
+ * preserves the legacy behavior (data is the payload directly, fetchedAt
+ * falls back to `now()`).
+ */
+export type R2IndexName =
+  | "by_item"
+  | "by_renter"
+  | "by_month"
+  | "totals"
+  | "intel_rankings"
+  | "daily_briefing"
+  | "top_renters"
+  | "inventory_overview";
+
+/** Snapshot envelope shape produced by `wrapSnapshot<T>` (Phase 1c+). */
+interface SnapshotEnvelope<T = unknown> {
+  generatedAt: number;
+  data: T;
+}
+
+function isSnapshotEnvelope(value: unknown): value is SnapshotEnvelope {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { generatedAt?: unknown }).generatedAt === "number" &&
+    "data" in (value as Record<string, unknown>)
+  );
+}
 
 // ── Injectable adapters (test seam) ─────────────────────────────────────
 
@@ -196,6 +228,15 @@ export interface HydrationLayer {
 
   // Invalidation — T1 only; T2 dies with instance; T3 obeys own TTL.
   invalidate(key: StaticTable | "all"): void;
+
+  /**
+   * Hint-only T3 cache buster — clears the layer-local snapshot cache for
+   * this key so the next `loadSnapshot(key)` call re-fetches from R2. Note
+   * this is purely advisory: the cron writer remains the source of truth
+   * and the next read still hits R2 (or its module-scope cache). Useful in
+   * tests and post-write fan-out paths to force a stale-cache flush.
+   */
+  invalidateSnapshot(key: string): void;
 }
 
 // ── Module-level T1 cache (shared across instances within a process) ────
@@ -426,6 +467,15 @@ export function createHydrationLayer(
     }
   }
 
+  /**
+   * Bust the T3 layer-local snapshot cache for `key`. Hint-only: next
+   * `loadSnapshot(key)` re-fetches from R2 (which has its own module
+   * cache). The cron writer remains the source of truth.
+   */
+  function invalidateSnapshot(key: string): void {
+    t3Cache.delete(key);
+  }
+
   // ── T2 — memoize ──────────────────────────────────────────────────────
 
   async function memoQuery<T>(
@@ -589,25 +639,72 @@ export function createHydrationLayer(
 
   // ── T3 — R2 snapshot loader with fallback chain ───────────────────────
 
+  /**
+   * Layer-local snapshot cache. Mirrors the 5-min TTL applied to T1 so
+   * repeated `loadSnapshot(key)` calls within one chat turn (or tool fan-
+   * out) avoid hammering R2. `invalidateSnapshot(key)` clears the entry —
+   * a hint, not a write barrier; the cron remains source of truth.
+   */
+  interface T3CacheEntry {
+    data: unknown;
+    fetchedAt: number;
+    expiresAt: number;
+  }
+  const t3Cache = new Map<string, T3CacheEntry>();
+
   async function loadSnapshot<T = unknown>(
     name: R2IndexName,
   ): Promise<HydrationResult<T | null>> {
     const chain: HydrationSourceLabel[] = [];
     const caveats: string[] = [];
     const fetchedAt0 = now();
+    // 0. Layer-local cache hit (5-min TTL).
+    const cachedEntry = t3Cache.get(name);
+    if (cachedEntry && cachedEntry.expiresAt > fetchedAt0) {
+      return {
+        data: cachedEntry.data as T,
+        meta: buildMeta(
+          {
+            tier: 3,
+            label: "t3.r2-snapshot",
+            table: name,
+            fetchedAt: cachedEntry.fetchedAt,
+            cached: true,
+            ttlExpiresAt: cachedEntry.expiresAt,
+          },
+          null,
+          caveats,
+        ),
+      };
+    }
     // 1. R2 cold-storage cachedIndex
     chain.push("t3.r2-snapshot");
     try {
       const r2 = await r2Loader(name);
       if (r2 !== null && r2 !== undefined) {
+        // Phase 1c+ envelope: {generatedAt, data} → unwrap and surface
+        // `generatedAt` as the canonical fetchedAt. Legacy keys keep
+        // their raw payload + now() fallback.
+        let payload: unknown = r2;
+        let envelopeGeneratedAt: number | null = null;
+        if (isSnapshotEnvelope(r2)) {
+          envelopeGeneratedAt = r2.generatedAt;
+          payload = r2.data;
+        }
+        const effectiveFetchedAt = envelopeGeneratedAt ?? now();
+        t3Cache.set(name, {
+          data: payload,
+          fetchedAt: effectiveFetchedAt,
+          expiresAt: fetchedAt0 + T1_TTL_MS,
+        });
         return {
-          data: r2 as T,
+          data: payload as T,
           meta: buildMeta(
             {
               tier: 3,
               label: "t3.r2-snapshot",
               table: name,
-              fetchedAt: now(),
+              fetchedAt: effectiveFetchedAt,
               cached: true,
               ttlExpiresAt: fetchedAt0 + T1_TTL_MS,
             },
@@ -618,10 +715,16 @@ export function createHydrationLayer(
       }
       // R2 returned null → snapshot missing
       caveats.push("r2_snapshot_missing");
+      caveats.push(`snapshot_unavailable_${name}`);
     } catch (err) {
       caveats.push("r2_unavailable");
+      caveats.push(`snapshot_unavailable_${name}`);
       caveats.push(
         `r2 error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[hydration] snapshot_unavailable_${name}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     // 2. MV fallback
@@ -719,6 +822,7 @@ export function createHydrationLayer(
     memoQuery,
     loadSnapshot,
     invalidate,
+    invalidateSnapshot,
   };
 }
 
