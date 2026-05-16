@@ -1065,49 +1065,6 @@ export default defineSchema({
   }).index("by_account_normname", ["account_slug", "item_name_normalised"])
     .index("by_fingerprint", ["inventory_fingerprint"]),
 
-  // ── W3a (Wave 3, Phase 3c) — Item embeddings for vector search ─────────
-  // 768-dim Gemini text-embedding-004 / image embeddings. Powers the
-  // vision-elimination pipeline (W3b) and future catalog semantic search.
-  // ADDITIVE: schema-only consumer here. Populated via internal action
-  // (manual invoke). See convex/item_embeddings.ts.
-  item_embeddings: defineTable({
-    item_id: v.id("items"),
-    embedding: v.array(v.float64()),   // 768-dim from Gemini
-    embedding_model: v.string(),       // for migration tracking
-    source_kind: v.union(v.literal("name"), v.literal("description"), v.literal("image")),
-    source_ref: v.optional(v.string()), // R2 key or item field name
-    generated_at: v.number(),
-  })
-    .index("by_item_id", ["item_id"])
-    .index("by_item_and_kind", ["item_id", "source_kind"])
-    .vectorIndex("by_embedding", {
-      vectorField: "embedding",
-      dimensions: 768,
-      filterFields: ["item_id", "source_kind"],
-    }),
-
-  // ── Phase 3c / Wave 3b: pHash → item_id cache (Tier 1 of vision pipeline) ─
-  // Each row maps an observed image (URL + 64-bit perceptual hash) to the
-  // canonical inventory item resolved for that image. Tier 1 hits exact-ish
-  // pHash matches (Hamming distance < 8) and short-circuits the rest of the
-  // pipeline. Every successful resolution from Tier 2/3/4 writes back here
-  // so the next call collapses to a free hash lookup ("learn-once-cache-
-  // forever"). ADDITIVE — schema-only change.
-  item_image_phash: defineTable({
-    image_url: v.string(),
-    phash: v.string(),                 // 64-bit pHash as hex (16 chars)
-    canonical_item_id: v.id("items"),
-    last_used_at: v.number(),
-    source: v.union(
-      v.literal("vision_resolve"),
-      v.literal("backfill"),
-    ),
-    confidence: v.number(),            // similarity score that produced this entry
-  })
-    .index("by_phash", ["phash"])
-    .index("by_canonical_item_id", ["canonical_item_id"])
-    .index("by_image_url", ["image_url"]),
-
   // Phase 4 — Listing Resolution
   // Stores the deterministic + AI resolution result for each Hygglo listing.
   // The resolver pipeline (catalog → photo_ref → pattern → detail_api → ai → fuzzy → manual)
