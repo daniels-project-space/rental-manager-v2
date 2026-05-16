@@ -343,45 +343,141 @@ export function findBestMatch(input: string, inventory: string[]): string | null
 }
 
 /**
+ * Compute the SAME score as findBestMatch for a single (query, candidate) pair.
+ * Returns null if the pair fails any gate (cross-brand, focal-length conflict,
+ * model-number conflict, variant conflict, A7-designator conflict, coverage>=0.5,
+ * overlap>=0.25, specific-token >=1, total-tokens >=2, brand-mismatch).
+ *
+ * This is the single source of truth for scoring — used by both findBestMatch
+ * (top-1 path) and findTopNMatches (top-N path) so both surface identical results.
+ */
+function scoreCandidate(
+  query: string,
+  candidate: string,
+): { name: string; score: number; coverage: number; overlap: number } | null {
+  const normalized = normalizeItemName(query);
+  if (!normalized) return null;
+  const normItem = normalizeItemName(candidate);
+  const inputTokens = normalized.split(' ');
+  const itemTokens = normItem.split(' ');
+
+  // Brand detection mirrors findBestMatch
+  const BRANDS = ['sony', 'canon', 'blackmagic', 'bmpcc', 'fujifilm', 'panasonic', 'nikon', 'red',
+    'aputure', 'nanlite', 'rode', 'dji', 'sennheiser', 'pioneer', 'viewsonic', 'anker', 'arri', 'dzo', 'sigma', '7artisans'];
+  const inputBrands = BRANDS.filter(b => normalized.includes(b));
+  if (inputBrands.length > 0) {
+    const itemBrands = BRANDS.filter(b => normItem.includes(b));
+    if (itemBrands.length > 0 && !inputBrands.some(ib => itemBrands.includes(ib))) {
+      return null;
+    }
+  }
+
+  const isSubstringMatch = (a: string, b: string) => {
+    const shorter = a.length <= b.length ? a : b;
+    const longer = a.length > b.length ? a : b;
+    return shorter.length >= 4 && longer.includes(shorter) && shorter.length / longer.length >= 0.6;
+  };
+
+  let score = 0;
+  let specificMatches = 0;
+  for (const token of inputTokens) {
+    if (token.length < 2) continue;
+    const variants = getTokenVariants(token);
+    if (itemTokens.some((t) => variants.some(v => t === v || isSubstringMatch(v, t)))) {
+      score++;
+      if (!GENERIC_TOKENS.has(token)) specificMatches++;
+    }
+  }
+
+  // Require at least 1 specific (non-generic) matching token
+  if (specificMatches === 0) return null;
+  // Require at least 2 matching tokens total
+  if (score < 2) return null;
+
+  // Focal length conflict
+  const mmPattern = /^\d+mm$/;
+  const inputMmTokens = inputTokens.filter(t => mmPattern.test(t));
+  const itemMmTokens = itemTokens.filter(t => mmPattern.test(t));
+  if (inputMmTokens.length > 0 && itemMmTokens.length > 0) {
+    if (!inputMmTokens.some(imt => itemMmTokens.includes(imt))) return null;
+  }
+
+  // Model number conflict
+  const modelNumPattern = /^\d{1,4}$/;
+  const inputModelNums = inputTokens.filter(t => modelNumPattern.test(t) && !GENERIC_TOKENS.has(t));
+  const itemModelNums = itemTokens.filter(t => modelNumPattern.test(t) && !GENERIC_TOKENS.has(t));
+  if (inputModelNums.length > 0 && itemModelNums.length > 0) {
+    if (!inputModelNums.some(n => itemModelNums.includes(n))) return null;
+  }
+
+  // Variant conflict (classic ≠ pro)
+  const VARIANT_WORDS = ['classic', 'pro', 'plus', 'max', 'lite', 'mini', 'standard', 'ultra'];
+  const inputVariants = inputTokens.filter(t => VARIANT_WORDS.includes(t));
+  const itemVariants = itemTokens.filter(t => VARIANT_WORDS.includes(t));
+  if (inputVariants.length > 0 && itemVariants.length > 0) {
+    const commonTokens = inputTokens.filter(t => itemTokens.includes(t) && !VARIANT_WORDS.includes(t) && t.length >= 2);
+    if (commonTokens.length >= 2 && !inputVariants.some(v => itemVariants.includes(v))) return null;
+  }
+
+  // A7-designator conflict
+  const getA7Designator = (tokens: string[]): string | null => {
+    for (const t of tokens) {
+      const variants = getTokenVariants(t);
+      for (const v of variants) {
+        const m = v.match(/^a7([src]?)/);
+        if (m) return m[1];
+      }
+    }
+    return null;
+  };
+  const inputA7Des = getA7Designator(inputTokens);
+  const itemA7Des = getA7Designator(itemTokens);
+  if (inputA7Des !== null && itemA7Des !== null && inputA7Des !== itemA7Des) return null;
+
+  // Coverage + overlap gates (same as findBestMatch)
+  const coverage = score / Math.min(inputTokens.length, itemTokens.length);
+  const overlap = score / Math.max(inputTokens.length, itemTokens.length);
+  if (coverage < 0.5 || overlap < 0.25) return null;
+
+  // Final brand-mismatch gate (uses extractPrimaryBrand semantics on raw names)
+  if (detectBrandMismatch(query, candidate).isMismatch) return null;
+
+  return { name: candidate, score: coverage, coverage, overlap };
+}
+
+/**
+ * Return the top-N inventory matches for a query, applying the EXACT same
+ * scoring rule as findBestMatch (GENERIC_TOKENS exclusion, coverage>=0.5,
+ * overlap>=0.25, brand-mismatch + conflict gates). Sorted by score desc.
+ *
+ * If fewer than N items pass thresholds, returns what we have (may be empty).
+ */
+export function findTopNMatches(
+  query: string,
+  candidates: string[],
+  n: number = 3,
+): Array<{ name: string; score: number; coverage: number; overlap: number }> {
+  const scored: Array<{ name: string; score: number; coverage: number; overlap: number }> = [];
+  for (const cand of candidates) {
+    const hit = scoreCandidate(query, cand);
+    if (hit) scored.push(hit);
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, n);
+}
+
+/**
  * Score-returning variant of findBestMatch for callers that need confidence.
+ * Thin wrapper over findTopNMatches for backwards compatibility.
  * Returns null if nothing matches; otherwise { name, score } where score is coverageRatio.
  */
 export function findBestMatchWithScore(
   input: string,
   inventory: string[],
 ): { name: string; score: number } | null {
-  const name = findBestMatch(input, inventory);
-  if (!name) return null;
-  // Recompute score the same way findBestMatch does for the chosen item
-  const normalized = normalizeItemName(input);
-  const normItem = normalizeItemName(name);
-  const inputTokens = normalized.split(' ');
-  const itemTokens = normItem.split(' ');
-  let score = 0;
-  for (const token of inputTokens) {
-    if (token.length < 2) continue;
-    const variants = (() => {
-      const variants = [token];
-      if (/\d/.test(token) && /[a-z]/.test(token)) {
-        if (/^f\d+$/.test(token)) return variants;
-        const split = token.replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2');
-        if (split !== token) {
-          const parts = split.split(' ');
-          for (const part of parts) if (part.length >= 2 && !variants.includes(part)) variants.push(part);
-          if (parts.length >= 2) {
-            const prefix = parts[0] + parts[1];
-            if (prefix.length >= 2 && !variants.includes(prefix)) variants.push(prefix);
-          }
-        }
-      }
-      return variants;
-    })();
-    if (itemTokens.some(t => variants.some(v => t === v || (v.length >= 4 && t.length >= 4 && (t.includes(v) || v.includes(t)))))) {
-      score++;
-    }
-  }
-  const coverageRatio = score / Math.min(inputTokens.length, itemTokens.length);
-  return { name, score: coverageRatio };
+  const top = findTopNMatches(input, inventory, 1);
+  if (top.length === 0) return null;
+  return { name: top[0].name, score: top[0].score };
 }
 
 /**

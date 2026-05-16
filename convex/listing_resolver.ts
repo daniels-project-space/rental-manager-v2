@@ -28,6 +28,7 @@ import {
   MASTER_INVENTORY,
   findBestMatch,
   findBestMatchWithScore,
+  findTopNMatches,
   detectBrandMismatch,
   extractPrimaryBrand,
 } from "./lib/item_matcher";
@@ -365,23 +366,14 @@ JSON:`;
  * queue — Daniel needs near-misses even when no tier produced a confident hit.
  */
 function topNCandidates(title: string, n: number): Candidate[] {
-  // Re-use findBestMatchWithScore by removing winners one at a time so we
-  // can return n distinct candidates without rewriting the scoring code.
-  const pool = INVENTORY_NAMES.slice();
-  const out: Candidate[] = [];
-  for (let i = 0; i < n; i++) {
-    if (pool.length === 0) break;
-    const hit = findBestMatchWithScore(title, pool);
-    if (!hit) break;
-    out.push({
-      item_name: hit.name,
-      score: hit.score,
-      reason: `fuzzy:${hit.score.toFixed(3)}`,
-    });
-    const idx = pool.indexOf(hit.name);
-    if (idx >= 0) pool.splice(idx, 1);
-  }
-  return out;
+  // Use findTopNMatches which scores the FULL pool with the same rule
+  // as findBestMatch, then returns the top-N (no winner-removal degradation).
+  const matches = findTopNMatches(title, INVENTORY_NAMES, n);
+  return matches.map((m) => ({
+    item_name: m.name,
+    score: m.score,
+    reason: `coverage=${m.coverage.toFixed(2)} overlap=${m.overlap.toFixed(2)}`,
+  }));
 }
 
 /**

@@ -235,17 +235,23 @@ export const listPendingReview = query({
 export const labelListingFromReview = mutation({
   args: {
     listing_id: v.string(),
+    account: v.string(),
     item_names: v.array(v.string()),
     qtys: v.array(v.number()),
     skip: v.boolean(),
     reviewed_by: v.string(),
   },
   handler: async (ctx, args) => {
+    // M7 fix: filter on hygglo_account to prevent cross-account writes
+    // if listing_ids ever collide between Hygglo accounts.
     const existing = await ctx.db
       .query("listing_resolution")
       .withIndex("by_listing_id", (q) => q.eq("hygglo_listing_id", args.listing_id))
-      .first();
-    if (!existing) throw new Error("listing not found in resolution queue");
+      .filter((q) => q.eq(q.field("hygglo_account"), args.account))
+      .unique();
+    if (!existing) {
+      throw new Error(`listing not found: ${args.listing_id} on account ${args.account}`);
+    }
 
     if (args.skip) {
       await ctx.db.patch(existing._id, {

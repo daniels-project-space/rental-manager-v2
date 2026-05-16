@@ -1249,6 +1249,7 @@ export const mutate = createTool({
         const convex = getConvex();
         result = await convex.mutation(anyApi.listing_resolver_data.labelListingFromReview, {
           listing_id: args.listing_id as string,
+          account: (args.account as string) ?? (args.accountSlug as string) ?? "",
           item_names: (args.item_names as string[]) ?? [],
           qtys: (args.qtys as number[]) ?? [],
           skip: (args.skip as boolean) ?? false,
