@@ -164,7 +164,6 @@ const monthBounds = () => {
   return { monthStart: start, monthEnd: end };
 };
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // W02 Stats Drawer — single reactive query powering all 16 stat-card drawers.
 //
@@ -611,7 +610,6 @@ export const getStatsDrawerData = query({
     // reflects actionable pending verifications only.
     const pendingTrackedCount = pendingTracked.length;
     const pendingTrackedValue = pendingTracked.reduce((s, r) => s + netOf(r), 0);
-
 
     const daysBetween = (a: string, b: string): number => {
       const ms = Date.parse(b) - Date.parse(a);

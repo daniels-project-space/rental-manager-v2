@@ -416,33 +416,3 @@ export const listForReconcile = query({
 // contamination path. Replaced by per-reservation `image_hints` written at
 // poll time + `resolveImageForReservationItem` at read time.
 
-// ─── Item Schedule (with time-of-day awareness) ─────────────────────────────
-//  Used by the chat agent to answer questions like "is the FX3 free today
-//  after 7pm?" and "when is the BMPCC next available?". Walks confirmed
-//  reservations whose date range overlaps [from, to], pulls the LLM-extracted
-//  pickup_time / return_time strings, and builds a per-day timeline with
-//  free intervals computed in HH:MM.
-// ────────────────────────────────────────────────────────────────────────────
-
-  items: T[],
-  itemName: string,
-): T | null {
-  const q = normName(itemName);
-  let best: T | null = null;
-  let bestScore = 0;
-  for (const i of items) {
-    if (i.status !== "active" || i.is_marketing_only) continue;
-    const cn = normName(i.name_canonical ?? "");
-    let score = cn === q ? 3 : cn.includes(q) ? 2 : q.includes(cn) && cn.length > 3 ? 1 : 0;
-    if (score === 0) {
-      const aliasHit = (i.aliases ?? []).some((a) => {
-        const an = normName(a);
-        return an === q || an.includes(q) || (q.includes(an) && an.length > 3);
-      });
-      if (aliasHit) score = 1;
-    }
-    if (score > bestScore) { best = i; bestScore = score; }
-  }
-  return best;
-}
-

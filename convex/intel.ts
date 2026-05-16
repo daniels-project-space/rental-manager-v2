@@ -159,7 +159,6 @@ export const getItemROIRanking = query({
   },
 });
 
-
 export const getSmartBuyRanking = query({
   args: {
     days: v.optional(v.number()),
@@ -294,9 +293,6 @@ export const getSmartBuyRanking = query({
   },
 });
 
-
-
-
 export const getTopSpenders = query({
   args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, { days, limit }) => {
@@ -359,13 +355,6 @@ export const getTopSpenders = query({
     return { ok: true as const, lookbackDays: days ?? null, rows: rows.slice(0, limit ?? 15) };
   },
 });
-
-
-
-
-
-
-
 
 const FUNNEL_ACTIVE_STEPS = new Set(["REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"]);
 const FUNNEL_CONFIRMED_STEPS = new Set(["BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED"]);
