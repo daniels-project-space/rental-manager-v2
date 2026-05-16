@@ -217,7 +217,7 @@ async function writeTimes(args: {
 
 export const extractBookingTimesTask = schedules.task({
   id: "extract-booking-times",
-  cron: "*/30 * * * *",
+  cron: "0 * * * *", // hourly (was: */30)
   maxDuration: 240,
   run: async (_payload, { ctx }) => {
     if (isWithinUkQuietHours()) {
@@ -226,8 +226,9 @@ export const extractBookingTimesTask = schedules.task({
     }
     const { candidates } = await fetchBatch(10);
     if (candidates.length === 0) {
-      logger.info("extract-booking-times: pool empty", { runId: ctx.run.id });
-      return { ok: true, processed: 0, idle: true };
+      // Queue-idle gate: no reservations need booking-time extraction.
+      logger.info("queue idle, skipping run", { task: "extract-booking-times" });
+      return { skipped: true };
     }
 
     let processed = 0;

@@ -76,6 +76,10 @@ interface TopRentersData {
 }
 
 export async function runSnapshotTopRenters() {
+    if (process.env.SNAPSHOTS_VIA_CONVEX === "1") {
+      logger.info("SNAPSHOTS_VIA_CONVEX=1, deferring to Convex internalAction");
+      return { ok: false as const, reason: "convex-action" as const, rowCount: 0, payloadBytes: 0, durationMs: 0 };
+    }
     const startedAt = Date.now();
     logger.info("snapshot-top-renters: starting");
 

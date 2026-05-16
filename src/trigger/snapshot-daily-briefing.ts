@@ -20,6 +20,10 @@ const CONVEX_URL =
   process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
 
 export async function runSnapshotDailyBriefing() {
+  if (process.env.SNAPSHOTS_VIA_CONVEX === "1") {
+    logger.info("SNAPSHOTS_VIA_CONVEX=1, deferring to Convex internalAction");
+    return { ok: false as const, reason: "convex-action" as const };
+  }
   const startedAt = Date.now();
   logger.info("snapshot-daily-briefing: starting");
 

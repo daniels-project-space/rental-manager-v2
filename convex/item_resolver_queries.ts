@@ -6,6 +6,8 @@
 
 import { v } from "convex/values";
 import { internalQuery, internalMutation, mutation, query } from "./_generated/server";
+// Phase W3b — dual-write to reservation_vision side table.
+import { mirrorResolvedItemsToVisionTable } from "./reservation_vision";
 
 export const getReservationForResolve = internalQuery({
   args: { reservation_id: v.id("reservations") },
@@ -65,13 +67,16 @@ export const setResolution = internalMutation({
     input_hash: v.string(),
   },
   handler: async (ctx, { reservation_id, resolved_items, expanded_items, method, input_hash }) => {
+    const now = Date.now();
     await ctx.db.patch(reservation_id, {
       resolved_items,
       expanded_items,
-      resolution_at: Date.now(),
+      resolution_at: now,
       resolution_method: method,
       resolution_input_hash: input_hash,
     });
+    // Phase W3b — dual-write to reservation_vision side table.
+    await mirrorResolvedItemsToVisionTable(ctx, reservation_id, resolved_items, now);
     return { ok: true };
   },
 });
@@ -131,12 +136,15 @@ export const admin_setResolutionByV1Id = mutation({
         .map((x) => x.item_name_canonical + ":" + (x.qty ?? 1))
         .sort()
         .join("|");
+      const now = Date.now();
       await ctx.db.patch(r._id, {
         resolved_items,
-        resolution_at: Date.now(),
+        resolution_at: now,
         resolution_method: method ?? "v1_migration",
         resolution_input_hash: "v1:" + hash,
       });
+      // Phase W3b — dual-write to reservation_vision side table.
+      await mirrorResolvedItemsToVisionTable(ctx, r._id, resolved_items, now);
       patched++;
     }
     return { ok: true, patched };
@@ -378,13 +386,16 @@ export const admin_resolveBatchWrite = mutation({
   handler: async (ctx, { results }) => {
     let patched = 0;
     for (const r of results) {
+      const now = Date.now();
       await ctx.db.patch(r.reservation_id, {
         resolved_items: r.resolved_items,
         expanded_items: r.expanded_items,
-        resolution_at: Date.now(),
+        resolution_at: now,
         resolution_method: r.method,
         resolution_input_hash: r.input_hash,
       });
+      // Phase W3b — dual-write to reservation_vision side table.
+      await mirrorResolvedItemsToVisionTable(ctx, r.reservation_id, r.resolved_items, now);
       patched++;
     }
     return { ok: true, patched };
@@ -503,13 +514,16 @@ export const admin_writeVisionAugmentation = mutation({
     input_hash: v.string(),
   },
   handler: async (ctx, { reservation_id, resolved_items, expanded_items, input_hash }) => {
+    const now = Date.now();
     await ctx.db.patch(reservation_id, {
       resolved_items,
       expanded_items,
-      resolution_at: Date.now(),
+      resolution_at: now,
       resolution_method: "llm+vision",
       resolution_input_hash: input_hash,
     });
+    // Phase W3b — dual-write to reservation_vision side table.
+    await mirrorResolvedItemsToVisionTable(ctx, reservation_id, resolved_items, now);
     return { ok: true };
   },
 });

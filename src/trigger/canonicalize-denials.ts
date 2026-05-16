@@ -156,7 +156,7 @@ async function setCanonical(args: {
 
 export const canonicalizeDenialsTask = schedules.task({
   id: "canonicalize-denials",
-  cron: "30 4 * * *", // daily 04:30 UTC
+  cron: "0 * * * *", // hourly (was: daily 04:30 UTC → widened)
   // One Grok call per run — bounded LLM cost.
   maxDuration: 120,
   run: async (_payload, { ctx }) => {
@@ -166,8 +166,9 @@ export const canonicalizeDenialsTask = schedules.task({
     }
     const todo = await listUnresolved(20);
     if (todo.length === 0) {
-      logger.info("canonicalize-denials: pool empty, idle", { runId: ctx.run.id });
-      return { ok: true, processed: 0, idle: true };
+      // Queue-idle gate: pool drained — skip LLM work, next hourly tick re-checks.
+      logger.info("queue idle, skipping run", { task: "canonicalize-denials" });
+      return { skipped: true };
     }
 
     const userMessage =

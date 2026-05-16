@@ -35,7 +35,7 @@ const crons = cronJobs();
 // collect across MVs for the bigger Convex-bandwidth win.
 crons.interval(
   "mv_refresh_fast",
-  { minutes: 30 },
+  { minutes: 60 },
   internal.mv.master.refreshFast,
   {},
 );
@@ -101,6 +101,49 @@ crons.daily(
   { hourUTC: 4, minuteUTC: 30 },
   internal.demand_loss.classifyObsoleteReservations,
   { limit: 100 },
+);
+
+// ── Phase 3a / Wave 2b — R2 snapshot writers moved from Trigger.dev.
+// Each writes the same R2 key its Trigger counterpart did. While both run,
+// the Trigger versions short-circuit when SNAPSHOTS_VIA_CONVEX=1 to avoid
+// double-writes (last-writer wins regardless via the wrapSnapshot envelope).
+crons.cron(
+  "snapshot-intel-rankings",
+  "0 */4 * * *",
+  internal.snapshot_jobs.snapshotIntelRankings,
+  {},
+);
+crons.cron(
+  "snapshot-daily-briefing",
+  "*/10 * * * *",
+  internal.snapshot_jobs.snapshotDailyBriefing,
+  {},
+);
+crons.cron(
+  "snapshot-top-renters",
+  "0 */6 * * *",
+  internal.snapshot_jobs.snapshotTopRenters,
+  {},
+);
+crons.cron(
+  "snapshot-inventory-overview",
+  "0 */12 * * *",
+  internal.snapshot_jobs.snapshotInventoryOverview,
+  {},
+);
+
+// ── Phase 3a / Wave 3a — R2 cold-storage archiver (DRY-RUN DEFAULT).
+//
+// Moves `hygglo_messages` + `audit_log` rows older than 90d to R2 to free
+// Convex hot-storage. DEFAULT IS DRY-RUN. Daniel must manually invoke
+// once with `dry_run: false` via the Convex dashboard (or `npx convex run
+// archive_to_r2:archiveToR2 '{"dry_run":false}'`) to verify behaviour
+// BEFORE flipping the cron arg below.
+crons.daily(
+  "archive-to-r2-cold",
+  { hourUTC: 3, minuteUTC: 30 },
+  internal.archive_to_r2.archiveToR2,
+  { dry_run: true },
 );
 
 export default crons;

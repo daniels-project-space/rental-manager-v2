@@ -1,5 +1,6 @@
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -180,18 +181,20 @@ export const markReturned = mutation({
 /**
  * T4: listObsolete — cancelled/rejected orders (lost revenue / dead deals)
  */
-export const listObsolete = query({
-  args: { sinceTs: v.optional(v.number()) },
-  handler: async (ctx, { sinceTs }) => {
-    const rows = await ctx.db.query("reservations").collect();
-    const filtered = rows
-      .filter((r) => r.is_obsolete === true)
-      .filter(
-        (r) =>
-          !sinceTs ||
-          (r.v1_updated_at ?? r._creationTime) >= sinceTs
-      );
-    return Promise.all(
+export const listObsolete = internalQuery({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    sinceTs: v.optional(v.number()),
+  },
+  handler: async (ctx, { paginationOpts, sinceTs }) => {
+    const page = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .paginate(paginationOpts);
+    const filtered = page.page.filter(
+      (r) => !sinceTs || (r.v1_updated_at ?? r._creationTime) >= sinceTs,
+    );
+    const rows = await Promise.all(
       filtered.map(async (r) => {
         let renterName: string | null = null;
         if (r.renter_id) {
@@ -211,15 +214,20 @@ export const listObsolete = query({
           items: r.items ?? [],
           last_seen_at: r.v1_updated_at ?? r._creationTime,
         };
-      })
+      }),
     );
+    return {
+      page: rows,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 
 /**
  * T4: getPipelineCounts — aggregate active order counts per order_step
  */
-export const getPipelineCounts = query({
+export const getPipelineCounts = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("reservations").collect();
@@ -303,8 +311,9 @@ export const adminSetStatus = mutation({
 // Also match rows where booking_status === "pending_review" (captured from Hygglo since
 // many "pending_review" orders have order_step=APPROVED already — renter approved by owner
 // but renter hasn't paid yet).
-export const listPending = query({
+export const listPending = internalQuery({
   args: {
+    paginationOpts: paginationOptsValidator,
     accountSlug: v.optional(v.string()),
     // verified_only=true keeps the strict dashboard semantics (escrow paid +
     // verifying). Default false matches chat expectations: "what's pending"
@@ -313,11 +322,14 @@ export const listPending = query({
     // returning 0 because nothing happens to be in VERIFIED right now.
     verified_only: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, verified_only }) => {
+  handler: async (ctx, { paginationOpts, accountSlug, verified_only }) => {
     // See convex/order_step_semantics.ts for full semantics.
     const PIPELINE = new Set(["REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"]);
-    const allRows = await ctx.db.query('reservations').collect();
-    let rows = allRows.filter((r) => {
+    const page = await ctx.db
+      .query("reservations")
+      .order("desc")
+      .paginate(paginationOpts);
+    let rows = page.page.filter((r) => {
       if (r.is_obsolete === true) return false;
       if (verified_only === true) return r.order_step === "VERIFIED";
       return r.order_step !== undefined && PIPELINE.has(r.order_step);
@@ -325,10 +337,8 @@ export const listPending = query({
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
     }
-    rows.sort((a, b) => b._creationTime - a._creationTime);
-    const top = rows.slice(0, 20);
     const rentals = await Promise.all(
-      top.map(async (r) => {
+      rows.map(async (r) => {
         let renterName = '';
         if (r.renter_id) {
           const renter = await ctx.db.get(r.renter_id);
@@ -346,7 +356,12 @@ export const listPending = query({
         };
       })
     );
-    return { count: rows.length, rentals };
+    return {
+      count: rentals.length,
+      rentals,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 

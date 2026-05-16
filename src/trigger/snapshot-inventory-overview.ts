@@ -100,6 +100,10 @@ async function convexQuery<T>(path: string, args: Record<string, unknown>): Prom
 // Previously a standalone `schedules.task` (cron "0 *\/12 * * *").
 // Consolidated into `snapshot-all` (Phase 18.5).
 export async function runSnapshotInventoryOverview(runId?: string) {
+    if (process.env.SNAPSHOTS_VIA_CONVEX === "1") {
+      logger.info("SNAPSHOTS_VIA_CONVEX=1, deferring to Convex internalAction");
+      return { ok: false as const, reason: "convex-action" as const, rowCount: 0, totalQty: 0, sizeBytes: 0, durationMs: 0 };
+    }
     const startMs = Date.now();
     logger.info("snapshot-inventory-overview: starting", { runId });
 

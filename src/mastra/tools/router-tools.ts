@@ -75,6 +75,18 @@ interface HydrationDuck {
       | "all",
   ) => void;
   invalidateSnapshot?: (key: string) => void;
+  /**
+   * Phase W3b — generic per-turn memoizer. Mirrors the
+   * `HydrationLayer.memoQuery` signature so router tools can dedup
+   * arbitrary Convex queries (e.g. reservation_vision side-table reads)
+   * without minting new entity-fetcher entries on the layer.
+   */
+  memoQuery?: <T>(
+    fnRef: unknown,
+    args: Record<string, unknown> | undefined,
+    runner: () => Promise<T>,
+    opts?: { table?: string },
+  ) => Promise<{ data: T; meta: HydrationMetaDuck }>;
 }
 
 interface HydrationMetaDuck {
@@ -362,38 +374,104 @@ export const queryOrders = createTool({
       }
     }
     // H3: vision — Trigger vision-resolver already wrote per-line image_url
-    // into resolved_items[]. Trivial passthrough: pluck and normalise.
+    // into resolved_items[]. Phase W3b: prefer the reservation_vision side
+    // table; fall back to reservation.resolved_items when the side-table
+    // row is missing (dual-write rollout — not every row mirrored yet).
+    // Side-table fetch is shared with booking_times branch below.
+    let sideMap: Map<string, unknown[]> | null = null;
+    if ((include_.includes("vision") || include_.includes("booking_times")) && hasRows) {
+      try {
+        const hydrate = hydrationFromCtx(_ctx);
+        const reservationIds = primaryRows
+          .map((r) => (r._id ?? r.id ?? r.order_id) as string | undefined)
+          .filter((x): x is string => typeof x === "string" && x.length > 0);
+        if (reservationIds.length > 0) {
+          const { getConvex } = await import("@/mastra/data/client");
+          const { anyApi } = await import("convex/server");
+          const convex = getConvex();
+          const runner = async () => {
+            return (await convex.query(
+              anyApi.reservation_vision.publicGetReservationVisionBatch,
+              { reservation_ids: reservationIds },
+            )) as Array<{
+              reservation_id: string;
+              resolved_items?: unknown[];
+            } | null>;
+          };
+          const rows = hydrate?.memoQuery
+            ? ((
+                await hydrate.memoQuery(
+                  "reservation_vision.publicGetReservationVisionBatch",
+                  { reservation_ids: reservationIds },
+                  runner,
+                  { table: "reservations" },
+                )
+              ).data as Array<{
+                reservation_id: string;
+                resolved_items?: unknown[];
+              } | null>)
+            : await runner();
+          sideMap = new Map<string, unknown[]>();
+          for (const row of rows ?? []) {
+            if (row && Array.isArray(row.resolved_items)) {
+              sideMap.set(String(row.reservation_id), row.resolved_items);
+            }
+          }
+        }
+      } catch (err) {
+        // Side-table read failure → fall through to legacy column path.
+        co.vision_side_table_error =
+          err instanceof Error ? err.message : String(err);
+      }
+    }
     if (include_.includes("vision") && hasRows) {
       try {
-        co.vision = primaryRows.map((r) => ({
-          order_id: (r._id ?? r.id ?? r.order_id) as unknown,
-          resolved_items: Array.isArray(r.resolved_items)
-            ? (r.resolved_items as unknown[]).map((it) => {
-                if (it && typeof it === "object") {
-                  const o = it as Record<string, unknown>;
-                  return {
-                    item_id: o.item_id ?? o.itemId,
-                    image_url: o.image_url ?? o.imageUrl,
-                    vision_source: o.vision_source ?? o.visionSource,
-                  };
-                }
-                return null;
-              })
-            : [],
-        }));
+        co.vision = primaryRows.map((r) => {
+          const id = (r._id ?? r.id ?? r.order_id) as string | undefined;
+          const sideHit = id && sideMap ? sideMap.get(id) : undefined;
+          const source: unknown[] = Array.isArray(sideHit)
+            ? sideHit
+            : Array.isArray(r.resolved_items)
+              ? (r.resolved_items as unknown[])
+              : [];
+          return {
+            order_id: id as unknown,
+            resolved_items: source.map((it) => {
+              if (it && typeof it === "object") {
+                const o = it as Record<string, unknown>;
+                return {
+                  item_id: o.item_id ?? o.itemId,
+                  image_url: o.image_url ?? o.imageUrl,
+                  vision_source: o.vision_source ?? o.visionSource,
+                };
+              }
+              return null;
+            }),
+            vision_source_table: sideHit ? "reservation_vision" : "reservations",
+          };
+        });
       } catch (err) {
         co.vision_error = err instanceof Error ? err.message : String(err);
       }
     }
     // H3: booking_times — Trigger booking-time extractor populates
     // extracted_pickup_time / extracted_return_time on the row. Pluck.
+    // Phase W3b: pickup/return timestamps still live on the reservations row;
+    // resolved_items is the only column moving. We still expose
+    // `vision_source_table` here so consumers know which path was used in
+    // case they want to cross-reference.
     if (include_.includes("booking_times") && hasRows) {
       try {
-        co.booking_times = primaryRows.map((r) => ({
-          order_id: (r._id ?? r.id ?? r.order_id) as unknown,
-          pickup_time: r.extracted_pickup_time ?? r.extractedPickupTime ?? null,
-          return_time: r.extracted_return_time ?? r.extractedReturnTime ?? null,
-        }));
+        co.booking_times = primaryRows.map((r) => {
+          const id = (r._id ?? r.id ?? r.order_id) as string | undefined;
+          const sideHit = id && sideMap ? sideMap.get(id) : undefined;
+          return {
+            order_id: id as unknown,
+            pickup_time: r.extracted_pickup_time ?? r.extractedPickupTime ?? null,
+            return_time: r.extracted_return_time ?? r.extractedReturnTime ?? null,
+            vision_source_table: sideHit ? "reservation_vision" : "reservations",
+          };
+        });
       } catch (err) {
         co.booking_times_error = err instanceof Error ? err.message : String(err);
       }

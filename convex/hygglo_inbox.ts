@@ -14,6 +14,7 @@
  * Dedup: payloadHash. Same payload received twice is a no-op.
  */
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { action, mutation, query } from "./_generated/server";
 import { api } from "./_generated/api";
 
@@ -42,12 +43,12 @@ export const receiveBatch = mutation({
 });
 
 export const listUnprocessed = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
     return await ctx.db
       .query("hygglo_inbox")
       .withIndex("by_processed", (q) => q.eq("processed", false))
-      .take(limit ?? 100);
+      .paginate(paginationOpts);
   },
 });
 

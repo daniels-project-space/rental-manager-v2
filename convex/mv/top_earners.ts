@@ -1,22 +1,61 @@
 /**
  * MV: top_earners_30d
  *
- * Phase 18.3 refactor: pure `computeTopEarners(reservations, items, ...)`
- * exported. `refresh` and `refreshOne` internalMutations remain as thin
- * wrappers for direct invocation.
+ * Refresh interval: every 15 min. Heavier compute (joins items × reservations)
+ * and tolerates moderate staleness — earnings change slowly over a 30-day window.
  *
  * For each item: gross/net 30d, rental count, 7-day utilisation %.
  * Top 20 per account by gross.
+ *
+ * ── Shared-collect entry point ────────────────────────────────────────────
+ * `computeTopEarners(reservations, items, ...)` is the pure entry point used
+ * by `convex/mv/master.ts` — the shared-collect orchestrator passes its
+ * pre-fetched 30-day reservation window + items table so the MVs don't each
+ * re-query.
+ *
+ * ── W2a: Incremental rebuild ─────────────────────────────────────────────
+ * The cron path is now "skip-when-clean": we still read the windowed slice
+ * (already indexed via `by_start_date` — drops ~1767 rows → ~80 rows), but
+ * if NO reservation in that slice has mutated since the last `generatedAt`
+ * we short-circuit without recomputing or writing.
+ *
+ * Freshness signal: `reservations.last_polled_at` — bumped by the poller on
+ * every upsert, including status/price/date changes. A reservation that
+ * "just left the 30-day window" is captured because the window-shrink check
+ * compares the persisted MV's last `cutoff` against the new `cutoff`: if it
+ * moved, we MUST rebuild even when no row mutated (rows that were inside
+ * yesterday may be outside today).
+ *
+ * `force: true` bypasses both checks (manual recovery / cold start).
+ *
+ * The aggregation logic itself is unchanged from the full rebuild —
+ * delta-merging item rollups against an existing `rows[]` would need a
+ * per-item snapshot we don't have. The win is wall-clock + DB-bandwidth on
+ * the (common) clean-window case, not in the rebuild path.
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
 import { getAccountSlugs, upsertSingleton, isoDaysAgo, todayISO, ACCOUNT_ALL } from "./_helpers";
 import { OWNER_SHARE } from "./constants";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ReservationRow = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ItemRow = any;
+type ItemLike = {
+  name_canonical: string;
+  qty: number;
+  aliases?: string[];
+};
+
+type ReservationLike = {
+  status: string;
+  start_date?: string;
+  end_date?: string;
+  pickup_date?: string;
+  account_slug?: string;
+  gross_paid_gbp?: number;
+  net_to_owner_gbp?: number;
+  last_polled_at?: number;
+  items?: Array<{ item_name: string }>;
+};
 
 export type TopEarnerRow = {
   itemName: string;
@@ -32,14 +71,19 @@ export type TopEarnersAccountRow = {
   rows: TopEarnerRow[];
 };
 
-function computeForAccount(args: {
+/**
+ * Pure aggregation — extracted so the parity test can exercise it without
+ * a Convex db. Identical math to the legacy in-mutation logic.
+ */
+export function computeTopEarnersForAccount(args: {
   account: string;
-  reservations: ReservationRow[];
-  items: ItemRow[];
+  reservations: ReservationLike[];
+  items: ItemLike[];
   today: string;
   cutoff: string;
 }): TopEarnerRow[] {
   const { account, reservations, items, today, cutoff } = args;
+
   const capacityByName = new Map<string, number>();
   for (const it of items) {
     capacityByName.set(it.name_canonical, it.qty);
@@ -66,8 +110,12 @@ function computeForAccount(args: {
       r.net_to_owner_gbp !== undefined
         ? r.net_to_owner_gbp / itemCount
         : perItemGross * OWNER_SHARE;
-    const startMs = new Date(Math.max(new Date(r.start_date ?? cutoff).getTime(), new Date(cutoff).getTime())).getTime();
-    const endMs = new Date(Math.min(new Date(r.end_date ?? today).getTime(), new Date(today).getTime())).getTime();
+    const startMs = new Date(
+      Math.max(new Date(r.start_date ?? cutoff).getTime(), new Date(cutoff).getTime()),
+    ).getTime();
+    const endMs = new Date(
+      Math.min(new Date(r.end_date ?? today).getTime(), new Date(today).getTime()),
+    ).getTime();
     const overlapDays = Math.max(0, Math.round((endMs - startMs) / 86_400_000) + 1);
 
     for (const it of r.items ?? []) {
@@ -100,11 +148,52 @@ function computeForAccount(args: {
 }
 
 /**
- * Pure compute — caller supplies the 30-day reservations window + full items table.
+ * Decide whether the existing MV is stale (must rebuild) or clean (skip).
+ *
+ * Stale when ANY of:
+ *   - `force`
+ *   - no singleton exists yet (cold start)
+ *   - the recorded `cutoffISO` doesn't match the current 30-day cutoff
+ *   - any windowed reservation has `last_polled_at >= generatedAt`
+ *
+ * Extracted as a pure function so the parity test can exercise it.
+ */
+export function shouldRebuildTopEarners(args: {
+  force: boolean;
+  existing: { generatedAt?: number; cutoffISO?: string } | null;
+  currentCutoff: string;
+  windowedReservations: ReservationLike[];
+}): { rebuild: boolean; reason: string } {
+  const { force, existing, currentCutoff, windowedReservations } = args;
+  if (force) return { rebuild: true, reason: "force" };
+  if (!existing || existing.generatedAt === undefined) {
+    return { rebuild: true, reason: "cold_start" };
+  }
+  if (existing.cutoffISO !== currentCutoff) {
+    return { rebuild: true, reason: "window_shifted" };
+  }
+  const prev = existing.generatedAt;
+  for (const r of windowedReservations) {
+    if (r.last_polled_at !== undefined && r.last_polled_at >= prev) {
+      return { rebuild: true, reason: "row_mutated" };
+    }
+  }
+  return { rebuild: false, reason: "clean" };
+}
+
+/**
+ * Shared-collect entry point — pure compute over a pre-fetched 30-day
+ * reservation window + full items table. Returns one row per account slug.
+ * Used by `convex/mv/master.ts` so the orchestrator can amortise the
+ * collects across multiple MVs.
+ *
+ * Does NOT consult any stored singleton — the master pipeline writes
+ * unconditionally. For the staleness-aware variant, see `refresh` /
+ * `refreshOne` below.
  */
 export function computeTopEarners(args: {
-  reservations: ReservationRow[];
-  items: ItemRow[];
+  reservations: ReservationLike[];
+  items: ItemLike[];
   targetAccount?: string;
   generatedAt?: number;
 }): TopEarnersAccountRow[] {
@@ -116,63 +205,137 @@ export function computeTopEarners(args: {
   return targets.map((account) => ({
     account,
     generatedAt,
-    rows: computeForAccount({ account, reservations, items, today, cutoff }),
+    rows: computeTopEarnersForAccount({ account, reservations, items, today, cutoff }),
   }));
 }
 
+async function recomputeForAccount(
+  ctx: MutationCtx,
+  account: string,
+  startedAt: number,
+  reservations: ReservationLike[],
+  items: ItemLike[],
+  today: string,
+  cutoff: string,
+): Promise<void> {
+  const rows = computeTopEarnersForAccount({ account, reservations, items, today, cutoff });
+  await upsertSingleton(ctx, "top_earners_30d", account, {
+    generatedAt: startedAt,
+    rows,
+    cutoffISO: cutoff,
+  });
+}
+
 export const refresh = internalMutation({
-  args: { account: v.optional(v.string()) },
-  handler: async (ctx, { account }) => {
+  args: {
+    account: v.optional(v.string()),
+    force: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { account, force }) => {
     const startedAt = Date.now();
+    const today = todayISO();
     const cutoff = isoDaysAgo(30);
     const reservations = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
-    const items = await ctx.db.query("items").collect();
 
-    const computed = computeTopEarners({
-      reservations,
-      items,
-      targetAccount: account,
-      generatedAt: startedAt,
+    const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
+
+    const existingByAccount = new Map<string, { generatedAt?: number; cutoffISO?: string } | null>();
+    for (const acc of targets) {
+      const existing = await ctx.db
+        .query("top_earners_30d")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .withIndex("by_account" as any, (q) => q.eq("account", acc))
+        .first();
+      existingByAccount.set(acc, existing as { generatedAt?: number; cutoffISO?: string } | null);
+    }
+    const accountsNeedingRebuild = targets.filter((acc) => {
+      const decision = shouldRebuildTopEarners({
+        force: force ?? false,
+        existing: existingByAccount.get(acc) ?? null,
+        currentCutoff: cutoff,
+        windowedReservations: acc === ACCOUNT_ALL
+          ? reservations
+          : reservations.filter((r) => r.account_slug === acc),
+      });
+      return decision.rebuild;
     });
 
+    if (accountsNeedingRebuild.length === 0) {
+      return {
+        ok: true,
+        rowsAffected: 0,
+        durationMs: Date.now() - startedAt,
+        skipped: true,
+        reason: "clean",
+      };
+    }
+
+    const items = await ctx.db.query("items").collect();
     let totalAffected = 0;
-    for (const row of computed) {
-      await upsertSingleton(ctx, "top_earners_30d", row.account, {
-        generatedAt: row.generatedAt,
-        rows: row.rows,
-      });
+    for (const acc of accountsNeedingRebuild) {
+      await recomputeForAccount(ctx, acc, startedAt, reservations, items, today, cutoff);
       totalAffected += 1;
     }
     return { ok: true, rowsAffected: totalAffected, durationMs: Date.now() - startedAt };
   },
 });
 
+/**
+ * Wave 4 — single-account variant. Also refreshes the `"all"` aggregate.
+ * Honors the same incremental skip path as `refresh`.
+ */
 export const refreshOne = internalMutation({
-  args: { account: v.string() },
-  handler: async (ctx, { account }) => {
+  args: {
+    account: v.string(),
+    force: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { account, force }) => {
     const startedAt = Date.now();
+    const today = todayISO();
     const cutoff = isoDaysAgo(30);
     const reservations = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
-    const items = await ctx.db.query("items").collect();
 
-    const computed = computeTopEarners({
-      reservations,
-      items,
-      targetAccount: account,
-      generatedAt: startedAt,
+    const targets = [account, ACCOUNT_ALL];
+    const existingByAccount = new Map<string, { generatedAt?: number; cutoffISO?: string } | null>();
+    for (const acc of targets) {
+      const existing = await ctx.db
+        .query("top_earners_30d")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .withIndex("by_account" as any, (q) => q.eq("account", acc))
+        .first();
+      existingByAccount.set(acc, existing as { generatedAt?: number; cutoffISO?: string } | null);
+    }
+    const accountsNeedingRebuild = targets.filter((acc) => {
+      const decision = shouldRebuildTopEarners({
+        force: force ?? false,
+        existing: existingByAccount.get(acc) ?? null,
+        currentCutoff: cutoff,
+        windowedReservations: acc === ACCOUNT_ALL
+          ? reservations
+          : reservations.filter((r) => r.account_slug === acc),
+      });
+      return decision.rebuild;
     });
 
-    for (const row of computed) {
-      await upsertSingleton(ctx, "top_earners_30d", row.account, {
-        generatedAt: row.generatedAt,
-        rows: row.rows,
-      });
+    if (accountsNeedingRebuild.length === 0) {
+      return {
+        ok: true,
+        rowsAffected: 0,
+        durationMs: Date.now() - startedAt,
+        skipped: true,
+        reason: "clean",
+      };
     }
-    return { ok: true, rowsAffected: computed.length, durationMs: Date.now() - startedAt };
+
+    const items = await ctx.db.query("items").collect();
+    for (const acc of accountsNeedingRebuild) {
+      await recomputeForAccount(ctx, acc, startedAt, reservations, items, today, cutoff);
+    }
+    return { ok: true, rowsAffected: accountsNeedingRebuild.length, durationMs: Date.now() - startedAt };
   },
 });
 
