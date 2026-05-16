@@ -18,10 +18,27 @@
  */
 import { internalAction } from "./_generated/server";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
+import { rateLimiter } from "./rate_limit_config";
 
 export const triggerWorkflow = internalAction({
   args: {},
-  handler: async () => {
+  handler: async (ctx) => {
+    // Rate-limit guard: max 1 trigger per 4 min (prevents cron + manual race).
+    // Background crons that are NOT rate-limited: mv_refresh_*, snapshot-*,
+    // archive-to-r2-cold, complete stale-confirmed, account profile sync,
+    // classify-obsolete-demand-loss — those have fixed cadences with no
+    // user amplification and must never be gated here.
+    const rl = await rateLimiter.limit(ctx, "hygglo_poll");
+    if (!rl.ok) {
+      const waitSec = rl.retryAfter !== undefined
+        ? Math.ceil(rl.retryAfter / 1000)
+        : "unknown";
+      console.log(
+        `[hygglo_poll_trigger] rate-limited; retry in ${waitSec}s`,
+      );
+      return { ok: false, reason: "rate_limited", retryAfter: rl.retryAfter };
+    }
+
     if (isWithinUkQuietHours()) {
       console.log("[quiet-hours] skipped", { task: "hygglo_poll_trigger:triggerWorkflow" });
       return { skipped: true, reason: "uk_quiet_hours" };

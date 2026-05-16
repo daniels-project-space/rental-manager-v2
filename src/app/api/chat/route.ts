@@ -45,23 +45,73 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // ── Rate limiter ───────────────────────────────────────────────
+// Three independent in-process rate-limit maps (Next.js edge/Node runtime —
+// @convex-dev/rate-limiter is a Convex-server-side component and cannot be
+// called directly from a Next.js API route handler):
+//
+//   IP-based:        20 req / 60 s    (unchanged — bot/abuse guard)
+//   Per-thread:      60 turns / 5 min (prevents runaway single conversation)
+//   Per-account:     300 turns / 60 min (per-tenant ceiling)
+//
+// Background crons (mv_refresh_*, snapshot-*, archive-to-r2-cold, etc.) do
+// NOT call this route — they are Convex internalActions/mutations and are
+// NOT subject to these limits.
 const rateMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 60_000;
 
-function checkRateLimit(ip: string): { allowed: boolean; retryAfter: number } {
+const threadRateMap = new Map<string, { count: number; resetAt: number }>();
+const THREAD_RATE_LIMIT = 60;
+const THREAD_WINDOW_MS = 5 * 60_000; // 5 minutes
+
+const accountRateMap = new Map<string, { count: number; resetAt: number }>();
+const ACCOUNT_RATE_LIMIT = 300;
+const ACCOUNT_WINDOW_MS = 60 * 60_000; // 1 hour
+
+function checkWindowLimit(
+  map: Map<string, { count: number; resetAt: number }>,
+  key: string,
+  limit: number,
+  windowMs: number,
+): { allowed: boolean; retryAfter: number } {
   const now = Date.now();
-  const entry = rateMap.get(ip);
+  const entry = map.get(key);
   if (!entry || now > entry.resetAt) {
-    rateMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    map.set(key, { count: 1, resetAt: now + windowMs });
     return { allowed: true, retryAfter: 0 };
   }
   entry.count += 1;
-  if (entry.count > RATE_LIMIT) {
+  if (entry.count > limit) {
     const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
     return { allowed: false, retryAfter };
   }
   return { allowed: true, retryAfter: 0 };
+}
+
+function checkRateLimit(ip: string): { allowed: boolean; retryAfter: number } {
+  return checkWindowLimit(rateMap, ip, RATE_LIMIT, RATE_WINDOW_MS);
+}
+
+function checkThreadRateLimit(
+  threadId: string,
+): { allowed: boolean; retryAfter: number } {
+  return checkWindowLimit(
+    threadRateMap,
+    threadId,
+    THREAD_RATE_LIMIT,
+    THREAD_WINDOW_MS,
+  );
+}
+
+function checkAccountRateLimit(
+  accountSlug: string,
+): { allowed: boolean; retryAfter: number } {
+  return checkWindowLimit(
+    accountRateMap,
+    accountSlug,
+    ACCOUNT_RATE_LIMIT,
+    ACCOUNT_WINDOW_MS,
+  );
 }
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -93,6 +143,36 @@ export async function POST(req: Request) {
 
   if (!message) {
     return NextResponse.json({ error: "message required" }, { status: 400 });
+  }
+
+  // Per-thread rate limit: 60 turns / 5 min
+  const threadLimit = checkThreadRateLimit(thread_id);
+  if (!threadLimit.allowed) {
+    return new Response(
+      JSON.stringify({ error: "rate_limited", retry_after: threadLimit.retryAfter }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(threadLimit.retryAfter),
+        },
+      },
+    );
+  }
+
+  // Per-account rate limit: 300 turns / 60 min
+  const accountLimit = checkAccountRateLimit(accountSlug);
+  if (!accountLimit.allowed) {
+    return new Response(
+      JSON.stringify({ error: "rate_limited", retry_after: accountLimit.retryAfter }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(accountLimit.retryAfter),
+        },
+      },
+    );
   }
 
   // Must match the dashboard's read deployment (src/lib/convex.ts) — Vercel's
