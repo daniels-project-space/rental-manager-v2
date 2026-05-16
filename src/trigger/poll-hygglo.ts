@@ -12,6 +12,7 @@ import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
+import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 // Fallback URL must match v2's active deployment (see .env.local NEXT_PUBLIC_CONVEX_URL).
@@ -440,6 +441,10 @@ export const pollHyggloInbox = schedules.task({
   maxDuration: 120,
   retry: { maxAttempts: 2 },
   run: async () => {
+    if (isWithinUkQuietHours()) {
+      logger.info("[quiet-hours] skipped", { task: "poll-hygglo-inbox" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     const runStart = Date.now();
     let runSucceeded = false;
     let runError: string | undefined;

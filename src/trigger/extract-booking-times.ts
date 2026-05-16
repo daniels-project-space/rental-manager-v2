@@ -14,6 +14,7 @@
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { generateText } from "ai";
 import { createXai } from "@ai-sdk/xai";
+import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
@@ -218,6 +219,10 @@ export const extractBookingTimesTask = schedules.task({
   cron: "*/30 * * * *",
   maxDuration: 240,
   run: async (_payload, { ctx }) => {
+    if (isWithinUkQuietHours()) {
+      logger.info("[quiet-hours] skipped", { task: "extract-booking-times" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     const { candidates } = await fetchBatch(10);
     if (candidates.length === 0) {
       logger.info("extract-booking-times: pool empty", { runId: ctx.run.id });

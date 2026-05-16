@@ -16,6 +16,7 @@ import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
+import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
@@ -187,6 +188,10 @@ export const visionResolveTask = schedules.task({
   cron: "0 * * * *", // hourly
   maxDuration: 300,
   run: async (_payload, { ctx }) => {
+    if (isWithinUkQuietHours()) {
+      logger.info("[quiet-hours] skipped", { task: "vision-resolve" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     const batch = await fetchBatch(5);
     if (batch.candidates.length === 0) {
       logger.info("vision-resolve: pool empty", { runId: ctx.run.id });

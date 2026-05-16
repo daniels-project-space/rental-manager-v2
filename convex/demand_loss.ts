@@ -26,6 +26,7 @@
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const DAY_MS = 86_400_000;
 const DEDUP_WINDOW_MS = 2 * DAY_MS;
@@ -105,6 +106,10 @@ export function classifyRow(r: Reservation): DemandClass {
 export const classifyObsoleteReservations = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skipped", { task: "demand_loss:classifyObsoleteReservations" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     const batch = limit ?? 200;
 
     // 1. Fetch obsolete rows missing a classification. There's no is_obsolete

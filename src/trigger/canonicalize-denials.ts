@@ -28,6 +28,7 @@ import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
+import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
@@ -158,6 +159,10 @@ export const canonicalizeDenialsTask = schedules.task({
   // One Grok call per run — bounded LLM cost.
   maxDuration: 120,
   run: async (_payload, { ctx }) => {
+    if (isWithinUkQuietHours()) {
+      logger.info("[quiet-hours] skipped", { task: "canonicalize-denials" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     const todo = await listUnresolved(20);
     if (todo.length === 0) {
       logger.info("canonicalize-denials: pool empty, idle", { runId: ctx.run.id });

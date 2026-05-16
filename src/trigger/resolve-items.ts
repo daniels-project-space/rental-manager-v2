@@ -26,6 +26,7 @@ import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
+import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
@@ -243,6 +244,10 @@ export const resolveItemsTask = schedules.task({
   cron: "*/15 * * * *",
   maxDuration: 180,
   run: async (_payload, { ctx }) => {
+    if (isWithinUkQuietHours()) {
+      logger.info("[quiet-hours] skipped", { task: "resolve-items" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     return await runBatch(ctx.run.id, false);
   },
 });
@@ -253,6 +258,10 @@ export const resolveItemsNotesBackfillTask = schedules.task({
   cron: "0 * * * *",
   maxDuration: 180,
   run: async (_payload, { ctx }) => {
+    if (isWithinUkQuietHours()) {
+      logger.info("[quiet-hours] skipped", { task: "resolve-items-notes-backfill" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     return await runBatch(ctx.run.id, true);
   },
 });

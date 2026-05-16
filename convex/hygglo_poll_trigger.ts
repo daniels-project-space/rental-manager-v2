@@ -17,10 +17,15 @@
  * exits fast).
  */
 import { internalAction } from "./_generated/server";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 export const triggerWorkflow = internalAction({
   args: {},
   handler: async () => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skipped", { task: "hygglo_poll_trigger:triggerWorkflow" });
+      return { skipped: true, reason: "uk_quiet_hours" };
+    }
     const url = process.env.POLL_TRIGGER_URL;
     if (!url) {
       console.warn("[hygglo_poll_trigger] POLL_TRIGGER_URL not set; skipping.");
