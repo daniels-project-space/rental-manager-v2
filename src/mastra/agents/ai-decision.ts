@@ -38,6 +38,18 @@ import { GROK_DECISION_MODEL } from "@/lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
+// ── Prompt-caching per-decision xAI clients ───────────────────────
+// xAI's prompt caching (auto prefix matching, 75-90% off cached input
+// tokens) opts in via the `x-grok-conv-id` header set to a stable ID
+// per decision context. We key by hygglo_order_id (or reservation_id
+// when the order id is unavailable) so consecutive decisions for the
+// same order — re-runs, manual retries, follow-up turns — share cache.
+// Bounded LRU-ish eviction keeps memory flat across long polling
+// horizons (we generate decisions every 5 minutes).
+const PER_CONV_AGENT_CAP = 512;
+const _convClients = new Map<string, ReturnType<typeof createXai>>();
+const _convAgents = new Map<string, Agent>();
+
 // ── READ-ONLY tool subset ────────────────────────────────────────
 // Carefully cherry-picked: only tools that observe state. NO updates to
 // rules/memories/rental status/Hygglo. The dashboard-chat agent has a
@@ -159,3 +171,48 @@ export const aiDecisionAgent = new Agent({
   model: [{ model: xai(GROK_DECISION_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 600 } }],
   tools: aiDecisionTools,
 });
+
+/**
+ * Returns a per-decision-context Mastra Agent wired to an xAI client
+ * with `x-grok-conv-id: <convId>` set. Cached, so repeated decisions
+ * for the same order/reservation reuse the same underlying client and
+ * benefit from xAI's automatic prompt prefix caching.
+ *
+ * `convId` MUST be stable per decision context. Recommended sources, in
+ * priority order:
+ *   1. hygglo_order_id  — preferred; survives reservation re-keys.
+ *   2. reservation_id   — fallback when the order id is missing.
+ *
+ * Falls back to the static `aiDecisionAgent` when convId is empty so
+ * callers don't accidentally key off "".
+ */
+export function getAiDecisionAgent(convId: string): Agent {
+  if (!convId) return aiDecisionAgent;
+  const cached = _convAgents.get(convId);
+  if (cached) {
+    _convAgents.delete(convId);
+    _convAgents.set(convId, cached);
+    return cached;
+  }
+  if (_convAgents.size >= PER_CONV_AGENT_CAP) {
+    const oldest = _convAgents.keys().next().value;
+    if (oldest !== undefined) {
+      _convAgents.delete(oldest);
+      _convClients.delete(oldest);
+    }
+  }
+  const client = createXai({
+    apiKey: process.env.XAI_API_KEY ?? "",
+    headers: { "x-grok-conv-id": convId },
+  });
+  _convClients.set(convId, client);
+  const agent = new Agent({
+    id: "ai-decision",
+    name: "ai-decision",
+    instructions: AI_DECISION_PROMPT,
+    model: [{ model: client(GROK_DECISION_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 600 } }],
+    tools: aiDecisionTools,
+  });
+  _convAgents.set(convId, agent);
+  return agent;
+}

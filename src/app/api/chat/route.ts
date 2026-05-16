@@ -3,7 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { RequestContext } from "@mastra/core/request-context";
 import { api } from "../../../../convex/_generated/api";
 import {
-  dashboardChatAgent,
+  getDashboardChatAgent,
   SYSTEM_PROMPT_BASE,
 } from "../../../mastra/agents/dashboard-chat";
 import { createHydrationLayer } from "../../../mastra/lib/hydration";
@@ -170,12 +170,17 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder();
   let fullText = "";
 
+  // Per-thread agent: bound to an xAI client with `x-grok-conv-id: <thread_id>`
+  // so xAI prompt caching (75-90% off cached input tokens) kicks in for
+  // consecutive turns on the same conversation. See dashboard-chat.ts.
+  const agent = getDashboardChatAgent(thread_id);
+
   const stream = new ReadableStream({
     async start(controller) {
-      let result: Awaited<ReturnType<typeof dashboardChatAgent.stream>>;
+      let result: Awaited<ReturnType<typeof agent.stream>>;
 
       try {
-        result = await dashboardChatAgent.stream(messages, streamOpts);
+        result = await agent.stream(messages, streamOpts);
       } catch (initErr) {
         const errMsg = errorMessage(initErr);
         console.error("[chat] agent stream init failed:", initErr);
@@ -203,15 +208,28 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
 
-        // Capture token usage if available
+        // Capture token usage if available. `cached_tokens` is the xAI
+        // prompt-caching hit count (cachedInputTokens on the AI SDK usage
+        // object) — proxied through Mastra. Non-zero means our
+        // `x-grok-conv-id` header is paying off; 0 on the first turn is
+        // expected, subsequent turns on the same thread should climb.
         const latencyMs = Date.now() - turnStart;
         let metadata: string | undefined;
         try {
           const usage = await result.usage;
+          const cachedTokens = usage?.cachedInputTokens ?? null;
           metadata = JSON.stringify({
             model: GROK_CHAT_MODEL,
             input_tokens: usage?.inputTokens ?? null,
             output_tokens: usage?.outputTokens ?? null,
+            cached_tokens: cachedTokens,
+            latency_ms: latencyMs,
+          });
+          console.log("[chat] token usage:", {
+            thread_id,
+            input_tokens: usage?.inputTokens ?? null,
+            output_tokens: usage?.outputTokens ?? null,
+            cached_tokens: cachedTokens,
             latency_ms: latencyMs,
           });
         } catch {

@@ -7,6 +7,58 @@ import { GROK_CHAT_MODEL } from "../../lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
+// ── Prompt-caching per-thread xAI clients ─────────────────────────
+// xAI's prompt caching (auto prefix matching, 75-90% off cached input
+// tokens) opts in via the `x-grok-conv-id` header set to a stable per-
+// thread ID. We instantiate one xAI client + one Agent per thread_id
+// and cache them in bounded module-level Maps so consecutive turns on
+// the same thread share the cache. Bounded LRU-ish eviction (insertion
+// order) keeps memory flat in long-running workers.
+const PER_THREAD_CLIENT_CAP = 256;
+const _threadClients = new Map<string, ReturnType<typeof createXai>>();
+const _threadAgents = new Map<string, Agent>();
+
+/**
+ * Returns a per-thread Mastra Agent wired to an xAI client with
+ * `x-grok-conv-id: <convId>` set. Cached, so repeat turns on the same
+ * thread reuse the same underlying client and benefit from xAI's
+ * automatic prompt prefix caching.
+ *
+ * The returned Agent shares the static instructions/tools of
+ * `dashboardChatAgent`; only the bound xAI client (and thus the conv-id
+ * header) differs.
+ */
+export function getDashboardChatAgent(convId: string): Agent {
+  const cached = _threadAgents.get(convId);
+  if (cached) {
+    // Refresh LRU position
+    _threadAgents.delete(convId);
+    _threadAgents.set(convId, cached);
+    return cached;
+  }
+  if (_threadAgents.size >= PER_THREAD_CLIENT_CAP) {
+    const oldest = _threadAgents.keys().next().value;
+    if (oldest !== undefined) {
+      _threadAgents.delete(oldest);
+      _threadClients.delete(oldest);
+    }
+  }
+  const client = createXai({
+    apiKey: process.env.XAI_API_KEY ?? "",
+    headers: { "x-grok-conv-id": convId },
+  });
+  _threadClients.set(convId, client);
+  const agent = new Agent({
+    id: "dashboard-chat",
+    name: "dashboard-chat",
+    instructions: SYSTEM_PROMPT_BASE,
+    model: [{ model: client(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
+    tools: routerTools,
+  });
+  _threadAgents.set(convId, agent);
+  return agent;
+}
+
 /**
  * Static system prompt base. Exported so the API route can compose it
  * with a dynamic freshness header before each turn.

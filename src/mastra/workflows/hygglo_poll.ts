@@ -30,7 +30,7 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
-import { aiDecisionAgent } from "@/mastra/agents/ai-decision";
+import { getAiDecisionAgent } from "@/mastra/agents/ai-decision";
 import { GROK_CHAT_MODEL } from "@/lib/ai-models";
 
 const CONVEX_URL = process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
@@ -221,7 +221,12 @@ const runAiDecisionAgent = createStep({
     const out: Decision[] = [];
     for (const c of inputData.enriched) {
       try {
-        const res = await aiDecisionAgent.generate(c.promptBlock);
+        // Stable per-decision conv id → xAI prompt caching hits when this
+        // decision is re-run (manual retry, follow-up turn). Prefer the
+        // Hygglo order id; fall back to the Convex reservation id.
+        const convId = c.hygglo_order_id ?? c.reservation_id;
+        const decisionAgent = getAiDecisionAgent(convId);
+        const res = await decisionAgent.generate(c.promptBlock);
         const parsed = parseDecisionFromText(res.text ?? "");
         if (!parsed) {
           // Fallback: ask_renter so Daniel gets visibility on the broken case.
