@@ -219,6 +219,16 @@ export const archiveToR2 = internalAction({
       chunk_size = 500,
     },
   ): Promise<ArchiveResult> => {
+    // H2 double-gate: even if `dry_run: false` is passed (e.g. cron edit slip),
+    // require ARCHIVE_TO_R2_LIVE=1 env var to actually delete rows. Otherwise
+    // force back to dry-run with a warning. Belt-and-braces for irreversible op.
+    const live = process.env.ARCHIVE_TO_R2_LIVE === "1";
+    if (!live && !dry_run) {
+      console.warn(
+        "[archive_to_r2] ARCHIVE_TO_R2_LIVE not set; forcing dry_run=true",
+      );
+      dry_run = true;
+    }
     const startedAt = Date.now();
     const cutoffMs = startedAt - NINETY_DAYS_MS;
     const cutoffISO = new Date(cutoffMs).toISOString();
@@ -226,6 +236,7 @@ export const archiveToR2 = internalAction({
 
     console.log("[archive_to_r2] starting", {
       dry_run,
+      live_gate: live,
       tables,
       chunk_size: safeChunk,
       cutoffISO,

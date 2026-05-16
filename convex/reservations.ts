@@ -518,7 +518,7 @@ export const adminPatchRichFieldsByHyggloId = mutation({
  * dashboard window. Used by the backfill script to know which orders
  * to fetch from the source-of-truth deployment.
  */
-export const adminListNeedsRichBackfill = internalQuery({
+export const adminListNeedsRichBackfill = query({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("reservations").collect();
@@ -548,7 +548,7 @@ export const adminListNeedsRichBackfill = internalQuery({
  * `ai_decision` row (regardless of decision status). This is the net-new
  * surface for the AI decision step.
  */
-export const listPendingWithoutDecision = internalQuery({
+export const listPendingWithoutDecision = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
     const pending = await ctx.db
