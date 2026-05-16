@@ -143,7 +143,7 @@ crons.daily(
   "archive-to-r2-cold",
   { hourUTC: 3, minuteUTC: 30 },
   internal.archive_to_r2.archiveToR2,
-  { dry_run: true },
+  { dry_run: false },
 );
 
 export default crons;
