@@ -30,15 +30,13 @@
  * so per-call rate limits add no value and would create false positives.
  */
 import { RateLimiter, MINUTE, HOUR } from "@convex-dev/rate-limiter";
-import type { ComponentApi } from "@convex-dev/rate-limiter/dist/component/_generated/component.js";
 import { components } from "./_generated/api";
 
-// NOTE: `components.rateLimiter` is typed as `never` until `convex dev` regenerates
-// _generated/api.d.ts after registering the component in convex.config.ts.
-// The cast below is safe — the runtime shape matches once the deployment is live.
-export const rateLimiter = new RateLimiter(
-  components.rateLimiter as unknown as ComponentApi,
-  {
+// NOTE: `components.rateLimiter` is typed as `{}` until `convex dev` regenerates
+// _generated/api.d.ts after convex.config.ts registers the component. The
+// `as any` cast is safe — the runtime shape matches once the deployment is live.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const rateLimiter = new RateLimiter((components as any).rateLimiter, {
     /**
      * Per-thread chat cap: 60 turns per 5-minute fixed window.
      * key = thread_id
@@ -68,5 +66,4 @@ export const rateLimiter = new RateLimiter(
       rate: 1,
       period: 4 * MINUTE,
     },
-  },
-);
+});
