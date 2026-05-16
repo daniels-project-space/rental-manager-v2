@@ -1029,6 +1029,22 @@ export default defineSchema({
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_slug", ["slug"]),
 
+  // ── Phase W3b: reservation_vision side table (dual-write) ────────────────
+  // Mirror of reservations.resolved_items so the heavy jsonb blob can move
+  // off the hot reservations row. DUAL-WRITE phase: every existing
+  // db.patch({resolved_items: ...}) site also writes here via
+  // upsertReservationVision. Readers prefer this table and fall back to the
+  // old column when absent. NULL-ing the old column is deferred to the
+  // follow-up phase once dashboards have been live on the new path for ≥7d.
+  reservation_vision: defineTable({
+    reservation_id: v.id("reservations"),
+    resolved_items: v.optional(v.any()), // mirror of the old column's shape
+    vision_processed_at: v.optional(v.number()),
+    last_synced_at: v.number(),
+  })
+    .index("by_reservation_id", ["reservation_id"])
+    .index("by_processed_at", ["vision_processed_at"]),
+
   // ── Phase 16.1 B1: denial_resolver result cache ──────────────────────────
   // Mirror of listing_resolutions for denial_records.item_name -> items._id.
   // Skips the LLM when the same product name + same active-inventory set is
