@@ -57,7 +57,15 @@ interface HydrationDuck {
     getByIds?: (ids: string[]) => Promise<{ data: unknown; meta: HydrationMetaDuck }>;
   };
   loadSnapshot: (
-    name: "by_item" | "by_renter" | "by_month" | "totals",
+    name:
+      | "by_item"
+      | "by_renter"
+      | "by_month"
+      | "totals"
+      | "intel_rankings"
+      | "daily_briefing"
+      | "top_renters"
+      | "inventory_overview",
   ) => Promise<{ data: unknown; meta: HydrationMetaDuck }>;
   invalidate?: (
     key:
@@ -67,6 +75,7 @@ interface HydrationDuck {
       | "bundle_items"
       | "all",
   ) => void;
+  invalidateSnapshot?: (key: string) => void;
 }
 
 interface HydrationMetaDuck {
@@ -208,7 +217,27 @@ export const queryInventory = createTool({
     }
     if (include_.includes("stats")) {
       try {
-        co.stats = await data.intelligence.getUtilizationSnapshot({});
+        // Phase 1c: prefer inventory_overview snapshot; fall through to live
+        // utilization snapshot when unavailable.
+        let statsFromSnapshot = false;
+        if (hydrate) {
+          try {
+            const snap = await hydrate.loadSnapshot("inventory_overview");
+            const unavailable = (snap.meta?.caveats ?? []).some((c) =>
+              c.includes("snapshot_unavailable_inventory_overview"),
+            );
+            if (snap.data && !unavailable) {
+              co.stats = snap.data;
+              co.stats_source = "r2.inventory_overview";
+              statsFromSnapshot = true;
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+        if (!statsFromSnapshot) {
+          co.stats = await data.intelligence.getUtilizationSnapshot({});
+        }
       } catch (err) {
         co.stats_error = err instanceof Error ? err.message : String(err);
       }
@@ -426,7 +455,45 @@ export const queryRenter = createTool({
     }
     if (include_.includes("ltv") && hasRows) {
       try {
-        co.ltv = await data.intel.getTopSpenders({});
+        // Phase 1c: prefer top_renters snapshot; if the renter is present,
+        // use those numbers; else fall through to getTopSpenders.
+        const hydrate = hydrationFromCtx(_ctx);
+        let ltvFromSnapshot = false;
+        if (hydrate) {
+          try {
+            const snap = await hydrate.loadSnapshot("top_renters");
+            const unavailable = (snap.meta?.caveats ?? []).some((c) =>
+              c.includes("snapshot_unavailable_top_renters"),
+            );
+            if (snap.data && !unavailable) {
+              const d = snap.data as { rows?: Array<Record<string, unknown>> };
+              const rows = Array.isArray(d.rows) ? d.rows : [];
+              const needle = idOrName.toLowerCase();
+              const match = rows.find((row) => {
+                const id = typeof row.renter_id === "string" ? row.renter_id : "";
+                const nm = typeof row.renter_name === "string" ? row.renter_name : "";
+                return (
+                  id.toLowerCase() === needle ||
+                  nm.toLowerCase() === needle ||
+                  nm.toLowerCase().includes(needle)
+                );
+              });
+              if (match) {
+                co.ltv = {
+                  source: "r2.top_renters",
+                  match,
+                  hydrationSource: snap.meta?.source ?? null,
+                };
+                ltvFromSnapshot = true;
+              }
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+        if (!ltvFromSnapshot) {
+          co.ltv = await data.intel.getTopSpenders({});
+        }
       } catch (err) {
         co.ltv_error = err instanceof Error ? err.message : String(err);
       }
@@ -492,6 +559,72 @@ export const queryIntel = createTool({
       params?: Record<string, unknown>;
     };
     const p = (params ?? {}) as Record<string, unknown>;
+    const hydrate = hydrationFromCtx(_ctx);
+    // Phase 1c: prefer R2 intel_rankings snapshot for roi / smart_sell /
+    // smart_buy / bundle_profit. Falls through on null / missing snapshot.
+    if (
+      hydrate &&
+      (metric === "roi" ||
+        metric === "smart_sell" ||
+        metric === "smart_buy" ||
+        metric === "bundle_profit")
+    ) {
+      try {
+        const snap = await hydrate.loadSnapshot("intel_rankings");
+        const unavailable = (snap.meta?.caveats ?? []).some((c) =>
+          c.includes("snapshot_unavailable_intel_rankings"),
+        );
+        if (snap.data && !unavailable) {
+          const d = snap.data as {
+            roiRanking?: unknown[];
+            topEarners30d?: unknown[];
+            smartSellRanking?: unknown[];
+            smartBuyRanking?: unknown[];
+            bundleProfitRanking?: unknown[];
+          };
+          let slice: unknown = null;
+          if (metric === "roi") slice = d.roiRanking ?? d.topEarners30d ?? null;
+          else if (metric === "smart_sell") slice = d.smartSellRanking ?? null;
+          else if (metric === "smart_buy") slice = d.smartBuyRanking ?? null;
+          else if (metric === "bundle_profit") slice = d.bundleProfitRanking ?? null;
+          if (slice !== null) {
+            const limit =
+              typeof p.limit === "number" ? (p.limit as number) : undefined;
+            const trimmed =
+              Array.isArray(slice) && typeof limit === "number"
+                ? slice.slice(0, limit)
+                : slice;
+            return wrap({
+              data: { metric, ranking: trimmed },
+              source: "r2.intel_rankings",
+              syncState: syncFromMeta(snap.meta),
+              extraCaveats: snap.meta?.caveats ?? [],
+            });
+          }
+        }
+      } catch {
+        /* fall through to live */
+      }
+    }
+    // Phase 1c: prefer top_renters snapshot for churn.
+    if (hydrate && metric === "churn") {
+      try {
+        const snap = await hydrate.loadSnapshot("top_renters");
+        const unavailable = (snap.meta?.caveats ?? []).some((c) =>
+          c.includes("snapshot_unavailable_top_renters"),
+        );
+        if (snap.data && !unavailable) {
+          return wrap({
+            data: { metric, ...(snap.data as Record<string, unknown>) },
+            source: "r2.top_renters",
+            syncState: syncFromMeta(snap.meta),
+            extraCaveats: snap.meta?.caveats ?? [],
+          });
+        }
+      } catch {
+        /* fall through to live */
+      }
+    }
     switch (metric) {
       case "roi":
         return data.intel.getItemROIRanking(
@@ -716,10 +849,33 @@ export const queryAlerts = createTool({
   }),
   execute: async (input, _ctx) => {
     const { account } = input as { account?: "leo" | "dbcinema" };
-    const [briefing, shadow, advisories] = await Promise.all([
-      Promise.resolve(data.rentals.getDailyBriefing({ account })).catch(
-        (err) => ({ error: err instanceof Error ? err.message : String(err) }),
-      ),
+    const hydrate = hydrationFromCtx(_ctx);
+    // Phase 1c: prefer daily_briefing snapshot for the briefing block.
+    // Always fetch shadow + advisories live (small queries).
+    let briefingData: unknown = null;
+    let briefingMeta: HydrationMetaDuck | undefined;
+    let briefingFromSnapshot = false;
+    if (hydrate) {
+      try {
+        const snap = await hydrate.loadSnapshot("daily_briefing");
+        const unavailable = (snap.meta?.caveats ?? []).some((c) =>
+          c.includes("snapshot_unavailable_daily_briefing"),
+        );
+        if (snap.data && !unavailable) {
+          briefingData = snap.data;
+          briefingMeta = snap.meta;
+          briefingFromSnapshot = true;
+        }
+      } catch {
+        /* fall through to live */
+      }
+    }
+    const [briefingLive, shadow, advisories] = await Promise.all([
+      briefingFromSnapshot
+        ? Promise.resolve(null)
+        : Promise.resolve(data.rentals.getDailyBriefing({ account })).catch(
+            (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+          ),
       Promise.resolve(data.uiActions.getPendingShadowActions({})).catch(
         (err) => ({ error: err instanceof Error ? err.message : String(err) }),
       ),
@@ -730,12 +886,13 @@ export const queryAlerts = createTool({
     const unwrap = (env: unknown): unknown => envFields(env).data;
     return wrap({
       data: {
-        daily_briefing: unwrap(briefing),
+        daily_briefing: briefingFromSnapshot ? briefingData : unwrap(briefingLive),
         pending_shadow_actions: unwrap(shadow),
         model_upgrade_advisories: unwrap(advisories),
       },
-      source: "composite.alerts",
-      syncState: null,
+      source: briefingFromSnapshot ? "r2.daily_briefing" : "composite.alerts",
+      syncState: briefingFromSnapshot ? syncFromMeta(briefingMeta) : null,
+      extraCaveats: briefingFromSnapshot ? briefingMeta?.caveats ?? [] : [],
     });
   },
 });
@@ -836,6 +993,18 @@ export const mutate = createTool({
           hydrate.invalidate("items");
         } catch (err) {
           console.warn("[mutate] hydration.invalidate(items) failed:", err);
+        }
+      }
+      // Phase 1c: also bust the inventory_overview T3 snapshot cache so the
+      // next loadSnapshot("inventory_overview") refetches from R2.
+      if (hydrate && typeof hydrate.invalidateSnapshot === "function") {
+        try {
+          hydrate.invalidateSnapshot("inventory_overview");
+        } catch (err) {
+          console.warn(
+            "[mutate] hydration.invalidateSnapshot(inventory_overview) failed:",
+            err,
+          );
         }
       }
     }
