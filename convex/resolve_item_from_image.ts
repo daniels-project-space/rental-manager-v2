@@ -42,29 +42,35 @@ const GEMINI_FLASH_MODEL = "gemini-1.5-flash";
 
 /**
  * Compute a 64-bit pHash hex string for an image buffer.
- * Algorithm: greyscale → 32x32 → DCT (approximated via row/col mean trick) →
- * sign vs median produces 64-bit hash. Sharp is the only image lib already
- * in deps; we don't need a full DCT — the 8x8 mean-block hash ("dHash"-ish)
- * gives a stable similarity signal sufficient for cache matching.
+ * Algorithm: greyscale → 9x8 → row-wise diff hash (8x8 = 64 bits).
+ *
+ * NOTE: switched from `sharp` to `jimp` (pure-JS, no native binary).
+ * Convex Node runtime on linux-arm64 can't resolve sharp's native module
+ * even with @img/sharp-linux-arm64 in optionalDependencies (bundler doesn't
+ * include the platform-specific binary). Jimp is slower but works everywhere.
  */
 export async function computePHash(buf: ArrayBuffer | Buffer): Promise<string> {
-  // Dynamic import so a missing optional binary doesn't break the bundle.
-  const sharpMod = await import("sharp");
-  const sharp = (sharpMod as any).default ?? sharpMod;
+  // Dynamic import so the module is only loaded when actually needed.
+  const jimpMod: any = await import("jimp");
+  const Jimp: any = jimpMod.Jimp ?? jimpMod.default ?? jimpMod;
+
+  const buffer = Buffer.isBuffer(buf) ? buf : Buffer.from(buf as ArrayBuffer);
+  const img = await Jimp.read(buffer);
 
   // 9x8 greyscale → 8x8 diff hash = 64 bits. Cheap, robust to JPEG noise.
-  const raw = await sharp(Buffer.from(buf as ArrayBuffer))
-    .greyscale()
-    .resize(9, 8, { fit: "fill" })
-    .raw()
-    .toBuffer();
+  img.greyscale().resize({ w: 9, h: 8 });
+
+  // jimp v1 stores pixels in img.bitmap.data (RGBA, 4 bytes/pixel)
+  const data: Buffer = img.bitmap.data;
+  const px = (x: number, y: number) => data[(y * 9 + x) * 4]; // R == G == B after greyscale
 
   let bits = "";
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
-      const left = raw[y * 9 + x];
-      const right = raw[y * 9 + x + 1];
-      bits += left < right ? "1" : "0";
+      // `<=` (rather than `<`) so flat regions emit "1" — matches sharp's
+      // micro-interpolation behaviour where adjacent pixels are never exactly
+      // equal. Ensures visually-distinct images don't collapse to all-zero.
+      bits += px(x, y) <= px(x + 1, y) ? "1" : "0";
     }
   }
   // bits is 64 chars of "0"/"1" → 16-char hex
