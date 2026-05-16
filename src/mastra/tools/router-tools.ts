@@ -35,7 +35,6 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { wrap, type ToolEnvelope } from "../lib/tool-envelope";
 import * as data from "@/mastra/data";
-import { dashboardTools } from "./dashboard-tools";
 
 // ── Hydration accessor (duck-typed; resilient to layer absence) ─────────
 
@@ -973,16 +972,173 @@ export const mutate = createTool({
   }),
   execute: async (input, _ctx) => {
     const { op, args } = input as { op: MutateOp; args: Record<string, unknown> };
-    // Delegate to the existing tool's execute() so we inherit READ_ONLY_MODE,
-    // HYGGLO_UI_LIVE_* gating, shadow-mode logic, accountSlug validation —
-    // all of it lives in the data-layer functions we forward to.
-    const tool = (dashboardTools as Record<string, unknown>)[op] as
-      | { execute?: (input: unknown, ctx?: unknown) => Promise<unknown> }
-      | undefined;
-    if (!tool || typeof tool.execute !== "function") {
-      throw new Error(`mutate: no registered handler for op "${op}"`);
+    // Call the data-layer function directly. READ_ONLY_MODE, HYGGLO_UI_LIVE_*
+    // gating, shadow-mode logic, accountSlug validation, MASTER_INVENTORY
+    // protection, and Hygglo date math all live INSIDE the data.* functions
+    // we forward to — we DO NOT relax those gates here. Each switch arm
+    // preserves the exact arg shape the previous dashboard-tools wrapper used
+    // (notably: rating narrowing for leave_renter_review, `acquiredDate` →
+    // `acquiredAtIso` for set_item_acquisition_cost, `source: "manual"` for
+    // record_denial, `actorSource: "dashboard_chat"` for approve_decision).
+    let result: unknown;
+    switch (op) {
+      // ── 9 Trigger-dispatched UI actions (gated by HYGGLO_UI_LIVE_*) ──────
+      case "accept_order_ui":
+        result = await data.uiActions.acceptOrderUi(
+          args as { accountSlug: "leo" | "dbcinema"; orderId: string },
+        );
+        break;
+      case "decline_order_ui":
+        result = await data.uiActions.declineOrderUi(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            reason?: string;
+          },
+        );
+        break;
+      case "add_item_to_order":
+        result = await data.uiActions.addItemToOrder(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            itemName: string;
+            quantity?: number;
+            days?: number;
+          },
+        );
+        break;
+      case "remove_item_from_order":
+        result = await data.uiActions.removeItemFromOrder(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            itemName: string;
+          },
+        );
+        break;
+      case "apply_order_discount":
+        result = await data.uiActions.applyOrderDiscount(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            percentOff?: number;
+            newOwnerEarningsGbp?: number;
+            reason?: string;
+          },
+        );
+        break;
+      case "change_owner_earnings":
+        result = await data.uiActions.changeOwnerEarnings(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            newGbp: number;
+            reason?: string;
+          },
+        );
+        break;
+      case "mark_order_picked_up":
+        result = await data.uiActions.markOrderPickedUp(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            notes?: string;
+          },
+        );
+        break;
+      case "mark_order_returned":
+        result = await data.uiActions.markOrderReturned(
+          args as {
+            accountSlug: "leo" | "dbcinema";
+            orderId: string;
+            conditionNotes?: string;
+          },
+        );
+        break;
+      case "leave_renter_review": {
+        // Preserve rating-type narrowing from the dashboard-tools wrapper.
+        const a = args as {
+          accountSlug: "leo" | "dbcinema";
+          orderId: string;
+          rating: number;
+          comment?: string;
+        };
+        result = await data.uiActions.leaveRenterReview({
+          accountSlug: a.accountSlug,
+          orderId: a.orderId,
+          rating: a.rating as 1 | 2 | 3 | 4 | 5,
+          comment: a.comment,
+        });
+        break;
+      }
+      // ── 4 internal mutations ─────────────────────────────────────────────
+      case "set_item_acquisition_cost": {
+        // Preserve arg remap: external `acquiredDate` → internal `acquiredAtIso`.
+        const a = args as {
+          itemName?: string;
+          itemId?: string;
+          costGbp: number;
+          acquiredDate?: string;
+          replacementCostGbp?: number;
+        };
+        result = await data.catalog.setItemAcquisition({
+          itemName: a.itemName,
+          itemId: a.itemId,
+          costGbp: a.costGbp,
+          acquiredAtIso: a.acquiredDate,
+          replacementCostGbp: a.replacementCostGbp,
+        });
+        break;
+      }
+      case "record_denial": {
+        // Preserve injected `source: "manual"` tag.
+        const a = args as { itemRequested: string; renterName?: string };
+        result = await data.lostRevenue.recordDenial({
+          ...a,
+          source: "manual",
+        });
+        break;
+      }
+      case "update_rule":
+        result = await data.rules.updateRule(
+          args as { ruleId: string; field: string; value: string },
+        );
+        break;
+      case "update_memory":
+        result = await data.memories.updateMemory(
+          args as { memoryId?: string; newContent: string; scope?: string },
+        );
+        break;
+      // ── send-message (READ_ONLY_MODE gate lives inside data.feedback) ────
+      case "send_correction":
+        result = await data.feedback.sendCorrection(
+          args as { rentalId: string; message: string },
+        );
+        break;
+      // ── decision approval (READ_ONLY_MODE gate inside data.decisions) ────
+      case "approve_decision": {
+        // Preserve `actorSource: "dashboard_chat"` audit tag.
+        const a = args as {
+          decisionId: string;
+          modifyReply?: string;
+          forceDecline?: boolean;
+          declineReason?: string;
+        };
+        result = await data.decisions.applyApproval({
+          decisionId: a.decisionId,
+          actorSource: "dashboard_chat",
+          modifyReply: a.modifyReply,
+          forceDecline: a.forceDecline,
+          declineReason: a.declineReason,
+        });
+        break;
+      }
+      default: {
+        const never_: never = op;
+        throw new Error(`mutate: unknown op "${String(never_)}"`);
+      }
     }
-    const result = await tool.execute(args, _ctx);
     // H1: Invalidate T1 cache for mutations that touch cached tables.
     // set_item_acquisition_cost writes to the `items` table → bust items cache.
     // update_rule / update_memory write to ai_rules / ai_memories (not T1 cached).
