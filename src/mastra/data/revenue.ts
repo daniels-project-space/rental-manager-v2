@@ -149,14 +149,6 @@ export async function getBusinessIntelligence(input?: {
   }
 }
 
-/**
- * Wave 2 (Q2): formerly a stub. Now an alias for getDashboardStats — both
- * surfaces emit the expanded net-to-owner + insurance + ISO-week series.
- * Keeping the symbol around so callers (Wave 4 polling agent) wiring it
- * directly do not break.
- */
-export const getCurrentBriefing = getDashboardStats;
-
 // ─────────────────────────────────────────────────────────────────────────
 // Wave 2 — 6 new revenue functions (V1 audit §5)
 // ─────────────────────────────────────────────────────────────────────────
@@ -493,5 +485,3 @@ export async function getTaxSummary(input?: {
   }
 }
 
-/** Test-only export — internal date helper. Not re-exported from public index. */
-export const __test = { isoWeekKey };

@@ -69,10 +69,7 @@ export async function getSyncState(): Promise<SyncStateDoc | null> {
   }
 }
 
-/** Test-only: clear the sync_state cache. Not exported from the public index. */
-export function __clearSyncStateCache(): void {
-  syncStateCache.clear();
-}
+
 
 /**
  * Convenience: wrap data with auto-fetched sync_state.
