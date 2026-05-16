@@ -10,7 +10,7 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
-import { api, internal } from "../../convex/_generated/api";
+import { api } from "../../convex/_generated/api";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 

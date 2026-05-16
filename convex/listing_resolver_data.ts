@@ -336,7 +336,6 @@ export const upsertListingResolutionPublic = mutation({
         candidates: args.candidates,
         image_url: args.image_url,
         attempted_tiers: args.attempted_tiers,
-        updated_at: Date.now(),
       });
       return existing._id;
     }
@@ -352,8 +351,6 @@ export const upsertListingResolutionPublic = mutation({
       candidates: args.candidates,
       image_url: args.image_url,
       attempted_tiers: args.attempted_tiers,
-      created_at: Date.now(),
-      updated_at: Date.now(),
     });
   },
 });
