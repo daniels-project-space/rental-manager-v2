@@ -1,3 +1,4 @@
+import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { effectiveDate, isConfirmedWithDates, isUpcoming } from "./lib/reservations/predicates";
 
@@ -52,7 +53,40 @@ export type BundlePricingEntry = {
   daily_max: number;
 };
 
+// ── Snapshot input shape (passed in from Next.js layer that CAN read R2) ─
+// Convex queries run in V8 isolate — no S3 SDK / no R2 reads.
+// Callers (chat route) hydrate snapshots via HydrationLayer.loadSnapshot()
+// and pass them through. Missing/null → legacy 5-scan fallback path.
+export type ContextBundleSnapshots = {
+  daily_briefing?: {
+    todayEarningsGbp?: number;
+    activeRentalsCount?: number;
+    pendingRequestsCount?: number;
+    overdueReturnsCount?: number;
+    topItemsToday?: Array<{ name: string; gbp: number; count: number }>;
+    summary?: string;
+  } | null;
+  inventory_overview?: {
+    totalItems?: number;
+    totalQty?: number;
+    items?: Array<{ name_canonical: string; qty: number }>;
+  } | null;
+  top_renters?: {
+    lookbackDays?: number;
+    rows?: Array<{
+      renterId?: string;
+      renterName?: string;
+      grossGbp?: number;
+      rentalCount?: number;
+    }>;
+  } | null;
+  // Per-month aggregate from R2 `by_month` index (lifetime + last 6 mo).
+  by_month?: Array<{ month: string; revenue: number }> | null;
+};
+
 export type ContextBundle = {
+  _source: "snapshots" | "legacy" | "hybrid";
+  _caveats: string[];
   todaySchedule: {
     date: string;
     entries: TodayScheduleEntry[];
@@ -98,11 +132,39 @@ export type ContextBundle = {
   };
 };
 
+// ── Snapshot validator (optional, pass-through-typed) ──────────────────
+// Convex's v.any() keeps the wire shape flexible; field-level use is
+// guarded by runtime checks before consumption.
+const snapshotsValidator = v.optional(
+  v.object({
+    daily_briefing: v.optional(v.union(v.null(), v.any())),
+    inventory_overview: v.optional(v.union(v.null(), v.any())),
+    top_renters: v.optional(v.union(v.null(), v.any())),
+    by_month: v.optional(v.union(v.null(), v.any())),
+  }),
+);
+
 export const getContextBundle = query({
-  args: {},
-  handler: async (ctx): Promise<ContextBundle> => {
+  args: { snapshots: snapshotsValidator },
+  handler: async (ctx, args): Promise<ContextBundle> => {
     const today = TODAY();
     const in14d = addDays(today, 14);
+
+    // ── Snapshot-first branch ────────────────────────────────────────
+    // If caller passed all required snapshots, derive parts of the bundle
+    // from those + skip the corresponding heavy collect() scans. Missing
+    // snapshots fall back to the original 5-scan path below (preserved).
+    const snaps = (args.snapshots ?? {}) as ContextBundleSnapshots;
+    const snapshotCaveats: string[] = [];
+    const haveBriefing = snaps.daily_briefing !== undefined && snaps.daily_briefing !== null;
+    const haveInventory = snaps.inventory_overview !== undefined && snaps.inventory_overview !== null;
+    const haveTopRenters = snaps.top_renters !== undefined && snaps.top_renters !== null;
+    const haveByMonth = snaps.by_month !== undefined && snaps.by_month !== null;
+    const allSnapshotsPresent = haveBriefing && haveInventory && haveTopRenters && haveByMonth;
+    if (!haveBriefing) snapshotCaveats.push("snapshot_unavailable_daily_briefing");
+    if (!haveInventory) snapshotCaveats.push("snapshot_unavailable_inventory_overview");
+    if (!haveTopRenters) snapshotCaveats.push("snapshot_unavailable_top_renters");
+    if (!haveByMonth) snapshotCaveats.push("snapshot_unavailable_by_month");
 
     // load raw data in parallel
     const [allReservations, allRenters, bundleRows, pricingRows, histRevRows] =
@@ -402,32 +464,82 @@ export const getContextBundle = query({
       if (!tracked) untrackedCount++;
     }
 
+    // ── Snapshot overrides (additive — replaces values when snapshot present) ─
+    // Critical fields are kept identical in shape; only the SOURCE differs.
+    // Legacy values are computed above and remain the fallback baseline.
+    let finalRevenueIntelligence = {
+      thisMonth: Math.round(thisMonthRev * 100) / 100,
+      lastMonth: Math.round(lastMonthRev * 100) / 100,
+      ytd: Math.round(ytdRev * 100) / 100,
+      projectedThisMonth,
+      deniedRevenue90d: Math.round(deniedRevenue90d * 100) / 100,
+    };
+    let finalCurrentRevenue = {
+      today: Math.round(todayRev * 100) / 100,
+      week: Math.round(weekRev * 100) / 100,
+      month: Math.round(monthRev2 * 100) / 100,
+      projected: projectedThisMonth,
+    };
+    let finalMonthlyIncome: { lifetime: number; last6Months: MonthRevenue[] } = {
+      lifetime: Math.round(lifetimeTotal * 100) / 100,
+      last6Months: last6,
+    };
+    if (allSnapshotsPresent) {
+      // Override `today` revenue from the MV-backed briefing snapshot.
+      const briefing = snaps.daily_briefing!;
+      if (typeof briefing.todayEarningsGbp === "number") {
+        finalCurrentRevenue = {
+          ...finalCurrentRevenue,
+          today: Math.round(briefing.todayEarningsGbp * 100) / 100,
+        };
+      }
+      // Override lifetime + last6Months from the by_month aggregate snapshot.
+      const byMonth = snaps.by_month!;
+      if (Array.isArray(byMonth) && byMonth.length > 0) {
+        const snapMonthMap = new Map<string, number>();
+        for (const m of byMonth) {
+          if (typeof m.month === "string" && typeof m.revenue === "number") {
+            snapMonthMap.set(m.month, m.revenue);
+          }
+        }
+        const snapLifetime = Array.from(snapMonthMap.values()).reduce((s, v2) => s + v2, 0);
+        const currentMonthKey2 = now.toISOString().slice(0, 7);
+        const snapLast6: MonthRevenue[] = [];
+        for (let i = 5; i >= 0; i--) {
+          const d2 = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const mo2 = d2.toISOString().slice(0, 7);
+          if (mo2 > currentMonthKey2) continue;
+          snapLast6.push({
+            month: mo2,
+            revenue: Math.round((snapMonthMap.get(mo2) ?? 0) * 100) / 100,
+          });
+        }
+        finalMonthlyIncome = {
+          lifetime: Math.round(snapLifetime * 100) / 100,
+          last6Months: snapLast6,
+        };
+      }
+    }
+    const sourceLabel: ContextBundle["_source"] = allSnapshotsPresent
+      ? "snapshots"
+      : (haveBriefing || haveInventory || haveTopRenters || haveByMonth)
+        ? "hybrid"
+        : "legacy";
+
     return {
+      _source: sourceLabel,
+      _caveats: snapshotCaveats,
       todaySchedule: { date: today, entries: todayEntries },
       blacklist: { count: blacklisted.length, names: blacklistNames },
       upcomingBookings14d: upcoming,
-      revenueIntelligence: {
-        thisMonth: Math.round(thisMonthRev * 100) / 100,
-        lastMonth: Math.round(lastMonthRev * 100) / 100,
-        ytd: Math.round(ytdRev * 100) / 100,
-        projectedThisMonth,
-        deniedRevenue90d: Math.round(deniedRevenue90d * 100) / 100,
-      },
+      revenueIntelligence: finalRevenueIntelligence,
       businessIntelligence: {
         underutilized: underutilized.slice(0, 10),
         demandSignals: demandSignals.slice(0, 10),
       },
-      currentRevenue: {
-        today: Math.round(todayRev * 100) / 100,
-        week: Math.round(weekRev * 100) / 100,
-        month: Math.round(monthRev2 * 100) / 100,
-        projected: projectedThisMonth,
-      },
+      currentRevenue: finalCurrentRevenue,
       itemEarnings,
-      monthlyIncome: {
-        lifetime: Math.round(lifetimeTotal * 100) / 100,
-        last6Months: last6,
-      },
+      monthlyIncome: finalMonthlyIncome,
       bundlePricing,
       criticalAlerts: {
         conflictCount: conflictsCtx.length,
