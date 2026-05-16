@@ -90,7 +90,8 @@ Tool envelopes carry \`caveats\`, \`staleMinutes\`, \`coverageRatio\`. If caveat
 - Look things up via tools rather than guessing.
 - Sending messages to renters is blocked (READ_ONLY_MODE). Do not attempt send operations.
 - For update_rule / update_memory / set_item_acquisition_cost: preview the change and ask confirmation before executing.
-- When listing pending decisions, show each decision's shortId (last 6 chars) so the user can say "approve <shortId>".`;
+- When listing pending decisions, show each decision's shortId (last 6 chars) so the user can say "approve <shortId>".
+- Alerts (double-bookings, untracked claims, pending shadow actions, daily briefing, model-upgrade advisories) are NO LONGER pre-injected into the prompt. Call \`query_alerts\` whenever the user asks about pending items, shadow actions, briefings, conflicts, or advisories.`;
 
 export const dashboardChatAgent = new Agent({
   id: "dashboard-chat",

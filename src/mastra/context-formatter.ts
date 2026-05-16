@@ -36,28 +36,13 @@ export function formatContext(
       `This block is a snapshot. For authoritative facts (pricing, availability, pending rentals, top earners) you MUST call the corresponding tool.`
   );
 
-  // ── CRITICAL ALERTS ──────────────────────────────────────────
-  const alerts = (ctx as unknown as {
-    criticalAlerts?: {
-      conflictCount: number;
-      untrackedCount: number;
-      conflicts: Array<{ item_canonical: string; qty: number; overlap_count: number; conflict_start: string; renters: string[] }>;
-    };
-  }).criticalAlerts;
-  if (alerts && (alerts.conflictCount > 0 || alerts.untrackedCount > 0)) {
-    const lines: string[] = [];
-    lines.push("⚠ CRITICAL ALERTS — surface these to the user without being asked:");
-    if (alerts.conflictCount > 0) {
-      lines.push(`- ${alerts.conflictCount} DOUBLE-BOOKING(s) detected. We have fewer units than concurrent reservations.`);
-      for (const c of alerts.conflicts) {
-        lines.push(`  · ${c.item_canonical} (qty ${c.qty}, ${c.overlap_count} booked) — conflict from ${c.conflict_start}; renters: ${c.renters.join(", ")}`);
-      }
-    }
-    if (alerts.untrackedCount > 0) {
-      lines.push(`- ${alerts.untrackedCount} pending claim(s) reference items NOT in master inventory. Owner should review / add the item, or treat as untrackable.`);
-    }
-    parts.push(lines.join("\n"));
-  }
+  // ── CRITICAL ALERTS — removed W2a (2026-05-15) ────────────────
+  // Conflicts / untracked claims / pending shadow actions / model-upgrade
+  // advisories used to ship inline every turn (~600 tok). The agent now
+  // pulls them on demand via the `query_alerts` tool — see SYSTEM_PROMPT
+  // note in src/mastra/agents/dashboard-chat.ts. The `criticalAlerts`
+  // field is still produced by getContextBundle for backward compat with
+  // non-prompt consumers; it is just no longer stringified here.
 
     // ── TODAY'S SCHEDULE — grouped by orderId ───────────────────
   if (ctx.todaySchedule.entries.length > 0) {
