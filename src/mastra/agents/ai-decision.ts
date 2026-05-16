@@ -156,7 +156,6 @@ export const aiDecisionAgent = new Agent({
   id: "ai-decision",
   name: "ai-decision",
   instructions: AI_DECISION_PROMPT,
-  model: xai(GROK_DECISION_MODEL),
+  model: [{ model: xai(GROK_DECISION_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 600 } }],
   tools: aiDecisionTools,
-  modelSettings: { maxOutputTokens: 600 },
 });

@@ -44,7 +44,6 @@ export const dashboardChatAgent = new Agent({
   id: "dashboard-chat",
   name: "dashboard-chat",
   instructions: SYSTEM_PROMPT_BASE,
-  model: xai(GROK_CHAT_MODEL),
+  model: [{ model: xai(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
   tools: routerTools,
-  modelSettings: { maxOutputTokens: 1200 },
 });
