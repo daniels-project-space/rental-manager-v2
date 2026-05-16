@@ -102,6 +102,10 @@ export const snapshotInventoryOverviewTask = schedules.task({
   cron: "0 */12 * * *",
   maxDuration: 120,
   run: async (_payload, { ctx }) => {
+    if (process.env.SNAPSHOTS_VIA_CONVEX === "1") {
+      logger.info("SNAPSHOTS_VIA_CONVEX=1, deferring to Convex internalAction");
+      return { skipped: true, reason: "convex-action" };
+    }
     const startMs = Date.now();
     logger.info("snapshot-inventory-overview: starting", { runId: ctx.run.id });
 

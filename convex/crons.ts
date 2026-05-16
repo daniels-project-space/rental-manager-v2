@@ -103,4 +103,33 @@ crons.daily(
   { limit: 100 },
 );
 
+// ── Phase 3a / Wave 2b — R2 snapshot writers moved from Trigger.dev.
+// Each writes the same R2 key its Trigger counterpart did. While both run,
+// the Trigger versions short-circuit when SNAPSHOTS_VIA_CONVEX=1 to avoid
+// double-writes (last-writer wins regardless via the wrapSnapshot envelope).
+crons.cron(
+  "snapshot-intel-rankings",
+  "0 */4 * * *",
+  internal.snapshot_jobs.snapshotIntelRankings,
+  {},
+);
+crons.cron(
+  "snapshot-daily-briefing",
+  "*/10 * * * *",
+  internal.snapshot_jobs.snapshotDailyBriefing,
+  {},
+);
+crons.cron(
+  "snapshot-top-renters",
+  "0 */6 * * *",
+  internal.snapshot_jobs.snapshotTopRenters,
+  {},
+);
+crons.cron(
+  "snapshot-inventory-overview",
+  "0 */12 * * *",
+  internal.snapshot_jobs.snapshotInventoryOverview,
+  {},
+);
+
 export default crons;

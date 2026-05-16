@@ -19,6 +19,10 @@ export const snapshotDailyBriefingTask = schedules.task({
   id: "snapshot-daily-briefing",
   cron: "*/10 * * * *",
   run: async () => {
+    if (process.env.SNAPSHOTS_VIA_CONVEX === "1") {
+      logger.info("SNAPSHOTS_VIA_CONVEX=1, deferring to Convex internalAction");
+      return { skipped: true, reason: "convex-action" };
+    }
     const startedAt = Date.now();
     logger.info("snapshot-daily-briefing: starting");
 
