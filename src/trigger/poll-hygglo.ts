@@ -8,7 +8,7 @@
  *
  * READ-ONLY on Hygglo: only GET requests after auth. No mutations sent to Hygglo.
  */
-import { schedules, logger } from "@trigger.dev/sdk/v3";
+import { schedules, logger, tasks } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
@@ -112,6 +112,9 @@ type OrderReservationPayload = {
   return_method?: string;
   notes?: string;
   photos_urls?: string[];
+  /** Phase 18.2 — list-endpoint activity stamp; persisted so the next poll
+   *  can skip the detail fetch when unchanged. */
+  latest_activity?: number | string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
 };
@@ -160,7 +163,11 @@ async function scrapeAccount(
   accountSlug: string,
   email: string,
   password: string,
-  clientSecret: string
+  clientSecret: string,
+  // Phase 18.2 — pre-fetched map of hygglo_order_id → stored latest_activity.
+  // When the list response carries the same value for an order, we skip the
+  // expensive per-order detail fetch.
+  lookupStoredLatestActivity?: (ids: string[]) => Promise<Record<string, number | string>>,
 ): Promise<{
   messages: Array<{
     thread_id: string;
@@ -218,7 +225,16 @@ async function scrapeAccount(
 
   // 2. Fetch orders (read-only GETs)
   const filters = ["pending", "current", "future", "obsolete"] as const;
-  const allOrders: Array<{ id: number; sourceFilter: string }> = [];
+  // Phase 18.2 — also carry the per-order latest_activity from the list
+  // response so we can skip the detail fetch when nothing changed since
+  // the last poll. Field name is unknown across Hygglo's API versions —
+  // probe multiple candidates and pick whatever is present.
+  const allOrders: Array<{ id: number; sourceFilter: string; latest_activity?: number | string }> = [];
+
+  // One-shot sample log (first run only) to help us confirm the canonical
+  // field name in Hygglo's response. After we see what it actually is we
+  // can simplify this probe in a follow-up.
+  let sampleLogged = false;
 
   for (const filter of filters) {
     const res = await fetch(
@@ -227,10 +243,26 @@ async function scrapeAccount(
     );
     if (!res.ok) continue;
     const data = (await res.json()) as unknown;
-    const arr = Array.isArray(data)
-      ? (data as Array<{ id: number }>)
-      : ((data as { items?: Array<{ id: number }> }).items ?? []);
-    allOrders.push(...arr.map((o) => ({ ...o, sourceFilter: filter })));
+    const arr: Array<Record<string, unknown> & { id: number }> = Array.isArray(data)
+      ? (data as Array<Record<string, unknown> & { id: number }>)
+      : (((data as { items?: Array<Record<string, unknown> & { id: number }> }).items) ?? []);
+    if (!sampleLogged && arr.length > 0) {
+      console.log(
+        `[poll-hygglo] ${accountSlug} list-sample keys: ${Object.keys(arr[0]).join(",")}`
+      );
+      sampleLogged = true;
+    }
+    for (const o of arr) {
+      // Probe a handful of likely names. First non-undefined wins.
+      const la =
+        (o.latest_activity as number | string | undefined) ??
+        (o.latestActivity as number | string | undefined) ??
+        (o.last_activity_at as number | string | undefined) ??
+        (o.lastActivityAt as number | string | undefined) ??
+        (o.updated_at as number | string | undefined) ??
+        (o.updatedAt as number | string | undefined);
+      allOrders.push({ id: o.id, sourceFilter: filter, latest_activity: la });
+    }
   }
 
   // Deduplicate by order id — first-seen filter wins (active/current beats obsolete)
@@ -242,6 +274,14 @@ async function scrapeAccount(
   });
 
   console.log(`[poll-hygglo] ${accountSlug}: ${uniqueOrders.length} orders`);
+
+  // Phase 18.2 — pre-fetch stored latest_activity for every order so we can
+  // skip per-order detail fetches that haven't changed. Only runs when the
+  // list response actually populated the field (else we proceed normally).
+  const storedActivity: Record<string, number | string> = lookupStoredLatestActivity
+    ? await lookupStoredLatestActivity(uniqueOrders.map((o) => String(o.id)))
+    : {};
+  let skippedFetch = 0;
 
   // 3. Fetch each order detail and extract chat messages
   const messages: Array<{
@@ -268,6 +308,17 @@ async function scrapeAccount(
   const fetchedAt = Date.now();
 
   for (const order of uniqueOrders) {
+    // Phase 18.2 — skip detail fetch if Hygglo's list response shows the
+    // order hasn't changed since our last poll. Only kicks in when the list
+    // response actually carries a latest_activity value AND it matches what
+    // we previously stored.
+    if (order.latest_activity !== undefined) {
+      const stored = storedActivity[String(order.id)];
+      if (stored !== undefined && stored === order.latest_activity) {
+        skippedFetch++;
+        continue;
+      }
+    }
     const detailRes = await fetch(
       `${API_BASE}/v4/my/orders/${order.id}?timezone=Europe/London`,
       { headers }
@@ -413,6 +464,7 @@ async function scrapeAccount(
         return_method,
         notes,
         photos_urls,
+        latest_activity: order.latest_activity,
         order: detail,
       });
     }
@@ -422,7 +474,8 @@ async function scrapeAccount(
     "[poll-hygglo] " + accountSlug + ": " + String(messages.length) + " messages, " +
     String(reservationPayloads.length) + " reservation payloads, " +
     String(renterMap.size) + " renters, " +
-    String(conversationSpecs.length) + " conversations extracted"
+    String(conversationSpecs.length) + " conversations extracted, " +
+    String(skippedFetch) + " details skipped (unchanged latest_activity)"
   );
 
   return {
@@ -507,8 +560,25 @@ export const pollHyggloInbox = schedules.task({
         }
 
         try {
+          // Phase 18.2 — callback the scraper uses to ask Convex for the
+          // stored latest_activity per order before deciding whether to
+          // skip the detail fetch.
+          const lookupStored = async (ids: string[]) => {
+            if (ids.length === 0) return {};
+            try {
+              return (await convex.query(api.hygglo.getLatestActivityBatch, {
+                hygglo_order_ids: ids,
+              })) as Record<string, number | string>;
+            } catch (qErr) {
+              console.warn(
+                `[poll-hygglo] getLatestActivityBatch failed for ${account.slug} (non-fatal):`,
+                qErr,
+              );
+              return {};
+            }
+          };
           const { messages, reservations, renters, conversations } = await scrapeAccount(
-            account.slug, account.email, account.password, clientSecret
+            account.slug, account.email, account.password, clientSecret, lookupStored
           );
 
           // Upsert chat messages (batched 50)
@@ -528,6 +598,9 @@ export const pollHyggloInbox = schedules.task({
           // Upsert reservations (batched 50)
           let resInserted = 0;
           let resUpdated = 0;
+          // Phase 18.2 — collect freshly-inserted reservation IDs so we can
+          // trigger the resolver on-demand instead of waiting up to 60 min.
+          const newlyInsertedIds: string[] = [];
           for (let i = 0; i < reservations.length; i += 50) {
             const batch = reservations.slice(i, i + 50);
             for (const payload of batch) {
@@ -539,11 +612,31 @@ export const pollHyggloInbox = schedules.task({
                 order: payload.order,
                 sourceFilter: payload.sourceFilter,
               });
-              if (resResult.action === "inserted") resInserted++;
-              else if (resResult.action === "updated") resUpdated++;
+              if (resResult.action === "inserted") {
+                resInserted++;
+                if (resResult.reservation_id) newlyInsertedIds.push(resResult.reservation_id);
+              } else if (resResult.action === "updated") resUpdated++;
             }
           }
           totalReservationsUpserted += resInserted + resUpdated;
+
+          // Phase 18.2 — on-demand resolver trigger for new listings.
+          // Bypasses the hourly cron entirely so renters see resolved items
+          // within seconds of the order landing in Hygglo.
+          if (newlyInsertedIds.length > 0) {
+            try {
+              await tasks.trigger("resolve-items", { ids: newlyInsertedIds });
+              logger.info("[poll-hygglo] triggered resolve-items on-demand", {
+                account: account.slug,
+                count: newlyInsertedIds.length,
+              });
+            } catch (trigErr) {
+              logger.warn("[poll-hygglo] resolve-items trigger failed (non-fatal)", {
+                err: String(trigErr),
+                count: newlyInsertedIds.length,
+              });
+            }
+          }
 
           // Phase 6.1: upsert renters first, then conversations
           let rentersUpserted = 0;

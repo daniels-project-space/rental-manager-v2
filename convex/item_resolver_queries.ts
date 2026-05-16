@@ -250,10 +250,22 @@ export const listNeedingVision = internalQuery({
  *   - overrides:  manual mapping table by title_hash
  */
 export const admin_getResolverBatchInputs = query({
-  args: { limit: v.number(), include_notes_only: v.optional(v.boolean()) },
-  handler: async (ctx, { limit, include_notes_only }) => {
-    // Reuse the same logic as listUnresolved
-    const all = await ctx.db.query("reservations").collect();
+  args: {
+    limit: v.number(),
+    include_notes_only: v.optional(v.boolean()),
+    // Phase 18.2 — on-demand mode: only consider these reservation IDs.
+    // Used by poll-hygglo to resolve freshly-inserted reservations in seconds
+    // instead of waiting up to 60 min for the next cron scan.
+    ids: v.optional(v.array(v.id("reservations"))),
+  },
+  handler: async (ctx, { limit, include_notes_only, ids }) => {
+    // Reuse the same logic as listUnresolved.
+    // When `ids` is provided, do targeted .get() lookups instead of a full scan.
+    const all = ids && ids.length > 0
+      ? (await Promise.all(ids.map((id) => ctx.db.get(id)))).filter(
+          (x): x is NonNullable<typeof x> => x !== null,
+        )
+      : await ctx.db.query("reservations").collect();
     type Item = { item_name: string; qty?: number };
     type Reservation = (typeof all)[number] & {
       items?: Item[];

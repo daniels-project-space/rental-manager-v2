@@ -404,8 +404,15 @@ export const upsertOrderAsReservation = mutation({
     notes: v.optional(v.string()),
     /** Raw CDN photo URLs from the order detail. */
     photos_urls: v.optional(v.array(v.string())),
+    /** Phase 18.2 — monotonic activity timestamp from Hygglo list response.
+     *  Stored verbatim so the next poll cycle can compare and skip the
+     *  detail fetch when unchanged. */
+    latest_activity: v.optional(v.union(v.number(), v.string())),
   },
-  handler: async (ctx, args): Promise<{ action: "inserted" | "updated" | "skipped" }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ action: "inserted" | "updated" | "skipped"; reservation_id?: string }> => {
     const existing = await ctx.db
       .query("reservations")
       .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
@@ -480,6 +487,7 @@ export const upsertOrderAsReservation = mutation({
       ...(return_method !== undefined && { return_method }),
       ...(notes !== undefined && { notes }),
       ...(photos_urls !== undefined && { photos_urls }),
+      ...(args.latest_activity !== undefined && { latest_activity: args.latest_activity }),
     };
 
     if (existing) {
@@ -568,7 +576,7 @@ export const upsertOrderAsReservation = mutation({
       incomingStep !== undefined ? { order_step: incomingStep } : {};
     const hintsInsert = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
     const hyggloItemsInsert = buildHyggloItems(args.items);
-    await ctx.db.insert("reservations", {
+    const newId = await ctx.db.insert("reservations", {
       ...baseFields,
       ...stepInsert,
       ...obsoleteFields,
@@ -584,7 +592,9 @@ export const upsertOrderAsReservation = mutation({
       });
     }
 
-    return { action: "inserted" };
+    // Phase 18.2 — return the new ID so poll-hygglo can trigger the
+    // on-demand resolver task for fresh reservations.
+    return { action: "inserted", reservation_id: newId as unknown as string };
   },
 });
 
@@ -738,5 +748,32 @@ export const listByThread = query({
       content: m.body_text,
       timestamp: m.hygglo_sent_at ?? m.fetched_at,
     }));
+  },
+});
+
+// ── Phase 18.2 — latest_activity skip-fetch optimisation ──────
+
+/**
+ * Returns the stored `latest_activity` value for each given hygglo_order_id.
+ * Used by poll-hygglo to skip the per-order detail fetch when the list-endpoint
+ * activity stamp matches the stored value (i.e. nothing changed since last poll).
+ *
+ * Missing rows / missing field → entry omitted from the returned map. Caller
+ * must then proceed with the detail fetch.
+ */
+export const getLatestActivityBatch = query({
+  args: { hygglo_order_ids: v.array(v.string()) },
+  handler: async (ctx, { hygglo_order_ids }) => {
+    const out: Record<string, number | string> = {};
+    for (const id of hygglo_order_ids) {
+      const row = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", id))
+        .first();
+      const la = (row as { latest_activity?: number | string } | null)
+        ?.latest_activity;
+      if (la !== undefined) out[id] = la;
+    }
+    return out;
   },
 });

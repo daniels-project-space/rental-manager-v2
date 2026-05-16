@@ -332,6 +332,13 @@ export default defineSchema({
     last_polled_at: v.optional(v.number()),
     /** Last Hygglo filter the row was seen in: "pending" | "current" | "future" | "obsolete". */
     source_filter: v.optional(v.string()),
+    /** Phase 18.2 — monotonic activity timestamp from Hygglo's order-list
+     *  response (sort=latest-activity). Used by poll-hygglo to skip the
+     *  per-order detail fetch when the list value matches the stored value
+     *  (no changes since last poll). Stored as ms epoch when parseable,
+     *  string otherwise. Optional: rows pre-Phase-18.2 have it undefined and
+     *  will fall through to the regular detail fetch path. */
+    latest_activity: v.optional(v.union(v.number(), v.string())),
     // Phase 10.1 — Demand-Loss Classifier. Populated by classifyObsoleteReservations
     // for rows where is_obsolete === true. Optional/backward compatible.
     demand_loss_class: v.optional(

@@ -23,48 +23,27 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// NOTE (Wave 4): each MV refresh handler now takes optional `account` arg.
-// Crons always run the full all-accounts refresh — pass `{}` explicitly so the
-// rest-param signature `OptionalRestArgs<FuncRef>` resolves.
+// Phase 18.2 — MV cron consolidation.
+// Was: 6 separate cron entries each running a per-MV `refresh` mutation
+// (daily_briefing + top_earners + purchase_signals + churn_risk +
+// utilization + upcoming_returns).
+// Now: 2 master actions in convex/mv/_master.ts that fan out to the same
+// refresh mutations. Each delegated refresh keeps its existing compute logic
+// (account loops, denial-record reads, singleton writes) so dashboard query
+// shapes are unchanged. Future PR can refactor each MV to a pure
+// `compute(reservations, denials, items)` function and share the input
+// collect across MVs for the bigger Convex-bandwidth win.
 crons.interval(
-  "daily_briefing refresh",
-  { minutes: 15 },
-  internal.mv.daily_briefing.refresh,
-  {},
-);
-
-crons.interval(
-  "top_earners_30d refresh",
-  { minutes: 360 },
-  internal.mv.top_earners.refresh,
-  {},
-);
-
-crons.daily(
-  "purchase_signals refresh",
-  { hourUTC: 4, minuteUTC: 0 },
-  internal.mv.purchase_signals.refresh,
-  {},
-);
-
-crons.daily(
-  "churn_risk_renters refresh",
-  { hourUTC: 4, minuteUTC: 15 },
-  internal.mv.churn_risk.refresh,
-  {},
-);
-
-crons.interval(
-  "utilization_today refresh",
-  { minutes: 60 },
-  internal.mv.utilization.refresh,
-  {},
-);
-
-crons.interval(
-  "upcoming_returns refresh",
+  "mv_refresh_fast",
   { minutes: 30 },
-  internal.mv.upcoming_returns.refresh,
+  internal.mv.master.refreshFast,
+  {},
+);
+
+crons.daily(
+  "mv_refresh_slow",
+  { hourUTC: 4, minuteUTC: 0 },
+  internal.mv.master.refreshSlow,
   {},
 );
 

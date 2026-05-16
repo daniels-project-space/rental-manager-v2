@@ -63,6 +63,7 @@ import type * as mv__helpers from "../mv/_helpers.js";
 import type * as mv_churn_risk from "../mv/churn_risk.js";
 import type * as mv_constants from "../mv/constants.js";
 import type * as mv_daily_briefing from "../mv/daily_briefing.js";
+import type * as mv_master from "../mv/master.js";
 import type * as mv_purchase_signals from "../mv/purchase_signals.js";
 import type * as mv_refresh_dispatch from "../mv/refresh_dispatch.js";
 import type * as mv_top_earners from "../mv/top_earners.js";
@@ -148,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   "mv/churn_risk": typeof mv_churn_risk;
   "mv/constants": typeof mv_constants;
   "mv/daily_briefing": typeof mv_daily_briefing;
+  "mv/master": typeof mv_master;
   "mv/purchase_signals": typeof mv_purchase_signals;
   "mv/refresh_dispatch": typeof mv_refresh_dispatch;
   "mv/top_earners": typeof mv_top_earners;

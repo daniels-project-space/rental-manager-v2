@@ -109,13 +109,21 @@ interface ResolutionResult {
   input_hash: string;
 }
 
-async function fetchBatch(limit: number, notesOnly: boolean): Promise<BatchInputs> {
+async function fetchBatch(
+  limit: number,
+  notesOnly: boolean,
+  ids?: string[],
+): Promise<BatchInputs> {
   const res = await fetch(`${CONVEX_URL}/api/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       path: "item_resolver_queries:admin_getResolverBatchInputs",
-      args: { limit, include_notes_only: notesOnly },
+      args: {
+        limit,
+        include_notes_only: notesOnly,
+        ...(ids && ids.length > 0 ? { ids } : {}),
+      },
       format: "json",
     }),
   });
@@ -263,14 +271,24 @@ function buildUserMessage(title: string, inv: InventoryItem[]): string {
 
 export const resolveItemsTask = schedules.task({
   id: "resolve-items",
-  cron: "*/15 * * * *",
+  // Phase 18.2 — cron loosened 15m → 60m. New-listing latency is now covered by
+  // on-demand triggers from poll-hygglo (which fires `tasks.trigger("resolve-items",
+  // { ids:[...] })` immediately after inserting a fresh reservation), so the cron
+  // only has to mop up retries + backfills.
+  cron: "0 * * * *",
   maxDuration: 180,
-  run: async (_payload, { ctx }) => {
+  run: async (payload, { ctx }) => {
     if (isWithinUkQuietHours()) {
       logger.info("[quiet-hours] skipped", { task: "resolve-items" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }
-    return await runBatch(ctx.run.id, false);
+    // Accept BOTH shapes:
+    //   • cron / scan-all: payload is the schedules SDK envelope, no `ids`/`limit`.
+    //   • on-demand: `tasks.trigger("resolve-items", { ids: [...] })` from poll-hygglo.
+    const p = payload as unknown as { ids?: string[]; limit?: number } | undefined;
+    const targetIds = p?.ids;
+    const limit = p?.limit ?? 15;
+    return await runBatch(ctx.run.id, false, { ids: targetIds, limit });
   },
 });
 
@@ -284,14 +302,19 @@ export const resolveItemsNotesBackfillTask = schedules.task({
       logger.info("[quiet-hours] skipped", { task: "resolve-items-notes-backfill" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }
-    return await runBatch(ctx.run.id, true);
+    return await runBatch(ctx.run.id, true, { limit: 10 });
   },
 });
 
-async function runBatch(runId: string, notesOnly: boolean) {
-  const batch = await fetchBatch(notesOnly ? 10 : 15, notesOnly);
+async function runBatch(
+  runId: string,
+  notesOnly: boolean,
+  opts?: { ids?: string[]; limit?: number },
+) {
+  const limit = opts?.limit ?? (notesOnly ? 10 : 15);
+  const batch = await fetchBatch(limit, notesOnly, opts?.ids);
   if (batch.unresolved.length === 0) {
-    logger.info("resolve-items: pool empty", { runId, notesOnly });
+    logger.info("resolve-items: pool empty", { runId, notesOnly, targeted: (opts?.ids?.length ?? 0) > 0 });
     return { ok: true, processed: 0, idle: true };
   }
 
