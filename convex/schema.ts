@@ -1107,4 +1107,48 @@ export default defineSchema({
     .index("by_phash", ["phash"])
     .index("by_canonical_item_id", ["canonical_item_id"])
     .index("by_image_url", ["image_url"]),
+
+  // Phase 4 — Listing Resolution
+  // Stores the deterministic + AI resolution result for each Hygglo listing.
+  // The resolver pipeline (catalog → photo_ref → pattern → detail_api → ai → fuzzy → manual)
+  // writes one row per listing. `resolved_items` is the final answer; `candidates` carries
+  // near-misses for human review. `attempted_tiers` records which tiers ran for debugging.
+  listing_resolution: defineTable({
+    hygglo_listing_id: v.string(),
+    hygglo_account: v.string(),
+    hygglo_title: v.string(),
+    hygglo_description: v.optional(v.string()),
+    hygglo_detail_payload: v.optional(v.any()),
+    resolved_items: v.array(v.object({
+      item_name: v.string(),
+      qty: v.number(),
+      confidence: v.number(),
+      source: v.union(
+        v.literal("catalog"),
+        v.literal("photo_ref"),
+        v.literal("pattern"),
+        v.literal("detail_api"),
+        v.literal("ai"),
+        v.literal("fuzzy"),
+        v.literal("manual"),
+      ),
+    })),
+    status: v.union(
+      v.literal("resolved"),
+      v.literal("pending_review"),
+      v.literal("unresolved"),
+    ),
+    candidates: v.optional(v.array(v.object({
+      item_name: v.string(),
+      score: v.number(),
+      reason: v.string(),
+    }))),
+    image_url: v.optional(v.string()),
+    reviewed_at: v.optional(v.number()),
+    reviewed_by: v.optional(v.string()),
+    attempted_tiers: v.array(v.string()),
+  })
+    .index("by_listing_id", ["hygglo_listing_id"])
+    .index("by_status", ["status"])
+    .index("by_account_status", ["hygglo_account", "status"]),
 });
