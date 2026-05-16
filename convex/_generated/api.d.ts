@@ -57,6 +57,8 @@ import type * as lib_reservations_predicates from "../lib/reservations/predicate
 import type * as lib_reservations_views from "../lib/reservations/views.js";
 import type * as listing_cache from "../listing_cache.js";
 import type * as listing_images from "../listing_images.js";
+import type * as listing_resolver from "../listing_resolver.js";
+import type * as listing_resolver_data from "../listing_resolver_data.js";
 import type * as lost_revenue from "../lost_revenue.js";
 import type * as market_search from "../market_search.js";
 import type * as market_search_cache from "../market_search_cache.js";
@@ -155,6 +157,8 @@ declare const fullApi: ApiFromModules<{
   "lib/reservations/views": typeof lib_reservations_views;
   listing_cache: typeof listing_cache;
   listing_images: typeof listing_images;
+  listing_resolver: typeof listing_resolver;
+  listing_resolver_data: typeof listing_resolver_data;
   lost_revenue: typeof lost_revenue;
   market_search: typeof market_search;
   market_search_cache: typeof market_search_cache;
