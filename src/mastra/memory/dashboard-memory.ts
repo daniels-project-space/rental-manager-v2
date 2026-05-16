@@ -1,4 +1,8 @@
-import "server-only";
+// NOTE: This module is server-only by virtue of its only callers
+// (api/chat/route.ts and src/mastra/agents/dashboard-chat.ts) which
+// each carry `import "server-only"`. We don't import server-only here
+// because it breaks the vitest loader and the chained import already
+// guards against client bundling.
 
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
@@ -51,6 +55,7 @@ let _memory: Memory | null = null;
 export function getDashboardMemory(): Memory {
   if (_memory) return _memory;
   _store = new LibSQLStore({
+    id: "dashboard-chat-memory",
     url: STORE_URL,
   });
   _memory = new Memory({

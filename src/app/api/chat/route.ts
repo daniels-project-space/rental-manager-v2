@@ -250,10 +250,11 @@ export async function POST(req: Request) {
   requestContext.set("hydration", hydration);
   if (accountSlug) requestContext.set("accountSlug", accountSlug);
 
-  const messages: ChatMessage[] = history.map((m) => ({
-    role: m.role === "user" ? "user" : "assistant",
-    content: m.content,
-  }));
+  // Mastra Memory handles history: we pass ONLY the new user message
+  // here. Memory loads the last 8 prior turns (configured in
+  // dashboard-memory.ts) from its LibSQL store via the `memory.thread`
+  // hint below, and persists assistant turns automatically on save.
+  const messages: ChatMessage[] = [{ role: "user", content: message }];
 
   // Wire client-disconnect → upstream Grok cancel. `req.signal` fires when the
   // browser closes the EventSource; passing it as `abortSignal` lets Mastra
@@ -263,6 +264,13 @@ export async function POST(req: Request) {
     instructions: composedInstructions,
     requestContext,
     abortSignal: req.signal,
+    memory: {
+      // `thread` scopes Memory to this conversation. `resource` scopes by
+      // tenant (account) so multi-account workers don't bleed history
+      // across operators.
+      thread: thread_id,
+      resource: accountSlug,
+    },
   };
 
   // 4. Stream with error handling
