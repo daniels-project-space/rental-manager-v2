@@ -35,7 +35,7 @@ rules:
       Phase 18.3 — wrapper module is in place; migration is a follow-up.
       This rule starts at WARNING so CI does not break. Flip to ERROR
       after all call sites are migrated.
-    severity: WARNING
+    severity: ERROR
     languages:
       - typescript
       - javascript

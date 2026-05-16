@@ -14,7 +14,7 @@
  * vision calls, not corruption.
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "../lib/gated-generate";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
@@ -239,14 +239,21 @@ export const visionResolveTask = schedules.task({
         confidence: number;
       }> = [];
       try {
-        const result = await generateObject({
+        const gated = await gatedGenerateObject({
           model: (await getXai())("grok-4.3"),
           schema: VISION_SCHEMA,
           messages: [
             { role: "system", content: VISION_PROMPT },
             { role: "user", content: userContent },
           ],
+          context: { source: "trigger:vision-resolve", tag: "vision-resolve" },
         });
+        if (gated.skipped) {
+          logger.info("[quiet-hours] gated skip", { task: "vision-resolve", reservation_id: c.id });
+          processed++;
+          continue;
+        }
+        const result = gated.result;
         added = (result.object.visible_items ?? [])
           .filter((vi) => validIds.has(vi.item_id))
           .filter((vi) => vi.confidence >= 0.7)

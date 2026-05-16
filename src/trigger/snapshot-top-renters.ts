@@ -1,14 +1,17 @@
 /**
- * Trigger.dev scheduled task: snapshot top renters to R2.
+ * Snapshot helper: snapshot top renters to R2.
  *
- * Runs every 6 hours. Reads in parallel:
+ * NOTE: Previously a standalone `schedules.task` (cron "0 *\/6 * * *").
+ * Consolidated into `snapshot-all` (Phase 18.5).
+ *
+ * Reads in parallel:
  *   - intel.getTopSpenders (90-day window, up to 50)
  *   - R2 by_renter lifetime aggregate index
  *
  * Merges both sources, dedupes by renterId, caps at top 100 by gross.
  * R2 key: cold/v1/indexes/top_renters.json
  */
-import { schedules, logger } from "@trigger.dev/sdk/v3";
+import { logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import {
@@ -72,10 +75,7 @@ interface TopRentersData {
   rows: TopRenterRow[];
 }
 
-export const snapshotTopRentersTask = schedules.task({
-  id: "snapshot-top-renters",
-  cron: "0 */6 * * *",
-  run: async () => {
+export async function runSnapshotTopRenters() {
     const startedAt = Date.now();
     logger.info("snapshot-top-renters: starting");
 
@@ -181,11 +181,12 @@ export const snapshotTopRentersTask = schedules.task({
       throw err;
     }
 
-    const durationMs = Date.now() - startedAt;
-    logger.info("snapshot-top-renters: done", {
-      rowCount: rows.length,
-      payloadBytes,
-      durationMs,
-    });
-  },
-});
+  const durationMs = Date.now() - startedAt;
+  logger.info("snapshot-top-renters: done", {
+    rowCount: rows.length,
+    payloadBytes,
+    durationMs,
+  });
+
+  return { ok: true as const, rowCount: rows.length, payloadBytes, durationMs };
+}

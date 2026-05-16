@@ -23,7 +23,7 @@
  * cost. Can re-add cache later if hit rate proves valuable.
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "../lib/gated-generate";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
@@ -351,7 +351,7 @@ async function runBatch(
     }> = [];
 
     try {
-      const result = await generateObject({
+      const gated = await gatedGenerateObject({
         model: (await getXai())("grok-4.3"),
         schema: RESOLUTION_SCHEMA,
         messages: [
@@ -368,7 +368,13 @@ async function runBatch(
             ),
           },
         ],
+        context: { source: "trigger:resolve-items", tag: "resolve-items" },
       });
+      if (gated.skipped) {
+        logger.info("[quiet-hours] gated skip", { task: "resolve-items", reservation_id: r.id });
+        continue;
+      }
+      const result = gated.result;
       const validIds = new Set(batch.inventory.map((i) => i._id));
       resolved = result.object.resolved_items
         .filter((x) => validIds.has(x.item_id) && x.confidence >= 0.5)

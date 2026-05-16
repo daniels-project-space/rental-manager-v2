@@ -16,7 +16,7 @@
  *   { itemId, nameCanonical, kind, qty, status, acquisitionCostGbp,
  *     dailyPriceMax, gross30dGbp, rentalCount30d, utilizationPct30d }
  */
-import { schedules, logger } from "@trigger.dev/sdk/v3";
+import { logger } from "@trigger.dev/sdk/v3";
 import {
   putAggregateIndex,
   wrapSnapshot,
@@ -97,13 +97,11 @@ async function convexQuery<T>(path: string, args: Record<string, unknown>): Prom
 
 // ── Scheduled task ───────────────────────────────────────────────────────────
 
-export const snapshotInventoryOverviewTask = schedules.task({
-  id: "snapshot-inventory-overview",
-  cron: "0 */12 * * *",
-  maxDuration: 120,
-  run: async (_payload, { ctx }) => {
+// Previously a standalone `schedules.task` (cron "0 *\/12 * * *").
+// Consolidated into `snapshot-all` (Phase 18.5).
+export async function runSnapshotInventoryOverview(runId?: string) {
     const startMs = Date.now();
-    logger.info("snapshot-inventory-overview: starting", { runId: ctx.run.id });
+    logger.info("snapshot-inventory-overview: starting", { runId });
 
     // ── 1. Parallel fetch ──────────────────────────────────────────────────
     const [items, pricingRows, revenueRanking] = await Promise.all([
@@ -228,11 +226,10 @@ export const snapshotInventoryOverviewTask = schedules.task({
     });
 
     return {
-      ok: true,
+      ok: true as const,
       rowCount: overviewItems.length,
       totalQty,
       sizeBytes,
       durationMs,
     };
-  },
-});
+}

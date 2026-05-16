@@ -25,7 +25,7 @@
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { titleHash, primaryBrand, brandMismatch } from "./listing_cache";
@@ -334,7 +334,7 @@ export const resolveReservation = action({
 
     let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }> = [];
     try {
-      const result = await generateObject({
+      const gated = await gatedGenerateObject({
         model: (await getXai())("grok-4.3"),
         schema: RESOLUTION_SCHEMA,
         messages: [
@@ -348,7 +348,10 @@ export const resolveReservation = action({
               ),
             ) },
         ],
+        context: { source: "convex:item_resolver", tag: "item-resolver" },
       });
+      if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
+      const result = gated.result;
       // Validate item_ids against the inventory we sent (defensive — model can hallucinate)
       const validIds = new Set(inventory.map((i: InventoryItem) => i._id));
       resolved = result.object.resolved_items

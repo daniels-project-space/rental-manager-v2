@@ -29,7 +29,7 @@
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
@@ -128,7 +128,7 @@ export const canonicalizeDenialBatch = internalAction({
 
     let result: { object: { results: Array<{ index: number; canonical_product: string; brand: string; kind: string }> } };
     try {
-      result = await generateObject({
+      const gated = await gatedGenerateObject({
         model: (await getXai())(GROK_NARROW_MODEL),
         schema: BATCH_SCHEMA,
         messages: [
@@ -140,7 +140,10 @@ export const canonicalizeDenialBatch = internalAction({
             ),
           },
         ],
+        context: { source: "convex:denial_canonicalizer", tag: "denial-canonicalizer" },
       });
+      if (gated.skipped) return { ok: false as const, error: "uk_quiet_hours" };
+      result = gated.result as typeof result;
     } catch (err) {
       console.error("[denial-canonicalizer] LLM call failed:", err);
       return { ok: false as const, error: String(err) };

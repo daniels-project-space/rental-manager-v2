@@ -25,7 +25,7 @@
  * worst case is double-work, not data corruption.
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "../lib/gated-generate";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
@@ -176,14 +176,20 @@ export const canonicalizeDenialsTask = schedules.task({
 
     let result: { object: { results: Array<{ index: number; canonical_product: string; brand: string; kind: string }> } };
     try {
-      result = await generateObject({
+      const gated = await gatedGenerateObject({
         model: (await getXai())(GROK_NARROW_MODEL),
         schema: BATCH_SCHEMA,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userMessage },
         ],
+        context: { source: "trigger:canonicalize-denials", tag: "canonicalize-denials" },
       });
+      if (gated.skipped) {
+        logger.info("[quiet-hours] gated skip", { task: "canonicalize-denials" });
+        return { skipped: true, reason: "uk_quiet_hours" };
+      }
+      result = gated.result as typeof result;
     } catch (err) {
       logger.error("canonicalize-denials: LLM call failed", { err: String(err) });
       return { ok: false, error: String(err) };

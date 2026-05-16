@@ -32,7 +32,7 @@ import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { createXai } from "@ai-sdk/xai";
-import { generateText } from "ai";
+import { gatedGenerateText } from "./lib/gatedGenerate";
 import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
@@ -229,11 +229,14 @@ export const extractForReservation = action({
 
     let response: { text: string };
     try {
-      response = await generateText({
+      const gated = await gatedGenerateText({
         model: (await getXai())(GROK_NARROW_MODEL),
         prompt,
         maxOutputTokens: 300,
+        context: { source: "convex:extract_booking_times", tag: "extract-booking-times" },
       });
+      if (gated.skipped) return { ok: true, skipped: "uk_quiet_hours" };
+      response = gated.result;
     } catch (err) {
       console.error("[extract_booking_times] LLM call failed:", err);
       return { ok: false, skipped: "llm error" };

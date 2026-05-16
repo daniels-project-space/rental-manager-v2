@@ -31,7 +31,7 @@
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
@@ -176,14 +176,17 @@ export const augmentWithVision = action({
 
     let added: Array<{ item_id: string; item_name_canonical: string; qty: number; confidence: number; visual_cue: string }> = [];
     try {
-      const result = await generateObject({
+      const gated = await gatedGenerateObject({
         model: (await getXai())("grok-4.3"),
         schema: VISION_SCHEMA,
         messages: [
           { role: "system", content: VISION_PROMPT },
           { role: "user", content: userContent },
         ],
+        context: { source: "convex:vision_resolver", tag: "vision-resolver" },
       });
+      if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
+      const result = gated.result;
       added = (result.object.visible_items ?? [])
         .filter((vi) => validIds.has(vi.item_id))
         .filter((vi) => vi.confidence >= 0.7)

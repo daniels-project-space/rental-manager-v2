@@ -1,13 +1,16 @@
 /**
- * Trigger.dev scheduled task: snapshot intel ROI + top-earners data to R2.
+ * Snapshot helper: snapshot intel ROI + top-earners data to R2.
  *
- * Runs every 4 hours. Reads two Convex queries in parallel:
+ * Reads two Convex queries in parallel:
  *   - intel.getItemROIRanking  (no args — full item set)
  *   - mv.top_earners.get       (account = undefined → "all")
  *
  * R2 key: cold/v1/indexes/intel_rankings.json
+ *
+ * NOTE: Previously a standalone `schedules.task` (cron "0 *\/4 * * *").
+ * Consolidated into `snapshot-all` (Phase 18.5).
  */
-import { schedules, logger } from "@trigger.dev/sdk/v3";
+import { logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { wrapSnapshot, putAggregateIndex } from "../lib/r2-cold-storage";
@@ -15,52 +18,54 @@ import { wrapSnapshot, putAggregateIndex } from "../lib/r2-cold-storage";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
 
-export const snapshotIntelRankingsTask = schedules.task({
-  id: "snapshot-intel-rankings",
-  cron: "0 */4 * * *",
-  run: async () => {
-    const startedAt = Date.now();
-    logger.info("snapshot-intel-rankings: starting");
+export async function runSnapshotIntelRankings() {
+  const startedAt = Date.now();
+  logger.info("snapshot-intel-rankings: starting");
 
-    const convex = new ConvexHttpClient(CONVEX_URL);
+  const convex = new ConvexHttpClient(CONVEX_URL);
 
-    let roiRanking: Awaited<ReturnType<typeof convex.query<typeof api.intel.getItemROIRanking>>>;
-    let topEarners30d: Awaited<ReturnType<typeof convex.query<typeof api.mv.top_earners.get>>>;
+  let roiRanking: Awaited<ReturnType<typeof convex.query<typeof api.intel.getItemROIRanking>>>;
+  let topEarners30d: Awaited<ReturnType<typeof convex.query<typeof api.mv.top_earners.get>>>;
 
-    try {
-      [roiRanking, topEarners30d] = await Promise.all([
-        convex.query(api.intel.getItemROIRanking, {}),
-        convex.query(api.mv.top_earners.get, {}),
-      ]);
-    } catch (err) {
-      logger.error("snapshot-intel-rankings: Convex query failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
+  try {
+    [roiRanking, topEarners30d] = await Promise.all([
+      convex.query(api.intel.getItemROIRanking, {}),
+      convex.query(api.mv.top_earners.get, {}),
+    ]);
+  } catch (err) {
+    logger.error("snapshot-intel-rankings: Convex query failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 
-    const data = { roiRanking, topEarners30d };
-    const payload = wrapSnapshot(data);
-    const payloadBytes = JSON.stringify(payload).length;
-    const durationMs = Date.now() - startedAt;
+  const data = { roiRanking, topEarners30d };
+  const payload = wrapSnapshot(data);
+  const payloadBytes = JSON.stringify(payload).length;
+  const durationMs = Date.now() - startedAt;
 
-    try {
-      await putAggregateIndex("intel_rankings", payload);
-    } catch (err) {
-      logger.error("snapshot-intel-rankings: R2 write failed", {
-        error: err instanceof Error ? err.message : String(err),
-        payloadBytes,
-        durationMs,
-      });
-      throw err;
-    }
-
-    logger.info("snapshot-intel-rankings: done", {
-      rowCount: Array.isArray(roiRanking) ? roiRanking.length : 0,
+  try {
+    await putAggregateIndex("intel_rankings", payload);
+  } catch (err) {
+    logger.error("snapshot-intel-rankings: R2 write failed", {
+      error: err instanceof Error ? err.message : String(err),
       payloadBytes,
       durationMs,
     });
+    throw err;
+  }
 
-    return { ok: true, rowCount: Array.isArray(roiRanking) ? roiRanking.length : 0, payloadBytes, durationMs };
-  },
-});
+  logger.info("snapshot-intel-rankings: done", {
+    rowCount: Array.isArray(roiRanking) ? roiRanking.length : 0,
+    payloadBytes,
+    durationMs,
+  });
+
+  return {
+    ok: true as const,
+    rowCount: Array.isArray(roiRanking) ? roiRanking.length : 0,
+    payloadBytes,
+    durationMs,
+  };
+}
+

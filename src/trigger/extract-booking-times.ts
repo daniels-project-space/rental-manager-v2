@@ -12,7 +12,7 @@
  * (`booking_time_extractor batch` in convex/crons.ts).
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
-import { generateText } from "ai";
+import { gatedGenerateText } from "../lib/gated-generate";
 import { createXai } from "@ai-sdk/xai";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 import { GROK_NARROW_MODEL } from "../lib/ai-models";
@@ -254,11 +254,17 @@ export const extractBookingTimesTask = schedules.task({
 
       let extracted: ExtractedTimes;
       try {
-        const result = await generateText({
+        const gated = await gatedGenerateText({
           model: (await getXai())(GROK_NARROW_MODEL),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
+          context: { source: "trigger:extract-booking-times", tag: "extract-booking-times" },
         });
-        extracted = parseResponse(result.text);
+        if (gated.skipped) {
+          logger.info("[quiet-hours] gated skip", { task: "extract-booking-times", reservation_id: c.id });
+          skipped++;
+          continue;
+        }
+        extracted = parseResponse(gated.result.text);
       } catch (err) {
         logger.error("extract-booking-times: LLM failed", {
           reservation_id: c.id,

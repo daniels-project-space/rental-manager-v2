@@ -25,7 +25,7 @@
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { generateObject } from "ai";
+import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createHash } from "crypto";
 import {
   getXai,
@@ -105,14 +105,19 @@ export const resolveItemFor = internalAction({
     let bestConfidence = 0;
     let bestName: string | undefined;
     try {
-      const result = await generateObject({
+      const gated = await gatedGenerateObject({
         model: (await getXai())(GROK_NARROW_MODEL),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
           { role: "user", content: buildUserMessage(itemName, filterInventoryByCategory(inventory, itemName)) },
         ],
+        context: { source: "convex:denial_resolver", tag: "denial-resolver" },
       });
+      if (gated.skipped) {
+        return { ok: false, matched: false, reason: "uk_quiet_hours" };
+      }
+      const result = gated.result;
 
       // Validate item_ids against the inventory we sent (defensive — model can hallucinate).
       const validIds = new Set(inventory.map((i: { _id: string }) => i._id));
