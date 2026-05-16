@@ -29,10 +29,9 @@
  * invocation via Convex dashboard / `npx convex run` to verify the
  * planned R2 keys + row counts before mutating data.
  */
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
 import { gzipSync } from "zlib";
 import { getR2 } from "../src/mastra/lib/r2-client";
 import { loadArchivedRange } from "../src/lib/r2-cold-storage";
@@ -56,73 +55,9 @@ function archiveKey(table: string, minCreationMs: number): string {
   return `cold/archive/${table}/${utcDateString(minCreationMs)}.jsonl.gz`;
 }
 
-// ── Internal queries / mutations (run inside DB transaction) ───────────
-
-/**
- * Page over old rows by `_creationTime` ascending. Returns chunk plus the
- * next cursor (the `_creationTime` of the last row, or null when drained).
- * Uses Convex's default `by_creation_time` index.
- */
-export const listOldChunk = internalQuery({
-  args: {
-    table: v.union(v.literal("hygglo_messages"), v.literal("audit_log")),
-    cutoffMs: v.number(),
-    cursorMs: v.optional(v.number()),
-    chunkSize: v.number(),
-  },
-  handler: async (
-    ctx,
-    { table, cutoffMs, cursorMs, chunkSize },
-  ): Promise<{
-    rows: Array<Record<string, unknown> & { _id: string; _creationTime: number }>;
-    nextCursorMs: number | null;
-  }> => {
-    // We have to satisfy two predicates: `_creationTime < cutoffMs` and
-    // (when paging) `_creationTime > cursorMs`. The built-in index works
-    // for both.
-    const rows = await ctx.db
-      .query(table)
-      .withIndex("by_creation_time", (q) =>
-        cursorMs !== undefined
-          ? q.gt("_creationTime", cursorMs).lt("_creationTime", cutoffMs)
-          : q.lt("_creationTime", cutoffMs),
-      )
-      .order("asc")
-      .take(chunkSize);
-    if (rows.length === 0) return { rows: [], nextCursorMs: null };
-    const lastRow = rows[rows.length - 1]!;
-    const nextCursorMs: number | null =
-      rows.length < chunkSize ? null : lastRow._creationTime;
-    return {
-      rows: rows as Array<
-        Record<string, unknown> & { _id: string; _creationTime: number }
-      >,
-      nextCursorMs,
-    };
-  },
-});
-
-/**
- * Bulk-delete rows by id. Runs after a successful R2 PUT to free hot
- * storage. NEVER call this without verifying the R2 key landed first.
- */
-export const deleteChunk = internalMutation({
-  args: {
-    table: v.union(v.literal("hygglo_messages"), v.literal("audit_log")),
-    ids: v.array(v.string()),
-  },
-  handler: async (ctx, { table, ids }) => {
-    let deleted = 0;
-    for (const rawId of ids) {
-      const id = rawId as Id<typeof table>;
-      const doc = await ctx.db.get(id);
-      if (!doc) continue; // already gone (e.g. retried run)
-      await ctx.db.delete(id);
-      deleted++;
-    }
-    return { deleted };
-  },
-});
+// Internal queries/mutations moved to archive_to_r2_helpers.ts —
+// Convex disallows mutations/queries in files marked `"use node";`.
+// This action calls them via internal.archive_to_r2_helpers.*
 
 // ── R2 idempotency check ───────────────────────────────────────────────
 
@@ -278,7 +213,7 @@ export const archiveToR2 = internalAction({
             Record<string, unknown> & { _id: string; _creationTime: number }
           >;
           nextCursorMs: number | null;
-        } = await ctx.runQuery(internal.archive_to_r2.listOldChunk, {
+        } = await ctx.runQuery(internal.archive_to_r2_helpers.listOldChunk, {
           table,
           cutoffMs,
           cursorMs,
@@ -348,7 +283,7 @@ export const archiveToR2 = internalAction({
 
           // ONLY after PUT succeeded — bulk delete the archived rows.
           const deleted = await ctx.runMutation(
-            internal.archive_to_r2.deleteChunk,
+            internal.archive_to_r2_helpers.deleteChunk,
             { table, ids: g.rows.map((r) => r._id) },
           );
           result.deletedRows += deleted.deleted;
@@ -413,7 +348,7 @@ export const getMessagesIncludingArchive = internalAction({
     // recent slice — kept simple here by re-using getRecentMessages-ish
     // semantics. In practice callers can substitute their own query.
     const hotRows = (await ctx.runQuery(
-      internal.archive_to_r2.listRangeForReader,
+      internal.archive_to_r2_helpers.listRangeForReader,
       {
         table: "hygglo_messages",
         fromMs,
@@ -442,27 +377,4 @@ export const getMessagesIncludingArchive = internalAction({
   },
 });
 
-// Helper query for the action above. Returns hygglo_messages in the
-// requested ms window, optionally filtered by account. Range scan via
-// the by_creation_time index keeps it cheap.
-export const listRangeForReader = internalQuery({
-  args: {
-    table: v.union(v.literal("hygglo_messages"), v.literal("audit_log")),
-    fromMs: v.number(),
-    toMs: v.number(),
-    accountSlug: v.optional(v.string()),
-  },
-  handler: async (ctx, { table, fromMs, toMs, accountSlug }) => {
-    const rows = await ctx.db
-      .query(table)
-      .withIndex("by_creation_time", (q) =>
-        q.gte("_creationTime", fromMs).lte("_creationTime", toMs),
-      )
-      .order("asc")
-      .collect();
-    if (!accountSlug || table === "audit_log") return rows;
-    return rows.filter(
-      (r) => (r as { account_slug?: string }).account_slug === accountSlug,
-    );
-  },
-});
+// listRangeForReader query moved to archive_to_r2_helpers.ts
