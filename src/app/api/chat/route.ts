@@ -15,6 +15,7 @@ import {
 import { createHydrationLayer } from "../../../mastra/lib/hydration";
 import { GROK_CHAT_MODEL } from "../../../lib/ai-models";
 import type { AgentExecutionOptionsBase } from "@mastra/core/agent";
+import { seedMemoryFromConvex } from "../../../mastra/memory/dashboard-memory-bridge";
 
 // ── Per-account slim bundle cache (cost control) ───────────────────────
 // Wave 2 (phase1-tool-router-hydration): the prior implementation invoked
@@ -184,20 +185,27 @@ export async function POST(req: Request) {
   const convex = new ConvexHttpClient(CONVEX_URL);
   const turnStart = Date.now();
 
-  // 1. Persist user message
+  // 1. Persist user message to Convex (UI source of truth).
+  // We still write to Convex because the dashboard chat history view
+  // subscribes to this table via a Convex live query. Mastra Memory
+  // (LibSQL-backed) handles its own retrieval at agent.stream time.
   await convex.mutation(api.dashboard_chat.appendMessage, {
     thread_id,
     role: "user",
     content: message,
   });
 
-  // 2. Pull last 6 messages for context (3 user + 3 assistant turns).
-  //    Wave 2: history was 20 — slashed to 6 because the agent now resolves
-  //    factual state from tool calls + hydration, not from chat scrollback.
+  // 2. Mastra Memory bridge: pull the recent Convex history once and seed
+  //    the agent's Memory store so a fresh process boot doesn't lose the
+  //    thread. Mastra Memory then handles retrieval (lastMessages:8) +
+  //    summarisation automatically inside agent.stream(). Replaces the
+  //    legacy `getMessages(limit:6)` + manual `messages` array build.
+  //    Phase3c W2a.
   const history = await convex.query(api.dashboard_chat.getMessages, {
     thread_id,
-    limit: 6,
+    limit: 20,
   });
+  await seedMemoryFromConvex(thread_id, accountSlug, history);
 
   // 3. Build the slim live-context bundle and the per-turn HydrationLayer.
   //    The 7-scan getContextBundle is gone; per the audit substitution

@@ -4,6 +4,7 @@ import { Agent } from "@mastra/core/agent";
 import { createXai } from "@ai-sdk/xai";
 import { routerTools } from "../tools/router-tools";
 import { GROK_CHAT_MODEL } from "../../lib/ai-models";
+import { getDashboardMemory } from "../memory/dashboard-memory";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
@@ -79,12 +80,18 @@ export function getDashboardChatAgentBundle(convId: string): ThreadAgentBundle {
     headers: xGrokHeaders,
   });
   _threadClients.set(convId, client);
+  // Mastra Memory: shared singleton across all per-thread agents.
+  // Memory keys retrieval by `thread`+`resource` passed at stream-time,
+  // so a single instance multiplexes safely. Replaces manual
+  // getMessages(limit:6) in the chat route (W2a, phase3c).
+  const memory = getDashboardMemory();
   const full = new Agent({
     id: "dashboard-chat",
     name: "dashboard-chat",
     instructions: SYSTEM_PROMPT_BASE,
     model: [{ model: client(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1800 } }],
     tools: routerTools,
+    memory,
   });
   const fast = new Agent({
     id: "dashboard-chat-fast",
@@ -92,6 +99,7 @@ export function getDashboardChatAgentBundle(convId: string): ThreadAgentBundle {
     instructions: SYSTEM_PROMPT_BASE,
     model: [{ model: client(GROK_FAST_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1800 } }],
     tools: routerTools,
+    memory,
   });
   const bundle: ThreadAgentBundle = { full, fast };
   _threadAgents.set(convId, bundle);
@@ -138,4 +146,5 @@ export const dashboardChatAgent = new Agent({
   instructions: SYSTEM_PROMPT_BASE,
   model: [{ model: xai(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1800 } }],
   tools: routerTools,
+  memory: getDashboardMemory(),
 });
