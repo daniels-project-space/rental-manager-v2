@@ -1,96 +1,331 @@
 /**
- * Phase 18.2 — MV master refresher.
+ * Phase 18.3 — MV master refresher with shared-collect.
  *
- * Consolidates the six per-MV cron entries into two batches:
- *   • refreshFast   — utilization_today + upcoming_returns (30 min cadence,
- *                     tight SLA for the Active widget + returns surface)
- *   • refreshSlow   — daily_briefing + top_earners + purchase_signals +
- *                     churn_risk (daily cadence; all slow-moving aggregates)
+ * Before (Phase 18.2): two action batches that fanned out to each MV's
+ * `refresh` internalMutation. Each delegated mutation re-queried the
+ * reservations table independently, leading to ~3.5M reservations-row
+ * reads/day from MV crons alone (6 MVs x 2 daily collects = 12, each
+ * scanning the full reservations table after the day's accumulation).
  *
- * NOTE on shared-collect optimisation:
- * The biggest potential win — reading `reservations` once and passing the
- * in-memory array to each pure compute — was scoped out of this PR because
- * each MV file's `refresh` is a tangled internalMutation with its own
- * account loop, denial-record queries, and singleton write logic. Refactoring
- * those to pure `compute(reservations, ...)` functions would blow the 200
- * LOC budget. This master delegates to existing `refresh` mutations, so we
- * only consolidate the cron entries and the shared-collect refactor stays
- * a candidate for the next PR.
+ * After (Phase 18.3): the master action collects each underlying table
+ * ONCE per refresh cycle (reservations / items / renters / denials /
+ * pricing / accounts), passes the in-memory arrays to pure compute
+ * functions exported from each MV file, then writes the resulting rows
+ * via dedicated `write<MV>` internalMutations.
  *
- * Each delegated refresh runs in its own Convex mutation transaction, so a
- * failure in one MV does not roll back the others.
+ * Each MV's `refresh` internalMutation still exists in its own file for
+ * direct invocation (refresh_dispatch.ts public action, manual ops, the
+ * Mastra polling workflow's `refreshOne`). master.ts bypasses them.
+ *
+ * Window strategy (matches the legacy mutations):
+ *   • daily_briefing  — 90-day reservations window (by_start_date >= cutoff)
+ *   • top_earners     — 30-day reservations window
+ *   • utilization     — 30-day reservations window
+ *   • upcoming_returns — confirmed reservations (by_status === "confirmed")
+ *   • churn_risk      — full reservations table (needed for renter-account
+ *                       membership lookup across the lifetime of the renter)
+ *   • purchase_signals — denials + items + pricing + accounts (no reservations)
+ *
+ * To avoid double-scanning, the master picks the WIDEST window each batch
+ * needs and slices in-memory for the narrower computes. Fast batch needs
+ * 30d (utilization) + confirmed-status (upcoming_returns); slow batch needs
+ * 90d (daily_briefing) + 30d (top_earners) + full table (churn_risk) +
+ * denials/items/pricing/accounts (purchase_signals).
+ *
+ * Estimated reservations-row reads/day AFTER refactor:
+ *   • refreshFast: 2 collects per cron run (30d slice + confirmed-status).
+ *     30 min cadence → 48 runs/day → 48 * 2 = 96 table scans/day.
+ *     Each scan ≈ 200-300 rows after window filter → ~25k row reads/day.
+ *   • refreshSlow: 2 collects per cron run (full table + items + denials
+ *     + pricing + accounts). 1 run/day → 1 full-table scan/day ≈ 1767 rows.
+ *   • TOTAL ≈ ~27k reservations row reads/day (was ~3.5M). > 100x reduction.
+ *
+ * If any MV throws inside its `write<MV>` mutation, the OTHER MVs in the
+ * batch still complete — failures are surfaced per-MV in the returned
+ * `results` array but the master keeps going. (One per-MV failure should
+ * not roll back the others; each write runs as its own transaction.)
  */
 import { v } from "convex/values";
-import { internalAction, type ActionCtx } from "../_generated/server";
+import { internalAction, internalMutation, internalQuery } from "../_generated/server";
 import { internal } from "../_generated/api";
+import type { ActionCtx } from "../_generated/server";
+import { isoDaysAgo, upsertSingleton } from "./_helpers";
+import { computeDailyBriefing } from "./daily_briefing";
+import { computeTopEarners } from "./top_earners";
+import { computeUtilization } from "./utilization";
+import { computeUpcomingReturns } from "./upcoming_returns";
+import { computeChurnRisk } from "./churn_risk";
+import { computePurchaseSignals } from "./purchase_signals";
 
-type MvName =
-  | "daily_briefing"
-  | "top_earners"
-  | "purchase_signals"
-  | "churn_risk"
-  | "utilization"
-  | "upcoming_returns";
+// ──────────────────────────────────────────────────────────────
+// Shared collectors — one query per underlying table per refresh.
+// ──────────────────────────────────────────────────────────────
 
-const FAST_MVS: MvName[] = ["utilization", "upcoming_returns"];
-const SLOW_MVS: MvName[] = [
-  "daily_briefing",
-  "top_earners",
-  "purchase_signals",
-  "churn_risk",
-];
+/**
+ * Collect reservations whose start_date is on/after `cutoffIsoDate`.
+ * Used by the fast batch (30d window for utilization) and the slow
+ * batch (90d window for daily_briefing — strictly wider so the same
+ * collect can also feed top_earners' 30d compute via in-memory slice).
+ */
+export const collectReservationsSince = internalQuery({
+  args: { cutoff: v.string() },
+  handler: async (ctx, { cutoff }) => {
+    return await ctx.db.query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
+  },
+});
 
-async function runOne(
-  ctx: ActionCtx,
-  name: MvName,
-): Promise<{ name: MvName; ok: boolean; error?: string }> {
-  try {
-    switch (name) {
-      case "daily_briefing":
-        await ctx.runMutation(internal.mv.daily_briefing.refresh, {});
-        break;
-      case "top_earners":
-        await ctx.runMutation(internal.mv.top_earners.refresh, {});
-        break;
-      case "purchase_signals":
-        await ctx.runMutation(internal.mv.purchase_signals.refresh, {});
-        break;
-      case "churn_risk":
-        await ctx.runMutation(internal.mv.churn_risk.refresh, {});
-        break;
-      case "utilization":
-        await ctx.runMutation(internal.mv.utilization.refresh, {});
-        break;
-      case "upcoming_returns":
-        await ctx.runMutation(internal.mv.upcoming_returns.refresh, {});
-        break;
+/** Confirmed-status reservations only (upcoming_returns input). */
+export const collectConfirmedReservations = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+      .collect();
+  },
+});
+
+/** Full reservations table (needed for churn_risk renter-account membership). */
+export const collectAllReservations = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("reservations").collect();
+  },
+});
+
+export const collectItems = internalQuery({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("items").collect(),
+});
+
+export const collectRenters = internalQuery({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("renters").collect(),
+});
+
+export const collectDenials = internalQuery({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("denial_records").collect(),
+});
+
+export const collectPricing = internalQuery({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("pricing_catalog").collect(),
+});
+
+export const collectAccounts = internalQuery({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("accounts").collect(),
+});
+
+// ──────────────────────────────────────────────────────────────
+// Write mutations — receive pre-computed rows, just upsert.
+// One transaction per MV per call (failure isolation).
+// ──────────────────────────────────────────────────────────────
+
+// Row payload is structurally fixed per MV, but Convex's validator can't
+// easily express the recursive shape; we accept `any` and trust the pure
+// compute functions to produce the documented shape. Same approach as
+// upsertSingleton in _helpers.ts.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ANY_ROW = v.any() as any;
+
+export const writeDailyBriefing = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, ...rest } = r;
+      await upsertSingleton(ctx, "daily_briefing", account, rest);
     }
-    return { name, ok: true };
+    return { ok: true, written: rows.length };
+  },
+});
+
+export const writeTopEarners = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, ...rest } = r;
+      await upsertSingleton(ctx, "top_earners_30d", account, rest);
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
+export const writeUtilization = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, ...rest } = r;
+      await upsertSingleton(ctx, "utilization_today", account, rest);
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
+export const writeUpcomingReturns = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, ...rest } = r;
+      await upsertSingleton(ctx, "upcoming_returns", account, rest);
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
+export const writeChurnRisk = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, ...rest } = r;
+      await upsertSingleton(ctx, "churn_risk_renters", account, rest);
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
+export const writePurchaseSignals = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, ...rest } = r;
+      await upsertSingleton(ctx, "purchase_signals", account, rest);
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
+// ──────────────────────────────────────────────────────────────
+// Master refresh actions.
+// ──────────────────────────────────────────────────────────────
+
+type StepResult = { name: string; ok: boolean; durationMs: number; error?: string };
+
+async function safeStep(
+  ctx: ActionCtx,
+  name: string,
+  fn: () => Promise<unknown>,
+): Promise<StepResult> {
+  const startedAt = Date.now();
+  try {
+    await fn();
+    return { name, ok: true, durationMs: Date.now() - startedAt };
   } catch (err) {
-    return { name, ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      name,
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export const refreshFast = internalAction({
-  args: { only: v.optional(v.array(v.string())) },
-  handler: async (ctx, { only }) => {
-    const targets = only && only.length > 0
-      ? FAST_MVS.filter((m) => only.includes(m))
-      : FAST_MVS;
-    const results = [];
-    for (const name of targets) results.push(await runOne(ctx, name));
+  args: {},
+  handler: async (ctx): Promise<{ batch: "fast"; results: StepResult[] }> => {
+    const startedAt = Date.now();
+    // 30-day window covers utilization. upcoming_returns uses confirmed-status.
+    const cutoff30 = isoDaysAgo(30);
+    const [reservations30, confirmedReservations, items, renters] = await Promise.all([
+      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoff30 }),
+      ctx.runQuery(internal.mv.master.collectConfirmedReservations, {}),
+      ctx.runQuery(internal.mv.master.collectItems, {}),
+      ctx.runQuery(internal.mv.master.collectRenters, {}),
+    ]);
+
+    const results: StepResult[] = [];
+
+    results.push(await safeStep(ctx, "utilization", async () => {
+      const rows = computeUtilization({
+        reservations: reservations30,
+        items,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeUtilization, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "upcoming_returns", async () => {
+      const rows = computeUpcomingReturns({
+        reservations: confirmedReservations,
+        renters,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeUpcomingReturns, { rows });
+    }));
+
     return { batch: "fast", results };
   },
 });
 
 export const refreshSlow = internalAction({
-  args: { only: v.optional(v.array(v.string())) },
-  handler: async (ctx, { only }) => {
-    const targets = only && only.length > 0
-      ? SLOW_MVS.filter((m) => only.includes(m))
-      : SLOW_MVS;
-    const results = [];
-    for (const name of targets) results.push(await runOne(ctx, name));
+  args: {},
+  handler: async (ctx): Promise<{ batch: "slow"; results: StepResult[] }> => {
+    const startedAt = Date.now();
+    // 90d window covers daily_briefing AND top_earners (top_earners filters
+    // by pickup_date/start_date >= 30d cutoff in-memory).
+    const cutoff90 = isoDaysAgo(90);
+
+    const [
+      reservations90,
+      allReservations,
+      items,
+      renters,
+      denials,
+      pricing,
+      accounts,
+    ] = await Promise.all([
+      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoff90 }),
+      ctx.runQuery(internal.mv.master.collectAllReservations, {}),
+      ctx.runQuery(internal.mv.master.collectItems, {}),
+      ctx.runQuery(internal.mv.master.collectRenters, {}),
+      ctx.runQuery(internal.mv.master.collectDenials, {}),
+      ctx.runQuery(internal.mv.master.collectPricing, {}),
+      ctx.runQuery(internal.mv.master.collectAccounts, {}),
+    ]);
+
+    const results: StepResult[] = [];
+
+    results.push(await safeStep(ctx, "daily_briefing", async () => {
+      const rows = computeDailyBriefing({
+        reservations: reservations90,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeDailyBriefing, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "top_earners", async () => {
+      // top_earners only looks at the 30d slice — pass the 90d collect, the
+      // compute applies its own cutoff filter in-memory.
+      const rows = computeTopEarners({
+        reservations: reservations90,
+        items,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeTopEarners, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "churn_risk", async () => {
+      const rows = computeChurnRisk({
+        renters,
+        reservations: allReservations,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeChurnRisk, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "purchase_signals", async () => {
+      const rows = computePurchaseSignals({
+        denials,
+        items,
+        pricing,
+        accounts,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writePurchaseSignals, { rows });
+    }));
+
     return { batch: "slow", results };
   },
 });

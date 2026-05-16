@@ -1,8 +1,8 @@
 /**
  * MV: daily_briefing
  *
- * Refresh interval: every 5 min (most-stale-sensitive — drives chat
- * "what happened today" answers). One row per account slug.
+ * Phase 18.3 refactor: pure `computeDailyBriefing(reservations,...)` exported.
+ * `refresh` and `refreshOne` internalMutations remain as thin wrappers.
  *
  * Computes today's earnings, active rentals, pending requests, overdue
  * returns, top 3 items today, and a pre-rendered narrative.
@@ -16,26 +16,25 @@ import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } f
 
 type ItemTotal = { name: string; gbp: number; count: number };
 
-function computeForAccount(args: {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ReservationRow = any;
+
+export type DailyBriefingAccountRow = {
   account: string;
-  reservations: Array<{
-    status: string;
-    start_date?: string;
-    end_date?: string;
-    pickup_date?: string;
-    account_slug?: string;
-    gross_paid_gbp?: number;
-    items?: Array<{ item_name: string }>;
-  }>;
-  today: string;
-}): {
+  generatedAt: number;
   todayEarningsGbp: number;
   activeRentalsCount: number;
   pendingRequestsCount: number;
   overdueReturnsCount: number;
   topItemsToday: ItemTotal[];
   summary: string;
-} {
+};
+
+function computeForAccount(args: {
+  account: string;
+  reservations: ReservationRow[];
+  today: string;
+}): Omit<DailyBriefingAccountRow, "account" | "generatedAt"> {
   const { account, reservations, today } = args;
   const scoped = account === ACCOUNT_ALL ? reservations : reservations.filter((r) => r.account_slug === account);
 
@@ -59,7 +58,6 @@ function computeForAccount(args: {
   const overdueReturnsCount = confirmed.filter((r) => (r.end_date as string) < today).length;
   const pendingRequestsCount = scoped.filter((r) => r.status === "pending_review").length;
 
-  // Top items by gbp earned today
   const itemMap = new Map<string, ItemTotal>();
   for (const r of earnedToday) {
     const itemCount = (r.items ?? []).length || 1;
@@ -94,32 +92,44 @@ function computeForAccount(args: {
 }
 
 /**
- * Internal mutation — runs the full refresh transactionally.
- * Reads all reservations (one collect — small table) and upserts one row
- * per account slug.
+ * Pure compute — pass pre-collected 90-day reservations window.
+ * Returns one row per account slug.
  */
+export function computeDailyBriefing(args: {
+  reservations: ReservationRow[];
+  targetAccount?: string;
+  generatedAt?: number;
+}): DailyBriefingAccountRow[] {
+  const { reservations, targetAccount } = args;
+  const generatedAt = args.generatedAt ?? Date.now();
+  const today = todayISO();
+  const targets = targetAccount ? [targetAccount, ACCOUNT_ALL] : getAccountSlugs();
+  return targets.map((account) => ({
+    account,
+    generatedAt,
+    ...computeForAccount({ account, reservations, today }),
+  }));
+}
+
 export const refresh = internalMutation({
   args: { account: v.optional(v.string()) },
   handler: async (ctx, { account }) => {
     const startedAt = Date.now();
-    const today = todayISO();
-    // 90-day rolling window. daily_briefing reports today's earnings +
-    // active rentals (start_date<=today<=end_date) + 'this month' counters.
-    // Anything older than 90 days can't appear in those buckets. Indexed
-    // read drops ~1767 rows → ~200 rows per refresh.
     const cutoff = isoDaysAgo(90);
     const reservations = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
 
-    const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
+    const computed = computeDailyBriefing({
+      reservations,
+      targetAccount: account,
+      generatedAt: startedAt,
+    });
+
     let rowsAffected = 0;
-    for (const acc of targets) {
-      const computed = computeForAccount({ account: acc, reservations, today });
-      await upsertSingleton(ctx, "daily_briefing", acc, {
-        generatedAt: startedAt,
-        ...computed,
-      });
+    for (const row of computed) {
+      const { account: acc, generatedAt: ts, ...rest } = row;
+      await upsertSingleton(ctx, "daily_briefing", acc, { generatedAt: ts, ...rest });
       rowsAffected += 1;
     }
 
@@ -127,38 +137,31 @@ export const refresh = internalMutation({
   },
 });
 
-/**
- * Wave 4 — single-account refresh entry point. Recomputes the targeted
- * account row PLUS the cross-account `"all"` row (changing one account
- * always shifts the aggregate). Delegates to `refresh`.
- */
 export const refreshOne = internalMutation({
   args: { account: v.string() },
   handler: async (ctx, { account }) => {
     const startedAt = Date.now();
-    const today = todayISO();
     const cutoff = isoDaysAgo(90);
     const reservations = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
 
+    const computed = computeDailyBriefing({
+      reservations,
+      targetAccount: account,
+      generatedAt: startedAt,
+    });
+
     let rowsAffected = 0;
-    for (const acc of [account, ACCOUNT_ALL]) {
-      const computed = computeForAccount({ account: acc, reservations, today });
-      await upsertSingleton(ctx, "daily_briefing", acc, {
-        generatedAt: startedAt,
-        ...computed,
-      });
+    for (const row of computed) {
+      const { account: acc, generatedAt: ts, ...rest } = row;
+      await upsertSingleton(ctx, "daily_briefing", acc, { generatedAt: ts, ...rest });
       rowsAffected += 1;
     }
     return { ok: true, rowsAffected, durationMs: Date.now() - startedAt };
   },
 });
 
-/**
- * Public query — read the latest singleton row for an account.
- * Falls back to `"all"` if no account passed.
- */
 export const get = query({
   args: { account: v.optional(v.string()) },
   handler: async (ctx, { account }) => {
@@ -169,4 +172,3 @@ export const get = query({
       .first();
   },
 });
-

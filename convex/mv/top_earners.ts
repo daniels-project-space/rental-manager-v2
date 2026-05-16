@@ -1,33 +1,45 @@
 /**
  * MV: top_earners_30d
  *
- * Refresh interval: every 15 min. Heavier compute (joins items × reservations)
- * and tolerates moderate staleness — earnings change slowly over a 30-day window.
+ * Phase 18.3 refactor: pure `computeTopEarners(reservations, items, ...)`
+ * exported. `refresh` and `refreshOne` internalMutations remain as thin
+ * wrappers for direct invocation.
  *
  * For each item: gross/net 30d, rental count, 7-day utilisation %.
  * Top 20 per account by gross.
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
-import type { MutationCtx } from "../_generated/server";
 import { getAccountSlugs, upsertSingleton, isoDaysAgo, todayISO, ACCOUNT_ALL } from "./_helpers";
 import { OWNER_SHARE } from "./constants";
 
-/**
- * Pure recompute for one account. Shared by `refresh` (all accounts) and
- * `refreshOne` (Wave 4 per-account variant) — single implementation.
- */
-async function recomputeForAccount(
-  ctx: MutationCtx,
-  account: string,
-  startedAt: number,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  reservations: any[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  items: any[],
-  today: string,
-  cutoff: string,
-): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ReservationRow = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ItemRow = any;
+
+export type TopEarnerRow = {
+  itemName: string;
+  gross30dGbp: number;
+  net30dGbp: number;
+  rentalCount: number;
+  utilizationPct: number;
+};
+
+export type TopEarnersAccountRow = {
+  account: string;
+  generatedAt: number;
+  rows: TopEarnerRow[];
+};
+
+function computeForAccount(args: {
+  account: string;
+  reservations: ReservationRow[];
+  items: ItemRow[];
+  today: string;
+  cutoff: string;
+}): TopEarnerRow[] {
+  const { account, reservations, items, today, cutoff } = args;
   const capacityByName = new Map<string, number>();
   for (const it of items) {
     capacityByName.set(it.name_canonical, it.qty);
@@ -68,7 +80,7 @@ async function recomputeForAccount(
     }
   }
 
-  const rows = [...agg.entries()]
+  return [...agg.entries()]
     .map(([itemName, a]) => {
       const capacity = capacityByName.get(itemName) ?? 1;
       const utilizationPct = Math.min(
@@ -85,50 +97,82 @@ async function recomputeForAccount(
     })
     .sort((a, b) => b.gross30dGbp - a.gross30dGbp)
     .slice(0, 20);
+}
 
-  await upsertSingleton(ctx, "top_earners_30d", account, { generatedAt: startedAt, rows });
+/**
+ * Pure compute — caller supplies the 30-day reservations window + full items table.
+ */
+export function computeTopEarners(args: {
+  reservations: ReservationRow[];
+  items: ItemRow[];
+  targetAccount?: string;
+  generatedAt?: number;
+}): TopEarnersAccountRow[] {
+  const { reservations, items, targetAccount } = args;
+  const generatedAt = args.generatedAt ?? Date.now();
+  const today = todayISO();
+  const cutoff = isoDaysAgo(30);
+  const targets = targetAccount ? [targetAccount, ACCOUNT_ALL] : getAccountSlugs();
+  return targets.map((account) => ({
+    account,
+    generatedAt,
+    rows: computeForAccount({ account, reservations, items, today, cutoff }),
+  }));
 }
 
 export const refresh = internalMutation({
   args: { account: v.optional(v.string()) },
   handler: async (ctx, { account }) => {
     const startedAt = Date.now();
-    const today = todayISO();
     const cutoff = isoDaysAgo(30);
-    // Indexed read — only rentals whose start_date is within the 30-day
-    // window. Drops ~1767 rows → ~80 rows per refresh.
     const reservations = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
     const items = await ctx.db.query("items").collect();
 
-    const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
+    const computed = computeTopEarners({
+      reservations,
+      items,
+      targetAccount: account,
+      generatedAt: startedAt,
+    });
+
     let totalAffected = 0;
-    for (const acc of targets) {
-      await recomputeForAccount(ctx, acc, startedAt, reservations, items, today, cutoff);
+    for (const row of computed) {
+      await upsertSingleton(ctx, "top_earners_30d", row.account, {
+        generatedAt: row.generatedAt,
+        rows: row.rows,
+      });
       totalAffected += 1;
     }
     return { ok: true, rowsAffected: totalAffected, durationMs: Date.now() - startedAt };
   },
 });
 
-/** Wave 4 — single-account variant. Also refreshes the `"all"` aggregate. */
 export const refreshOne = internalMutation({
   args: { account: v.string() },
   handler: async (ctx, { account }) => {
     const startedAt = Date.now();
-    const today = todayISO();
     const cutoff = isoDaysAgo(30);
-    // Indexed read — only rentals whose start_date is within the 30-day
-    // window. Drops ~1767 rows → ~80 rows per refresh.
     const reservations = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
     const items = await ctx.db.query("items").collect();
-    for (const acc of [account, ACCOUNT_ALL]) {
-      await recomputeForAccount(ctx, acc, startedAt, reservations, items, today, cutoff);
+
+    const computed = computeTopEarners({
+      reservations,
+      items,
+      targetAccount: account,
+      generatedAt: startedAt,
+    });
+
+    for (const row of computed) {
+      await upsertSingleton(ctx, "top_earners_30d", row.account, {
+        generatedAt: row.generatedAt,
+        rows: row.rows,
+      });
     }
-    return { ok: true, rowsAffected: 2, durationMs: Date.now() - startedAt };
+    return { ok: true, rowsAffected: computed.length, durationMs: Date.now() - startedAt };
   },
 });
 

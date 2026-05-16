@@ -1,0 +1,41 @@
+rules:
+  - id: no-raw-generate-object-in-scheduled
+    patterns:
+      - pattern-either:
+          - pattern: |
+              import { generateObject } from "ai"
+          - pattern: |
+              import { generateText } from "ai"
+          - pattern: |
+              import { streamObject } from "ai"
+          - pattern: |
+              import { streamText } from "ai"
+          # Multi-import lines (e.g. `import { generateObject, generateText } from "ai"`)
+          # — single-pattern matchers above only catch single-binding imports;
+          # this regex catches the multi-binding case.
+          - pattern-regex: |
+              import\s*\{[^}]*\b(generateObject|generateText|streamObject|streamText)\b[^}]*\}\s*from\s*["']ai["']
+    paths:
+      include:
+        - "**/convex/**/*.ts"
+        - "**/src/trigger/**/*.ts"
+        - "**/src/mastra/workflows/**/*.ts"
+      exclude:
+        - "**/convex/lib/gatedGenerate.ts"
+        - "**/src/lib/gated-generate.ts"
+        - "**/node_modules/**"
+    message: |
+      Raw LLM imports under scheduled / automation paths must go through
+      the gatedGenerate() wrapper so the UK quiet-hours gate is applied
+      consistently. Import from `convex/lib/gatedGenerate` (Convex
+      actions) or `src/lib/gated-generate` (Trigger.dev / Mastra) instead
+      of importing `generateObject` / `generateText` / `streamObject` /
+      `streamText` directly from `ai`.
+
+      Phase 18.3 — wrapper module is in place; migration is a follow-up.
+      This rule starts at WARNING so CI does not break. Flip to ERROR
+      after all call sites are migrated.
+    severity: WARNING
+    languages:
+      - typescript
+      - javascript

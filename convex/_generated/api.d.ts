@@ -46,6 +46,7 @@ import type * as intel from "../intel.js";
 import type * as item_resolver from "../item_resolver.js";
 import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
+import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
 import type * as lib_imageResolution from "../lib/imageResolution.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
@@ -132,6 +133,7 @@ declare const fullApi: ApiFromModules<{
   item_resolver: typeof item_resolver;
   item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;
+  "lib/gatedGenerate": typeof lib_gatedGenerate;
   "lib/imageResolution": typeof lib_imageResolution;
   "lib/quiet_hours": typeof lib_quiet_hours;
   "lib/reservations/predicates": typeof lib_reservations_predicates;
