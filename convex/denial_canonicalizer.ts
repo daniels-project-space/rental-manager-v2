@@ -25,6 +25,7 @@ import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -107,6 +108,10 @@ function buildUserMessage(titles: Array<{ index: number; title: string }>): stri
 export const canonicalizeDenialBatch = internalAction({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skip canonicalizeDenialBatch");
+      return { ok: true as const, processed: 0, idle: true };
+    }
     const batchSize = limit ?? 20;
     const todo = (await ctx.runQuery(internal.denial_canonicalizer_queries.listUnresolvedDenials, {
       limit: batchSize,

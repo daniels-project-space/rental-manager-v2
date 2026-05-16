@@ -28,6 +28,7 @@ import { api, internal } from "./_generated/api";
 import { createXai } from "@ai-sdk/xai";
 import { generateText } from "ai";
 import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -181,6 +182,10 @@ export const extractForReservation = action({
     confidence?: string;
     extracted?: ExtractedTimes;
   }> => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skip extractForReservation", reservation_id);
+      return { ok: true, skipped: "uk_quiet_hours" };
+    }
     const r = await ctx.runQuery(internal.extract_booking_times_q.getReservationForExtract, { reservation_id });
     if (!r) return { ok: false, skipped: "not found" };
     if (!r.hygglo_order_id) return { ok: false, skipped: "no thread" };
@@ -270,6 +275,10 @@ export const extractBatch = internalAction({
     ctx,
     { limit },
   ): Promise<{ ids: number; ok: number; skipped: number }> => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skip extractBatch");
+      return { ids: 0, ok: 0, skipped: 0 };
+    }
     const ids: Array<string> = await ctx.runQuery(
       internal.extract_booking_times_q.listNeedingExtraction,
       { limit: limit ?? 10 },

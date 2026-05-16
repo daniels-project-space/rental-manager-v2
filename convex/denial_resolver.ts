@@ -36,6 +36,7 @@ import {
 } from "./item_resolver";
 import { primaryBrand, brandMismatch } from "./listing_cache";
 import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const CONFIDENCE_THRESHOLD = 0.7;
 
@@ -56,6 +57,10 @@ function inventoryFingerprint(inventory: Array<{ _id: string }>): string {
 export const resolveItemFor = internalAction({
   args: { id: v.id("denial_records") },
   handler: async (ctx, { id }): Promise<{ ok: boolean; matched: boolean; confidence?: number; reason?: string }> => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skip resolveItemFor", id);
+      return { ok: false, matched: false, reason: "uk_quiet_hours" };
+    }
     const row = await ctx.runQuery(internal.denial_records.getById, { id });
     if (!row) return { ok: false, matched: false, reason: "row not found" };
     if (row.item_id) return { ok: true, matched: true, reason: "already resolved" };

@@ -29,6 +29,7 @@ import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { titleHash, primaryBrand, brandMismatch } from "./listing_cache";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -481,6 +482,10 @@ export const resolveBatch = internalAction({
     ctx,
     { limit, include_notes_only },
   ): Promise<{ ids: number; resolved: number; skipped: number }> => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skip resolveBatch");
+      return { ids: 0, resolved: 0, skipped: 0 };
+    }
     const ids: Array<string> = await ctx.runQuery(
       internal.item_resolver_queries.listUnresolved,
       { limit: limit ?? 15, include_notes_only },

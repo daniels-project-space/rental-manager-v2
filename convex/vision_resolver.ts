@@ -28,6 +28,7 @@ import { api, internal } from "./_generated/api";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
+import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -268,6 +269,10 @@ export const augmentWithVision = action({
 export const augmentBatch = internalAction({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }): Promise<{ ids: number; added: number; skipped: number }> => {
+    if (isWithinUkQuietHours()) {
+      console.log("[quiet-hours] skip augmentBatch");
+      return { ids: 0, added: 0, skipped: 0 };
+    }
     const ids = await ctx.runQuery(internal.item_resolver_queries.listNeedingVision, {
       limit: limit ?? 5,
     });
