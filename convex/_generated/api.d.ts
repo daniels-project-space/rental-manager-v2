@@ -16,6 +16,8 @@ import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as archive_to_r2 from "../archive_to_r2.js";
 import type * as archive_to_r2_helpers from "../archive_to_r2_helpers.js";
+import type * as audit_listings from "../audit_listings.js";
+import type * as audit_listings_data from "../audit_listings_data.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
 import type * as backfill_hygglo_images from "../backfill_hygglo_images.js";
 import type * as bundles from "../bundles.js";
@@ -116,6 +118,8 @@ declare const fullApi: ApiFromModules<{
   ai_insights: typeof ai_insights;
   archive_to_r2: typeof archive_to_r2;
   archive_to_r2_helpers: typeof archive_to_r2_helpers;
+  audit_listings: typeof audit_listings;
+  audit_listings_data: typeof audit_listings_data;
   audit_snapshot: typeof audit_snapshot;
   backfill_hygglo_images: typeof backfill_hygglo_images;
   bundles: typeof bundles;
