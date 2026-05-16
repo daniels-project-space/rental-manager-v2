@@ -32,6 +32,14 @@ export const GROK_VISION_MODEL: string =
   process.env.GROK_VISION_MODEL ?? process.env.XAI_VISION_MODEL ?? "grok-4.3";
 
 /**
+ * GROK_DECISION_MODEL is used by the ai-decision agent (rental order scoring).
+ * Defaults to grok-4-fast to reduce cost on the ~100/day decision job (~$32/mo
+ * savings vs grok-4.3). Override via env var without a code change.
+ */
+export const GROK_DECISION_MODEL: string =
+  process.env.GROK_DECISION_MODEL ?? "grok-4-fast";
+
+/**
  * Default chat model literal — exported so the auto-upgrade scanner can rewrite
  * THIS LINE only when bumping minor versions. Keep the assignment shape stable:
  *   export const DEFAULT_GROK_CHAT_MODEL = "grok-X.Y";

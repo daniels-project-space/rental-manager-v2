@@ -34,7 +34,7 @@ import { createTool } from "@mastra/core/tools";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import * as data from "@/mastra/data";
-import { GROK_CHAT_MODEL } from "@/lib/ai-models";
+import { GROK_DECISION_MODEL } from "@/lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
@@ -156,6 +156,7 @@ export const aiDecisionAgent = new Agent({
   id: "ai-decision",
   name: "ai-decision",
   instructions: AI_DECISION_PROMPT,
-  model: xai(GROK_CHAT_MODEL),
+  model: xai(GROK_DECISION_MODEL),
   tools: aiDecisionTools,
+  modelSettings: { maxOutputTokens: 600 },
 });
