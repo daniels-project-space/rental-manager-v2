@@ -1,5 +1,6 @@
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -180,18 +181,20 @@ export const markReturned = mutation({
 /**
  * T4: listObsolete — cancelled/rejected orders (lost revenue / dead deals)
  */
-export const listObsolete = query({
-  args: { sinceTs: v.optional(v.number()) },
-  handler: async (ctx, { sinceTs }) => {
-    const rows = await ctx.db.query("reservations").collect();
-    const filtered = rows
-      .filter((r) => r.is_obsolete === true)
-      .filter(
-        (r) =>
-          !sinceTs ||
-          (r.v1_updated_at ?? r._creationTime) >= sinceTs
-      );
-    return Promise.all(
+export const listObsolete = internalQuery({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    sinceTs: v.optional(v.number()),
+  },
+  handler: async (ctx, { paginationOpts, sinceTs }) => {
+    const page = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .paginate(paginationOpts);
+    const filtered = page.page.filter(
+      (r) => !sinceTs || (r.v1_updated_at ?? r._creationTime) >= sinceTs,
+    );
+    const rows = await Promise.all(
       filtered.map(async (r) => {
         let renterName: string | null = null;
         if (r.renter_id) {
@@ -211,15 +214,20 @@ export const listObsolete = query({
           items: r.items ?? [],
           last_seen_at: r.v1_updated_at ?? r._creationTime,
         };
-      })
+      }),
     );
+    return {
+      page: rows,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 
 /**
  * T4: getPipelineCounts — aggregate active order counts per order_step
  */
-export const getPipelineCounts = query({
+export const getPipelineCounts = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("reservations").collect();
@@ -303,7 +311,7 @@ export const adminSetStatus = mutation({
 // Also match rows where booking_status === "pending_review" (captured from Hygglo since
 // many "pending_review" orders have order_step=APPROVED already — renter approved by owner
 // but renter hasn't paid yet).
-export const listPending = query({
+export const listPending = internalQuery({
   args: {
     accountSlug: v.optional(v.string()),
     // verified_only=true keeps the strict dashboard semantics (escrow paid +
@@ -503,7 +511,7 @@ export const adminPatchRichFieldsByHyggloId = mutation({
  * dashboard window. Used by the backfill script to know which orders
  * to fetch from the source-of-truth deployment.
  */
-export const adminListNeedsRichBackfill = query({
+export const adminListNeedsRichBackfill = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("reservations").collect();
@@ -533,7 +541,7 @@ export const adminListNeedsRichBackfill = query({
  * `ai_decision` row (regardless of decision status). This is the net-new
  * surface for the AI decision step.
  */
-export const listPendingWithoutDecision = query({
+export const listPendingWithoutDecision = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
     const pending = await ctx.db

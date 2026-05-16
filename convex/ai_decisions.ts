@@ -17,7 +17,7 @@
  * approve_modified and what audit fields to record.
  */
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 
 const decisionEnum = v.union(
   v.literal("accept"),
@@ -59,7 +59,7 @@ export const writeDecision = mutation({
   },
 });
 
-export const getPending = query({
+export const getPending = internalQuery({
   args: {
     account: v.optional(v.string()),
     limit: v.optional(v.number()),
@@ -76,7 +76,7 @@ export const getPending = query({
   },
 });
 
-export const getForReservation = query({
+export const getForReservation = internalQuery({
   args: { reservation_id: v.id("reservations") },
   handler: async (ctx, { reservation_id }) => {
     return await ctx.db
