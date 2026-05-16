@@ -101,22 +101,33 @@ function containsAny(haystack: string, needles: readonly string[]): boolean {
 
 /**
  * Inspect recent assistant turn(s) for a `mutate` tool call signal. We
- * persist tool-call summaries in `metadata`, so a simple substring scan
- * is enough. If the last assistant turn called `mutate`, follow-up
- * questions tend to be confirmations/clarifications — bump those to
- * `complex` so they get the full model.
+ * persist tool-call summaries in `metadata`, so a precise match on the
+ * exact tool name is required. If the last assistant turn called the
+ * `mutate` tool (exact name match), follow-up questions tend to be
+ * confirmations/clarifications — bump those to `complex` so they get
+ * the full model.
+ *
+ * Exact-match rules (H1 fix: avoid false-positives on substrings like
+ * "accumulate", "commutate", or JSON fields that contain "mutate" as
+ * part of a larger word):
+ *   - metadata JSON contains `"tool":"mutate"` or `"name":"mutate"` with
+ *     word-boundary awareness (the key value is exactly "mutate").
+ *   - body contains `mutate(` as a function-call marker (exact prefix).
+ * We do NOT use plain `.includes("mutate")` — that would match any word
+ * containing "mutate" as a substring.
  */
 function recentMutateContext(history: readonly IntentHistoryEntry[]): boolean {
+  // Matches JSON patterns where the tool/function name IS exactly "mutate":
+  //   "tool":"mutate"   "name":"mutate"   'tool':'mutate'   tool_call: mutate
+  const EXACT_TOOL_NAME_RE = /(?:"tool"|"name"|'tool'|'name')\s*:\s*(?:"mutate"|'mutate')/;
   for (let i = history.length - 1; i >= 0; i--) {
     const h = history[i];
     if (h.role !== "assistant") continue;
     const md = h.metadata ?? "";
     const body = h.content ?? "";
     if (
-      md.includes("\"mutate\"") ||
-      md.includes("'mutate'") ||
-      body.includes("mutate(") ||
-      /\bmutate\b/.test(md)
+      EXACT_TOOL_NAME_RE.test(md) ||
+      body.includes("mutate(")
     ) {
       return true;
     }

@@ -201,9 +201,16 @@ export function getAiDecisionAgent(convId: string): Agent {
       _convClients.delete(oldest);
     }
   }
+  // H3: only set x-grok-conv-id when convId is non-empty. An empty
+  // convId would cache under "" — a global collision key that merges
+  // all users' prompt caches. Skip the header so caching is disabled
+  // for that call rather than poisoned.
+  const xGrokHeaders: Record<string, string> = convId
+    ? { "x-grok-conv-id": convId }
+    : {};
   const client = createXai({
     apiKey: process.env.XAI_API_KEY ?? "",
-    headers: { "x-grok-conv-id": convId },
+    headers: xGrokHeaders,
   });
   _convClients.set(convId, client);
   const agent = new Agent({

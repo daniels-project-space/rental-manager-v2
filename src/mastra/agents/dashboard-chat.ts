@@ -67,23 +67,30 @@ export function getDashboardChatAgentBundle(convId: string): ThreadAgentBundle {
       _threadClients.delete(oldest);
     }
   }
+  // H3: only set x-grok-conv-id when convId is non-empty. An empty
+  // thread_id would cache under "" — a global collision key that merges
+  // all users' prompt caches into one slot. Skip the header instead so
+  // caching is simply disabled for that call rather than poisoned.
+  const xGrokHeaders: Record<string, string> = convId
+    ? { "x-grok-conv-id": convId }
+    : {};
   const client = createXai({
     apiKey: process.env.XAI_API_KEY ?? "",
-    headers: { "x-grok-conv-id": convId },
+    headers: xGrokHeaders,
   });
   _threadClients.set(convId, client);
   const full = new Agent({
     id: "dashboard-chat",
     name: "dashboard-chat",
     instructions: SYSTEM_PROMPT_BASE,
-    model: [{ model: client(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
+    model: [{ model: client(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1800 } }],
     tools: routerTools,
   });
   const fast = new Agent({
     id: "dashboard-chat-fast",
     name: "dashboard-chat-fast",
     instructions: SYSTEM_PROMPT_BASE,
-    model: [{ model: client(GROK_FAST_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
+    model: [{ model: client(GROK_FAST_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1800 } }],
     tools: routerTools,
   });
   const bundle: ThreadAgentBundle = { full, fast };
@@ -129,6 +136,6 @@ export const dashboardChatAgent = new Agent({
   id: "dashboard-chat",
   name: "dashboard-chat",
   instructions: SYSTEM_PROMPT_BASE,
-  model: [{ model: xai(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
+  model: [{ model: xai(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1800 } }],
   tools: routerTools,
 });
