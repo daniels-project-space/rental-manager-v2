@@ -1008,7 +1008,44 @@ export const readMemory = createTool({
   },
 });
 
-// ── 12. mutate ──────────────────────────────────────────────────────────
+// ── 12. query_pending_listings ──────────────────────────────────────────
+
+export const queryPendingListings = createTool({
+  id: "query_pending_listings",
+  description:
+    "Fetch a batch of Hygglo listings flagged for manual review by the listing resolver. Returns title + description + image_url + top-3 candidate canonical items. Use when the user asks to 'review pending listings' or wants to triage ambiguous resolutions. Default limit 10." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    limit: z.number().optional().default(10),
+    account: z.string().optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { limit, account } = input as { limit?: number; account?: string };
+    const { getConvex } = await import("@/mastra/data/client");
+    const { anyApi } = await import("convex/server");
+    const convex = getConvex();
+    const rows = await convex.query(anyApi.listing_resolver_data.listPendingReview, {
+      limit: limit ?? 10,
+      account,
+    });
+    const hydrate = hydrationFromCtx(_ctx);
+    return wrap({
+      data: rows,
+      source: "convex.listing_resolution",
+      extraCaveats: (rows as unknown[]).length === 0 ? ["queue_empty"] : [],
+      syncState: {
+        _id: "synthetic",
+        _creationTime: 0,
+        source: "convex.listing_resolution",
+        lastRunAt: Date.now(),
+        lastRunSucceeded: true,
+      },
+    });
+    void hydrate; // hydration layer unused for this query (no T1/T2 entity)
+  },
+});
+
+// ── 13. mutate ──────────────────────────────────────────────────────────
 
 const MUTATE_OPS = [
   // 9 Trigger-dispatched UI actions (each gated by HYGGLO_UI_LIVE_*)
@@ -1030,6 +1067,8 @@ const MUTATE_OPS = [
   "send_correction",
   // Decision approval
   "approve_decision",
+  // Inline listing triage (label or skip a pending_review listing)
+  "label_listing",
 ] as const;
 
 type MutateOp = (typeof MUTATE_OPS)[number];
@@ -1039,7 +1078,7 @@ export const mutate = createTool({
   description:
     "Unified mutation dispatcher. `op` selects the operation, `args` is the flat arg-map for that op. " +
     "UI-action ops (accept_order_ui, decline_order_ui, add_item_to_order, remove_item_from_order, apply_order_discount, change_owner_earnings, mark_order_picked_up, mark_order_returned, leave_renter_review) REQUIRE `args.accountSlug` ('leo'|'dbcinema'). " +
-    "Internal ops: set_item_acquisition_cost, record_denial, update_rule, update_memory. Gated ops: send_correction (READ_ONLY_MODE), approve_decision. " +
+    "Internal ops: set_item_acquisition_cost, record_denial, update_rule, update_memory, label_listing. Gated ops: send_correction (READ_ONLY_MODE), approve_decision. " +
     "For any destructive change always preview and confirm with the operator before invoking." +
     CACHE_NOTE,
   inputSchema: z.object({
@@ -1194,6 +1233,37 @@ export const mutate = createTool({
           args as { rentalId: string; message: string },
         );
         break;
+      // ── inline listing triage ─────────────────────────────────────────────
+      case "label_listing": {
+        // args: { listing_id: string, item_names: string[], qtys: number[], skip?: boolean }
+        if (process.env.READ_ONLY_MODE === "1") {
+          return wrap({
+            data: { error: "READ_ONLY_MODE active" },
+            source: "convex.read_only",
+            extraCaveats: ["read_only"],
+            syncState: null,
+          });
+        }
+        const { getConvex } = await import("@/mastra/data/client");
+        const { anyApi } = await import("convex/server");
+        const convex = getConvex();
+        result = await convex.mutation(anyApi.listing_resolver_data.labelListingFromReview, {
+          listing_id: args.listing_id as string,
+          item_names: (args.item_names as string[]) ?? [],
+          qtys: (args.qtys as number[]) ?? [],
+          skip: (args.skip as boolean) ?? false,
+          reviewed_by: "operator-chat",
+        });
+        const hydrate = hydrationFromCtx(_ctx);
+        if (hydrate && typeof hydrate.invalidateSnapshot === "function") {
+          try {
+            hydrate.invalidateSnapshot("listing_resolution");
+          } catch (err) {
+            console.warn("[mutate.label_listing] invalidateSnapshot failed:", err);
+          }
+        }
+        break;
+      }
       // ── decision approval (READ_ONLY_MODE gate inside data.decisions) ────
       case "approve_decision": {
         // Preserve `actorSource: "dashboard_chat"` audit tag.
@@ -1260,6 +1330,7 @@ export const routerTools = {
   query_alerts: queryAlerts,
   query_compatibility: queryCompatibility,
   read_memory: readMemory,
+  query_pending_listings: queryPendingListings,
   mutate,
 };
 

@@ -21,7 +21,7 @@
  * convex/listing_resolver_data.ts (regular V8 module).
  */
 
-import { internalAction } from "./_generated/server";
+import { internalAction, action } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
@@ -545,5 +545,24 @@ export const resolveListing = internalAction({
       candidates,
       attempted_tiers: attemptedTiers,
     };
+  },
+});
+
+/**
+ * Public wrapper around resolveListing so external callers (e.g. Trigger.dev
+ * via ConvexHttpClient) can invoke the internal action. ConvexHttpClient only
+ * supports public functions, so this thin shim delegates to the internal one.
+ */
+export const resolveListingPublic = action({
+  args: {
+    hygglo_listing_id: v.string(),
+    hygglo_account: v.string(),
+    hygglo_title: v.string(),
+    hygglo_description: v.optional(v.string()),
+    hygglo_detail_payload: v.optional(v.any()),
+    image_url: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<ResolveResponse> => {
+    return ctx.runAction(internal.listing_resolver.resolveListing, args);
   },
 });

@@ -8,9 +8,9 @@
  *
  * READ-ONLY on Hygglo: only GET requests after auth. No mutations sent to Hygglo.
  */
-import { schedules, logger, tasks } from "@trigger.dev/sdk/v3";
+import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../convex/_generated/api";
+import { api, internal } from "../../convex/_generated/api";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
@@ -598,9 +598,16 @@ export const pollHyggloInbox = schedules.task({
           // Upsert reservations (batched 50)
           let resInserted = 0;
           let resUpdated = 0;
-          // Phase 18.2 — collect freshly-inserted reservation IDs so we can
-          // trigger the resolver on-demand instead of waiting up to 60 min.
-          const newlyInsertedIds: string[] = [];
+          // Phase 18.2 — collect freshly-inserted reservation metadata so we can
+          // call listing_resolver on-demand instead of waiting up to 60 min.
+          const newlyInserted: Array<{
+            reservation_id: string;
+            hygglo_order_id: string;
+            hygglo_title: string;
+            hygglo_description?: string;
+            hygglo_detail_payload?: unknown;
+            image_url?: string;
+          }> = [];
           for (let i = 0; i < reservations.length; i += 50) {
             const batch = reservations.slice(i, i + 50);
             for (const payload of batch) {
@@ -614,27 +621,69 @@ export const pollHyggloInbox = schedules.task({
               });
               if (resResult.action === "inserted") {
                 resInserted++;
-                if (resResult.reservation_id) newlyInsertedIds.push(resResult.reservation_id);
+                if (resResult.reservation_id) {
+                  // Collect metadata for on-demand listing resolution
+                  const firstItem = payload.items[0];
+                  newlyInserted.push({
+                    reservation_id: resResult.reservation_id,
+                    hygglo_order_id: payload.hygglo_order_id,
+                    hygglo_title: firstItem?.item_name ?? payload.hygglo_order_id,
+                    hygglo_description: payload.notes,
+                    hygglo_detail_payload: payload.order,
+                    image_url: firstItem?.image?.fullSizeUrl ?? firstItem?.image?.largeUrl ?? firstItem?.image?.url,
+                  });
+                }
               } else if (resResult.action === "updated") resUpdated++;
             }
           }
           totalReservationsUpserted += resInserted + resUpdated;
 
-          // Phase 18.2 — on-demand resolver trigger for new listings.
-          // Bypasses the hourly cron entirely so renters see resolved items
-          // within seconds of the order landing in Hygglo.
-          if (newlyInsertedIds.length > 0) {
-            try {
-              await tasks.trigger("resolve-items", { ids: newlyInsertedIds });
-              logger.info("[poll-hygglo] triggered resolve-items on-demand", {
-                account: account.slug,
-                count: newlyInsertedIds.length,
-              });
-            } catch (trigErr) {
-              logger.warn("[poll-hygglo] resolve-items trigger failed (non-fatal)", {
-                err: String(trigErr),
-                count: newlyInsertedIds.length,
-              });
+          // Phase 18.2 — on-demand listing resolution for newly inserted reservations.
+          // Calls internal.listing_resolver.resolveListing directly instead of the
+          // old vision pipeline. On error, writes an "unresolved" row so audit can retry.
+          if (newlyInserted.length > 0) {
+            for (const entry of newlyInserted) {
+              try {
+                const result = await convex.action(api.listing_resolver.resolveListingPublic, {
+                  hygglo_listing_id: entry.hygglo_order_id,
+                  hygglo_account: account.slug,
+                  hygglo_title: entry.hygglo_title,
+                  hygglo_description: entry.hygglo_description,
+                  hygglo_detail_payload: entry.hygglo_detail_payload,
+                  image_url: entry.image_url,
+                });
+                logger.info("[poll-hygglo] resolveListing succeeded", {
+                  account: account.slug,
+                  hygglo_order_id: entry.hygglo_order_id,
+                  status: result.status,
+                });
+              } catch (resolveErr) {
+                logger.warn("[poll-hygglo] resolveListing failed — writing unresolved row", {
+                  account: account.slug,
+                  hygglo_order_id: entry.hygglo_order_id,
+                  err: String(resolveErr),
+                });
+                // Preserve listing: write minimal unresolved row so audit can retry
+                try {
+                  await convex.mutation(api.listing_resolver_data.upsertListingResolutionPublic, {
+                    hygglo_listing_id: entry.hygglo_order_id,
+                    hygglo_account: account.slug,
+                    hygglo_title: entry.hygglo_title,
+                    hygglo_description: entry.hygglo_description,
+                    hygglo_detail_payload: entry.hygglo_detail_payload,
+                    image_url: entry.image_url,
+                    resolved_items: [],
+                    status: "unresolved",
+                    attempted_tiers: [],
+                  });
+                } catch (fallbackErr) {
+                  logger.error("[poll-hygglo] fallback upsertListingResolution failed", {
+                    account: account.slug,
+                    hygglo_order_id: entry.hygglo_order_id,
+                    err: String(fallbackErr),
+                  });
+                }
+              }
             }
           }
 
