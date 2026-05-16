@@ -35,7 +35,7 @@ const crons = cronJobs();
 // collect across MVs for the bigger Convex-bandwidth win.
 crons.interval(
   "mv_refresh_fast",
-  { minutes: 30 },
+  { minutes: 60 },
   internal.mv.master.refreshFast,
   {},
 );
