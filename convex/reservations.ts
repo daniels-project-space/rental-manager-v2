@@ -313,6 +313,7 @@ export const adminSetStatus = mutation({
 // but renter hasn't paid yet).
 export const listPending = internalQuery({
   args: {
+    paginationOpts: paginationOptsValidator,
     accountSlug: v.optional(v.string()),
     // verified_only=true keeps the strict dashboard semantics (escrow paid +
     // verifying). Default false matches chat expectations: "what's pending"
@@ -321,11 +322,14 @@ export const listPending = internalQuery({
     // returning 0 because nothing happens to be in VERIFIED right now.
     verified_only: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, verified_only }) => {
+  handler: async (ctx, { paginationOpts, accountSlug, verified_only }) => {
     // See convex/order_step_semantics.ts for full semantics.
     const PIPELINE = new Set(["REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"]);
-    const allRows = await ctx.db.query('reservations').collect();
-    let rows = allRows.filter((r) => {
+    const page = await ctx.db
+      .query("reservations")
+      .order("desc")
+      .paginate(paginationOpts);
+    let rows = page.page.filter((r) => {
       if (r.is_obsolete === true) return false;
       if (verified_only === true) return r.order_step === "VERIFIED";
       return r.order_step !== undefined && PIPELINE.has(r.order_step);
@@ -333,10 +337,8 @@ export const listPending = internalQuery({
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
     }
-    rows.sort((a, b) => b._creationTime - a._creationTime);
-    const top = rows.slice(0, 20);
     const rentals = await Promise.all(
-      top.map(async (r) => {
+      rows.map(async (r) => {
         let renterName = '';
         if (r.renter_id) {
           const renter = await ctx.db.get(r.renter_id);
@@ -354,7 +356,12 @@ export const listPending = internalQuery({
         };
       })
     );
-    return { count: rows.length, rentals };
+    return {
+      count: rentals.length,
+      rentals,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 

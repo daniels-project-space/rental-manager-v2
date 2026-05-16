@@ -93,7 +93,10 @@ const fetchAndIngest = createStep({
   outputSchema: runState.extend({ inboxProcessed: z.number() }),
   execute: async ({ inputData }) => {
     const c = convex();
-    const inbox = await c.query(api.hygglo_inbox.listUnprocessed, { limit: 100 });
+    const result = await c.query(api.hygglo_inbox.listUnprocessed, {
+      paginationOpts: { numItems: 100, cursor: null },
+    });
+    const inbox = result.page;
     if (inbox.length > 0) {
       // Mark processed; no transformation yet (raw payloads only ever
       // arrive via the future VPS-scraper path).

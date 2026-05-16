@@ -1,5 +1,6 @@
 import { internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 
 /**
  * Phase 3 audit: list reservations whose [start_date, end_date] overlaps
@@ -8,15 +9,15 @@ import { v } from "convex/values";
  * Note: image_hints field does not exist yet on reservations (added by phase 6).
  */
 export const listActiveReservations = internalQuery({
-  args: {},
-  handler: async (ctx) => {
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
     const now = new Date();
     const todayIso = now.toISOString().slice(0, 10);
     const horizon = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const horizonIso = horizon.toISOString().slice(0, 10);
 
-    const all = await ctx.db.query("reservations").collect();
-    const inWindow = all.filter((r) => {
+    const page = await ctx.db.query("reservations").paginate(paginationOpts);
+    const inWindow = page.page.filter((r) => {
       const sd = r.start_date ?? null;
       const ed = r.end_date ?? null;
       if (!sd || !ed) return false;
@@ -44,6 +45,8 @@ export const listActiveReservations = internalQuery({
         photos_urls: r.photos_urls ?? null,
         image_hints: (r as any).image_hints ?? null,
       })),
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
     };
   },
 });
