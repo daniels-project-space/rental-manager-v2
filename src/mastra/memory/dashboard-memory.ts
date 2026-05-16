@@ -39,6 +39,17 @@ import { LibSQLStore } from "@mastra/libsql";
  * ── Why lastMessages = 8 ───────────────────────────────────────
  * Mild upgrade from the legacy `limit:6`. Agent routes via tools for
  * factual lookups, so we keep history small to limit prompt growth.
+ *
+ * ── M14: tenant isolation (thread namespacing) ─────────────────
+ * The LibSQL storage adapter scopes messages by `threadId` ALONE — the
+ * passed `resourceId` is an optional filter on query, not part of the
+ * primary key. Two accounts sending requests with the default
+ * `thread_id="dashboard"` would otherwise share the same Memory rows.
+ * Callers (see src/app/api/chat/route.ts) therefore namespace their
+ * Memory threadId as `${accountSlug}:${rawThreadId}` before any
+ * Memory call, while keeping the raw `thread_id` for Convex/UI and
+ * rate-limit buckets. No code change needed here; the rule is
+ * encoded at the call sites.
  */
 
 // File-backed in prod (Vercel/Node containers have a writable /tmp). In test

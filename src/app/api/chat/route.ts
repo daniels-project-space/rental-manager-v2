@@ -141,6 +141,13 @@ export async function POST(req: Request) {
   const message = (body.message ?? "").trim();
   const thread_id = body.thread_id ?? "dashboard";
   const accountSlug = (body.accountSlug ?? "default").trim() || "default";
+  // M14 fix: Mastra Memory + LibSQL adapter scopes messages by threadId only
+  // by default (resourceId is an optional filter, not a composite PK). With
+  // the default thread_id="dashboard", two account tenants would otherwise
+  // share the same thread row. Namespace the Memory thread by accountSlug so
+  // history retrieval is strictly per-tenant. The raw `thread_id` is still
+  // used for Convex (UI source of truth) and rate-limit buckets.
+  const memoryThreadId = `${accountSlug}:${thread_id}`;
 
   if (!message) {
     return NextResponse.json({ error: "message required" }, { status: 400 });
@@ -205,7 +212,9 @@ export async function POST(req: Request) {
     thread_id,
     limit: 20,
   });
-  await seedMemoryFromConvex(thread_id, accountSlug, history);
+  // M14: seed Memory under the namespaced threadId; Convex history is keyed
+  // by raw thread_id, but Memory storage is keyed by `${accountSlug}:${thread_id}`.
+  await seedMemoryFromConvex(memoryThreadId, accountSlug, history);
 
   // 3. Build the slim live-context bundle and the per-turn HydrationLayer.
   //    The 7-scan getContextBundle is gone; per the audit substitution
@@ -267,8 +276,11 @@ export async function POST(req: Request) {
     memory: {
       // `thread` scopes Memory to this conversation. `resource` scopes by
       // tenant (account) so multi-account workers don't bleed history
-      // across operators.
-      thread: thread_id,
+      // across operators. M14: use the accountSlug-namespaced threadId
+      // because LibSQL stores messages keyed by threadId alone (resourceId
+      // is an optional filter), so two tenants on the default
+      // thread_id="dashboard" would otherwise share rows.
+      thread: memoryThreadId,
       resource: accountSlug,
     },
   };

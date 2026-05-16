@@ -3,7 +3,7 @@
 /**
  * Phase 3c / Wave 3b — 4-tier vision-elimination pipeline.
  *
- *   Tier 1: pHash exact-ish match (Hamming distance < 8)         → free
+ *   Tier 1: pHash exact-ish match (Hamming distance < 5, conf ≥ 0.9) → free
  *   Tier 2: vectorIndex cosine > 0.85 over item_embeddings        → Gemini embed only
  *   Tier 3: Gemini Flash multimodal extraction + fuzzy match      → free tier 1500/day
  *   Tier 4: Grok Vision (legacy, last resort)                     → paid, LOGGED
@@ -27,7 +27,12 @@ import type { Doc, Id } from "./_generated/dataModel";
 
 const EMBEDDING_MODEL = "text-embedding-004";
 const EMBEDDING_DIMENSIONS = 768;
-const PHASH_HAMMING_THRESHOLD = 8;        // Tier 1 cutoff
+// M9 fix: Hamming<5 (was 8) — tighter to cut false-positives on solid-bg photos.
+// Tier 2 vectorIndex catches anything we miss between 5 and 8 bits of drift.
+const PHASH_HAMMING_THRESHOLD = 5;        // Tier 1 cutoff
+// Confidence floor — sub-0.9 pHash hits fall through to Tier 2 even if Hamming<5.
+// Trades a small extra embedding call for far fewer wrong-item resolutions.
+const PHASH_CONFIDENCE_FLOOR = 0.9;
 const VECTOR_SIM_THRESHOLD = 0.85;        // Tier 2 cutoff
 const GEMINI_FLASH_MODEL = "gemini-1.5-flash";
 
@@ -393,7 +398,9 @@ export const resolveItemFromImage = internalAction({
       internal.resolve_item_from_image.findByExactPhash,
       { phash },
     );
-    if (exact) {
+    // M9: even exact-phash hits must clear the confidence floor; otherwise
+    // fall through so Tier 2 can re-confirm (cheap embedding call).
+    if (exact && exact.confidence >= PHASH_CONFIDENCE_FLOOR) {
       await ctx.runMutation(internal.resolve_item_from_image.touchPhashRow, { id: exact._id });
       return {
         item_id: exact.canonical_item_id,
@@ -413,7 +420,9 @@ export const resolveItemFromImage = internalAction({
         bestNear = { row, dist: d };
       }
     }
-    if (bestNear) {
+    // M9: only short-circuit at Tier 1 if cached confidence is high enough.
+    // Lower-confidence near-matches drop through to Tier 2 (vectorIndex).
+    if (bestNear && bestNear.row.confidence >= PHASH_CONFIDENCE_FLOOR) {
       await ctx.runMutation(internal.resolve_item_from_image.touchPhashRow, { id: bestNear.row._id });
       // Writeback: store the new URL under its own pHash so next exact lookup hits.
       await ctx.runMutation(internal.resolve_item_from_image.upsertPhashCache, {
