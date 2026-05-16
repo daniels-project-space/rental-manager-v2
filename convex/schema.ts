@@ -665,6 +665,10 @@ export default defineSchema({
       count: v.number(),
     })),
     summary: v.string(),                  // pre-rendered narrative
+    // W2a — incremental rebuild cursor. Records the ISO date used as the
+    // 90-day window cutoff at last rebuild. If today's cutoff differs, the
+    // window has shifted and a full rebuild is required.
+    cutoffISO: v.optional(v.string()),
   }).index("by_account", ["account"]),
 
   top_earners_30d: defineTable({
@@ -677,6 +681,10 @@ export default defineSchema({
       rentalCount: v.number(),
       utilizationPct: v.number(),
     })),
+    // W2a — incremental rebuild cursor. Records the ISO date used as the
+    // 30-day window cutoff at last rebuild. If today's cutoff differs the
+    // window has shifted and a full rebuild is required.
+    cutoffISO: v.optional(v.string()),
   }).index("by_account", ["account"]),
 
   purchase_signals: defineTable({
