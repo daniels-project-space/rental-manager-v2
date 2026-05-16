@@ -26,6 +26,7 @@ import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { generateObject } from "ai";
+import { createHash } from "crypto";
 import {
   getXai,
   RESOLUTION_SCHEMA,
@@ -34,8 +35,20 @@ import {
   buildUserMessage,
 } from "./item_resolver";
 import { primaryBrand, brandMismatch } from "./listing_cache";
+import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
 
 const CONFIDENCE_THRESHOLD = 0.7;
+
+/** Lowercase, strip non-alphanumerics — cache key for B1 denial_resolutions. */
+function normaliseItemName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "").trim();
+}
+
+/** sha1 of sorted active item_ids — invalidates cache when inventory changes. */
+function inventoryFingerprint(inventory: Array<{ _id: string }>): string {
+  const ids = inventory.map((i) => i._id).sort();
+  return createHash("sha1").update(ids.join("|")).digest("hex");
+}
 
 /** Resolve a single denial row's item_name → items._id via the existing LLM
  *  resolver. Writes the FK on the row, or marks it as resolved-but-unmatched
@@ -59,12 +72,36 @@ export const resolveItemFor = internalAction({
       return { ok: false, matched: false, reason: "empty inventory" };
     }
 
+    // B1: cache lookup (account_slug, item_name_normalised) gated by
+    //     inventory_fingerprint so inventory churn invalidates automatically.
+    const accountSlug = (row as { account_id?: unknown; account_slug?: string }).account_slug
+      ?? (await ctx.runQuery(internal.denial_resolutions.accountSlugForRow, { id })) ?? "";
+    const fingerprint = inventoryFingerprint(inventory);
+    const normName = normaliseItemName(itemName);
+    if (accountSlug && normName) {
+      const cached = await ctx.runQuery(internal.denial_resolutions.lookup, {
+        account_slug: accountSlug,
+        item_name_normalised: normName,
+        inventory_fingerprint: fingerprint,
+      });
+      if (cached) {
+        await ctx.runMutation(internal.denial_records.patchItemId, {
+          id,
+          item_id: (cached.resolved_item_id ?? undefined) as never,
+          confidence: cached.resolution_confidence,
+        });
+        await ctx.runMutation(internal.denial_resolutions.bumpHit, { _id: cached._id });
+        console.log("[denial-resolver] cache hit", id, "→", cached.resolved_item_id ?? "(unmatched)");
+        return { ok: true, matched: !!cached.resolved_item_id, confidence: cached.resolution_confidence, reason: "cache" };
+      }
+    }
+
     let bestId: string | undefined;
     let bestConfidence = 0;
     let bestName: string | undefined;
     try {
       const result = await generateObject({
-        model: (await getXai())("grok-4.3"),
+        model: (await getXai())(GROK_NARROW_MODEL),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
@@ -98,6 +135,18 @@ export const resolveItemFor = internalAction({
       item_id: bestId as never,
       confidence: bestConfidence > 0 ? bestConfidence : undefined,
     });
+
+    // B1: write through to the resolutions cache so the next denial of the
+    //     same product (with the same active inventory) skips the LLM.
+    if (accountSlug && normName) {
+      await ctx.runMutation(internal.denial_resolutions.upsert, {
+        account_slug: accountSlug,
+        item_name_normalised: normName,
+        inventory_fingerprint: fingerprint,
+        resolved_item_id: (bestId as never) ?? undefined,
+        resolution_confidence: bestConfidence > 0 ? bestConfidence : undefined,
+      });
+    }
     if (bestId) {
       console.log("[denial-resolver] resolved", id, "→", bestName, "(conf", bestConfidence.toFixed(2) + ")");
     } else {

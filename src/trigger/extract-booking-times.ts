@@ -15,6 +15,7 @@ import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { generateText } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
+import { GROK_NARROW_MODEL } from "../lib/ai-models";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
@@ -254,7 +255,7 @@ export const extractBookingTimesTask = schedules.task({
       let extracted: ExtractedTimes;
       try {
         const result = await generateText({
-          model: (await getXai())("grok-4.3"),
+          model: (await getXai())(GROK_NARROW_MODEL),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
         });
         extracted = parseResponse(result.text);

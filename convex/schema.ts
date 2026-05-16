@@ -1013,4 +1013,21 @@ export default defineSchema({
   }).index("by_product", ["product_id"])
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_slug", ["slug"]),
+
+  // ── Phase 16.1 B1: denial_resolver result cache ──────────────────────────
+  // Mirror of listing_resolutions for denial_records.item_name -> items._id.
+  // Skips the LLM when the same product name + same active-inventory set is
+  // seen again. Invalidated automatically when inventory_fingerprint changes
+  // (inventory add/remove).
+  denial_resolutions: defineTable({
+    account_slug: v.string(),
+    item_name_normalised: v.string(),   // lower-case, alphanum-only
+    inventory_fingerprint: v.string(),  // sha1 of sorted active item_ids
+    resolved_item_id: v.optional(v.id("items")),
+    resolution_confidence: v.optional(v.number()),
+    hit_count: v.number(),
+    created_at: v.number(),
+    last_used_at: v.number(),
+  }).index("by_account_normname", ["account_slug", "item_name_normalised"])
+    .index("by_fingerprint", ["inventory_fingerprint"]),
 });

@@ -29,6 +29,7 @@ import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
+import { GROK_NARROW_MODEL } from "../lib/ai-models";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
@@ -176,7 +177,7 @@ export const canonicalizeDenialsTask = schedules.task({
     let result: { object: { results: Array<{ index: number; canonical_product: string; brand: string; kind: string }> } };
     try {
       result = await generateObject({
-        model: (await getXai())("grok-4.3"),
+        model: (await getXai())(GROK_NARROW_MODEL),
         schema: BATCH_SCHEMA,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },

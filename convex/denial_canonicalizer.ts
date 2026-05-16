@@ -24,6 +24,7 @@ import { api, internal } from "./_generated/api";
 import { generateObject } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
+import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -115,7 +116,7 @@ export const canonicalizeDenialBatch = internalAction({
     let result: { object: { results: Array<{ index: number; canonical_product: string; brand: string; kind: string }> } };
     try {
       result = await generateObject({
-        model: (await getXai())("grok-4.3"),
+        model: (await getXai())(GROK_NARROW_MODEL),
         schema: BATCH_SCHEMA,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },

@@ -16,6 +16,17 @@
 export const GROK_CHAT_MODEL: string =
   process.env.GROK_CHAT_MODEL ?? "grok-4.3";
 
+/**
+ * GROK_NARROW_MODEL is consumed by classification / canonicalisation tasks
+ * where the LLM is picking from a narrow enum or returning a structured
+ * tag (denial resolution, denial canonicalisation, booking-time extraction).
+ * Defaults to GROK_CHAT_MODEL so behaviour is unchanged. Daniel can flip
+ * to a cheaper tier (e.g. "grok-3-mini" or "grok-4-fast-non-reasoning")
+ * via the GROK_NARROW_MODEL env var after running an A/B sanity check.
+ */
+export const GROK_NARROW_MODEL: string =
+  process.env.GROK_NARROW_MODEL ?? GROK_CHAT_MODEL;
+
 /** Vision / browser-use UI automation (Wave 4.6). */
 export const GROK_VISION_MODEL: string =
   process.env.GROK_VISION_MODEL ?? process.env.XAI_VISION_MODEL ?? "grok-4.3";

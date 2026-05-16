@@ -27,6 +27,7 @@ import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { createXai } from "@ai-sdk/xai";
 import { generateText } from "ai";
+import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -218,7 +219,7 @@ export const extractForReservation = action({
     let response: { text: string };
     try {
       response = await generateText({
-        model: (await getXai())("grok-4.3"),
+        model: (await getXai())(GROK_NARROW_MODEL),
         prompt,
         maxOutputTokens: 300,
       });
