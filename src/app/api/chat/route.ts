@@ -161,9 +161,14 @@ export async function POST(req: Request) {
     content: m.content,
   }));
 
+  // Wire client-disconnect → upstream Grok cancel. `req.signal` fires when the
+  // browser closes the EventSource; passing it as `abortSignal` lets Mastra
+  // propagate cancellation into the AI SDK / xAI HTTP call so we stop paying
+  // for tokens nobody is reading. Saves ~$5/mo on abandoned streams.
   const streamOpts: StreamOpts = {
     instructions: composedInstructions,
     requestContext,
+    abortSignal: req.signal,
   };
 
   // 4. Stream with error handling
@@ -179,9 +184,29 @@ export async function POST(req: Request) {
     async start(controller) {
       let result: Awaited<ReturnType<typeof agent.stream>>;
 
+      // If the client has already disconnected by the time we get here, bail.
+      if (req.signal.aborted) {
+        try { controller.close(); } catch { /* noop */ }
+        return;
+      }
+
+      // Close the SSE response stream gracefully on client disconnect so the
+      // ReadableStream doesn't hang waiting on a reader that's gone.
+      const onAbort = () => {
+        try { controller.close(); } catch { /* already closed */ }
+      };
+      req.signal.addEventListener("abort", onAbort, { once: true });
+
       try {
         result = await agent.stream(messages, streamOpts);
       } catch (initErr) {
+        req.signal.removeEventListener("abort", onAbort);
+        // AbortError on init = client gave up before stream opened; not an
+        // error worth surfacing or persisting.
+        if (req.signal.aborted) {
+          try { controller.close(); } catch { /* noop */ }
+          return;
+        }
         const errMsg = errorMessage(initErr);
         console.error("[chat] agent stream init failed:", initErr);
         controller.enqueue(
@@ -198,6 +223,7 @@ export async function POST(req: Request) {
       const reader = result.textStream.getReader();
       try {
         while (true) {
+          if (req.signal.aborted) break;
           const { done, value } = await reader.read();
           if (done) break;
           fullText += value;
@@ -205,6 +231,19 @@ export async function POST(req: Request) {
             encoder.encode(`data: ${JSON.stringify({ text: value })}\n\n`)
           );
         }
+        // On client abort, skip the [DONE] sentinel + persistence — the
+        // reader is already gone and we don't want to write a truncated
+        // assistant message.
+        if (req.signal.aborted) {
+          req.signal.removeEventListener("abort", onAbort);
+          try { controller.close(); } catch { /* already closed */ }
+          console.log("[chat] client disconnected, upstream aborted", {
+            thread_id,
+            partial_chars: fullText.length,
+          });
+          return;
+        }
+
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
 
@@ -250,6 +289,16 @@ export async function POST(req: Request) {
             console.error("[chat] persist assistant msg failed:", e)
           );
       } catch (streamErr) {
+        // Client-disconnect mid-stream surfaces here as an AbortError — that
+        // is the success path for cancellation, not a stream error.
+        if (req.signal.aborted) {
+          try { controller.close(); } catch { /* already closed */ }
+          console.log("[chat] client disconnected mid-stream", {
+            thread_id,
+            partial_chars: fullText.length,
+          });
+          return;
+        }
         const errMsg = classifyError(streamErr);
         console.error("[chat] stream read error:", streamErr);
         controller.enqueue(
@@ -260,6 +309,8 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         try { controller.close(); } catch { /* already closed */ }
         await persistError(convex, thread_id, errMsg);
+      } finally {
+        req.signal.removeEventListener("abort", onAbort);
       }
     },
   });
