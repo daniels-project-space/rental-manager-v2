@@ -919,7 +919,7 @@ export const queryChat = createTool({
 export const queryAlerts = createTool({
   id: "query_alerts",
   description:
-    "Composite alert feed for the operator: daily briefing (MV), pending shadow actions awaiting approval, and any open model-upgrade advisories." +
+    "Fetch the daily ops briefing: today's earnings, pending requests, overdue returns, pending shadow actions, and model upgrade advisories. Call this when the user asks about: 'briefing', 'pending', 'today', 'what should I look at', 'overdue', 'shadow actions', 'model upgrades', or any time they want a status snapshot. Returns a compact summary with freshness metadata." +
     CACHE_NOTE,
   inputSchema: z.object({
     account: z.enum(["dbcinema", "leo"]).optional(),
