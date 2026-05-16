@@ -1061,4 +1061,25 @@ export default defineSchema({
     last_used_at: v.number(),
   }).index("by_account_normname", ["account_slug", "item_name_normalised"])
     .index("by_fingerprint", ["inventory_fingerprint"]),
+
+  // ── W3a (Wave 3, Phase 3c) — Item embeddings for vector search ─────────
+  // 768-dim Gemini text-embedding-004 / image embeddings. Powers the
+  // vision-elimination pipeline (W3b) and future catalog semantic search.
+  // ADDITIVE: schema-only consumer here. Populated via internal action
+  // (manual invoke). See convex/item_embeddings.ts.
+  item_embeddings: defineTable({
+    item_id: v.id("items"),
+    embedding: v.array(v.float64()),   // 768-dim from Gemini
+    embedding_model: v.string(),       // for migration tracking
+    source_kind: v.union(v.literal("name"), v.literal("description"), v.literal("image")),
+    source_ref: v.optional(v.string()), // R2 key or item field name
+    generated_at: v.number(),
+  })
+    .index("by_item_id", ["item_id"])
+    .index("by_item_and_kind", ["item_id", "source_kind"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 768,
+      filterFields: ["item_id", "source_kind"],
+    }),
 });

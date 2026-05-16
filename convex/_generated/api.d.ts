@@ -45,6 +45,7 @@ import type * as hygglo_poll_trigger from "../hygglo_poll_trigger.js";
 import type * as hygglo_ui from "../hygglo_ui.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as intel from "../intel.js";
+import type * as item_embeddings from "../item_embeddings.js";
 import type * as item_resolver from "../item_resolver.js";
 import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
@@ -137,6 +138,7 @@ declare const fullApi: ApiFromModules<{
   hygglo_ui: typeof hygglo_ui;
   insurance_claims: typeof insurance_claims;
   intel: typeof intel;
+  item_embeddings: typeof item_embeddings;
   item_resolver: typeof item_resolver;
   item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;
