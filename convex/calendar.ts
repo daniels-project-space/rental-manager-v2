@@ -126,12 +126,15 @@ export const getCalendarStrip = query({
     // Also include reservations that started before the range but end inside / after it.
     // V1 parity: a rental shows on every day between pickup and return ("away" days).
     {
-      const allRes = await ctx.db.query("reservations").collect();
+      // W1a: indexed scan — only reservations whose start_date is BEFORE the
+      // window. Residual end_date>=startDate filter retained (not in index).
+      const allRes = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.lt("start_date", startDate))
+        .collect();
       for (const r of allRes) {
         if (
-          r.start_date !== undefined &&
           r.end_date !== undefined &&
-          r.start_date < startDate &&
           r.end_date >= startDate
         ) {
           if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
