@@ -1,3 +1,11 @@
+// DEPRECATED 2026-05-16 — entire file.
+// `canonicalizeDenialBatch` is the only export and has zero active
+// callers; the scheduled pipeline now runs in
+// src/trigger/canonicalize-denials.ts (Trigger.dev). The Convex queries
+// it depends on live in denial_canonicalizer_queries.ts and are still
+// used by the Trigger task. Don't delete yet — keep one release cycle
+// for rollback safety, then remove.
+
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Denial title canonicalizer.

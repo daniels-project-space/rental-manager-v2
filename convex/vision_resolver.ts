@@ -1,3 +1,9 @@
+// DEPRECATED 2026-05-16 — `augmentBatch` only.
+// The scheduled batch sweep was lifted to Trigger.dev
+// (src/trigger/vision-resolve.ts). `augmentWithVision` (per-reservation
+// action) is still live and called from the item_resolver write-through
+// path. Don't delete the file; just the unused `augmentBatch` export.
+
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Vision-augmented item resolver.

@@ -6,7 +6,7 @@
  * Grok call. Convex bills action runtime; lifting the LLM call to
  * Trigger.dev's free-tier compute is materially cheaper.
  *
- * Cadence: every 30 min. Picks 20 uncanonicalised denials per run,
+ * Cadence: daily 04:30 UTC. Picks 20 uncanonicalised denials per run,
  * extracts clean Brand+Model via Grok, writes back via Convex mutation.
  * Naturally idles once the pool is drained (listUnresolvedDenials
  * returns []).
@@ -156,7 +156,7 @@ async function setCanonical(args: {
 
 export const canonicalizeDenialsTask = schedules.task({
   id: "canonicalize-denials",
-  cron: "*/30 * * * *", // every 30 min
+  cron: "30 4 * * *", // daily 04:30 UTC
   // One Grok call per run — bounded LLM cost.
   maxDuration: 120,
   run: async (_payload, { ctx }) => {

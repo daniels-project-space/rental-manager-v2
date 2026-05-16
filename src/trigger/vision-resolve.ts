@@ -5,7 +5,8 @@
  * (~8-15s per call, 5 calls per batch). Lifting to Trigger.dev removes
  * those seconds from Convex's action runtime billing.
  *
- * Cadence: hourly (matches the post-Tier-1 Convex cron cadence).
+ * Cadence: daily 04:45 UTC (Phase 18.1 reduction — vision Grok is the
+ * most expensive call in the pipeline; daily sweep is sufficient).
  *
  * SAFETY: When this task is enabled, REMOVE the matching Convex cron
  * (`vision_resolver augment` in convex/crons.ts) to avoid double-LLM.
@@ -190,7 +191,7 @@ const KIT_RE =
 
 export const visionResolveTask = schedules.task({
   id: "vision-resolve",
-  cron: "0 * * * *", // hourly
+  cron: "45 4 * * *", // daily 04:45 UTC
   maxDuration: 300,
   run: async (_payload, { ctx }) => {
     if (isWithinUkQuietHours()) {

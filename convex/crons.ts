@@ -3,15 +3,17 @@
  *
  * Refresh intervals tuned per MV staleness tolerance:
  *
- *   daily_briefing      15 min   tolerated stale window per chat-UX testing.
- *   top_earners_30d     60 min   30-day window barely changes hourly.
- *   purchase_signals   120 min   denial aggregation, slow-moving.
- *   churn_risk         360 min   renter behaviour shifts over weeks.
- *   utilization_today   60 min   widget reads MV; refresh as bookings flow.
- *   upcoming_returns    30 min   refreshes after every poll cycle.
+ *   daily_briefing       15 min   tolerated stale window per chat-UX testing.
+ *   top_earners_30d     360 min   30-day window — 6h staleness tolerated.
+ *   purchase_signals  daily 04:00 UTC   denial aggregation, slow-moving.
+ *   churn_risk        daily 04:15 UTC   renter behaviour shifts over weeks.
+ *   utilization_today    60 min   widget reads MV; refresh as bookings flow.
+ *   upcoming_returns     30 min   refreshes after every poll cycle.
  *
- * Cost: cron cadences widened ~3x on 2026-05-15 to cut Convex bandwidth
- * (was ~3.5M reservations-row reads/day from crons alone).
+ * Cost: Phase 18.1 (2026-05-16) shifted slow-moving MVs to daily and
+ * widened top_earners to 6h. Previous round (2026-05-15) widened
+ * cadences ~3x to cut Convex bandwidth (was ~3.5M reservations-row
+ * reads/day from crons alone).
  *
  * All MV refreshers run as `internalMutation` (no external network calls,
  * so action wrappers are unnecessary for crons — direct mutation is faster).
@@ -33,21 +35,21 @@ crons.interval(
 
 crons.interval(
   "top_earners_30d refresh",
-  { minutes: 60 },
+  { minutes: 360 },
   internal.mv.top_earners.refresh,
   {},
 );
 
-crons.interval(
+crons.daily(
   "purchase_signals refresh",
-  { minutes: 120 },
+  { hourUTC: 4, minuteUTC: 0 },
   internal.mv.purchase_signals.refresh,
   {},
 );
 
-crons.interval(
+crons.daily(
   "churn_risk_renters refresh",
-  { minutes: 360 },
+  { hourUTC: 4, minuteUTC: 15 },
   internal.mv.churn_risk.refresh,
   {},
 );
@@ -95,60 +97,11 @@ crons.interval(
 );
 
 
-// ── Item resolver — LIFTED TO TRIGGER.DEV ──────────────────────
-// Now lives at src/trigger/resolve-items.ts :: resolveItemsTask.
-// Convex action runtime was billed for every Grok call (3-8s × 15
-// resolutions per batch × 96 runs/day = ~2-3 hrs/day of action time).
-// Trigger.dev free-tier compute is materially cheaper for long LLM jobs.
-// To re-enable here, uncomment the block below AND disable the
-// Trigger schedule. They share the same input_hash idempotency, so
-// running both is wasteful (double-LLM) but not corrupting.
-/*
-crons.interval(
-  "item_resolver batch",
-  { minutes: 15 },
-  internal.item_resolver.resolveBatch,
-  { limit: 15 },
-);
-*/
-
-// ── Notes-only backfill — LIFTED TO TRIGGER.DEV ───────────────
-// Now lives at src/trigger/resolve-items.ts :: resolveItemsNotesBackfillTask.
-/*
-crons.interval(
-  "item_resolver notes backfill",
-  { minutes: 60 },
-  internal.item_resolver.resolveBatch,
-  { limit: 10, include_notes_only: true },
-);
-*/
-
-
-// ── Booking-time extractor — LIFTED TO TRIGGER.DEV ────────────
-// Now lives at src/trigger/extract-booking-times.ts :: extractBookingTimesTask.
-/*
-crons.interval(
-  "booking_time_extractor batch",
-  { minutes: 30 },
-  internal.extract_booking_times.extractBatch,
-  { limit: 10 },
-);
-*/
-
-
-// ── Vision resolver — LIFTED TO TRIGGER.DEV ───────────────────
-// Now lives at src/trigger/vision-resolve.ts :: visionResolveTask.
-// Vision Grok holds Convex actions open ~8-15s × 5 calls = up to 75s
-// of action time per cycle. Trigger.dev free-tier compute avoids that.
-/*
-crons.interval(
-  "vision_resolver augment",
-  { minutes: 60 },
-  internal.vision_resolver.augmentBatch,
-  { limit: 5 },
-);
-*/
-
+// ── Item resolver, notes-only backfill, booking-time extractor, vision
+// resolver: all LIFTED TO TRIGGER.DEV. See src/trigger/{resolve-items,
+// extract-booking-times,vision-resolve}.ts. Convex action runtime was
+// billed for every Grok call; Trigger.dev free-tier compute is cheaper
+// for long LLM jobs.
 
 // ── Account profile-image sync — weekly. Re-scrapes each account's
 // Hygglo profile photo from a sample order detail. Right now we
@@ -162,11 +115,11 @@ crons.weekly(
 
 // ── Phase 10.7 — Demand-Loss Classifier sweep.
 // Picks up newly-obsolete rows from the Hygglo poller and assigns
-// demand_loss_class within an hour. Idempotent; small batch keeps
-// per-cycle cost flat. See convex/demand_loss.ts.
-crons.interval(
+// demand_loss_class. Idempotent; daily cadence sufficient since
+// obsolete reservations are slow-moving. See convex/demand_loss.ts.
+crons.daily(
   "classify-obsolete-demand-loss",
-  { hours: 1 },
+  { hourUTC: 4, minuteUTC: 30 },
   internal.demand_loss.classifyObsoleteReservations,
   { limit: 100 },
 );

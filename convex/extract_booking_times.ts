@@ -1,3 +1,9 @@
+// DEPRECATED 2026-05-16 — `extractBatch` only.
+// The scheduled batch sweep was lifted to Trigger.dev
+// (src/trigger/extract-booking-times.ts). `extractForReservation` is
+// still live — called from convex/hygglo.ts poll path. Don't delete the
+// file; just the unused `extractBatch` export.
+
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Booking time extractor — pickup/return time + date + method.
