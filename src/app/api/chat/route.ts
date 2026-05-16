@@ -3,9 +3,15 @@ import { ConvexHttpClient } from "convex/browser";
 import { RequestContext } from "@mastra/core/request-context";
 import { api } from "../../../../convex/_generated/api";
 import {
-  getDashboardChatAgent,
+  getDashboardChatAgentBundle,
+  GROK_FAST_MODEL,
   SYSTEM_PROMPT_BASE,
 } from "../../../mastra/agents/dashboard-chat";
+import {
+  classifyIntent,
+  type ChatIntent,
+  type IntentHistoryEntry,
+} from "../../../mastra/agents/classify-intent";
 import { createHydrationLayer } from "../../../mastra/lib/hydration";
 import { GROK_CHAT_MODEL } from "../../../lib/ai-models";
 import type { AgentExecutionOptionsBase } from "@mastra/core/agent";
@@ -175,10 +181,29 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder();
   let fullText = "";
 
-  // Per-thread agent: bound to an xAI client with `x-grok-conv-id: <thread_id>`
-  // so xAI prompt caching (75-90% off cached input tokens) kicks in for
-  // consecutive turns on the same conversation. See dashboard-chat.ts.
-  const agent = getDashboardChatAgent(thread_id);
+  // Per-thread agent bundle: bound to an xAI client with
+  // `x-grok-conv-id: <thread_id>` so xAI prompt caching (75-90% off cached
+  // input tokens) kicks in for consecutive turns on the same conversation.
+  // Bundle contains `full` (grok-4.3) and `fast` (grok-4-fast) agents that
+  // share the same client (and thus the same prompt cache).
+  //
+  // Phase 3b W3: rule-based classifier picks the tier. Defaults to FULL on
+  // uncertainty so we never silently downgrade a hard turn.
+  const agentBundle = getDashboardChatAgentBundle(thread_id);
+  const intentHistory: IntentHistoryEntry[] = history.map((m) => ({
+    role: m.role as "user" | "assistant" | "system",
+    content: m.content,
+    metadata: (m as { metadata?: string | null }).metadata ?? null,
+  }));
+  const intent: ChatIntent = classifyIntent(message, intentHistory);
+  const useFast = intent === "simple_read";
+  const agent = useFast ? agentBundle.fast : agentBundle.full;
+  const routedModel = useFast ? GROK_FAST_MODEL : GROK_CHAT_MODEL;
+  console.log("[chat] intent routing", {
+    thread_id,
+    intent,
+    routed_model: routedModel,
+  });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -258,7 +283,9 @@ export async function POST(req: Request) {
           const usage = await result.usage;
           const cachedTokens = usage?.cachedInputTokens ?? null;
           metadata = JSON.stringify({
-            model: GROK_CHAT_MODEL,
+            model: routedModel,
+            routed_model: routedModel,
+            intent,
             input_tokens: usage?.inputTokens ?? null,
             output_tokens: usage?.outputTokens ?? null,
             cached_tokens: cachedTokens,
@@ -266,6 +293,8 @@ export async function POST(req: Request) {
           });
           console.log("[chat] token usage:", {
             thread_id,
+            intent,
+            routed_model: routedModel,
             input_tokens: usage?.inputTokens ?? null,
             output_tokens: usage?.outputTokens ?? null,
             cached_tokens: cachedTokens,
@@ -273,7 +302,9 @@ export async function POST(req: Request) {
           });
         } catch {
           metadata = JSON.stringify({
-            model: GROK_CHAT_MODEL,
+            model: routedModel,
+            routed_model: routedModel,
+            intent,
             latency_ms: latencyMs,
           });
         }

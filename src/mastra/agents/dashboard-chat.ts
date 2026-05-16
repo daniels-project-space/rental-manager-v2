@@ -7,6 +7,14 @@ import { GROK_CHAT_MODEL } from "../../lib/ai-models";
 
 const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 
+/**
+ * Cheap-tier model id for the simple-read router branch. Defaults to
+ * grok-4-fast (~10× cheaper than grok-4.3). Override via env without a
+ * code change. The "full" tier reuses GROK_CHAT_MODEL.
+ */
+export const GROK_FAST_MODEL: string =
+  process.env.GROK_FAST_MODEL ?? "grok-4-fast";
+
 // ── Prompt-caching per-thread xAI clients ─────────────────────────
 // xAI's prompt caching (auto prefix matching, 75-90% off cached input
 // tokens) opts in via the `x-grok-conv-id` header set to a stable per-
@@ -14,9 +22,15 @@ const xai = createXai({ apiKey: process.env.XAI_API_KEY ?? "" });
 // and cache them in bounded module-level Maps so consecutive turns on
 // the same thread share the cache. Bounded LRU-ish eviction (insertion
 // order) keeps memory flat in long-running workers.
+//
+// Phase 3b W3: each thread gets TWO agents — `full` (grok-4.3) and
+// `fast` (grok-4-fast). They share the underlying xAI client (same
+// x-grok-conv-id header) so prompt caching still hits across both
+// tiers. Route selection happens in the chat POST handler.
 const PER_THREAD_CLIENT_CAP = 256;
+type ThreadAgentBundle = { full: Agent; fast: Agent };
 const _threadClients = new Map<string, ReturnType<typeof createXai>>();
-const _threadAgents = new Map<string, Agent>();
+const _threadAgents = new Map<string, ThreadAgentBundle>();
 
 /**
  * Returns a per-thread Mastra Agent wired to an xAI client with
@@ -29,6 +43,16 @@ const _threadAgents = new Map<string, Agent>();
  * header) differs.
  */
 export function getDashboardChatAgent(convId: string): Agent {
+  return getDashboardChatAgentBundle(convId).full;
+}
+
+/**
+ * Returns the {full, fast} bundle for a given thread. The simple-read
+ * router uses .fast (grok-4-fast); everything else (mutation, complex,
+ * unknown) uses .full (grok-4.3). Both wrap the SAME per-thread xAI
+ * client, so x-grok-conv-id prompt caching is preserved across tiers.
+ */
+export function getDashboardChatAgentBundle(convId: string): ThreadAgentBundle {
   const cached = _threadAgents.get(convId);
   if (cached) {
     // Refresh LRU position
@@ -48,15 +72,23 @@ export function getDashboardChatAgent(convId: string): Agent {
     headers: { "x-grok-conv-id": convId },
   });
   _threadClients.set(convId, client);
-  const agent = new Agent({
+  const full = new Agent({
     id: "dashboard-chat",
     name: "dashboard-chat",
     instructions: SYSTEM_PROMPT_BASE,
     model: [{ model: client(GROK_CHAT_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
     tools: routerTools,
   });
-  _threadAgents.set(convId, agent);
-  return agent;
+  const fast = new Agent({
+    id: "dashboard-chat-fast",
+    name: "dashboard-chat-fast",
+    instructions: SYSTEM_PROMPT_BASE,
+    model: [{ model: client(GROK_FAST_MODEL), maxRetries: 1, modelSettings: { maxOutputTokens: 1200 } }],
+    tools: routerTools,
+  });
+  const bundle: ThreadAgentBundle = { full, fast };
+  _threadAgents.set(convId, bundle);
+  return bundle;
 }
 
 /**
