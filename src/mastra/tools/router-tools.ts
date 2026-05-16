@@ -1,0 +1,864 @@
+/**
+ * Router tools — Wave 2.
+ *
+ * Twelve coarse-grained tools that REPLACE the historical 68-tool surface
+ * when the env flag MASTRA_ROUTER_TOOLS=on is set. Each router tool fans
+ * the call out to one or more existing implementations in
+ * `dashboard-tools.ts` (we DO NOT reimplement business logic — that lives
+ * in `src/mastra/data/*` and is unchanged).
+ *
+ * Design contract: /tmp/wfo-phase1/design_hydration_interface.md
+ * Wave 1 impl report: /tmp/wfo-phase1/implement_hydration_layer.md
+ *
+ * Each router tool:
+ *   - Accepts the Mastra execution context, pulls a `HydrationLayer` from
+ *     `requestContext.get("hydration")` (Mastra v1 calls runtimeContext
+ *     `requestContext`). The HydrationLayer module is loaded lazily so
+ *     this file stays compilable while Wave 1 hydration is in flight;
+ *     when the layer is unavailable we degrade gracefully (no T1/T2/T3
+ *     caches, but freshness metadata still flows via the data-layer
+ *     envelopes).
+ *   - Uses a flat Zod input schema (no nested unions >500 chars).
+ *   - Wraps results in the existing `ToolEnvelope<T>` shape via `wrap()`.
+ *   - Carries a description that explicitly tells the LLM about the
+ *     `include` parameter and that results are cached within the turn.
+ *
+ * Mutation gating: `READ_ONLY_MODE` plus per-op `HYGGLO_UI_LIVE_*` flags
+ * live inside the data-layer implementations we delegate to. We do NOT
+ * relax those gates here.
+ *
+ * Hygglo date math: never touched here — preserved by every underlying
+ * data-layer function.
+ */
+import "server-only";
+import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
+import { wrap, type ToolEnvelope } from "../lib/tool-envelope";
+import * as data from "@/mastra/data";
+import { dashboardTools } from "./dashboard-tools";
+
+// ── Hydration accessor (duck-typed; resilient to layer absence) ─────────
+
+/**
+ * Minimal duck-typed view of the HydrationLayer surface this file needs.
+ * Kept structural so we are NOT tightly coupled to the hydration module's
+ * shape during Wave 2 — if the layer is unavailable we simply skip the
+ * cache-aware path and rely on the data layer's existing envelopes.
+ */
+interface HydrationDuck {
+  items: {
+    getAll: () => Promise<{ data: unknown; meta: HydrationMetaDuck }>;
+    getByIds?: (ids: string[]) => Promise<{ data: unknown; meta: HydrationMetaDuck }>;
+  };
+  pricing_catalog: { getAll: () => Promise<{ data: unknown; meta: HydrationMetaDuck }> };
+  bundles: { getAll: () => Promise<{ data: unknown; meta: HydrationMetaDuck }> };
+  bundle_items: { getAll: () => Promise<{ data: unknown; meta: HydrationMetaDuck }> };
+  renters?: {
+    getByIds?: (ids: string[]) => Promise<{ data: unknown; meta: HydrationMetaDuck }>;
+  };
+  loadSnapshot: (
+    name: "by_item" | "by_renter" | "by_month" | "totals",
+  ) => Promise<{ data: unknown; meta: HydrationMetaDuck }>;
+  invalidate?: (
+    key:
+      | "items"
+      | "pricing_catalog"
+      | "bundles"
+      | "bundle_items"
+      | "all",
+  ) => void;
+}
+
+interface HydrationMetaDuck {
+  source?: {
+    tier?: number;
+    table?: string;
+    fetchedAt?: number;
+    cached?: boolean;
+  };
+  lastSyncedAt?: number | null;
+  staleMinutes?: number | null;
+  coverageRatio?: number;
+  caveats?: string[];
+}
+
+/**
+ * Pull the per-turn HydrationLayer from Mastra's request context.
+ * Returns null when the route has not been wired through the
+ * `makeHydrationRuntimeContext()` factory — every tool below treats that
+ * as a degraded path and falls back to direct data-layer calls.
+ */
+function hydrationFromCtx(ctxArg: unknown): HydrationDuck | null {
+  const ctx = ctxArg as
+    | {
+        requestContext?: { get?: (k: string) => unknown };
+        runtimeContext?: { get?: (k: string) => unknown };
+      }
+    | undefined;
+  const bag = ctx?.requestContext ?? ctx?.runtimeContext;
+  if (!bag || typeof bag.get !== "function") return null;
+  const layer = bag.get("hydration");
+  if (!layer || typeof layer !== "object") return null;
+  return layer as HydrationDuck;
+}
+
+/**
+ * Build a sync_state-shaped object from a HydrationMetaDuck so we can
+ * reuse the existing `wrap()` contract (which keys off `syncState`).
+ */
+function syncFromMeta(meta: HydrationMetaDuck | undefined) {
+  if (!meta || typeof meta.lastSyncedAt !== "number") return null;
+  return {
+    _id: "synthetic",
+    _creationTime: 0,
+    source: meta.source?.table ?? "hydration",
+    lastRunAt: meta.lastSyncedAt,
+    lastRunSucceeded: true,
+  };
+}
+
+/** Pull primitive fields out of any envelope-like value (defensive). */
+function envFields(v: unknown): {
+  data: unknown;
+  lastSyncedAt: number | null;
+  caveats: string[];
+  coverageRatio?: number;
+} {
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const out: {
+      data: unknown;
+      lastSyncedAt: number | null;
+      caveats: string[];
+      coverageRatio?: number;
+    } = {
+      data: "data" in o ? o.data : v,
+      lastSyncedAt:
+        typeof o.lastSyncedAt === "number" || o.lastSyncedAt === null
+          ? (o.lastSyncedAt as number | null)
+          : null,
+      caveats: Array.isArray(o.caveats) ? (o.caveats as string[]) : [],
+    };
+    if (typeof o.coverageRatio === "number") out.coverageRatio = o.coverageRatio;
+    return out;
+  }
+  return { data: v, lastSyncedAt: null, caveats: [] };
+}
+
+// ── Common cache-discipline notice (appended to every tool description) ─
+
+const CACHE_NOTE =
+  " Results are cached within the turn — do NOT re-call this tool with the same arguments in the same turn; reuse the previous response.";
+
+// ── 1. query_inventory ──────────────────────────────────────────────────
+
+const includeInventory = z
+  .array(z.enum(["pricing", "bundles", "stats"]))
+  .optional()
+  .describe(
+    "Optional related graphs to co-fetch: 'pricing' adds pricing_catalog, 'bundles' adds bundles + bundle_items, 'stats' adds utilization snapshot.",
+  );
+
+export const queryInventory = createTool({
+  id: "query_inventory",
+  description:
+    "Unified inventory read. Returns the full items catalogue plus optional related graphs. " +
+    "`filter` is a case-insensitive substring on item.name; `include` controls co-fetched graphs: 'pricing' = pricing_catalog rows, 'bundles' = bundles + bundle_items, 'stats' = utilization snapshot." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    filter: z
+      .string()
+      .optional()
+      .describe("Case-insensitive substring on item.name. Omit for full catalogue."),
+    include: includeInventory,
+  }),
+  execute: async (input, ctx) => {
+    const { filter, include } = input as {
+      filter?: string;
+      include?: Array<"pricing" | "bundles" | "stats">;
+    };
+    const hydrate = hydrationFromCtx(ctx);
+    const include_ = include ?? [];
+    let items: unknown[] = [];
+    let meta: HydrationMetaDuck | undefined;
+    if (hydrate) {
+      const r = await hydrate.items.getAll();
+      items = Array.isArray(r.data) ? (r.data as unknown[]) : [];
+      meta = r.meta;
+    }
+    const filtered = filter
+      ? items.filter((r) => {
+          const o = r as Record<string, unknown>;
+          const name = typeof o.name === "string" ? o.name.toLowerCase() : "";
+          return name.includes(filter.toLowerCase());
+        })
+      : items;
+    const co: Record<string, unknown> = {};
+    if (hydrate && include_.includes("pricing")) {
+      const p = await hydrate.pricing_catalog.getAll();
+      co.pricing = p.data;
+    }
+    if (hydrate && include_.includes("bundles")) {
+      const [b, bi] = await Promise.all([
+        hydrate.bundles.getAll(),
+        hydrate.bundle_items.getAll(),
+      ]);
+      co.bundles = b.data;
+      co.bundle_items = bi.data;
+    }
+    if (include_.includes("stats")) {
+      try {
+        co.stats = await data.intelligence.getUtilizationSnapshot({});
+      } catch (err) {
+        co.stats_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return wrap({
+      data: { items: filtered, ...co },
+      source: hydrate ? "convex.items.static" : "convex.items",
+      syncState: syncFromMeta(meta),
+      extraCaveats: meta?.caveats ?? (hydrate ? [] : ["hydration layer unavailable"]),
+    });
+  },
+});
+
+// ── 2. query_orders ─────────────────────────────────────────────────────
+
+const orderInclude = z
+  .array(z.enum(["renter", "items", "denials", "vision", "booking_times"]))
+  .optional()
+  .describe(
+    "Optional co-fetched graphs: 'renter' joins renter row, 'items' joins inventory, 'denials' joins recent denial events, 'vision' joins vision AI inspections, 'booking_times' adds pickup/return timestamps.",
+  );
+
+export const queryOrders = createTool({
+  id: "query_orders",
+  description:
+    "Unified orders read. Filter by `status` ('pending'|'confirmed'|'overdue'|'obsolete'|'all') and `window` ('today'|'week'|'month'|'upcoming'). `include` controls fan-out: renter, items, denials, vision, booking_times." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    status: z.enum(["pending", "confirmed", "overdue", "obsolete", "all"]).optional(),
+    window: z.enum(["today", "week", "month", "upcoming"]).optional(),
+    account: z.enum(["dbcinema", "leo"]).optional(),
+    include: orderInclude,
+  }),
+  execute: async (input, _ctx) => {
+    const { status, window, account, include } = input as {
+      status?: "pending" | "confirmed" | "overdue" | "obsolete" | "all";
+      window?: "today" | "week" | "month" | "upcoming";
+      account?: "leo" | "dbcinema";
+      include?: Array<"renter" | "items" | "denials" | "vision" | "booking_times">;
+    };
+    const want = status ?? "pending";
+    let primary: unknown;
+    if (want === "pending") {
+      primary = await data.rentals.getPendingRentals({ account });
+    } else if (want === "overdue") {
+      primary = await data.intel.getOverdueReturns({});
+    } else if (want === "obsolete") {
+      primary = await data.rentals.getObsoleteOrders({ account });
+    } else {
+      primary = await data.rentals.getOrderPipeline({ account });
+    }
+    const pf = envFields(primary);
+    const include_ = include ?? [];
+    const co: Record<string, unknown> = {};
+    // H2: Gate every co-fetch on a non-empty primary result set. Empty
+    // → skip fan-out entirely (no point loading renters for zero orders).
+    const primaryRows: Array<Record<string, unknown>> = Array.isArray(pf.data)
+      ? (pf.data as Array<Record<string, unknown>>)
+      : pf.data && typeof pf.data === "object"
+        ? ([pf.data] as Array<Record<string, unknown>>)
+        : [];
+    const hasRows = primaryRows.length > 0;
+
+    if (include_.includes("denials") && hasRows) {
+      try {
+        co.denials = await data.demand.getTop({});
+      } catch (err) {
+        co.denials_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    // H3: renter fan-out — batch-load distinct renter ids via hydration.
+    if (include_.includes("renter") && hasRows) {
+      try {
+        const hydrate = hydrationFromCtx(_ctx);
+        const renterIds = [
+          ...new Set(
+            primaryRows
+              .map((r) => (r.renter_id ?? r.renterId) as string | undefined)
+              .filter((x): x is string => typeof x === "string" && x.length > 0),
+          ),
+        ];
+        if (renterIds.length > 0 && hydrate?.renters?.getByIds) {
+          const env = await hydrate.renters.getByIds(renterIds);
+          co.renter = env.data;
+        } else if (renterIds.length > 0) {
+          // Fallback: degrade gracefully when hydration is unavailable.
+          co.renter_ids = renterIds;
+        }
+      } catch (err) {
+        co.renter_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    // H3: items fan-out — collect distinct item_ids from resolved_items[]
+    // (set by Trigger item-resolver), batch-load via hydration.items.
+    if (include_.includes("items") && hasRows) {
+      try {
+        const hydrate = hydrationFromCtx(_ctx);
+        const itemIds = [
+          ...new Set(
+            primaryRows.flatMap((r) => {
+              const ri = r.resolved_items;
+              if (!Array.isArray(ri)) return [] as string[];
+              return ri
+                .map((it: unknown) => {
+                  if (it && typeof it === "object") {
+                    const o = it as Record<string, unknown>;
+                    return (o.item_id ?? o.itemId) as string | undefined;
+                  }
+                  return undefined;
+                })
+                .filter((x): x is string => typeof x === "string" && x.length > 0);
+            }),
+          ),
+        ];
+        if (itemIds.length > 0 && hydrate?.items?.getByIds) {
+          const env = await hydrate.items.getByIds(itemIds);
+          co.items = env.data;
+        } else if (itemIds.length > 0) {
+          co.item_ids = itemIds;
+        }
+      } catch (err) {
+        co.items_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    // H3: vision — Trigger vision-resolver already wrote per-line image_url
+    // into resolved_items[]. Trivial passthrough: pluck and normalise.
+    if (include_.includes("vision") && hasRows) {
+      try {
+        co.vision = primaryRows.map((r) => ({
+          order_id: (r._id ?? r.id ?? r.order_id) as unknown,
+          resolved_items: Array.isArray(r.resolved_items)
+            ? (r.resolved_items as unknown[]).map((it) => {
+                if (it && typeof it === "object") {
+                  const o = it as Record<string, unknown>;
+                  return {
+                    item_id: o.item_id ?? o.itemId,
+                    image_url: o.image_url ?? o.imageUrl,
+                    vision_source: o.vision_source ?? o.visionSource,
+                  };
+                }
+                return null;
+              })
+            : [],
+        }));
+      } catch (err) {
+        co.vision_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    // H3: booking_times — Trigger booking-time extractor populates
+    // extracted_pickup_time / extracted_return_time on the row. Pluck.
+    if (include_.includes("booking_times") && hasRows) {
+      try {
+        co.booking_times = primaryRows.map((r) => ({
+          order_id: (r._id ?? r.id ?? r.order_id) as unknown,
+          pickup_time: r.extracted_pickup_time ?? r.extractedPickupTime ?? null,
+          return_time: r.extracted_return_time ?? r.extractedReturnTime ?? null,
+        }));
+      } catch (err) {
+        co.booking_times_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return wrap({
+      data: { window: window ?? "week", status: want, primary: pf.data, ...co },
+      source: "convex.orders",
+      extraCaveats: pf.caveats,
+      syncState:
+        pf.lastSyncedAt !== null
+          ? {
+              _id: "synthetic",
+              _creationTime: 0,
+              source: "convex.orders",
+              lastRunAt: pf.lastSyncedAt,
+              lastRunSucceeded: true,
+            }
+          : null,
+    });
+  },
+});
+
+// ── 3. query_renter ─────────────────────────────────────────────────────
+
+export const queryRenter = createTool({
+  id: "query_renter",
+  description:
+    "Unified renter profile read. `idOrName` accepts the Hygglo renter id or display name. `include` controls graphs: 'history' = past rentals, 'denials' = denial events, 'facts' = blacklist + flags, 'reviews' = renter reviews, 'ltv' = lifetime spend." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    idOrName: z.string().describe("Hygglo renter id or display name (case-insensitive)."),
+    include: z
+      .array(z.enum(["history", "denials", "facts", "reviews", "ltv"]))
+      .optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { idOrName, include } = input as {
+      idOrName: string;
+      include?: Array<"history" | "denials" | "facts" | "reviews" | "ltv">;
+    };
+    const include_ = include ?? [];
+    const profile = await data.renters.getProfile({ name: idOrName });
+    const pf = envFields(profile);
+    const co: Record<string, unknown> = {};
+    // H2: Gate co-fetch on a non-empty primary result (profile found).
+    const primaryRows: Array<Record<string, unknown>> = Array.isArray(pf.data)
+      ? (pf.data as Array<Record<string, unknown>>)
+      : pf.data && typeof pf.data === "object"
+        ? ([pf.data] as Array<Record<string, unknown>>)
+        : [];
+    const hasRows = primaryRows.length > 0;
+    if (include_.includes("facts") && hasRows) {
+      try {
+        co.facts = await data.renters.checkBlacklist({ name: idOrName });
+      } catch (err) {
+        co.facts_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    if (include_.includes("ltv") && hasRows) {
+      try {
+        co.ltv = await data.intel.getTopSpenders({});
+      } catch (err) {
+        co.ltv_error = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return wrap({
+      data: { query: idOrName, profile: pf.data, ...co },
+      source: "convex.renters",
+      extraCaveats: pf.caveats,
+      syncState:
+        pf.lastSyncedAt !== null
+          ? {
+              _id: "synthetic",
+              _creationTime: 0,
+              source: "convex.renters",
+              lastRunAt: pf.lastSyncedAt,
+              lastRunSucceeded: true,
+            }
+          : null,
+    });
+  },
+});
+
+// ── 4. query_intel ──────────────────────────────────────────────────────
+
+export const queryIntel = createTool({
+  id: "query_intel",
+  description:
+    "Unified business-intelligence read. `metric` selects which signal to compute. `params` is a flat map forwarded to the underlying intel function — e.g. `{ months: 6 }` or `{ itemName: 'FX3' }`. Pick the smallest metric that answers the question; do not run the full set." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    metric: z.enum([
+      "roi",
+      "smart_sell",
+      "smart_buy",
+      "bundle_profit",
+      "denial_signals",
+      "churn",
+      "utilization",
+      "seasonality",
+      "yoy",
+      "demand_slope",
+      "pricing",
+    ]),
+    params: z
+      .record(z.unknown())
+      .optional()
+      .describe("Optional flat params forwarded to the intel function."),
+  }),
+  execute: async (input, _ctx) => {
+    const { metric, params } = input as {
+      metric:
+        | "roi"
+        | "smart_sell"
+        | "smart_buy"
+        | "bundle_profit"
+        | "denial_signals"
+        | "churn"
+        | "utilization"
+        | "seasonality"
+        | "yoy"
+        | "demand_slope"
+        | "pricing";
+      params?: Record<string, unknown>;
+    };
+    const p = (params ?? {}) as Record<string, unknown>;
+    switch (metric) {
+      case "roi":
+        return data.intel.getItemROIRanking(
+          p as { limit?: number; includeUnknownCost?: boolean },
+        );
+      case "smart_sell":
+        return data.intel.getSmartSellRanking(
+          p as { idleDays?: number; limit?: number },
+        );
+      case "smart_buy":
+        return data.intel.getSmartBuyRanking(
+          p as { days?: number; limit?: number },
+        );
+      case "bundle_profit":
+        return data.intel.getBundleProfitRanking(p as { days?: number });
+      case "denial_signals":
+        return data.demand.getTop({});
+      case "churn":
+        return data.intelligence.getChurnRisk(
+          p as Parameters<typeof data.intelligence.getChurnRisk>[0],
+        );
+      case "utilization":
+        return data.intelligence.getUtilizationSnapshot(
+          p as Parameters<typeof data.intelligence.getUtilizationSnapshot>[0],
+        );
+      case "seasonality": {
+        const itemName =
+          typeof p.itemName === "string" ? (p.itemName as string) : "";
+        return data.intel.getItemSeasonality({ itemName });
+      }
+      case "yoy":
+        return data.intel.getItemYoYGrowth(
+          p as { itemName?: string; limit?: number },
+        );
+      case "demand_slope":
+        return data.intel.getDemandTrendSlope(
+          p as { months?: number; limit?: number },
+        );
+      case "pricing":
+        return data.intel.getPricingSignals(
+          p as { lookbackDays?: number; limit?: number },
+        );
+      default: {
+        const never_: never = metric;
+        throw new Error(`query_intel: unknown metric "${String(never_)}"`);
+      }
+    }
+  },
+});
+
+// ── 5. query_revenue ────────────────────────────────────────────────────
+
+export const queryRevenue = createTool({
+  id: "query_revenue",
+  description:
+    "Revenue/earnings aggregation. `granularity` ∈ day|week|month, `window` is an integer day-count, `by` ∈ item|bundle|renter|total controls the breakdown. " +
+    "Prefers the R2 cold-storage snapshot (e.g. `by_item`) when available — falls through to live Convex." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    granularity: z.enum(["day", "week", "month"]),
+    window: z.number().int().positive(),
+    by: z.enum(["item", "bundle", "renter", "total"]).optional(),
+    account: z.enum(["dbcinema", "leo"]).optional(),
+  }),
+  execute: async (input, ctx) => {
+    const { granularity, window, by, account } = input as {
+      granularity: "day" | "week" | "month";
+      window: number;
+      by?: "item" | "bundle" | "renter" | "total";
+      account?: "leo" | "dbcinema";
+    };
+    const by_ = by ?? "total";
+    const hydrate = hydrationFromCtx(ctx);
+    if (hydrate) {
+      const snapshotName: "by_item" | "by_renter" | "by_month" | "totals" =
+        by_ === "item"
+          ? "by_item"
+          : by_ === "renter"
+            ? "by_renter"
+            : by_ === "bundle"
+              ? "by_month"
+              : "totals";
+      try {
+        const snap = await hydrate.loadSnapshot(snapshotName);
+        if (snap.data !== null && snap.data !== undefined) {
+          return wrap({
+            data: {
+              granularity,
+              window,
+              by: by_,
+              account,
+              breakdown: snap.data,
+            },
+            source: "r2.revenue",
+            syncState: syncFromMeta(snap.meta),
+            extraCaveats: snap.meta?.caveats ?? [],
+          });
+        }
+      } catch {
+        /* fall through to live */
+      }
+    }
+    const period: "week" | "month" | "all" =
+      window <= 7 ? "week" : window <= 31 ? "month" : "all";
+    const live = await data.revenue.getRevenueSummary({ period, account });
+    const lf = envFields(live);
+    return wrap({
+      data: { granularity, window, by: by_, account, breakdown: lf.data },
+      source: "convex.revenue",
+      extraCaveats: [...lf.caveats, "r2 snapshot unavailable — using live convex"],
+      syncState:
+        lf.lastSyncedAt !== null
+          ? {
+              _id: "synthetic",
+              _creationTime: 0,
+              source: "convex.revenue",
+              lastRunAt: lf.lastSyncedAt,
+              lastRunSucceeded: true,
+            }
+          : null,
+    });
+  },
+});
+
+// ── 6. query_calendar ───────────────────────────────────────────────────
+
+export const queryCalendar = createTool({
+  id: "query_calendar",
+  description:
+    "Calendar / schedule lookup. `window` is an integer day-count, `item_id` (an item id or display name) optionally narrows to a single item's schedule (per-day blocks with pickup_time/return_time + freeAfter/freeUntil)." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    window: z.number().int().positive(),
+    item_id: z.string().optional(),
+    account: z.enum(["dbcinema", "leo"]).optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { window, item_id, account } = input as {
+      window: number;
+      item_id?: string;
+      account?: "leo" | "dbcinema";
+    };
+    if (item_id) {
+      // catalog.getItemSchedule expects { itemName, startDate, endDate }.
+      // We synthesise an ISO window centred on today.
+      const today = new Date();
+      const start = today.toISOString().slice(0, 10);
+      const end = new Date(today.getTime() + window * 86400_000)
+        .toISOString()
+        .slice(0, 10);
+      return data.catalog.getItemSchedule({
+        itemName: item_id,
+        startDate: start,
+        endDate: end,
+      } as Parameters<typeof data.catalog.getItemSchedule>[0]);
+    }
+    return data.catalog.checkAvailability({
+      items: [],
+      days: window,
+      account,
+    } as unknown as Parameters<typeof data.catalog.checkAvailability>[0]);
+  },
+});
+
+// ── 7. query_market ─────────────────────────────────────────────────────
+
+export const queryMarket = createTool({
+  id: "query_market",
+  description:
+    "External market intelligence (UK Google via SerpAPI / xAI Grok live search, 24h cached). `term` is a free-text query; `limit` caps results; `bypassCache=true` forces a fresh fetch (costs more)." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    term: z.string(),
+    limit: z.number().int().positive().optional(),
+    bypassCache: z.boolean().optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { term, limit, bypassCache } = input as {
+      term: string;
+      limit?: number;
+      bypassCache?: boolean;
+    };
+    return data.catalog.getMarketSearch({
+      query: term,
+      limit,
+      bypassCache,
+    } as unknown as Parameters<typeof data.catalog.getMarketSearch>[0]);
+  },
+});
+
+// ── 8. query_chat ───────────────────────────────────────────────────────
+
+export const queryChat = createTool({
+  id: "query_chat",
+  description:
+    "Read a Hygglo conversation thread. `threadIdOrOrderId` accepts either the numeric thread id or a reservation keyword. `limit` caps messages returned." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    threadIdOrOrderId: z.string(),
+    limit: z.number().int().positive().optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { threadIdOrOrderId } = input as {
+      threadIdOrOrderId: string;
+      limit?: number;
+    };
+    return data.conversations.readConversation({
+      search: threadIdOrOrderId,
+    } as unknown as Parameters<typeof data.conversations.readConversation>[0]);
+  },
+});
+
+// ── 9. query_alerts ─────────────────────────────────────────────────────
+
+export const queryAlerts = createTool({
+  id: "query_alerts",
+  description:
+    "Composite alert feed for the operator: daily briefing (MV), pending shadow actions awaiting approval, and any open model-upgrade advisories." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    account: z.enum(["dbcinema", "leo"]).optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { account } = input as { account?: "leo" | "dbcinema" };
+    const [briefing, shadow, advisories] = await Promise.all([
+      Promise.resolve(data.rentals.getDailyBriefing({ account })).catch(
+        (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+      ),
+      Promise.resolve(data.uiActions.getPendingShadowActions({})).catch(
+        (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+      ),
+      Promise.resolve(data.modelUpgrades.getOpenAdvisories()).catch(
+        (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+      ),
+    ]);
+    const unwrap = (env: unknown): unknown => envFields(env).data;
+    return wrap({
+      data: {
+        daily_briefing: unwrap(briefing),
+        pending_shadow_actions: unwrap(shadow),
+        model_upgrade_advisories: unwrap(advisories),
+      },
+      source: "composite.alerts",
+      syncState: null,
+    });
+  },
+});
+
+// ── 10. query_compatibility ─────────────────────────────────────────────
+
+export const queryCompatibility = createTool({
+  id: "query_compatibility",
+  description:
+    "Detect mount/accessory conflicts and missing essentials across a list of items. `itemIds` accepts either item ids or display names — the underlying matcher is fuzzy." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    itemIds: z.array(z.string()).min(1),
+  }),
+  execute: async (input, _ctx) => {
+    const { itemIds } = input as { itemIds: string[] };
+    return data.catalog.checkCompatibility({ items: itemIds });
+  },
+});
+
+// ── 11. read_memory ─────────────────────────────────────────────────────
+
+export const readMemory = createTool({
+  id: "read_memory",
+  description:
+    "Read business memories / notes. Omit `topic` to fetch all; pass a keyword to search by topic / scope." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    topic: z.string().optional(),
+  }),
+  execute: async (input, _ctx) => {
+    const { topic } = input as { topic?: string };
+    return data.memories.searchMemories({
+      query: topic ?? "",
+    } as unknown as Parameters<typeof data.memories.searchMemories>[0]);
+  },
+});
+
+// ── 12. mutate ──────────────────────────────────────────────────────────
+
+const MUTATE_OPS = [
+  // 9 Trigger-dispatched UI actions (each gated by HYGGLO_UI_LIVE_*)
+  "accept_order_ui",
+  "decline_order_ui",
+  "add_item_to_order",
+  "remove_item_from_order",
+  "apply_order_discount",
+  "change_owner_earnings",
+  "mark_order_picked_up",
+  "mark_order_returned",
+  "leave_renter_review",
+  // 4 internal mutations
+  "set_item_acquisition_cost",
+  "record_denial",
+  "update_rule",
+  "update_memory",
+  // Send-message (gated by READ_ONLY_MODE)
+  "send_correction",
+  // Decision approval
+  "approve_decision",
+] as const;
+
+type MutateOp = (typeof MUTATE_OPS)[number];
+
+export const mutate = createTool({
+  id: "mutate",
+  description:
+    "Unified mutation dispatcher. `op` selects the operation, `args` is the flat arg-map for that op. " +
+    "UI-action ops (accept_order_ui, decline_order_ui, add_item_to_order, remove_item_from_order, apply_order_discount, change_owner_earnings, mark_order_picked_up, mark_order_returned, leave_renter_review) REQUIRE `args.accountSlug` ('leo'|'dbcinema'). " +
+    "Internal ops: set_item_acquisition_cost, record_denial, update_rule, update_memory. Gated ops: send_correction (READ_ONLY_MODE), approve_decision. " +
+    "For any destructive change always preview and confirm with the operator before invoking." +
+    CACHE_NOTE,
+  inputSchema: z.object({
+    op: z.enum(MUTATE_OPS),
+    args: z
+      .record(z.unknown())
+      .describe("Flat arg map specific to the chosen op."),
+  }),
+  execute: async (input, _ctx) => {
+    const { op, args } = input as { op: MutateOp; args: Record<string, unknown> };
+    // Delegate to the existing tool's execute() so we inherit READ_ONLY_MODE,
+    // HYGGLO_UI_LIVE_* gating, shadow-mode logic, accountSlug validation —
+    // all of it lives in the data-layer functions we forward to.
+    const tool = (dashboardTools as Record<string, unknown>)[op] as
+      | { execute?: (input: unknown, ctx?: unknown) => Promise<unknown> }
+      | undefined;
+    if (!tool || typeof tool.execute !== "function") {
+      throw new Error(`mutate: no registered handler for op "${op}"`);
+    }
+    const result = await tool.execute(args, _ctx);
+    // H1: Invalidate T1 cache for mutations that touch cached tables.
+    // set_item_acquisition_cost writes to the `items` table → bust items cache.
+    // update_rule / update_memory write to ai_rules / ai_memories (not T1 cached).
+    if (op === "set_item_acquisition_cost") {
+      const hydrate = hydrationFromCtx(_ctx);
+      if (hydrate && typeof hydrate.invalidate === "function") {
+        try {
+          hydrate.invalidate("items");
+        } catch (err) {
+          console.warn("[mutate] hydration.invalidate(items) failed:", err);
+        }
+      }
+    }
+    return result;
+  },
+});
+
+// ── Registry ────────────────────────────────────────────────────────────
+
+export const routerTools = {
+  query_inventory: queryInventory,
+  query_orders: queryOrders,
+  query_renter: queryRenter,
+  query_intel: queryIntel,
+  query_revenue: queryRevenue,
+  query_calendar: queryCalendar,
+  query_market: queryMarket,
+  query_chat: queryChat,
+  query_alerts: queryAlerts,
+  query_compatibility: queryCompatibility,
+  read_memory: readMemory,
+  mutate,
+};
+
+// Re-export the ToolEnvelope type for downstream consumers.
+export type { ToolEnvelope };

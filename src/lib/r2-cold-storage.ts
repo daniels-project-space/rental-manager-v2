@@ -24,56 +24,21 @@
  *      from R2 (cached in-memory per Vercel cold start).
  *   3. v1 rows can then be deleted from Convex (after verification).
  */
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
-
-let cachedR2: {
-  endpoint: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  bucket: string;
-  publicBase: string;
-} | null = null;
-
-async function getR2Creds() {
-  if (cachedR2) return cachedR2;
-  const vaultKey = process.env.PROJECT_HUB_VAULT_KEY ?? "";
-  const res = await fetch(`${VAULT_URL}/api/run/secrets/listByService`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${vaultKey}`,
-    },
-    body: JSON.stringify({ service: "cloudflare-r2" }),
-  });
-  if (!res.ok) throw new Error(`vault r2: ${res.status}`);
-  const data = (await res.json()) as {
-    value: Array<{ keyName: string; value: string }>;
-  };
-  const lookup = (k: string) =>
-    data.value.find((s) => s.keyName === k)?.value ?? "";
-  cachedR2 = {
-    endpoint: lookup("R2_ENDPOINT"),
-    accessKeyId: lookup("R2_ACCESS_KEY_ID"),
-    secretAccessKey: lookup("R2_SECRET_ACCESS_KEY"),
-    bucket: lookup("R2_BUCKET") || "rental-manager-v2",
-    publicBase: lookup("R2_PUBLIC_BASE") || "",
-  };
-  return cachedR2;
-}
+// Vault + S3Client logic lives in `src/mastra/lib/r2-client.ts` so this
+// helper and `src/lib/hygglo-ui-r2.ts` share one memoized client per process.
+import { getR2 } from "../mastra/lib/r2-client";
 
 async function getS3() {
-  const creds = await getR2Creds();
-  const { S3Client } = await import("@aws-sdk/client-s3");
+  const { s3, bucket, publicBase, endpoint } = await getR2();
   return {
-    creds,
-    s3: new S3Client({
-      endpoint: creds.endpoint,
-      region: "auto",
-      credentials: {
-        accessKeyId: creds.accessKeyId,
-        secretAccessKey: creds.secretAccessKey,
-      },
-    }),
+    creds: {
+      endpoint,
+      accessKeyId: "", // not exposed; readers don't need raw creds
+      secretAccessKey: "",
+      bucket,
+      publicBase,
+    },
+    s3,
   };
 }
 
