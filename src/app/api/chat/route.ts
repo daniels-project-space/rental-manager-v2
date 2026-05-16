@@ -214,7 +214,6 @@ export async function POST(req: Request) {
             output_tokens: usage?.outputTokens ?? null,
             latency_ms: latencyMs,
           });
-          console.log("[chat] token usage:", metadata);
         } catch {
           metadata = JSON.stringify({
             model: GROK_CHAT_MODEL,

@@ -335,7 +335,7 @@ export const resolveReservation = action({
           return true;
         });
         if (resolved.length !== before) {
-          console.log("[brand-gate] dropped", before - resolved.length, "item(s); primary=" + primary);
+          if (process.env.DEBUG) console.log("[brand-gate] dropped", before - resolved.length, "item(s); primary=" + primary);
         }
       }
     } catch (err) {

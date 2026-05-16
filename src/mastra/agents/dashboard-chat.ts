@@ -2,7 +2,6 @@ import "server-only";
 
 import { Agent } from "@mastra/core/agent";
 import { createXai } from "@ai-sdk/xai";
-import { dashboardTools } from "../tools/dashboard-tools";
 import { routerTools } from "../tools/router-tools";
 import { GROK_CHAT_MODEL } from "../../lib/ai-models";
 

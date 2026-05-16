@@ -98,10 +98,12 @@ export const resolveItemFor = internalAction({
       item_id: bestId as never,
       confidence: bestConfidence > 0 ? bestConfidence : undefined,
     });
-    if (bestId) {
-      console.log("[denial-resolver] resolved", id, "→", bestName, "(conf", bestConfidence.toFixed(2) + ")");
-    } else {
-      console.log("[denial-resolver] unmatched", id, "item_name=", itemName);
+    if (process.env.DEBUG) {
+      if (bestId) {
+        console.log("[denial-resolver] resolved", id, "→", bestName, "(conf", bestConfidence.toFixed(2) + ")");
+      } else {
+        console.log("[denial-resolver] unmatched", id, "item_name=", itemName);
+      }
     }
     return { ok: true, matched: !!bestId, confidence: bestConfidence > 0 ? bestConfidence : undefined };
   },
