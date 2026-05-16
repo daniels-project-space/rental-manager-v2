@@ -132,4 +132,18 @@ crons.cron(
   {},
 );
 
+// ── Phase 3a / Wave 3a — R2 cold-storage archiver (DRY-RUN DEFAULT).
+//
+// Moves `hygglo_messages` + `audit_log` rows older than 90d to R2 to free
+// Convex hot-storage. DEFAULT IS DRY-RUN. Daniel must manually invoke
+// once with `dry_run: false` via the Convex dashboard (or `npx convex run
+// archive_to_r2:archiveToR2 '{"dry_run":false}'`) to verify behaviour
+// BEFORE flipping the cron arg below.
+crons.daily(
+  "archive-to-r2-cold",
+  { hourUTC: 3, minuteUTC: 30 },
+  internal.archive_to_r2.archiveToR2,
+  { dry_run: true },
+);
+
 export default crons;
