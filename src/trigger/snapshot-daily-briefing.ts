@@ -37,7 +37,7 @@ export async function runSnapshotDailyBriefing() {
     return { ok: false as const, reason: "mv_null" as const };
   }
 
-  const payload = wrapSnapshot(briefing);
+  const payload = wrapSnapshot(briefing, "trigger");
   const rowSize = JSON.stringify(payload).length;
 
   await putAggregateIndex("daily_briefing", payload);

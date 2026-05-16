@@ -91,10 +91,21 @@ export async function putReservationSnapshot(
 
 export interface SnapshotEnvelope<T> {
   generatedAt: number;
+  /**
+   * Provenance tag identifying which writer produced this envelope.
+   * Added 2026-05-15 to support W1 safety gates (cf. phase3c-cleanup).
+   * BACKWARD-COMPAT: existing R2 blobs written before this change lack the
+   * `source` field; T3 hydration consumers must treat missing source as
+   * `undefined` (do NOT throw). Only NEW writes carry the tag.
+   */
+  source?: "convex" | "trigger";
   data: T;
 }
-export function wrapSnapshot<T>(data: T): SnapshotEnvelope<T> {
-  return { generatedAt: Date.now(), data };
+export function wrapSnapshot<T>(
+  data: T,
+  source: "convex" | "trigger" = "convex",
+): SnapshotEnvelope<T> {
+  return { generatedAt: Date.now(), source, data };
 }
 
 // ── Aggregate index key union ────────────────────────────────────────────

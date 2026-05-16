@@ -44,7 +44,7 @@ export async function runSnapshotIntelRankings() {
   }
 
   const data = { roiRanking, topEarners30d };
-  const payload = wrapSnapshot(data);
+  const payload = wrapSnapshot(data, "trigger");
   const payloadBytes = JSON.stringify(payload).length;
   const durationMs = Date.now() - startedAt;
 

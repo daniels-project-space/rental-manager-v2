@@ -171,7 +171,7 @@ export async function runSnapshotTopRenters() {
 
     // ── Write ─────────────────────────────────────────────────────────────
     const data: TopRentersData = { lookbackDays: LOOKBACK_DAYS, rows };
-    const payload = wrapSnapshot(data);
+    const payload = wrapSnapshot(data, "trigger");
     const payloadBytes = JSON.stringify(payload).length;
 
     try {

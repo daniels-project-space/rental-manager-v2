@@ -47,7 +47,7 @@ export const snapshotIntelRankings = internalAction({
     ]);
 
     const data = { roiRanking, topEarners30d };
-    const payload = wrapSnapshot(data);
+    const payload = wrapSnapshot(data, "convex");
     const payloadBytes = JSON.stringify(payload).length;
 
     await putAggregateIndex("intel_rankings", payload);
@@ -88,7 +88,7 @@ export const snapshotDailyBriefing = internalAction({
       return { ok: false, reason: "mv_null" };
     }
 
-    const payload = wrapSnapshot(briefing);
+    const payload = wrapSnapshot(briefing, "convex");
     const rowSize = JSON.stringify(payload).length;
 
     await putAggregateIndex("daily_briefing", payload);
@@ -235,7 +235,7 @@ export const snapshotTopRenters = internalAction({
       .slice(0, TR_OUTPUT_CAP);
 
     const data: TopRentersData = { lookbackDays: TR_LOOKBACK_DAYS, rows };
-    const payload = wrapSnapshot(data);
+    const payload = wrapSnapshot(data, "convex");
     const payloadBytes = JSON.stringify(payload).length;
 
     await putAggregateIndex("top_renters", payload);
@@ -448,7 +448,7 @@ export const snapshotInventoryOverview = internalAction({
       items: overviewItems,
     };
 
-    const payload = wrapSnapshot(data);
+    const payload = wrapSnapshot(data, "convex");
     const sizeBytes = JSON.stringify(payload).length;
     const key = await putAggregateIndex("inventory_overview", payload);
     const durationMs = Date.now() - startMs;

@@ -217,9 +217,9 @@ export async function runSnapshotInventoryOverview(runId?: string) {
 
     // ── 4. Write to R2 ─────────────────────────────────────────────────────
 
-    const key = await putAggregateIndex("inventory_overview", wrapSnapshot(data));
+    const key = await putAggregateIndex("inventory_overview", wrapSnapshot(data, "trigger"));
     const durationMs = Date.now() - startMs;
-    const sizeBytes = JSON.stringify(wrapSnapshot(data)).length;
+    const sizeBytes = JSON.stringify(wrapSnapshot(data, "trigger")).length;
 
     logger.info("snapshot-inventory-overview: complete", {
       rowCount: overviewItems.length,
