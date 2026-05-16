@@ -84,6 +84,8 @@ interface BatchInputs {
     items: Item[];
     notes: string | null;
     photos_urls: string[];
+    account_slug?: string | null;
+    hygglo_listing_id?: string | null;
   }>;
   inventory: InventoryItem[];
   bundles: Bundle[];
@@ -184,6 +186,32 @@ function filterInventoryByCategory(inv: InventoryItem[], title: string): Invento
   return filtered.length >= 8 ? filtered : inv;
 }
 
+// ── Phase 15.1: trigram pre-rank ──────────────────────────────
+const KIT_RE = /[+&]|\b(kit|bundle|combo|set)\b|×\s*\d|\b\d+x\b/i;
+
+function trigrams(s: string): Set<string> {
+  const t = s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const out = new Set<string>();
+  for (let i = 0; i <= t.length - 3; i++) out.add(t.slice(i, i + 3));
+  return out;
+}
+function trigramSim(a: Set<string>, b: Set<string>): number {
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  const denom = a.size + b.size - inter;
+  return denom > 0 ? inter / denom : 0;
+}
+function rankInventory(title: string, candidates: InventoryItem[], topN: number): InventoryItem[] {
+  if (candidates.length <= topN) return candidates;
+  const titleTri = trigrams(title);
+  const scored = candidates.map((c) => {
+    const blob = [c.name_canonical, ...(c.aliases ?? [])].join(" ");
+    return { c, score: trigramSim(titleTri, trigrams(blob)) };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, topN).map((x) => x.c);
+}
+
 const KNOWN_BRANDS = [
   "sony", "canon", "nikon", "fujifilm", "panasonic", "blackmagic", "red", "atomos",
   "dji", "hollyland", "aputure", "nanlite", "godox", "rode", "sennheiser", "shure",
@@ -210,21 +238,15 @@ function brandMismatch(primary: string, candidateName: string): boolean {
 function modelPrompt(): string {
   return `You are a precise camera/photo equipment cataloguer for a film-rental business.
 
-You receive a Hygglo listing title (which often bundles multiple physical items)
-and a list of every item we actually own (master inventory). Identify which
-inventory items the listing represents.
+Identify which inventory items the Hygglo listing title represents.
 
-CRITICAL RULES:
-1. RESPECT MODEL DISAMBIGUATORS. "Sony A7 II" ≠ "Sony A7 III". A listing for
-   "A7 III" does NOT match an inventory entry for "A7 II".
-2. NO SUBSTRING SHORTCUTS. "Sony FX3" appearing in the title does not match
-   inventory entry "Sony FX6".
-3. Only return items physically in the title's bundle.
-4. If an item in the title is NOT in inventory, add to unresolved_phrases.
-5. QUANTITY: extract integer qty. "2x" / "(2x)" / "2×" → qty:2.
-6. Confidence: 1.0 only when the disambiguator is unambiguous. 0.6-0.9 partial.
-   < 0.5 = guess; skip it.
-7. Use the exact item_id value supplied (Convex Id, must round-trip verbatim).`;
+RULES:
+1. RESPECT MODEL DISAMBIGUATORS. "A7 II" ≠ "A7 III". "FX3" ≠ "FX6". "Mk2" ≠ "Mk3".
+2. Only return items physically in the title's bundle.
+3. If a title item is NOT in inventory, add to unresolved_phrases — never substitute.
+4. QUANTITY: extract integer qty. "2x" / "(2x)" / "2×" → qty:2. Default 1.
+5. Confidence: 1.0 unambiguous, 0.6-0.9 partial, <0.5 skip.
+6. Use the exact item_id supplied (Convex Id, round-trip verbatim).`;
 }
 
 function buildUserMessage(title: string, inv: InventoryItem[]): string {
@@ -274,11 +296,29 @@ async function runBatch(runId: string, notesOnly: boolean) {
   }
 
   const results: ResolutionResult[] = [];
+  let cacheHits = 0;
   for (const r of batch.unresolved) {
     const combinedTitle = r.items
       .map((i) => (i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name))
       .join("\n");
     const newHash = inputHash(r.items);
+    const isKit = KIT_RE.test(combinedTitle);
+
+    // Phase 15.1: cache lookup keyed by (account_slug, hygglo_listing_id).
+    if (r.account_slug && r.hygglo_listing_id) {
+      const cached = await lookupCache(r.account_slug, r.hygglo_listing_id);
+      if (cached) {
+        results.push({
+          reservation_id: r.id,
+          resolved_items: cached.resolved_items,
+          expanded_items: cached.expanded_items,
+          method: cached.resolution_method,
+          input_hash: newHash,
+        });
+        cacheHits++;
+        continue;
+      }
+    }
 
     let resolved: Array<{
       item_id: string;
@@ -297,7 +337,11 @@ async function runBatch(runId: string, notesOnly: boolean) {
             role: "user",
             content: buildUserMessage(
               combinedTitle,
-              filterInventoryByCategory(batch.inventory, combinedTitle),
+              rankInventory(
+                combinedTitle,
+                filterInventoryByCategory(batch.inventory, combinedTitle),
+                isKit ? 15 : 8,
+              ),
             ),
           },
         ],
@@ -369,6 +413,21 @@ async function runBatch(runId: string, notesOnly: boolean) {
       method: "llm",
       input_hash: newHash,
     });
+
+    // Phase 15.1: write-through to cache (dual-key).
+    try {
+      await upsertCache({
+        title_hash: titleHashOf(r.items),
+        account_slug: r.account_slug ?? undefined,
+        hygglo_listing_id: r.hygglo_listing_id ?? undefined,
+        sample_title: r.items[0]?.item_name?.slice(0, 200) ?? "",
+        resolved_items: resolved,
+        expanded_items: expanded,
+        resolution_method: "llm",
+      });
+    } catch (err) {
+      logger.warn("resolve-items: cache write failed", { reservation_id: r.id, err: String(err) });
+    }
   }
 
   await writeResults(results);
@@ -376,7 +435,68 @@ async function runBatch(runId: string, notesOnly: boolean) {
     runId,
     attempted: batch.unresolved.length,
     written: results.length,
+    cacheHits,
     notesOnly,
   });
-  return { ok: true, attempted: batch.unresolved.length, written: results.length };
+  return { ok: true, attempted: batch.unresolved.length, written: results.length, cacheHits };
+}
+
+// ── Phase 15.1: cache helpers (HTTP into Convex listing_cache) ────────────
+function titleHashOf(items: Item[]): string {
+  const norm = items
+    .map((i) => i.item_name.toLowerCase().replace(/\s+/g, " ").trim())
+    .sort()
+    .join("|");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < norm.length; i++) {
+    h ^= norm.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, "0") + "_" + norm.length;
+}
+
+async function lookupCache(account_slug: string, hygglo_listing_id: string): Promise<{
+  resolved_items: ResolutionResult["resolved_items"];
+  expanded_items: ResolutionResult["expanded_items"];
+  resolution_method: string;
+} | null> {
+  try {
+    // Modelled as a mutation server-side because it bumps hit_count.
+    const res = await fetch(`${CONVEX_URL}/api/mutation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: "listing_cache:adminLookupByListing",
+        args: { account_slug, hygglo_listing_id },
+        format: "json",
+      }),
+    });
+    const data = (await res.json()) as { status: string; value?: unknown };
+    if (data.status !== "success" || !data.value) return null;
+    return data.value as Awaited<ReturnType<typeof lookupCache>>;
+  } catch {
+    return null;
+  }
+}
+
+async function upsertCache(args: {
+  title_hash: string;
+  account_slug?: string;
+  hygglo_listing_id?: string;
+  sample_title: string;
+  resolved_items: ResolutionResult["resolved_items"];
+  expanded_items: ResolutionResult["expanded_items"];
+  resolution_method: string;
+}): Promise<void> {
+  const res = await fetch(`${CONVEX_URL}/api/mutation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: "listing_cache:adminUpsertResolution",
+      args,
+      format: "json",
+    }),
+  });
+  const data = (await res.json()) as { status: string; errorMessage?: string };
+  if (data.status !== "success") throw new Error(`cache upsert: ${data.errorMessage}`);
 }

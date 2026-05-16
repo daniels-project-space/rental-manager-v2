@@ -115,35 +115,53 @@ export function filterInventoryByCategory<T extends { kind?: string }>(inventory
   return filtered.length >= 8 ? filtered : inventory;
 }
 
+// ── Phase 15.1: trigram pre-rank ──────────────────────────────
+export const KIT_RE = /[+&]|\b(kit|bundle|combo|set)\b|×\s*\d|\b\d+x\b/i;
+
+function trigrams(s: string): Set<string> {
+  const t = s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const out = new Set<string>();
+  for (let i = 0; i <= t.length - 3; i++) out.add(t.slice(i, i + 3));
+  return out;
+}
+
+function trigramSim(a: Set<string>, b: Set<string>): number {
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  const denom = a.size + b.size - inter;
+  return denom > 0 ? inter / denom : 0;
+}
+
+/** Narrow inventory to the top-N closest matches by trigram similarity
+ *  against the listing title. Kit titles widen the pool so decomposition
+ *  still has options. Falls back to the input list if too small to rank. */
+export function rankInventory<T extends { name_canonical: string; aliases?: string[] }>(
+  title: string,
+  candidates: T[],
+  topN = 8,
+): T[] {
+  if (candidates.length <= topN) return candidates;
+  const titleTri = trigrams(title);
+  const scored = candidates.map((c) => {
+    const blob = [c.name_canonical, ...(c.aliases ?? [])].join(" ");
+    return { c, score: trigramSim(titleTri, trigrams(blob)) };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, topN).map((x) => x.c);
+}
+
 export function modelPrompt(): string {
   return `You are a precise camera/photo equipment cataloguer for a film-rental business.
 
-You will receive a Hygglo listing title (which often bundles multiple physical items)
-and a list of every item we actually own (master inventory). Your job: identify
-which inventory items the listing represents.
+Identify which inventory items the Hygglo listing title represents.
 
-CRITICAL RULES:
-1. RESPECT MODEL DISAMBIGUATORS. "Sony A7 II" ≠ "Sony A7 III". "Mk2" ≠ "Mk3". A
-   listing for "A7 III" does NOT match an inventory entry for "A7 II" even if the
-   strings share a prefix. If the title says "A7 III" only include the A7 III
-   item — never both.
-2. NO SUBSTRING SHORTCUTS. "Sony FX3" appearing in the title does not match
-   inventory entry "Sony FX6" just because the brand+letter prefix overlaps.
-3. ONLY return items that physically appear in the title's described bundle.
-   A title saying "Sony A7 III + 24-70mm GM Lens + Atomos Ninja V" yields THREE
-   resolved items: A7 III, 24-70mm GM, Atomos Ninja V (if present in inventory).
-4. If an item mentioned in the title is NOT in inventory, add it to
-   unresolved_phrases — do not invent or substitute a "close" inventory item.
-5. QUANTITY: extract integer qty per item. "2x Sony A7" / "3× Pavotube" /
-   "(2x) LED panels" → qty:2 / qty:3 / qty:2. Default qty:1 when not specified.
-   IMPORTANT: never collapse two physical units into qty:1 by listing the item
-   only once. Two of the same item = one resolved entry with qty:2.
-6. Confidence: 1.0 only when the model number / disambiguator is unambiguous
-   in the title. 0.6-0.9 for partial matches. < 0.5 means you're guessing —
-   skip it.
-
-Output strict JSON matching the schema. Use the exact item_id value supplied
-for each inventory entry — these are Convex IDs and must round-trip verbatim.`;
+RULES:
+1. RESPECT MODEL DISAMBIGUATORS. "A7 II" ≠ "A7 III". "Mk2" ≠ "Mk3". "FX3" ≠ "FX6".
+2. Only return items physically in the title's bundle.
+3. If a title item is NOT in inventory, add to unresolved_phrases — never substitute.
+4. QUANTITY: extract integer qty. "2x" / "3×" / "(2x)" → qty:2/3/2. Default 1.
+5. Confidence: 1.0 unambiguous, 0.6-0.9 partial, <0.5 skip.
+6. Use the exact item_id supplied (Convex Id, round-trip verbatim).`;
 }
 
 export function buildUserMessage(title: string, inv: InventoryItem[]): string {
@@ -173,6 +191,8 @@ export const resolveReservation = action({
       reservation_id,
     });
     if (!res) return { ok: false, skipped: "not found" };
+    const accountSlug = (res as { account_slug?: string | null }).account_slug ?? null;
+    const hyggloListingId = (res as { hygglo_listing_id?: string | null }).hygglo_listing_id ?? null;
     // Decide what title to resolve against. Poller-synced reservations carry
     // items[] with each item's listing title. v1-imported rows came in with
     // items=[] but a rich `notes` field that carries the bundle description.
@@ -255,24 +275,46 @@ export const resolveReservation = action({
     }
 
     // ── Listing-resolution cache ───────────────────────────────────
-    // Same items[] → same Hygglo listing → reuse a previous resolution
-    // without paying for another LLM call. The hash is title-only, so
-    // any title-edit by the owner naturally invalidates.
-    const cached = await ctx.runQuery(internal.listing_cache.lookupByHash, { title_hash: tHash });
+    // Phase 15.1: prefer (account_slug, hygglo_listing_id) — survives title
+    // edits. Fall back to title_hash for legacy rows lacking listing_id.
+    let cached: Awaited<ReturnType<typeof ctx.runQuery>> = null;
+    let cacheHitByListing = false;
+    if (accountSlug && hyggloListingId) {
+      cached = await ctx.runQuery(internal.listing_cache.lookupByListing, {
+        account_slug: accountSlug,
+        hygglo_listing_id: hyggloListingId,
+      });
+      if (cached) cacheHitByListing = true;
+    }
+    if (!cached) {
+      cached = await ctx.runQuery(internal.listing_cache.lookupByHash, { title_hash: tHash });
+    }
     if (cached) {
+      const c = cached as {
+        resolved_items: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty?: number }>;
+        expanded_items: Array<{ item_id: string; item_name_canonical: string; qty: number; via_bundle?: string }>;
+        resolution_method: string;
+      };
       await ctx.runMutation(internal.item_resolver_queries.setResolution, {
         reservation_id,
-        resolved_items: cached.resolved_items as unknown as Array<{
+        resolved_items: c.resolved_items as unknown as Array<{
           item_id: never; item_name_canonical: string; confidence: number; qty: number;
         }>,
-        expanded_items: cached.expanded_items as unknown as Array<{
+        expanded_items: c.expanded_items as unknown as Array<{
           item_id: never; item_name_canonical: string; qty: number; via_bundle?: never;
         }>,
-        method: cached.resolution_method,
+        method: c.resolution_method,
         input_hash: newHash,
       });
-      await ctx.runMutation(internal.listing_cache.incrementHit, { title_hash: tHash });
-      return { ok: true, resolved: cached.resolved_items.length, skipped: "cache hit" };
+      if (cacheHitByListing && accountSlug && hyggloListingId) {
+        await ctx.runMutation(internal.listing_cache.incrementHitByListing, {
+          account_slug: accountSlug,
+          hygglo_listing_id: hyggloListingId,
+        });
+      } else {
+        await ctx.runMutation(internal.listing_cache.incrementHit, { title_hash: tHash });
+      }
+      return { ok: true, resolved: c.resolved_items.length, skipped: "cache hit" };
     }
 
     const inventory = await ctx.runQuery(internal.item_resolver_queries.getInventoryForResolve, {});
@@ -284,6 +326,11 @@ export const resolveReservation = action({
       i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name,
     ).join("\n");
 
+    // Phase 15.1: trigram pre-rank narrows inventory to top-N candidates so
+    // the LLM prompt stays small (~300 tokens vs ~3k). For kit/bundle titles
+    // we widen the candidate pool so decomposition still has options.
+    const isKitTitle = KIT_RE.test(combinedTitle);
+
     let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }> = [];
     try {
       const result = await generateObject({
@@ -291,7 +338,14 @@ export const resolveReservation = action({
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
-          { role: "user", content: buildUserMessage(combinedTitle, filterInventoryByCategory(inventory, combinedTitle)) },
+          { role: "user", content: buildUserMessage(
+              combinedTitle,
+              rankInventory(
+                combinedTitle,
+                filterInventoryByCategory(inventory, combinedTitle),
+                isKitTitle ? 15 : 8,
+              ),
+            ) },
         ],
       });
       // Validate item_ids against the inventory we sent (defensive — model can hallucinate)
@@ -393,9 +447,11 @@ export const resolveReservation = action({
     });
 
     // Write-through to the listing-resolution cache so subsequent reservations
-    // for the same listing skip the LLM entirely.
+    // for the same listing skip the LLM entirely. Phase 15.1: dual-key.
     await ctx.runMutation(internal.listing_cache.upsertResolution, {
       title_hash: tHash,
+      account_slug: accountSlug ?? undefined,
+      hygglo_listing_id: hyggloListingId ?? undefined,
       sample_title: items[0]?.item_name?.slice(0, 200) ?? "",
       resolved_items: resolved as unknown as Array<{
         item_id: never;

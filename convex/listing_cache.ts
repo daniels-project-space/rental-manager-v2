@@ -15,7 +15,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, mutation } from "./_generated/server";
+import { internalQuery, internalMutation, mutation, query } from "./_generated/server";
 
 /** Stable hash for a sorted, normalised list of item-name strings.
  *  Convex actions+queries+mutations all need the same fn — kept inline so
@@ -129,9 +129,61 @@ export const lookupByHash = internalQuery({
   },
 });
 
-export const upsertResolution = internalMutation({
+/** Phase 15.1: primary cache lookup keyed by (account_slug, hygglo_listing_id).
+ *  Survives Hygglo title edits (which used to invalidate title_hash entries). */
+export const lookupByListing = internalQuery({
+  args: {
+    account_slug: v.string(),
+    hygglo_listing_id: v.string(),
+  },
+  handler: async (ctx, { account_slug, hygglo_listing_id }) => {
+    const row = await ctx.db
+      .query("listing_resolutions")
+      .withIndex("by_account_listing", (q) =>
+        q.eq("account_slug", account_slug).eq("hygglo_listing_id", hygglo_listing_id),
+      )
+      .first();
+    if (!row) return null;
+    return {
+      title_hash: row.title_hash,
+      resolved_items: row.resolved_items,
+      expanded_items: row.expanded_items,
+      resolution_method: row.resolution_method,
+      hit_count: row.hit_count,
+    };
+  },
+});
+
+/** Phase 15.1: public listing-id cache lookup for the Trigger.dev task.
+ *  Modelled as a mutation because we bump hit_count to surface real reuse. */
+export const adminLookupByListing = mutation({
+  args: { account_slug: v.string(), hygglo_listing_id: v.string() },
+  handler: async (ctx, { account_slug, hygglo_listing_id }) => {
+    const row = await ctx.db
+      .query("listing_resolutions")
+      .withIndex("by_account_listing", (q) =>
+        q.eq("account_slug", account_slug).eq("hygglo_listing_id", hygglo_listing_id),
+      )
+      .first();
+    if (!row) return null;
+    await ctx.db.patch(row._id, {
+      hit_count: (row.hit_count ?? 0) + 1,
+      last_used_at: Date.now(),
+    });
+    return {
+      resolved_items: row.resolved_items,
+      expanded_items: row.expanded_items,
+      resolution_method: row.resolution_method,
+    };
+  },
+});
+
+/** Phase 15.1: public write-through used by the Trigger.dev task. */
+export const adminUpsertResolution = mutation({
   args: {
     title_hash: v.string(),
+    account_slug: v.optional(v.string()),
+    hygglo_listing_id: v.optional(v.string()),
     sample_title: v.string(),
     resolved_items: v.array(v.object({
       item_id: v.id("items"),
@@ -148,10 +200,22 @@ export const upsertResolution = internalMutation({
     resolution_method: v.string(),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("listing_resolutions")
-      .withIndex("by_title_hash", (q) => q.eq("title_hash", args.title_hash))
-      .first();
+    const slug = args.account_slug;
+    const listingId = args.hygglo_listing_id;
+    let existing = (slug && listingId)
+      ? await ctx.db
+          .query("listing_resolutions")
+          .withIndex("by_account_listing", (q) =>
+            q.eq("account_slug", slug).eq("hygglo_listing_id", listingId),
+          )
+          .first()
+      : null;
+    if (!existing) {
+      existing = await ctx.db
+        .query("listing_resolutions")
+        .withIndex("by_title_hash", (q) => q.eq("title_hash", args.title_hash))
+        .first();
+    }
     const now = Date.now();
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -159,12 +223,104 @@ export const upsertResolution = internalMutation({
         resolved_items: args.resolved_items,
         expanded_items: args.expanded_items,
         resolution_method: args.resolution_method,
+        account_slug: args.account_slug ?? existing.account_slug,
+        hygglo_listing_id: args.hygglo_listing_id ?? existing.hygglo_listing_id,
+        title_hash: args.title_hash,
+        last_used_at: now,
+      });
+      return { action: "updated" as const };
+    }
+    await ctx.db.insert("listing_resolutions", {
+      title_hash: args.title_hash,
+      account_slug: args.account_slug,
+      hygglo_listing_id: args.hygglo_listing_id,
+      sample_title: args.sample_title,
+      resolved_items: args.resolved_items,
+      expanded_items: args.expanded_items,
+      resolution_method: args.resolution_method,
+      hit_count: 0,
+      last_used_at: now,
+      created_at: now,
+    });
+    return { action: "inserted" as const };
+  },
+});
+
+/** Phase 15.1: increment hit counter via listing-id row. */
+export const incrementHitByListing = internalMutation({
+  args: { account_slug: v.string(), hygglo_listing_id: v.string() },
+  handler: async (ctx, { account_slug, hygglo_listing_id }) => {
+    const existing = await ctx.db
+      .query("listing_resolutions")
+      .withIndex("by_account_listing", (q) =>
+        q.eq("account_slug", account_slug).eq("hygglo_listing_id", hygglo_listing_id),
+      )
+      .first();
+    if (!existing) return { ok: false };
+    await ctx.db.patch(existing._id, {
+      hit_count: (existing.hit_count ?? 0) + 1,
+      last_used_at: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+export const upsertResolution = internalMutation({
+  args: {
+    title_hash: v.string(),
+    account_slug: v.optional(v.string()),
+    hygglo_listing_id: v.optional(v.string()),
+    sample_title: v.string(),
+    resolved_items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      confidence: v.number(),
+      qty: v.optional(v.number()),
+    })),
+    expanded_items: v.array(v.object({
+      item_id: v.id("items"),
+      item_name_canonical: v.string(),
+      qty: v.number(),
+      via_bundle: v.optional(v.id("bundles")),
+    })),
+    resolution_method: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Prefer listing-id key match when both provided; fall back to title_hash.
+    const slug = args.account_slug;
+    const listingId = args.hygglo_listing_id;
+    let existing = (slug && listingId)
+      ? await ctx.db
+          .query("listing_resolutions")
+          .withIndex("by_account_listing", (q) =>
+            q.eq("account_slug", slug).eq("hygglo_listing_id", listingId),
+          )
+          .first()
+      : null;
+    if (!existing) {
+      existing = await ctx.db
+        .query("listing_resolutions")
+        .withIndex("by_title_hash", (q) => q.eq("title_hash", args.title_hash))
+        .first();
+    }
+    const now = Date.now();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        sample_title: args.sample_title,
+        resolved_items: args.resolved_items,
+        expanded_items: args.expanded_items,
+        resolution_method: args.resolution_method,
+        account_slug: args.account_slug ?? existing.account_slug,
+        hygglo_listing_id: args.hygglo_listing_id ?? existing.hygglo_listing_id,
+        title_hash: args.title_hash,
         last_used_at: now,
       });
       return { action: "updated" as const, id: existing._id };
     }
     const id = await ctx.db.insert("listing_resolutions", {
       title_hash: args.title_hash,
+      account_slug: args.account_slug,
+      hygglo_listing_id: args.hygglo_listing_id,
       sample_title: args.sample_title,
       resolved_items: args.resolved_items,
       expanded_items: args.expanded_items,

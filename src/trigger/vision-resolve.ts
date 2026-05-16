@@ -183,6 +183,11 @@ async function writeAugmentation(args: {
 
 // ── Scheduled task ────────────────────────────────────────────────────
 
+// Phase 15.1: conditional vision pass. Skip when the text resolver already
+// returned confident matches and the title shows no kit/bundle signals.
+const KIT_RE =
+  /[+&]|\b(kit|bundle|combo|set)\b|×\s*\d|\b\d+x\b/i;
+
 export const visionResolveTask = schedules.task({
   id: "vision-resolve",
   cron: "0 * * * *", // hourly
@@ -201,7 +206,22 @@ export const visionResolveTask = schedules.task({
 
     let totalAdded = 0;
     let processed = 0;
+    let skippedGate = 0;
     for (const c of batch.candidates) {
+      // Phase 15.1: gate. If every existing resolution has confidence>=0.7
+      // AND the title is not kit-shaped, skip the vision LLM call entirely.
+      const hasLowConfidence = c.already_resolved.some(
+        (x) => (x.confidence ?? 0) < 0.7,
+      );
+      const isKit = KIT_RE.test(c.title);
+      if (!hasLowConfidence && !isKit && c.already_resolved.length > 0) {
+        logger.info("vision-resolve: skipped (confident + no kit signals)", {
+          reservation_id: c.id,
+        });
+        skippedGate++;
+        processed++;
+        continue;
+      }
       const alreadyIds = new Set(c.already_resolved.map((x) => x.item_id));
 
       type VisionImage = { type: "image"; image: string | URL };
@@ -294,8 +314,9 @@ export const visionResolveTask = schedules.task({
       runId: ctx.run.id,
       processed,
       totalAdded,
+      skippedGate,
       candidates: batch.candidates.length,
     });
-    return { ok: true, processed, totalAdded };
+    return { ok: true, processed, totalAdded, skippedGate };
   },
 });

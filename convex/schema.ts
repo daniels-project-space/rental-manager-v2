@@ -959,6 +959,11 @@ export default defineSchema({
   //  Hygglo listings the user has already paid to resolve.
   listing_resolutions: defineTable({
     title_hash: v.string(),
+    // Phase 15.1: dual-keying. Primary cache lookup is by
+    // (account_slug, hygglo_listing_id) — survives Hygglo title edits.
+    // title_hash retained as secondary fallback for rows lacking listing_id.
+    account_slug: v.optional(v.string()),
+    hygglo_listing_id: v.optional(v.string()),
     sample_title: v.string(),
     resolved_items: v.array(v.object({
       item_id: v.id("items"),
@@ -976,7 +981,9 @@ export default defineSchema({
     hit_count: v.number(),
     last_used_at: v.number(),
     created_at: v.number(),
-  }).index("by_title_hash", ["title_hash"]),
+  })
+    .index("by_title_hash", ["title_hash"])
+    .index("by_account_listing", ["account_slug", "hygglo_listing_id"]),
 
   // ── market_search 24h cache (Grok live-search results) ────────────────────
   market_search_cache: defineTable({

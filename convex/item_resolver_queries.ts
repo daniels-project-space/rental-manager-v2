@@ -266,6 +266,8 @@ export const admin_getResolverBatchInputs = query({
       items: Item[];
       notes: string | null;
       photos_urls: string[];
+      account_slug: string | null;
+      hygglo_listing_id: string | null;
     }> = [];
     for (const rRaw of all) {
       const r = rRaw as Reservation;
@@ -285,6 +287,8 @@ export const admin_getResolverBatchInputs = query({
         items,
         notes: notes ?? null,
         photos_urls: ((r as { photos_urls?: string[] }).photos_urls ?? []),
+        account_slug: ((r as { account_slug?: string | null }).account_slug ?? null),
+        hygglo_listing_id: ((r as { hygglo_listing_id?: string | null }).hygglo_listing_id ?? null),
       });
       if (need.length >= limit) break;
     }
