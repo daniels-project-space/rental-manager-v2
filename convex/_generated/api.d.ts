@@ -46,6 +46,7 @@ import type * as hygglo_ui from "../hygglo_ui.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as intel from "../intel.js";
 import type * as item_embeddings from "../item_embeddings.js";
+import type * as item_embeddings_data from "../item_embeddings_data.js";
 import type * as item_resolver from "../item_resolver.js";
 import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
@@ -78,12 +79,14 @@ import type * as mv_refresh_locks from "../mv_refresh_locks.js";
 import type * as order_step_semantics from "../order_step_semantics.js";
 import type * as polling_runs from "../polling_runs.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
+import type * as rate_limit_config from "../rate_limit_config.js";
 import type * as refresh_hygglo_orders from "../refresh_hygglo_orders.js";
 import type * as renters from "../renters.js";
 import type * as reservation_vision from "../reservation_vision.js";
 import type * as reservation_vision_backfill from "../reservation_vision_backfill.js";
-import type * as resolve_item_from_image from "../resolve_item_from_image.js";
 import type * as reservations from "../reservations.js";
+import type * as resolve_item_from_image from "../resolve_item_from_image.js";
+import type * as resolve_item_from_image_data from "../resolve_item_from_image_data.js";
 import type * as revenue from "../revenue.js";
 import type * as rules from "../rules.js";
 import type * as seed_data from "../seed/data.js";
@@ -141,6 +144,7 @@ declare const fullApi: ApiFromModules<{
   insurance_claims: typeof insurance_claims;
   intel: typeof intel;
   item_embeddings: typeof item_embeddings;
+  item_embeddings_data: typeof item_embeddings_data;
   item_resolver: typeof item_resolver;
   item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;
@@ -173,12 +177,14 @@ declare const fullApi: ApiFromModules<{
   order_step_semantics: typeof order_step_semantics;
   polling_runs: typeof polling_runs;
   pricing_catalog: typeof pricing_catalog;
+  rate_limit_config: typeof rate_limit_config;
   refresh_hygglo_orders: typeof refresh_hygglo_orders;
   renters: typeof renters;
   reservation_vision: typeof reservation_vision;
-  resolve_item_from_image: typeof resolve_item_from_image;
   reservation_vision_backfill: typeof reservation_vision_backfill;
   reservations: typeof reservations;
+  resolve_item_from_image: typeof resolve_item_from_image;
+  resolve_item_from_image_data: typeof resolve_item_from_image_data;
   revenue: typeof revenue;
   rules: typeof rules;
   "seed/data": typeof seed_data;
@@ -218,4 +224,6 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+};

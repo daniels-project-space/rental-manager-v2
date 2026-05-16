@@ -21,7 +21,7 @@
  */
 
 import { v } from "convex/values";
-import { internalAction, internalQuery, internalMutation } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -87,118 +87,9 @@ export function hammingHex(a: string, b: string): number {
   return dist;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Internal queries / mutations
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * Return all pHash rows. Caller computes Hamming distance in the action
- * runtime. We page through small chunks — table is bounded by unique
- * image URLs (≤ a few thousand even at scale).
- */
-export const listAllPhashRows = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query("item_image_phash").collect();
-  },
-});
-
-/**
- * Lookup by exact phash. Cheap path before falling back to Hamming scan.
- */
-export const findByExactPhash = internalQuery({
-  args: { phash: v.string() },
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query("item_image_phash")
-      .withIndex("by_phash", (q) => q.eq("phash", args.phash))
-      .first();
-  },
-});
-
-/**
- * Lookup by image URL. Idempotency guard for writeback.
- */
-export const findByImageUrl = internalQuery({
-  args: { image_url: v.string() },
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query("item_image_phash")
-      .withIndex("by_image_url", (q) => q.eq("image_url", args.image_url))
-      .first();
-  },
-});
-
-/**
- * Upsert a pHash → item_id cache row. Writes from any resolution tier
- * call into this. Idempotent on (image_url): a re-resolution updates the
- * existing row's last_used_at + confidence + canonical_item_id.
- */
-export const upsertPhashCache = internalMutation({
-  args: {
-    image_url: v.string(),
-    phash: v.string(),
-    canonical_item_id: v.id("items"),
-    confidence: v.number(),
-    source: v.union(
-      v.literal("vision_resolve"),
-      v.literal("backfill"),
-    ),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("item_image_phash")
-      .withIndex("by_image_url", (q) => q.eq("image_url", args.image_url))
-      .first();
-    const now = Date.now();
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        phash: args.phash,
-        canonical_item_id: args.canonical_item_id,
-        confidence: args.confidence,
-        last_used_at: now,
-        source: args.source,
-      });
-      return existing._id;
-    }
-    return await ctx.db.insert("item_image_phash", {
-      image_url: args.image_url,
-      phash: args.phash,
-      canonical_item_id: args.canonical_item_id,
-      confidence: args.confidence,
-      last_used_at: now,
-      source: args.source,
-    });
-  },
-});
-
-/**
- * Touch last_used_at on an existing cache row (Tier 1 hit). Keeps the
- * "hot" rows fresh for future TTL-style eviction.
- */
-export const touchPhashRow = internalMutation({
-  args: { id: v.id("item_image_phash") },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.id, { last_used_at: Date.now() });
-  },
-});
-
-/**
- * List all items for Tier 3 fuzzy match — cheapest path is to compare
- * Gemini-returned name to canonical names client-side.
- */
-export const listItemsForFuzzyMatch = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query("items").collect();
-    return rows.map((r) => ({
-      _id: r._id,
-      name_canonical: r.name_canonical,
-      name_input: r.name_input,
-      aliases: r.aliases ?? [],
-    }));
-  },
-});
+// Queries + mutations moved to ./resolve_item_from_image_data.ts (this
+// module is "use node"). References below use
+// internal.resolve_item_from_image_data.* accordingly.
 
 // ────────────────────────────────────────────────────────────────────────────
 // Fuzzy match for Tier 3 (Gemini → canonical item)
@@ -395,13 +286,13 @@ export const resolveItemFromImage = internalAction({
     // ── Tier 1: pHash cache ────────────────────────────────────────────
     // Exact match first (cheap), then Hamming scan.
     const exact: Doc<"item_image_phash"> | null = await ctx.runQuery(
-      internal.resolve_item_from_image.findByExactPhash,
+      internal.resolve_item_from_image_data.findByExactPhash,
       { phash },
     );
     // M9: even exact-phash hits must clear the confidence floor; otherwise
     // fall through so Tier 2 can re-confirm (cheap embedding call).
     if (exact && exact.confidence >= PHASH_CONFIDENCE_FLOOR) {
-      await ctx.runMutation(internal.resolve_item_from_image.touchPhashRow, { id: exact._id });
+      await ctx.runMutation(internal.resolve_item_from_image_data.touchPhashRow, { id: exact._id });
       return {
         item_id: exact.canonical_item_id,
         tier: 1,
@@ -410,7 +301,7 @@ export const resolveItemFromImage = internalAction({
       };
     }
     const allRows: Doc<"item_image_phash">[] = await ctx.runQuery(
-      internal.resolve_item_from_image.listAllPhashRows,
+      internal.resolve_item_from_image_data.listAllPhashRows,
       {},
     );
     let bestNear: { row: Doc<"item_image_phash">; dist: number } | null = null;
@@ -423,9 +314,9 @@ export const resolveItemFromImage = internalAction({
     // M9: only short-circuit at Tier 1 if cached confidence is high enough.
     // Lower-confidence near-matches drop through to Tier 2 (vectorIndex).
     if (bestNear && bestNear.row.confidence >= PHASH_CONFIDENCE_FLOOR) {
-      await ctx.runMutation(internal.resolve_item_from_image.touchPhashRow, { id: bestNear.row._id });
+      await ctx.runMutation(internal.resolve_item_from_image_data.touchPhashRow, { id: bestNear.row._id });
       // Writeback: store the new URL under its own pHash so next exact lookup hits.
-      await ctx.runMutation(internal.resolve_item_from_image.upsertPhashCache, {
+      await ctx.runMutation(internal.resolve_item_from_image_data.upsertPhashCache, {
         image_url: args.imageUrl,
         phash,
         canonical_item_id: bestNear.row.canonical_item_id,
@@ -461,11 +352,11 @@ export const resolveItemFromImage = internalAction({
           if (hits.length > 0 && hits[0]._score >= VECTOR_SIM_THRESHOLD) {
             // Resolve embedding row → item_id
             const top: Doc<"item_embeddings"> | null = await ctx.runQuery(
-              internal.resolve_item_from_image._getEmbeddingRow,
+              internal.resolve_item_from_image_data._getEmbeddingRow,
               { id: hits[0]._id },
             );
             if (top) {
-              await ctx.runMutation(internal.resolve_item_from_image.upsertPhashCache, {
+              await ctx.runMutation(internal.resolve_item_from_image_data.upsertPhashCache, {
                 image_url: args.imageUrl,
                 phash,
                 canonical_item_id: top.item_id,
@@ -490,10 +381,10 @@ export const resolveItemFromImage = internalAction({
     if (apiKeyPresent) {
       const flash = await callGeminiFlash(buf);
       if (flash.name) {
-        const items = await ctx.runQuery(internal.resolve_item_from_image.listItemsForFuzzyMatch, {});
+        const items = await ctx.runQuery(internal.resolve_item_from_image_data.listItemsForFuzzyMatch, {});
         const matched = fuzzyMatchItem(flash.name, items);
         if (matched) {
-          await ctx.runMutation(internal.resolve_item_from_image.upsertPhashCache, {
+          await ctx.runMutation(internal.resolve_item_from_image_data.upsertPhashCache, {
             image_url: args.imageUrl,
             phash,
             canonical_item_id: matched.item_id,
@@ -526,10 +417,10 @@ export const resolveItemFromImage = internalAction({
     }
 
     // ── Tier 4: Grok Vision (last resort) ──────────────────────────────
-    const items = await ctx.runQuery(internal.resolve_item_from_image.listItemsForFuzzyMatch, {});
+    const items = await ctx.runQuery(internal.resolve_item_from_image_data.listItemsForFuzzyMatch, {});
     const grok = await callGrokVision(args.imageUrl, items);
     if (grok.item_id) {
-      await ctx.runMutation(internal.resolve_item_from_image.upsertPhashCache, {
+      await ctx.runMutation(internal.resolve_item_from_image_data.upsertPhashCache, {
         image_url: args.imageUrl,
         phash,
         canonical_item_id: grok.item_id,
@@ -559,63 +450,5 @@ export const resolveItemFromImage = internalAction({
   },
 });
 
-/**
- * Internal helper — fetch one embedding row by id. (Action can't read db
- * directly, so we go through a query.)
- */
-export const _getEmbeddingRow = internalQuery({
-  args: { id: v.id("item_embeddings") },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
-  },
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Monitoring: tier distribution over a rolling window
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * Aggregate resolved_via_tier across the reservation_vision side table
- * over the last `windowHours` hours. Helps validate the pipeline is
- * hitting Tier 1/2 mostly (not Tier 4).
- *
- * Returns: { tier1, tier2, tier3, tier4, none, total, window_hours }.
- */
-export const getVisionTierDistribution = internalQuery({
-  args: { windowHours: v.number() },
-  handler: async (ctx, args): Promise<{
-    tier1: number;
-    tier2: number;
-    tier3: number;
-    tier4: number;
-    none: number;
-    total: number;
-    window_hours: number;
-  }> => {
-    const cutoff = Date.now() - args.windowHours * 3_600_000;
-    const rows = await ctx.db
-      .query("reservation_vision")
-      .withIndex("by_processed_at")
-      .filter((q) => q.gte(q.field("vision_processed_at"), cutoff))
-      .collect();
-    let t1 = 0, t2 = 0, t3 = 0, t4 = 0, none = 0;
-    for (const r of rows) {
-      // resolved_via_tier is stored on the side table when written by the trigger
-      const tier = (r as any).resolved_via_tier as number | undefined;
-      if (tier === 1) t1++;
-      else if (tier === 2) t2++;
-      else if (tier === 3) t3++;
-      else if (tier === 4) t4++;
-      else none++;
-    }
-    return {
-      tier1: t1,
-      tier2: t2,
-      tier3: t3,
-      tier4: t4,
-      none,
-      total: rows.length,
-      window_hours: args.windowHours,
-    };
-  },
-});
+// _getEmbeddingRow + getVisionTierDistribution moved to
+// ./resolve_item_from_image_data.ts (this module is "use node").

@@ -21,7 +21,7 @@
  */
 
 import { v } from "convex/values";
-import { internalAction, internalQuery } from "../_generated/server";
+import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { computePHash } from "../resolve_item_from_image";
@@ -32,28 +32,8 @@ interface ItemRow {
   image_url?: string;
 }
 
-export const _listItemsForPhashBackfill = internalQuery({
-  args: {
-    after_creation_time: v.optional(v.number()),
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<ItemRow[]> => {
-    const rows = await ctx.db
-      .query("items")
-      .filter((q) =>
-        args.after_creation_time === undefined
-          ? q.eq(q.field("_id"), q.field("_id"))
-          : q.gt(q.field("_creationTime"), args.after_creation_time!),
-      )
-      .order("asc")
-      .take(args.limit);
-    return rows.map((r) => ({
-      _id: r._id,
-      _creationTime: r._creationTime,
-      image_url: r.image_url,
-    }));
-  },
-});
+// _listItemsForPhashBackfill moved to ../resolve_item_from_image_data.ts
+// (this module is "use node").
 
 export const backfillPhash = internalAction({
   args: {
@@ -84,7 +64,7 @@ export const backfillPhash = internalAction({
 
     for (let i = 0; i < maxChunks; i++) {
       const batch: ItemRow[] = await ctx.runQuery(
-        internal.migrations.backfill_phash._listItemsForPhashBackfill,
+        internal.resolve_item_from_image_data._listItemsForPhashBackfill,
         { after_creation_time: cursor, limit: chunkSize },
       );
       if (batch.length === 0) break;
@@ -99,7 +79,7 @@ export const backfillPhash = internalAction({
         }
         // Idempotency check
         const existing = await ctx.runQuery(
-          internal.resolve_item_from_image.findByImageUrl,
+          internal.resolve_item_from_image_data.findByImageUrl,
           { image_url: row.image_url },
         );
         if (existing) {
@@ -119,7 +99,7 @@ export const backfillPhash = internalAction({
           const arr = await res.arrayBuffer();
           const phash = await computePHash(Buffer.from(arr));
           await ctx.runMutation(
-            internal.resolve_item_from_image.upsertPhashCache,
+            internal.resolve_item_from_image_data.upsertPhashCache,
             {
               image_url: row.image_url,
               phash,

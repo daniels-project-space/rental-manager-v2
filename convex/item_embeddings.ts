@@ -23,7 +23,7 @@
  */
 
 import { v } from "convex/values";
-import { internalAction, internalQuery, internalMutation } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -73,105 +73,10 @@ async function getGeminiClient(): Promise<{
 // Internal mutations & queries
 // ────────────────────────────────────────────────────────────────────────────
 
-/**
- * Write a single embedding row. Replaces any existing row with the same
- * (item_id, source_kind) tuple to keep the table idempotent.
- */
-export const upsertEmbedding = internalMutation({
-  args: {
-    item_id: v.id("items"),
-    embedding: v.array(v.float64()),
-    embedding_model: v.string(),
-    source_kind: v.union(v.literal("name"), v.literal("description"), v.literal("image")),
-    source_ref: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("item_embeddings")
-      .withIndex("by_item_and_kind", (q) =>
-        q.eq("item_id", args.item_id).eq("source_kind", args.source_kind),
-      )
-      .first();
-    const now = Date.now();
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        embedding: args.embedding,
-        embedding_model: args.embedding_model,
-        source_ref: args.source_ref,
-        generated_at: now,
-      });
-      return existing._id;
-    }
-    return await ctx.db.insert("item_embeddings", {
-      item_id: args.item_id,
-      embedding: args.embedding,
-      embedding_model: args.embedding_model,
-      source_kind: args.source_kind,
-      source_ref: args.source_ref,
-      generated_at: now,
-    });
-  },
-});
-
-/**
- * Returns true when (item_id, source_kind) is already embedded with the
- * current model. Backfill uses this to skip already-done rows.
- */
-export const hasEmbedding = internalQuery({
-  args: {
-    item_id: v.id("items"),
-    source_kind: v.union(v.literal("name"), v.literal("description"), v.literal("image")),
-  },
-  handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("item_embeddings")
-      .withIndex("by_item_and_kind", (q) =>
-        q.eq("item_id", args.item_id).eq("source_kind", args.source_kind),
-      )
-      .first();
-    return !!row && row.embedding_model === EMBEDDING_MODEL;
-  },
-});
-
-/**
- * Load a single item (used by generateEmbeddingsForItem to assemble the
- * three source strings).
- */
-export const getItem = internalQuery({
-  args: { item_id: v.id("items") },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.item_id);
-  },
-});
-
-/**
- * Paged list of items for backfill. Cursor-based via `_creationTime` for
- * stable ordering. Limit caps chunk size.
- */
-export const listItemsForBackfill = internalQuery({
-  args: {
-    after_creation_time: v.optional(v.number()),
-    limit: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const rows = await ctx.db
-      .query("items")
-      .filter((q) =>
-        args.after_creation_time === undefined
-          ? q.eq(q.field("_id"), q.field("_id"))
-          : q.gt(q.field("_creationTime"), args.after_creation_time!),
-      )
-      .order("asc")
-      .take(args.limit);
-    return rows.map((r) => ({
-      _id: r._id,
-      _creationTime: r._creationTime,
-      name_canonical: r.name_canonical,
-      name_input: r.name_input,
-      image_url: r.image_url,
-    }));
-  },
-});
+// Queries + mutations moved to ./item_embeddings_data.ts because this
+// module declares "use node" (for the Gemini SDK) and node-runtime
+// Convex modules may only export actions. References below use
+// internal.item_embeddings_data.* accordingly.
 
 /**
  * Semantic search via vectorIndex. Internal — callers pass an already-
@@ -200,7 +105,7 @@ export const generateEmbedding = internalAction({
     if (!client) return { ok: false, reason: "no_api_key" };
     const vec = await client.embedContent(args.content);
     if (!vec) return { ok: false, reason: "empty_or_failed" };
-    await ctx.runMutation(internal.item_embeddings.upsertEmbedding, {
+    await ctx.runMutation(internal.item_embeddings_data.upsertEmbedding, {
       item_id: args.item_id,
       embedding: vec,
       embedding_model: EMBEDDING_MODEL,
@@ -220,7 +125,7 @@ export const generateEmbeddingsForItem = internalAction({
   args: { item_id: v.id("items") },
   handler: async (ctx, args): Promise<{ generated: number; skipped: number }> => {
     const item: Doc<"items"> | null = await ctx.runQuery(
-      internal.item_embeddings.getItem,
+      internal.item_embeddings_data.getItem,
       { item_id: args.item_id },
     );
     if (!item) return { generated: 0, skipped: 0 };
@@ -244,7 +149,7 @@ export const generateEmbeddingsForItem = internalAction({
     }
 
     // description source: prefer item_specs.description; fall back to notes.
-    const spec = await ctx.runQuery(internal.item_embeddings.getItemSpec, {
+    const spec = await ctx.runQuery(internal.item_embeddings_data.getItemSpec, {
       item_id: args.item_id,
     });
     const descContent =
@@ -270,7 +175,7 @@ export const generateEmbeddingsForItem = internalAction({
     }
 
     for (const src of sources) {
-      const alreadyDone = await ctx.runQuery(internal.item_embeddings.hasEmbedding, {
+      const alreadyDone = await ctx.runQuery(internal.item_embeddings_data.hasEmbedding, {
         item_id: args.item_id,
         source_kind: src.kind,
       });
@@ -283,7 +188,7 @@ export const generateEmbeddingsForItem = internalAction({
         skipped++;
         continue;
       }
-      await ctx.runMutation(internal.item_embeddings.upsertEmbedding, {
+      await ctx.runMutation(internal.item_embeddings_data.upsertEmbedding, {
         item_id: args.item_id,
         embedding: vec,
         embedding_model: EMBEDDING_MODEL,
@@ -294,19 +199,6 @@ export const generateEmbeddingsForItem = internalAction({
     }
 
     return { generated, skipped };
-  },
-});
-
-/**
- * Side-table description lookup. Returns null when no spec exists.
- */
-export const getItemSpec = internalQuery({
-  args: { item_id: v.id("items") },
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query("item_specs")
-      .withIndex("by_item", (q) => q.eq("item_id", args.item_id))
-      .first();
   },
 });
 
@@ -399,7 +291,7 @@ export const backfillEmbeddings = internalAction({
         name_canonical: string;
         name_input: string;
         image_url?: string;
-      }> = await ctx.runQuery(internal.item_embeddings.listItemsForBackfill, {
+      }> = await ctx.runQuery(internal.item_embeddings_data.listItemsForBackfill, {
         after_creation_time: cursor,
         limit: chunkSize,
       });
