@@ -1041,6 +1041,9 @@ export default defineSchema({
     resolved_items: v.optional(v.any()), // mirror of the old column's shape
     vision_processed_at: v.optional(v.number()),
     last_synced_at: v.number(),
+    // Phase 3c/W3b — which tier of the 4-tier vision pipeline produced the
+    // resolution(s). 1=pHash, 2=vectorIndex, 3=Gemini Flash, 4=Grok Vision.
+    resolved_via_tier: v.optional(v.number()),
   })
     .index("by_reservation_id", ["reservation_id"])
     .index("by_processed_at", ["vision_processed_at"]),
@@ -1082,4 +1085,26 @@ export default defineSchema({
       dimensions: 768,
       filterFields: ["item_id", "source_kind"],
     }),
+
+  // ── Phase 3c / Wave 3b: pHash → item_id cache (Tier 1 of vision pipeline) ─
+  // Each row maps an observed image (URL + 64-bit perceptual hash) to the
+  // canonical inventory item resolved for that image. Tier 1 hits exact-ish
+  // pHash matches (Hamming distance < 8) and short-circuits the rest of the
+  // pipeline. Every successful resolution from Tier 2/3/4 writes back here
+  // so the next call collapses to a free hash lookup ("learn-once-cache-
+  // forever"). ADDITIVE — schema-only change.
+  item_image_phash: defineTable({
+    image_url: v.string(),
+    phash: v.string(),                 // 64-bit pHash as hex (16 chars)
+    canonical_item_id: v.id("items"),
+    last_used_at: v.number(),
+    source: v.union(
+      v.literal("vision_resolve"),
+      v.literal("backfill"),
+    ),
+    confidence: v.number(),            // similarity score that produced this entry
+  })
+    .index("by_phash", ["phash"])
+    .index("by_canonical_item_id", ["canonical_item_id"])
+    .index("by_image_url", ["image_url"]),
 });

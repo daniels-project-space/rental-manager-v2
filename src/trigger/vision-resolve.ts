@@ -168,6 +168,8 @@ async function writeAugmentation(args: {
     via_bundle?: string;
   }>;
   input_hash: string;
+  // Phase 3c/W3b — dominant resolution tier (1=pHash, 2=vec, 3=Gemini, 4=Grok).
+  resolved_via_tier?: number;
 }): Promise<void> {
   const res = await fetch(`${CONVEX_URL}/api/mutation`, {
     method: "POST",
@@ -180,6 +182,38 @@ async function writeAugmentation(args: {
   });
   const data = (await res.json()) as { status: string; errorMessage?: string };
   if (data.status !== "success") throw new Error(`vision write: ${data.errorMessage}`);
+}
+
+// Phase 3c/W3b — call the 4-tier Convex resolver per image. Cheaper than
+// shipping every photo through Grok; pHash + vectorIndex catch most.
+interface TieredResolveResult {
+  item_id: string | null;
+  tier: 0 | 1 | 2 | 3 | 4;
+  confidence: number;
+}
+async function tieredResolveImage(imageUrl: string): Promise<TieredResolveResult> {
+  try {
+    const res = await fetch(`${CONVEX_URL}/api/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: "resolve_item_from_image:resolveItemFromImage",
+        args: { imageUrl },
+        format: "json",
+      }),
+    });
+    const data = (await res.json()) as {
+      status: string;
+      value?: TieredResolveResult;
+      errorMessage?: string;
+    };
+    if (data.status !== "success" || !data.value) {
+      return { item_id: null, tier: 0, confidence: 0 };
+    }
+    return data.value;
+  } catch {
+    return { item_id: null, tier: 0, confidence: 0 };
+  }
 }
 
 // ── Scheduled task ────────────────────────────────────────────────────
@@ -232,43 +266,54 @@ export const visionResolveTask = schedules.task({
         ...c.photos_urls.map((u) => ({ type: "image" as const, image: u })),
       ];
 
-      let added: Array<{
+      // Phase 3c/W3b — 4-tier resolver per photo. Each photo is resolved
+      // independently; the lowest tier (Tier 4 = Grok) is only reached when
+      // pHash/vectorIndex/Gemini Flash all miss. Track per-photo tier so we
+      // can store the DOMINANT tier on the reservation (max = costliest hit).
+      const tierCounts = { 1: 0, 2: 0, 3: 0, 4: 0 } as Record<1 | 2 | 3 | 4, number>;
+      const added: Array<{
         item_id: string;
         item_name_canonical: string;
         qty: number;
         confidence: number;
       }> = [];
+      const itemNameById = new Map(batch.inventory.map((i) => [i._id, i.name_canonical]));
+
       try {
-        const gated = await gatedGenerateObject({
-          model: (await getXai())("grok-4.3"),
-          schema: VISION_SCHEMA,
-          messages: [
-            { role: "system", content: VISION_PROMPT },
-            { role: "user", content: userContent },
-          ],
-          context: { source: "trigger:vision-resolve", tag: "vision-resolve" },
-        });
-        if (gated.skipped) {
-          logger.info("[quiet-hours] gated skip", { task: "vision-resolve", reservation_id: c.id });
-          processed++;
-          continue;
+        for (const photoUrl of c.photos_urls) {
+          const r = await tieredResolveImage(photoUrl);
+          if (!r.item_id || r.tier === 0) continue;
+          if (r.tier >= 1 && r.tier <= 4) tierCounts[r.tier as 1 | 2 | 3 | 4]++;
+          if (!validIds.has(r.item_id)) continue;
+          if (alreadyIds.has(r.item_id)) continue;
+          if (r.confidence < 0.7 && r.tier !== 1) continue;
+          // Dedup within this batch
+          if (added.some((a) => a.item_id === r.item_id)) continue;
+          const name = itemNameById.get(r.item_id) ?? r.item_id;
+          added.push({
+            item_id: r.item_id,
+            item_name_canonical: name,
+            qty: 1,
+            confidence: r.confidence,
+          });
         }
-        const result = gated.result;
-        added = (result.object.visible_items ?? [])
-          .filter((vi) => validIds.has(vi.item_id))
-          .filter((vi) => vi.confidence >= 0.7)
-          .filter((vi) => !alreadyIds.has(vi.item_id))
-          .map((vi) => ({
-            item_id: vi.item_id,
-            item_name_canonical: vi.item_name_canonical,
-            qty: Math.max(1, Math.floor(vi.qty ?? 1)),
-            confidence: vi.confidence,
-          }));
       } catch (err) {
-        logger.error("vision-resolve: LLM failed", { reservation_id: c.id, err: String(err) });
+        logger.error("vision-resolve: tiered resolver failed", {
+          reservation_id: c.id,
+          err: String(err),
+        });
         processed++;
         continue;
       }
+
+      // Suppress unused legacy bindings (kept for backward compat of file
+      // shape during the cutover; remove in Phase 3c.2 once the LLM-direct
+      // path is fully retired).
+      void VISION_PROMPT;
+      void VISION_SCHEMA;
+      void userContent;
+      void getXai;
+      void gatedGenerateObject;
 
       if (added.length === 0) {
         processed++;
@@ -301,12 +346,23 @@ export const visionResolveTask = schedules.task({
         }
       }
 
+      // Dominant tier = costliest tier hit on any photo for this reservation
+      // (1 < 2 < 3 < 4). Lets us monitor when Tier 4 is still firing.
+      let dominantTier: number | undefined;
+      for (const t of [4, 3, 2, 1] as const) {
+        if (tierCounts[t] > 0) {
+          dominantTier = t;
+          break;
+        }
+      }
+
       try {
         await writeAugmentation({
           reservation_id: c.id,
           resolved_items: merged,
           expanded_items: expanded,
           input_hash: c.resolution_input_hash,
+          resolved_via_tier: dominantTier,
         });
         totalAdded += added.length;
       } catch (err) {

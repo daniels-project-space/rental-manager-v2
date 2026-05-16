@@ -182,6 +182,7 @@ export async function mirrorResolvedItemsToVisionTable(
   reservation_id: unknown,
   resolved_items: unknown,
   vision_processed_at?: number,
+  resolved_via_tier?: number,
 ): Promise<void> {
   try {
     const existing = await ctx.db
@@ -199,14 +200,21 @@ export async function mirrorResolvedItemsToVisionTable(
       if (vision_processed_at !== undefined) {
         patch.vision_processed_at = vision_processed_at;
       }
+      if (resolved_via_tier !== undefined) {
+        patch.resolved_via_tier = resolved_via_tier;
+      }
       await ctx.db.patch(existing._id, patch);
     } else {
-      await ctx.db.insert("reservation_vision", {
+      const insertRow: Record<string, unknown> = {
         reservation_id,
         resolved_items,
         vision_processed_at,
         last_synced_at: now,
-      });
+      };
+      if (resolved_via_tier !== undefined) {
+        insertRow.resolved_via_tier = resolved_via_tier;
+      }
+      await ctx.db.insert("reservation_vision", insertRow);
     }
   } catch (err) {
     // Dual-write — never fail the primary mutation on a side-table error.

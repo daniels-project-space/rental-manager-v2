@@ -512,8 +512,14 @@ export const admin_writeVisionAugmentation = mutation({
       via_bundle: v.optional(v.id("bundles")),
     }))),
     input_hash: v.string(),
+    // Phase 3c/W3b — which tier of the vision pipeline produced the
+    // dominant resolution. Optional for backward-compatibility.
+    resolved_via_tier: v.optional(v.number()),
   },
-  handler: async (ctx, { reservation_id, resolved_items, expanded_items, input_hash }) => {
+  handler: async (
+    ctx,
+    { reservation_id, resolved_items, expanded_items, input_hash, resolved_via_tier },
+  ) => {
     const now = Date.now();
     await ctx.db.patch(reservation_id, {
       resolved_items,
@@ -522,8 +528,14 @@ export const admin_writeVisionAugmentation = mutation({
       resolution_method: "llm+vision",
       resolution_input_hash: input_hash,
     });
-    // Phase W3b — dual-write to reservation_vision side table.
-    await mirrorResolvedItemsToVisionTable(ctx, reservation_id, resolved_items, now);
+    // Phase W3b — dual-write to reservation_vision side table (with tier).
+    await mirrorResolvedItemsToVisionTable(
+      ctx,
+      reservation_id,
+      resolved_items,
+      now,
+      resolved_via_tier,
+    );
     return { ok: true };
   },
 });
