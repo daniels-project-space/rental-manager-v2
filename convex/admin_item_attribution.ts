@@ -36,6 +36,7 @@ export const setItemAttribution = mutation({
     replacement_cost_gbp: v.optional(v.number()),
     included_with_rental: v.optional(v.array(v.string())),
     kind_override: v.optional(v.string()),
+    is_marketing_only: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const item = await ctx.db
@@ -75,6 +76,14 @@ export const setItemAttribution = mutation({
 
     if (args.kind_override !== undefined && args.kind_override !== item.kind) {
       patch.kind = args.kind_override;
+      changed = true;
+    }
+
+    if (
+      args.is_marketing_only !== undefined &&
+      args.is_marketing_only !== item.is_marketing_only
+    ) {
+      patch.is_marketing_only = args.is_marketing_only;
       changed = true;
     }
 
