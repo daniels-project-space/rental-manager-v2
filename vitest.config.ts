@@ -15,7 +15,11 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: false,
-    include: ["src/mastra/**/*.test.ts", "convex/lib/item_matcher.test.ts"],
+    include: [
+      "src/mastra/**/*.test.ts",
+      "convex/lib/item_matcher.test.ts",
+      "convex/lib/revenue_attribution.test.ts",
+    ],
     css: false,
   },
 });
