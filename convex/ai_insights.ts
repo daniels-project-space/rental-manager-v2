@@ -15,7 +15,13 @@ export const getInsights = query({
     const sixtyDaysAgoStr = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
     const ninetyDaysAgoStr = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
 
-    let allReservations = await ctx.db.query("reservations").collect();
+    // 365d cutoff: the insights here use 30d / 60d / 90d windows only, so
+    // anything older than a year is dead weight. ~6× bandwidth saving.
+    const aiCutoff = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    let allReservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", aiCutoff))
+      .collect();
     if (accountSlug) {
       allReservations = allReservations.filter((r) => r.account_slug === accountSlug);
     }

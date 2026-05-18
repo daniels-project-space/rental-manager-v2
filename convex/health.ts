@@ -18,7 +18,17 @@ export const getHealthReport = query({
 
     // --- Item scan ---
     const allItems = await ctx.db.query("items").collect();
-    for (const item of allItems.filter((i) => i.status === "active" && !i.is_marketing_only)) {
+    const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+
+    // Hoisted listing_photos load: previously fetched inside the per-item loop
+    // (N×M reads). One collect + Set lookup is O(rows + items).
+    const allPhotos = await ctx.db.query("listing_photos").collect();
+    const photoNames = new Set<string>();
+    for (const p of allPhotos) {
+      for (const it of p.items ?? []) photoNames.add(it.item_name);
+    }
+
+    for (const item of activeItems) {
       // No pricing entry
       const priceRow = await ctx.db
         .query("pricing_catalog")
@@ -32,17 +42,7 @@ export const getHealthReport = query({
           entityId: item._id,
         });
       }
-
-      // No listing photos
-      const photo = await ctx.db
-        .query("listing_photos")
-        .collect()
-        .then((rows) =>
-          rows.find((p) =>
-            p.items.some((i) => i.item_name === item.name_canonical)
-          )
-        );
-      if (!photo) {
+      if (!photoNames.has(item.name_canonical)) {
         issues.push({
           severity: "warning",
           type: "missing_photo",
@@ -53,7 +53,13 @@ export const getHealthReport = query({
     }
 
     // --- Reservation scan ---
-    let reservations = await ctx.db.query("reservations").collect();
+    // Health checks only care about recent confirmed bookings — older rows
+    // are immutable history. 365-day cutoff drops ~1500 → ~250 reads.
+    const cutoff = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }

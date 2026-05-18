@@ -584,14 +584,22 @@ export const getWeeklyCalendar = query({
       (r) => r.start_date !== undefined && r.start_date <= weekEnd
     );
 
-    // Also include reservations that started before weekStart but end during/after it
-    // OPEN_INDEX_NEED: index on end_date to efficiently fetch reservations ending >= weekStart.
-    const allRes = await ctx.db.query("reservations").collect();
-    for (const r of allRes) {
+    // Also include reservations that started before weekStart but end during/after it.
+    // No end_date index, so use a bounded start_date lookback (90 days). Long
+    // rentals exceeding 90 days are vanishingly rare on Hygglo; the bounded
+    // scan drops ~1700 → ~90 reads.
+    const overlapStart = new Date(Date.parse(weekStartDate) - 90 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    const priorRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", overlapStart).lt("start_date", weekStartDate),
+      )
+      .collect();
+    for (const r of priorRes) {
       if (
-        r.start_date !== undefined &&
         r.end_date !== undefined &&
-        r.start_date < weekStartDate &&
         r.end_date >= weekStartDate
       ) {
         if (!reservations.find((x) => x._id === r._id)) {
@@ -795,13 +803,20 @@ export const getGanttWeek = query({
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= weekEnd
     );
-    // Reservations starting before weekStart but ending inside / after it
-    const allRes = await ctx.db.query("reservations").collect();
-    for (const r of allRes) {
+    // Reservations starting before weekStart but ending inside / after it.
+    // Bounded 90-day lookback (see comment in getCalendarStrip above).
+    const overlapStart = new Date(Date.parse(weekStart!) - 90 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    const priorRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", overlapStart).lt("start_date", weekStart!),
+      )
+      .collect();
+    for (const r of priorRes) {
       if (
-        r.start_date !== undefined &&
         r.end_date !== undefined &&
-        r.start_date < weekStart! &&
         r.end_date >= weekStart!
       ) {
         if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
