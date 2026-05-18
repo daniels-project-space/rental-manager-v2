@@ -131,6 +131,7 @@ export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
   const { layout, isStatHidden, reorderStats } = useEditMode();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [catVolExpanded, setCatVolExpanded] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -484,11 +485,15 @@ export function StatsGrid() {
             borderLeft: "3px solid #a78bfa",
           }}
         >
-          <CategoryVolumePieBody accountSlug={activeAccountSlug} alwaysOpen />
+          <CategoryVolumePieBody
+            accountSlug={activeAccountSlug}
+            expanded={catVolExpanded}
+            onToggle={() => setCatVolExpanded((v) => !v)}
+          />
         </div>
       ),
     };
-  }, [rawData, expandedId, activeAccountSlug]);
+  }, [rawData, expandedId, activeAccountSlug, catVolExpanded]);
 
   if (!cards) return <StatsGridSkeleton />;
 
@@ -526,7 +531,11 @@ export function StatsGrid() {
                 id={id}
                 kind="stat"
                 label={label}
-                className={HERO_IDS.has(id) ? "col-span-2" : ""}
+                className={
+                  HERO_IDS.has(id) && !(id === "category_volume" && !catVolExpanded)
+                    ? "col-span-2"
+                    : ""
+                }
               >
                 {cards[id]}
               </EditableWidget>

@@ -52,7 +52,8 @@ type MissedComponent = "all" | "denied" | "gap" | "demand";
 
 type CategoryVolumePieBodyProps = {
   accountSlug: string | null;
-  alwaysOpen?: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 };
 
 const LEADER_KEYFRAMES = `@keyframes leaderFadeIn {
@@ -102,14 +103,14 @@ function makeLeaderLabel(
 
 export function CategoryVolumePieBody({
   accountSlug,
-  alwaysOpen: _alwaysOpen,
+  expanded,
+  onToggle,
 }: CategoryVolumePieBodyProps) {
   const [days, setDays] = useState<Days>(30);
   const [metric, setMetric] = useState<Metric>("count");
   const [view, setView] = useState<View>("earned");
   const [drillKind, setDrillKind] = useState<string | null>(null);
   const [subDrillKind, setSubDrillKind] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<boolean>(true);
   // Phase 10.6 — component filter for Missed mode (All/Denials/Gaps/Demand).
   const [missedComponent, setMissedComponent] = useState<MissedComponent>("all");
 
@@ -211,7 +212,7 @@ export function CategoryVolumePieBody({
 
   const chevron = (
     <button
-      onClick={() => setExpanded((v) => !v)}
+      onClick={() => onToggle()}
       className="text-slate-400 hover:text-white transition-colors text-sm leading-none px-1.5 py-0.5 rounded"
       aria-label={expanded ? "Collapse" : "Expand"}
       style={{ background: "transparent" }}
@@ -220,17 +221,56 @@ export function CategoryVolumePieBody({
     </button>
   );
 
-  // Collapsed view — compact summary only.
+  // Collapsed view — mini ring + compact stats.
   if (!expanded) {
+    const slices = data?.slices ?? [];
+    const hasData = !!data;
+    const hasSlices = hasData && slices.length > 0;
+    const topPct = hasSlices && data!.totals.revenue > 0
+      ? Math.round((slices[0].revenue / data!.totals.revenue) * 100)
+      : 0;
     return (
       <>
         <style>{LEADER_KEYFRAMES}</style>
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="text-[10px] text-slate-400 uppercase tracking-wider">
-              Category Mix
-            </span>
-            <span className="text-xs text-[#e4e6eb] truncate">{compactSummary}</span>
+        <div className="flex items-center gap-3">
+          {!hasData ? (
+            <SkeletonBlock className="w-[44px] h-[44px] rounded-full" />
+          ) : !hasSlices ? (
+            <div className="w-[44px] h-[44px] rounded-full bg-slate-700/40" />
+          ) : (
+            <div style={{ width: 44, height: 44 }}>
+              <PieChart width={44} height={44}>
+                <Pie
+                  data={slices}
+                  dataKey="revenue"
+                  innerRadius={14}
+                  outerRadius={20}
+                  paddingAngle={2}
+                  labelLine={false}
+                  label={false}
+                  isAnimationActive={false}
+                >
+                  {slices.map((s) => (
+                    <Cell key={s.kind} fill={s.color} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider">Category Mix</span>
+            <div className="text-xs text-[#e4e6eb]">
+              {!hasData
+                ? "—"
+                : !hasSlices
+                  ? `No rentals · ${days}d`
+                  : `£${data!.totals.revenue.toFixed(0)} · ${data!.totals.count} rentals`}
+            </div>
+            {hasSlices && (
+              <div className="text-[11px] text-[#8b8fa3] truncate">
+                top: {slices[0].label} {topPct}%
+              </div>
+            )}
           </div>
           {chevron}
         </div>
@@ -414,13 +454,12 @@ export function CategoryVolumePieBody({
 
           return (
           <div
-            className="px-16"
             style={{
               background: "radial-gradient(circle at 50% 50%, rgba(245,158,11,0.06) 0%, transparent 60%)",
             }}
           >
             <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-              <PieChart>
+              <PieChart margin={{ top: 20, right: 90, bottom: 20, left: 90 }}>
                 <Pie
                   data={filteredOuter}
                   dataKey="missed"
@@ -516,13 +555,12 @@ export function CategoryVolumePieBody({
         <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />
       ) : (
         <div
-          className="px-16"
           style={{
             background: "radial-gradient(circle at 50% 50%, rgba(96,165,250,0.06) 0%, transparent 60%)",
           }}
         >
           <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-            <PieChart>
+            <PieChart margin={{ top: 20, right: 90, bottom: 20, left: 90 }}>
               <Pie
                 data={data.slices}
                 dataKey={metric}
