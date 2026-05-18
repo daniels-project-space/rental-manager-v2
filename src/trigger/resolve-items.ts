@@ -24,41 +24,12 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { gatedGenerateObject } from "../lib/gated-generate";
-import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
+import { getLlmModel } from "../lib/llm-client";
 
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-// ── Vault + LLM client ─────────────────────────────────────────────────
-
-async function getVaultSecret(service: string, keyName: string): Promise<string> {
-  const res = await fetch(`${VAULT_URL}/api/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      path: "secrets:listByService",
-      args: { service },
-      format: "json",
-    }),
-  });
-  if (!res.ok) throw new Error(`vault: ${res.status}`);
-  const data = (await res.json()) as {
-    value?: Array<{ keyName: string; value: string }>;
-  };
-  for (const s of data.value ?? []) if (s.keyName === keyName) return s.value;
-  throw new Error(`${keyName} missing in vault service=${service}`);
-}
-
-let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
-  if (_xai) return _xai;
-  const key = process.env.XAI_API_KEY ?? (await getVaultSecret("xai", "XAI_API_KEY"));
-  _xai = createXai({ apiKey: key });
-  return _xai;
-}
 
 // ── Convex HTTP helpers ────────────────────────────────────────────────
 
@@ -352,7 +323,7 @@ async function runBatch(
 
     try {
       const gated = await gatedGenerateObject({
-        model: (await getXai())("grok-4.3"),
+        model: await getLlmModel(),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },

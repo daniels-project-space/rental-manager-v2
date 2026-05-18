@@ -26,44 +26,12 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { gatedGenerateObject } from "../lib/gated-generate";
-import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
-import { GROK_NARROW_MODEL } from "../lib/ai-models";
+import { getLlmModel } from "../lib/llm-client";
 
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-// ── Vault + LLM client (lazy) ──────────────────────────────────────────
-
-async function getVaultSecret(service: string, keyName: string): Promise<string> {
-  const res = await fetch(`${VAULT_URL}/api/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      path: "secrets:listByService",
-      args: { service },
-      format: "json",
-    }),
-  });
-  if (!res.ok) throw new Error(`Vault fetch failed: ${res.status}`);
-  const data = (await res.json()) as {
-    value?: Array<{ keyName: string; value: string }>;
-  };
-  for (const s of data.value ?? []) {
-    if (s.keyName === keyName) return s.value;
-  }
-  throw new Error(`${keyName} not found in vault service=${service}`);
-}
-
-let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
-  if (_xai) return _xai;
-  const key = process.env.XAI_API_KEY ?? (await getVaultSecret("xai", "XAI_API_KEY"));
-  _xai = createXai({ apiKey: key });
-  return _xai;
-}
 
 // ── LLM schema (must match Convex side, but lives here independently) ──
 
@@ -178,7 +146,7 @@ export const canonicalizeDenialsTask = schedules.task({
     let result: { object: { results: Array<{ index: number; canonical_product: string; brand: string; kind: string }> } };
     try {
       const gated = await gatedGenerateObject({
-        model: (await getXai())(GROK_NARROW_MODEL),
+        model: await getLlmModel(),
         schema: BATCH_SCHEMA,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },

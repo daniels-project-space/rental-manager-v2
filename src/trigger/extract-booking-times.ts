@@ -13,39 +13,11 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { gatedGenerateText } from "../lib/gated-generate";
-import { createXai } from "@ai-sdk/xai";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
-import { GROK_NARROW_MODEL } from "../lib/ai-models";
+import { getLlmModel } from "../lib/llm-client";
 
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-async function getVaultSecret(service: string, keyName: string): Promise<string> {
-  const res = await fetch(`${VAULT_URL}/api/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      path: "secrets:listByService",
-      args: { service },
-      format: "json",
-    }),
-  });
-  if (!res.ok) throw new Error(`vault: ${res.status}`);
-  const data = (await res.json()) as {
-    value?: Array<{ keyName: string; value: string }>;
-  };
-  for (const s of data.value ?? []) if (s.keyName === keyName) return s.value;
-  throw new Error(`${keyName} missing in vault service=${service}`);
-}
-
-let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
-  if (_xai) return _xai;
-  const key = process.env.XAI_API_KEY ?? (await getVaultSecret("xai", "XAI_API_KEY"));
-  _xai = createXai({ apiKey: key });
-  return _xai;
-}
 
 // ── Helpers (ported from convex/extract_booking_times.ts) ──────────────
 
@@ -256,7 +228,7 @@ export const extractBookingTimesTask = schedules.task({
       let extracted: ExtractedTimes;
       try {
         const gated = await gatedGenerateText({
-          model: (await getXai())(GROK_NARROW_MODEL),
+          model: await getLlmModel(),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
           context: { source: "trigger:extract-booking-times", tag: "extract-booking-times" },
         });

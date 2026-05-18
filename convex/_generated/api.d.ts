@@ -32,7 +32,6 @@ import type * as dashboard_chat_context from "../dashboard_chat_context.js";
 import type * as dashboard_invariants from "../dashboard_invariants.js";
 import type * as demand from "../demand.js";
 import type * as demand_loss from "../demand_loss.js";
-import type * as denial_canonicalizer from "../denial_canonicalizer.js";
 import type * as denial_canonicalizer_queries from "../denial_canonicalizer_queries.js";
 import type * as denial_records from "../denial_records.js";
 import type * as denial_resolutions from "../denial_resolutions.js";
@@ -133,7 +132,6 @@ declare const fullApi: ApiFromModules<{
   dashboard_invariants: typeof dashboard_invariants;
   demand: typeof demand;
   demand_loss: typeof demand_loss;
-  denial_canonicalizer: typeof denial_canonicalizer;
   denial_canonicalizer_queries: typeof denial_canonicalizer_queries;
   denial_records: typeof denial_records;
   denial_resolutions: typeof denial_resolutions;

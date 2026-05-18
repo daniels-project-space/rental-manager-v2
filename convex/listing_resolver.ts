@@ -35,7 +35,25 @@ import {
 import { CANONICAL_MAP, getRelevantItems } from "./lib/inventory_categories";
 import { lookupPhotoReference } from "./lib/listing_photo_reference";
 import { createXai } from "@ai-sdk/xai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText } from "ai";
+
+// Convex-side LLM provider selector (mirrors src/lib/llm-client.ts; can't
+// cross-import between convex/ and src/). Default OpenRouter + DeepSeek;
+// rollback to xAI direct via AI_PROVIDER=xai.
+function getTier5Model() {
+  const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
+  if (useXai) {
+    const apiKey = process.env.XAI_API_KEY ?? process.env.GROK_API_KEY;
+    if (!apiKey) return null;
+    return createXai({ apiKey })(process.env.GROK_CHAT_MODEL ?? "grok-4.3");
+  }
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return null;
+  return createOpenRouter({ apiKey })(
+    process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash",
+  );
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -273,8 +291,8 @@ async function aiResolve(
   _description?: string,
   detail?: unknown,
 ): Promise<ResolvedItem[]> {
-  const apiKey = process.env.XAI_API_KEY ?? process.env.GROK_API_KEY;
-  if (!apiKey) return [];
+  const model = getTier5Model();
+  if (!model) return [];
 
   const relevantItems = getRelevantItems(title, detail);
   if (relevantItems.length === 0) return [];
@@ -305,10 +323,8 @@ ${brandRule}
 JSON:`;
 
   try {
-    const xai = createXai({ apiKey });
-    const modelId = process.env.GROK_DECISION_MODEL ?? "grok-4-fast";
     const { text } = await generateText({
-      model: xai(modelId),
+      model,
       prompt,
       maxOutputTokens: 512,
       temperature: 0,

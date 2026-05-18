@@ -27,34 +27,52 @@ import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createXai } from "@ai-sdk/xai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
 import { titleHash, primaryBrand, brandMismatch } from "./listing_cache";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
-async function getXaiKeyFromVault(): Promise<string> {
-  if (process.env.XAI_API_KEY) return process.env.XAI_API_KEY;
+async function getVaultKey(service: string, keyName: string): Promise<string> {
+  const envValue = process.env[keyName];
+  if (envValue) return envValue;
   const res = await fetch(VAULT_URL + "/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: "secrets:listByService", args: { service: "xai" }, format: "json" }),
+    body: JSON.stringify({ path: "secrets:listByService", args: { service }, format: "json" }),
   });
   if (!res.ok) throw new Error("vault fetch failed: " + res.status);
   const data = (await res.json()) as { value?: Array<{ keyName: string; value: string }> };
-  for (const s of data.value ?? []) {
-    if (s.keyName === "XAI_API_KEY") return s.value;
-  }
-  throw new Error("XAI_API_KEY not found in vault");
+  for (const s of data.value ?? []) if (s.keyName === keyName) return s.value;
+  throw new Error(keyName + " not found in vault service=" + service);
 }
 
-// Built lazily on first call so the module loads without env access.
+// Convex-side LLM provider selector. Default: OpenRouter → DeepSeek-v4-flash
+// ($0.112 / $0.224 per 1M tok). Set AI_PROVIDER=xai for the grok-4.3 fallback
+// path ($1.25 / $2.50). Built lazily so module loads without env access.
+//
+// IMPORTANT — Convex actions can't cross-import from src/, so this helper is
+// duplicated in listing_resolver.ts intentionally. All other "use node"
+// resolver modules in this folder (denial_resolver, extract_booking_times)
+// re-export from here.
 let _xai: ReturnType<typeof createXai> | null = null;
-export async function getXai() {
-  if (_xai) return _xai;
-  const key = await getXaiKeyFromVault();
-  _xai = createXai({ apiKey: key });
-  return _xai;
+let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
+
+export async function getActionLlmModel() {
+  const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
+  if (useXai) {
+    if (!_xai) {
+      const key = await getVaultKey("xai", "XAI_API_KEY");
+      _xai = createXai({ apiKey: key });
+    }
+    return _xai(process.env.GROK_CHAT_MODEL ?? "grok-4.3");
+  }
+  if (!_openrouter) {
+    const key = await getVaultKey("openrouter", "OPENROUTER_API_KEY");
+    _openrouter = createOpenRouter({ apiKey: key });
+  }
+  return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash");
 }
 
 export const RESOLUTION_SCHEMA = z.object({
@@ -335,7 +353,7 @@ export const resolveReservation = action({
     let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }> = [];
     try {
       const gated = await gatedGenerateObject({
-        model: (await getXai())("grok-4.3"),
+        model: await getActionLlmModel(),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
