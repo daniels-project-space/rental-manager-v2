@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/xai": "^3.0.89",
+    "@openrouter/ai-sdk-provider": "^2.9.0",
     "@aws-sdk/client-s3": "^3.1045.0",
     "@aws-sdk/s3-request-presigner": "^3.1045.0",
     "@browserbasehq/stagehand": "^3.4.0",
@@ -26,9 +27,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@mastra/core": "^1.32.1",
-    "@mastra/libsql": "^1.10.0",
     "@mastra/loggers": "^1.1.1",
-    "@mastra/memory": "^1.18.2",
     "@trigger.dev/core": "4.4.5",
     "@trigger.dev/sdk": "4.4.5",
     "ai": "^6.0.176",

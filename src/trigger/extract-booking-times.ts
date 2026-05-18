@@ -13,39 +13,11 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { gatedGenerateText } from "../lib/gated-generate";
-import { createXai } from "@ai-sdk/xai";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
-import { GROK_NARROW_MODEL } from "../lib/ai-models";
+import { getLlmModel } from "../lib/llm-client";
 
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-async function getVaultSecret(service: string, keyName: string): Promise<string> {
-  const res = await fetch(`${VAULT_URL}/api/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      path: "secrets:listByService",
-      args: { service },
-      format: "json",
-    }),
-  });
-  if (!res.ok) throw new Error(`vault: ${res.status}`);
-  const data = (await res.json()) as {
-    value?: Array<{ keyName: string; value: string }>;
-  };
-  for (const s of data.value ?? []) if (s.keyName === keyName) return s.value;
-  throw new Error(`${keyName} missing in vault service=${service}`);
-}
-
-let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
-  if (_xai) return _xai;
-  const key = process.env.XAI_API_KEY ?? (await getVaultSecret("xai", "XAI_API_KEY"));
-  _xai = createXai({ apiKey: key });
-  return _xai;
-}
 
 // ── Helpers (ported from convex/extract_booking_times.ts) ──────────────
 
@@ -72,17 +44,10 @@ function hashTranscript(messages: Array<{ body_text: string }>): string {
   return `${messages.length}:${last.slice(-200)}`;
 }
 
-function buildPrompt(rentalTitle: string, startDate: string, endDate: string, transcript: string): string {
-  const now = new Date().toISOString().replace("T", " ").substring(0, 16);
-  return `You are extracting the FINAL AGREED pickup and return times from a rental equipment chat.
-Current date/time: ${now} UTC
-
-Equipment: ${rentalTitle}
-Rental period: ${startDate} to ${endDate}
-
-=== CONVERSATION ===
-${transcript}
-=== END ===
+// Static prompt body — invariant across every call so DeepSeek's auto
+// prefix cache hits the whole instruction block. Variable bits (current
+// time, dates, equipment, transcript) are appended in buildPrompt below.
+const TIMES_INSTRUCTIONS = `You are extracting the FINAL AGREED pickup and return times from a rental equipment chat.
 
 INSTRUCTIONS:
 - Find the LAST pickup and return times that were AGREED or CONFIRMED by both parties.
@@ -99,11 +64,11 @@ INSTRUCTIONS:
 - If the renter corrected themselves (e.g., first said 11am then 8pm), use the LAST corrected time.
 
 CRITICAL — DATES:
-- The rental period is ${startDate} to ${endDate}, but pickup/return dates may DIFFER.
+- The rental period spans the provided start_date to end_date, but pickup/return dates may DIFFER.
 - Pickup can be the EVENING BEFORE the rental starts.
 - Return can be the MORNING AFTER the rental ends.
 - Determine the actual date from context.
-- If no specific date context, default pickup to ${startDate} and return to ${endDate}. NEVER output NONE for dates.
+- If no specific date context, default pickup to start_date and return to end_date. NEVER output NONE for dates.
 
 DELIVERY METHOD DETECTION:
 - ONLY mark as DELIVERY if the courier was ACTUALLY BOOKED/CONFIRMED.
@@ -112,14 +77,27 @@ DELIVERY METHOD DETECTION:
 
 Respond ONLY with these nine lines:
 PICKUP_TIME: HH:MM or NONE
-PICKUP_DATE: YYYY-MM-DD (default to ${startDate} if unknown — NEVER output NONE)
+PICKUP_DATE: YYYY-MM-DD (default to start_date if unknown — NEVER output NONE)
 PICKUP_METHOD: DELIVERY or COLLECTION or UNKNOWN
 RETURN_TIME: HH:MM or NONE
-RETURN_DATE: YYYY-MM-DD (default to ${endDate} if unknown — NEVER output NONE)
+RETURN_DATE: YYYY-MM-DD (default to end_date if unknown — NEVER output NONE)
 RETURN_METHOD: DELIVERY or COLLECTION or UNKNOWN
 STATUS: ACTIVE or CANCELLED
 CONFIDENCE: HIGH or LOW
 NOTES: <any relevant context>`;
+
+function buildPrompt(rentalTitle: string, startDate: string, endDate: string, transcript: string): string {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 16);
+  // Static instructions FIRST (cache prefix); variable context LAST.
+  return `${TIMES_INSTRUCTIONS}
+
+Current date/time: ${now} UTC
+Equipment: ${rentalTitle}
+Rental period: ${startDate} to ${endDate}
+
+=== CONVERSATION ===
+${transcript}
+=== END ===`;
 }
 
 interface ExtractedTimes {
@@ -256,8 +234,12 @@ export const extractBookingTimesTask = schedules.task({
       let extracted: ExtractedTimes;
       try {
         const gated = await gatedGenerateText({
-          model: (await getXai())(GROK_NARROW_MODEL),
+          model: await getLlmModel(),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
+          // 9 short lines (~150 visible tok) + reasoning model overhead.
+          // DeepSeek-v4-flash routinely uses 800-1500 reasoning tokens on this
+          // task (observed during integration testing). 1800 leaves headroom.
+          maxOutputTokens: 1800,
           context: { source: "trigger:extract-booking-times", tag: "extract-booking-times" },
         });
         if (gated.skipped) {

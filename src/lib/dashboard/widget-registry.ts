@@ -19,7 +19,6 @@ import { PriceRecommendations } from "@/components/dashboard/PriceRecommendation
 import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsights";
 import { HealthScanner } from "@/components/dashboard/HealthScanner";
 import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
-import { AIChat } from "@/components/dashboard/AIChat";
 import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
 import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
@@ -58,7 +57,6 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "ai-insights",         label: "AI Investment Insights", component: AIInvestmentInsights },
   { id: "health-scanner",      label: "Health & Scanner",       component: HealthScanner },
   { id: "hygglo-inbox",        label: "Hygglo Inbox",           component: HyggloInbox },
-  { id: "ai-chat",             label: "AI Chat",                component: AIChat },
   { id: "item-roi",            label: "Item ROI",              component: ItemROIPanel },
   { id: "lost-revenue-buy",    label: "Lost Revenue · Buy",    component: LostRevenueBuyPanel },
   { id: "verification-funnel", label: "Verification Funnel",   component: VerificationFunnelPanel },

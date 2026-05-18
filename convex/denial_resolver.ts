@@ -28,14 +28,13 @@ import { internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createHash } from "crypto";
 import {
-  getXai,
+  getActionLlmModel,
   RESOLUTION_SCHEMA,
   filterInventoryByCategory,
   modelPrompt,
   buildUserMessage,
 } from "./item_resolver";
 import { primaryBrand, brandMismatch } from "./listing_cache";
-import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -106,12 +105,14 @@ export const resolveItemFor = internalAction({
     let bestName: string | undefined;
     try {
       const gated = await gatedGenerateObject({
-        model: (await getXai())(GROK_NARROW_MODEL),
+        model: await getActionLlmModel(),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
           { role: "user", content: buildUserMessage(itemName, filterInventoryByCategory(inventory, itemName)) },
         ],
+        // Single denial → 1-2 items visible + reasoning overhead.
+        maxOutputTokens: 1200,
         context: { source: "convex:denial_resolver", tag: "denial-resolver" },
       });
       if (gated.skipped) {

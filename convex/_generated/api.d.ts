@@ -28,11 +28,9 @@ import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as dashboardLayout from "../dashboardLayout.js";
 import type * as dashboard_chat from "../dashboard_chat.js";
-import type * as dashboard_chat_context from "../dashboard_chat_context.js";
 import type * as dashboard_invariants from "../dashboard_invariants.js";
 import type * as demand from "../demand.js";
 import type * as demand_loss from "../demand_loss.js";
-import type * as denial_canonicalizer from "../denial_canonicalizer.js";
 import type * as denial_canonicalizer_queries from "../denial_canonicalizer_queries.js";
 import type * as denial_records from "../denial_records.js";
 import type * as denial_resolutions from "../denial_resolutions.js";
@@ -101,7 +99,6 @@ import type * as snapshot_jobs from "../snapshot_jobs.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
-import type * as vision_resolver from "../vision_resolver.js";
 
 import type {
   ApiFromModules,
@@ -130,11 +127,9 @@ declare const fullApi: ApiFromModules<{
   dashboard: typeof dashboard;
   dashboardLayout: typeof dashboardLayout;
   dashboard_chat: typeof dashboard_chat;
-  dashboard_chat_context: typeof dashboard_chat_context;
   dashboard_invariants: typeof dashboard_invariants;
   demand: typeof demand;
   demand_loss: typeof demand_loss;
-  denial_canonicalizer: typeof denial_canonicalizer;
   denial_canonicalizer_queries: typeof denial_canonicalizer_queries;
   denial_records: typeof denial_records;
   denial_resolutions: typeof denial_resolutions;
@@ -203,7 +198,6 @@ declare const fullApi: ApiFromModules<{
   sync_account_profiles: typeof sync_account_profiles;
   sync_state: typeof sync_state;
   tax: typeof tax;
-  vision_resolver: typeof vision_resolver;
 }>;
 
 /**

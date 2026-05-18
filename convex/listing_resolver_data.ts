@@ -1,9 +1,10 @@
 /**
  * Data-access layer for the listing_resolver action.
  *
- * The listing_resolver itself runs in Node (`"use node"`) so it can call the
- * @ai-sdk/xai grok-4-fast model. Convex queries and mutations cannot live in
- * a "use node" file, so they live here in a regular Convex module.
+ * The listing_resolver itself runs in Node (`"use node"`) so it can call
+ * AI providers via getTier5Model (OpenRouter→DeepSeek default; xAI→grok-4.3
+ * fallback). Convex queries and mutations cannot live in a "use node" file,
+ * so they live here in a regular Convex module.
  *
  * Tables touched:
  *   - listing_resolution (one row per Hygglo listing × account)

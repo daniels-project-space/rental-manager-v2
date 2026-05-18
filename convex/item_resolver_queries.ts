@@ -217,29 +217,6 @@ export const getBundlesWithItems = internalQuery({
   },
 });
 
-
-/** Reservations that have a text-only LLM resolution and a kit-style title
- *  with photos — candidates for the vision pass. */
-export const listNeedingVision = internalQuery({
-  args: { limit: v.number() },
-  handler: async (ctx, { limit }) => {
-    const KIT_RE = /(kit|set|complete|full|bundle|package|cinematic|production)|\+/i;
-    const all = await ctx.db.query("reservations").collect();
-    const candidates = [] as Array<{ id: typeof all[number]["_id"]; ts: number }>;
-    for (const r of all) {
-      if (r.is_obsolete) continue;
-      if (!r.hygglo_order_id) continue;
-      if (((r as any).photos_urls?.length ?? 0) === 0) continue;
-      if (((r as any).resolution_method ?? null) !== "llm") continue;
-      const title = (r.items ?? []).map((i) => i.item_name).join(" + ");
-      if (!KIT_RE.test(title)) continue;
-      candidates.push({ id: r._id, ts: (r as any).resolution_at ?? r._creationTime });
-    }
-    candidates.sort((a, b) => b.ts - a.ts);
-    return candidates.slice(0, limit).map((c) => c.id);
-  },
-});
-
 // ───────────────────────────────────────────────────────────────────────
 // Trigger.dev orchestration surface.
 // The item-resolver action is lifted to src/trigger/resolve-items.ts to

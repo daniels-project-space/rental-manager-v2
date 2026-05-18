@@ -31,31 +31,9 @@
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { createXai } from "@ai-sdk/xai";
 import { gatedGenerateText } from "./lib/gatedGenerate";
-import { GROK_NARROW_MODEL } from "../src/lib/ai-models";
+import { getActionLlmModel } from "./item_resolver";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
-
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
-
-let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
-  if (_xai) return _xai;
-  let key = process.env.XAI_API_KEY ?? "";
-  if (!key) {
-    const res = await fetch(VAULT_URL + "/api/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "secrets:listByService", args: { service: "xai" }, format: "json" }),
-    });
-    if (!res.ok) throw new Error("vault fetch failed: " + res.status);
-    const data = (await res.json()) as { value?: Array<{ keyName: string; value: string }> };
-    for (const s of data.value ?? []) if (s.keyName === "XAI_API_KEY") key = s.value;
-  }
-  if (!key) throw new Error("XAI_API_KEY missing");
-  _xai = createXai({ apiKey: key });
-  return _xai;
-}
 
 /**
  * Accept any valid HH:MM. v1's hard-slot rejection was paired with an
@@ -230,9 +208,11 @@ export const extractForReservation = action({
     let response: { text: string };
     try {
       const gated = await gatedGenerateText({
-        model: (await getXai())(GROK_NARROW_MODEL),
+        model: await getActionLlmModel(),
         prompt,
-        maxOutputTokens: 300,
+        // Reasoning model overhead — observed 800-1500 reasoning tokens
+        // on this task; 1800 leaves headroom.
+        maxOutputTokens: 1800,
         context: { source: "convex:extract_booking_times", tag: "extract-booking-times" },
       });
       if (gated.skipped) return { ok: true, skipped: "uk_quiet_hours" };

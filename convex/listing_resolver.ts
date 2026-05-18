@@ -11,14 +11,15 @@
  *   Tier 2: photo_ref (manually verified)              confidence 0.95
  *   Tier 3: pattern (regex bank)                       confidence 0.87
  *   Tier 4: detail_api (Hygglo detail.items)           confidence 0.80
- *   Tier 5: ai (grok-4-fast, constrained inventory)    confidence 0.70
+ *   Tier 5: ai (OpenRouter → DeepSeek-v4-flash by default,            confidence 0.70
+ *           xAI → grok-4.3 when AI_PROVIDER=xai; see getTier5Model)
  *   Tier 6: fuzzy (last-resort fuzzy match)            confidence 0.50
  *   Tier 7: pending_review (write candidates, no items)
  *
- * Lives in a "use node" module because Tier 5 calls @ai-sdk/xai grok-4-fast
- * through `ai.generateText`, which needs the Node runtime. All Convex DB
- * touches are delegated to internal queries/mutations in
- * convex/listing_resolver_data.ts (regular V8 module).
+ * Lives in a "use node" module because Tier 5 streams generateText through
+ * `ai`, which needs the Node runtime. All Convex DB touches are delegated
+ * to internal queries/mutations in convex/listing_resolver_data.ts
+ * (regular V8 module).
  */
 
 import { internalAction, action } from "./_generated/server";
@@ -34,8 +35,19 @@ import {
 } from "./lib/item_matcher";
 import { CANONICAL_MAP, getRelevantItems } from "./lib/inventory_categories";
 import { lookupPhotoReference } from "./lib/listing_photo_reference";
-import { createXai } from "@ai-sdk/xai";
 import { generateText } from "ai";
+// Reuse the central Convex-side helper (vault fallback + AI_PROVIDER routing).
+// item_resolver.ts is the canonical home for this — see getActionLlmModel.
+import { getActionLlmModel } from "./item_resolver";
+
+async function getTier5Model() {
+  try {
+    return await getActionLlmModel();
+  } catch (err) {
+    console.warn("[listing_resolver] getTier5Model: provider unavailable", String(err));
+    return null;
+  }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -262,7 +274,8 @@ function resolveDetailApiItems(detailPayload: unknown): ResolvedItem[] {
 }
 
 /**
- * Tier 5 — Constrained AI resolution via grok-4-fast.
+ * Tier 5 — Constrained AI resolution via OpenRouter→DeepSeek (default) or
+ * xAI→grok-4.3 (when AI_PROVIDER=xai). See getTier5Model above.
  *
  * Sends only the 15-30 category-relevant inventory items (via getRelevantItems)
  * to keep the prompt small and the model honest. Applies brand-mismatch gate
@@ -273,8 +286,8 @@ async function aiResolve(
   _description?: string,
   detail?: unknown,
 ): Promise<ResolvedItem[]> {
-  const apiKey = process.env.XAI_API_KEY ?? process.env.GROK_API_KEY;
-  if (!apiKey) return [];
+  const model = await getTier5Model();
+  if (!model) return [];
 
   const relevantItems = getRelevantItems(title, detail);
   if (relevantItems.length === 0) return [];
@@ -285,9 +298,10 @@ async function aiResolve(
     ? `- BRAND RULE: The listing is for a ${titleBrand.toUpperCase()} product. Do NOT match to a different brand (e.g., do NOT match Canon to Sony or vice versa). If no same-brand item exists in the inventory, return [].`
     : "";
 
+  // Order matters for DeepSeek's automatic prefix cache: invariant blocks
+  // (intro + INVENTORY + Rules) come BEFORE the variable TITLE so the
+  // stable prefix can be served from cache on every batch.
   const prompt = `Match this rental listing title to items from the inventory below.
-
-TITLE: "${title}"
 
 INVENTORY (only match from this list):
 ${inventoryList}
@@ -302,15 +316,16 @@ ${brandRule}
 - Return JSON array: [{"item": "exact inventory name", "qty": 1}]
 - If nothing matches, return []
 
+TITLE: "${title}"
+
 JSON:`;
 
   try {
-    const xai = createXai({ apiKey });
-    const modelId = process.env.GROK_DECISION_MODEL ?? "grok-4-fast";
     const { text } = await generateText({
-      model: xai(modelId),
+      model,
       prompt,
-      maxOutputTokens: 512,
+      // Reasoning-model headroom: ~200 visible JSON + reasoning overhead.
+      maxOutputTokens: 1500,
       temperature: 0,
     });
 

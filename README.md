@@ -13,7 +13,7 @@ Cloud-native rebuild of the rental-manager bot. Two Hygglo accounts (`leo` + `db
 | Background jobs | Trigger.dev v3 (project `rental-manager-v2-jobs`) |
 | Agents | Mastra (embedded in Trigger tasks, no separate runtime) |
 | Browser automation | Stagehand on Browserbase, two persistent contexts |
-| LLMs | Grok 4.1 Fast default + Sonnet 4.6 escalation, via Vercel AI SDK |
+| LLMs | OpenRouter → DeepSeek-v4-flash default (xAI → grok-4.3 fallback via AI_PROVIDER=xai), via Vercel AI SDK |
 | Storage | Cloudflare R2 (`rental-manager-v2` bucket: photos + attachments + DB snapshots) |
 | Auth | Vercel Password Protection |
 | Operator channel | Telegram (Daniel only) |

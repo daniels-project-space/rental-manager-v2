@@ -24,41 +24,12 @@
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { gatedGenerateObject } from "../lib/gated-generate";
-import { createXai } from "@ai-sdk/xai";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
+import { getLlmModel } from "../lib/llm-client";
 
-const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-// ── Vault + LLM client ─────────────────────────────────────────────────
-
-async function getVaultSecret(service: string, keyName: string): Promise<string> {
-  const res = await fetch(`${VAULT_URL}/api/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      path: "secrets:listByService",
-      args: { service },
-      format: "json",
-    }),
-  });
-  if (!res.ok) throw new Error(`vault: ${res.status}`);
-  const data = (await res.json()) as {
-    value?: Array<{ keyName: string; value: string }>;
-  };
-  for (const s of data.value ?? []) if (s.keyName === keyName) return s.value;
-  throw new Error(`${keyName} missing in vault service=${service}`);
-}
-
-let _xai: ReturnType<typeof createXai> | null = null;
-async function getXai() {
-  if (_xai) return _xai;
-  const key = process.env.XAI_API_KEY ?? (await getVaultSecret("xai", "XAI_API_KEY"));
-  _xai = createXai({ apiKey: key });
-  return _xai;
-}
 
 // ── Convex HTTP helpers ────────────────────────────────────────────────
 
@@ -170,6 +141,34 @@ function inputHash(items: Item[]): string {
   return items.map((i) => i.item_name).sort().join("|");
 }
 
+/**
+ * Collapse duplicate item_id entries in the LLM response. DeepSeek
+ * occasionally emits "2x ITEM" as two qty:1 entries instead of one
+ * qty:2. The matched_phrase regex bumps one of them; MAX picks the
+ * bumped value and discards the unbumped duplicate. SUM would double-
+ * count after the regex fires. Mirrors convex/item_resolver.ts:
+ * mergeDuplicateItems — duplicated because src/ can't runtime-import
+ * from convex/ modules.
+ */
+function mergeDuplicateItems<T extends { item_id: string; qty?: number; confidence?: number }>(
+  items: T[],
+): T[] {
+  const map = new Map<string, T>();
+  for (const it of items) {
+    const qty = Math.max(1, Math.floor(it.qty ?? 1));
+    const existing = map.get(it.item_id);
+    if (!existing) {
+      map.set(it.item_id, { ...it, qty });
+    } else {
+      existing.qty = Math.max(existing.qty ?? 1, qty);
+      if ((it.confidence ?? 0) > (existing.confidence ?? 0)) {
+        existing.confidence = it.confidence;
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
 const CATEGORY_MAP: Record<string, RegExp> = {
   camera: /(camera|body|mirrorless|cine\s*camera|fx3|fx6|fx30|a7|a7s|a7\s*iii|a7\s*iv|a7\s*v|bmpcc|c70|c200|c300|c500|gh5|gh6|mavic|drone)/,
   lens: /(lens|lenses|mm|gmaster|g\s*master|gm|prime|zoom|anamorphic|wide|tele|fisheye|cine\s*lens|24-70|16-35|70-200|28-70|90mm|24mm|35mm|50mm|85mm)/,
@@ -264,7 +263,10 @@ function buildUserMessage(title: string, inv: InventoryItem[]): string {
     const notes = i.notes ? ` — ${i.notes.slice(0, 80)}` : "";
     return `- item_id: ${i._id} | name: ${i.name_canonical}${kind}${aliases}${notes}`;
   });
-  return `LISTING TITLE:\n"${title}"\n\nINVENTORY (the only items we own):\n${lines.join("\n")}`;
+  // INVENTORY block first: stable across the batch → DeepSeek's automatic
+  // prefix cache hits the inventory portion (billed at cache-read rate).
+  // TITLE last: variable per call, cannot be cached anyway.
+  return `INVENTORY (the only items we own):\n${lines.join("\n")}\n\nLISTING TITLE:\n"${title}"`;
 }
 
 // ── Scheduled task ─────────────────────────────────────────────────────
@@ -320,6 +322,13 @@ async function runBatch(
 
   const results: ResolutionResult[] = [];
   let cacheHits = 0;
+
+  // In-batch dedup: when the same hygglo_listing_id (or item set) appears
+  // on multiple reservations in one batch, only call the LLM once. Saves
+  // duplicate hits for kit listings co-booked by the same group.
+  const inBatchByListing = new Map<string, ResolutionResult>();
+  const inBatchByHash = new Map<string, ResolutionResult>();
+
   for (const r of batch.unresolved) {
     const combinedTitle = r.items
       .map((i) => (i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name))
@@ -327,17 +336,42 @@ async function runBatch(
     const newHash = inputHash(r.items);
     const isKit = KIT_RE.test(combinedTitle);
 
-    // Phase 15.1: cache lookup keyed by (account_slug, hygglo_listing_id).
+    // In-batch listing-id dedup.
+    const listingKey =
+      r.account_slug && r.hygglo_listing_id
+        ? `${r.account_slug}:${r.hygglo_listing_id}`
+        : null;
+    if (listingKey) {
+      const dup = inBatchByListing.get(listingKey);
+      if (dup) {
+        results.push({ ...dup, reservation_id: r.id, input_hash: newHash });
+        cacheHits++;
+        continue;
+      }
+    }
+
+    // In-batch item-hash dedup (catches listings without a hygglo_listing_id).
+    const hashDup = inBatchByHash.get(newHash);
+    if (hashDup) {
+      results.push({ ...hashDup, reservation_id: r.id, input_hash: newHash });
+      cacheHits++;
+      continue;
+    }
+
+    // Phase 15.1: persistent cache lookup keyed by (account_slug, hygglo_listing_id).
     if (r.account_slug && r.hygglo_listing_id) {
       const cached = await lookupCache(r.account_slug, r.hygglo_listing_id);
       if (cached) {
-        results.push({
+        const hit: ResolutionResult = {
           reservation_id: r.id,
           resolved_items: cached.resolved_items,
           expanded_items: cached.expanded_items,
           method: cached.resolution_method,
           input_hash: newHash,
-        });
+        };
+        results.push(hit);
+        if (listingKey) inBatchByListing.set(listingKey, hit);
+        inBatchByHash.set(newHash, hit);
         cacheHits++;
         continue;
       }
@@ -352,7 +386,7 @@ async function runBatch(
 
     try {
       const gated = await gatedGenerateObject({
-        model: (await getXai())("grok-4.3"),
+        model: await getLlmModel(),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
@@ -368,6 +402,9 @@ async function runBatch(
             ),
           },
         ],
+        // Typical: 1-5 items × ~100 visible tok + ~200-500 reasoning tok.
+        // 1500 covers worst-case kit listings with verbose reasoning.
+        maxOutputTokens: 1500,
         context: { source: "trigger:resolve-items", tag: "resolve-items" },
       });
       if (gated.skipped) {
@@ -376,7 +413,7 @@ async function runBatch(
       }
       const result = gated.result;
       const validIds = new Set(batch.inventory.map((i) => i._id));
-      resolved = result.object.resolved_items
+      const rawItems = result.object.resolved_items
         .filter((x) => validIds.has(x.item_id) && x.confidence >= 0.5)
         .map((x) => {
           let qty = Math.max(1, Math.floor(x.qty ?? 1));
@@ -394,8 +431,16 @@ async function runBatch(
             item_name_canonical: x.item_name_canonical,
             confidence: x.confidence,
             qty,
+            matched_phrase: x.matched_phrase,
           };
         });
+      // Collapse duplicate item_id entries (DeepSeek "2x ITEM" → two qty:1 quirk).
+      resolved = mergeDuplicateItems(rawItems).map((x) => ({
+        item_id: x.item_id,
+        item_name_canonical: x.item_name_canonical,
+        confidence: x.confidence ?? 0,
+        qty: x.qty ?? 1,
+      }));
       // Brand integrity gate
       const primary = primaryBrand(combinedTitle);
       if (primary) {
@@ -435,13 +480,16 @@ async function runBatch(
       }
     }
 
-    results.push({
+    const llmResult: ResolutionResult = {
       reservation_id: r.id,
       resolved_items: resolved,
       expanded_items: expanded,
       method: "llm",
       input_hash: newHash,
-    });
+    };
+    results.push(llmResult);
+    if (listingKey) inBatchByListing.set(listingKey, llmResult);
+    inBatchByHash.set(newHash, llmResult);
 
     // Phase 15.1: write-through to cache (dual-key).
     try {

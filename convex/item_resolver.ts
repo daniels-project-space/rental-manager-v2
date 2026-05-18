@@ -27,34 +27,60 @@ import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createXai } from "@ai-sdk/xai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
 import { titleHash, primaryBrand, brandMismatch } from "./listing_cache";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
-async function getXaiKeyFromVault(): Promise<string> {
-  if (process.env.XAI_API_KEY) return process.env.XAI_API_KEY;
+async function getVaultKey(service: string, keyName: string): Promise<string> {
+  const envValue = process.env[keyName];
+  if (envValue) return envValue;
   const res = await fetch(VAULT_URL + "/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: "secrets:listByService", args: { service: "xai" }, format: "json" }),
+    body: JSON.stringify({ path: "secrets:listByService", args: { service }, format: "json" }),
   });
   if (!res.ok) throw new Error("vault fetch failed: " + res.status);
   const data = (await res.json()) as { value?: Array<{ keyName: string; value: string }> };
-  for (const s of data.value ?? []) {
-    if (s.keyName === "XAI_API_KEY") return s.value;
-  }
-  throw new Error("XAI_API_KEY not found in vault");
+  for (const s of data.value ?? []) if (s.keyName === keyName) return s.value;
+  throw new Error(keyName + " not found in vault service=" + service);
 }
 
-// Built lazily on first call so the module loads without env access.
+// Convex-side LLM provider selector. Default: OpenRouter → DeepSeek-v4-flash
+// ($0.112 / $0.224 per 1M tok). Set AI_PROVIDER=xai for the grok-4.3 fallback
+// path ($1.25 / $2.50). Built lazily so module loads without env access.
+//
+// IMPORTANT — Convex actions can't cross-import from src/, so this helper is
+// the single source of truth on the Convex side. denial_resolver,
+// extract_booking_times, and listing_resolver all import this re-export.
+// Keys come from the project-hub vault (service "openrouter" or "xai")
+// with process.env as the override; no Vercel/Trigger.dev env required.
 let _xai: ReturnType<typeof createXai> | null = null;
-export async function getXai() {
-  if (_xai) return _xai;
-  const key = await getXaiKeyFromVault();
-  _xai = createXai({ apiKey: key });
-  return _xai;
+let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
+
+/** Pin OpenRouter routing to providers that emit clean output. Observed
+ *  SiliconFlow fp8 emitting malformed JSON; Alibaba + DeepSeek own infra
+ *  are stable. */
+const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
+
+export async function getActionLlmModel() {
+  const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
+  if (useXai) {
+    if (!_xai) {
+      const key = await getVaultKey("xai", "XAI_API_KEY");
+      _xai = createXai({ apiKey: key });
+    }
+    return _xai(process.env.GROK_CHAT_MODEL ?? "grok-4.3");
+  }
+  if (!_openrouter) {
+    const key = await getVaultKey("openrouter", "OPENROUTER_API_KEY");
+    _openrouter = createOpenRouter({ apiKey: key });
+  }
+  return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash", {
+    extraBody: { provider: PROVIDER_PIN },
+  });
 }
 
 export const RESOLUTION_SCHEMA = z.object({
@@ -161,8 +187,45 @@ RULES:
 2. Only return items physically in the title's bundle.
 3. If a title item is NOT in inventory, add to unresolved_phrases — never substitute.
 4. QUANTITY: extract integer qty. "2x" / "3×" / "(2x)" → qty:2/3/2. Default 1.
+   Emit ONE entry per item_id with the correct qty. NEVER emit duplicate
+   entries for the same item_id — combine them into a single entry whose
+   qty is the total count.
 5. Confidence: 1.0 unambiguous, 0.6-0.9 partial, <0.5 skip.
 6. Use the exact item_id supplied (Convex Id, round-trip verbatim).`;
+}
+
+/**
+ * Defensive merger — collapses duplicate item_id entries in the LLM
+ * response into a single entry whose qty is the MAX across duplicates,
+ * preserving the highest confidence. DeepSeek (and to a lesser extent
+ * other reasoning models) occasionally emit two
+ * `{ item_id: i1, qty: 1 }` entries when the title says "2x …" instead
+ * of one `{ item_id: i1, qty: 2 }`. The downstream regex on
+ * `matched_phrase` already bumps qty when it sees "Nx" before the
+ * phrase, so MAX is the correct combinator here: it picks up the
+ * regex-bumped value and discards the unbumped duplicate, instead of
+ * SUM (which would double-count after the regex fires).
+ *
+ * Tradeoff: a genuine "ITEM + ITEM" (two of same product, no 2x prefix)
+ * collapses to one. Rare in practice; same risk under Grok.
+ */
+export function mergeDuplicateItems<T extends { item_id: string; qty?: number; confidence?: number; matched_phrase?: string }>(
+  items: T[],
+): T[] {
+  const map = new Map<string, T>();
+  for (const it of items) {
+    const qty = Math.max(1, Math.floor(it.qty ?? 1));
+    const existing = map.get(it.item_id);
+    if (!existing) {
+      map.set(it.item_id, { ...it, qty });
+    } else {
+      existing.qty = Math.max(existing.qty ?? 1, qty);
+      if ((it.confidence ?? 0) > (existing.confidence ?? 0)) {
+        existing.confidence = it.confidence;
+      }
+    }
+  }
+  return Array.from(map.values());
 }
 
 export function buildUserMessage(title: string, inv: InventoryItem[]): string {
@@ -174,7 +237,8 @@ export function buildUserMessage(title: string, inv: InventoryItem[]): string {
       return `- item_id: ${i._id} | name: ${i.name_canonical}${kind}${aliases}${notes}`;
     })
     .join("\n");
-  return `LISTING TITLE:\n"${title}"\n\nINVENTORY (the only items we own):\n${inventoryBlock}`;
+  // INVENTORY first (stable prefix → DeepSeek auto-cache hit); TITLE last.
+  return `INVENTORY (the only items we own):\n${inventoryBlock}\n\nLISTING TITLE:\n"${title}"`;
 }
 
 function inputHash(items: Array<{ item_name: string }>): string {
@@ -335,7 +399,7 @@ export const resolveReservation = action({
     let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }> = [];
     try {
       const gated = await gatedGenerateObject({
-        model: (await getXai())("grok-4.3"),
+        model: await getActionLlmModel(),
         schema: RESOLUTION_SCHEMA,
         messages: [
           { role: "system", content: modelPrompt() },
@@ -348,13 +412,15 @@ export const resolveReservation = action({
               ),
             ) },
         ],
+        // Typical: 1-5 items × ~100 visible + reasoning overhead.
+        maxOutputTokens: 1500,
         context: { source: "convex:item_resolver", tag: "item-resolver" },
       });
       if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
       const result = gated.result;
       // Validate item_ids against the inventory we sent (defensive — model can hallucinate)
       const validIds = new Set(inventory.map((i: InventoryItem) => i._id));
-      resolved = result.object.resolved_items
+      const rawItems = result.object.resolved_items
         .filter((r) => validIds.has(r.item_id) && r.confidence >= 0.5)
         .map((r) => {
           let qty = Math.max(1, Math.floor(r.qty ?? 1));
@@ -373,8 +439,17 @@ export const resolveReservation = action({
             item_name_canonical: r.item_name_canonical,
             confidence: r.confidence,
             qty,
+            matched_phrase: r.matched_phrase,
           };
         });
+      // Collapse any duplicate item_id entries (DeepSeek occasionally emits
+      // "2x ITEM" as two separate qty:1 entries instead of one qty:2).
+      resolved = mergeDuplicateItems(rawItems).map((x) => ({
+        item_id: x.item_id,
+        item_name_canonical: x.item_name_canonical,
+        confidence: x.confidence ?? 0,
+        qty: x.qty ?? 1,
+      }));
       // Brand-integrity gate: drop any resolved item carrying a different
       // brand than the title's primary brand. Catches AI cross-brand
       // hallucinations (e.g. title=Canon, resolved=Sony GM lens).
