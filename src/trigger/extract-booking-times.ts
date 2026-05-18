@@ -44,17 +44,10 @@ function hashTranscript(messages: Array<{ body_text: string }>): string {
   return `${messages.length}:${last.slice(-200)}`;
 }
 
-function buildPrompt(rentalTitle: string, startDate: string, endDate: string, transcript: string): string {
-  const now = new Date().toISOString().replace("T", " ").substring(0, 16);
-  return `You are extracting the FINAL AGREED pickup and return times from a rental equipment chat.
-Current date/time: ${now} UTC
-
-Equipment: ${rentalTitle}
-Rental period: ${startDate} to ${endDate}
-
-=== CONVERSATION ===
-${transcript}
-=== END ===
+// Static prompt body — invariant across every call so DeepSeek's auto
+// prefix cache hits the whole instruction block. Variable bits (current
+// time, dates, equipment, transcript) are appended in buildPrompt below.
+const TIMES_INSTRUCTIONS = `You are extracting the FINAL AGREED pickup and return times from a rental equipment chat.
 
 INSTRUCTIONS:
 - Find the LAST pickup and return times that were AGREED or CONFIRMED by both parties.
@@ -71,11 +64,11 @@ INSTRUCTIONS:
 - If the renter corrected themselves (e.g., first said 11am then 8pm), use the LAST corrected time.
 
 CRITICAL — DATES:
-- The rental period is ${startDate} to ${endDate}, but pickup/return dates may DIFFER.
+- The rental period spans the provided start_date to end_date, but pickup/return dates may DIFFER.
 - Pickup can be the EVENING BEFORE the rental starts.
 - Return can be the MORNING AFTER the rental ends.
 - Determine the actual date from context.
-- If no specific date context, default pickup to ${startDate} and return to ${endDate}. NEVER output NONE for dates.
+- If no specific date context, default pickup to start_date and return to end_date. NEVER output NONE for dates.
 
 DELIVERY METHOD DETECTION:
 - ONLY mark as DELIVERY if the courier was ACTUALLY BOOKED/CONFIRMED.
@@ -84,14 +77,27 @@ DELIVERY METHOD DETECTION:
 
 Respond ONLY with these nine lines:
 PICKUP_TIME: HH:MM or NONE
-PICKUP_DATE: YYYY-MM-DD (default to ${startDate} if unknown — NEVER output NONE)
+PICKUP_DATE: YYYY-MM-DD (default to start_date if unknown — NEVER output NONE)
 PICKUP_METHOD: DELIVERY or COLLECTION or UNKNOWN
 RETURN_TIME: HH:MM or NONE
-RETURN_DATE: YYYY-MM-DD (default to ${endDate} if unknown — NEVER output NONE)
+RETURN_DATE: YYYY-MM-DD (default to end_date if unknown — NEVER output NONE)
 RETURN_METHOD: DELIVERY or COLLECTION or UNKNOWN
 STATUS: ACTIVE or CANCELLED
 CONFIDENCE: HIGH or LOW
 NOTES: <any relevant context>`;
+
+function buildPrompt(rentalTitle: string, startDate: string, endDate: string, transcript: string): string {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 16);
+  // Static instructions FIRST (cache prefix); variable context LAST.
+  return `${TIMES_INSTRUCTIONS}
+
+Current date/time: ${now} UTC
+Equipment: ${rentalTitle}
+Rental period: ${startDate} to ${endDate}
+
+=== CONVERSATION ===
+${transcript}
+=== END ===`;
 }
 
 interface ExtractedTimes {

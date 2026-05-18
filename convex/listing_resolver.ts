@@ -303,9 +303,10 @@ async function aiResolve(
     ? `- BRAND RULE: The listing is for a ${titleBrand.toUpperCase()} product. Do NOT match to a different brand (e.g., do NOT match Canon to Sony or vice versa). If no same-brand item exists in the inventory, return [].`
     : "";
 
+  // Order matters for DeepSeek's automatic prefix cache: invariant blocks
+  // (intro + INVENTORY + Rules) come BEFORE the variable TITLE so the
+  // stable prefix can be served from cache on every batch.
   const prompt = `Match this rental listing title to items from the inventory below.
-
-TITLE: "${title}"
 
 INVENTORY (only match from this list):
 ${inventoryList}
@@ -319,6 +320,8 @@ ${brandRule}
 - Do NOT add items not clearly indicated by the title
 - Return JSON array: [{"item": "exact inventory name", "qty": 1}]
 - If nothing matches, return []
+
+TITLE: "${title}"
 
 JSON:`;
 

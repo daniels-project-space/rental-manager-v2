@@ -235,7 +235,10 @@ function buildUserMessage(title: string, inv: InventoryItem[]): string {
     const notes = i.notes ? ` — ${i.notes.slice(0, 80)}` : "";
     return `- item_id: ${i._id} | name: ${i.name_canonical}${kind}${aliases}${notes}`;
   });
-  return `LISTING TITLE:\n"${title}"\n\nINVENTORY (the only items we own):\n${lines.join("\n")}`;
+  // INVENTORY block first: stable across the batch → DeepSeek's automatic
+  // prefix cache hits the inventory portion (billed at cache-read rate).
+  // TITLE last: variable per call, cannot be cached anyway.
+  return `INVENTORY (the only items we own):\n${lines.join("\n")}\n\nLISTING TITLE:\n"${title}"`;
 }
 
 // ── Scheduled task ─────────────────────────────────────────────────────

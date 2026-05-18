@@ -192,7 +192,8 @@ export function buildUserMessage(title: string, inv: InventoryItem[]): string {
       return `- item_id: ${i._id} | name: ${i.name_canonical}${kind}${aliases}${notes}`;
     })
     .join("\n");
-  return `LISTING TITLE:\n"${title}"\n\nINVENTORY (the only items we own):\n${inventoryBlock}`;
+  // INVENTORY first (stable prefix → DeepSeek auto-cache hit); TITLE last.
+  return `INVENTORY (the only items we own):\n${inventoryBlock}\n\nLISTING TITLE:\n"${title}"`;
 }
 
 function inputHash(items: Array<{ item_name: string }>): string {
