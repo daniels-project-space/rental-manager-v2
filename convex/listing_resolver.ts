@@ -324,7 +324,8 @@ JSON:`;
     const { text } = await generateText({
       model,
       prompt,
-      maxOutputTokens: 512,
+      // Reasoning-model headroom: ~200 visible JSON + reasoning overhead.
+      maxOutputTokens: 1500,
       temperature: 0,
     });
 

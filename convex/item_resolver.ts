@@ -60,6 +60,11 @@ async function getVaultKey(service: string, keyName: string): Promise<string> {
 let _xai: ReturnType<typeof createXai> | null = null;
 let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
 
+/** Pin OpenRouter routing to providers that emit clean output. Observed
+ *  SiliconFlow fp8 emitting malformed JSON; Alibaba + DeepSeek own infra
+ *  are stable. */
+const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
+
 export async function getActionLlmModel() {
   const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
   if (useXai) {
@@ -73,7 +78,9 @@ export async function getActionLlmModel() {
     const key = await getVaultKey("openrouter", "OPENROUTER_API_KEY");
     _openrouter = createOpenRouter({ apiKey: key });
   }
-  return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash");
+  return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash", {
+    extraBody: { provider: PROVIDER_PIN },
+  });
 }
 
 export const RESOLUTION_SCHEMA = z.object({
@@ -180,8 +187,45 @@ RULES:
 2. Only return items physically in the title's bundle.
 3. If a title item is NOT in inventory, add to unresolved_phrases — never substitute.
 4. QUANTITY: extract integer qty. "2x" / "3×" / "(2x)" → qty:2/3/2. Default 1.
+   Emit ONE entry per item_id with the correct qty. NEVER emit duplicate
+   entries for the same item_id — combine them into a single entry whose
+   qty is the total count.
 5. Confidence: 1.0 unambiguous, 0.6-0.9 partial, <0.5 skip.
 6. Use the exact item_id supplied (Convex Id, round-trip verbatim).`;
+}
+
+/**
+ * Defensive merger — collapses duplicate item_id entries in the LLM
+ * response into a single entry whose qty is the MAX across duplicates,
+ * preserving the highest confidence. DeepSeek (and to a lesser extent
+ * other reasoning models) occasionally emit two
+ * `{ item_id: i1, qty: 1 }` entries when the title says "2x …" instead
+ * of one `{ item_id: i1, qty: 2 }`. The downstream regex on
+ * `matched_phrase` already bumps qty when it sees "Nx" before the
+ * phrase, so MAX is the correct combinator here: it picks up the
+ * regex-bumped value and discards the unbumped duplicate, instead of
+ * SUM (which would double-count after the regex fires).
+ *
+ * Tradeoff: a genuine "ITEM + ITEM" (two of same product, no 2x prefix)
+ * collapses to one. Rare in practice; same risk under Grok.
+ */
+export function mergeDuplicateItems<T extends { item_id: string; qty?: number; confidence?: number; matched_phrase?: string }>(
+  items: T[],
+): T[] {
+  const map = new Map<string, T>();
+  for (const it of items) {
+    const qty = Math.max(1, Math.floor(it.qty ?? 1));
+    const existing = map.get(it.item_id);
+    if (!existing) {
+      map.set(it.item_id, { ...it, qty });
+    } else {
+      existing.qty = Math.max(existing.qty ?? 1, qty);
+      if ((it.confidence ?? 0) > (existing.confidence ?? 0)) {
+        existing.confidence = it.confidence;
+      }
+    }
+  }
+  return Array.from(map.values());
 }
 
 export function buildUserMessage(title: string, inv: InventoryItem[]): string {
@@ -368,15 +412,15 @@ export const resolveReservation = action({
               ),
             ) },
         ],
-        // Typical: 1-5 items × ~100 tok; 600 caps hallucinated long lists.
-        maxOutputTokens: 600,
+        // Typical: 1-5 items × ~100 visible + reasoning overhead.
+        maxOutputTokens: 1500,
         context: { source: "convex:item_resolver", tag: "item-resolver" },
       });
       if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
       const result = gated.result;
       // Validate item_ids against the inventory we sent (defensive — model can hallucinate)
       const validIds = new Set(inventory.map((i: InventoryItem) => i._id));
-      resolved = result.object.resolved_items
+      const rawItems = result.object.resolved_items
         .filter((r) => validIds.has(r.item_id) && r.confidence >= 0.5)
         .map((r) => {
           let qty = Math.max(1, Math.floor(r.qty ?? 1));
@@ -395,8 +439,17 @@ export const resolveReservation = action({
             item_name_canonical: r.item_name_canonical,
             confidence: r.confidence,
             qty,
+            matched_phrase: r.matched_phrase,
           };
         });
+      // Collapse any duplicate item_id entries (DeepSeek occasionally emits
+      // "2x ITEM" as two separate qty:1 entries instead of one qty:2).
+      resolved = mergeDuplicateItems(rawItems).map((x) => ({
+        item_id: x.item_id,
+        item_name_canonical: x.item_name_canonical,
+        confidence: x.confidence ?? 0,
+        qty: x.qty ?? 1,
+      }));
       // Brand-integrity gate: drop any resolved item carrying a different
       // brand than the title's primary brand. Catches AI cross-brand
       // hallucinations (e.g. title=Canon, resolved=Sony GM lens).

@@ -58,6 +58,12 @@ async function getOpenRouter(): Promise<ReturnType<typeof createOpenRouter>> {
   return _openrouter;
 }
 
+/** Pin OpenRouter to providers that don't aggressively fp8/fp4 quantize.
+ *  Observed regression: SiliconFlow's fp8 routing emitted malformed JSON
+ *  with stray tab whitespace on batch outputs (canonicalize-denials).
+ *  Alibaba + DeepSeek own infra are stable. */
+const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
+
 async function getXai(): Promise<ReturnType<typeof createXai>> {
   if (_xai) return _xai;
   const apiKey =
@@ -78,7 +84,9 @@ export async function getLlmModel() {
     return xai(GROK_CHAT_MODEL);
   }
   const openrouter = await getOpenRouter();
-  return openrouter(DEEPSEEK_MODEL);
+  return openrouter(DEEPSEEK_MODEL, {
+    extraBody: { provider: PROVIDER_PIN },
+  });
 }
 
 /**

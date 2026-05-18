@@ -141,6 +141,34 @@ function inputHash(items: Item[]): string {
   return items.map((i) => i.item_name).sort().join("|");
 }
 
+/**
+ * Collapse duplicate item_id entries in the LLM response. DeepSeek
+ * occasionally emits "2x ITEM" as two qty:1 entries instead of one
+ * qty:2. The matched_phrase regex bumps one of them; MAX picks the
+ * bumped value and discards the unbumped duplicate. SUM would double-
+ * count after the regex fires. Mirrors convex/item_resolver.ts:
+ * mergeDuplicateItems — duplicated because src/ can't runtime-import
+ * from convex/ modules.
+ */
+function mergeDuplicateItems<T extends { item_id: string; qty?: number; confidence?: number }>(
+  items: T[],
+): T[] {
+  const map = new Map<string, T>();
+  for (const it of items) {
+    const qty = Math.max(1, Math.floor(it.qty ?? 1));
+    const existing = map.get(it.item_id);
+    if (!existing) {
+      map.set(it.item_id, { ...it, qty });
+    } else {
+      existing.qty = Math.max(existing.qty ?? 1, qty);
+      if ((it.confidence ?? 0) > (existing.confidence ?? 0)) {
+        existing.confidence = it.confidence;
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
 const CATEGORY_MAP: Record<string, RegExp> = {
   camera: /(camera|body|mirrorless|cine\s*camera|fx3|fx6|fx30|a7|a7s|a7\s*iii|a7\s*iv|a7\s*v|bmpcc|c70|c200|c300|c500|gh5|gh6|mavic|drone)/,
   lens: /(lens|lenses|mm|gmaster|g\s*master|gm|prime|zoom|anamorphic|wide|tele|fisheye|cine\s*lens|24-70|16-35|70-200|28-70|90mm|24mm|35mm|50mm|85mm)/,
@@ -374,8 +402,9 @@ async function runBatch(
             ),
           },
         ],
-        // Typical: 1-5 items × ~100 tok; 600 caps a hallucinated long list.
-        maxOutputTokens: 600,
+        // Typical: 1-5 items × ~100 visible tok + ~200-500 reasoning tok.
+        // 1500 covers worst-case kit listings with verbose reasoning.
+        maxOutputTokens: 1500,
         context: { source: "trigger:resolve-items", tag: "resolve-items" },
       });
       if (gated.skipped) {
@@ -384,7 +413,7 @@ async function runBatch(
       }
       const result = gated.result;
       const validIds = new Set(batch.inventory.map((i) => i._id));
-      resolved = result.object.resolved_items
+      const rawItems = result.object.resolved_items
         .filter((x) => validIds.has(x.item_id) && x.confidence >= 0.5)
         .map((x) => {
           let qty = Math.max(1, Math.floor(x.qty ?? 1));
@@ -402,8 +431,16 @@ async function runBatch(
             item_name_canonical: x.item_name_canonical,
             confidence: x.confidence,
             qty,
+            matched_phrase: x.matched_phrase,
           };
         });
+      // Collapse duplicate item_id entries (DeepSeek "2x ITEM" → two qty:1 quirk).
+      resolved = mergeDuplicateItems(rawItems).map((x) => ({
+        item_id: x.item_id,
+        item_name_canonical: x.item_name_canonical,
+        confidence: x.confidence ?? 0,
+        qty: x.qty ?? 1,
+      }));
       // Brand integrity gate
       const primary = primaryBrand(combinedTitle);
       if (primary) {

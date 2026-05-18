@@ -210,7 +210,9 @@ export const extractForReservation = action({
       const gated = await gatedGenerateText({
         model: await getActionLlmModel(),
         prompt,
-        maxOutputTokens: 300,
+        // Reasoning model overhead — observed 800-1500 reasoning tokens
+        // on this task; 1800 leaves headroom.
+        maxOutputTokens: 1800,
         context: { source: "convex:extract_booking_times", tag: "extract-booking-times" },
       });
       if (gated.skipped) return { ok: true, skipped: "uk_quiet_hours" };
