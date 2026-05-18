@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/xai": "^3.0.89",
-    "@openrouter/ai-sdk-provider": "^1.2.4",
+    "@openrouter/ai-sdk-provider": "^2.9.0",
     "@aws-sdk/client-s3": "^3.1045.0",
     "@aws-sdk/s3-request-presigner": "^3.1045.0",
     "@browserbasehq/stagehand": "^3.4.0",
