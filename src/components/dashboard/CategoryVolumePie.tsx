@@ -127,9 +127,10 @@ export function CategoryVolumePieBody({
     | CatVolData
     | undefined;
 
+  // Always-subscribe so toggling Earned↔Missed is instant (no skeleton flash).
   const missedData = useQuery(
     api.revenue.getMissedAndDeniedByCategory,
-    isMissed ? { accountSlug, days } : "skip",
+    { accountSlug, days },
   ) as MissedData | undefined;
 
   const breakdown = useQuery(
@@ -281,36 +282,45 @@ export function CategoryVolumePieBody({
   return (
     <>
       <style>{LEADER_KEYFRAMES}</style>
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider">
-            {isMissed ? "Missed Revenue" : "Category Mix"}
-          </span>
-          <span className="text-xs text-[#8b8fa3]">
-            {isMissed ? (
-              missedData
-                ? `£${missedData.missed.totals.missed.toFixed(0)} · £${missedData.denied.totals.denied.toFixed(0)} denied · £${missedData.missed.totals.gap.toFixed(0)} gap · £${missedData.missed.totals.demandLost.toFixed(0)} demand · ${days}d${missedData.unmatchedDenials.revenue > 0 ? ` + £${missedData.unmatchedDenials.revenue.toFixed(0)} unmatched` : ""}`
-                : periodLabel
-            ) : subDrillKind || drillKind ? (
-              <>
-                <button
-                  onClick={() => { setDrillKind(null); setSubDrillKind(null); }}
-                  className="text-sm font-medium px-2 py-1 -my-1 rounded hover:bg-white/5 hover:text-white transition-colors"
-                  style={{ color: "#6ea8fe" }}
-                  aria-label="Back to all categories"
-                >
-                  ← All categories
-                </button>
-                <span className="ml-2 text-white/70">
-                  / {subDrillKind ? `${drillLabel} / ${subDrillLabel}` : drillLabel}
-                </span>
-              </>
-            ) : (
-              periodLabel
-            )}
-          </span>
+      <div className="mb-2 flex flex-col gap-1.5">
+        {/* Row 1: title + breadcrumb + chevron */}
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider shrink-0">
+              {isMissed ? "Missed" : "Category Mix"}
+            </span>
+            <span className="text-xs text-[#8b8fa3] truncate">
+              {isMissed ? (
+                missedData
+                  ? (() => {
+                      const total = missedData.missed.totals.missed;
+                      const fmt = (n: number) => n >= 1000 ? `£${(n / 1000).toFixed(1)}k` : `£${Math.round(n)}`;
+                      return `${fmt(total)} · ${days}d`;
+                    })()
+                  : periodLabel
+              ) : subDrillKind || drillKind ? (
+                <>
+                  <button
+                    onClick={() => { setDrillKind(null); setSubDrillKind(null); }}
+                    className="text-sm font-medium px-2 py-1 -my-1 rounded hover:bg-white/5 hover:text-white transition-colors"
+                    style={{ color: "#6ea8fe" }}
+                    aria-label="Back to all categories"
+                  >
+                    ← All categories
+                  </button>
+                  <span className="ml-2 text-white/70 truncate">
+                    / {subDrillKind ? `${drillLabel} / ${subDrillLabel}` : drillLabel}
+                  </span>
+                </>
+              ) : (
+                periodLabel
+              )}
+            </span>
+          </div>
+          {chevron}
         </div>
-        <div className="flex items-center gap-2">
+        {/* Row 2: control pills, wrap on overflow */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           <div className="flex gap-1">
             {(["earned", "missed"] as const).map((vw) => (
               <button
@@ -320,7 +330,7 @@ export function CategoryVolumePieBody({
                   setDrillKind(null);
                   setSubDrillKind(null);
                 }}
-                className="text-xs px-2 py-0.5 rounded transition-colors"
+                className="text-[11px] px-1.5 py-0.5 rounded transition-colors"
                 style={{
                   background: view === vw
                     ? (vw === "earned" ? "rgba(96,165,250,0.15)" : "rgba(245,158,11,0.18)")
@@ -353,7 +363,7 @@ export function CategoryVolumePieBody({
                   <button
                     key={c.val}
                     onClick={() => setMissedComponent(c.val)}
-                    className="px-2 py-0.5 text-xs rounded transition-colors"
+                    className="px-1.5 py-0.5 text-[11px] rounded transition-colors"
                     style={{
                       background: active ? "rgba(245,158,11,0.18)" : "transparent",
                       color: active ? "#f59e0b" : "#8b8fa3",
@@ -373,7 +383,7 @@ export function CategoryVolumePieBody({
               <button
                 key={p.val}
                 onClick={() => setDays(p.val)}
-                className="px-2 py-0.5 text-xs rounded transition-colors"
+                className="px-1.5 py-0.5 text-[11px] rounded transition-colors"
                 style={{
                   background: days === p.val ? "rgba(110,168,254,0.15)" : "transparent",
                   color: days === p.val ? "#6ea8fe" : "#8b8fa3",
@@ -392,7 +402,7 @@ export function CategoryVolumePieBody({
                   key={m.val}
                   onClick={() => { if (!disabled) setMetric(m.val); }}
                   disabled={disabled}
-                  className="px-2 py-0.5 text-xs rounded transition-colors"
+                  className="px-1.5 py-0.5 text-[11px] rounded transition-colors"
                   style={{
                     background: active ? "rgba(110,168,254,0.15)" : "transparent",
                     color: active ? "#6ea8fe" : "#8b8fa3",
@@ -405,7 +415,6 @@ export function CategoryVolumePieBody({
             })}
           </div>
           )}
-          {chevron}
         </div>
       </div>
 
