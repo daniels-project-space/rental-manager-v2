@@ -26,7 +26,7 @@ import {
  * backfill action can use it as an idempotency checkpoint.
  *
  * Internal — write surface is dual-write helpers only. External callers
- * should keep using the existing item_resolver / vision_resolver mutations.
+ * should keep using the existing item_resolver mutations.
  */
 export const upsertReservationVision = internalMutation({
   args: {

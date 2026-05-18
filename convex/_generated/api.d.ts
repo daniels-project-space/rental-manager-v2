@@ -101,7 +101,6 @@ import type * as snapshot_jobs from "../snapshot_jobs.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
-import type * as vision_resolver from "../vision_resolver.js";
 
 import type {
   ApiFromModules,
@@ -203,7 +202,6 @@ declare const fullApi: ApiFromModules<{
   sync_account_profiles: typeof sync_account_profiles;
   sync_state: typeof sync_state;
   tax: typeof tax;
-  vision_resolver: typeof vision_resolver;
 }>;
 
 /**

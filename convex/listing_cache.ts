@@ -5,9 +5,7 @@
  * titles. Two reservations referencing the same Hygglo listing share the
  * same hash, so we only pay for the LLM call on the first one.
  *
- * Used by:
- *   - item_resolver.resolveReservation (text path)  → check cache first
- *   - vision_resolver.augmentWithVision             → write-through on add
+ * Used by item_resolver.resolveReservation (text path) — check cache first.
  *
  * Brand integrity gate (KNOWN_BRANDS) rejects cross-brand AI matches —
  * if the title primary brand is Canon and a resolved item is "Sony GM
