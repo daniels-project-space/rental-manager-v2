@@ -408,6 +408,16 @@ export const upsertOrderAsReservation = mutation({
      *  Stored verbatim so the next poll cycle can compare and skip the
      *  detail fetch when unchanged. */
     latest_activity: v.optional(v.union(v.number(), v.string())),
+    /** Phase 3d — Hygglo system event signal derived from activity.event.content. */
+    hygglo_system_signal: v.optional(v.union(
+      v.literal("owner_denied"),
+      v.literal("renter_cancelled"),
+      v.literal("auto_cancelled"),
+      v.literal("verification_failed"),
+      v.literal("approved"),
+      v.literal("none"),
+    )),
+    hygglo_system_signal_text: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -488,6 +498,11 @@ export const upsertOrderAsReservation = mutation({
       ...(notes !== undefined && { notes }),
       ...(photos_urls !== undefined && { photos_urls }),
       ...(args.latest_activity !== undefined && { latest_activity: args.latest_activity }),
+      // Phase 3d — Hygglo system signal (ground truth for denial classifier).
+      // Always write when present (even "none") so the classifier can rely on
+      // the field's existence to know whether we've checked the events stream.
+      ...(args.hygglo_system_signal !== undefined && { hygglo_system_signal: args.hygglo_system_signal }),
+      ...(args.hygglo_system_signal_text !== undefined && { hygglo_system_signal_text: args.hygglo_system_signal_text }),
     };
 
     if (existing) {

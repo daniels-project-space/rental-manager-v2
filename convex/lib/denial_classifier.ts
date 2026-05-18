@@ -47,6 +47,17 @@ export type ClassifierInput = {
   chat_owner_cancel_hit?: boolean;
   chat_renter_cancel_hit?: boolean;
   chat_owner_approval_hit?: boolean;
+  /** Phase 3d — derived from Hygglo `activity.event.content` (platform-canonical
+   *  "blue text"). Highest-priority signal in the cascade: when present and
+   *  decisive, it overrides chat regex hits. */
+  hygglo_system_signal?:
+    | "owner_denied"
+    | "renter_cancelled"
+    | "auto_cancelled"
+    | "verification_failed"
+    | "approved"
+    | "none"
+    | null;
 };
 
 export type ClassifierOutput = {
@@ -107,6 +118,84 @@ export function classifyDenialActor(input: ClassifierInput): ClassifierOutput {
   const sender = input.last_message_sender ?? "none";
   const days = daysSinceLastMessage(input);
   const step = (input.order_step ?? "").toUpperCase() || null;
+  const sysSignal = input.hygglo_system_signal ?? null;
+
+  // ── 0. Hygglo system-event ground truth (Phase 3d — HIGHEST priority) ─
+  // Platform-canonical "blue text" emitted only when Hygglo's UI button was
+  // pressed (or a system auto-action fired). Cannot be faked by chat — lives
+  // on activity.event, not activity.chatMessage. Overrides chat regex.
+  if (sysSignal === "owner_denied") {
+    return {
+      outcome: "owner_denied",
+      confidence: "high",
+      signal: "hygglo_system_event=owner_denied",
+    };
+  }
+  if (sysSignal === "renter_cancelled") {
+    return {
+      outcome: "renter_cancelled_explicit",
+      confidence: "high",
+      signal: "hygglo_system_event=renter_cancelled",
+    };
+  }
+  if (sysSignal === "auto_cancelled") {
+    return {
+      outcome: "system_or_other",
+      confidence: "high",
+      signal: "hygglo_system_event=auto_cancelled",
+    };
+  }
+  if (sysSignal === "verification_failed") {
+    return {
+      outcome: "system_or_other",
+      confidence: "high",
+      signal: "hygglo_system_event=verification_failed",
+    };
+  }
+  // sysSignal === "approved" is non-decisive — fall through to chat/structural
+  // rules but enable the renter_ghosted detection below.
+
+  // ── 0b. Stage-aware structural ground truth (Phase 3d) ───────────────
+  // These fire when sysSignal is absent ("none"/null) but order_step pins
+  // funnel-stage truth. Run BEFORE chat regex so they short-circuit a noisy
+  // chat thread that contradicts the funnel state.
+  if (step === "CANCELED" && reason === "renter_cancelled") {
+    return {
+      outcome: "renter_cancelled_explicit",
+      confidence: "high",
+      signal: "order_step=CANCELED+reason=renter_cancelled",
+    };
+  }
+  if (step === "VERIFICATION_FAILED") {
+    return {
+      outcome: "system_or_other",
+      confidence: "high",
+      signal: "order_step=VERIFICATION_FAILED",
+    };
+  }
+  if (step === "REQUEST" && sender !== "renter") {
+    // Never accepted, renter hasn't poked again — owner denied (implicit
+    // or explicit). Days-since-last-message bumps confidence.
+    return {
+      outcome: "owner_denied",
+      confidence: days >= 3 ? "high" : "medium",
+      signal: "order_step=REQUEST+no_renter_followup",
+    };
+  }
+  // Phase 3d — renter_ghosted detection: Hygglo says "approved", but renter
+  // never paid and the latest message was Daniel's (and it's been a while).
+  if (
+    sysSignal === "approved" &&
+    !paid &&
+    sender === "me" &&
+    days >= 7
+  ) {
+    return {
+      outcome: "renter_ghosted",
+      confidence: "high",
+      signal: "hygglo_system_event=approved+unpaid+sender=me+days>=7",
+    };
+  }
 
   // ── 0. Chat signal precedence (audit §2D) ────────────────────────────
   // Only override structural classification when chat hits agree with the

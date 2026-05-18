@@ -90,10 +90,16 @@ export const reclassifyBatch = mutation({
   args: {
     limit: v.optional(v.number()),
     only_unreclassified: v.optional(v.boolean()),
+    /** Phase 3d — for hard-flip backfills: only pick rows whose
+     *  `reclassified_at` is < this timestamp. Lets the caller loop
+     *  through every row exactly once even when `only_unreclassified=false`,
+     *  because each batch's writes advance their `reclassified_at` past
+     *  this watermark. Defaults to `undefined` (no watermark filter). */
+    reclassified_before: v.optional(v.number()),
   },
   handler: async (
     ctx,
-    { limit = 50, only_unreclassified = true },
+    { limit = 50, only_unreclassified = true, reclassified_before },
   ): Promise<{
     processed: number;
     skipped_already_classified: number;
@@ -118,6 +124,16 @@ export const reclassifyBatch = mutation({
         continue;
       }
       if (only_unreclassified && r.reclassified_at != null) {
+        if (scanned >= SCAN_CAP) break;
+        continue;
+      }
+      // Phase 3d hard-flip helper: when caller passes a watermark, skip rows
+      // already reclassified at-or-after it (i.e. already processed this run).
+      if (
+        reclassified_before !== undefined &&
+        r.reclassified_at != null &&
+        r.reclassified_at >= reclassified_before
+      ) {
         if (scanned >= SCAN_CAP) break;
         continue;
       }
@@ -171,6 +187,8 @@ export const reclassifyBatch = mutation({
         chat_owner_cancel_hit: hits.owner_cancel,
         chat_renter_cancel_hit: hits.renter_cancel,
         chat_owner_approval_hit: hits.owner_approval,
+        // Phase 3d — Hygglo system event signal (ground truth, beats chat regex).
+        hygglo_system_signal: r.hygglo_system_signal ?? null,
       };
 
       const result = classifyDenialActor(input);

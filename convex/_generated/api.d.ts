@@ -10,6 +10,8 @@
 
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
+import type * as admin_backfill_hygglo_signals from "../admin_backfill_hygglo_signals.js";
+import type * as admin_backfill_hygglo_signals_data from "../admin_backfill_hygglo_signals_data.js";
 import type * as admin_backfill_net from "../admin_backfill_net.js";
 import type * as admin_item_attribution from "../admin_item_attribution.js";
 import type * as admin_migrate from "../admin_migrate.js";
@@ -118,6 +120,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
   accounts: typeof accounts;
+  admin_backfill_hygglo_signals: typeof admin_backfill_hygglo_signals;
+  admin_backfill_hygglo_signals_data: typeof admin_backfill_hygglo_signals_data;
   admin_backfill_net: typeof admin_backfill_net;
   admin_item_attribution: typeof admin_item_attribution;
   admin_migrate: typeof admin_migrate;

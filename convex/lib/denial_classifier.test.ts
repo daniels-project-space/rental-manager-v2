@@ -186,4 +186,99 @@ describe("chat regex patterns", () => {
     expect(OWNER_APPROVAL_RE.test("Sounds good, see you Friday")).toBe(true);
     expect(OWNER_APPROVAL_RE.test("Could you confirm the pickup time?")).toBe(false);
   });
+
+  // ── Phase 3d — Hygglo system-event signal overrides ──────────────────
+  it("Phase 3d: hygglo_system_signal=owner_denied overrides chat renter_cancel hit", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "renter_cancelled",
+      gross_paid_gbp: 0,
+      last_message_sender: "renter",
+      // Chat says renter cancelled — but Hygglo's UI says Daniel hit deny.
+      chat_renter_cancel_hit: true,
+      hygglo_system_signal: "owner_denied",
+    }));
+    expect(out.outcome).toBe("owner_denied");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toBe("hygglo_system_event=owner_denied");
+  });
+
+  it("Phase 3d: hygglo_system_signal=renter_cancelled overrides chat owner_cancel hit", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "owner_denied",
+      gross_paid_gbp: 50,
+      last_message_sender: "me",
+      // Chat owner-cancel regex hit (Daniel said sorry can't do it) — but
+      // Hygglo's UI actually recorded renter pressing the cancel button.
+      chat_owner_cancel_hit: true,
+      hygglo_system_signal: "renter_cancelled",
+    }));
+    expect(out.outcome).toBe("renter_cancelled_explicit");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toBe("hygglo_system_event=renter_cancelled");
+  });
+
+  it("Phase 3d: hygglo_system_signal=auto_cancelled → system_or_other even with chat owner cancel", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "other",
+      gross_paid_gbp: 0,
+      last_message_sender: "me",
+      chat_owner_cancel_hit: true,
+      hygglo_system_signal: "auto_cancelled",
+    }));
+    expect(out.outcome).toBe("system_or_other");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toBe("hygglo_system_event=auto_cancelled");
+  });
+
+  it("Phase 3d: hygglo_system_signal=verification_failed → system_or_other high", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "verification_failed",
+      gross_paid_gbp: 0,
+      last_message_sender: "renter",
+      hygglo_system_signal: "verification_failed",
+    }));
+    expect(out.outcome).toBe("system_or_other");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toBe("hygglo_system_event=verification_failed");
+  });
+
+  it("Phase 3d: step=CANCELED + reason=renter_cancelled → renter_cancelled_explicit/high", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "renter_cancelled",
+      order_step: "CANCELED",
+      gross_paid_gbp: 0,
+      last_message_sender: "none",
+      // No chat hits, no Hygglo system signal — but the funnel state alone
+      // is enough to pin renter_cancelled_explicit at high confidence.
+    }));
+    expect(out.outcome).toBe("renter_cancelled_explicit");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toBe("order_step=CANCELED+reason=renter_cancelled");
+  });
+
+  it("Phase 3d: step=REQUEST + sender!=renter + days>=3 → owner_denied/high", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "owner_denied",
+      order_step: "REQUEST",
+      gross_paid_gbp: 0,
+      last_message_sender: "me",
+      last_message_at: NOW - 5 * DAY_MS,
+    }));
+    expect(out.outcome).toBe("owner_denied");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toBe("order_step=REQUEST+no_renter_followup");
+  });
+
+  it("Phase 3d: hygglo_system_signal=approved + unpaid + sender=me + days>=7 → renter_ghosted", () => {
+    const out = classifyDenialActor(input({
+      obsolete_reason: "other",
+      gross_paid_gbp: 0,
+      last_message_sender: "me",
+      last_message_at: NOW - 10 * DAY_MS,
+      hygglo_system_signal: "approved",
+    }));
+    expect(out.outcome).toBe("renter_ghosted");
+    expect(out.confidence).toBe("high");
+    expect(out.signal).toContain("hygglo_system_event=approved");
+  });
 });

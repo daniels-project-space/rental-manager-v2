@@ -54,8 +54,53 @@ async function getVaultSecrets(service: string): Promise<Record<string, string>>
 type Activity = {
   key: string;
   chatMessage?: { text?: { content?: string }; byMe?: boolean };
+  /** Phase 3d — Hygglo system events ("blue text"). The poller previously
+   *  ignored this; we now derive `hygglo_system_signal` from it. */
+  event?: { title?: string; content?: string };
   createdAtLabel?: string;
 };
+
+/** Phase 3d — derive the most-recent decisive Hygglo system signal from a list
+ *  of order activities. Iterates in reverse (most recent first) and returns
+ *  the first matching decisive signal. `approved` is non-decisive (returned
+ *  only if no obsolete-style event came after it) — useful for downstream
+ *  renter_ghosted detection. Returns `none` when nothing matches. */
+export function deriveHyggloSystemSignal(acts: Activity[]): {
+  signal:
+    | "owner_denied"
+    | "renter_cancelled"
+    | "auto_cancelled"
+    | "verification_failed"
+    | "approved"
+    | "none";
+  text?: string;
+} {
+  let approvedText: string | undefined;
+  for (const a of [...acts].reverse()) {
+    const c = a.event?.content ?? "";
+    if (!c) continue;
+    if (/You have denied the rental request/i.test(c))
+      return { signal: "owner_denied", text: c };
+    if (/has cancelled the rental request/i.test(c))
+      return { signal: "renter_cancelled", text: c };
+    if (/Automatically cancelled/i.test(c))
+      return { signal: "auto_cancelled", text: c };
+    if (
+      /did not pass our security checks/i.test(c) ||
+      /pre-authorized funds.*cancelled.*rejected/i.test(c)
+    )
+      return { signal: "verification_failed", text: c };
+    if (/Now the borrower should pay/i.test(c) && approvedText === undefined) {
+      approvedText = c;
+      // Don't return yet — keep looking for a later decisive obsolete event.
+      // Since we iterate reverse (newest first), `approved` would have been
+      // hit first if it were truly latest; but we still scan the rest in case
+      // an obsolete event followed it.
+    }
+  }
+  if (approvedText !== undefined) return { signal: "approved", text: approvedText };
+  return { signal: "none" };
+}
 
 type OrderDetail = {
   id: number;
@@ -117,6 +162,15 @@ type OrderReservationPayload = {
   latest_activity?: number | string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
+  /** Phase 3d — derived from activity.event.content. */
+  hygglo_system_signal?:
+    | "owner_denied"
+    | "renter_cancelled"
+    | "auto_cancelled"
+    | "verification_failed"
+    | "approved"
+    | "none";
+  hygglo_system_signal_text?: string;
 };
 
 // ── Timestamp parser ──────────────────────────────────────────
@@ -445,6 +499,8 @@ async function scrapeAccount(
         }
         return urls.length > 0 ? urls : undefined;
       })();
+      // Phase 3d — derive Hygglo system signal from activity.event.content
+      const systemSignal = deriveHyggloSystemSignal(detail.activities ?? []);
       reservationPayloads.push({
         hygglo_order_id: String(order.id),
         status,
@@ -466,6 +522,8 @@ async function scrapeAccount(
         photos_urls,
         latest_activity: order.latest_activity,
         order: detail,
+        hygglo_system_signal: systemSignal.signal,
+        hygglo_system_signal_text: systemSignal.text,
       });
     }
   }
@@ -612,12 +670,20 @@ export const pollHyggloInbox = schedules.task({
             const batch = reservations.slice(i, i + 50);
             for (const payload of batch) {
               // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { sourceFilter: _sf, order: _order, ...mutationPayload } = payload;
+              const {
+                sourceFilter: _sf,
+                order: _order,
+                hygglo_system_signal: _hss,
+                hygglo_system_signal_text: _hsst,
+                ...mutationPayload
+              } = payload;
               const resResult = await convex.mutation(api.hygglo.upsertOrderAsReservation, {
                 account_slug: account.slug,
                 ...mutationPayload,
                 order: payload.order,
                 sourceFilter: payload.sourceFilter,
+                hygglo_system_signal: payload.hygglo_system_signal,
+                hygglo_system_signal_text: payload.hygglo_system_signal_text,
               });
               if (resResult.action === "inserted") {
                 resInserted++;

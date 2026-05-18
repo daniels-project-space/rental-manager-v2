@@ -388,6 +388,20 @@ export default defineSchema({
     chat_owner_approval_hit: v.optional(v.boolean()),
     /** Best-effort timestamp when this reservation first became obsolete. */
     obsolete_at: v.optional(v.number()),
+    // ── Phase 3d — Hygglo system-event signal (ground truth) ─────
+    /** Derived from `activity.event.content` in Hygglo's /v4/my/orders/:id.
+     *  "blue text" — owner deny / renter cancel / system auto-cancel / verification
+     *  failure / approved. Overrides chat-regex in the classifier (rule #0). */
+    hygglo_system_signal: v.optional(v.union(
+      v.literal("owner_denied"),
+      v.literal("renter_cancelled"),
+      v.literal("auto_cancelled"),
+      v.literal("verification_failed"),
+      v.literal("approved"),
+      v.literal("none"),
+    )),
+    /** Raw event.content text that produced `hygglo_system_signal`. Observability only. */
+    hygglo_system_signal_text: v.optional(v.string()),
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
