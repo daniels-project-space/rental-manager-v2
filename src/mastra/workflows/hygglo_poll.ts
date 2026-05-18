@@ -1,16 +1,14 @@
 /**
  * Wave 4 — Hygglo polling Mastra workflow.
  *
- * SEVEN-STEP PIPELINE (per the wave spec):
+ * SEVEN-STEP PIPELINE:
  *   1. openRun          — insert a `polling_runs` row, status="running"
  *   2. fetchAndIngest   — drain unprocessed rows from `hygglo_inbox` table
- *                         (populated by the Trigger.dev poller or future VPS
- *                         scraper). For Wave 4 the existing Trigger.dev task
- *                         remains the source of truth — this workflow is
- *                         decoupled from raw scraping.
  *   3. diffAgainstConvex — compute the net-new reservation set
  *   4. enrichWithContext — for each new rental, attach renter + items
- *   5. aiDecisionAgent  — run the `ai-decision` Mastra agent per rental
+ *   5. decideRules      — deterministic rule engine emits accept/decline/ask_renter
+ *                         (was an LLM agent; replaced 2026-05-18 — see commit
+ *                         message for cost/data-quality analysis)
  *   6. writeDecisions   — Convex internal mutation persists `ai_decision` rows
  *   7. refreshMVs       — with per-(mv × account) lock, call `internal.mv.*.refresh`
  *
@@ -30,8 +28,8 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
-import { getAiDecisionAgent } from "@/mastra/agents/ai-decision";
-import { GROK_CHAT_MODEL } from "@/lib/ai-models";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const anyApi = api as any;
 
 const CONVEX_URL = process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
 
@@ -178,7 +176,24 @@ const enrichWithContext = createStep({
   },
 });
 
-// ── Step 5: aiDecisionAgent ─────────────────────────────────────
+// ── Step 5: decideRules ─────────────────────────────────────────
+//
+// Deterministic rule engine. Replaced the LLM-driven `ai-decision` Mastra
+// agent on 2026-05-18 for three reasons:
+//   1. Daniel approves every decision manually (READ_ONLY_MODE) — the
+//      LLM was an advisory layer, not an autonomous actor.
+//   2. The agent's `check_availability` tool referenced
+//      `convex/items.checkAvailability`, which doesn't exist — calls
+//      silently errored, so decisions were already made without live
+//      availability data. Rules == feature parity.
+//   3. ~$14/mo saved (≈100 calls/day × ~3k in / ~400 out tok @ Grok 4.3).
+//
+// Rule order (first match wins):
+//   - Blacklist     → decline   @ 1.0
+//   - No items      → ask_renter @ 0.3
+//   - No dates      → ask_renter @ 0.3
+//   - Underpriced   → decline (severe) / ask_renter (mild) by ratio
+//   - Default       → accept    @ 0.7
 
 const decision = enrichedCandidate.extend({
   decision: z.enum(["accept", "decline", "ask_renter"]),
@@ -189,69 +204,201 @@ const decision = enrichedCandidate.extend({
 });
 type Decision = z.infer<typeof decision>;
 
-function parseDecisionFromText(text: string): Omit<Decision, keyof RentalCandidate | "promptBlock"> | null {
-  // Find fenced ```json ... ``` block; fall back to first { ... } object.
-  const fence = text.match(/```json\s*([\s\S]*?)```/i);
-  const raw = fence ? fence[1] : text;
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start === -1 || end === -1) return null;
-  try {
-    const obj = JSON.parse(raw.slice(start, end + 1));
-    if (!obj || typeof obj !== "object") return null;
-    const d = obj.decision;
-    if (d !== "accept" && d !== "decline" && d !== "ask_renter") return null;
-    return {
-      decision: d,
-      confidence: Number(obj.confidence ?? 0.5),
-      reasoning: String(obj.reasoning ?? ""),
-      suggestedReply: String(obj.suggestedReply ?? ""),
-      redFlags: Array.isArray(obj.redFlags) ? obj.redFlags.map(String) : [],
-    };
-  } catch {
-    return null;
+interface BlacklistRow { blacklisted?: boolean; reason?: string | null }
+interface PricingRow { ok?: boolean; total?: number; daily_rate?: number; item?: string }
+
+function dayCount(start?: string, end?: string): number | null {
+  if (!start || !end) return null;
+  const a = Date.parse(start);
+  const b = Date.parse(end);
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  const days = Math.max(1, Math.round((b - a) / 86400000));
+  return days;
+}
+
+function firstName(full?: string): string {
+  if (!full) return "there";
+  return full.trim().split(/\s+/)[0] || "there";
+}
+
+function buildReply(d: Decision["decision"], c: RentalCandidate, ctx: { reason?: string }): string {
+  const name = firstName(c.renter_name);
+  const items = c.items.map((i) => i.item_name).join(", ") || "your selection";
+  const dates =
+    c.start_date && c.end_date ? ` from ${c.start_date} to ${c.end_date}` : "";
+  switch (d) {
+    case "accept":
+      return `Hi ${name}! Your request for ${items}${dates} looks good — I'll confirm shortly. — Daniel`;
+    case "decline":
+      if (ctx.reason === "blacklisted_renter") {
+        return `Hi ${name}, unfortunately we're unable to accept this request at this time. — Daniel`;
+      }
+      if (ctx.reason === "underpriced") {
+        return `Hi ${name}! Thanks for the request. The total is below our usual rate for ${items}${dates}. Could you double-check the pricing and re-submit? — Daniel`;
+      }
+      return `Hi ${name}, unfortunately we can't accept this booking. — Daniel`;
+    case "ask_renter":
+      if (ctx.reason === "no_items") {
+        return `Hi ${name}! Could you let me know exactly which items you'd like to rent? — Daniel`;
+      }
+      if (ctx.reason === "no_dates") {
+        return `Hi ${name}! Thanks for the interest — could you confirm the pickup and return dates? — Daniel`;
+      }
+      return `Hi ${name}! Thanks for the request for ${items}${dates}. Could you confirm a few details so I can finalise? — Daniel`;
   }
 }
 
-const runAiDecisionAgent = createStep({
-  id: "aiDecisionAgent",
+const decideRules = createStep({
+  id: "decideRules",
   inputSchema: runState.extend({ enriched: z.array(enrichedCandidate) }),
   outputSchema: runState.extend({ decisions: z.array(decision) }),
   execute: async ({ inputData }) => {
+    const c = convex();
     const out: Decision[] = [];
-    for (const c of inputData.enriched) {
-      try {
-        // Stable per-decision conv id → xAI prompt caching hits when this
-        // decision is re-run (manual retry, follow-up turn). Prefer the
-        // Hygglo order id; fall back to the Convex reservation id.
-        const convId = c.hygglo_order_id ?? c.reservation_id;
-        const decisionAgent = getAiDecisionAgent(convId);
-        const res = await decisionAgent.generate(c.promptBlock);
-        const parsed = parseDecisionFromText(res.text ?? "");
-        if (!parsed) {
-          // Fallback: ask_renter so Daniel gets visibility on the broken case.
-          out.push({
-            ...c,
-            decision: "ask_renter",
-            confidence: 0,
-            reasoning: "Agent output could not be parsed as JSON.",
-            suggestedReply: "Hi! We received your request and will reply shortly with details.",
-            redFlags: ["agent_output_unparseable"],
-          });
-        } else {
-          out.push({ ...c, ...parsed });
+
+    for (const cand of inputData.enriched) {
+      const redFlags: string[] = [];
+      const reasoningParts: string[] = [];
+      let d: Decision["decision"] = "accept";
+      let confidence = 0.7;
+      let replyReason: string | undefined;
+
+      // Rule 1 — blacklist (highest priority).
+      let blacklisted = false;
+      if (cand.renter_name) {
+        try {
+          const bl = (await c.query(anyApi.renters.checkBlacklistByName, {
+            name: cand.renter_name,
+          })) as BlacklistRow | null;
+          if (bl?.blacklisted) {
+            blacklisted = true;
+            redFlags.push("blacklisted_renter");
+            reasoningParts.push(
+              `Renter "${cand.renter_name}" is blacklisted${bl.reason ? `: ${bl.reason}` : ""}.`,
+            );
+          }
+        } catch {
+          // Treat as not-blacklisted on lookup failure; surface via a soft flag.
+          redFlags.push("blacklist_lookup_failed");
         }
-      } catch (err) {
-        out.push({
-          ...c,
-          decision: "ask_renter",
-          confidence: 0,
-          reasoning: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
-          suggestedReply: "Hi! We received your request and will reply shortly with details.",
-          redFlags: ["agent_invocation_error"],
-        });
       }
+
+      if (blacklisted) {
+        d = "decline";
+        confidence = 1.0;
+        replyReason = "blacklisted_renter";
+        out.push({
+          ...cand,
+          decision: d,
+          confidence,
+          reasoning: reasoningParts.join(" "),
+          suggestedReply: buildReply(d, cand, { reason: replyReason }),
+          redFlags,
+        });
+        continue;
+      }
+
+      // Rule 2 — missing items.
+      if (cand.items.length === 0) {
+        d = "ask_renter";
+        confidence = 0.3;
+        replyReason = "no_items";
+        redFlags.push("incomplete_request");
+        reasoningParts.push("No items listed on the request.");
+        out.push({
+          ...cand,
+          decision: d,
+          confidence,
+          reasoning: reasoningParts.join(" "),
+          suggestedReply: buildReply(d, cand, { reason: replyReason }),
+          redFlags,
+        });
+        continue;
+      }
+
+      // Rule 3 — missing dates.
+      const days = dayCount(cand.start_date, cand.end_date);
+      if (!days) {
+        d = "ask_renter";
+        confidence = 0.3;
+        replyReason = "no_dates";
+        redFlags.push("incomplete_request");
+        reasoningParts.push("Pickup or return date missing.");
+        out.push({
+          ...cand,
+          decision: d,
+          confidence,
+          reasoning: reasoningParts.join(" "),
+          suggestedReply: buildReply(d, cand, { reason: replyReason }),
+          redFlags,
+        });
+        continue;
+      }
+
+      // Rule 4 — pricing sanity.
+      // Look up each item's daily rate; sum the expected total. Compare to
+      // gross_paid_gbp. Severity bands tuned to v1 owner intuition:
+      //   ratio < 0.7  → decline (underpriced)
+      //   ratio < 0.9  → ask_renter (request a re-check)
+      //   ratio >= 0.9 → no flag
+      if (cand.gross_paid_gbp !== undefined && cand.gross_paid_gbp > 0) {
+        let expectedTotal = 0;
+        let anyPriced = false;
+        for (const item of cand.items) {
+          try {
+            const row = (await c.query(anyApi.pricing_catalog.lookup, {
+              item_name: item.item_name,
+            })) as PricingRow[] | null;
+            const first = Array.isArray(row) ? row[0] : null;
+            if (first?.daily_rate) {
+              expectedTotal += first.daily_rate * days;
+              anyPriced = true;
+            }
+          } catch {
+            // Skip item — pricing lookup failures don't dominate the decision.
+          }
+        }
+
+        if (anyPriced && expectedTotal > 0) {
+          const ratio = cand.gross_paid_gbp / expectedTotal;
+          reasoningParts.push(
+            `Paid £${cand.gross_paid_gbp.toFixed(0)} vs expected ~£${expectedTotal.toFixed(0)} (ratio ${ratio.toFixed(2)}).`,
+          );
+          if (ratio < 0.7) {
+            d = "decline";
+            confidence = 0.75;
+            replyReason = "underpriced";
+            redFlags.push("underpriced");
+          } else if (ratio < 0.9) {
+            d = "ask_renter";
+            confidence = 0.6;
+            replyReason = "underpriced_mild";
+            redFlags.push("underpriced_mild");
+          }
+        } else {
+          redFlags.push("pricing_unavailable");
+        }
+      } else {
+        redFlags.push("total_missing");
+      }
+
+      // Default accept path.
+      if (d === "accept") {
+        reasoningParts.push(
+          "No blacklist hit, items + dates present, price within tolerance.",
+        );
+      }
+
+      out.push({
+        ...cand,
+        decision: d,
+        confidence,
+        reasoning: reasoningParts.join(" "),
+        suggestedReply: buildReply(d, cand, { reason: replyReason }),
+        redFlags,
+      });
     }
+
     return { ...inputData, decisions: out };
   },
 });
@@ -276,8 +423,8 @@ const writeDecisions = createStep({
           reasoning: d.reasoning,
           suggestedReply: d.suggestedReply,
           redFlags: d.redFlags,
-          generatedByAgent: "ai-decision",
-          modelId: GROK_CHAT_MODEL,
+          generatedByAgent: "rules-v1",
+          modelId: "deterministic",
           pollingRunId: inputData.runId as unknown as Id<"polling_runs">,
         });
         written += 1;
@@ -352,7 +499,7 @@ export const hyggloPollWorkflow = createWorkflow({
   .then(fetchAndIngest)
   .then(diffAgainstConvex)
   .then(enrichWithContext)
-  .then(runAiDecisionAgent)
+  .then(decideRules)
   .then(writeDecisions)
   .then(refreshMVs)
   .commit();
