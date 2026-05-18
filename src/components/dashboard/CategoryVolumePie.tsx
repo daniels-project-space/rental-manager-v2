@@ -291,27 +291,19 @@ export function CategoryVolumePieBody({
               missedData
                 ? `£${missedData.missed.totals.missed.toFixed(0)} · £${missedData.denied.totals.denied.toFixed(0)} denied · £${missedData.missed.totals.gap.toFixed(0)} gap · £${missedData.missed.totals.demandLost.toFixed(0)} demand · ${days}d${missedData.unmatchedDenials.revenue > 0 ? ` + £${missedData.unmatchedDenials.revenue.toFixed(0)} unmatched` : ""}`
                 : periodLabel
-            ) : subDrillKind ? (
-              <>
-                <button
-                  onClick={() => setSubDrillKind(null)}
-                  className="hover:text-white transition-colors"
-                  style={{ color: "#6ea8fe" }}
-                >
-                  ← Other
-                </button>
-                <span className="ml-2 text-white/70">/ {subDrillLabel}</span>
-              </>
-            ) : drillKind ? (
+            ) : subDrillKind || drillKind ? (
               <>
                 <button
                   onClick={() => { setDrillKind(null); setSubDrillKind(null); }}
-                  className="hover:text-white transition-colors"
+                  className="text-sm font-medium px-2 py-1 -my-1 rounded hover:bg-white/5 hover:text-white transition-colors"
                   style={{ color: "#6ea8fe" }}
+                  aria-label="Back to all categories"
                 >
                   ← All categories
                 </button>
-                <span className="ml-2 text-white/70">/ {drillLabel}</span>
+                <span className="ml-2 text-white/70">
+                  / {subDrillKind ? `${drillLabel} / ${subDrillLabel}` : drillLabel}
+                </span>
               </>
             ) : (
               periodLabel
@@ -390,6 +382,7 @@ export function CategoryVolumePieBody({
               >{p.label}</button>
             ))}
           </div>
+          {!isMissed && (
           <div className="flex gap-1">
             {metricOpts.map((m) => {
               const disabled = isMissed && m.val === "count";
@@ -411,6 +404,7 @@ export function CategoryVolumePieBody({
               );
             })}
           </div>
+          )}
           {chevron}
         </div>
       </div>
