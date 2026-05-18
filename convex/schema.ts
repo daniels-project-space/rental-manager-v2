@@ -352,6 +352,42 @@ export default defineSchema({
     ),
     demand_loss_classified_at: v.optional(v.number()),
     demand_loss_estimated_gbp: v.optional(v.number()),
+    // ── Phase 3 — Denial actor reclassification (audit_reclassification.md §3) ──
+    /** Final denial actor (4-outcome canonical model). Set once at first classify. */
+    denial_actor: v.optional(v.union(
+      v.literal("owner_denied"),
+      v.literal("renter_ghosted"),
+      v.literal("renter_cancelled_explicit"),
+      v.literal("system_or_other"),
+    )),
+    /** Re-classifier output (kept separate from denial_actor so we can compare
+     *  before/after backfill). Mirror enum. */
+    reclassified_outcome: v.optional(v.union(
+      v.literal("owner_denied"),
+      v.literal("renter_ghosted"),
+      v.literal("renter_cancelled_explicit"),
+      v.literal("system_or_other"),
+    )),
+    reclassified_at: v.optional(v.number()),
+    /** Human-readable rule label, e.g. "obsolete_reason=owner_denied+no_chat_conflict". */
+    reclassified_signal: v.optional(v.string()),
+    reclassified_confidence: v.optional(v.union(
+      v.literal("high"),
+      v.literal("medium"),
+      v.literal("low"),
+    )),
+    /** Cached "last hygglo_messages sender" at the time of obsolescence. */
+    last_message_sender_at_obsolete: v.optional(v.union(
+      v.literal("me"),
+      v.literal("renter"),
+      v.literal("none"),
+    )),
+    last_message_at_obsolete: v.optional(v.number()),
+    chat_owner_cancel_hit: v.optional(v.boolean()),
+    chat_renter_cancel_hit: v.optional(v.boolean()),
+    chat_owner_approval_hit: v.optional(v.boolean()),
+    /** Best-effort timestamp when this reservation first became obsolete. */
+    obsolete_at: v.optional(v.number()),
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])
@@ -471,6 +507,8 @@ export default defineSchema({
     item_id: v.optional(v.id("items")),
     item_resolved_at: v.optional(v.number()),
     item_resolution_confidence: v.optional(v.number()),
+    // Phase 3 — link denial to source reservation (back-fill in Phase 6).
+    rental_id: v.optional(v.id("reservations")),
   }).index("by_account", ["account_id"]).index("by_reason", ["reason"]).index("by_item", ["item_id"]),
 
   // ── Audit log ────────────────────────────────────────────────

@@ -19,6 +19,7 @@ export default defineConfig({
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
       "convex/lib/revenue_attribution.test.ts",
+      "convex/lib/denial_classifier.test.ts",
     ],
     css: false,
   },
