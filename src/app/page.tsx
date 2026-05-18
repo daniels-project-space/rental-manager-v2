@@ -21,6 +21,17 @@ import { EditableWidget } from "@/components/dashboard/EditableWidget";
 import { WidgetErrorBoundary } from "@/components/dashboard/WidgetErrorBoundary";
 import { PANEL_WIDGETS } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
+import { DeferredMount } from "@/lib/dashboard/deferred-mount";
+import { DashboardHydrationProvider } from "@/lib/dashboard/hydration-context";
+
+// Above-the-fold panels (always-eager mount). Everything else is deferred
+// until it enters the viewport — cuts cold-paint Convex bandwidth ~50%.
+const EAGER_PANELS = new Set([
+  "stats-grid",
+  "lifetime",
+  "earnings-chart",
+  "live-activity",
+]);
 
 export default function DashboardPage() {
   const { layout, reorderPanels, isPanelHidden } = useEditMode();
@@ -44,35 +55,39 @@ export default function DashboardPage() {
   };
 
   return (
-    <div style={{ background: "#070910", minHeight: "100dvh" }}>
-      <HeaderBar />
-      <EditModeBar />
-      <main
-        className="mx-auto px-4 md:px-6 py-5"
-        style={{ maxWidth: "1440px" }}
-      >
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
+    <DashboardHydrationProvider>
+      <div style={{ background: "#070910", minHeight: "100dvh" }}>
+        <HeaderBar />
+        <EditModeBar />
+        <main
+          className="mx-auto px-4 md:px-6 py-5"
+          style={{ maxWidth: "1440px" }}
         >
-          <SortableContext
-            items={visiblePanels.map((w) => w.id)}
-            strategy={verticalListSortingStrategy}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
           >
-            {visiblePanels.map(({ id, label, component: Component }) => (
-              <div key={id} className="mb-4">
-                <EditableWidget id={id} kind="panel" label={label}>
-                  <WidgetErrorBoundary label={label}>
-                    <Component />
-                  </WidgetErrorBoundary>
-                </EditableWidget>
-              </div>
-            ))}
-          </SortableContext>
-        </DndContext>
-      </main>
-      <AddWidgetDrawer />
-    </div>
+            <SortableContext
+              items={visiblePanels.map((w) => w.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {visiblePanels.map(({ id, label, component: Component }) => (
+                <div key={id} className="mb-4">
+                  <EditableWidget id={id} kind="panel" label={label}>
+                    <WidgetErrorBoundary label={label}>
+                      <DeferredMount eager={EAGER_PANELS.has(id)}>
+                        <Component />
+                      </DeferredMount>
+                    </WidgetErrorBoundary>
+                  </EditableWidget>
+                </div>
+              ))}
+            </SortableContext>
+          </DndContext>
+        </main>
+        <AddWidgetDrawer />
+      </div>
+    </DashboardHydrationProvider>
   );
 }
