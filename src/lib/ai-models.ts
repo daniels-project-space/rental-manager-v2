@@ -1,43 +1,41 @@
 /**
- * Wave 4.7 — central source of truth for Grok model IDs.
+ * Central source of truth for LLM model IDs.
  *
- * All agents / API routes / Trigger tasks should import from here, NEVER
- * hard-code a model string inline. The monthly auto-upgrade scanner
- * (`src/trigger/model-auto-upgrade.ts`) rewrites the defaults below when
- * xAI ships a newer minor version.
+ * Active provider is selected via the AI_PROVIDER env var (default
+ * "openrouter"; set to "xai" for the legacy direct-Grok rollback path).
+ * Every scheduled call site uses `getLlmModel()` from `./llm-client`,
+ * which reads AI_PROVIDER and picks the matching id below.
+ *
+ * Cost reference (per 1M tok, in / out, as of 2026-05-18):
+ *   deepseek-v4-flash       $0.112 / $0.224   ← default
+ *   grok-4.3 (xAI direct)   $1.25  / $2.50    ← fallback
  *
  * Env-var overrides let ops bump a single deployment without a code change.
  *
- * Aligned with Wave 4.6 Python runner (`python/browser_use_action.py`) which
- * uses `XAI_VISION_MODEL` (default `grok-4.3`) for vision-driven UI actions.
+ * The monthly auto-upgrade scanner (`src/trigger/model-auto-upgrade.ts`)
+ * rewrites the Grok defaults when xAI ships a newer minor version.
+ * Keep the `DEFAULT_GROK_CHAT_MODEL` literal shape stable for that script.
  */
 
-/** Chat / decision agents (dashboard-chat, ai-decision, etc). */
+/** OpenRouter id for the active default model (DeepSeek-v4-flash). */
+export const DEEPSEEK_MODEL: string =
+  process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash";
+
+/** xAI direct Grok chat model — used when AI_PROVIDER=xai. */
 export const GROK_CHAT_MODEL: string =
   process.env.GROK_CHAT_MODEL ?? "grok-4.3";
 
 /**
- * GROK_NARROW_MODEL is consumed by classification / canonicalisation tasks
- * where the LLM is picking from a narrow enum or returning a structured
- * tag (denial resolution, denial canonicalisation, booking-time extraction).
- * Defaults to GROK_CHAT_MODEL so behaviour is unchanged. Daniel can flip
- * to a cheaper tier (e.g. "grok-3-mini" or "grok-4-fast-non-reasoning")
- * via the GROK_NARROW_MODEL env var after running an A/B sanity check.
+ * Narrow-output Grok variant for structured / classification tasks. Kept
+ * for parity with the chat tier; xAI no longer ships a cheaper "fast"
+ * SKU (retired 2026-05-15 — requests redirect to grok-4.3 at chat pricing).
  */
 export const GROK_NARROW_MODEL: string =
   process.env.GROK_NARROW_MODEL ?? GROK_CHAT_MODEL;
 
-/** Vision / browser-use UI automation (Wave 4.6). */
+/** Vision / browser-use UI automation (still on xAI; DeepSeek-flash is text-only). */
 export const GROK_VISION_MODEL: string =
   process.env.GROK_VISION_MODEL ?? process.env.XAI_VISION_MODEL ?? "grok-4.3";
-
-/**
- * GROK_DECISION_MODEL is used by the ai-decision agent (rental order scoring).
- * Defaults to grok-4-fast to reduce cost on the ~100/day decision job (~$32/mo
- * savings vs grok-4.3). Override via env var without a code change.
- */
-export const GROK_DECISION_MODEL: string =
-  process.env.GROK_DECISION_MODEL ?? "grok-4-fast";
 
 /**
  * Default chat model literal — exported so the auto-upgrade scanner can rewrite
