@@ -28,7 +28,6 @@ import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as dashboardLayout from "../dashboardLayout.js";
 import type * as dashboard_chat from "../dashboard_chat.js";
-import type * as dashboard_chat_context from "../dashboard_chat_context.js";
 import type * as dashboard_invariants from "../dashboard_invariants.js";
 import type * as demand from "../demand.js";
 import type * as demand_loss from "../demand_loss.js";
@@ -128,7 +127,6 @@ declare const fullApi: ApiFromModules<{
   dashboard: typeof dashboard;
   dashboardLayout: typeof dashboardLayout;
   dashboard_chat: typeof dashboard_chat;
-  dashboard_chat_context: typeof dashboard_chat_context;
   dashboard_invariants: typeof dashboard_invariants;
   demand: typeof demand;
   demand_loss: typeof demand_loss;
