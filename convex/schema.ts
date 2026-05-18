@@ -1108,4 +1108,14 @@ export default defineSchema({
     .index("by_listing_id", ["hygglo_listing_id"])
     .index("by_status", ["status"])
     .index("by_account_status", ["hygglo_account", "status"]),
+
+  // ── Runtime feature flags (Phase 2 attribution cutover) ──────────────
+  // Key/value boolean flags Daniel can flip instantly to switch code paths
+  // (e.g. `use_new_attribution_engine`). Default OFF when row missing.
+  feature_flags: defineTable({
+    name: v.string(),
+    enabled: v.boolean(),
+    updated_at: v.number(),
+    updated_by: v.string(),
+  }).index("by_name", ["name"]),
 });

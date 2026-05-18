@@ -16,6 +16,12 @@ import {
   buildSharedImageBlacklist,
   type ImageHint,
 } from "./lib/imageResolution";
+// Phase 2 — new attribution engine, gated by `use_new_attribution_engine`.
+import {
+  attributeRevenue,
+  type RentalForAttribution,
+} from "./lib/revenue_attribution";
+import { isFlagEnabled } from "./lib/feature_flags_helper";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
@@ -1495,6 +1501,19 @@ export const getRentalVolumeByCategory = query({
     const kindById = new Map<string, string>();
     for (const it of items) kindById.set(it._id as string, it.kind);
 
+    // Phase 2 — gate on `use_new_attribution_engine`. Default OFF.
+    const useNewEngine = await isFlagEnabled(ctx, "use_new_attribution_engine");
+    // Maps needed only by the new engine — built once, reused across rentals.
+    const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
+    const itemByCanonical = new Map<string, typeof items[number]>();
+    if (useNewEngine) {
+      for (const it of items) {
+        itemById.set(it._id, it);
+        const nm = (it as { name_canonical?: string }).name_canonical;
+        if (nm) itemByCanonical.set(nm, it);
+      }
+    }
+
     const countByKind = new Map<string, number>();
     const revenueByKind = new Map<string, number>();
 
@@ -1504,16 +1523,42 @@ export const getRentalVolumeByCategory = query({
           resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
         }).resolved_items ?? [];
       if (resolved.length === 0) continue;
-      const gross = r.gross_paid_gbp ?? 0;
-      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
-      const priceSum = prices.reduce((a, b) => a + b, 0);
-      resolved.forEach((x, idx) => {
-        const share =
-          priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
-        const k = kindById.get(x.item_id) ?? "unknown";
-        countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
-        revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
-      });
+
+      if (useNewEngine) {
+        // Phase 2 — new attribution engine, gated by use_new_attribution_engine.
+        const rental: RentalForAttribution = {
+          _id: r._id,
+          gross_gbp: r.gross_paid_gbp ?? 0,
+          duration_days: r.duration_days,
+          expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
+          resolved_items: resolved as RentalForAttribution["resolved_items"],
+        };
+        const lines = attributeRevenue(rental, {
+          itemById,
+          itemByCanonical,
+          priceByName: priceByCanonical,
+        });
+        for (const line of lines) {
+          const k = line.kind;
+          // Count from the source line qty (one AttributionLine per pickLines line).
+          // The engine yields one line per input — qty lives on the input line.
+          // We mirror legacy behaviour: count is per source line qty.
+          countByKind.set(k, (countByKind.get(k) ?? 0) + 1);
+          revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + line.share);
+        }
+      } else {
+        // Legacy path — DO NOT MODIFY (instant rollback target).
+        const gross = r.gross_paid_gbp ?? 0;
+        const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+        const priceSum = prices.reduce((a, b) => a + b, 0);
+        resolved.forEach((x, idx) => {
+          const share =
+            priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+          const k = kindById.get(x.item_id) ?? "unknown";
+          countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
+          revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
+        });
+      }
     }
 
     // Assemble entries (any kind with count>0 OR revenue>0).
@@ -1534,9 +1579,25 @@ export const getRentalVolumeByCategory = query({
       revenue: Math.round(entries.reduce((s, e) => s + e.revenue, 0) * 100) / 100,
     };
 
+    // Phase 2 — extract `unknown` to its own "Unresolved" slice (only under
+    // the new engine, where `unknown` reliably means resolver-miss rather
+    // than legacy noise). Sits OUTSIDE the top-6/Other split below.
+    let unresolvedEntry: typeof entries[number] | null = null;
+    let topPool = entries;
+    if (useNewEngine) {
+      const idx = entries.findIndex((e) => e.kind === "unknown");
+      if (idx >= 0) {
+        const e = entries[idx];
+        if (e.revenue > 0 || e.count > 0) {
+          unresolvedEntry = { ...e, label: "Unresolved" };
+        }
+        topPool = entries.filter((_, i) => i !== idx);
+      }
+    }
+
     // Top 6 + Other.
-    const top = entries.slice(0, 6);
-    const rest = entries.slice(6);
+    const top = topPool.slice(0, 6);
+    const rest = topPool.slice(6);
     const slices: Array<{
       kind: string;
       label: string;
@@ -1562,6 +1623,15 @@ export const getRentalVolumeByCategory = query({
           color: OTHER_COLOR,
         });
       }
+    }
+    if (unresolvedEntry && (unresolvedEntry.revenue > 0 || unresolvedEntry.count > 0)) {
+      slices.push({
+        kind: "unknown",
+        label: "Unresolved",
+        count: unresolvedEntry.count,
+        revenue: Math.round(unresolvedEntry.revenue * 100) / 100,
+        color: "#9ca3af",
+      });
     }
 
     return {
@@ -1642,6 +1712,18 @@ export const getRentalVolumeKindBreakdown = query({
       return k === kind;
     };
 
+    // Phase 2 — gate on `use_new_attribution_engine`. Default OFF.
+    const useNewEngine = await isFlagEnabled(ctx, "use_new_attribution_engine");
+    const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
+    const itemByCanonical = new Map<string, typeof items[number]>();
+    if (useNewEngine) {
+      for (const it of items) {
+        itemById.set(it._id, it);
+        const nm = (it as { name_canonical?: string }).name_canonical;
+        if (nm) itemByCanonical.set(nm, it);
+      }
+    }
+
     // Second pass: split each row's gross across ALL resolved items (to keep
     // attribution math identical to the main query), then keep only the
     // in-target items.
@@ -1653,17 +1735,41 @@ export const getRentalVolumeKindBreakdown = query({
           resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
         }).resolved_items ?? [];
       if (resolved.length === 0) continue;
-      const gross = r.gross_paid_gbp ?? 0;
-      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
-      const priceSum = prices.reduce((a, b) => a + b, 0);
-      resolved.forEach((x, idx) => {
-        const k = kindById.get(x.item_id)?.kind ?? "unknown";
-        if (!isInTargetSet(k)) return;
-        const share =
-          priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
-        itemCount.set(x.item_id, (itemCount.get(x.item_id) ?? 0) + (x.qty ?? 1));
-        itemRevenue.set(x.item_id, (itemRevenue.get(x.item_id) ?? 0) + share);
-      });
+
+      if (useNewEngine) {
+        // Phase 2 — new attribution engine, gated by use_new_attribution_engine.
+        const rental: RentalForAttribution = {
+          _id: r._id,
+          gross_gbp: r.gross_paid_gbp ?? 0,
+          duration_days: r.duration_days,
+          expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
+          resolved_items: resolved as RentalForAttribution["resolved_items"],
+        };
+        const lines = attributeRevenue(rental, {
+          itemById,
+          itemByCanonical,
+          priceByName: priceByCanonical,
+        });
+        for (const line of lines) {
+          if (!isInTargetSet(line.kind)) continue;
+          const idStr = (line.key.id as string | undefined) ?? line.key.nameCanonical;
+          itemCount.set(idStr, (itemCount.get(idStr) ?? 0) + 1);
+          itemRevenue.set(idStr, (itemRevenue.get(idStr) ?? 0) + line.share);
+        }
+      } else {
+        // Legacy path — DO NOT MODIFY (instant rollback target).
+        const gross = r.gross_paid_gbp ?? 0;
+        const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+        const priceSum = prices.reduce((a, b) => a + b, 0);
+        resolved.forEach((x, idx) => {
+          const k = kindById.get(x.item_id)?.kind ?? "unknown";
+          if (!isInTargetSet(k)) return;
+          const share =
+            priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+          itemCount.set(x.item_id, (itemCount.get(x.item_id) ?? 0) + (x.qty ?? 1));
+          itemRevenue.set(x.item_id, (itemRevenue.get(x.item_id) ?? 0) + share);
+        });
+      }
     }
 
     type ItemSlice = { itemId: string; name: string; count: number; revenue: number; color: string };
@@ -1744,6 +1850,18 @@ export const getRentalVolumeOtherSubKinds = query({
     const kindById = new Map<string, string>();
     for (const it of items) kindById.set(it._id as string, it.kind);
 
+    // Phase 2 — gate on `use_new_attribution_engine`. Default OFF.
+    const useNewEngine = await isFlagEnabled(ctx, "use_new_attribution_engine");
+    const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
+    const itemByCanonical = new Map<string, typeof items[number]>();
+    if (useNewEngine) {
+      for (const it of items) {
+        itemById.set(it._id, it);
+        const nm = (it as { name_canonical?: string }).name_canonical;
+        if (nm) itemByCanonical.set(nm, it);
+      }
+    }
+
     const countByKind = new Map<string, number>();
     const revenueByKind = new Map<string, number>();
 
@@ -1753,16 +1871,39 @@ export const getRentalVolumeOtherSubKinds = query({
           resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
         }).resolved_items ?? [];
       if (resolved.length === 0) continue;
-      const gross = r.gross_paid_gbp ?? 0;
-      const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
-      const priceSum = prices.reduce((a, b) => a + b, 0);
-      resolved.forEach((x, idx) => {
-        const share =
-          priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
-        const k = kindById.get(x.item_id) ?? "unknown";
-        countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
-        revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
-      });
+
+      if (useNewEngine) {
+        // Phase 2 — new attribution engine, gated by use_new_attribution_engine.
+        const rental: RentalForAttribution = {
+          _id: r._id,
+          gross_gbp: r.gross_paid_gbp ?? 0,
+          duration_days: r.duration_days,
+          expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
+          resolved_items: resolved as RentalForAttribution["resolved_items"],
+        };
+        const lines = attributeRevenue(rental, {
+          itemById,
+          itemByCanonical,
+          priceByName: priceByCanonical,
+        });
+        for (const line of lines) {
+          const k = line.kind;
+          countByKind.set(k, (countByKind.get(k) ?? 0) + 1);
+          revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + line.share);
+        }
+      } else {
+        // Legacy path — DO NOT MODIFY (instant rollback target).
+        const gross = r.gross_paid_gbp ?? 0;
+        const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
+        const priceSum = prices.reduce((a, b) => a + b, 0);
+        resolved.forEach((x, idx) => {
+          const share =
+            priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
+          const k = kindById.get(x.item_id) ?? "unknown";
+          countByKind.set(k, (countByKind.get(k) ?? 0) + (x.qty ?? 1));
+          revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + share);
+        });
+      }
     }
 
     const kinds = new Set<string>([...countByKind.keys(), ...revenueByKind.keys()]);
@@ -1776,8 +1917,14 @@ export const getRentalVolumeOtherSubKinds = query({
       .filter((e) => e.count > 0 || e.revenue > 0)
       .sort((a, b) => b.count - a.count);
 
+    // Phase 2 — strip `unknown` from the "Other" sub-bucket so Unresolved is
+    // not double-counted (it appears as its own slice in the parent query).
+    let topPool = entries;
+    if (useNewEngine) {
+      topPool = entries.filter((e) => e.kind !== "unknown");
+    }
     // Same split as main query: top 6 stay top, rest = "Other".
-    const rest = entries.slice(6);
+    const rest = topPool.slice(6);
     const PALETTE = ["#60a5fa", "#34d399", "#a78bfa", "#fbbf24", "#f87171", "#22d3ee", "#ec4899", "#14b8a6", "#eab308", "#8b5cf6", "#f97316", "#10b981", "#3b82f6", "#d946ef", "#84cc16", "#cbd5e1"];
     const slices = rest.map((e, i) => ({
       kind: e.kind,
