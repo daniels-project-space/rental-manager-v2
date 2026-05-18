@@ -21,6 +21,7 @@ import { mutation } from "./_generated/server";
 import { v } from "convex/values";
 
 const ACTOR_SEED = "phase-1.5a";
+const ACTOR_INVENTORY_EXT = "phase-1.5b-inventory-extension";
 
 /**
  * Single-item attribution setter. Patches `replacement_cost_gbp` and/or
@@ -270,6 +271,102 @@ export const correctMisclassifiedKinds = mutation({
       not_found,
       missing_names: missing,
       skipped_unexpected_kind: skipped,
+    };
+  },
+});
+
+/**
+ * Phase 1.5b — Idempotent insert of a new inventory item by canonical name.
+ *
+ * Used to fill inventory gaps (e.g. battery/media canonicals referenced by
+ * camera-body `included_with_rental` bundles but missing as standalone items).
+ *
+ * Behavior:
+ *   - If an item with matching `name_canonical` already exists → no-op,
+ *     returns { action: "exists", item_id, canonical }.
+ *   - Otherwise inserts a minimal row using the items schema defaults and
+ *     returns { action: "inserted", item_id, canonical }.
+ *
+ * Required schema fields (per convex/schema.ts items table):
+ *   name_canonical, name_input, slug, kind, qty, unit_kind,
+ *   is_marketing_only, status, created_at, updated_at.
+ *
+ * Defaults applied when caller doesn't supply:
+ *   name_input = canonical_name
+ *   slug = lowercased + hyphenated canonical
+ *   qty = 1, unit_kind = "unit"
+ *   is_marketing_only = false, status = "active"
+ *   created_at = updated_at = Date.now()
+ *
+ * Note: schema `unit_kind` accepts "unit" | "kit" | "set" — caller can pass
+ * "each" but it will be coerced to "unit" if explicitly "each". To stay safe
+ * and not invent values, we pass through whatever the caller supplies; the
+ * default is "unit" (a valid schema value).
+ */
+export const addItemIfMissing = mutation({
+  args: {
+    canonical_name: v.string(),
+    name_input: v.optional(v.string()),
+    kind: v.string(),
+    replacement_cost_gbp: v.optional(v.number()),
+    qty: v.optional(v.number()),
+    unit_kind: v.optional(v.string()),
+    included_with_rental: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("items")
+      .withIndex("by_canonical_name", (q) =>
+        q.eq("name_canonical", args.canonical_name),
+      )
+      .first();
+    if (existing) {
+      return {
+        action: "exists" as const,
+        item_id: existing._id,
+        canonical: args.canonical_name,
+      };
+    }
+
+    const slug = args.canonical_name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+
+    const t = Date.now();
+    const compatibility = args.included_with_rental
+      ? { included_with_rental: args.included_with_rental }
+      : undefined;
+
+    const itemId = await ctx.db.insert("items", {
+      name_canonical: args.canonical_name,
+      name_input: args.name_input ?? args.canonical_name,
+      slug,
+      kind: args.kind,
+      qty: args.qty ?? 1,
+      unit_kind: args.unit_kind ?? "unit",
+      compatibility,
+      replacement_cost_gbp: args.replacement_cost_gbp,
+      is_marketing_only: false,
+      status: "active",
+      created_at: t,
+      updated_at: t,
+    });
+
+    await ctx.db.insert("audit_log", {
+      table_name: "items",
+      actor: ACTOR_INVENTORY_EXT,
+      op: "insert",
+      count: 1,
+      source_file: "convex/admin_item_attribution.ts:addItemIfMissing",
+      note: `name_canonical=${args.canonical_name} kind=${args.kind} cost=${args.replacement_cost_gbp ?? "unset"}`,
+      ts: t,
+    });
+
+    return {
+      action: "inserted" as const,
+      item_id: itemId,
+      canonical: args.canonical_name,
     };
   },
 });
