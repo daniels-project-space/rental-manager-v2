@@ -374,6 +374,8 @@ async function runBatch(
             ),
           },
         ],
+        // Typical: 1-5 items × ~100 tok; 600 caps a hallucinated long list.
+        maxOutputTokens: 600,
         context: { source: "trigger:resolve-items", tag: "resolve-items" },
       });
       if (gated.skipped) {

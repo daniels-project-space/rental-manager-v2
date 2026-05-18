@@ -152,6 +152,8 @@ export const canonicalizeDenialsTask = schedules.task({
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userMessage },
         ],
+        // 20 entries × ~80 tok each = 1600 expected; 2000 caps verbose edge cases.
+        maxOutputTokens: 2000,
         context: { source: "trigger:canonicalize-denials", tag: "canonicalize-denials" },
       });
       if (gated.skipped) {

@@ -236,6 +236,8 @@ export const extractBookingTimesTask = schedules.task({
         const gated = await gatedGenerateText({
           model: await getLlmModel(),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
+          // 9 short lines (~150 tok); 250 leaves headroom for the NOTES line.
+          maxOutputTokens: 250,
           context: { source: "trigger:extract-booking-times", tag: "extract-booking-times" },
         });
         if (gated.skipped) {

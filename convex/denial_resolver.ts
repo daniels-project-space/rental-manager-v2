@@ -111,6 +111,8 @@ export const resolveItemFor = internalAction({
           { role: "system", content: modelPrompt() },
           { role: "user", content: buildUserMessage(itemName, filterInventoryByCategory(inventory, itemName)) },
         ],
+        // Single denial → 1-2 items in output. 300 caps any verbose drift.
+        maxOutputTokens: 300,
         context: { source: "convex:denial_resolver", tag: "denial-resolver" },
       });
       if (gated.skipped) {

@@ -367,6 +367,8 @@ export const resolveReservation = action({
               ),
             ) },
         ],
+        // Typical: 1-5 items × ~100 tok; 600 caps hallucinated long lists.
+        maxOutputTokens: 600,
         context: { source: "convex:item_resolver", tag: "item-resolver" },
       });
       if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
