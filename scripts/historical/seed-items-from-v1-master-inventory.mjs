@@ -102,22 +102,26 @@ function inferMeta(name) {
   const n = name.toLowerCase();
 
   // kind
+  // Order matters — narrower / higher-specificity regexes first.
+  // 1) cage/rig BEFORE camera_body to keep SmallRig FX3 cage from matching `fx3`.
+  // 2) smoke/hazer BEFORE monitor to keep "Smoke Ninja" out of monitor (matches `ninja`).
+  // 3) lens regex uses `mm\s+f\d` (digit after f) — old `mm f` failed for "mm f2.8".
   let kind = 'accessory';
-  if (/\b(fx3|a7|bmpcc|fuji|x100|camera body)\b/.test(n)) kind = 'camera_body';
-  else if (/\b(lens|mm f|fisheye|anamorphic)\b/.test(n)) kind = 'lens';
+  if (/\b(cage|smallrig|shoulder\s*rig|camera\s*cage)\b/.test(n)) kind = 'support';
+  else if (/\b(smoke|hazer|fogger|smoke\s*ninja)\b/.test(n)) kind = 'effects';
+  else if (/\b(fx3|a7|bmpcc|fuji|x100|camera body)\b/.test(n)) kind = 'camera_body';
+  else if (/(\blens\b|\d+(?:-\d+)?mm(?:\s+f\d|\b)|\bfisheye\b|\banamorphic\b)/.test(n)) kind = 'lens';
   else if (/\b(light|softbox|reflector|nanlite|ambitful|led|flash)\b/.test(n)) kind = 'lighting';
   else if (/\b(battery|batteries|v-mount|np-f|np-fz|anker|power station|gimbal battery)\b/.test(n)) kind = 'power';
-  else if (/\b(gimbal|slider|tripod|c-stand|monopod|shoulder|follow focus|tilta)\b/.test(n)) kind = 'support';
+  else if (/\b(gimbal|slider|tripod|c-stand|monopod|follow focus|tilta)\b/.test(n)) kind = 'support';
   else if (/\b(monitor|atomos|ninja|hollyland|transmitter)\b/.test(n)) kind = 'monitor';
   else if (/\b(mic|microphone|rode|sennheiser|audio|boom|dji mic|dji wireless)\b/.test(n)) kind = 'audio';
   else if (/\b(drone|mavic|mini 4|action|osmo|gopro)\b/.test(n)) kind = 'action_cam';
   else if (/\b(dj|controller|speaker|jbl|partybox)\b/.test(n)) kind = 'av';
-  else if (/\b(smoke|hazer|fogger|ninja hazer|ninja pro)\b/.test(n)) kind = 'effects';
   else if (/\b(filter|nd filter|cinebloom|mist)\b/.test(n)) kind = 'filter';
   else if (/\b(card|256gb|cf express)\b/.test(n)) kind = 'media';
   else if (/\b(mount|adapter|pl to)\b/.test(n)) kind = 'adapter';
   else if (/\b(suction|cups)\b/.test(n)) kind = 'mount';
-  else if (/\b(cage|rig|smallrig)\b/.test(n)) kind = 'rig';
 
   const unit_kind = 'unit';
 

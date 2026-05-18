@@ -13,6 +13,12 @@
  *
  * No DB migration: legacy strings stay as-is; `normalizeKind()` maps any raw
  * string onto the typed union, returning `"unknown"` for anything unmapped.
+ *
+ * Phase 1.5a extensions (audit_data_quality.md §5):
+ *   - action_cam → distinct kind (drones / GoPro / Osmo). Standalone rental.
+ *   - media_av → distinct kind (DJ / JBL / speakers). Standalone rental.
+ *   - filter → mapped onto existing `nd_filter`.
+ *   - adapter / mount → mapped onto existing `support` (PL mounts, suction cups).
  */
 
 /** Closed set of typed item kinds for Phase 1 attribution. */
@@ -28,6 +34,8 @@ export const ITEM_KINDS = [
   "monitor",
   "transmitter",
   "media",
+  "media_av",
+  "action_cam",
   "accessory_consumable",
   "bundle",
   "marketing_only",
@@ -65,15 +73,17 @@ export const STANDALONE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
   "support",
   "lighting",
   "media",
+  "media_av",
+  "action_cam",
 ]);
 
 /**
  * Normalize a raw `items.kind` string onto the typed `ItemKind` union.
  *
- * Mapping derived from the schema comment at `convex/schema.ts:51`:
- *   camera, lens, audio, lighting, grip, gimbal, drone, monitor,
- *   transmission, accessory, smoke_fx, dj_audio, power, storage_card,
- *   support, motion, stabilizer, video, effects, bundle (+ unknown).
+ * Mapping derived from the schema comment at `convex/schema.ts:51` plus the
+ * 15 raw kinds emitted by `seed-items-from-v1-master-inventory.mjs:inferMeta`:
+ *   camera_body, lens, lighting, support, monitor, audio, power, media,
+ *   accessory, effects, action_cam, av, filter, adapter, mount.
  *
  * Strategy: lowercase, strip whitespace and underscores for matching, then
  * map onto the typed kinds. Anything unrecognized → `"unknown"`.
@@ -89,12 +99,19 @@ export function normalizeKind(raw: string | undefined): ItemKind {
     case "nd_filter":
     case "nd":
     case "ndfilter":
+    case "filter":
+    case "filters":
       return "nd_filter";
     case "audio":
     case "dj_audio":
     case "dj-audio":
     case "djaudio":
       return "audio";
+    case "av":
+    case "media_av":
+    case "mediaav":
+    case "av_media":
+      return "media_av";
     case "lighting":
     case "lights":
     case "light":
@@ -137,10 +154,13 @@ export function normalizeKind(raw: string | undefined): ItemKind {
     case "camera":
     case "camera_body":
     case "body":
+      return "camera_body";
     case "drone":
     case "drones":
-      // Drones are flying camera bodies; map onto camera_body for attribution.
-      return "camera_body";
+    case "action_cam":
+    case "actioncam":
+    case "action-cam":
+      return "action_cam";
     case "support":
     case "grip":
     case "gimbal":
@@ -151,6 +171,10 @@ export function normalizeKind(raw: string | undefined): ItemKind {
     case "motion":
     case "tripod":
     case "rig":
+    case "adapter":
+    case "adapters":
+    case "mount":
+    case "mounts":
       return "support";
     case "unknown":
     case "":
