@@ -211,7 +211,16 @@ export const getInvestmentScorecard = query({
       (i) => !i.is_marketing_only && i.status === "active" && (i.acquisition_cost_gbp == null || i.acquisition_cost_gbp === 0)
     ).length;
 
-    let reservations = await ctx.db.query("reservations").collect();
+    // 2-year window for lifetime ROI scorecard. Same trade-off as
+    // intel.ts:getItemROIRanking — forward-safe today, migrate to MV when
+    // history > 2y.
+    const roiScorecardCutoff = new Date(Date.now() - 730 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", roiScorecardCutoff))
+      .collect();
     if (accountSlug) {
       reservations = reservations.filter(
         (r) => r.account_slug === accountSlug
@@ -274,6 +283,10 @@ export const getLifetimeByMonth = query({
     const AI_ACTIVE_FROM: string = (settings as unknown as Record<string, string>)?.ai_active_from ?? "2026-02";
     const boostRate: number = (settings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.24;
 
+    // getLifetimeByMonth feeds the lifetime chart — by definition needs
+    // full history. The cost-watch ratchet allows this once flagged:
+    // a future PR should back this with an MV (one row per (month, account)
+    // refreshed nightly). // check-patterns:ok
     const allReservations = await ctx.db.query("reservations").collect();
 
     // Load historical_revenue for pre-import months (retired accounts + v1 migration)

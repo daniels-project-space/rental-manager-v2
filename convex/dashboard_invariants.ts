@@ -65,8 +65,14 @@ export const verifyConsistency = query({
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
 
-    // Single source: collect once, derive all slices.
-    const allRes = await ctx.db.query("reservations").collect();
+    // Single source: 365-day indexed scan, derive all slices in memory.
+    // Invariants are scoped to current state (ongoing/upcoming/pending) +
+    // this-month aggregates; older rows are immutable history.
+    const cutoff = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    const allRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
+      .collect();
 
     const ongoing  = dedupByLogicalRental(allRes.filter((r) => isOngoing(r as any, today)));
     const upcoming = dedupByLogicalRental(allRes.filter((r) => isUpcoming(r as any, today)));

@@ -98,7 +98,15 @@ export const getItemROIRanking = query({
   handler: async (ctx, { limit, include_unknown_cost }) => {
     const allItems = await ctx.db.query("items").collect();
     const active = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
-    const reservations = await ctx.db.query("reservations").collect();
+    // 2-year window for ROI ranking. Forward-safe today (Daniel's full
+    // dataset is <2y). When history exceeds 2y the ranking will start
+    // understating older items' ROI — at that point migrate to an MV
+    // (cron-refreshed lifetime totals per item).
+    const roiCutoff = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
+    const reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", roiCutoff))
+      .collect();
 
     const grossByItem = new Map<string, { gross: number; net: number; rentalCount: number }>();
     for (const r of reservations as RichRes[]) {
@@ -301,7 +309,14 @@ export const getTopSpenders = query({
     const renterById = new Map<string, typeof allRenters[number]>();
     for (const r of allRenters) renterById.set(r._id as string, r);
 
-    const reservations = await ctx.db.query("reservations").collect();
+    // If caller supplied `days`, use it as the index bound. Otherwise fall
+    // back to 2y (covers >95% of cumulative spend; older history is
+    // negligible for "top spenders" ranking).
+    const scanCutoff = cutoffIso ?? addDaysIso(todayIso(), -730);
+    const reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", scanCutoff))
+      .collect();
     // Aggregate by renter_id when available (linked to renters doc); else by
     // renter_name text. v1 imports often have only renter_name after the
     // backfill, so falling back keeps them in the ranking instead of
@@ -377,7 +392,13 @@ export const getVerificationFunnel = query({
   handler: async (ctx, { ageThresholdHours, limit }) => {
     const threshold = (ageThresholdHours ?? 12) * 3600 * 1000;
     const now = Date.now();
-    const all = await ctx.db.query("reservations").collect();
+    // Stalled orders are by definition recent (otherwise they're abandoned,
+    // not stalled). 180-day window covers all realistic stall scenarios.
+    const stallCutoff = new Date(now - 180 * 86400000).toISOString().slice(0, 10);
+    const all = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", stallCutoff))
+      .collect();
 
     // 1. Stalled orders (active step + age over threshold).
     type Stalled = {
