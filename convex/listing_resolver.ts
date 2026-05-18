@@ -35,25 +35,18 @@ import {
 } from "./lib/item_matcher";
 import { CANONICAL_MAP, getRelevantItems } from "./lib/inventory_categories";
 import { lookupPhotoReference } from "./lib/listing_photo_reference";
-import { createXai } from "@ai-sdk/xai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText } from "ai";
+// Reuse the central Convex-side helper (vault fallback + AI_PROVIDER routing).
+// item_resolver.ts is the canonical home for this — see getActionLlmModel.
+import { getActionLlmModel } from "./item_resolver";
 
-// Convex-side LLM provider selector (mirrors src/lib/llm-client.ts; can't
-// cross-import between convex/ and src/). Default OpenRouter + DeepSeek;
-// rollback to xAI direct via AI_PROVIDER=xai.
-function getTier5Model() {
-  const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
-  if (useXai) {
-    const apiKey = process.env.XAI_API_KEY ?? process.env.GROK_API_KEY;
-    if (!apiKey) return null;
-    return createXai({ apiKey })(process.env.GROK_CHAT_MODEL ?? "grok-4.3");
+async function getTier5Model() {
+  try {
+    return await getActionLlmModel();
+  } catch (err) {
+    console.warn("[listing_resolver] getTier5Model: provider unavailable", String(err));
+    return null;
   }
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return null;
-  return createOpenRouter({ apiKey })(
-    process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash",
-  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -293,7 +286,7 @@ async function aiResolve(
   _description?: string,
   detail?: unknown,
 ): Promise<ResolvedItem[]> {
-  const model = getTier5Model();
+  const model = await getTier5Model();
   if (!model) return [];
 
   const relevantItems = getRelevantItems(title, detail);

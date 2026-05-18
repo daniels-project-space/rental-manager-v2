@@ -53,9 +53,10 @@ async function getVaultKey(service: string, keyName: string): Promise<string> {
 // path ($1.25 / $2.50). Built lazily so module loads without env access.
 //
 // IMPORTANT — Convex actions can't cross-import from src/, so this helper is
-// duplicated in listing_resolver.ts intentionally. All other "use node"
-// resolver modules in this folder (denial_resolver, extract_booking_times)
-// re-export from here.
+// the single source of truth on the Convex side. denial_resolver,
+// extract_booking_times, and listing_resolver all import this re-export.
+// Keys come from the project-hub vault (service "openrouter" or "xai")
+// with process.env as the override; no Vercel/Trigger.dev env required.
 let _xai: ReturnType<typeof createXai> | null = null;
 let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
 
