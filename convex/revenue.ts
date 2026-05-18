@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive } from "./lib/reservations/predicates";
+import { isFlagEnabled } from "./lib/feature_flags_helper";
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -800,6 +801,12 @@ export const getMissedAndDeniedByCategory = query({
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     const periodStart = cutoffStr;
 
+    // Phase 3c — feature-flagged denial classifier. When ON, the Denied slice
+    // counts ONLY reservations where Daniel actively denied (denial_actor =
+    // "owner_denied"). Renter-cancelled / ghosted / system rows are excluded.
+    // Default OFF — flip via feature_flags.setFlag('use_new_denial_classifier').
+    const useNewClassifier = await isFlagEnabled(ctx, "use_new_denial_classifier");
+
     // 1. Build kind maps from items. Phase 9.2: prefer item_id FK (resolved
     //    at write time by the LLM) over name_canonical string matching.
     const allItems = await ctx.db.query("items").collect();
@@ -817,47 +824,112 @@ export const getMissedAndDeniedByCategory = query({
       pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
     );
 
-    // 2. Denials path — same logic/value-fallback as getMissedRevenue.
-    let denials = await ctx.db.query("denial_records").collect();
-    if (accountSlug) {
-      const accountRow = await ctx.db
-        .query("accounts")
-        .withIndex("by_slug", (q) => q.eq("slug", accountSlug as string))
-        .first();
-      if (accountRow) {
-        denials = denials.filter((d) => d.account_id === accountRow._id);
-      }
-    }
-    denials = denials.filter((d) => d.created_at >= cutoffMs);
-
+    // 2. Denials path — feature-flagged (Phase 3c).
     const deniedByKind = new Map<string, { revenue: number; count: number }>();
     let unmatchedRevenue = 0;
     let unmatchedCount = 0;
     let totalDeniedRevenue = 0;
+    // `deniedRecordCount` mirrors the original `denials.length` semantic so the
+    // returned `denied.totals.count` shape is unchanged. Under the new path it
+    // tracks owner_denied reservation rows.
+    let deniedRecordCount = 0;
 
-    for (const d of denials) {
-      let estimatedValue = d.estimated_value ?? 0;
-      if (estimatedValue === 0 && d.item_name) {
-        const dp = priceByName.get(d.item_name);
-        if (dp) estimatedValue = dp * 2;
+    if (useNewClassifier) {
+      // NEW: count only reservations where Daniel actively denied.
+      // Source = reservations table filtered by reclassified_outcome (Phase 3a
+      // re-classifier output). Fall back to denial_actor if reclassified is
+      // missing on an older row.
+      let obsoleteRes = await ctx.db
+        .query("reservations")
+        .filter((q) => q.eq(q.field("is_obsolete"), true))
+        .collect();
+      if (accountSlug) {
+        obsoleteRes = obsoleteRes.filter((r) => r.account_slug === accountSlug);
       }
-      totalDeniedRevenue += estimatedValue;
+      // Cutoff: prefer obsolete_at, then v1_updated_at, then _creationTime.
+      obsoleteRes = obsoleteRes.filter((r) => {
+        const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
+        return ts >= cutoffMs;
+      });
+      const ownerDenied = obsoleteRes.filter((r) => {
+        const actor = r.reclassified_outcome ?? r.denial_actor;
+        return actor === "owner_denied";
+      });
 
-      // Kind lookup priority: FK (item_id) → canonical name → unmatched.
-      // Phase 9.2 — new denials land here via the LLM resolver; the name path
-      // is the fallback for historical rows where item_id is still null.
-      let kind: string | undefined;
-      if (d.item_id) kind = idToKind.get(d.item_id);
-      if (!kind && d.item_name) kind = nameToKind.get(d.item_name);
-      if (!kind) {
-        unmatchedRevenue += estimatedValue;
-        unmatchedCount += 1;
-        continue;
+      for (const r of ownerDenied) {
+        // EstimatedValue: prefer gross_paid_gbp (rare on denials), else
+        // first resolved_item daily_price * duration_days fallback, else 0.
+        let estimatedValue = r.gross_paid_gbp ?? 0;
+        const firstItem = (r.items ?? [])[0];
+        const itemNameForLookup =
+          (r.resolved_items ?? [])[0]?.item_name_canonical ??
+          firstItem?.item_name;
+        if (estimatedValue === 0 && itemNameForLookup) {
+          const dp = priceByName.get(itemNameForLookup);
+          if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
+        }
+        totalDeniedRevenue += estimatedValue;
+        deniedRecordCount += 1;
+
+        // Kind lookup: resolved_items[0].item_id → canonical name → items[0].item_name → unmatched.
+        let kind: string | undefined;
+        const resolved = (r.resolved_items ?? [])[0];
+        if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
+        if (!kind && resolved?.item_name_canonical) {
+          kind = nameToKind.get(resolved.item_name_canonical);
+        }
+        if (!kind && firstItem?.item_name) {
+          kind = nameToKind.get(firstItem.item_name);
+        }
+        if (!kind) {
+          unmatchedRevenue += estimatedValue;
+          unmatchedCount += 1;
+          continue;
+        }
+        const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
+        slot.revenue += estimatedValue;
+        slot.count += 1;
+        deniedByKind.set(kind, slot);
       }
-      const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
-      slot.revenue += estimatedValue;
-      slot.count += 1;
-      deniedByKind.set(kind, slot);
+    } else {
+      // LEGACY: full denial_records collect + per-row classification.
+      let denials = await ctx.db.query("denial_records").collect();
+      if (accountSlug) {
+        const accountRow = await ctx.db
+          .query("accounts")
+          .withIndex("by_slug", (q) => q.eq("slug", accountSlug as string))
+          .first();
+        if (accountRow) {
+          denials = denials.filter((d) => d.account_id === accountRow._id);
+        }
+      }
+      denials = denials.filter((d) => d.created_at >= cutoffMs);
+      deniedRecordCount = denials.length;
+
+      for (const d of denials) {
+        let estimatedValue = d.estimated_value ?? 0;
+        if (estimatedValue === 0 && d.item_name) {
+          const dp = priceByName.get(d.item_name);
+          if (dp) estimatedValue = dp * 2;
+        }
+        totalDeniedRevenue += estimatedValue;
+
+        // Kind lookup priority: FK (item_id) → canonical name → unmatched.
+        // Phase 9.2 — new denials land here via the LLM resolver; the name path
+        // is the fallback for historical rows where item_id is still null.
+        let kind: string | undefined;
+        if (d.item_id) kind = idToKind.get(d.item_id);
+        if (!kind && d.item_name) kind = nameToKind.get(d.item_name);
+        if (!kind) {
+          unmatchedRevenue += estimatedValue;
+          unmatchedCount += 1;
+          continue;
+        }
+        const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
+        slot.revenue += estimatedValue;
+        slot.count += 1;
+        deniedByKind.set(kind, slot);
+      }
     }
 
     // 3. Idle-gap path — same algorithm as getMissedRevenue, grouped by kind.
@@ -1049,7 +1121,7 @@ export const getMissedAndDeniedByCategory = query({
 
     const totalMissed = combined.reduce((s, c) => s + c.missed, 0) + unmatchedRevenue;
     const totalGap = combined.reduce((s, c) => s + c.gap, 0);
-    const totalDeniedCount = denials.length;
+    const totalDeniedCount = deniedRecordCount;
 
     return {
       days,
