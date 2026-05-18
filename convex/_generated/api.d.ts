@@ -23,6 +23,7 @@ import type * as audit_listings from "../audit_listings.js";
 import type * as audit_listings_data from "../audit_listings_data.js";
 import type * as audit_reclassification from "../audit_reclassification.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
+import type * as audit_thread_join from "../audit_thread_join.js";
 import type * as backfill_hygglo_images from "../backfill_hygglo_images.js";
 import type * as bundles from "../bundles.js";
 import type * as bundles_seed from "../bundles_seed.js";
@@ -130,6 +131,7 @@ declare const fullApi: ApiFromModules<{
   audit_listings_data: typeof audit_listings_data;
   audit_reclassification: typeof audit_reclassification;
   audit_snapshot: typeof audit_snapshot;
+  audit_thread_join: typeof audit_thread_join;
   backfill_hygglo_images: typeof backfill_hygglo_images;
   bundles: typeof bundles;
   bundles_seed: typeof bundles_seed;
