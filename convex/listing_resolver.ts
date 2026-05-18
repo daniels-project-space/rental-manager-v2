@@ -11,14 +11,15 @@
  *   Tier 2: photo_ref (manually verified)              confidence 0.95
  *   Tier 3: pattern (regex bank)                       confidence 0.87
  *   Tier 4: detail_api (Hygglo detail.items)           confidence 0.80
- *   Tier 5: ai (grok-4-fast, constrained inventory)    confidence 0.70
+ *   Tier 5: ai (OpenRouter → DeepSeek-v4-flash by default,            confidence 0.70
+ *           xAI → grok-4.3 when AI_PROVIDER=xai; see getTier5Model)
  *   Tier 6: fuzzy (last-resort fuzzy match)            confidence 0.50
  *   Tier 7: pending_review (write candidates, no items)
  *
- * Lives in a "use node" module because Tier 5 calls @ai-sdk/xai grok-4-fast
- * through `ai.generateText`, which needs the Node runtime. All Convex DB
- * touches are delegated to internal queries/mutations in
- * convex/listing_resolver_data.ts (regular V8 module).
+ * Lives in a "use node" module because Tier 5 streams generateText through
+ * `ai`, which needs the Node runtime. All Convex DB touches are delegated
+ * to internal queries/mutations in convex/listing_resolver_data.ts
+ * (regular V8 module).
  */
 
 import { internalAction, action } from "./_generated/server";
@@ -280,7 +281,8 @@ function resolveDetailApiItems(detailPayload: unknown): ResolvedItem[] {
 }
 
 /**
- * Tier 5 — Constrained AI resolution via grok-4-fast.
+ * Tier 5 — Constrained AI resolution via OpenRouter→DeepSeek (default) or
+ * xAI→grok-4.3 (when AI_PROVIDER=xai). See getTier5Model above.
  *
  * Sends only the 15-30 category-relevant inventory items (via getRelevantItems)
  * to keep the prompt small and the model honest. Applies brand-mismatch gate
