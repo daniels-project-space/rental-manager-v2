@@ -294,6 +294,13 @@ async function runBatch(
 
   const results: ResolutionResult[] = [];
   let cacheHits = 0;
+
+  // In-batch dedup: when the same hygglo_listing_id (or item set) appears
+  // on multiple reservations in one batch, only call the LLM once. Saves
+  // duplicate hits for kit listings co-booked by the same group.
+  const inBatchByListing = new Map<string, ResolutionResult>();
+  const inBatchByHash = new Map<string, ResolutionResult>();
+
   for (const r of batch.unresolved) {
     const combinedTitle = r.items
       .map((i) => (i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name))
@@ -301,17 +308,42 @@ async function runBatch(
     const newHash = inputHash(r.items);
     const isKit = KIT_RE.test(combinedTitle);
 
-    // Phase 15.1: cache lookup keyed by (account_slug, hygglo_listing_id).
+    // In-batch listing-id dedup.
+    const listingKey =
+      r.account_slug && r.hygglo_listing_id
+        ? `${r.account_slug}:${r.hygglo_listing_id}`
+        : null;
+    if (listingKey) {
+      const dup = inBatchByListing.get(listingKey);
+      if (dup) {
+        results.push({ ...dup, reservation_id: r.id, input_hash: newHash });
+        cacheHits++;
+        continue;
+      }
+    }
+
+    // In-batch item-hash dedup (catches listings without a hygglo_listing_id).
+    const hashDup = inBatchByHash.get(newHash);
+    if (hashDup) {
+      results.push({ ...hashDup, reservation_id: r.id, input_hash: newHash });
+      cacheHits++;
+      continue;
+    }
+
+    // Phase 15.1: persistent cache lookup keyed by (account_slug, hygglo_listing_id).
     if (r.account_slug && r.hygglo_listing_id) {
       const cached = await lookupCache(r.account_slug, r.hygglo_listing_id);
       if (cached) {
-        results.push({
+        const hit: ResolutionResult = {
           reservation_id: r.id,
           resolved_items: cached.resolved_items,
           expanded_items: cached.expanded_items,
           method: cached.resolution_method,
           input_hash: newHash,
-        });
+        };
+        results.push(hit);
+        if (listingKey) inBatchByListing.set(listingKey, hit);
+        inBatchByHash.set(newHash, hit);
         cacheHits++;
         continue;
       }
@@ -409,13 +441,16 @@ async function runBatch(
       }
     }
 
-    results.push({
+    const llmResult: ResolutionResult = {
       reservation_id: r.id,
       resolved_items: resolved,
       expanded_items: expanded,
       method: "llm",
       input_hash: newHash,
-    });
+    };
+    results.push(llmResult);
+    if (listingKey) inBatchByListing.set(listingKey, llmResult);
+    inBatchByHash.set(newHash, llmResult);
 
     // Phase 15.1: write-through to cache (dual-key).
     try {
