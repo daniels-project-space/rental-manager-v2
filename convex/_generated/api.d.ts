@@ -57,6 +57,7 @@ import type * as intel from "../intel.js";
 import type * as item_resolver from "../item_resolver.js";
 import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
+import type * as lib_availability from "../lib/availability.js";
 import type * as lib_denial_classifier from "../lib/denial_classifier.js";
 import type * as lib_feature_flags_helper from "../lib/feature_flags_helper.js";
 import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
@@ -167,6 +168,7 @@ declare const fullApi: ApiFromModules<{
   item_resolver: typeof item_resolver;
   item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;
+  "lib/availability": typeof lib_availability;
   "lib/denial_classifier": typeof lib_denial_classifier;
   "lib/feature_flags_helper": typeof lib_feature_flags_helper;
   "lib/gatedGenerate": typeof lib_gatedGenerate;

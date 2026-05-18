@@ -2,6 +2,7 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive } from "./lib/reservations/predicates";
 import { isFlagEnabled } from "./lib/feature_flags_helper";
+import { diagnoseDenialAvailability } from "./lib/availability";
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -932,69 +933,164 @@ export const getMissedAndDeniedByCategory = query({
       }
     }
 
-    // 3. Idle-gap path — same algorithm as getMissedRevenue, grouped by kind.
-    let allResForGap = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
-    }
-
-    const rentalDaysPerItem = new Map<string, number>();
-    for (const r of allResForGap) {
-      for (const item of r.items ?? []) {
-        rentalDaysPerItem.set(
-          item.item_name,
-          (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0),
-        );
-      }
-    }
+    // 3. Gap path.
+    //
+    // Phase 4 — `use_new_gap_demand` flag rewrites this from "idle days *
+    // rate" (underutilization) to Daniel's definition of gap: rentals that
+    // were DENIED because we couldn't fulfill — either marketing-only or
+    // fully-booked. See convex/lib/availability.ts.
+    //
+    // Legacy retained for instant rollback.
+    const useNewGapDemand = await isFlagEnabled(ctx, "use_new_gap_demand");
 
     const gapByKind = new Map<string, number>();
-    for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
-      const idleDays = Math.max(0, days - Math.min(rentalDays, days));
-      if (idleDays <= 0) continue;
-      const dailyRate = priceByName.get(itemName);
-      if (!dailyRate) continue;
-      const gapLoss = idleDays * dailyRate;
-      const kind = nameToKind.get(itemName) ?? "unknown";
-      gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + gapLoss);
-    }
-
-    // 3b. Demand-Loss path — Phase 10.5. Pull obsolete reservations classified
-    // as genuine_demand within the cutoff window. Each row contributes its
-    // demand_loss_estimated_gbp to a per-kind bucket. Kind lookup mirrors the
-    // denials path: resolved_items[0].item_id → name_canonical → unknown.
-    let demandRows = await ctx.db
-      .query("reservations")
-      .withIndex("by_demand_loss_class", (q) =>
-        q.eq("demand_loss_class", "genuine_demand"),
-      )
-      .collect();
-    if (accountSlug) {
-      demandRows = demandRows.filter((r) => r.account_slug === accountSlug);
-    }
-    demandRows = demandRows.filter((r) => r._creationTime >= cutoffMs);
-
+    const gapBreakdown = {
+      marketing_only: 0,
+      fully_booked: 0,
+      voluntary_demand_lost: 0,
+    };
     const demandByKind = new Map<string, number>();
     let totalDemandLost = 0;
-    for (const r of demandRows) {
-      const est = r.demand_loss_estimated_gbp ?? 0;
-      if (est <= 0) continue;
-      totalDemandLost += est;
-      let kind: string | undefined;
-      const resolved = (r.resolved_items ?? [])[0];
-      if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
-      if (!kind && resolved?.item_name_canonical) {
-        kind = nameToKind.get(resolved.item_name_canonical);
+
+    if (useNewGapDemand) {
+      // NEW: iterate owner_denied reservations. For each, diagnose per-item
+      // availability over the requested date range. Attribute the rental's
+      // estimated value (gross_paid_gbp or pricing fallback) split evenly
+      // across the items that drove the denial.
+      //
+      // Marketing-only path: items.is_marketing_only=true → gap.marketing_only
+      // Fully-booked path : all units busy on ≥1 requested date → gap.fully_booked
+      // Available-anyway  : Daniel had inventory → voluntary_demand_lost
+      //                     (does NOT count as gap, but tracked for demand)
+      let obsoleteResAll = await ctx.db
+        .query("reservations")
+        .filter((q) => q.eq(q.field("is_obsolete"), true))
+        .collect();
+      if (accountSlug) {
+        obsoleteResAll = obsoleteResAll.filter(
+          (r) => r.account_slug === accountSlug,
+        );
       }
-      if (!kind) {
-        const firstRaw = (r.items ?? [])[0];
-        if (firstRaw?.item_name) kind = nameToKind.get(firstRaw.item_name);
+      obsoleteResAll = obsoleteResAll.filter((r) => {
+        const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
+        return ts >= cutoffMs;
+      });
+      const ownerDeniedAll = obsoleteResAll.filter((r) => {
+        const actor = r.reclassified_outcome ?? r.denial_actor;
+        return actor === "owner_denied";
+      });
+
+      for (const r of ownerDeniedAll) {
+        // Estimate rental's £ value, same fallback chain as denials path.
+        let estimated = r.gross_paid_gbp ?? 0;
+        const firstItem = (r.items ?? [])[0];
+        const lookupName =
+          (r.resolved_items ?? [])[0]?.item_name_canonical ??
+          firstItem?.item_name;
+        if (estimated === 0 && lookupName) {
+          const dp = priceByName.get(lookupName);
+          if (dp) estimated = dp * Math.max(1, r.duration_days ?? 2);
+        }
+        if (estimated <= 0) continue;
+
+        const diag = await diagnoseDenialAvailability(ctx, r);
+        const totalBuckets =
+          diag.marketing_only_items.length +
+          diag.fully_booked_items.length +
+          diag.available_anyway.length;
+        if (totalBuckets === 0) continue;
+
+        // Share by item — equal split across the items that drove the denial.
+        const sharePer = estimated / totalBuckets;
+
+        for (const m of diag.marketing_only_items) {
+          gapBreakdown.marketing_only += sharePer;
+          const kind = idToKind.get(m.item_id) ?? "unknown";
+          gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
+          // Marketing-only gap is also part of demand (turned away because
+          // we don't own it).
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
+        }
+        for (const f of diag.fully_booked_items) {
+          gapBreakdown.fully_booked += sharePer;
+          const kind = idToKind.get(f.item_id) ?? "unknown";
+          gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
+          // Fully-booked gap is also part of demand (turned away because
+          // inventory was committed elsewhere).
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
+        }
+        for (const a of diag.available_anyway) {
+          // Voluntary deny — Daniel had inventory. Surfaces in demand (it's
+          // real lost demand) but NOT in gap (gap = unable-to-fulfill).
+          gapBreakdown.voluntary_demand_lost += sharePer;
+          const kind = idToKind.get(a.item_id) ?? "unknown";
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
+        }
       }
-      if (!kind) kind = "unknown";
-      demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + est);
+    } else {
+      // LEGACY: idle-gap path — same algorithm as getMissedRevenue, grouped by kind.
+      let allResForGap = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+        .collect();
+      if (accountSlug) {
+        allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
+      }
+
+      const rentalDaysPerItem = new Map<string, number>();
+      for (const r of allResForGap) {
+        for (const item of r.items ?? []) {
+          rentalDaysPerItem.set(
+            item.item_name,
+            (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0),
+          );
+        }
+      }
+
+      for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
+        const idleDays = Math.max(0, days - Math.min(rentalDays, days));
+        if (idleDays <= 0) continue;
+        const dailyRate = priceByName.get(itemName);
+        if (!dailyRate) continue;
+        const gapLoss = idleDays * dailyRate;
+        const kind = nameToKind.get(itemName) ?? "unknown";
+        gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + gapLoss);
+      }
+
+      // LEGACY Demand-Loss path — Phase 10.5. Pull obsolete reservations
+      // classified as genuine_demand within the cutoff window. Each row
+      // contributes its demand_loss_estimated_gbp to a per-kind bucket.
+      let demandRows = await ctx.db
+        .query("reservations")
+        .withIndex("by_demand_loss_class", (q) =>
+          q.eq("demand_loss_class", "genuine_demand"),
+        )
+        .collect();
+      if (accountSlug) {
+        demandRows = demandRows.filter((r) => r.account_slug === accountSlug);
+      }
+      demandRows = demandRows.filter((r) => r._creationTime >= cutoffMs);
+
+      for (const r of demandRows) {
+        const est = r.demand_loss_estimated_gbp ?? 0;
+        if (est <= 0) continue;
+        totalDemandLost += est;
+        let kind: string | undefined;
+        const resolved = (r.resolved_items ?? [])[0];
+        if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
+        if (!kind && resolved?.item_name_canonical) {
+          kind = nameToKind.get(resolved.item_name_canonical);
+        }
+        if (!kind) {
+          const firstRaw = (r.items ?? [])[0];
+          if (firstRaw?.item_name) kind = nameToKind.get(firstRaw.item_name);
+        }
+        if (!kind) kind = "unknown";
+        demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + est);
+      }
     }
 
     // 4. Combine per-kind totals.
