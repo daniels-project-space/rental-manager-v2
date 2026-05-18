@@ -531,11 +531,7 @@ export function StatsGrid() {
                 id={id}
                 kind="stat"
                 label={label}
-                className={
-                  HERO_IDS.has(id) && !(id === "category_volume" && !catVolExpanded)
-                    ? "col-span-2"
-                    : ""
-                }
+                className={HERO_IDS.has(id) ? "col-span-2" : ""}
               >
                 {cards[id]}
               </EditableWidget>
