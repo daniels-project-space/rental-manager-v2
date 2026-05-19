@@ -72,10 +72,33 @@ const LEADER_KEYFRAMES = `@keyframes leaderFadeIn {
   to   { opacity: 1; transform: translateX(0); }
 }`;
 
-// Phase 7.6 — truncate overlong labels so leader-label text stays inside the
-// widget's visible bounding box. Combined with reduced outer radius + tighter
-// leader offsets, this keeps "Category · £1,234" within ~80px of right padding.
-function truncateLabel(s: string, max = 22): string {
+// Phase 7.7 — prettify raw kind strings for display (camera_body → Cameras, etc.)
+const KIND_LABEL_PRETTY: Record<string, string> = {
+  camera_body: "Cameras",
+  action_cam: "Action cam",
+  nd_filter: "ND filter",
+  media_av: "DJ/AV",
+  accessory_consumable: "Accessory",
+  storage_card: "Storage",
+  power: "Power",
+  media: "Media",
+  audio: "Audio",
+  lens: "Lenses",
+  lighting: "Lighting",
+  support: "Support",
+  monitor: "Monitors",
+  transmitter: "Transmitters",
+  other: "Other",
+  unknown: "Unresolved",
+};
+function prettyLabel(s: string): string {
+  if (!s) return "";
+  return KIND_LABEL_PRETTY[s] ?? s;
+}
+
+// Phase 7.7 — truncate overlong labels so leader-label text stays inside the
+// widget's visible bounding box.
+function truncateLabel(s: string, max = 14): string {
   if (!s) return "";
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
@@ -90,8 +113,8 @@ function makeLeaderLabel(
   const dimmed = opts?.dimmed ?? false;
   const primaryFs = opts?.primaryFs ?? 12;
   const secondaryFs = opts?.secondaryFs ?? 11;
-  const exExtension = opts?.exExtension ?? 8; // Phase 7.6: 18 → 8
-  const maxChars = opts?.maxChars ?? 22;       // Phase 7.6: cap label length
+  const exExtension = opts?.exExtension ?? 4;
+  const maxChars = opts?.maxChars ?? 14;
   return function renderLeaderLabel(props: any) {
     const { cx, cy, midAngle, outerRadius, fill, payload, value } = props;
     const RAD = Math.PI / 180;
@@ -101,21 +124,47 @@ function makeLeaderLabel(
     const sy = cy + outerRadius * sin;
     const mx = cx + (outerRadius + offset) * cos;
     const my = cy + (outerRadius + offset) * sin;
-    const ex = mx + (cos >= 0 ? 1 : -1) * exExtension;
+    const dir = cos >= 0 ? 1 : -1;
     const textAnchor = cos >= 0 ? "start" : "end";
     const rawText = (payload?.[textKey] ?? "") as string;
-    const text = truncateLabel(rawText, maxChars);
+    const text = truncateLabel(prettyLabel(rawText), maxChars);
     const valText = metric === "count"
       ? `${value} rentals`
       : `£${Number(value || 0).toFixed(0)}`;
-    const tx = ex + (cos >= 0 ? 4 : -4);
+    // Phase 7.7 — bounded clamping: estimate full text width and clamp
+    // the text anchor so the rendered text stays inside the chart bounds.
+    // recharts passes cx="50%" — chartWidth ≈ 2 * cx.
+    const fullText = `${text} · ${valText}`;
+    const estTextWidth = fullText.length * primaryFs * 0.58;
+    const chartHalfWidth = cx; // 50% center
+    const GUTTER = 6;
+    let ex = mx + dir * exExtension;
+    let tx = ex + dir * 4;
+    // Clamp: text must fit between [GUTTER, 2*cx - GUTTER]
+    if (dir > 0) {
+      // text extends rightward from tx
+      const maxTx = 2 * cx - GUTTER - estTextWidth;
+      if (tx > maxTx) {
+        tx = maxTx;
+        ex = tx - dir * 4;
+      }
+    } else {
+      // text extends leftward (textAnchor=end means tx is the right edge of text)
+      const minTx = GUTTER + estTextWidth;
+      if (tx < minTx) {
+        tx = minTx;
+        ex = tx - dir * 4;
+      }
+    }
+    // Recompute mx so the leader line elbow stays consistent with the shifted ex.
+    const mxAdj = ex - dir * exExtension;
     return (
       <g style={{
         animation: "leaderFadeIn 360ms ease-out both",
         opacity: dimmed ? 0.4 : 1,
         transition: "opacity 180ms ease",
       }}>
-        <path d={`M${sx},${sy}L${mx},${my}L${ex},${my}`} stroke={fill} strokeWidth={1} fill="none" />
+        <path d={`M${sx},${sy}L${mxAdj},${my}L${ex},${my}`} stroke={fill} strokeWidth={1} fill="none" />
         <circle cx={ex} cy={my} r={2} fill={fill} />
         <text x={tx} y={my} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={primaryFs} fontWeight={600} style={{ letterSpacing: "0.02em" }}>
           <tspan>{text}</tspan>
@@ -233,12 +282,15 @@ export function CategoryVolumePieBody({
 
   // Geometry — Phase 7.6: reduced OUTER_OUTER 108→95 to give labels more
   // horizontal room. MIDDLE_OUTER stays at 80 (no collision with outer at 95).
-  const OUTER_INNER = 68, OUTER_OUTER = 95;
-  const MIDDLE_INNER = 40, MIDDLE_OUTER = 64;
+  const OUTER_INNER = 60, OUTER_OUTER = 82;
+  const MIDDLE_INNER = 36, MIDDLE_OUTER = 56;
   const INNERMOST_INNER = 8, INNERMOST_OUTER = 34;
-  const OUTER_LEADER_OFFSET = 6;       // Phase 7.6: 14 → 6
-  const INNER_LEADER_OFFSET = 10;
-  const INNERMOST_LEADER_OFFSET = 18;
+  // Phase 7.7 — all leader labels exit OUTSIDE the outermost ring (radius 82)
+  // so inner-ring labels never overlap any ring. Outer ring labels live at
+  // radius 82+6=88; middle at 56+30=86; innermost at 34+54=88. All ~same band.
+  const OUTER_LEADER_OFFSET = 6;
+  const INNER_LEADER_OFFSET = 30;
+  const INNERMOST_LEADER_OFFSET = 54;
   const CHART_HEIGHT = 400;
 
   // Middle ring data: items for non-other drill, sub-kinds for "other" drill.
