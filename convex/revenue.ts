@@ -3,6 +3,11 @@ import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive } from "./lib/reservations/predicates";
 import { isFlagEnabled } from "./lib/feature_flags_helper";
 import { diagnoseDenialAvailability } from "./lib/availability";
+import {
+  buildCommitmentMap,
+  diagnoseDenialCapacity,
+  isCompletedCommitting,
+} from "./lib/capacity_gap";
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -980,54 +985,57 @@ export const getMissedAndDeniedByCategory = query({
         return actor === "owner_denied";
       });
 
-      for (const r of ownerDeniedAll) {
-        // Estimate rental's £ value, same fallback chain as denials path.
-        let estimated = r.gross_paid_gbp ?? 0;
-        const firstItem = (r.items ?? [])[0];
-        const lookupName =
-          (r.resolved_items ?? [])[0]?.item_name_canonical ??
-          firstItem?.item_name;
-        if (estimated === 0 && lookupName) {
-          const dp = priceByName.get(lookupName);
-          if (dp) estimated = dp * Math.max(1, r.duration_days ?? 2);
-        }
-        if (estimated <= 0) continue;
+      // Phase 5b — gap rewrite per Daniel's instruction. Build a commitment
+      // map from COMPLETED rentals (status confirmed/completed, not obsolete)
+      // covering the cutoff window forward. This replaces the
+      // availability.ts path (which checked calendar_holds + owner_unavailability
+      // and returned ~zero output because holds aren't reliably populated for
+      // historical denials).
+      const completedAll = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+        .collect();
+      const completedScoped = accountSlug
+        ? completedAll.filter((c) => c.account_slug === accountSlug)
+        : completedAll;
+      const commitMap = buildCommitmentMap(
+        completedScoped.filter(isCompletedCommitting),
+      );
 
-        const diag = await diagnoseDenialAvailability(ctx, r);
-        const totalBuckets =
-          diag.marketing_only_items.length +
-          diag.fully_booked_items.length +
-          diag.available_anyway.length;
-        if (totalBuckets === 0) continue;
+      for (const r of ownerDeniedAll) {
+        // diagnoseDenialCapacity does its own £ estimation (same fallback).
+        const diag = await diagnoseDenialCapacity(
+          ctx,
+          r,
+          commitMap,
+          priceByName,
+        );
+        const estimated = diag.estimated_loss_gbp;
+        const totalBuckets = diag.per_item_diagnosis.length;
+        if (estimated <= 0 || totalBuckets === 0) continue;
 
         // Share by item — equal split across the items that drove the denial.
         const sharePer = estimated / totalBuckets;
 
-        for (const m of diag.marketing_only_items) {
-          gapBreakdown.marketing_only += sharePer;
-          const kind = idToKind.get(m.item_id) ?? "unknown";
-          gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-          // Marketing-only gap is also part of demand (turned away because
-          // we don't own it).
-          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-          totalDemandLost += sharePer;
-        }
-        for (const f of diag.fully_booked_items) {
-          gapBreakdown.fully_booked += sharePer;
-          const kind = idToKind.get(f.item_id) ?? "unknown";
-          gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-          // Fully-booked gap is also part of demand (turned away because
-          // inventory was committed elsewhere).
-          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-          totalDemandLost += sharePer;
-        }
-        for (const a of diag.available_anyway) {
-          // Voluntary deny — Daniel had inventory. Surfaces in demand (it's
-          // real lost demand) but NOT in gap (gap = unable-to-fulfill).
-          gapBreakdown.voluntary_demand_lost += sharePer;
-          const kind = idToKind.get(a.item_id) ?? "unknown";
-          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-          totalDemandLost += sharePer;
+        for (const p of diag.per_item_diagnosis) {
+          const itemIdStr = p.item_id ? String(p.item_id) : undefined;
+          const kind = itemIdStr ? idToKind.get(itemIdStr) ?? "unknown" : "unknown";
+          if (p.classification === "marketing_only") {
+            gapBreakdown.marketing_only += sharePer;
+            gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
+            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+            totalDemandLost += sharePer;
+          } else if (p.classification === "capacity_gap") {
+            gapBreakdown.fully_booked += sharePer;
+            gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
+            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+            totalDemandLost += sharePer;
+          } else {
+            // voluntary
+            gapBreakdown.voluntary_demand_lost += sharePer;
+            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+            totalDemandLost += sharePer;
+          }
         }
       }
     } else {
