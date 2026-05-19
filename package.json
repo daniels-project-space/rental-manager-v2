@@ -13,6 +13,7 @@
     "trigger:deploy": "trigger.dev deploy",
     "check:mirror": "node scripts/check-mirror-sync.mjs",
     "check:patterns": "node scripts/check-patterns.mjs",
+    "verify:trigger-key": "tsx scripts/verify-trigger-key.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
