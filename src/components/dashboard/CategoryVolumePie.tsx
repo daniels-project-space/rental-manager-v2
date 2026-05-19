@@ -46,6 +46,17 @@ type MissedData = {
   unmatchedDenials: { revenue: number; count: number };
 };
 
+// Phase 7.5 — per-item drill-down within a kind in Missed mode.
+type MissedKindBreakdown = {
+  days: number;
+  periodStart: string;
+  kind: string;
+  kindLabel: string;
+  view: "all" | "denied" | "gap" | "demand";
+  items: Array<{ itemId: string; name: string; count: number; revenue: number; color: string }>;
+  totals: { count: number; revenue: number };
+};
+
 type View = "earned" | "missed";
 // Phase 10.6 — component filter for Missed mode. "all" = legacy behavior.
 type MissedComponent = "all" | "denied" | "gap" | "demand";
@@ -154,6 +165,20 @@ export function CategoryVolumePieBody({
       : "skip",
   ) as KindBreakdown | undefined;
 
+  // Phase 7.5 — Missed-mode drill-down. Fetch per-item breakdown within the
+  // clicked kind, scoped to the current `missedComponent` filter.
+  const missedBreakdown = useQuery(
+    api.revenue.getMissedKindBreakdown,
+    isMissed && drillKind
+      ? {
+          accountSlug,
+          days,
+          kind: drillKind,
+          view: missedComponent,
+        }
+      : "skip",
+  ) as MissedKindBreakdown | undefined;
+
   // Prefetch top-3 kind breakdowns for snappy drills.
   const top3 = (data?.slices ?? []).slice(0, 3).map((s) => s.kind);
   useQuery(
@@ -194,8 +219,8 @@ export function CategoryVolumePieBody({
   const OUTER_INNER = 78, OUTER_OUTER = 108;
   const MIDDLE_INNER = 40, MIDDLE_OUTER = 80;
   const INNERMOST_INNER = 8, INNERMOST_OUTER = 34;
-  const INNER_LEADER_OFFSET = 42;
-  const INNERMOST_LEADER_OFFSET = 80;
+  const INNER_LEADER_OFFSET = 10;
+  const INNERMOST_LEADER_OFFSET = 18;
   const CHART_HEIGHT = 400;
 
   // Middle ring data: items for non-other drill, sub-kinds for "other" drill.
