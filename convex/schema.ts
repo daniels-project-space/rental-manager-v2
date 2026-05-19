@@ -1227,6 +1227,12 @@ export default defineSchema({
     capacity_denied_estimated_gbp: v.optional(v.number()),
     voluntary_denied_estimated_gbp: v.optional(v.number()),
     marketing_only_denied_estimated_gbp: v.optional(v.number()),
+    // ── Phase 5c — "below minimum threshold" sub-bucket ─────────
+    // Voluntary denials whose estimated gross < £39 (~£25 net
+    // after ~36% Hygglo fees). Mutually exclusive with
+    // voluntary_denied_* (moved out of voluntary bucket).
+    below_minimum_threshold_denied_count: v.optional(v.number()),
+    below_minimum_threshold_denied_estimated_gbp: v.optional(v.number()),
 
     // ── DEMAND (Phase 5b) ───────────────────────────────────────
     unique_renters: v.optional(v.number()),

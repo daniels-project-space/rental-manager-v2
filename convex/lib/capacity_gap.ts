@@ -31,9 +31,30 @@ export type ItemDiagnosis = {
   classification: "capacity_gap" | "voluntary" | "marketing_only";
 };
 
+/**
+ * Phase 5c — "below minimum threshold" sub-cause of voluntary.
+ *
+ * Hygglo platform fees ≈ 36% → net = gross × 0.64. Daniel's mental floor for
+ * "worth bothering" is £25 net, which back-solves to £25 / 0.64 ≈ £39.06
+ * gross. Rounded to £39 for clean numbers.
+ *
+ * A denial classified `voluntary` whose estimated gross < BELOW_MIN_GROSS
+ * gets reclassified to `below_minimum_threshold` — "not worth the hassle",
+ * distinct from a willful turn-away of full-priced inventory.
+ */
+export const BELOW_MIN_GROSS_GBP = 39;
+
+export type DenialCause =
+  | "capacity"
+  | "voluntary"
+  | "marketing_only"
+  | "below_minimum_threshold"
+  | "mixed"
+  | "unknown";
+
 export type DenialGapDiagnosis = {
   reservation_id: Id<"reservations">;
-  cause: "capacity" | "voluntary" | "marketing_only" | "mixed" | "unknown";
+  cause: DenialCause;
   estimated_loss_gbp: number;
   per_item_diagnosis: ItemDiagnosis[];
 };
@@ -118,17 +139,31 @@ function sourceItemRefs(
 }
 
 /**
- * Estimate the £ loss for a denied rental. Same fallback chain used by
- * revenue.ts gap-path:
+ * Estimate the gross £ for a (possibly denied) rental. Used both for £-loss
+ * accounting AND for the Phase 5c below-minimum-threshold reclassification.
+ *
+ * Fallback chain:
  *   1. gross_paid_gbp on the row (if Hygglo captured it pre-denial)
- *   2. duration_days × pricing_catalog.daily_price_min for the first item
+ *   2. gross_gbp on the row (if separately populated)
+ *   3. duration_days × pricing_catalog.daily_price_min for the first item
+ *   4. 0
+ *
+ * Exported so the backfill / future callers can reuse the same definition
+ * Daniel agreed on (no duplicate fallback chains drifting apart).
  */
-function estimateLossGbp(
+export function estimated_gross_gbp(
   r: Doc<"reservations">,
   priceByName: Map<string, number>,
 ): number {
   if (typeof r.gross_paid_gbp === "number" && r.gross_paid_gbp > 0) {
     return r.gross_paid_gbp;
+  }
+  // `gross_gbp` is not currently in the reservations schema, but Daniel's spec
+  // names it as a fallback. Tolerate either typed field or a forward-compat
+  // dynamic field (returned by future Hygglo poller revisions).
+  const rAny = r as unknown as { gross_gbp?: number };
+  if (typeof rAny.gross_gbp === "number" && rAny.gross_gbp > 0) {
+    return rAny.gross_gbp;
   }
   const firstItem = (r.items ?? [])[0];
   const lookupName =
@@ -138,6 +173,17 @@ function estimateLossGbp(
   if (!daily) return 0;
   const days = Math.max(1, r.duration_days ?? 2);
   return daily * days;
+}
+
+/**
+ * Legacy alias used by `diagnoseDenialCapacity` for £-loss accounting. Same
+ * chain as `estimated_gross_gbp` — kept as an internal name for readability.
+ */
+function estimateLossGbp(
+  r: Doc<"reservations">,
+  priceByName: Map<string, number>,
+): number {
+  return estimated_gross_gbp(r, priceByName);
 }
 
 /**
@@ -257,6 +303,18 @@ export async function diagnoseDenialCapacity(
     else if (hasVoluntary && !hasMktOnly) cause = "voluntary";
     else if (hasVoluntary && hasMktOnly) cause = "voluntary";
     else cause = "unknown";
+  }
+
+  // Phase 5c — sub-classify voluntary denials below the £25-net (≈ £39
+  // gross) threshold as `below_minimum_threshold`. Daniel's mental model:
+  // "denied because not worth the hassle" is distinct from a willful
+  // turn-away of full-priced inventory. Only voluntary maps here — capacity
+  // / marketing_only / mixed retain their meaning regardless of price.
+  if (cause === "voluntary") {
+    const gross = estimated_gross_gbp(reservation, priceByName);
+    if (gross > 0 && gross < BELOW_MIN_GROSS_GBP) {
+      cause = "below_minimum_threshold";
+    }
   }
 
   return {

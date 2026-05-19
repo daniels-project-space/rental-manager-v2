@@ -212,6 +212,89 @@ describe("diagnoseDenialCapacity", () => {
   });
 });
 
+describe("Phase 5c: below_minimum_threshold reclassification", () => {
+  it("reclassifies voluntary deny with gross=£20 to below_minimum_threshold", async () => {
+    const ctx = stubCtxWith({
+      [String(itemA)]: { qty: 3, name_canonical: "Tripod", is_marketing_only: false },
+    });
+    const denial = res({
+      _id: "reservations:bm1",
+      status: "cancelled",
+      start_date: "2026-06-10",
+      end_date: "2026-06-11",
+      duration_days: 2,
+      gross_paid_gbp: 20,
+      expanded_items: [{ item_id: itemA, item_name_canonical: "Tripod", qty: 1 }],
+    });
+    const out = await diagnoseDenialCapacity(ctx, denial, new Map(), new Map());
+    expect(out.cause).toBe("below_minimum_threshold");
+    // Per-item classification stays "voluntary" (structural). Reservation
+    // cause is the sub-classification.
+    expect(out.per_item_diagnosis[0].classification).toBe("voluntary");
+  });
+
+  it("leaves voluntary deny with gross=£50 unchanged as voluntary", async () => {
+    const ctx = stubCtxWith({
+      [String(itemA)]: { qty: 3, name_canonical: "Lens", is_marketing_only: false },
+    });
+    const denial = res({
+      _id: "reservations:bm2",
+      status: "cancelled",
+      start_date: "2026-06-10",
+      end_date: "2026-06-11",
+      duration_days: 2,
+      gross_paid_gbp: 50,
+      expanded_items: [{ item_id: itemA, item_name_canonical: "Lens", qty: 1 }],
+    });
+    const out = await diagnoseDenialCapacity(ctx, denial, new Map(), new Map());
+    expect(out.cause).toBe("voluntary");
+  });
+
+  it("derives gross from duration × daily_price when no gross fields set; flips to below_minimum if < £39", async () => {
+    const ctx = stubCtxWith({
+      [String(itemA)]: { qty: 3, name_canonical: "Mic", is_marketing_only: false },
+    });
+    // 2 days × £15 daily = £30 gross → below £39 → flips to below_minimum.
+    const denial = res({
+      _id: "reservations:bm3",
+      status: "cancelled",
+      start_date: "2026-06-10",
+      end_date: "2026-06-11",
+      duration_days: 2,
+      items: [{ item_name: "Mic" }],
+      expanded_items: [{ item_id: itemA, item_name_canonical: "Mic", qty: 1 }],
+    });
+    const out = await diagnoseDenialCapacity(
+      ctx,
+      denial,
+      new Map(),
+      new Map([["Mic", 15]]),
+    );
+    expect(out.cause).toBe("below_minimum_threshold");
+    expect(out.estimated_loss_gbp).toBe(30);
+  });
+
+  it("does NOT reclassify capacity-gap denials below threshold (only voluntary maps to below_minimum)", async () => {
+    const map: CommitmentMap = new Map([
+      [`${itemA}|2026-06-01`, 1],
+    ]);
+    const ctx = stubCtxWith({
+      [String(itemA)]: { qty: 1, name_canonical: "FX3", is_marketing_only: false },
+    });
+    const denial = res({
+      _id: "reservations:bm4",
+      status: "cancelled",
+      start_date: "2026-06-01",
+      end_date: "2026-06-01",
+      duration_days: 1,
+      gross_paid_gbp: 10, // tiny, but cause is capacity → stays capacity
+      expanded_items: [{ item_id: itemA, item_name_canonical: "FX3", qty: 1 }],
+    });
+    const out = await diagnoseDenialCapacity(ctx, denial, map, new Map());
+    expect(out.cause).toBe("capacity");
+  });
+});
+
 describe("isCompletedCommitting", () => {
   it("accepts confirmed + completed, rejects cancelled and obsolete", () => {
     expect(isCompletedCommitting(res({ status: "confirmed" }))).toBe(true);

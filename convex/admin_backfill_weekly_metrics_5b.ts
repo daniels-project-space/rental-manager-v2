@@ -212,6 +212,9 @@ export const _patchGlobalRow = internalMutation({
     capacity_denied_estimated_gbp: v.number(),
     voluntary_denied_estimated_gbp: v.number(),
     marketing_only_denied_estimated_gbp: v.number(),
+    // Phase 5c — split out of voluntary, not double-counted.
+    below_minimum_threshold_denied_count: v.number(),
+    below_minimum_threshold_denied_estimated_gbp: v.number(),
     unique_renters: v.number(),
     repeat_renter_count: v.number(),
     new_renter_count: v.number(),
@@ -245,6 +248,9 @@ export const _patchItemRow = internalMutation({
     capacity_denied_estimated_gbp: v.number(),
     voluntary_denied_estimated_gbp: v.number(),
     marketing_only_denied_estimated_gbp: v.number(),
+    // Phase 5c — split out of voluntary, not double-counted.
+    below_minimum_threshold_denied_count: v.number(),
+    below_minimum_threshold_denied_estimated_gbp: v.number(),
     top_co_rented_canonicals: v.array(v.string()),
     substitutes_booked_after_denial: v.array(
       v.object({ canonical_name: v.string(), count: v.number() }),
@@ -369,10 +375,12 @@ export const backfillAdvancedBatch = action({
 
         let capCount = 0,
           volCount = 0,
-          mktCount = 0;
+          mktCount = 0,
+          belowMinCount = 0;
         let capGbp = 0,
           volGbp = 0,
-          mktGbp = 0;
+          mktGbp = 0,
+          belowMinGbp = 0;
         const denialDiagnoses: Array<{
           res_id: string;
           cause: string;
@@ -387,7 +395,9 @@ export const backfillAdvancedBatch = action({
             commitMap,
             priceByName,
           );
-          // count rules
+          // count rules. NOTE Phase 5c: voluntary_denied_count/_gbp
+          // EXCLUDES rows whose cause is `below_minimum_threshold` — those
+          // are bucketed separately so the splits don't double-count.
           if (diag.cause === "capacity" || diag.cause === "mixed") {
             capCount += 1;
             capGbp += diag.estimated_loss_gbp;
@@ -397,15 +407,26 @@ export const backfillAdvancedBatch = action({
           } else if (diag.cause === "marketing_only") {
             mktCount += 1;
             mktGbp += diag.estimated_loss_gbp;
+          } else if (diag.cause === "below_minimum_threshold") {
+            belowMinCount += 1;
+            belowMinGbp += diag.estimated_loss_gbp;
           }
           denialDiagnoses.push({
             res_id: String(d._id),
             cause: diag.cause,
             loss: diag.estimated_loss_gbp,
+            // Phase 5c: when reservation-level cause is
+            // `below_minimum_threshold`, propagate that to each item's
+            // bucket so the per-item rollup matches the global rollup.
+            // Otherwise keep the structural per-item classification.
             items: diag.per_item_diagnosis.map((p) => ({
               item_id: String(p.item_id ?? ""),
               canonical: p.canonical_name,
-              classification: p.classification,
+              classification:
+                diag.cause === "below_minimum_threshold" &&
+                p.classification === "voluntary"
+                  ? "below_minimum_threshold"
+                  : p.classification,
             })),
           });
         }
@@ -436,6 +457,8 @@ export const backfillAdvancedBatch = action({
             capacity_denied_estimated_gbp: round2(capGbp),
             voluntary_denied_estimated_gbp: round2(volGbp),
             marketing_only_denied_estimated_gbp: round2(mktGbp),
+            below_minimum_threshold_denied_count: belowMinCount,
+            below_minimum_threshold_denied_estimated_gbp: round2(belowMinGbp),
             unique_renters: rm.unique_renters,
             repeat_renter_count: rm.repeat_renter_count,
             new_renter_count: rm.new_renter_count,
@@ -465,9 +488,11 @@ export const backfillAdvancedBatch = action({
         const perItemCap = new Map<string, number>();
         const perItemVol = new Map<string, number>();
         const perItemMkt = new Map<string, number>();
+        const perItemBelowMin = new Map<string, number>();
         const perItemCapGbp = new Map<string, number>();
         const perItemVolGbp = new Map<string, number>();
         const perItemMktGbp = new Map<string, number>();
+        const perItemBelowMinGbp = new Map<string, number>();
         for (const dx of denialDiagnoses) {
           const n = dx.items.length || 1;
           const share = dx.loss / n;
@@ -491,6 +516,15 @@ export const backfillAdvancedBatch = action({
               perItemMktGbp.set(
                 it.item_id,
                 (perItemMktGbp.get(it.item_id) ?? 0) + share,
+              );
+            } else if (it.classification === "below_minimum_threshold") {
+              perItemBelowMin.set(
+                it.item_id,
+                (perItemBelowMin.get(it.item_id) ?? 0) + 1,
+              );
+              perItemBelowMinGbp.set(
+                it.item_id,
+                (perItemBelowMinGbp.get(it.item_id) ?? 0) + share,
               );
             }
           }
@@ -529,6 +563,11 @@ export const backfillAdvancedBatch = action({
               ),
               marketing_only_denied_estimated_gbp: round2(
                 perItemMktGbp.get(idStr) ?? 0,
+              ),
+              below_minimum_threshold_denied_count:
+                perItemBelowMin.get(idStr) ?? 0,
+              below_minimum_threshold_denied_estimated_gbp: round2(
+                perItemBelowMinGbp.get(idStr) ?? 0,
               ),
               top_co_rented_canonicals: coRented.map((c) => c.canonical_name),
               substitutes_booked_after_denial: subs.map((s) => ({
@@ -589,6 +628,37 @@ export const topVoluntaryDeniedItems = internalQuery({
       };
       prev.count += r.voluntary_denied_count ?? 0;
       prev.gbp += r.voluntary_denied_estimated_gbp ?? 0;
+      agg.set(key, prev);
+    }
+    return Array.from(agg.entries())
+      .map(([item_id, v]) => ({ item_id, ...v }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, lim);
+  },
+});
+
+export const topBelowMinimumDeniedItems = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const lim = limit ?? 10;
+    const rows = await ctx.db
+      .query("weekly_metrics")
+      .filter((q) => q.eq(q.field("granularity"), "item"))
+      .collect();
+    const agg = new Map<
+      string,
+      { canonical: string; count: number; gbp: number }
+    >();
+    for (const r of rows) {
+      if (!r.item_id) continue;
+      const key = String(r.item_id);
+      const prev = agg.get(key) ?? {
+        canonical: r.item_name_canonical ?? "?",
+        count: 0,
+        gbp: 0,
+      };
+      prev.count += r.below_minimum_threshold_denied_count ?? 0;
+      prev.gbp += r.below_minimum_threshold_denied_estimated_gbp ?? 0;
       agg.set(key, prev);
     }
     return Array.from(agg.entries())
