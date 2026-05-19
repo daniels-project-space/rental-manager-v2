@@ -146,4 +146,31 @@ crons.daily(
   { dry_run: false },
 );
 
+// ── Phase 5a — Weekly metrics recompute.
+// Runs Sunday 23:30 UTC (just after the ISO week boundary). Idempotent
+// re-compute of the just-finished week (Mon..Sun). Writes
+// weekly_metrics rows (global + per-kind + per-item, × accounts).
+// See convex/admin_backfill_weekly_metrics.ts:recomputeJustFinishedWeek.
+crons.weekly(
+  "phase5a-weekly-metrics-recompute",
+  { dayOfWeek: "sunday", hourUTC: 23, minuteUTC: 30 },
+  internal.admin_backfill_weekly_metrics.recomputeJustFinishedWeek,
+  {},
+);
+
+// ── Phase 5b — Advanced weekly metrics (gap diagnosis + demand +
+// customer + substitution). Runs Sunday 23:45 UTC, 15 min after 5a above
+// lands the base rows. Patches the same weekly_metrics rows with 5b-owned
+// fields (capacity_denied_*, voluntary_denied_*, unique/repeat/new renters,
+// avg_response_time_minutes, top_co_rented_canonicals,
+// substitutes_booked_after_denial). Idempotent — re-running overwrites
+// patched fields with fresh values.
+// See convex/admin_backfill_weekly_metrics_5b.ts.
+crons.weekly(
+  "phase5b-advanced-metrics",
+  { dayOfWeek: "sunday", hourUTC: 23, minuteUTC: 45 },
+  internal.admin_backfill_weekly_metrics_5b.cronRefreshLastWeek,
+  {},
+);
+
 export default crons;

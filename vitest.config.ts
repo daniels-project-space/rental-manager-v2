@@ -21,6 +21,8 @@ export default defineConfig({
       "convex/lib/revenue_attribution.test.ts",
       "convex/lib/denial_classifier.test.ts",
       "convex/lib/availability.test.ts",
+      "convex/lib/weekly_metrics_compute.test.ts",
+      "convex/lib/capacity_gap.test.ts",
     ],
     css: false,
   },

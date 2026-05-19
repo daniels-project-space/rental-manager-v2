@@ -1170,4 +1170,103 @@ export default defineSchema({
     updated_at: v.number(),
     updated_by: v.string(),
   }).index("by_name", ["name"]),
+
+  // ── Phase 5a — Weekly metrics rollup ─────────────────────────────────
+  // Foundational analytics table. One row per
+  //   (week_start × account_slug × granularity × (kind|item))
+  // - granularity="global": one row per account per week (no kind/item)
+  // - granularity="kind":   one row per account×kind×week
+  // - granularity="item":   one row per account×item×week
+  // Phase 5a populates: revenue (gross/attributed/net), volume (by denial
+  // outcome), capacity/utilization, pricing.
+  // Phase 5b will PATCH: gap detail (capacity/voluntary/marketing denied),
+  // demand (unique/repeat renters, response time), co-occurrence,
+  // substitution. Both phases share this table — non-overlapping fields.
+  // Backfilled by convex/admin_backfill_weekly_metrics.ts. Recomputed
+  // weekly by a cron at Sun 23:30 UTC (just-finished week, idempotent).
+  weekly_metrics: defineTable({
+    // ── Identifiers ─────────────────────────────────────────────
+    week_start: v.string(),           // YYYY-MM-DD Monday
+    week_end: v.string(),             // YYYY-MM-DD Sunday
+    account_slug: v.string(),
+    granularity: v.union(
+      v.literal("global"),
+      v.literal("kind"),
+      v.literal("item"),
+    ),
+    kind: v.optional(v.string()),                  // set when granularity ∈ {kind, item}
+    item_id: v.optional(v.id("items")),            // set when granularity = item
+    item_name_canonical: v.optional(v.string()),   // denormalized convenience copy
+
+    // ── REVENUE (Phase 5a) ──────────────────────────────────────
+    revenue_gross_gbp: v.optional(v.number()),
+    revenue_attributed_gbp: v.optional(v.number()),  // via attributeRevenue
+    revenue_net_gbp: v.optional(v.number()),         // gross × 0.64 (Hygglo ~36% fees)
+
+    // ── VOLUME (Phase 5a) ───────────────────────────────────────
+    rentals_completed: v.optional(v.number()),
+    rentals_requested: v.optional(v.number()),
+    rentals_owner_denied: v.optional(v.number()),
+    rentals_renter_cancelled: v.optional(v.number()),
+    rentals_renter_ghosted: v.optional(v.number()),
+    rentals_auto_cancelled: v.optional(v.number()),
+
+    // ── CAPACITY / UTILIZATION (Phase 5a) ───────────────────────
+    unit_days_rented: v.optional(v.number()),
+    unit_days_capacity: v.optional(v.number()),
+    utilization_rate: v.optional(v.number()),       // 0..1
+
+    // ── PRICING (Phase 5a) ──────────────────────────────────────
+    avg_daily_price_realized: v.optional(v.number()),
+    avg_rental_duration_days: v.optional(v.number()),
+
+    // ── GAP DETAIL (Phase 5b will populate) ─────────────────────
+    capacity_denied_count: v.optional(v.number()),
+    voluntary_denied_count: v.optional(v.number()),
+    marketing_only_denied_count: v.optional(v.number()),
+    capacity_denied_estimated_gbp: v.optional(v.number()),
+    voluntary_denied_estimated_gbp: v.optional(v.number()),
+    marketing_only_denied_estimated_gbp: v.optional(v.number()),
+
+    // ── DEMAND (Phase 5b) ───────────────────────────────────────
+    unique_renters: v.optional(v.number()),
+    repeat_renter_count: v.optional(v.number()),
+    new_renter_count: v.optional(v.number()),
+    avg_response_time_minutes: v.optional(v.number()),
+
+    // ── CO-OCCURRENCE (Phase 5b) ────────────────────────────────
+    top_co_rented_canonicals: v.optional(v.array(v.string())),
+
+    // ── SUBSTITUTION (Phase 5b) ─────────────────────────────────
+    substitutes_booked_after_denial: v.optional(
+      v.array(
+        v.object({
+          canonical_name: v.string(),
+          count: v.number(),
+        }),
+      ),
+    ),
+
+    // ── META ────────────────────────────────────────────────────
+    algorithm_version: v.string(),    // bumped when methodology changes; current = "v1"
+    computed_at: v.number(),
+  })
+    .index("by_week_account_granularity", ["week_start", "account_slug", "granularity"])
+    .index("by_week_item", ["week_start", "item_id"])
+    .index("by_week_kind", ["week_start", "kind"])
+    .index("by_account_week", ["account_slug", "week_start"]),
+
+  // ── Phase 5a — Metrics backfill run log (observability) ──────────────
+  // One row per backfill/cron invocation per (week × account). Lets us see
+  // when a week was last recomputed, by whom, how many rows were written,
+  // and any errors. Not used by the metrics math itself — purely audit.
+  metrics_run_log: defineTable({
+    run_id: v.string(),
+    started_at: v.number(),
+    finished_at: v.optional(v.number()),
+    week_start: v.string(),
+    account_slug: v.string(),
+    rows_written: v.number(),
+    errors: v.optional(v.string()),
+  }).index("by_run", ["run_id"]),
 });
