@@ -1136,3 +1136,206 @@ export const getMissedAndDeniedByCategory = query({
     };
   },
 });
+
+/**
+ * Phase 7.5 — Missed-mode drill-down (per-item breakdown within a kind).
+ *
+ * Returns per-item slices for a specific kind within the Missed view, so
+ * clicking a kind ring in Missed mode reveals which individual items drove
+ * the loss. Parity with `dashboard:getRentalVolumeKindBreakdown` (Earned).
+ *
+ * `view` selects the component:
+ *   - "denied"  : only owner_denied reservations (mirrors inner ring)
+ *   - "gap"     : capacity_gap + marketing_only diagnoses
+ *   - "demand"  : voluntary_demand_lost + gap (all demand the owner couldn't fulfil)
+ *   - "all"     : total missed (denied + gap + demand) — matches outer ring
+ */
+export const getMissedKindBreakdown = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    days: v.number(),
+    kind: v.string(),
+    view: v.optional(v.union(
+      v.literal("all"),
+      v.literal("denied"),
+      v.literal("gap"),
+      v.literal("demand"),
+    )),
+  },
+  handler: async (ctx, { accountSlug, days, kind, view }) => {
+    const effView = view ?? "all";
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffMs = cutoff.getTime();
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    // Build kind maps from items.
+    const allItems = await ctx.db.query("items").collect();
+    const itemById = new Map<string, { kind: string; name: string }>();
+    const itemKindByCanonical = new Map<string, string>();
+    for (const it of allItems) {
+      const k = it.kind ?? "unknown";
+      const name = (it as { name_canonical?: string }).name_canonical ?? String(it._id);
+      itemById.set(String(it._id), { kind: k, name });
+      if ((it as { name_canonical?: string }).name_canonical) {
+        itemKindByCanonical.set((it as { name_canonical?: string }).name_canonical!, k);
+      }
+    }
+
+    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const priceByName = new Map(
+      pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
+    );
+
+    // Owner-denied reservations within the window.
+    let obsoleteRes = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    if (accountSlug) {
+      obsoleteRes = obsoleteRes.filter((r) => r.account_slug === accountSlug);
+    }
+    obsoleteRes = obsoleteRes.filter((r) => {
+      const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
+      return ts >= cutoffMs;
+    });
+    const ownerDenied = obsoleteRes.filter((r) => {
+      const actor = r.reclassified_outcome ?? r.denial_actor;
+      return actor === "owner_denied";
+    });
+
+    // Per-item aggregator. Each item gets {revenue, count} bucket.
+    const perItem = new Map<string, { name: string; revenue: number; count: number }>();
+    const bumpItem = (id: string, name: string, revenue: number) => {
+      const slot = perItem.get(id) ?? { name, revenue: 0, count: 0 };
+      slot.revenue += revenue;
+      slot.count += 1;
+      perItem.set(id, slot);
+    };
+
+    // Denied component: attribute the whole estimated value to the first
+    // resolved item (matches how the outer/inner denied math is computed).
+    if (effView === "all" || effView === "denied") {
+      for (const r of ownerDenied) {
+        let estimatedValue = r.gross_paid_gbp ?? 0;
+        const firstItem = (r.items ?? [])[0];
+        const resolved0 = (r.resolved_items ?? [])[0];
+        const itemNameForLookup =
+          resolved0?.item_name_canonical ?? firstItem?.item_name;
+        if (estimatedValue === 0 && itemNameForLookup) {
+          const dp = priceByName.get(itemNameForLookup);
+          if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
+        }
+        if (estimatedValue <= 0) continue;
+
+        // Resolve kind for this item; only contribute if it matches `kind`.
+        let resolvedKind: string | undefined;
+        let itemId: string | undefined;
+        let itemName: string | undefined;
+        if (resolved0?.item_id) {
+          itemId = String(resolved0.item_id);
+          const info = itemById.get(itemId);
+          resolvedKind = info?.kind;
+          itemName = info?.name ?? resolved0.item_name_canonical;
+        }
+        if (!resolvedKind && resolved0?.item_name_canonical) {
+          resolvedKind = itemKindByCanonical.get(resolved0.item_name_canonical);
+          itemName = resolved0.item_name_canonical;
+          itemId = itemId ?? resolved0.item_name_canonical;
+        }
+        if (!resolvedKind && firstItem?.item_name) {
+          resolvedKind = itemKindByCanonical.get(firstItem.item_name);
+          itemName = firstItem.item_name;
+          itemId = itemId ?? firstItem.item_name;
+        }
+        if (!resolvedKind || resolvedKind !== kind) continue;
+        bumpItem(itemId ?? itemName ?? "unknown", itemName ?? "Unknown", estimatedValue);
+      }
+    }
+
+    // Gap + demand components: use diagnoseDenialCapacity per reservation.
+    if (effView === "all" || effView === "gap" || effView === "demand") {
+      // Build commitment map from completed reservations.
+      const completedAll = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+        .collect();
+      const completedScoped = accountSlug
+        ? completedAll.filter((c) => c.account_slug === accountSlug)
+        : completedAll;
+      const commitMap = buildCommitmentMap(
+        completedScoped.filter(isCompletedCommitting),
+      );
+
+      for (const r of ownerDenied) {
+        const diag = await diagnoseDenialCapacity(ctx, r, commitMap, priceByName);
+        const estimated = diag.estimated_loss_gbp;
+        const totalBuckets = diag.per_item_diagnosis.length;
+        if (estimated <= 0 || totalBuckets === 0) continue;
+        const sharePer = estimated / totalBuckets;
+
+        for (const p of diag.per_item_diagnosis) {
+          const itemIdStr = p.item_id ? String(p.item_id) : undefined;
+          const info = itemIdStr ? itemById.get(itemIdStr) : undefined;
+          const itemKind = info?.kind ?? "unknown";
+          if (itemKind !== kind) continue;
+
+          const cls = p.classification;
+          let includeAsGap = false;
+          let includeAsDemand = false;
+          if (cls === "capacity_gap" || cls === "marketing_only") {
+            includeAsGap = true;
+            includeAsDemand = true;
+          } else {
+            // voluntary
+            includeAsDemand = true;
+          }
+          const shouldInclude =
+            effView === "all"
+              ? includeAsDemand // demand subsumes gap
+              : effView === "gap"
+                ? includeAsGap
+                : effView === "demand"
+                  ? includeAsDemand
+                  : false;
+          if (!shouldInclude) continue;
+          bumpItem(
+            itemIdStr ?? "unknown",
+            info?.name ?? "Unknown",
+            sharePer,
+          );
+        }
+      }
+    }
+
+    // Sort, slice top-15, attach colours.
+    const PALETTE = [
+      "#fde047", "#fbbf24", "#f59e0b", "#fb923c", "#f97316",
+      "#ef4444", "#ec4899", "#a78bfa", "#60a5fa", "#22d3ee",
+      "#34d399", "#84cc16", "#eab308", "#d946ef", "#8b5cf6",
+    ];
+    const entries = Array.from(perItem.entries())
+      .map(([id, v]) => ({ itemId: id, name: v.name, count: v.count, revenue: r2(v.revenue) }))
+      .filter((e) => e.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+    const items_out = entries.slice(0, 15).map((e, i) => ({
+      ...e,
+      color: PALETTE[i % PALETTE.length],
+    }));
+
+    const totals = {
+      count: items_out.reduce((s, e) => s + e.count, 0),
+      revenue: r2(items_out.reduce((s, e) => s + e.revenue, 0)),
+    };
+
+    return {
+      days,
+      periodStart: cutoffStr,
+      kind,
+      kindLabel: missedLabelFor(kind),
+      view: effView,
+      items: items_out,
+      totals,
+    };
+  },
+});

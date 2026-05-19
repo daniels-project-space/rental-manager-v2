@@ -131,6 +131,10 @@ export function CategoryVolumePieBody({
   useEffect(() => { setSubDrillKind(null); }, [drillKind]);
   // Reset filter when switching out of Missed mode.
   useEffect(() => { if (view !== "missed") setMissedComponent("all"); }, [view]);
+  // Reset Missed drill when toggling components (kind set may change).
+  useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [missedComponent]);
+  // Reset drill when switching Earned↔Missed.
+  useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [view]);
 
   const isMissed = view === "missed";
   // Force £ in missed mode (count is meaningless for missed-revenue).
@@ -317,7 +321,21 @@ export function CategoryVolumePieBody({
               {isMissed ? "Missed" : "Category Mix"}
             </span>
             <span className="text-xs text-[#8b8fa3] truncate">
-              {isMissed ? (
+              {isMissed && drillKind ? (
+                <>
+                  <button
+                    onClick={() => { setDrillKind(null); setSubDrillKind(null); }}
+                    className="text-sm font-medium px-2 py-1 -my-1 rounded hover:bg-white/5 hover:text-white transition-colors"
+                    style={{ color: "#fbbf24" }}
+                    aria-label="Back to all missed kinds"
+                  >
+                    ← All kinds
+                  </button>
+                  <span className="ml-2 text-white/70 truncate">
+                    / {missedData?.missed.slices.find((s) => s.kind === drillKind)?.label ?? drillKind}
+                  </span>
+                </>
+              ) : isMissed ? (
                 missedData
                   ? (() => {
                       const total = missedData.missed.totals.missed;
@@ -501,16 +519,24 @@ export function CategoryVolumePieBody({
                   paddingAngle={4}
                   cornerRadius={6}
                   labelLine={false}
-                  label={makeLeaderLabel("revenue", "label", 14)}
+                  label={drillKind ? false : makeLeaderLabel("revenue", "label", 14)}
                   isAnimationActive={true}
                   animationDuration={400}
                   animationEasing="ease-out"
-                  style={{ cursor: "default" }}
+                  onClick={(_e, idx: number) => {
+                    const slice = filteredOuter[idx];
+                    if (slice) {
+                      setDrillKind((prev) => (prev === slice.kind ? null : slice.kind));
+                      setSubDrillKind(null);
+                    }
+                  }}
+                  style={{ cursor: "pointer" }}
                 >
                   {filteredOuter.map((s) => (
                     <Cell
                       key={s.kind}
                       fill={s.color}
+                      fillOpacity={drillKind ? 0.4 : 1}
                       style={{
                         filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
                         transition: "fill-opacity 220ms ease",
@@ -518,7 +544,38 @@ export function CategoryVolumePieBody({
                     />
                   ))}
                 </Pie>
-                {innerData.length > 0 && (
+                {/* Phase 7.5 — middle ring shows per-item drill within the clicked kind. */}
+                {drillKind && missedBreakdown && missedBreakdown.items.length > 0 && (
+                  <Pie
+                    data={missedBreakdown.items}
+                    dataKey="revenue"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={MIDDLE_INNER}
+                    outerRadius={MIDDLE_OUTER}
+                    paddingAngle={3}
+                    cornerRadius={6}
+                    labelLine={false}
+                    label={makeLeaderLabel("revenue", "name", INNER_LEADER_OFFSET)}
+                    legendType="none"
+                    isAnimationActive={true}
+                    animationDuration={400}
+                    animationEasing="ease-out"
+                  >
+                    {missedBreakdown.items.map((it) => (
+                      <Cell
+                        key={it.itemId}
+                        fill={it.color}
+                        style={{
+                          filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
+                          transition: "fill-opacity 220ms ease",
+                        }}
+                      />
+                    ))}
+                  </Pie>
+                )}
+                {!drillKind && innerData.length > 0 && (
                   <Pie
                     data={innerData}
                     dataKey={innerKey}
