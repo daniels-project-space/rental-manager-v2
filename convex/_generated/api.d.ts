@@ -15,6 +15,7 @@ import type * as admin_backfill_hygglo_signals_data from "../admin_backfill_hygg
 import type * as admin_backfill_net from "../admin_backfill_net.js";
 import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_metrics.js";
 import type * as admin_backfill_weekly_metrics_5b from "../admin_backfill_weekly_metrics_5b.js";
+import type * as admin_debug_steps from "../admin_debug_steps.js";
 import type * as admin_item_attribution from "../admin_item_attribution.js";
 import type * as admin_migrate from "../admin_migrate.js";
 import type * as admin_reclassify from "../admin_reclassify.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   admin_backfill_net: typeof admin_backfill_net;
   admin_backfill_weekly_metrics: typeof admin_backfill_weekly_metrics;
   admin_backfill_weekly_metrics_5b: typeof admin_backfill_weekly_metrics_5b;
+  admin_debug_steps: typeof admin_debug_steps;
   admin_item_attribution: typeof admin_item_attribution;
   admin_migrate: typeof admin_migrate;
   admin_reclassify: typeof admin_reclassify;

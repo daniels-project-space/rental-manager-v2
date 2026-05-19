@@ -779,7 +779,14 @@ export const listByThread = query({
 export const getLatestActivityBatch = query({
   args: { hygglo_order_ids: v.array(v.string()) },
   handler: async (ctx, { hygglo_order_ids }) => {
-    const out: Record<string, number | string> = {};
+    // Returns { latest_activity, has_order_step } per id.
+    // has_order_step lets the poller skip detail fetch ONLY when the row is
+    // both unchanged AND already populated with order_step — otherwise we
+    // must fetch to backfill order_step on legacy rows.
+    const out: Record<
+      string,
+      { latest_activity: number | string; has_order_step: boolean }
+    > = {};
     for (const id of hygglo_order_ids) {
       const row = await ctx.db
         .query("reservations")
@@ -787,7 +794,10 @@ export const getLatestActivityBatch = query({
         .first();
       const la = (row as { latest_activity?: number | string } | null)
         ?.latest_activity;
-      if (la !== undefined) out[id] = la;
+      const step = (row as { order_step?: string } | null)?.order_step;
+      if (la !== undefined) {
+        out[id] = { latest_activity: la, has_order_step: step !== undefined };
+      }
     }
     return out;
   },

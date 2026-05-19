@@ -218,10 +218,12 @@ async function scrapeAccount(
   email: string,
   password: string,
   clientSecret: string,
-  // Phase 18.2 — pre-fetched map of hygglo_order_id → stored latest_activity.
-  // When the list response carries the same value for an order, we skip the
-  // expensive per-order detail fetch.
-  lookupStoredLatestActivity?: (ids: string[]) => Promise<Record<string, number | string>>,
+  // Phase 18.2 — pre-fetched map of hygglo_order_id → { latest_activity, has_order_step }.
+  // Phase 2 fix: include has_order_step so the skip-detail optimization can be
+  // bypassed for legacy rows that lack order_step (needs detail to backfill).
+  lookupStoredLatestActivity?: (ids: string[]) => Promise<
+    Record<string, { latest_activity: number | string; has_order_step: boolean }>
+  >,
 ): Promise<{
   messages: Array<{
     thread_id: string;
@@ -332,7 +334,10 @@ async function scrapeAccount(
   // Phase 18.2 — pre-fetch stored latest_activity for every order so we can
   // skip per-order detail fetches that haven't changed. Only runs when the
   // list response actually populated the field (else we proceed normally).
-  const storedActivity: Record<string, number | string> = lookupStoredLatestActivity
+  const storedActivity: Record<
+    string,
+    { latest_activity: number | string; has_order_step: boolean }
+  > = lookupStoredLatestActivity
     ? await lookupStoredLatestActivity(uniqueOrders.map((o) => String(o.id)))
     : {};
   let skippedFetch = 0;
@@ -368,7 +373,16 @@ async function scrapeAccount(
     // we previously stored.
     if (order.latest_activity !== undefined) {
       const stored = storedActivity[String(order.id)];
-      if (stored !== undefined && stored === order.latest_activity) {
+      // Phase 2 fix: only skip when the row is unchanged AND already has
+      // order_step. Legacy rows (v1 import / pre-step-extraction polls) have
+      // matching latest_activity but no order_step — they must be re-fetched
+      // so upsertOrderAsReservation can backfill the step from steps[].
+      if (
+        stored !== undefined &&
+        typeof stored === "object" &&
+        stored.latest_activity === order.latest_activity &&
+        stored.has_order_step === true
+      ) {
         skippedFetch++;
         continue;
       }
@@ -626,7 +640,10 @@ export const pollHyggloInbox = schedules.task({
             try {
               return (await convex.query(api.hygglo.getLatestActivityBatch, {
                 hygglo_order_ids: ids,
-              })) as Record<string, number | string>;
+              })) as Record<
+                string,
+                { latest_activity: number | string; has_order_step: boolean }
+              >;
             } catch (qErr) {
               console.warn(
                 `[poll-hygglo] getLatestActivityBatch failed for ${account.slug} (non-fatal):`,

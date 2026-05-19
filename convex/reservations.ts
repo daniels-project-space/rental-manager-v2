@@ -25,8 +25,13 @@ export const getRecentActivity = query({
     return rows.map((r) => ({
       id: r._id,
       accountSlug: r.account_slug,
+      renterName: (r as { renter_name?: string }).renter_name,
       itemNames: (r.items ?? []).map((i) => i.item_name),
       status: r.status,
+      // Phase 2: expose order_step + is_obsolete so dashboards/diagnostics
+      // can verify the poller wired the field end-to-end.
+      order_step: (r as { order_step?: string }).order_step,
+      is_obsolete: (r as { is_obsolete?: boolean }).is_obsolete,
       startDate: r.start_date,
       endDate: r.end_date,
       createdAt: r._creationTime,
