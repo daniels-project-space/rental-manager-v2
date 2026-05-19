@@ -106,6 +106,7 @@ import type * as mv_upcoming_returns from "../mv/upcoming_returns.js";
 import type * as mv_utilization from "../mv/utilization.js";
 import type * as mv_refresh_locks from "../mv_refresh_locks.js";
 import type * as order_step_semantics from "../order_step_semantics.js";
+import type * as poller_health from "../poller_health.js";
 import type * as polling_runs from "../polling_runs.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as rate_limit_config from "../rate_limit_config.js";
@@ -236,6 +237,7 @@ declare const fullApi: ApiFromModules<{
   "mv/utilization": typeof mv_utilization;
   mv_refresh_locks: typeof mv_refresh_locks;
   order_step_semantics: typeof order_step_semantics;
+  poller_health: typeof poller_health;
   polling_runs: typeof polling_runs;
   pricing_catalog: typeof pricing_catalog;
   rate_limit_config: typeof rate_limit_config;
