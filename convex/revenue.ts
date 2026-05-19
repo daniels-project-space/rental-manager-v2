@@ -1,7 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive } from "./lib/reservations/predicates";
-import { isFlagEnabled } from "./lib/feature_flags_helper";
 import { diagnoseDenialAvailability } from "./lib/availability";
 import {
   buildCommitmentMap,
@@ -807,11 +806,10 @@ export const getMissedAndDeniedByCategory = query({
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     const periodStart = cutoffStr;
 
-    // Phase 3c — feature-flagged denial classifier. When ON, the Denied slice
-    // counts ONLY reservations where Daniel actively denied (denial_actor =
-    // "owner_denied"). Renter-cancelled / ghosted / system rows are excluded.
-    // Default OFF — flip via feature_flags.setFlag('use_new_denial_classifier').
-    const useNewClassifier = await isFlagEnabled(ctx, "use_new_denial_classifier");
+    // Phase 6 — new denial classifier is the only path. Denied slice counts
+    // ONLY reservations where Daniel actively denied (reclassified_outcome /
+    // denial_actor = "owner_denied"). Renter-cancelled / ghosted / system
+    // rows are excluded.
 
     // 1. Build kind maps from items. Phase 9.2: prefer item_id FK (resolved
     //    at write time by the LLM) over name_canonical string matching.
@@ -840,114 +838,75 @@ export const getMissedAndDeniedByCategory = query({
     // tracks owner_denied reservation rows.
     let deniedRecordCount = 0;
 
-    if (useNewClassifier) {
-      // NEW: count only reservations where Daniel actively denied.
-      // Source = reservations table filtered by reclassified_outcome (Phase 3a
-      // re-classifier output). Fall back to denial_actor if reclassified is
-      // missing on an older row.
-      let obsoleteRes = await ctx.db
-        .query("reservations")
-        .filter((q) => q.eq(q.field("is_obsolete"), true))
-        .collect();
-      if (accountSlug) {
-        obsoleteRes = obsoleteRes.filter((r) => r.account_slug === accountSlug);
-      }
-      // Cutoff: prefer obsolete_at, then v1_updated_at, then _creationTime.
-      obsoleteRes = obsoleteRes.filter((r) => {
-        const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
-        return ts >= cutoffMs;
-      });
-      const ownerDenied = obsoleteRes.filter((r) => {
-        const actor = r.reclassified_outcome ?? r.denial_actor;
-        return actor === "owner_denied";
-      });
+    // Count only reservations where Daniel actively denied.
+    // Source = reservations table filtered by reclassified_outcome (Phase 3a
+    // re-classifier output). Fall back to denial_actor if reclassified is
+    // missing on an older row.
+    let obsoleteRes = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    if (accountSlug) {
+      obsoleteRes = obsoleteRes.filter((r) => r.account_slug === accountSlug);
+    }
+    // Cutoff: prefer obsolete_at, then v1_updated_at, then _creationTime.
+    obsoleteRes = obsoleteRes.filter((r) => {
+      const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
+      return ts >= cutoffMs;
+    });
+    const ownerDenied = obsoleteRes.filter((r) => {
+      const actor = r.reclassified_outcome ?? r.denial_actor;
+      return actor === "owner_denied";
+    });
 
-      for (const r of ownerDenied) {
-        // EstimatedValue: prefer gross_paid_gbp (rare on denials), else
-        // first resolved_item daily_price * duration_days fallback, else 0.
-        let estimatedValue = r.gross_paid_gbp ?? 0;
-        const firstItem = (r.items ?? [])[0];
-        const itemNameForLookup =
-          (r.resolved_items ?? [])[0]?.item_name_canonical ??
-          firstItem?.item_name;
-        if (estimatedValue === 0 && itemNameForLookup) {
-          const dp = priceByName.get(itemNameForLookup);
-          if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
-        }
-        totalDeniedRevenue += estimatedValue;
-        deniedRecordCount += 1;
-
-        // Kind lookup: resolved_items[0].item_id → canonical name → items[0].item_name → unmatched.
-        let kind: string | undefined;
-        const resolved = (r.resolved_items ?? [])[0];
-        if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
-        if (!kind && resolved?.item_name_canonical) {
-          kind = nameToKind.get(resolved.item_name_canonical);
-        }
-        if (!kind && firstItem?.item_name) {
-          kind = nameToKind.get(firstItem.item_name);
-        }
-        if (!kind) {
-          unmatchedRevenue += estimatedValue;
-          unmatchedCount += 1;
-          continue;
-        }
-        const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
-        slot.revenue += estimatedValue;
-        slot.count += 1;
-        deniedByKind.set(kind, slot);
+    for (const r of ownerDenied) {
+      // EstimatedValue: prefer gross_paid_gbp (rare on denials), else
+      // first resolved_item daily_price * duration_days fallback, else 0.
+      let estimatedValue = r.gross_paid_gbp ?? 0;
+      const firstItem = (r.items ?? [])[0];
+      const itemNameForLookup =
+        (r.resolved_items ?? [])[0]?.item_name_canonical ??
+        firstItem?.item_name;
+      if (estimatedValue === 0 && itemNameForLookup) {
+        const dp = priceByName.get(itemNameForLookup);
+        if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
       }
-    } else {
-      // LEGACY: full denial_records collect + per-row classification.
-      let denials = await ctx.db.query("denial_records").collect();
-      if (accountSlug) {
-        const accountRow = await ctx.db
-          .query("accounts")
-          .withIndex("by_slug", (q) => q.eq("slug", accountSlug as string))
-          .first();
-        if (accountRow) {
-          denials = denials.filter((d) => d.account_id === accountRow._id);
-        }
-      }
-      denials = denials.filter((d) => d.created_at >= cutoffMs);
-      deniedRecordCount = denials.length;
+      totalDeniedRevenue += estimatedValue;
+      deniedRecordCount += 1;
 
-      for (const d of denials) {
-        let estimatedValue = d.estimated_value ?? 0;
-        if (estimatedValue === 0 && d.item_name) {
-          const dp = priceByName.get(d.item_name);
-          if (dp) estimatedValue = dp * 2;
-        }
-        totalDeniedRevenue += estimatedValue;
-
-        // Kind lookup priority: FK (item_id) → canonical name → unmatched.
-        // Phase 9.2 — new denials land here via the LLM resolver; the name path
-        // is the fallback for historical rows where item_id is still null.
-        let kind: string | undefined;
-        if (d.item_id) kind = idToKind.get(d.item_id);
-        if (!kind && d.item_name) kind = nameToKind.get(d.item_name);
-        if (!kind) {
-          unmatchedRevenue += estimatedValue;
-          unmatchedCount += 1;
-          continue;
-        }
-        const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
-        slot.revenue += estimatedValue;
-        slot.count += 1;
-        deniedByKind.set(kind, slot);
+      // Kind lookup: resolved_items[0].item_id → canonical name → items[0].item_name → unmatched.
+      let kind: string | undefined;
+      const resolved = (r.resolved_items ?? [])[0];
+      if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
+      if (!kind && resolved?.item_name_canonical) {
+        kind = nameToKind.get(resolved.item_name_canonical);
       }
+      if (!kind && firstItem?.item_name) {
+        kind = nameToKind.get(firstItem.item_name);
+      }
+      if (!kind) {
+        unmatchedRevenue += estimatedValue;
+        unmatchedCount += 1;
+        continue;
+      }
+      const slot = deniedByKind.get(kind) ?? { revenue: 0, count: 0 };
+      slot.revenue += estimatedValue;
+      slot.count += 1;
+      deniedByKind.set(kind, slot);
     }
 
-    // 3. Gap path.
+    // 3. Gap + Demand path (Phase 6 — new gap/demand engine is the only path).
     //
-    // Phase 4 — `use_new_gap_demand` flag rewrites this from "idle days *
-    // rate" (underutilization) to Daniel's definition of gap: rentals that
-    // were DENIED because we couldn't fulfill — either marketing-only or
-    // fully-booked. See convex/lib/availability.ts.
+    // Iterate owner_denied reservations. For each, diagnose per-item
+    // availability over the requested date range using a commitment map built
+    // from COMPLETED rentals. Attribute the rental's estimated value
+    // (gross_paid_gbp or pricing fallback) split evenly across the items
+    // that drove the denial.
     //
-    // Legacy retained for instant rollback.
-    const useNewGapDemand = await isFlagEnabled(ctx, "use_new_gap_demand");
-
+    // Marketing-only path: items.is_marketing_only=true → gap.marketing_only
+    // Fully-booked path : all units busy on ≥1 requested date → gap.fully_booked
+    // Available-anyway  : Daniel had inventory → voluntary_demand_lost
+    //                     (does NOT count as gap, but tracked for demand)
     const gapByKind = new Map<string, number>();
     const gapBreakdown = {
       marketing_only: 0,
@@ -957,147 +916,71 @@ export const getMissedAndDeniedByCategory = query({
     const demandByKind = new Map<string, number>();
     let totalDemandLost = 0;
 
-    if (useNewGapDemand) {
-      // NEW: iterate owner_denied reservations. For each, diagnose per-item
-      // availability over the requested date range. Attribute the rental's
-      // estimated value (gross_paid_gbp or pricing fallback) split evenly
-      // across the items that drove the denial.
-      //
-      // Marketing-only path: items.is_marketing_only=true → gap.marketing_only
-      // Fully-booked path : all units busy on ≥1 requested date → gap.fully_booked
-      // Available-anyway  : Daniel had inventory → voluntary_demand_lost
-      //                     (does NOT count as gap, but tracked for demand)
-      let obsoleteResAll = await ctx.db
-        .query("reservations")
-        .filter((q) => q.eq(q.field("is_obsolete"), true))
-        .collect();
-      if (accountSlug) {
-        obsoleteResAll = obsoleteResAll.filter(
-          (r) => r.account_slug === accountSlug,
-        );
-      }
-      obsoleteResAll = obsoleteResAll.filter((r) => {
-        const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
-        return ts >= cutoffMs;
-      });
-      const ownerDeniedAll = obsoleteResAll.filter((r) => {
-        const actor = r.reclassified_outcome ?? r.denial_actor;
-        return actor === "owner_denied";
-      });
-
-      // Phase 5b — gap rewrite per Daniel's instruction. Build a commitment
-      // map from COMPLETED rentals (status confirmed/completed, not obsolete)
-      // covering the cutoff window forward. This replaces the
-      // availability.ts path (which checked calendar_holds + owner_unavailability
-      // and returned ~zero output because holds aren't reliably populated for
-      // historical denials).
-      const completedAll = await ctx.db
-        .query("reservations")
-        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-        .collect();
-      const completedScoped = accountSlug
-        ? completedAll.filter((c) => c.account_slug === accountSlug)
-        : completedAll;
-      const commitMap = buildCommitmentMap(
-        completedScoped.filter(isCompletedCommitting),
+    let obsoleteResAll = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    if (accountSlug) {
+      obsoleteResAll = obsoleteResAll.filter(
+        (r) => r.account_slug === accountSlug,
       );
+    }
+    obsoleteResAll = obsoleteResAll.filter((r) => {
+      const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
+      return ts >= cutoffMs;
+    });
+    const ownerDeniedAll = obsoleteResAll.filter((r) => {
+      const actor = r.reclassified_outcome ?? r.denial_actor;
+      return actor === "owner_denied";
+    });
 
-      for (const r of ownerDeniedAll) {
-        // diagnoseDenialCapacity does its own £ estimation (same fallback).
-        const diag = await diagnoseDenialCapacity(
-          ctx,
-          r,
-          commitMap,
-          priceByName,
-        );
-        const estimated = diag.estimated_loss_gbp;
-        const totalBuckets = diag.per_item_diagnosis.length;
-        if (estimated <= 0 || totalBuckets === 0) continue;
+    // Build a commitment map from COMPLETED rentals (status confirmed/completed,
+    // not obsolete) covering the cutoff window forward.
+    const completedAll = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+      .collect();
+    const completedScoped = accountSlug
+      ? completedAll.filter((c) => c.account_slug === accountSlug)
+      : completedAll;
+    const commitMap = buildCommitmentMap(
+      completedScoped.filter(isCompletedCommitting),
+    );
 
-        // Share by item — equal split across the items that drove the denial.
-        const sharePer = estimated / totalBuckets;
+    for (const r of ownerDeniedAll) {
+      // diagnoseDenialCapacity does its own £ estimation (same fallback).
+      const diag = await diagnoseDenialCapacity(
+        ctx,
+        r,
+        commitMap,
+        priceByName,
+      );
+      const estimated = diag.estimated_loss_gbp;
+      const totalBuckets = diag.per_item_diagnosis.length;
+      if (estimated <= 0 || totalBuckets === 0) continue;
 
-        for (const p of diag.per_item_diagnosis) {
-          const itemIdStr = p.item_id ? String(p.item_id) : undefined;
-          const kind = itemIdStr ? idToKind.get(itemIdStr) ?? "unknown" : "unknown";
-          if (p.classification === "marketing_only") {
-            gapBreakdown.marketing_only += sharePer;
-            gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-            totalDemandLost += sharePer;
-          } else if (p.classification === "capacity_gap") {
-            gapBreakdown.fully_booked += sharePer;
-            gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-            totalDemandLost += sharePer;
-          } else {
-            // voluntary
-            gapBreakdown.voluntary_demand_lost += sharePer;
-            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-            totalDemandLost += sharePer;
-          }
+      // Share by item — equal split across the items that drove the denial.
+      const sharePer = estimated / totalBuckets;
+
+      for (const p of diag.per_item_diagnosis) {
+        const itemIdStr = p.item_id ? String(p.item_id) : undefined;
+        const kind = itemIdStr ? idToKind.get(itemIdStr) ?? "unknown" : "unknown";
+        if (p.classification === "marketing_only") {
+          gapBreakdown.marketing_only += sharePer;
+          gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
+        } else if (p.classification === "capacity_gap") {
+          gapBreakdown.fully_booked += sharePer;
+          gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
+        } else {
+          // voluntary
+          gapBreakdown.voluntary_demand_lost += sharePer;
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
         }
-      }
-    } else {
-      // LEGACY: idle-gap path — same algorithm as getMissedRevenue, grouped by kind.
-      let allResForGap = await ctx.db
-        .query("reservations")
-        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-        .collect();
-      if (accountSlug) {
-        allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
-      }
-
-      const rentalDaysPerItem = new Map<string, number>();
-      for (const r of allResForGap) {
-        for (const item of r.items ?? []) {
-          rentalDaysPerItem.set(
-            item.item_name,
-            (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0),
-          );
-        }
-      }
-
-      for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
-        const idleDays = Math.max(0, days - Math.min(rentalDays, days));
-        if (idleDays <= 0) continue;
-        const dailyRate = priceByName.get(itemName);
-        if (!dailyRate) continue;
-        const gapLoss = idleDays * dailyRate;
-        const kind = nameToKind.get(itemName) ?? "unknown";
-        gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + gapLoss);
-      }
-
-      // LEGACY Demand-Loss path — Phase 10.5. Pull obsolete reservations
-      // classified as genuine_demand within the cutoff window. Each row
-      // contributes its demand_loss_estimated_gbp to a per-kind bucket.
-      let demandRows = await ctx.db
-        .query("reservations")
-        .withIndex("by_demand_loss_class", (q) =>
-          q.eq("demand_loss_class", "genuine_demand"),
-        )
-        .collect();
-      if (accountSlug) {
-        demandRows = demandRows.filter((r) => r.account_slug === accountSlug);
-      }
-      demandRows = demandRows.filter((r) => r._creationTime >= cutoffMs);
-
-      for (const r of demandRows) {
-        const est = r.demand_loss_estimated_gbp ?? 0;
-        if (est <= 0) continue;
-        totalDemandLost += est;
-        let kind: string | undefined;
-        const resolved = (r.resolved_items ?? [])[0];
-        if (resolved?.item_id) kind = idToKind.get(resolved.item_id);
-        if (!kind && resolved?.item_name_canonical) {
-          kind = nameToKind.get(resolved.item_name_canonical);
-        }
-        if (!kind) {
-          const firstRaw = (r.items ?? [])[0];
-          if (firstRaw?.item_name) kind = nameToKind.get(firstRaw.item_name);
-        }
-        if (!kind) kind = "unknown";
-        demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + est);
       }
     }
 

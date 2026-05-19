@@ -2,12 +2,11 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
-// Phase 2 — new attribution engine, gated by `use_new_attribution_engine`.
+// Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
   type RentalForAttribution,
 } from "./lib/revenue_attribution";
-import { isFlagEnabled } from "./lib/feature_flags_helper";
 
 // Re-export image-resolution helpers for backward compatibility — other widget
 // files may import from `./items` or `./lib/imageResolution` directly.
@@ -66,17 +65,14 @@ export const getItemRevenueRanking = query({
     const pricingAll = await ctx.db.query("pricing_catalog").collect();
     const priceByCanonical = new Map(pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]));
 
-    // Phase 2 — gate on `use_new_attribution_engine`. Default OFF.
-    const useNewEngine = await isFlagEnabled(ctx, "use_new_attribution_engine");
-    const itemsAll = useNewEngine ? await ctx.db.query("items").collect() : [];
+    // Phase 6 — attribution engine is the only path.
+    const itemsAll = await ctx.db.query("items").collect();
     const itemById = new Map<typeof itemsAll[number]["_id"], typeof itemsAll[number]>();
     const itemByCanonical = new Map<string, typeof itemsAll[number]>();
-    if (useNewEngine) {
-      for (const it of itemsAll) {
-        itemById.set(it._id, it);
-        const nm = (it as { name_canonical?: string }).name_canonical;
-        if (nm) itemByCanonical.set(nm, it);
-      }
+    for (const it of itemsAll) {
+      itemById.set(it._id, it);
+      const nm = (it as { name_canonical?: string }).name_canonical;
+      if (nm) itemByCanonical.set(nm, it);
     }
 
     // LLM-resolved items: revenue attributed strictly to inventory items
@@ -86,48 +82,29 @@ export const getItemRevenueRanking = query({
     for (const r of reservations) {
       const resolved = (r as { resolved_items?: Array<{ item_id?: string; item_name_canonical: string; qty?: number }> }).resolved_items ?? [];
       if (resolved.length === 0) continue;
-      const gross = r.gross_paid_gbp ?? 0;
       const days = r.duration_days ?? 0;
 
-      if (useNewEngine) {
-        // Phase 2 — new attribution engine, gated by use_new_attribution_engine.
-        const rental: RentalForAttribution = {
-          _id: r._id,
-          gross_gbp: gross,
-          duration_days: r.duration_days,
-          expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
-          resolved_items: resolved as RentalForAttribution["resolved_items"],
-        };
-        const lines = attributeRevenue(rental, {
-          itemById,
-          itemByCanonical,
-          priceByName: priceByCanonical,
-        });
-        for (const line of lines) {
-          const cleanName = line.key.nameCanonical.replace(/\s*\[[^\]]+\]\s*$/, "");
-          const existing = itemMap.get(cleanName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
-          existing.totalRevenue += line.share;
-          existing.rentalCount += 1;
-          existing.totalDays += days;
-          itemMap.set(cleanName, existing);
-        }
-      } else {
-        // Legacy path — DO NOT MODIFY (instant rollback target).
-        const prices = resolved.map((x) => priceByCanonical.get(x.item_name_canonical) ?? 0);
-        const priceSum = prices.reduce((a, b) => a + b, 0);
-        resolved.forEach((x, idx) => {
-          const share = priceSum > 0 ? gross * (prices[idx] / priceSum) : gross / resolved.length;
-          // Strip " [kind]" tag that some LLM-resolved rows captured into the
-          // canonical name (the model copied the inventory listing format).
-          // Without this, Sony FX3 (v1 migrated) and "Sony FX3 [camera]"
-          // (LLM) appear as separate rows in the ranking.
-          const cleanName = x.item_name_canonical.replace(/\s*\[[^\]]+\]\s*$/, "");
-          const existing = itemMap.get(cleanName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
-          existing.totalRevenue += share;
-          existing.rentalCount += 1;
-          existing.totalDays += days;
-          itemMap.set(cleanName, existing);
-        });
+      const rental: RentalForAttribution = {
+        _id: r._id,
+        gross_gbp: r.gross_paid_gbp ?? 0,
+        duration_days: r.duration_days,
+        expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
+        resolved_items: resolved as RentalForAttribution["resolved_items"],
+      };
+      const lines = attributeRevenue(rental, {
+        itemById,
+        itemByCanonical,
+        priceByName: priceByCanonical,
+      });
+      for (const line of lines) {
+        // Strip " [kind]" tag that some LLM-resolved rows captured into the
+        // canonical name (the model copied the inventory listing format).
+        const cleanName = line.key.nameCanonical.replace(/\s*\[[^\]]+\]\s*$/, "");
+        const existing = itemMap.get(cleanName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
+        existing.totalRevenue += line.share;
+        existing.rentalCount += 1;
+        existing.totalDays += days;
+        itemMap.set(cleanName, existing);
       }
     }
 
