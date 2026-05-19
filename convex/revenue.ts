@@ -7,6 +7,10 @@ import {
   diagnoseDenialCapacity,
   isCompletedCommitting,
 } from "./lib/capacity_gap";
+import {
+  attributeRevenue,
+  type RentalForAttribution,
+} from "./lib/revenue_attribution";
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -1411,5 +1415,311 @@ export const getMissedKindBreakdown = query({
       items: items_out,
       totals,
     };
+  },
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Phase 7.9 — Top 6 rentals for a clicked item.
+// Returns the 6 largest rentals (by attributed share for the specified item)
+// scoped to mode (earned/missed) and view (denied/gap/demand). Used by the
+// CategoryVolumePie grid that renders under the ring after a per-item slice
+// is clicked.
+// ────────────────────────────────────────────────────────────────────────
+
+const MONTH_ABBR = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** "May 15" or "May 15-18" (multi-day, same month) or "May 15 - Jun 02". */
+function formatDateLabel(startStr?: string, endStr?: string): string {
+  if (!startStr) return "";
+  const s = new Date(startStr);
+  if (Number.isNaN(s.getTime())) return startStr;
+  const sLabel = `${MONTH_ABBR[s.getMonth()]} ${s.getDate()}`;
+  if (!endStr) return sLabel;
+  const e = new Date(endStr);
+  if (Number.isNaN(e.getTime()) || endStr === startStr) return sLabel;
+  if (e.getMonth() === s.getMonth() && e.getFullYear() === s.getFullYear()) {
+    return `${sLabel}-${e.getDate()}`;
+  }
+  return `${sLabel} - ${MONTH_ABBR[e.getMonth()]} ${e.getDate()}`;
+}
+
+const SEO_STRIP_WORDS = [
+  "best", "cheap", "top", "rent", "rental", "hire", "for hire",
+  "hygglo", "professional", "premium", "uk", "london", "available",
+  "high quality", "high-quality", "deal", "sale", "now", "today",
+  "online", "the", "a ", " an ",
+];
+
+/** Strip marketing/SEO words and bracketed kind tags. */
+function stripSeo(s: string): string {
+  let out = s;
+  // remove bracketed kind tag e.g. "Sony A7S III [camera_body]"
+  out = out.replace(/\s*\[[^\]]+\]\s*/g, " ");
+  // remove SEO words (case-insensitive, word-boundary-ish)
+  for (const w of SEO_STRIP_WORDS) {
+    const re = new RegExp(`(^|\\s|[,.\\-|])${w.trim()}(?=$|\\s|[,.\\-|])`, "ig");
+    out = out.replace(re, "$1");
+  }
+  // collapse separators + whitespace
+  out = out.replace(/\s*[|,]\s*/g, " · ").replace(/\s+/g, " ").trim();
+  // trim trailing punctuation
+  out = out.replace(/^[\s·\-,.]+|[\s·\-,.]+$/g, "");
+  return out;
+}
+
+/** Cap to ~40 chars with ellipsis. */
+function cap40(s: string): string {
+  if (s.length <= 40) return s;
+  return s.slice(0, 37).trimEnd() + "...";
+}
+
+/**
+ * Build a human-readable description for one rental:
+ *   - prefer resolved_items canonical names joined " + " (de-SEO'd)
+ *   - fall back to items[0].item_name (de-SEO'd)
+ *   - cap at ~40 chars
+ */
+function buildRentalDescription(r: {
+  resolved_items?: Array<{ item_name_canonical?: string }>;
+  expanded_items?: Array<{ item_name_canonical?: string }>;
+  items?: Array<{ item_name?: string }>;
+}): string {
+  const resolved = r.resolved_items ?? [];
+  const expanded = r.expanded_items ?? [];
+  // Prefer resolved_items (cleaner names than expanded_items which can include
+  // accessories from bundles).
+  const names: string[] = [];
+  const source = resolved.length > 0
+    ? resolved.map((x) => x.item_name_canonical ?? "")
+    : expanded.length > 0
+      ? expanded.map((x) => x.item_name_canonical ?? "")
+      : [];
+  for (const n of source) {
+    const clean = stripSeo(n);
+    if (clean && !names.includes(clean)) names.push(clean);
+  }
+  if (names.length > 0) {
+    if (names.length === 1) return cap40(names[0]);
+    if (names.length === 2) return cap40(`${names[0]} + ${names[1]}`);
+    // 3+: top item + count of others
+    return cap40(`${names[0]} + ${names.length - 1} other`);
+  }
+  // Last resort: raw items[0].item_name
+  const raw = (r.items ?? [])[0]?.item_name ?? "";
+  const clean = stripSeo(raw);
+  return cap40(clean || "Unnamed rental");
+}
+
+/**
+ * Filter predicate for a reservation matching the requested mode/view.
+ * Returns true if the reservation should be included.
+ */
+function rentalMatchesMode(
+  r: {
+    status?: string;
+    is_obsolete?: boolean;
+    denial_actor?: string;
+    reclassified_outcome?: string;
+    gross_paid_gbp?: number;
+  },
+  mode: "earned" | "missed",
+  view?: "denied" | "gap" | "demand",
+): boolean {
+  if (mode === "earned") {
+    if (r.is_obsolete) return false;
+    const s = r.status ?? "";
+    return s === "confirmed" || s === "completed";
+  }
+  // missed
+  if (!r.is_obsolete) return false;
+  const actor = r.reclassified_outcome ?? r.denial_actor;
+  if (view === "demand") {
+    if (actor === "owner_denied") return false;
+    if (actor === "renter_cancelled_explicit") return true;
+    if (actor === "renter_ghosted") return true;
+    if ((actor == null || actor === "system_or_other") &&
+        (r.gross_paid_gbp ?? 0) > 0) return true;
+    return false;
+  }
+  // denied / gap → owner_denied; gap further classified by diagnoseDenialCapacity below.
+  return actor === "owner_denied";
+}
+
+export const getTopRentalsForItem = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    item_id: v.id("items"),
+    mode: v.union(v.literal("earned"), v.literal("missed")),
+    view: v.optional(v.union(
+      v.literal("denied"),
+      v.literal("gap"),
+      v.literal("demand"),
+    )),
+    days: v.number(),
+  },
+  handler: async (ctx, { accountSlug, item_id, mode, view, days }) => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffMs = cutoff.getTime();
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    // Build attribution context once.
+    const itemsAll = await ctx.db.query("items").collect();
+    const itemById = new Map<typeof itemsAll[number]["_id"], typeof itemsAll[number]>();
+    const itemByCanonical = new Map<string, typeof itemsAll[number]>();
+    for (const it of itemsAll) {
+      itemById.set(it._id, it);
+      const nm = (it as { name_canonical?: string }).name_canonical;
+      if (nm) itemByCanonical.set(nm, it);
+    }
+    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const priceByName = new Map(
+      pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
+    );
+
+    // Phase 7.9 — gather candidate reservations.
+    let candidates: Array<any> = [];
+    if (mode === "earned") {
+      // Use by_start_date for efficient scan.
+      candidates = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+        .collect();
+    } else {
+      // missed → obsolete reservations.
+      candidates = await ctx.db
+        .query("reservations")
+        .filter((q) => q.eq(q.field("is_obsolete"), true))
+        .collect();
+      candidates = candidates.filter((r) => {
+        const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
+        return ts >= cutoffMs;
+      });
+    }
+    if (accountSlug) {
+      candidates = candidates.filter((r) => r.account_slug === accountSlug);
+    }
+    candidates = candidates.filter((r) => rentalMatchesMode(r, mode, view));
+
+    // For missed/gap and missed/demand we need diag classification; cache it.
+    // For missed/gap we want only capacity_gap | marketing_only diagnoses
+    // attributed to this item_id (per Phase 7.5 semantics).
+    let commitMap: ReturnType<typeof buildCommitmentMap> | undefined;
+    if (mode === "missed" && (view === "gap" || view === "demand")) {
+      const completedAll = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+        .collect();
+      const completedScoped = accountSlug
+        ? completedAll.filter((c) => c.account_slug === accountSlug)
+        : completedAll;
+      commitMap = buildCommitmentMap(
+        completedScoped.filter(isCompletedCommitting),
+      );
+    }
+
+    // For each candidate, compute the attributed-share for the target item.
+    type Row = {
+      rental_id: string;
+      hygglo_order_id: string | null;
+      date_label: string;
+      duration_days: number;
+      gross_gbp: number;
+      attributed_gbp: number;
+      description: string;
+    };
+    const out: Row[] = [];
+    const itemIdStr = String(item_id);
+
+    for (const r of candidates) {
+      // Estimated value (uses gross_paid_gbp || pricing fallback).
+      let gross = r.gross_paid_gbp ?? 0;
+      const firstItem = (r.items ?? [])[0];
+      const resolved0 = (r.resolved_items ?? [])[0];
+      const lookupName =
+        resolved0?.item_name_canonical ?? firstItem?.item_name;
+      if (gross === 0 && lookupName) {
+        const dp = priceByName.get(lookupName);
+        if (dp) gross = dp * Math.max(1, r.duration_days ?? 2);
+      }
+      if (gross <= 0) continue;
+
+      let attributed = 0;
+
+      if (mode === "missed" && view === "gap" && commitMap) {
+        // Gap path: use diagnoseDenialCapacity per-item diagnoses.
+        const diag = await diagnoseDenialCapacity(ctx, r, commitMap, priceByName);
+        const total = diag.per_item_diagnosis.length;
+        if (total === 0) continue;
+        const sharePer = diag.estimated_loss_gbp / total;
+        for (const p of diag.per_item_diagnosis) {
+          if (!p.item_id) continue;
+          if (String(p.item_id) !== itemIdStr) continue;
+          if (p.classification === "capacity_gap" ||
+              p.classification === "marketing_only") {
+            attributed += sharePer;
+          }
+        }
+      } else if (mode === "missed" && view === "demand") {
+        // Demand path: equal split across resolved/items (matches Phase 7.5 demand inner-loop math).
+        const resolved = r.resolved_items ?? [];
+        const items = r.items ?? [];
+        const itemCount = Math.max(resolved.length, items.length, 1);
+        const sharePer = gross / itemCount;
+        let matches = 0;
+        for (let i = 0; i < itemCount; i++) {
+          const ri = resolved[i];
+          if (ri?.item_id && String(ri.item_id) === itemIdStr) matches += 1;
+        }
+        attributed = sharePer * matches;
+      } else if (mode === "missed" && (view === "denied" || view === undefined)) {
+        // Denied path: whole estimated value attributed to first resolved item
+        // (matches getMissedKindBreakdown).
+        const firstResolved = (r.resolved_items ?? [])[0];
+        if (firstResolved?.item_id && String(firstResolved.item_id) === itemIdStr) {
+          attributed = gross;
+        }
+      } else {
+        // Earned path: attribution engine.
+        const rental: RentalForAttribution = {
+          _id: r._id,
+          gross_gbp: gross,
+          duration_days: r.duration_days,
+          expanded_items: r.expanded_items,
+          resolved_items: r.resolved_items,
+          items: r.items,
+        };
+        const lines = attributeRevenue(rental, {
+          itemById,
+          itemByCanonical,
+          priceByName,
+        });
+        for (const ln of lines) {
+          if (ln.key.id && String(ln.key.id) === itemIdStr) {
+            attributed += ln.share;
+          }
+        }
+      }
+
+      if (attributed <= 0) continue;
+
+      const dateLabel = formatDateLabel(r.start_date, r.end_date);
+      const description = buildRentalDescription(r);
+      out.push({
+        rental_id: String(r._id),
+        hygglo_order_id: r.hygglo_order_id ?? null,
+        date_label: dateLabel,
+        duration_days: Math.max(1, r.duration_days ?? 1),
+        gross_gbp: r2(gross),
+        attributed_gbp: r2(attributed),
+        description,
+      });
+    }
+
+    out.sort((a, b) => b.attributed_gbp - a.attributed_gbp);
+    return out.slice(0, 6);
   },
 });

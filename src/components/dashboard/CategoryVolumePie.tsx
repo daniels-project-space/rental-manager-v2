@@ -1,6 +1,7 @@
 "use client";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useEffect, useState } from "react";
@@ -200,6 +201,8 @@ export function CategoryVolumePieBody({
   const [subDrillKind, setSubDrillKind] = useState<string | null>(null);
   // Phase 10.6 — component filter for Missed mode (All/Denials/Gaps/Demand).
   const [missedComponent, setMissedComponent] = useState<MissedComponent>("denied");
+  // Phase 7.9 — clicked-item id for the top-6 rentals grid under the ring.
+  const [selectedItemId, setSelectedItemId] = useState<Id<"items"> | null>(null);
 
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [days]);
   useEffect(() => { setSubDrillKind(null); }, [drillKind]);
@@ -209,6 +212,8 @@ export function CategoryVolumePieBody({
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [missedComponent]);
   // Reset drill when switching Earned↔Missed.
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [view]);
+  // Phase 7.9 — reset top-6 grid when any drill/view/period changes.
+  useEffect(() => { setSelectedItemId(null); }, [drillKind, subDrillKind, view, days, missedComponent]);
 
   const isMissed = view === "missed";
   // Force £ in missed mode (count is meaningless for missed-revenue).
@@ -256,6 +261,34 @@ export function CategoryVolumePieBody({
         }
       : "skip",
   ) as MissedKindBreakdown | undefined;
+
+  // Phase 7.9 — top-6 rentals for the clicked item (grid under the ring).
+  // View arg only used in Missed mode; in Earned mode pass undefined.
+  const missedViewForQuery: "denied" | "gap" | "demand" | undefined = isMissed
+    ? (missedComponent === "all" ? "denied" : missedComponent)
+    : undefined;
+  const topRentals = useQuery(
+    api.revenue.getTopRentalsForItem,
+    selectedItemId
+      ? {
+          accountSlug,
+          item_id: selectedItemId,
+          mode: isMissed ? "missed" : "earned",
+          view: missedViewForQuery,
+          days,
+        }
+      : "skip",
+  ) as
+    | Array<{
+        rental_id: string;
+        hygglo_order_id: string | null;
+        date_label: string;
+        duration_days: number;
+        gross_gbp: number;
+        attributed_gbp: number;
+        description: string;
+      }>
+    | undefined;
 
   // Prefetch top-3 kind breakdowns for snappy drills.
   const top3 = (data?.slices ?? []).slice(0, 3).map((s) => s.kind);
@@ -644,11 +677,25 @@ export function CategoryVolumePieBody({
                     isAnimationActive={true}
                     animationDuration={400}
                     animationEasing="ease-out"
+                    onClick={(_e, idx: number) => {
+                      const slice = missedBreakdown.items[idx];
+                      if (slice && slice.itemId) {
+                        setSelectedItemId((prev) =>
+                          prev === (slice.itemId as Id<"items">)
+                            ? null
+                            : (slice.itemId as Id<"items">),
+                        );
+                      }
+                    }}
+                    style={{ cursor: "pointer" }}
                   >
                     {missedBreakdown.items.map((it) => (
                       <Cell
                         key={it.itemId}
                         fill={it.color}
+                        fillOpacity={
+                          selectedItemId && selectedItemId !== it.itemId ? 0.4 : 1
+                        }
                         style={{
                           filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
                           transition: "fill-opacity 220ms ease",
@@ -784,19 +831,38 @@ export function CategoryVolumePieBody({
                   animationDuration={400}
                   animationEasing="ease-out"
                   onClick={(_e, idx: number) => {
-                    if (drillKind !== "other") return;
-                    const slice = (otherSubKinds?.slices ?? [])[idx];
-                    if (slice) {
-                      setSubDrillKind((prev) => (prev === slice.kind ? null : slice.kind));
+                    if (drillKind === "other") {
+                      const slice = (otherSubKinds?.slices ?? [])[idx];
+                      if (slice) {
+                        setSubDrillKind((prev) => (prev === slice.kind ? null : slice.kind));
+                      }
+                      return;
+                    }
+                    // Non-other earned drill: middle slices are per-item.
+                    const slice = (breakdown?.items ?? [])[idx] as
+                      | { itemId?: string }
+                      | undefined;
+                    if (slice && slice.itemId) {
+                      setSelectedItemId((prev) =>
+                        prev === (slice.itemId as Id<"items">)
+                          ? null
+                          : (slice.itemId as Id<"items">),
+                      );
                     }
                   }}
-                  style={{ cursor: drillKind === "other" ? "pointer" : "default" }}
+                  style={{ cursor: "pointer" }}
                 >
                   {middleData.map((it: any, i: number) => (
                     <Cell
                       key={(it.itemId ?? it.kind ?? i) as string}
                       fill={it.color}
-                      fillOpacity={middleDimmed ? 0.4 : 1}
+                      fillOpacity={
+                        middleDimmed
+                          ? 0.4
+                          : selectedItemId && it.itemId && selectedItemId !== it.itemId
+                            ? 0.4
+                            : 1
+                      }
                       style={{
                         filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
                         transition: "fill-opacity 220ms ease",
@@ -822,11 +888,27 @@ export function CategoryVolumePieBody({
                   isAnimationActive={true}
                   animationDuration={400}
                   animationEasing="ease-out"
+                  onClick={(_e, idx: number) => {
+                    const slice = subBreakdown.items[idx];
+                    if (slice && slice.itemId) {
+                      setSelectedItemId((prev) =>
+                        prev === (slice.itemId as Id<"items">)
+                          ? null
+                          : (slice.itemId as Id<"items">),
+                      );
+                    }
+                  }}
+                  style={{ cursor: "pointer" }}
                 >
                   {subBreakdown.items.map((it, i) => (
                     <Cell
                       key={it.itemId ?? i}
                       fill={it.color}
+                      fillOpacity={
+                        selectedItemId && it.itemId && selectedItemId !== it.itemId
+                          ? 0.4
+                          : 1
+                      }
                       style={{
                         filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))",
                         transition: "fill-opacity 220ms ease",
@@ -853,6 +935,35 @@ export function CategoryVolumePieBody({
               />
             </PieChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Phase 7.9 — Top-6 rentals grid for the clicked item. */}
+      {selectedItemId && topRentals && topRentals.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-2">
+            Top {topRentals.length} rental{topRentals.length === 1 ? "" : "s"}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {topRentals.map((r) => (
+              <div
+                key={r.rental_id}
+                className="rounded-lg bg-slate-900/40 p-2 border border-white/5"
+              >
+                <div className="text-xs text-[#e4e6eb] truncate" title={r.description}>
+                  {r.description}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  {r.date_label}
+                  {r.date_label ? " · " : ""}
+                  {r.duration_days}d
+                </div>
+                <div className="text-sm font-semibold text-green-400 mt-1">
+                  £{r.attributed_gbp.toFixed(0)}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
