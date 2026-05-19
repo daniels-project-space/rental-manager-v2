@@ -72,15 +72,26 @@ const LEADER_KEYFRAMES = `@keyframes leaderFadeIn {
   to   { opacity: 1; transform: translateX(0); }
 }`;
 
+// Phase 7.6 — truncate overlong labels so leader-label text stays inside the
+// widget's visible bounding box. Combined with reduced outer radius + tighter
+// leader offsets, this keeps "Category · £1,234" within ~80px of right padding.
+function truncateLabel(s: string, max = 22): string {
+  if (!s) return "";
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
 function makeLeaderLabel(
   metric: Metric,
   textKey: "label" | "name",
   offset: number,
-  opts?: { dimmed?: boolean; primaryFs?: number; secondaryFs?: number },
+  opts?: { dimmed?: boolean; primaryFs?: number; secondaryFs?: number; exExtension?: number; maxChars?: number },
 ) {
   const dimmed = opts?.dimmed ?? false;
   const primaryFs = opts?.primaryFs ?? 12;
   const secondaryFs = opts?.secondaryFs ?? 11;
+  const exExtension = opts?.exExtension ?? 8; // Phase 7.6: 18 → 8
+  const maxChars = opts?.maxChars ?? 22;       // Phase 7.6: cap label length
   return function renderLeaderLabel(props: any) {
     const { cx, cy, midAngle, outerRadius, fill, payload, value } = props;
     const RAD = Math.PI / 180;
@@ -90,9 +101,10 @@ function makeLeaderLabel(
     const sy = cy + outerRadius * sin;
     const mx = cx + (outerRadius + offset) * cos;
     const my = cy + (outerRadius + offset) * sin;
-    const ex = mx + (cos >= 0 ? 1 : -1) * 18;
+    const ex = mx + (cos >= 0 ? 1 : -1) * exExtension;
     const textAnchor = cos >= 0 ? "start" : "end";
-    const text = (payload?.[textKey] ?? "") as string;
+    const rawText = (payload?.[textKey] ?? "") as string;
+    const text = truncateLabel(rawText, maxChars);
     const valText = metric === "count"
       ? `${value} rentals`
       : `£${Number(value || 0).toFixed(0)}`;
@@ -219,10 +231,12 @@ export function CategoryVolumePieBody({
     ? `£${data.totals.revenue.toFixed(0)} · ${data.totals.count} rentals · ${days}d${topSlice ? ` · top: ${topSlice.label} £${topSlice.revenue.toFixed(0)}` : ""}`
     : "Loading…";
 
-  // Geometry
-  const OUTER_INNER = 78, OUTER_OUTER = 108;
-  const MIDDLE_INNER = 40, MIDDLE_OUTER = 80;
+  // Geometry — Phase 7.6: reduced OUTER_OUTER 108→95 to give labels more
+  // horizontal room. MIDDLE_OUTER stays at 80 (no collision with outer at 95).
+  const OUTER_INNER = 68, OUTER_OUTER = 95;
+  const MIDDLE_INNER = 40, MIDDLE_OUTER = 64;
   const INNERMOST_INNER = 8, INNERMOST_OUTER = 34;
+  const OUTER_LEADER_OFFSET = 6;       // Phase 7.6: 14 → 6
   const INNER_LEADER_OFFSET = 10;
   const INNERMOST_LEADER_OFFSET = 18;
   const CHART_HEIGHT = 400;
@@ -236,11 +250,15 @@ export function CategoryVolumePieBody({
   const middleNameKey: "name" | "label" = drillKind === "other" ? "label" : "name";
   const middleDimmed = !!subDrillKind;
 
-  const renderOuterLabel = makeLeaderLabel(metric, "label", 14);
+  const renderOuterLabel = makeLeaderLabel(metric, "label", OUTER_LEADER_OFFSET);
   const renderMiddleLabel = makeLeaderLabel(metric, middleNameKey, INNER_LEADER_OFFSET, {
     dimmed: middleDimmed,
   });
+  // Phase 7.6 — innermost ring labels stack and overlap when many slices exist;
+  // hide them and let the tooltip serve. (kept variable for backward-compat in
+  // case we re-enable later, but unused for now.)
   const renderInnermostLabel = makeLeaderLabel(metric, "name", INNERMOST_LEADER_OFFSET);
+  void renderInnermostLabel;
 
   const chevron = (
     <button
@@ -507,7 +525,7 @@ export function CategoryVolumePieBody({
             }}
           >
             <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-              <PieChart margin={{ top: 20, right: 90, bottom: 20, left: 90 }}>
+              <PieChart margin={{ top: 20, right: 90, bottom: 20, left: 90 }} style={{ overflow: "visible" }}>
                 <Pie
                   data={filteredOuter}
                   dataKey="missed"
@@ -519,7 +537,7 @@ export function CategoryVolumePieBody({
                   paddingAngle={4}
                   cornerRadius={6}
                   labelLine={false}
-                  label={drillKind ? false : makeLeaderLabel("revenue", "label", 14)}
+                  label={drillKind ? false : makeLeaderLabel("revenue", "label", OUTER_LEADER_OFFSET)}
                   isAnimationActive={true}
                   animationDuration={400}
                   animationEasing="ease-out"
@@ -647,7 +665,7 @@ export function CategoryVolumePieBody({
           }}
         >
           <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-            <PieChart margin={{ top: 20, right: 90, bottom: 20, left: 90 }}>
+            <PieChart margin={{ top: 20, right: 90, bottom: 20, left: 90 }} style={{ overflow: "visible" }}>
               <Pie
                 data={data.slices}
                 dataKey={metric}
@@ -735,7 +753,7 @@ export function CategoryVolumePieBody({
                   paddingAngle={2}
                   cornerRadius={6}
                   labelLine={false}
-                  label={renderInnermostLabel}
+                  label={false}
                   legendType="none"
                   isAnimationActive={true}
                   animationDuration={400}
