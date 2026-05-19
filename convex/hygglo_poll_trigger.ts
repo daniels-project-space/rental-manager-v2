@@ -49,12 +49,18 @@ export const triggerWorkflow = internalAction({
       return { ok: false, reason: "no_url" };
     }
     const secret = process.env.POLL_TRIGGER_SECRET ?? "";
+    // Wave 3b: also send X-Internal-Token so the same cron can drive
+    // EITHER the Mastra `/api/workflows/hygglo-poll` route (Bearer auth)
+    // OR the redundant L3 backup `/api/poll-hygglo` route (X-Internal-Token).
+    // Whichever URL POLL_TRIGGER_URL points to, the matching header is present.
+    const internalToken = process.env.INTERNAL_POLL_TOKEN ?? "";
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+          ...(internalToken ? { "X-Internal-Token": internalToken } : {}),
         },
         body: JSON.stringify({ source: "convex_cron" }),
       });
