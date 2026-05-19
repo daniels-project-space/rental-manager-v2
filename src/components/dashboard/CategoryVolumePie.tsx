@@ -94,8 +94,10 @@ function makeLeaderLabel(
       }}>
         <path d={`M${sx},${sy}L${mx},${my}L${ex},${my}`} stroke={fill} strokeWidth={1} fill="none" />
         <circle cx={ex} cy={my} r={2} fill={fill} />
-        <text x={tx} y={my} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={primaryFs} fontWeight={600} style={{ letterSpacing: "0.02em" }}>{text}</text>
-        <text x={tx} y={my + 12} textAnchor={textAnchor} dominantBaseline="middle" fill="#cbd5e1" fontSize={secondaryFs}>{valText}</text>
+        <text x={tx} y={my} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={primaryFs} fontWeight={600} style={{ letterSpacing: "0.02em" }}>
+          <tspan>{text}</tspan>
+          <tspan fill="#8b8fa3" fontWeight={400} dx={6}>· {valText}</tspan>
+        </text>
       </g>
     );
   };
