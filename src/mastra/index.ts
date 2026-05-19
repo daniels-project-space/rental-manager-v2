@@ -13,6 +13,7 @@ import "server-only";
 import { Mastra } from "@mastra/core";
 import { PinoLogger } from "@mastra/loggers";
 import { hyggloPollWorkflow } from "./workflows/hygglo_poll";
+import { renterBotDraftWorkflow } from "./workflows/renter_bot_draft";
 
 // Wire Langfuse as OTel sink.
 // getLangfuse() is a lazy singleton — returns a no-op shim when
@@ -20,8 +21,12 @@ import { hyggloPollWorkflow } from "./workflows/hygglo_poll";
 import { getLangfuse, traceMastraSpan } from "@/lib/langfuse";
 export { getLangfuse, traceMastraSpan };
 
+// Renter-bot agent is built lazily on first call (it needs an async vault
+// fetch for the LLM key), so we don't register it as a static agent here —
+// the workflow imports it directly via getRenterBotAgent().
+
 export const mastra = new Mastra({
-  workflows: { hyggloPollWorkflow },
+  workflows: { hyggloPollWorkflow, renterBotDraftWorkflow },
   logger: new PinoLogger({
     name: "rental-manager-v2",
     level: process.env.NODE_ENV === "production" ? "info" : "debug",

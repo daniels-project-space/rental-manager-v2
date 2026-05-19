@@ -190,6 +190,17 @@ export default defineSchema({
     imported_at: v.optional(v.number()),
     notes: v.optional(v.string()),
     blacklist: v.optional(v.boolean()),       // legacy boolean (kept for compat)
+    // Renter-bot Phase 1+ — 5-axis DNA profile, evolved per message.
+    // Bot reads + updates only when signal is strong (delta > 0.5).
+    renter_dna: v.optional(v.object({
+      style: v.optional(v.string()),         // formal | casual | terse | chatty
+      expertise: v.optional(v.string()),     // pro | intermediate | beginner
+      driver: v.optional(v.string()),        // price | quality | speed | trust
+      energy: v.optional(v.string()),        // calm | excited | anxious | impatient
+      decisionSpeed: v.optional(v.string()), // quick | deliberate | slow | flipflop
+      signals_observed: v.optional(v.number()),
+      updated_at: v.optional(v.number()),
+    })),
     created_at: v.number(),
   })
     .index("by_hygglo_user_id", ["hygglo_user_id"])
@@ -472,6 +483,19 @@ export default defineSchema({
     account_id: v.optional(v.id("accounts")),
     renter_id: v.optional(v.id("renters")),
     last_msg_at: v.number(),
+    // Renter-bot Phase 1 — 7-stage state machine (INQUIRY → DEAD).
+    // Optional: existing rows pre-Phase-1 have it undefined; the bot
+    // backfills on first run by inferring from latest reservation.status.
+    conversation_stage: v.optional(v.union(
+      v.literal("INQUIRY"),
+      v.literal("INTERESTED"),
+      v.literal("READY_TO_BOOK"),
+      v.literal("BOOKED"),
+      v.literal("CONFIRMED"),
+      v.literal("COMPLETED"),
+      v.literal("DEAD"),
+    )),
+    stage_updated_at: v.optional(v.number()),
     created_at: v.number(),
   }).index("by_thread", ["thread_id"]),
 
@@ -485,13 +509,20 @@ export default defineSchema({
   }).index("by_renter", ["renter_id"]).index("by_item", ["item_id"]),
 
   // ── Rules / overrides / denials (empty, Phase 4-5) ──────────
+  // Renter-bot Phase 1 seeds 33 rules from V1 (categories: policy,
+  // communication, pricing, faq, inventory, disclosure). category +
+  // priority + source kept optional so legacy callers still compile.
   rules: defineTable({
     account_id: v.optional(v.id("accounts")),
-    rule_kind: v.string(),
+    rule_kind: v.string(),                     // V1 "name" lives here (e.g. "Credential Security")
     rule_body: v.string(),
     enabled: v.boolean(),
+    category: v.optional(v.string()),           // V1: policy | communication | pricing | faq | inventory | disclosure
+    priority: v.optional(v.number()),           // V1: 1-10 (10 = absolute)
+    source: v.optional(v.string()),             // "v1-port" | "manual"
     created_at: v.number(),
-  }).index("by_account", ["account_id"]),
+  }).index("by_account", ["account_id"])
+    .index("by_category", ["category"]),
 
   rule_overrides: defineTable({
     rule_id: v.id("rules"),
@@ -646,12 +677,17 @@ export default defineSchema({
   }).index("by_month", ["month"]),
 
 
-  // -- AI Memories (Phase B-2 scaffold; seed deferred to B-3) --
+  // -- AI Memories (Phase B-2 scaffold; renter-bot Phase 1 seeds V1 corpus) --
+  // Renter-bot Phase 1 widens scope set to include "template" (verbatim
+  // texts the bot quotes directly) and "faq" (gear-specific Q&A). title
+  // + priority added for richer ranking inside search_knowledge.
   memories: defineTable({
-    scope: v.string(),                    // "general" | "pricing" | "operational"
+    scope: v.string(),                    // "general" | "pricing" | "operational" | "template" | "faq"
+    title: v.optional(v.string()),         // human-readable label for ranking + dashboard surfaces
     content: v.string(),
     tags: v.optional(v.array(v.string())),
-    source: v.string(),                   // "manual" | "v1-import-pending"
+    priority: v.optional(v.number()),       // 1-10 (10 = absolute, e.g. DANIEL RULES)
+    source: v.string(),                   // "manual" | "v1-import-pending" | "v1-port"
     created_at: v.number(),
     updated_at: v.optional(v.number()),
   }).index("by_scope", ["scope"])
@@ -1160,6 +1196,56 @@ export default defineSchema({
     .index("by_listing_id", ["hygglo_listing_id"])
     .index("by_status", ["status"])
     .index("by_account_status", ["hygglo_account", "status"]),
+
+  // ── Renter-bot drafts (Phase 1 — READ-ONLY through Phase 3) ──────────
+  // The bot writes one draft per (thread_id, last_inbound_message_id) pair.
+  // It NEVER calls Hygglo write APIs. status transitions to "sent" only
+  // when Daniel manually sends from Telegram + records that fact. Phase 4
+  // may flip in auto-send for opt-in intents.
+  renter_bot_drafts: defineTable({
+    thread_id: v.string(),
+    account_slug: v.string(),
+    last_inbound_message_id: v.string(),
+    last_inbound_at: v.number(),
+    // The renter-facing draft. Empty string when `needs_human=true`.
+    draft_text: v.string(),
+    original_draft: v.optional(v.string()),     // verbatim first LLM emission (string-eq edit detect)
+    final_sent_text: v.optional(v.string()),     // what Daniel actually sent (if any)
+    draft_intent: v.string(),                  // one of 14 V1 intents
+    draft_stage: v.optional(v.string()),         // one of 7 conversation stages
+    draft_confidence: v.number(),
+    draft_red_flags: v.array(v.string()),
+    facts_claimed: v.optional(v.array(v.object({
+      kind: v.string(),                          // price | availability | date | item_included | rule
+      value: v.string(),
+      sourceTool: v.string(),
+      sourceCallId: v.string(),
+      verified: v.boolean(),
+    }))),
+    needs_human: v.boolean(),
+    needs_human_reason: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),                      // awaiting Daniel's review
+      v.literal("dismissed"),                    // Daniel said no, archive
+      v.literal("sent"),                          // Daniel manually sent
+      v.literal("expired"),                       // newer inbound arrived, this draft stale
+      v.literal("escalated"),                     // forwarded to human with red banner (filter failed 2×)
+    ),
+    generated_by: v.string(),                  // "renter-bot-v1"
+    model_id: v.string(),                       // "deepseek/deepseek-v4-flash" etc
+    generated_at: v.number(),
+    cost_usd: v.optional(v.number()),
+    regeneration_count: v.optional(v.number()),  // 0 | 1 | 2 (filter-driven retries)
+    // Telegram audit
+    telegram_chat_id: v.optional(v.string()),
+    telegram_message_id: v.optional(v.string()),
+    telegram_sent_at: v.optional(v.number()),
+  })
+    .index("by_thread", ["thread_id"])
+    .index("by_thread_status", ["thread_id", "status"])
+    .index("by_status", ["status"])
+    .index("by_last_inbound", ["last_inbound_message_id"])
+    .index("by_generated_at", ["generated_at"]),
 
   // ── Runtime feature flags (Phase 2 attribution cutover) ──────────────
   // Key/value boolean flags Daniel can flip instantly to switch code paths
