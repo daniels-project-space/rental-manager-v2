@@ -93,7 +93,12 @@ const KIND_LABEL_PRETTY: Record<string, string> = {
 };
 function prettyLabel(s: string): string {
   if (!s) return "";
-  return KIND_LABEL_PRETTY[s] ?? s;
+  // Case-insensitive lookup against the override map (backend sometimes returns
+  // capitalized strings like "Action_cam", "Accessory_consumable").
+  const key = s.toLowerCase();
+  if (KIND_LABEL_PRETTY[key]) return KIND_LABEL_PRETTY[key];
+  // Fallback: replace underscores with spaces + capitalize first letter
+  return s.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 }
 
 // Phase 7.7 — truncate overlong labels so leader-label text stays inside the
@@ -116,7 +121,9 @@ function makeLeaderLabel(
   const exExtension = opts?.exExtension ?? 4;
   const maxChars = opts?.maxChars ?? 14;
   return function renderLeaderLabel(props: any) {
-    const { cx, cy, midAngle, outerRadius, fill, payload, value } = props;
+    const { cx, cy, midAngle, outerRadius, fill, payload, value, percent } = props;
+    // Phase 7.7b — hide labels for tiny slices (<4%) so labels don't stack
+    if (typeof percent === "number" && percent < 0.04) return null;
     const RAD = Math.PI / 180;
     const sin = Math.sin(-RAD * midAngle);
     const cos = Math.cos(-RAD * midAngle);
@@ -131,11 +138,10 @@ function makeLeaderLabel(
     const valText = metric === "count"
       ? `${value} rentals`
       : `£${Number(value || 0).toFixed(0)}`;
-    // Phase 7.7 — bounded clamping: estimate full text width and clamp
-    // the text anchor so the rendered text stays inside the chart bounds.
-    // recharts passes cx="50%" — chartWidth ≈ 2 * cx.
-    const fullText = `${text} · ${valText}`;
-    const estTextWidth = fullText.length * primaryFs * 0.58;
+    // Phase 7.7b — two-line layout when single line would be wide
+    const useTwoLines = (text.length + valText.length + 3) > 16;
+    const widest = useTwoLines ? Math.max(text.length, valText.length) : text.length + valText.length + 3;
+    const estTextWidth = widest * primaryFs * 0.58;
     const chartHalfWidth = cx; // 50% center
     const GUTTER = 6;
     let ex = mx + dir * exExtension;
@@ -166,10 +172,17 @@ function makeLeaderLabel(
       }}>
         <path d={`M${sx},${sy}L${mxAdj},${my}L${ex},${my}`} stroke={fill} strokeWidth={1} fill="none" />
         <circle cx={ex} cy={my} r={2} fill={fill} />
-        <text x={tx} y={my} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={primaryFs} fontWeight={600} style={{ letterSpacing: "0.02em" }}>
-          <tspan>{text}</tspan>
-          <tspan fill="#8b8fa3" fontWeight={400} dx={6}>· {valText}</tspan>
-        </text>
+        {useTwoLines ? (
+          <text x={tx} y={my - 7} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={primaryFs} fontWeight={600} style={{ letterSpacing: "0.02em" }}>
+            <tspan x={tx} dy={0}>{text}</tspan>
+            <tspan x={tx} dy={primaryFs + 2} fill="#8b8fa3" fontWeight={400} fontSize={secondaryFs}>{valText}</tspan>
+          </text>
+        ) : (
+          <text x={tx} y={my} textAnchor={textAnchor} dominantBaseline="middle" fill="#e4e6eb" fontSize={primaryFs} fontWeight={600} style={{ letterSpacing: "0.02em" }}>
+            <tspan>{text}</tspan>
+            <tspan fill="#8b8fa3" fontWeight={400} dx={6}>· {valText}</tspan>
+          </text>
+        )}
       </g>
     );
   };
