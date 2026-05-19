@@ -907,6 +907,16 @@ export const getMissedAndDeniedByCategory = query({
     // Fully-booked path : all units busy on ≥1 requested date → gap.fully_booked
     // Available-anyway  : Daniel had inventory → voluntary_demand_lost
     //                     (does NOT count as gap, but tracked for demand)
+    //
+    // Phase 7.8 — `use_new_gap_demand` flag separates Denied/Gap from Demand.
+    // When ON (default), owner_denied rows feed ONLY denied + gap; Demand is
+    // sourced from a separate population: renter-side cancellations / ghosts /
+    // paid-then-system-failed rows that exclude owner_denied. This eliminates
+    // the historical double-count where a single rental could be classified as
+    // both owner_denied (Denied) AND demand_loss_class=genuine_demand (Demand).
+    // When OFF, retain Phase 6 behavior — every owner_denied row also adds to
+    // demand — for instant rollback safety.
+    const useNewGapDemand = true;
     const gapByKind = new Map<string, number>();
     const gapBreakdown = {
       marketing_only: 0,
@@ -968,17 +978,81 @@ export const getMissedAndDeniedByCategory = query({
         if (p.classification === "marketing_only") {
           gapBreakdown.marketing_only += sharePer;
           gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-          totalDemandLost += sharePer;
+          if (!useNewGapDemand) {
+            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+            totalDemandLost += sharePer;
+          }
         } else if (p.classification === "capacity_gap") {
           gapBreakdown.fully_booked += sharePer;
           gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-          totalDemandLost += sharePer;
+          if (!useNewGapDemand) {
+            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+            totalDemandLost += sharePer;
+          }
         } else {
           // voluntary
           gapBreakdown.voluntary_demand_lost += sharePer;
-          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          if (!useNewGapDemand) {
+            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+            totalDemandLost += sharePer;
+          }
+        }
+      }
+    }
+
+    // Phase 7.8 — NEW demand path (flag ON).
+    // Demand = obsolete AND NOT owner_denied AND (
+    //   denial_actor in {renter_cancelled_explicit, renter_ghosted}
+    //   OR (denial_actor null/system_or_other AND gross_paid_gbp > 0)
+    // )
+    // Mutually exclusive with Denied + Gap (those are sourced from owner_denied).
+    if (useNewGapDemand) {
+      const demandRows = obsoleteResAll.filter((r) => {
+        const actor = r.reclassified_outcome ?? r.denial_actor;
+        if (actor === "owner_denied") return false;
+        if (actor === "renter_cancelled_explicit") return true;
+        if (actor === "renter_ghosted") return true;
+        // paid-then-system-failed: no actor or system_or_other AND money changed hands
+        if ((actor == null || actor === "system_or_other") &&
+            (r.gross_paid_gbp ?? 0) > 0) return true;
+        return false;
+      });
+
+      for (const r of demandRows) {
+        // Estimated value: gross_paid_gbp || gross_gbp || duration × daily_price
+        let estimatedValue = r.gross_paid_gbp ?? 0;
+        if (estimatedValue === 0) {
+          // gross_gbp may not exist on schema; fall back to pricing catalog
+          const firstItem = (r.items ?? [])[0];
+          const itemNameForLookup =
+            (r.resolved_items ?? [])[0]?.item_name_canonical ??
+            firstItem?.item_name;
+          if (itemNameForLookup) {
+            const dp = priceByName.get(itemNameForLookup);
+            if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
+          }
+        }
+        if (estimatedValue <= 0) continue;
+
+        // Per-item attribution: split evenly across resolved items (consistent
+        // with gap path which splits across per_item_diagnosis entries).
+        const resolved = r.resolved_items ?? [];
+        const items = r.items ?? [];
+        const itemCount = Math.max(resolved.length, items.length, 1);
+        const sharePer = estimatedValue / itemCount;
+
+        for (let i = 0; i < itemCount; i++) {
+          let kind: string | undefined;
+          const ri = resolved[i];
+          if (ri?.item_id) kind = idToKind.get(ri.item_id);
+          if (!kind && ri?.item_name_canonical) {
+            kind = nameToKind.get(ri.item_name_canonical);
+          }
+          if (!kind && items[i]?.item_name) {
+            kind = nameToKind.get(items[i].item_name);
+          }
+          const k = kind ?? "unknown";
+          demandByKind.set(k, (demandByKind.get(k) ?? 0) + sharePer);
           totalDemandLost += sharePer;
         }
       }
