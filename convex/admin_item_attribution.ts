@@ -17,8 +17,50 @@
  *   npx convex run --prod admin_item_attribution:bulkSetItemAttribution "$(cat /tmp/item_attribution_template.json)"
  */
 
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
+
+/**
+ * Phase 4.6 — diagnostic: list the obsolete owner-denied rentals in window
+ * with their items/resolved_items so we can see if the resolver matched
+ * the new marketing-only items.
+ */
+export const auditObsoleteOwnerDeniedResolution = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, { days }) => {
+    const cutoffMs = Date.now() - (days ?? 90) * 86_400_000;
+    const all = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    const owner = all.filter((r) => {
+      const actor = (r as { reclassified_outcome?: string; denial_actor?: string })
+        .reclassified_outcome ??
+        (r as { denial_actor?: string }).denial_actor;
+      if (actor !== "owner_denied") return false;
+      const ts = (r as { obsolete_at?: number; v1_updated_at?: number })
+        .obsolete_at ??
+        (r as { v1_updated_at?: number }).v1_updated_at ??
+        r._creationTime;
+      return (ts ?? 0) >= cutoffMs;
+    });
+    return owner.map((r) => ({
+      id: r._id,
+      account_slug: r.account_slug,
+      items: (r as { items?: Array<{ item_name: string; qty?: number }> }).items ?? [],
+      notes_first120: (
+        (r as { notes?: string | null }).notes ?? ""
+      ).slice(0, 120),
+      resolved_items: (r as { resolved_items?: unknown[] }).resolved_items ?? [],
+      expanded_items: (r as { expanded_items?: unknown[] }).expanded_items ?? [],
+      gross_paid_gbp: (r as { gross_paid_gbp?: number }).gross_paid_gbp,
+      duration_days: (r as { duration_days?: number }).duration_days,
+      reclassified_outcome: (r as { reclassified_outcome?: string }).reclassified_outcome,
+      denial_actor: (r as { denial_actor?: string }).denial_actor,
+    }));
+  },
+});
 
 const ACTOR_SEED = "phase-1.5a";
 const ACTOR_INVENTORY_EXT = "phase-1.5b-inventory-extension";
@@ -376,6 +418,115 @@ export const addItemIfMissing = mutation({
       action: "inserted" as const,
       item_id: itemId,
       canonical: args.canonical_name,
+    };
+  },
+});
+
+/**
+ * Phase 4.6 — Re-resolve obsolete owner-denied reservations.
+ *
+ * `item_resolver:listUnresolved` skips `is_obsolete=true` rows so the cron
+ * resolver never visits them. But the gap calculation in
+ * `revenue:getMissedAndDeniedByCategory` iterates exactly those obsolete
+ * owner-denied rentals — if their `resolved_items` is empty, the gap stays
+ * at £0 even when an item name (e.g. "Sony FX6") matches a marketing-only
+ * item.
+ *
+ * This mutation queries the obsolete owner_denied rentals whose resolved_items
+ * is empty/absent AND that have either `items[]` or `notes` content, then
+ * schedules `resolveReservation` for each. Idempotent — already-resolved rows
+ * are filtered out by `resolveReservation`'s own input-hash check.
+ */
+export const reresolveObsoleteOwnerDenied = mutation({
+  args: { limit: v.optional(v.number()), days: v.optional(v.number()) },
+  handler: async (ctx, { limit, days }) => {
+    const cap = limit ?? 100;
+    const cutoffMs = Date.now() - (days ?? 90) * 86_400_000;
+    const all = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    const owner = all.filter((r) => {
+      const actor = (r as { reclassified_outcome?: string; denial_actor?: string })
+        .reclassified_outcome ??
+        (r as { denial_actor?: string }).denial_actor;
+      if (actor !== "owner_denied") return false;
+      const ts = (r as { obsolete_at?: number; v1_updated_at?: number; _creationTime?: number })
+        .obsolete_at ??
+        (r as { v1_updated_at?: number }).v1_updated_at ??
+        r._creationTime;
+      return (ts ?? 0) >= cutoffMs;
+    });
+    const need = owner.filter((r) => {
+      const resolved = (r as { resolved_items?: unknown[] }).resolved_items;
+      const hasResolved = Array.isArray(resolved) && resolved.length > 0;
+      if (hasResolved) return false;
+      const hasItems = ((r as { items?: unknown[] }).items?.length ?? 0) > 0;
+      const notes = (r as { notes?: string | null }).notes;
+      const hasNotes =
+        typeof notes === "string" && notes.trim().length > 0;
+      return hasItems || hasNotes;
+    });
+    const batch = need.slice(0, cap);
+    let scheduled = 0;
+    for (const r of batch) {
+      await ctx.scheduler.runAfter(
+        scheduled * 1000,
+        api.item_resolver.resolveReservation,
+        { reservation_id: r._id },
+      );
+      scheduled++;
+    }
+    return {
+      ok: true,
+      scheduled,
+      totalNeedingResolve: need.length,
+      totalObsoleteOwnerDenied: owner.length,
+      sampleIds: batch.slice(0, 10).map((r) => r._id),
+    };
+  },
+});
+
+/**
+ * Phase 4.6 — Re-resolve denial_records whose item_id is still null.
+ *
+ * Unlike `denial_records:backfillResolveAll`, this includes rows where a prior
+ * resolve attempt failed (item_resolved_at is set but item_id is still null).
+ * After Phase 4.6 inserted 23 marketing-only items, those previously-unmatched
+ * denials may now find a canonical item.
+ *
+ * Idempotent — if item_id is still unset after the resolver runs, the row is
+ * simply left as-is; future runs will retry it.
+ */
+export const reresolveUnmatchedDenials = mutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cap = limit ?? 50;
+    const rows = await ctx.db.query("denial_records").collect();
+    const pending = rows.filter(
+      (r) =>
+        r.item_id === undefined &&
+        (r.item_name ?? "").trim().length > 0,
+    );
+    const batch = pending.slice(0, cap);
+    let scheduled = 0;
+    for (const r of batch) {
+      // Clear item_resolved_at so the resolver retries this row.
+      if (r.item_resolved_at !== undefined) {
+        await ctx.db.patch(r._id, { item_resolved_at: undefined });
+      }
+      await ctx.scheduler.runAfter(
+        scheduled * 500,
+        internal.denial_resolver.resolveItemFor,
+        { id: r._id },
+      );
+      scheduled++;
+    }
+    return {
+      ok: true,
+      scheduled,
+      totalPending: pending.length,
+      sampleItemNames: batch.slice(0, 10).map((r) => r.item_name),
     };
   },
 });

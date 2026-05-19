@@ -24,16 +24,17 @@ export const auditItemCoverage = query({
 
     const byKind = new Map<
       string,
-      { count: number; with_rc: number; with_inc: number; in_some_bundle: number; names: string[] }
+      { count: number; with_rc: number; with_inc: number; in_some_bundle: number; with_marketing_only: number; names: string[] }
     >();
     for (const it of items) {
       const k = it.kind ?? "unknown";
-      const slot = byKind.get(k) ?? { count: 0, with_rc: 0, with_inc: 0, in_some_bundle: 0, names: [] };
+      const slot = byKind.get(k) ?? { count: 0, with_rc: 0, with_inc: 0, in_some_bundle: 0, with_marketing_only: 0, names: [] };
       slot.count++;
       if (typeof it.replacement_cost_gbp === "number" && it.replacement_cost_gbp > 0) slot.with_rc++;
       const inc = it.compatibility?.included_with_rental;
       if (Array.isArray(inc) && inc.length > 0) slot.with_inc++;
       if (inBundle.has(it._id as string)) slot.in_some_bundle++;
+      if ((it as { is_marketing_only?: boolean }).is_marketing_only === true) slot.with_marketing_only++;
       slot.names.push(it.name_canonical);
       byKind.set(k, slot);
     }
@@ -46,8 +47,9 @@ export const auditItemCoverage = query({
         with_rc: s.with_rc + r.with_rc,
         with_inc: s.with_inc + r.with_inc,
         in_some_bundle: s.in_some_bundle + r.in_some_bundle,
+        with_marketing_only: s.with_marketing_only + r.with_marketing_only,
       }),
-      { count: 0, with_rc: 0, with_inc: 0, in_some_bundle: 0 },
+      { count: 0, with_rc: 0, with_inc: 0, in_some_bundle: 0, with_marketing_only: 0 },
     );
     return { rows, totals };
   },
