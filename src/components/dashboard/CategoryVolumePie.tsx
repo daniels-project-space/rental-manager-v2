@@ -323,7 +323,6 @@ export function CategoryVolumePieBody({
   // hide them and let the tooltip serve. (kept variable for backward-compat in
   // case we re-enable later, but unused for now.)
   const renderInnermostLabel = makeLeaderLabel(metric, "name", INNERMOST_LEADER_OFFSET);
-  void renderInnermostLabel;
 
   const chevron = (
     <button
@@ -658,7 +657,7 @@ export function CategoryVolumePieBody({
                     ))}
                   </Pie>
                 )}
-                {!drillKind && innerData.length > 0 && (
+                {false && !drillKind && innerData.length > 0 && (
                   <Pie
                     data={innerData}
                     dataKey={innerKey}
@@ -818,7 +817,7 @@ export function CategoryVolumePieBody({
                   paddingAngle={2}
                   cornerRadius={6}
                   labelLine={false}
-                  label={false}
+                  label={renderInnermostLabel}
                   legendType="none"
                   isAnimationActive={true}
                   animationDuration={400}
