@@ -199,12 +199,12 @@ export function CategoryVolumePieBody({
   const [drillKind, setDrillKind] = useState<string | null>(null);
   const [subDrillKind, setSubDrillKind] = useState<string | null>(null);
   // Phase 10.6 — component filter for Missed mode (All/Denials/Gaps/Demand).
-  const [missedComponent, setMissedComponent] = useState<MissedComponent>("all");
+  const [missedComponent, setMissedComponent] = useState<MissedComponent>("denied");
 
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [days]);
   useEffect(() => { setSubDrillKind(null); }, [drillKind]);
   // Reset filter when switching out of Missed mode.
-  useEffect(() => { if (view !== "missed") setMissedComponent("all"); }, [view]);
+  useEffect(() => { if (view !== "missed") setMissedComponent("denied"); }, [view]);
   // Reset Missed drill when toggling components (kind set may change).
   useEffect(() => { setDrillKind(null); setSubDrillKind(null); }, [missedComponent]);
   // Reset drill when switching Earned↔Missed.
@@ -479,7 +479,6 @@ export function CategoryVolumePieBody({
             <div className="flex gap-1">
               {(
                 [
-                  { val: "all", label: "All" },
                   { val: "denied", label: "Denials" },
                   { val: "gap", label: "Gaps" },
                   { val: "demand", label: "Demand" },
