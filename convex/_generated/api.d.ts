@@ -30,6 +30,7 @@ import type * as audit_reclassification from "../audit_reclassification.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
 import type * as audit_thread_join from "../audit_thread_join.js";
 import type * as backfill_hygglo_images from "../backfill_hygglo_images.js";
+import type * as backup_poll from "../backup_poll.js";
 import type * as bundles from "../bundles.js";
 import type * as bundles_seed from "../bundles_seed.js";
 import type * as calendar from "../calendar.js";
@@ -69,6 +70,7 @@ import type * as lib_customer_metrics from "../lib/customer_metrics.js";
 import type * as lib_denial_classifier from "../lib/denial_classifier.js";
 import type * as lib_feature_flags_helper from "../lib/feature_flags_helper.js";
 import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
+import type * as lib_hygglo_minimal from "../lib/hygglo_minimal.js";
 import type * as lib_imageResolution from "../lib/imageResolution.js";
 import type * as lib_inventory_categories from "../lib/inventory_categories.js";
 import type * as lib_item_matcher from "../lib/item_matcher.js";
@@ -82,6 +84,7 @@ import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
 import type * as lib_reservations_views from "../lib/reservations/views.js";
 import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
+import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
 import type * as listing_cache from "../listing_cache.js";
 import type * as listing_images from "../listing_images.js";
@@ -161,6 +164,7 @@ declare const fullApi: ApiFromModules<{
   audit_snapshot: typeof audit_snapshot;
   audit_thread_join: typeof audit_thread_join;
   backfill_hygglo_images: typeof backfill_hygglo_images;
+  backup_poll: typeof backup_poll;
   bundles: typeof bundles;
   bundles_seed: typeof bundles_seed;
   calendar: typeof calendar;
@@ -200,6 +204,7 @@ declare const fullApi: ApiFromModules<{
   "lib/denial_classifier": typeof lib_denial_classifier;
   "lib/feature_flags_helper": typeof lib_feature_flags_helper;
   "lib/gatedGenerate": typeof lib_gatedGenerate;
+  "lib/hygglo_minimal": typeof lib_hygglo_minimal;
   "lib/imageResolution": typeof lib_imageResolution;
   "lib/inventory_categories": typeof lib_inventory_categories;
   "lib/item_matcher": typeof lib_item_matcher;
@@ -213,6 +218,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reservations/predicates": typeof lib_reservations_predicates;
   "lib/reservations/views": typeof lib_reservations_views;
   "lib/revenue_attribution": typeof lib_revenue_attribution;
+  "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;
   listing_cache: typeof listing_cache;
   listing_images: typeof listing_images;

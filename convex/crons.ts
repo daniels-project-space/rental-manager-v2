@@ -76,6 +76,23 @@ crons.interval(
 );
 
 
+// ── Wave 4 — Poller staleness alarm + auto-heal ─────────────────
+//
+// Every 10 min. Scans account_state for `active` rows whose
+// lastSuccessfulPollAt is older than 30 min, sends a Telegram alert
+// to Daniel (deduped per-account to 1/hour), and invokes the backup
+// poller (internal.backup_poll.runBackupPoll) to auto-heal.
+//
+// Telegram env vars required on Convex prod:
+//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID_DANIEL
+// If missing, the alert no-ops gracefully (still attempts auto-heal).
+crons.interval(
+  "poller staleness check",
+  { minutes: 10 },
+  internal.poller_health.runStalenessCheck,
+  {},
+);
+
 // ── Item resolver, notes-only backfill, booking-time extractor, vision
 // resolver: all LIFTED TO TRIGGER.DEV. See src/trigger/{resolve-items,
 // extract-booking-times,vision-resolve}.ts. Convex action runtime was

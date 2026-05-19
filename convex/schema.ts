@@ -1361,4 +1361,17 @@ export default defineSchema({
     rows_written: v.number(),
     errors: v.optional(v.string()),
   }).index("by_run", ["run_id"]),
+
+  // ── Wave 4 — Poller staleness alert log + dedup ──────────────────────
+  // One row each time the staleness check fires a Telegram alert. Used
+  // for 60-min dedup (don't re-alert same account inside the window) and
+  // for post-hoc visibility into how often the backup poller kicked in.
+  poller_alerts: defineTable({
+    account_slug: v.string(),
+    sent_at: v.number(),
+    stale_minutes: v.number(),
+    auto_heal_attempted: v.boolean(),
+    auto_heal_ok: v.optional(v.boolean()),
+    telegram_ok: v.optional(v.boolean()),
+  }).index("by_account_slug", ["account_slug"]),
 });
