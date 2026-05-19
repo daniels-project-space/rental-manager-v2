@@ -81,6 +81,12 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "tax",             label: "Tax" },
   { id: "business_intel",  label: "Business Intel" },
   { id: "category_volume", label: "Category Volume" },
+  // ── Phase 7 — weekly_metrics-driven insight widgets ──
+  { id: "voluntary_deny",    label: "Voluntary Denies" },
+  { id: "capacity_gap",      label: "Capacity Gap" },
+  { id: "utilization",       label: "Idle Inventory" },
+  { id: "below_minimum",     label: "Below Min £" },
+  { id: "revenue_sparkline", label: "Revenue Trend" },
 ];
 
 export const DEFAULT_PANEL_ORDER = PANEL_WIDGETS.map((w) => w.id);

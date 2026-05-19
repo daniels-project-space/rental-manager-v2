@@ -41,6 +41,11 @@ import TaxDrawer from "./stat-cards/TaxDrawer";
 import BusinessIntelDrawer from "./stat-cards/BusinessIntelDrawer";
 import { CriticalAlerts } from "./CriticalAlerts";
 import { CategoryVolumePieBody } from "./CategoryVolumePie";
+import { VoluntaryDenyHotList } from "./insights/VoluntaryDenyHotList";
+import { CapacityGapAlert } from "./insights/CapacityGapAlert";
+import { ItemUtilizationRanking } from "./insights/ItemUtilizationRanking";
+import { BelowMinimumCounter } from "./insights/BelowMinimumCounter";
+import { WeeklyRevenueSparkline } from "./insights/WeeklyRevenueSparkline";
 
 function fmtGbp(n: number): string {
   if (n >= 1000) return "£" + (n / 1000).toFixed(1) + "k";
@@ -125,7 +130,7 @@ function StatsGridSkeleton() {
 
 // Hero cards span 2 grid columns. Without an outer wrapper this is set on the
 // card itself; with EditableWidget wrapper the col-span must live on the wrapper.
-const HERO_IDS = new Set(["active", "ongoing", "upcoming", "business_intel", "category_volume"]);
+const HERO_IDS = new Set(["active", "ongoing", "upcoming", "business_intel", "category_volume", "revenue_sparkline"]);
 
 export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
@@ -492,6 +497,12 @@ export function StatsGrid() {
           />
         </div>
       ),
+      // ── Phase 7: weekly_metrics insight widgets ──
+      voluntary_deny:    <VoluntaryDenyHotList    accountSlug={activeAccountSlug} />,
+      capacity_gap:      <CapacityGapAlert        accountSlug={activeAccountSlug} />,
+      utilization:       <ItemUtilizationRanking  accountSlug={activeAccountSlug} />,
+      below_minimum:     <BelowMinimumCounter     accountSlug={activeAccountSlug} />,
+      revenue_sparkline: <WeeklyRevenueSparkline  accountSlug={activeAccountSlug} />,
     };
   }, [rawData, expandedId, activeAccountSlug, catVolExpanded]);
 
