@@ -479,9 +479,9 @@ export function CategoryVolumePieBody({
             <div className="flex gap-1">
               {(
                 [
-                  { val: "denied", label: "Denials" },
-                  { val: "gap", label: "Gaps" },
-                  { val: "demand", label: "Demand" },
+                  { val: "denied", label: "Denials", tip: "You actively cancelled the rental in Hygglo." },
+                  { val: "gap", label: "Gaps", tip: "You couldn't fulfill — fully booked or marketing-only." },
+                  { val: "demand", label: "Demand", tip: "Renter paid/progressed then the booking fell apart." },
                 ] as const
               ).map((c) => {
                 const active = missedComponent === c.val;
@@ -489,6 +489,7 @@ export function CategoryVolumePieBody({
                   <button
                     key={c.val}
                     onClick={() => setMissedComponent(c.val)}
+                    title={c.tip}
                     className="px-1.5 py-0.5 text-[11px] rounded transition-colors"
                     style={{
                       background: active ? "rgba(245,158,11,0.18)" : "transparent",
