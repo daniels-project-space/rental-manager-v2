@@ -798,6 +798,48 @@ function missedLabelFor(k: string): string {
   return MISSED_KIND_LABELS[k] ?? (k.charAt(0).toUpperCase() + k.slice(1));
 }
 
+/**
+ * Phase 7.10 — keyword-based fallback kind classifier. Used when the resolver
+ * fails to map an item_name to a canonical and we still want to bucket it.
+ * Order matters — earliest match wins. Returns undefined only on total miss.
+ */
+function kindFromKeywords(rawName: string): string | undefined {
+  const n = rawName.toLowerCase();
+  // Audio first (microphone/mic/speaker/audio recorder)
+  if (/\b(microphone|microphones|wireless\s+mic|radio\s+mic|shotgun\s+mic|lapel|lavalier|sennheiser|senheiser|rode|zoom\s+h\d|mke\s*\d|ew\s*\d|audio\s+recorder|partybox|jbl|mackie|pa\s+system|loud\s*speaker|party\s+speaker|dj\s+speaker|bluetooth\s+speaker|mic\s+set)\b/.test(n)) {
+    if (/\b(speaker|partybox|jbl|mackie|pa\s+system)\b/.test(n)) return "dj_audio";
+    return "audio";
+  }
+  // Smoke / FX
+  if (/\b(fog\s*machine|smoke\s*machine|haze\s*machine|fogger|smoke\s*fx)\b/.test(n)) return "smoke_fx";
+  // Projectors
+  if (/\b(projector|nebula\s+4k|viewsonic|epson|benq)\b/.test(n)) return "video";
+  // Transmission
+  if (/\b(hollyland|teradek|wireless\s+video|video\s+transmitter|sdi\s+transmitter|hdmi\s+transmitter|mars\s+4k)\b/.test(n)) return "transmission";
+  // Monitor
+  if (/\b(smallhd|monitor|cine\s+\d|atomos\s+ninja|director\s+monitor)\b/.test(n)) return "monitor";
+  // Gimbal / stabilizer
+  if (/\b(gimbal|ronin|rs\s*\d|crane\s*\d|stabilizer|flycam|easyrig|easy\s*rig|flow\s*line|float\s+gimbal)\b/.test(n)) return "stabilizer";
+  // Support: tripod, slider, support vest
+  if (/\b(tripod|slider|manfrotto\s+190|sachtler|benro|fluid\s+head|video\s+head|support\s+vest|jib|crane)\b/.test(n)) return "support";
+  // Lighting
+  if (/\b(aputure|godox|softbox|lantern|600x|600d|300x|amaran|nanlite|light\s+modifier|bowens|key\s+light|fill\s+light)\b/.test(n)) return "lighting";
+  // Drone
+  if (/\b(drone|dji\s+air|dji\s+mavic|dji\s+inspire|dji\s+mini|fpv\s+drone)\b/.test(n)) return "drone";
+  // Lens — must contain "mm" AND lens-y term
+  if (/\b\d{1,3}(\.\d)?\s*[-–]?\s*\d{0,3}(\.\d)?\s*mm\b/.test(n) && /\b(lens|prime|zoom|fisheye|anamorphic|gm|g\s*master|gmaster|f\/?\d|t\d|art|sigma|sony\s+fe|canon\s+rf|dzo|zeiss|vespid|arles)\b/.test(n)) return "lens";
+  if (/\b(lens|prime\s+set|zoom\s+lens|fisheye)\b/.test(n)) return "lens";
+  // Camera
+  if (/\b(camera|sony\s+a\d|sony\s+fx\d|fx\s*3|fx\s*6|alpha\s+\d|canon\s+r\d|c\s*70|c\s*200|c\s*300|red\s+komodo|alexa|arri|bmpcc|pyxis|blackmagic|panasonic\s+s\d|fujifilm|x[-\s]?t\d|gh\d|osmo\s+pocket|pocket\s+camera|mirrorless|camcorder)\b/.test(n)) return "camera";
+  // Storage / SD
+  if (/\b(sd\s*card|cfexpress|cf\s*express|nvme|ssd\s+drive|storage|v\d{2}\s*card|128gb|256gb|512gb|1tb)\b/.test(n)) return "storage_card";
+  // Power / batteries
+  if (/\b(battery|np-?fw|np-?w|np-?f|d-?tap|v-?mount|gold\s*mount|battery\s+plate|power\s+station)\b/.test(n)) return "power";
+  // Accessory (filters etc.)
+  if (/\b(nd\s+filter|vnd|polarizer|cpl\s+filter|matte\s+box|follow\s+focus|flash|speedlight|cage|rig\s+plate)\b/.test(n)) return "accessory";
+  return undefined;
+}
+
 export const getMissedAndDeniedByCategory = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -887,6 +929,10 @@ export const getMissedAndDeniedByCategory = query({
       }
       if (!kind && firstItem?.item_name) {
         kind = nameToKind.get(firstItem.item_name);
+      }
+      // Phase 7.10 — keyword fallback before declaring unmatched.
+      if (!kind && firstItem?.item_name) {
+        kind = kindFromKeywords(firstItem.item_name);
       }
       if (!kind) {
         unmatchedRevenue += estimatedValue;
@@ -1054,6 +1100,10 @@ export const getMissedAndDeniedByCategory = query({
           }
           if (!kind && items[i]?.item_name) {
             kind = nameToKind.get(items[i].item_name);
+          }
+          // Phase 7.10 — keyword fallback before bucketing as "unknown".
+          if (!kind && items[i]?.item_name) {
+            kind = kindFromKeywords(items[i].item_name);
           }
           const k = kind ?? "unknown";
           demandByKind.set(k, (demandByKind.get(k) ?? 0) + sharePer);

@@ -530,3 +530,93 @@ export const reresolveUnmatchedDenials = mutation({
     };
   },
 });
+
+/**
+ * Phase 7.10 — re-resolve ALL obsolete reservations whose `resolved_items` is
+ * empty, regardless of denial_actor. Mirrors `reresolveObsoleteOwnerDenied`
+ * but covers the demand bucket (renter_cancelled_explicit, renter_ghosted,
+ * paid-system-failed) so its rentals also pick up resolved_items.
+ */
+export const reresolveAllObsoletes = mutation({
+  args: { limit: v.optional(v.number()), days: v.optional(v.number()) },
+  handler: async (ctx, { limit, days }) => {
+    const cap = limit ?? 200;
+    const cutoffMs = Date.now() - (days ?? 90) * 86_400_000;
+    const all = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    const inWindow = all.filter((r) => {
+      const ts = (r as { obsolete_at?: number; v1_updated_at?: number; _creationTime?: number })
+        .obsolete_at ??
+        (r as { v1_updated_at?: number }).v1_updated_at ??
+        r._creationTime;
+      return (ts ?? 0) >= cutoffMs;
+    });
+    const need = inWindow.filter((r) => {
+      const resolved = (r as { resolved_items?: unknown[] }).resolved_items;
+      const hasResolved = Array.isArray(resolved) && resolved.length > 0;
+      if (hasResolved) return false;
+      const hasItems = ((r as { items?: unknown[] }).items?.length ?? 0) > 0;
+      const notes = (r as { notes?: string | null }).notes;
+      const hasNotes = typeof notes === "string" && notes.trim().length > 0;
+      return hasItems || hasNotes;
+    });
+    const batch = need.slice(0, cap);
+    let scheduled = 0;
+    for (const r of batch) {
+      await ctx.scheduler.runAfter(
+        scheduled * 1000,
+        api.item_resolver.resolveReservation,
+        { reservation_id: r._id },
+      );
+      scheduled++;
+    }
+    return {
+      ok: true,
+      scheduled,
+      totalNeedingResolve: need.length,
+      totalInWindow: inWindow.length,
+      sampleIds: batch.slice(0, 10).map((r) => r._id),
+    };
+  },
+});
+
+/**
+ * Phase 7.10 — diagnostic: list ALL obsolete reservations (any actor) with
+ * empty resolved_items in window. Shows items[].item_name + actor + value
+ * so we can decide whether to add canonicals or fuzzy-match.
+ */
+export const listUnresolvedObsoletes = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, { days }) => {
+    const cutoffMs = Date.now() - (days ?? 90) * 86_400_000;
+    const all = await ctx.db
+      .query("reservations")
+      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .collect();
+    const inWindow = all.filter((r) => {
+      const ts = (r as { obsolete_at?: number; v1_updated_at?: number })
+        .obsolete_at ??
+        (r as { v1_updated_at?: number }).v1_updated_at ??
+        r._creationTime;
+      return (ts ?? 0) >= cutoffMs;
+    });
+    return inWindow
+      .filter((r) => {
+        const resolved = (r as { resolved_items?: unknown[] }).resolved_items;
+        return !Array.isArray(resolved) || resolved.length === 0;
+      })
+      .map((r) => ({
+        id: r._id,
+        actor: (r as { reclassified_outcome?: string; denial_actor?: string })
+          .reclassified_outcome ??
+          (r as { denial_actor?: string }).denial_actor ?? null,
+        items: ((r as { items?: Array<{ item_name: string }> }).items ?? []).map(
+          (it) => it.item_name,
+        ),
+        gross_paid_gbp: (r as { gross_paid_gbp?: number }).gross_paid_gbp ?? 0,
+        duration_days: (r as { duration_days?: number }).duration_days ?? 0,
+      }));
+  },
+});
