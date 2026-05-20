@@ -420,6 +420,11 @@ export const completeStaleConfirmedCron = internalMutation({
       if (r.is_obsolete) continue;
       if (!r.end_date) continue;
       if ((r.end_date as string) >= dateCutoff) continue;
+      // Hygglo keeps rentals in `current` until owner verifies return. Skip rows
+      // where gear is still with the renter (order_step ∈ {RETURNED, DELIVERED})
+      // so we don't auto-demote them to `completed` and hide them from the
+      // double-booking detector.
+      if (r.order_step === "RETURNED" || r.order_step === "DELIVERED") continue;
       const lastPolled =
         (r as { last_polled_at?: number }).last_polled_at ??
         (r as { _creationTime?: number })._creationTime ??
@@ -447,6 +452,11 @@ export const adminCompleteStaleConfirmed = mutation({
       if (r.is_obsolete) continue;
       if (!r.end_date) continue;
       if ((r.end_date as string) >= dateCutoff) continue;
+      // Hygglo keeps rentals in `current` until owner verifies return. Skip rows
+      // where gear is still with the renter (order_step ∈ {RETURNED, DELIVERED})
+      // so we don't auto-demote them to `completed` and hide them from the
+      // double-booking detector.
+      if (r.order_step === "RETURNED" || r.order_step === "DELIVERED") continue;
       const lastPolled =
         (r as { last_polled_at?: number }).last_polled_at ??
         (r as { _creationTime?: number })._creationTime ??
