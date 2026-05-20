@@ -16,6 +16,7 @@ import {
   buildSharedImageBlacklist,
   type ImageHint,
 } from "./lib/imageResolution";
+import { effEnd as effEndImpl } from "./lib/double_booking";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
@@ -547,20 +548,28 @@ export const getStatsDrawerData = query({
       if (sumQty(matchingRes) <= item.qty) continue;
 
       // Sweep dates within horizon, count concurrency per day.
+      // `effEnd` extends end_date to `today` for overdue gear-out rentals
+      // (order_step=RETURNED|DELIVERED + status=confirmed) — Hygglo's "current"
+      // bucket still has the item physically with the renter.
       const todayIso = today;
+      const effEnd = (r: ResRow): string =>
+        effEndImpl(
+          { end_date: r.end_date as string, order_step: r.order_step as string | null | undefined, status: r.status as string | null | undefined },
+          todayIso,
+        );
       let worstStart = "";
       let worstCount = 0;
       let worstEnd = "";
       const scanFrom = todayIso;
       const scanTo = horizonEnd;
       const startDates = matchingRes.map((m) => m.r.start_date as string);
-      const endDates = matchingRes.map((m) => m.r.end_date as string);
+      const endDates = matchingRes.map((m) => effEnd(m.r as ResRow));
       const candidates = Array.from(
         new Set<string>([scanFrom, ...startDates, ...endDates].filter((d) => d >= scanFrom && d <= scanTo)),
       ).sort();
       for (const d of candidates) {
         const overlapping = matchingRes.filter(
-          (m) => (m.r.start_date as string) <= d && (m.r.end_date as string) >= d,
+          (m) => (m.r.start_date as string) <= d && effEnd(m.r as ResRow) >= d,
         );
         const qtySum = overlapping.reduce(
           (s, m) => s + (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0),
@@ -575,10 +584,10 @@ export const getStatsDrawerData = query({
       if (worstCount > item.qty && worstStart) {
         // Compute the inclusive range these reservations all share
         const overlappingSet = matchingRes.filter(
-          (m) => (m.r.start_date as string) <= worstStart && (m.r.end_date as string) >= worstStart,
+          (m) => (m.r.start_date as string) <= worstStart && effEnd(m.r as ResRow) >= worstStart,
         );
         const earliestEnd = overlappingSet
-          .map((m) => m.r.end_date as string)
+          .map((m) => effEnd(m.r as ResRow))
           .sort()[0];
         // Stable conflict identity: item_id + sorted reservation IDs.
         // If any reservation set member changes, the key changes too — a
@@ -1249,6 +1258,31 @@ export const getStatsDrawerData = query({
     }
     const business_intel = { kpis };
 
+    // ── Layer B (2026-05-19) — qty-drift count for CriticalAlerts widget ─
+    // Cheap inline read: open rows in qty_drift_alerts scoped to the account
+    // (or global on accountSlug=null). Surfaces as a small badge inside the
+    // existing CriticalAlerts component rather than adding a new widget.
+    const qtyDriftRows = accountSlug
+      ? await ctx.db
+          .query("qty_drift_alerts")
+          .withIndex("by_account_status", (q) =>
+            q.eq("account_slug", accountSlug).eq("status", "open"),
+          )
+          .collect()
+      : await ctx.db
+          .query("qty_drift_alerts")
+          .withIndex("by_status", (q) => q.eq("status", "open"))
+          .collect();
+    const qty_drift_count = qtyDriftRows.length;
+    const qty_drift_sample = qtyDriftRows.slice(0, 10).map((r) => ({
+      reservation_id: r.reservation_id as string,
+      hygglo_order_id: r.hygglo_order_id,
+      renter_name: r.renter_name ?? null,
+      drift_kind: r.drift_kind,
+      raw_n: r.raw_n,
+      expanded_n: r.expanded_n,
+    }));
+
     return {
       active: {
         total: activeTotal,
@@ -1261,7 +1295,10 @@ export const getStatsDrawerData = query({
       // Pinned critical alerts — surfaced at the top of the dashboard.
       // conflicts: item has qty < concurrent reservations in next 90d.
       // untracked: paid+verifying rows whose items aren't in master inventory.
+      // qty_drift_count: open rows in qty_drift_alerts (Layer B audit).
       conflicts,
+      qty_drift_count,
+      qty_drift_sample,
       untracked: untrackedPayload,
       earnings,
       monthly,

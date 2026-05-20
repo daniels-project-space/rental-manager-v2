@@ -392,6 +392,9 @@ export const upsertOrderAsReservation = mutation({
     /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
     sourceFilter: v.optional(v.string()),
     renter_name: v.optional(v.string()),
+    /** 2026-05-19 — Hygglo renter user id (detail.users.otherPart.id). Stored
+     *  on the row + used to resolve `renter_id` via renters by_hygglo_user_id. */
+    hygglo_user_id: v.optional(v.string()),
     /** Raw Hygglo booking status (e.g. "pending_review", "confirmed"). */
     booking_status: v.optional(v.string()),
     /** Pickup/return time strings ("HH:MM") from booking detail. */
@@ -476,6 +479,23 @@ export const upsertOrderAsReservation = mutation({
     // ── status derivation (Fix A) ──────────────────────────────
     const incomingStatus = deriveStatusFromStep(incomingStep, args.sourceFilter);
 
+    // ── renter linkage (2026-05-19) ────────────────────────────
+    // Resolve renter_id via hygglo_user_id (indexed). Cheap when present;
+    // falls back to undefined when the renter row hasn't been inserted yet
+    // (renters list is written in the same poll cycle, so this resolves on
+    // the next poll). The denormalized hygglo_user_id is still written so
+    // the backfill action can re-link without refetching the order.
+    let resolved_renter_id: import("./_generated/dataModel").Id<"renters"> | undefined;
+    if (args.hygglo_user_id && args.hygglo_user_id.length > 0) {
+      const renter = await ctx.db
+        .query("renters")
+        .withIndex("by_hygglo_user_id", (q) =>
+          q.eq("hygglo_user_id", args.hygglo_user_id),
+        )
+        .first();
+      resolved_renter_id = renter?._id;
+    }
+
     const baseFields = {
       account_slug: args.account_slug,
       hygglo_order_id: args.hygglo_order_id,
@@ -490,6 +510,9 @@ export const upsertOrderAsReservation = mutation({
       items: args.items,
       duration_days: args.duration_days,
       renter_name: args.renter_name,
+      // 2026-05-19 renter linkage
+      ...(args.hygglo_user_id !== undefined && { hygglo_user_id: args.hygglo_user_id }),
+      ...(resolved_renter_id !== undefined && { renter_id: resolved_renter_id }),
       booking_status: args.booking_status,
       ...(pickup_time !== undefined && { pickup_time }),
       ...(return_time !== undefined && { return_time }),

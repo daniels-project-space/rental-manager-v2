@@ -148,6 +148,9 @@ type OrderReservationPayload = {
   duration_days?: number;
   sourceFilter: string;
   renter_name?: string;
+  /** 2026-05-19 — Hygglo renter user id (detail.users.otherPart.id). Forwarded
+   *  to upsertOrderAsReservation so the mutation can resolve renter_id. */
+  hygglo_user_id?: string;
   /** Raw Hygglo booking status (e.g. "pending_review") extracted from detail.booking.status. */
   booking_status?: string;
   /** Calendar UI fields — extracted from detail.booking.* and detail.* */
@@ -527,6 +530,7 @@ async function scrapeAccount(
         duration_days: durationDays > 0 ? durationDays : undefined,
         sourceFilter: order.sourceFilter,
         renter_name: otherPartName || undefined,
+        hygglo_user_id: otherPartUserId,
         booking_status: bookingStatus,
         pickup_time,
         return_time,

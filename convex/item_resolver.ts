@@ -384,101 +384,93 @@ export const resolveReservation = action({
 
     const inventory = await ctx.runQuery(internal.item_resolver_queries.getInventoryForResolve, {});
 
-    // Combine all titles in this reservation into a single prompt — Hygglo
-    // titles already describe the bundle, and the LLM is better at one
-    // multi-item resolution than many one-by-ones.
-    const combinedTitle = items.map((i: { item_name: string; qty?: number }) =>
-      i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name,
-    ).join("\n");
+    // ── Per-listing resolution loop ───────────────────────────────────
+    // Bug fix (qty-extraction): previously all listings were joined with "\n"
+    // into one prompt. When a Hygglo order had N listings of the same SKU,
+    // the LLM treated them as one and emitted qty:1, masking N physical units.
+    // Now each listing is resolved separately and merged via addExpanded which
+    // sums same-item_id qty.
+    type PerListing = Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }>;
+    const perListingResolved: PerListing[] = [];
 
-    // Phase 15.1: trigram pre-rank narrows inventory to top-N candidates so
-    // the LLM prompt stays small (~300 tokens vs ~3k). For kit/bundle titles
-    // we widen the candidate pool so decomposition still has options.
-    const isKitTitle = KIT_RE.test(combinedTitle);
-
-    let resolved: Array<{ item_id: string; item_name_canonical: string; confidence: number; qty: number }> = [];
     try {
-      const gated = await gatedGenerateObject({
-        model: await getActionLlmModel(),
-        schema: RESOLUTION_SCHEMA,
-        messages: [
-          { role: "system", content: modelPrompt() },
-          { role: "user", content: buildUserMessage(
-              combinedTitle,
-              rankInventory(
-                combinedTitle,
-                filterInventoryByCategory(inventory, combinedTitle),
-                isKitTitle ? 15 : 8,
-              ),
-            ) },
-        ],
-        // Typical: 1-5 items × ~100 visible + reasoning overhead.
-        maxOutputTokens: 1500,
-        context: { source: "convex:item_resolver", tag: "item-resolver" },
-      });
-      if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
-      const result = gated.result;
-      // Validate item_ids against the inventory we sent (defensive — model can hallucinate)
-      const validIds = new Set(inventory.map((i: InventoryItem) => i._id));
-      const rawItems = result.object.resolved_items
-        .filter((r) => validIds.has(r.item_id) && r.confidence >= 0.5)
-        .map((r) => {
-          let qty = Math.max(1, Math.floor(r.qty ?? 1));
-          // Fallback qty: scan the combined title for "Nx phrase" near the matched phrase.
-          if (qty === 1 && r.matched_phrase) {
-            const phrase = r.matched_phrase.toLowerCase();
-            const idx = combinedTitle.toLowerCase().indexOf(phrase);
-            if (idx > 0) {
-              const before = combinedTitle.slice(Math.max(0, idx - 8), idx);
-              const m = /(\d+)\s*[x×]/i.exec(before);
-              if (m) qty = Math.max(qty, parseInt(m[1], 10));
+      for (const listing of items as Array<{ item_name: string; qty?: number }>) {
+        const oneTitle = listing.qty && listing.qty > 1
+          ? `${listing.qty}× ${listing.item_name}`
+          : listing.item_name;
+        const isKitTitle = KIT_RE.test(oneTitle);
+
+        const gated = await gatedGenerateObject({
+          model: await getActionLlmModel(),
+          schema: RESOLUTION_SCHEMA,
+          messages: [
+            { role: "system", content: modelPrompt() },
+            { role: "user", content: buildUserMessage(
+                oneTitle,
+                rankInventory(
+                  oneTitle,
+                  filterInventoryByCategory(inventory, oneTitle),
+                  isKitTitle ? 15 : 8,
+                ),
+              ) },
+          ],
+          maxOutputTokens: 1500,
+          context: { source: "convex:item_resolver", tag: "item-resolver" },
+        });
+        if (gated.skipped) return { ok: false, skipped: "uk_quiet_hours" };
+        const result = gated.result;
+        const validIds = new Set(inventory.map((i: InventoryItem) => i._id));
+        const rawItems = result.object.resolved_items
+          .filter((r) => validIds.has(r.item_id) && r.confidence >= 0.5)
+          .map((r) => {
+            let qty = Math.max(1, Math.floor(r.qty ?? 1));
+            if (qty === 1 && r.matched_phrase) {
+              const phrase = r.matched_phrase.toLowerCase();
+              const idx = oneTitle.toLowerCase().indexOf(phrase);
+              if (idx > 0) {
+                const before = oneTitle.slice(Math.max(0, idx - 8), idx);
+                const m = /(\d+)\s*[x×]/i.exec(before);
+                if (m) qty = Math.max(qty, parseInt(m[1], 10));
+              }
             }
+            return {
+              item_id: r.item_id,
+              item_name_canonical: r.item_name_canonical,
+              confidence: r.confidence,
+              qty,
+              matched_phrase: r.matched_phrase,
+            };
+          });
+        // Collapse duplicates WITHIN this single listing (LLM "2x ITEM" → two qty:1).
+        // Cross-listing summation happens via addExpanded below.
+        let resolvedOne: PerListing = mergeDuplicateItems(rawItems).map((x) => ({
+          item_id: x.item_id,
+          item_name_canonical: x.item_name_canonical,
+          confidence: x.confidence ?? 0,
+          qty: x.qty ?? 1,
+        }));
+        const primary = primaryBrand(oneTitle);
+        if (primary) {
+          const before = resolvedOne.length;
+          resolvedOne = resolvedOne.filter((x) => {
+            if (brandMismatch(primary, x.item_name_canonical)) {
+              console.warn("[brand-gate] rejected", x.item_name_canonical, "because primary=" + primary);
+              return false;
+            }
+            return true;
+          });
+          if (resolvedOne.length !== before && process.env.DEBUG) {
+            console.log("[brand-gate] dropped", before - resolvedOne.length, "item(s); primary=" + primary);
           }
-          return {
-            item_id: r.item_id,
-            item_name_canonical: r.item_name_canonical,
-            confidence: r.confidence,
-            qty,
-            matched_phrase: r.matched_phrase,
-          };
-        });
-      // Collapse any duplicate item_id entries (DeepSeek occasionally emits
-      // "2x ITEM" as two separate qty:1 entries instead of one qty:2).
-      resolved = mergeDuplicateItems(rawItems).map((x) => ({
-        item_id: x.item_id,
-        item_name_canonical: x.item_name_canonical,
-        confidence: x.confidence ?? 0,
-        qty: x.qty ?? 1,
-      }));
-      // Brand-integrity gate: drop any resolved item carrying a different
-      // brand than the title's primary brand. Catches AI cross-brand
-      // hallucinations (e.g. title=Canon, resolved=Sony GM lens).
-      const primary = primaryBrand(combinedTitle);
-      if (primary) {
-        const before = resolved.length;
-        resolved = resolved.filter((x) => {
-          if (brandMismatch(primary, x.item_name_canonical)) {
-            console.warn(
-              "[brand-gate] rejected",
-              x.item_name_canonical,
-              "because primary=" + primary,
-            );
-            return false;
-          }
-          return true;
-        });
-        if (resolved.length !== before) {
-          if (process.env.DEBUG) console.log("[brand-gate] dropped", before - resolved.length, "item(s); primary=" + primary);
         }
+        perListingResolved.push(resolvedOne);
       }
     } catch (err) {
       console.error("[item-resolver] LLM call failed:", err);
       return { ok: false, skipped: "llm error" };
     }
 
-    // Bundle expansion — if a resolved item matches a bundle's bundle_name,
-    // replace it with its component bundle_items so conflict / out-of-stock /
-    // sell-reco can reason at the physical-item level.
+    // Bundle expansion + cross-listing qty summation.
     const bundlesData = await ctx.runQuery(internal.item_resolver_queries.getBundlesWithItems, {});
     type ExpandedItem = { item_id: string; item_name_canonical: string; qty: number; via_bundle?: string };
     const expanded: ExpandedItem[] = [];
@@ -492,20 +484,31 @@ export const resolveReservation = action({
         via_bundle: viaBundleId,
       });
     }
-    for (const r of resolved) {
-      const bundleHit = bundlesData.find(
-        (b: { bundle_name: string; bundle_id: string; items: Array<{ item_id?: string; item_name_canonical: string; qty: number }> }) =>
-          b.bundle_name === r.item_name_canonical,
-      );
-      if (bundleHit) {
-        for (const bi of bundleHit.items) {
-          if (!bi.item_id) continue;
-          addExpanded(bi.item_id, bi.item_name_canonical, bi.qty * r.qty, bundleHit.bundle_id);
+    const resolvedSum = new Map<string, { item_id: string; item_name_canonical: string; confidence: number; qty: number }>();
+    for (const listing of perListingResolved) {
+      for (const r of listing) {
+        const ex = resolvedSum.get(r.item_id);
+        if (ex) {
+          ex.qty += r.qty;
+          if (r.confidence > ex.confidence) ex.confidence = r.confidence;
+        } else {
+          resolvedSum.set(r.item_id, { ...r });
         }
-      } else {
-        addExpanded(r.item_id, r.item_name_canonical, r.qty);
+        const bundleHit = bundlesData.find(
+          (b: { bundle_name: string; bundle_id: string; items: Array<{ item_id?: string; item_name_canonical: string; qty: number }> }) =>
+            b.bundle_name === r.item_name_canonical,
+        );
+        if (bundleHit) {
+          for (const bi of bundleHit.items) {
+            if (!bi.item_id) continue;
+            addExpanded(bi.item_id, bi.item_name_canonical, bi.qty * r.qty, bundleHit.bundle_id);
+          }
+        } else {
+          addExpanded(r.item_id, r.item_name_canonical, r.qty);
+        }
       }
     }
+    const resolved = Array.from(resolvedSum.values());
 
     await ctx.runMutation(internal.item_resolver_queries.setResolution, {
       reservation_id,

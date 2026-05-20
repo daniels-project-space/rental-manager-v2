@@ -75,6 +75,19 @@ crons.interval(
   {},
 );
 
+// ── Layer B (2026-05-19) — qty-drift safety net ────────────────
+// Nightly 03:00 UTC re-fetches Hygglo per-order detail for active reservations
+// and compares raw items[].length vs stored expanded_items quantity. Drifted
+// rows persist in qty_drift_alerts (status=open) and surface via
+// dashboard.getStatsDrawerData.qty_drift_count. Layer C
+// (admin_backfill_qty_resolution) clears them by re-running the resolver.
+crons.daily(
+  "audit qty drift",
+  { hourUTC: 3, minuteUTC: 0 },
+  internal.audit_qty_drift.auditItemQuantities,
+  { only_active: true },
+);
+
 
 // ── Wave 4 — Poller staleness alarm + auto-heal ─────────────────
 //

@@ -36,6 +36,15 @@ interface UntrackedReservation {
   net_gbp: number | null;
 }
 
+interface QtyDriftSample {
+  reservation_id: string;
+  hygglo_order_id: string;
+  renter_name: string | null;
+  drift_kind: "listing_count_lt_items" | "unique_sku_lt_items";
+  raw_n: number;
+  expanded_n: number;
+}
+
 interface Props {
   conflicts: Conflict[];
   untracked: {
@@ -43,6 +52,10 @@ interface Props {
     total_value_gbp: number;
     reservations: UntrackedReservation[];
   };
+  // Layer B (2026-05-19) — optional qty-drift summary from getStatsDrawerData.
+  // Older callers that don't pass it render exactly as before (no-op badge).
+  qty_drift_count?: number;
+  qty_drift_sample?: QtyDriftSample[];
 }
 
 const fmtDate = (d: string | null) => {
@@ -52,10 +65,16 @@ const fmtDate = (d: string | null) => {
 
 const fmtGbp = (n: number) => "£" + Math.round(n).toLocaleString("en-GB");
 
-export function CriticalAlerts({ conflicts, untracked }: Props) {
+export function CriticalAlerts({
+  conflicts,
+  untracked,
+  qty_drift_count = 0,
+  qty_drift_sample = [],
+}: Props) {
   const hasConflicts = conflicts.length > 0;
   const hasUntracked = untracked.count > 0;
-  if (!hasConflicts && !hasUntracked) return null;
+  const hasDrift = qty_drift_count > 0;
+  if (!hasConflicts && !hasUntracked && !hasDrift) return null;
 
   return (
     <>
@@ -103,8 +122,59 @@ export function CriticalAlerts({ conflicts, untracked }: Props) {
         {hasUntracked && (
           <UntrackedBanner data={untracked} />
         )}
+        {hasDrift && (
+          <QtyDriftBadge count={qty_drift_count} sample={qty_drift_sample} />
+        )}
       </div>
     </>
+  );
+}
+
+// Layer B (2026-05-19) — qty-drift mini-banner. Non-blocking warning surfaced
+// when nightly audit (audit_qty_drift:auditItemQuantities) finds reservations
+// whose expanded_items under-count the raw Hygglo items[] (resolver miss).
+function QtyDriftBadge({ count, sample }: { count: number; sample: QtyDriftSample[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div
+      className="rounded-xl p-3"
+      style={{
+        background: "linear-gradient(135deg, rgba(234,179,8,0.14), rgba(202,138,4,0.10))",
+        border: "1px solid rgba(234,179,8,0.40)",
+      }}
+    >
+      <button
+        onClick={() => setExpanded((x) => !x)}
+        className="w-full flex items-center gap-2 text-left"
+      >
+        <span className="text-amber-300 text-sm">⚠</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] uppercase tracking-wider font-bold text-amber-200">
+            {count} qty drift{count === 1 ? "" : "s"} detected — view
+          </div>
+          <div className="text-xs text-amber-100 mt-0.5">
+            Resolver under-counted vs Hygglo listing[]; run admin_backfill_qty_resolution.
+          </div>
+        </div>
+        <span
+          className="text-amber-300 text-sm"
+          style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+        >
+          ▾
+        </span>
+      </button>
+      {expanded && sample.length > 0 && (
+        <ul className="mt-2 text-xs text-amber-100 space-y-1">
+          {sample.map((s) => (
+            <li key={s.reservation_id}>
+              <span className="font-mono">{s.hygglo_order_id}</span>{" "}
+              {s.renter_name ?? "—"} · expanded {s.expanded_n} / raw {s.raw_n}{" "}
+              <span className="text-amber-300/70">({s.drift_kind})</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

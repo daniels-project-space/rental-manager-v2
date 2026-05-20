@@ -139,6 +139,52 @@ function sourceItemRefs(
 }
 
 /**
+ * Phase 7.11b — name-based fallback for reservations whose `expanded_items` /
+ * `resolved_items` were never populated (53 of 130 owner_denied rentals in
+ * /tmp/gap_diagnostic). Substring matches the raw `items[].item_name` against
+ * the canonical item names so we at least get a capacity diagnosis instead of
+ * dumping the rental in `unknown`.
+ *
+ * Case-insensitive, longest-canonical-first to avoid prefix collisions
+ * (e.g. "Sony A7" matching before "Sony A7 III"). Only returns the first
+ * canonical hit per raw line — kits aren't reconstructed here, but a single
+ * recognizable item is enough to classify the reservation.
+ */
+async function nameFallbackRefs(
+  ctx: QueryCtx,
+  r: Doc<"reservations">,
+): Promise<Array<{ item_id: Id<"items">; canonical: string }>> {
+  const raws = (r.items ?? [])
+    .map((i: any) => (typeof i?.item_name === "string" ? i.item_name : ""))
+    .filter((s: string) => s.length > 0);
+  if (raws.length === 0) return [];
+
+  const allItems = await ctx.db.query("items").collect();
+  const canonicals = allItems
+    .map((it) => ({ item_id: it._id, canonical: it.name_canonical }))
+    .sort((a, b) => b.canonical.length - a.canonical.length);
+
+  const out: Array<{ item_id: Id<"items">; canonical: string }> = [];
+  const seen = new Set<string>();
+  for (const raw of raws) {
+    const hay = raw.toLowerCase();
+    for (const c of canonicals) {
+      const needle = c.canonical.toLowerCase();
+      if (needle.length < 4) continue;
+      if (hay.includes(needle)) {
+        const k = String(c.item_id);
+        if (!seen.has(k)) {
+          out.push({ item_id: c.item_id, canonical: c.canonical });
+          seen.add(k);
+        }
+        break; // first match per raw line
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Estimate the gross £ for a (possibly denied) rental. Used both for £-loss
  * accounting AND for the Phase 5c below-minimum-threshold reclassification.
  *
@@ -207,14 +253,31 @@ function estimateLossGbp(
  *     range (so we don't re-scan the table per call).
  *   - `priceByName` for £ estimation.
  */
+/**
+ * Phase 7.11b — partial-commitment threshold. Strict `committed >= total`
+ * leaves many "near miss" rentals (one of two units out, asked for both)
+ * classified as voluntary even though the SECOND unit was committed elsewhere
+ * and Daniel literally couldn't fulfil the order. We now also treat the day
+ * as capacity-exhausted if the *remaining* capacity (total - committed) is
+ * less than the rental's requested qty (so a 2-unit ask vs 1 free unit ⇒
+ * capacity_gap, not voluntary).
+ */
+export const PARTIAL_CAPACITY_RATIO = 1.0; // committed/total threshold (1.0 = fully booked)
+export const HIGH_UTILISATION_RATIO = 0.5; // committed/total ≥ 50% AND requested > free ⇒ capacity
+
 export async function diagnoseDenialCapacity(
   ctx: QueryCtx,
   reservation: Doc<"reservations">,
   commitMap: CommitmentMap,
   priceByName: Map<string, number>,
 ): Promise<DenialGapDiagnosis> {
-  const refs = sourceItemRefs(reservation);
+  let refs = sourceItemRefs(reservation);
   const estimated_loss_gbp = estimateLossGbp(reservation, priceByName);
+
+  // Phase 7.11b — Cycle 4: name-based fallback when items weren't resolved.
+  if (refs.length === 0) {
+    refs = await nameFallbackRefs(ctx, reservation);
+  }
 
   if (refs.length === 0) {
     return {
@@ -272,10 +335,35 @@ export async function diagnoseDenialCapacity(
     // Walk every requested date; track peak commitment.
     let peakCommitted = 0;
     let everFullyBooked = false;
+    let everHighUtil = false;
+    // Requested qty from the reservation's expanded/resolved/items line for THIS item.
+    let requestedQty = 1;
+    for (const xi of reservation.expanded_items ?? []) {
+      if (String(xi.item_id) === idStr) {
+        requestedQty = Math.max(requestedQty, xi.qty ?? 1);
+      }
+    }
+    for (const ri of reservation.resolved_items ?? []) {
+      if (ri.item_id && String(ri.item_id) === idStr) {
+        requestedQty = Math.max(requestedQty, ri.qty ?? 1);
+      }
+    }
     for (const d of dates) {
       const committed = commitMap.get(commitKey(idStr, d)) ?? 0;
       if (committed > peakCommitted) peakCommitted = committed;
       if (total > 0 && committed >= total) everFullyBooked = true;
+      // Phase 7.11b — partial: if remaining (total - committed) < requestedQty
+      // on any date, AND utilisation is ≥ HIGH_UTILISATION_RATIO, count it.
+      if (total > 0) {
+        const remaining = total - committed;
+        const util = committed / total;
+        if (
+          remaining < requestedQty &&
+          util >= HIGH_UTILISATION_RATIO
+        ) {
+          everHighUtil = true;
+        }
+      }
     }
 
     per_item_diagnosis.push({
@@ -285,23 +373,29 @@ export async function diagnoseDenialCapacity(
       units_committed: peakCommitted,
       units_total: total,
       is_marketing_only: false,
-      classification: everFullyBooked ? "capacity_gap" : "voluntary",
+      classification:
+        everFullyBooked || everHighUtil ? "capacity_gap" : "voluntary",
     });
   }
 
   // Aggregate reservation-level cause.
+  // Phase 7.11b — Cycle 3: ANY marketing-only item taints the rental as
+  // marketing_only (was: requires ALL items marketing_only). Rationale: kits
+  // where one rare lens (qty=0, flagged is_marketing_only) is in the line
+  // were rejected because of THAT item — the rest of the kit is irrelevant
+  // for "why was this denied".
   let cause: DenialGapDiagnosis["cause"] = "unknown";
   if (per_item_diagnosis.length > 0) {
     const classes = per_item_diagnosis.map((d) => d.classification);
     const hasCapacity = classes.includes("capacity_gap");
     const hasVoluntary = classes.includes("voluntary");
     const hasMktOnly = classes.includes("marketing_only");
-    const onlyMktOnly = classes.every((c) => c === "marketing_only");
-    if (onlyMktOnly) cause = "marketing_only";
-    else if (hasCapacity && hasVoluntary) cause = "mixed";
+    if (hasMktOnly && !hasCapacity) {
+      // Marketing-only dominates over voluntary; capacity wins if both.
+      cause = "marketing_only";
+    } else if (hasCapacity && hasVoluntary) cause = "mixed";
     else if (hasCapacity) cause = "capacity";
-    else if (hasVoluntary && !hasMktOnly) cause = "voluntary";
-    else if (hasVoluntary && hasMktOnly) cause = "voluntary";
+    else if (hasVoluntary) cause = "voluntary";
     else cause = "unknown";
   }
 

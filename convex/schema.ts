@@ -315,6 +315,11 @@ export default defineSchema({
     pickup_at: v.optional(v.number()),              // ms epoch — actual handover start
     return_at: v.optional(v.number()),              // ms epoch — actual handover end
     renter_name: v.optional(v.string()),            // denormalized from Hygglo otherPartName
+    /** 2026-05-19 — Hygglo renter user id (detail.users.otherPart.id). Used by
+     *  the poller + backfill to resolve `renter_id` via the renters table's
+     *  `by_hygglo_user_id` index. Kept on the reservation row as a denormalized
+     *  hint so future runs can re-link without refetching the order. */
+    hygglo_user_id: v.optional(v.string()),
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
 
     /** LLM-resolved master-inventory items for this reservation.
@@ -431,6 +436,30 @@ export default defineSchema({
     .index("by_v1_rental_id", ["v1_rental_id"])
     .index("by_hygglo_order_id", ["hygglo_order_id"])
     .index("by_demand_loss_class", ["demand_loss_class"]),
+
+  // ── Layer B (2026-05-19) — qty-drift safety net ────────────────────────
+  // Nightly audit (convex/audit_qty_drift.ts) detects reservations whose
+  // resolver output under-counts the raw Hygglo `items[]` array (root cause
+  // of the FX3 double-book miss). One open row per drifted reservation.
+  // Surfaced in dashboard via `qty_drift_count` field in getStatsDrawerData.
+  qty_drift_alerts: defineTable({
+    reservation_id: v.id("reservations"),
+    hygglo_order_id: v.string(),
+    renter_name: v.optional(v.string()),
+    account_slug: v.optional(v.string()),
+    drift_kind: v.union(
+      v.literal("listing_count_lt_items"),
+      v.literal("unique_sku_lt_items"),
+    ),
+    raw_n: v.number(),         // raw Hygglo items[].length
+    expanded_n: v.number(),    // sum of expanded_items[].qty
+    missing_skus: v.optional(v.array(v.string())),
+    detected_at: v.number(),
+    status: v.union(v.literal("open"), v.literal("resolved")),
+  })
+    .index("by_account_status", ["account_slug", "status"])
+    .index("by_reservation", ["reservation_id"])
+    .index("by_status", ["status"]),
 
   calendar_holds: defineTable({
     item_id: v.id("items"),

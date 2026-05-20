@@ -425,6 +425,10 @@ export const completeStaleConfirmedCron = internalMutation({
       // so we don't auto-demote them to `completed` and hide them from the
       // double-booking detector.
       if (r.order_step === "RETURNED" || r.order_step === "DELIVERED") continue;
+      // 2026-05-20: don't auto-complete rows where the renter still has the gear.
+      // Hygglo classifies DELIVERED/BOOKED_AFTER_VERIFIED rows as "current" until
+      // marked returned/reviewed — they're not actually done.
+      if (r.order_step === "BOOKED_AFTER_VERIFIED") continue;
       const lastPolled =
         (r as { last_polled_at?: number }).last_polled_at ??
         (r as { _creationTime?: number })._creationTime ??
@@ -457,6 +461,10 @@ export const adminCompleteStaleConfirmed = mutation({
       // so we don't auto-demote them to `completed` and hide them from the
       // double-booking detector.
       if (r.order_step === "RETURNED" || r.order_step === "DELIVERED") continue;
+      // 2026-05-20: don't auto-complete rows where the renter still has the gear.
+      // Hygglo classifies DELIVERED/BOOKED_AFTER_VERIFIED rows as "current" until
+      // marked returned/reviewed — they're not actually done.
+      if (r.order_step === "BOOKED_AFTER_VERIFIED") continue;
       const lastPolled =
         (r as { last_polled_at?: number }).last_polled_at ??
         (r as { _creationTime?: number })._creationTime ??
