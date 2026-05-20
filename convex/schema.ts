@@ -238,6 +238,14 @@ export default defineSchema({
       source: v.optional(v.string()),
       confidence_score: v.optional(v.number()),
       v1_extracteditem_id: v.optional(v.string()),
+      // 2026-05-20: widened to accept raw Hygglo items[] (poller commit aa2ad13 starts writing these)
+      type: v.optional(v.string()),
+      // 2026-05-20: widened to accept raw Hygglo items[] (poller commit aa2ad13 starts writing these)
+      image: v.optional(v.any()),
+      // 2026-05-20: widened to accept raw Hygglo items[] (poller commit aa2ad13 starts writing these; upstream sends number)
+      product_id: v.optional(v.any()),
+      // 2026-05-20: widened to accept raw Hygglo items[] (poller commit aa2ad13 starts writing these)
+      slug: v.optional(v.string()),
     }))),
     bundle_id: v.optional(v.id("bundles")),
     v1_created_at: v.optional(v.number()),
