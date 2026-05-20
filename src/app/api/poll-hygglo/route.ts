@@ -12,9 +12,10 @@
  * cron schedule on the task ever stops firing, the 15-min Convex cron will
  * keep poking the inbox. Idempotent (poller detects "nothing new" fast).
  *
- * Auth: `X-Internal-Token` header must match env `INTERNAL_POLL_TOKEN`.
- * If the env var is unset on the server, all requests are rejected — fail
- * closed, no anonymous trigger of background jobs from the public route.
+ * Auth: `Authorization: Bearer <token>` header must match env
+ * `POLL_TRIGGER_SECRET`. If the env var is unset on the server, all
+ * requests are rejected — fail closed, no anonymous trigger of
+ * background jobs from the public route.
  */
 import "server-only";
 import { NextResponse } from "next/server";
@@ -24,15 +25,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function checkAuth(req: Request): NextResponse | null {
-  const expected = process.env.INTERNAL_POLL_TOKEN;
+  const expected = process.env.POLL_TRIGGER_SECRET;
   if (!expected) {
     return NextResponse.json(
-      { ok: false, error: "server_missing_INTERNAL_POLL_TOKEN" },
+      { ok: false, error: "server_missing_POLL_TRIGGER_SECRET" },
       { status: 503 },
     );
   }
-  const provided = req.headers.get("x-internal-token") ?? "";
-  if (provided !== expected) {
+  const auth = req.headers.get("authorization") ?? "";
+  const provided = auth.toLowerCase().startsWith("bearer ")
+    ? auth.slice(7).trim()
+    : "";
+  if (!provided || provided !== expected) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   return null;
@@ -56,6 +60,6 @@ export async function GET(req: Request) {
   if (unauth) return unauth;
   return NextResponse.json({
     ok: true,
-    info: "POST (or GET) with X-Internal-Token header to enqueue poll-hygglo-inbox.",
+    info: "POST (or GET) with `Authorization: Bearer <POLL_TRIGGER_SECRET>` header to enqueue poll-hygglo-inbox.",
   });
 }
