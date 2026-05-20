@@ -149,26 +149,16 @@ export const runStalenessCheck = internalAction({
 
     if (toAlert.length === 0) return report;
 
-    // One backup_poll run covers all stale accounts (it polls both anyway).
-    let autoHealOk = false;
-    try {
-      const backupResult = await ctx.runAction(
-        internal.backup_poll.runBackupPoll,
-        {},
-      );
-      autoHealOk = backupResult.errors.length === 0;
-      report.autoHealInvoked = true;
-    } catch {
-      autoHealOk = false;
-      report.autoHealInvoked = true;
-    }
+    // 2026-05-20: DISABLED — backup poller writes stripped data, overwrites primary-enriched rows. Re-enable only after backup_poll fix.
+    // const backupResult = await ctx.runAction(internal.backup_poll.runBackupPoll, {});
+    report.autoHealInvoked = false;
 
     for (const s of toAlert) {
       const text =
         `*Hygglo poller stale*\n` +
         `Account: \`${s.account}\`\n` +
         `Last poll: ${s.staleMinutes} min ago\n` +
-        `Auto-heal: ${autoHealOk ? "ok" : "attempted (check logs)"}`;
+        `Auto-heal: disabled (primary-poller-only mode)`;
       const tg = await sendTelegram(text);
       report.alerted += 1;
       report.perAccount.push({
@@ -181,8 +171,8 @@ export const runStalenessCheck = internalAction({
         account_slug: s.account,
         sent_at: now,
         stale_minutes: s.staleMinutes,
-        auto_heal_attempted: true,
-        auto_heal_ok: autoHealOk,
+        auto_heal_attempted: false,
+        auto_heal_ok: false,
         telegram_ok: tg.ok,
       });
     }

@@ -72,37 +72,14 @@ export const runBackupPoll = internalAction({
         report.ordersFetched = payloads.length;
         report.detailErrors = detailErrors;
 
-        for (const p of payloads) {
-          try {
-            const res = await ctx.runMutation(
-              api.hygglo.upsertOrderAsReservation,
-              {
-                account_slug: slug,
-                hygglo_order_id: p.hygglo_order_id,
-                status: p.status,
-                start_date: p.start_date,
-                end_date: p.end_date,
-                gross_paid_gbp: p.gross_paid_gbp,
-                net_to_owner_gbp: p.net_to_owner_gbp,
-                currency: p.currency,
-                items: p.items,
-                duration_days: p.duration_days,
-                order: p.order,
-                sourceFilter: p.sourceFilter,
-                booking_status: p.booking_status,
-                latest_activity: p.latest_activity,
-              },
-            );
-            if (res.action === "inserted") report.inserted++;
-            else if (res.action === "updated") report.updated++;
-            else report.skipped++;
-          } catch (mErr) {
-            const msg = `order ${p.hygglo_order_id}: ${
-              mErr instanceof Error ? mErr.message : String(mErr)
-            }`;
-            report.detailErrors.push(msg);
-          }
-        }
+        // 2026-05-20: READ-ONLY MODE — backup poller no longer writes via
+        // api.hygglo.upsertOrderAsReservation. Earlier full-row overwrite
+        // stripped image_url, renter_name, hygglo_system_signal*, photos_urls
+        // and other primary-only fields. Backup is now a Hygglo-credentials
+        // health probe: if fetchOrdersMinimal returned without throwing, we
+        // consider the account "reachable" and clear staleness so Trigger.dev
+        // primary remains the only writer. All `skipped` accounting below.
+        report.skipped = payloads.length;
 
         // Mark account healthy in account_state.
         await ctx.runMutation(api.account_state.upsert, {
