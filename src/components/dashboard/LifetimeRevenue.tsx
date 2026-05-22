@@ -238,52 +238,54 @@ export function LifetimeRevenue() {
         <div className="flex gap-1 mb-2">
           <button
             onClick={() => setChartMode("bars")}
-            className="text-xs px-2 py-0.5 rounded-md transition-all"
+            className="text-[11px] px-2.5 py-0.5 rounded-full transition-all hover:opacity-90"
             style={{
-              border: "1px solid " + (chartMode === "bars" ? "#22c55e" : "#3a3f4b"),
-              color: chartMode === "bars" ? "#22c55e" : "#8b8fa3",
-              background: chartMode === "bars" ? "rgba(34,197,94,0.12)" : "transparent",
+              border: "1px solid " + (chartMode === "bars" ? "#22c55e80" : "#3a3f4b"),
+              color: chartMode === "bars" ? "#22c55e" : "#6b7280",
+              background: chartMode === "bars" ? "rgba(34,197,94,0.08)" : "rgba(255,255,255,0.02)",
+              opacity: chartMode === "bars" ? 1 : 0.5,
             }}
           >Bars</button>
           <button
             onClick={() => setChartMode("lines")}
-            className="text-xs px-2 py-0.5 rounded-md transition-all"
+            className="text-[11px] px-2.5 py-0.5 rounded-full transition-all hover:opacity-90"
             style={{
-              border: "1px solid " + (chartMode === "lines" ? "#22c55e" : "#3a3f4b"),
-              color: chartMode === "lines" ? "#22c55e" : "#8b8fa3",
-              background: chartMode === "lines" ? "rgba(34,197,94,0.12)" : "transparent",
+              border: "1px solid " + (chartMode === "lines" ? "#22c55e80" : "#3a3f4b"),
+              color: chartMode === "lines" ? "#22c55e" : "#6b7280",
+              background: chartMode === "lines" ? "rgba(34,197,94,0.08)" : "rgba(255,255,255,0.02)",
+              opacity: chartMode === "lines" ? 1 : 0.5,
             }}
           >Lines</button>
         </div>
 
         {/* Toggleable legend */}
-        <div className="flex flex-wrap gap-1.5 mb-3">
+        <div className="flex flex-wrap gap-1 mb-3">
           {SERIES.map((s) => {
             const isHidden = hidden[s.key] ?? false;
             return (
               <button
                 key={s.key}
                 onClick={() => toggle(s.key)}
-                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-all"
+                className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
                 style={{
-                  border: "1px solid " + s.color,
+                  border: "1px solid " + (isHidden ? "#3a3f4b" : s.color + "80"),
                   color: isHidden ? "#6b7280" : s.color,
-                  background: isHidden ? "rgba(255,255,255,0.03)" : s.fill,
-                  opacity: isHidden ? 0.45 : 1,
+                  background: isHidden ? "rgba(255,255,255,0.02)" : s.color + "14",
+                  opacity: isHidden ? 0.5 : 1,
                 }}
               >
                 <span
                   style={{
                     display: "inline-block",
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
+                    width: 6,
+                    height: 6,
+                    borderRadius: 9999,
                     background: isHidden ? "#6b7280" : s.color,
                   }}
                 />
                 <span className="flex flex-col items-start leading-tight">
                   <span>{s.label}</span>
-                  <span className="text-[10px] opacity-70 tabular-nums">
+                  <span className="text-[9px] opacity-70 tabular-nums">
                     {fmtGbp(seriesTotals[s.key] ?? 0)}
                   </span>
                 </span>
@@ -293,50 +295,52 @@ export function LifetimeRevenue() {
           {/* Cumulative toggle */}
           <button
             onClick={() => toggle("cumulative")}
-            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-all"
+            className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
             style={{
-              border: "1px solid #22c55e",
+              border: "1px solid " + (hidden.cumulative ? "#3a3f4b" : "#22c55e80"),
               color: hidden.cumulative ? "#6b7280" : "#22c55e",
-              background: hidden.cumulative ? "rgba(255,255,255,0.03)" : "rgba(34,197,94,0.12)",
-              opacity: hidden.cumulative ? 0.45 : 1,
+              background: hidden.cumulative ? "rgba(255,255,255,0.02)" : "rgba(34,197,94,0.08)",
+              opacity: hidden.cumulative ? 0.5 : 1,
             }}
           >
             <span
               style={{
                 display: "inline-block",
-                width: 8,
-                height: 3,
+                width: 6,
+                height: 6,
+                borderRadius: 9999,
                 background: hidden.cumulative ? "#6b7280" : "#22c55e",
               }}
             />
             <span className="flex flex-col items-start leading-tight">
               <span>Cumulative</span>
-              <span className="text-[10px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
+              <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
             </span>
           </button>
           {/* Target toggle — gates the current-month projected-total marker */}
           {expectedMonthlyTarget > 0 && (
             <button
               onClick={() => toggle("target")}
-              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-all"
+              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
               style={{
-                border: "1px solid #facc15",
-                color: hidden.target ? "#6b7280" : "#facc15",
-                background: hidden.target ? "rgba(255,255,255,0.03)" : "rgba(250,204,21,0.12)",
-                opacity: hidden.target ? 0.45 : 1,
+                border: "1px solid " + (hidden.target ? "#3a3f4b" : "#eab30880"),
+                color: hidden.target ? "#6b7280" : "#eab308",
+                background: hidden.target ? "rgba(255,255,255,0.02)" : "rgba(234,179,8,0.08)",
+                opacity: hidden.target ? 0.5 : 1,
               }}
             >
               <span
                 style={{
                   display: "inline-block",
-                  width: 8,
-                  height: 3,
-                  background: hidden.target ? "#6b7280" : "#facc15",
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9999,
+                  background: hidden.target ? "#6b7280" : "#eab308",
                 }}
               />
               <span className="flex flex-col items-start leading-tight">
                 <span>Target</span>
-                <span className="text-[10px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
+                <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
               </span>
             </button>
           )}
@@ -351,7 +355,7 @@ export function LifetimeRevenue() {
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+            <ComposedChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
               <defs>
                 {/* Per-series vertical gradients — lighter at top of bar, darker at base.
                     Gives bars a depth/sheen instead of flat rgba. */}
@@ -571,9 +575,9 @@ export function LifetimeRevenue() {
                 />
               )}
               {/* Vertical boundary marking where actuals end and projections begin.
-                  Renders in both chart modes. Gated on hidden.predictedRemainder
+                  Only renders in line mode. Gated on hidden.predictedRemainder
                   so the "Projected" legend pill hides this too. */}
-              {rawCurrentMonth && !hidden.predictedRemainder && (
+              {chartMode === "lines" && rawCurrentMonth && !hidden.predictedRemainder && (
                 <ReferenceLine
                   yAxisId="right"
                   x={fmtMonth(rawCurrentMonth)}
