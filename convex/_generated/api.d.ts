@@ -87,6 +87,7 @@ import type * as lib_inventory_categories from "../lib/inventory_categories.js";
 import type * as lib_item_matcher from "../lib/item_matcher.js";
 import type * as lib_item_taxonomy from "../lib/item_taxonomy.js";
 import type * as lib_knowledge_search from "../lib/knowledge_search.js";
+import type * as lib_listing_equivalence from "../lib/listing_equivalence.js";
 import type * as lib_listing_photo_reference from "../lib/listing_photo_reference.js";
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
@@ -146,6 +147,7 @@ import type * as snapshot_jobs from "../snapshot_jobs.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
+import type * as vacation from "../vacation.js";
 import type * as walle_ratelimits from "../walle_ratelimits.js";
 
 import type {
@@ -234,6 +236,7 @@ declare const fullApi: ApiFromModules<{
   "lib/item_matcher": typeof lib_item_matcher;
   "lib/item_taxonomy": typeof lib_item_taxonomy;
   "lib/knowledge_search": typeof lib_knowledge_search;
+  "lib/listing_equivalence": typeof lib_listing_equivalence;
   "lib/listing_photo_reference": typeof lib_listing_photo_reference;
   "lib/missed_revenue": typeof lib_missed_revenue;
   "lib/quiet_hours": typeof lib_quiet_hours;
@@ -293,6 +296,7 @@ declare const fullApi: ApiFromModules<{
   sync_account_profiles: typeof sync_account_profiles;
   sync_state: typeof sync_state;
   tax: typeof tax;
+  vacation: typeof vacation;
   walle_ratelimits: typeof walle_ratelimits;
 }>;
 

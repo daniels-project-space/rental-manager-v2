@@ -1462,4 +1462,21 @@ export default defineSchema({
   })
     .index("by_user_day", ["user_id", "day"])
     .index("by_day", ["day"]),
+
+  // ── Vacation Mode (GLOBAL) ────────────────────────────────────────────
+  // One row per vacation window. Affects ALL accounts (DB Cinema, Vertus,
+  // Daniel, Leo) — intentionally NO account_slug field. Soft-cancel via
+  // is_active=false so we keep an audit trail of past vacations.
+  // Date strings are YYYY-MM-DD in Europe/London (inclusive end_date),
+  // matching the existing reservation date columns.
+  vacation_periods: defineTable({
+    start_date: v.string(),                  // "YYYY-MM-DD" Europe/London
+    end_date: v.string(),                    // "YYYY-MM-DD" Europe/London (inclusive)
+    reason: v.optional(v.string()),          // free text, optional
+    created_at: v.number(),                  // Date.now()
+    created_by: v.optional(v.string()),      // "dashboard" | "telegram" | username
+    is_active: v.boolean(),                  // soft-cancel flag — false to "delete"
+  })
+    .index("by_active_start", ["is_active", "start_date"])
+    .index("by_active_end", ["is_active", "end_date"]),
 });
