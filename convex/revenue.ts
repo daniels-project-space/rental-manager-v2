@@ -1,6 +1,11 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import {
+  tieredCreditTotals,
+  type AiDecisionLite,
+  type AiDecisionAuditLite,
+} from "./lib/ai_attribution";
 import { diagnoseDenialAvailability } from "./lib/availability";
 import {
   buildCommitmentMap,
@@ -291,6 +296,10 @@ export const getLifetimeByMonth = query({
     // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
     const AI_ACTIVE_FROM: string = (settings as unknown as Record<string, string>)?.ai_active_from ?? "2026-02";
+    // NOTE (AI-BE rework, 2026-05-22): `ai_boost_rate` is NO LONGER used in
+    // the £ math — aiBoost is now computed from real ai_decision rows via
+    // tieredCreditTotals(). The field is preserved on settings for
+    // backwards-compat and read here only to be echoed in the response.
     const boostRate: number = (settings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.24;
 
     // getLifetimeByMonth feeds the lifetime chart — by definition needs
@@ -298,6 +307,15 @@ export const getLifetimeByMonth = query({
     // a future PR should back this with an MV (one row per (month, account)
     // refreshed nightly). // check-patterns:ok
     const allReservations = await ctx.db.query("reservations").collect();
+
+    // ── AI attribution source data (Wave AI-BE) ──────────────────
+    // Single fetch each (no N+1) — classification happens in-memory.
+    const allAiDecisions = (await ctx.db
+      .query("ai_decision")
+      .collect()) as unknown as AiDecisionLite[];
+    const allAiAudits = (await ctx.db
+      .query("ai_decision_audit")
+      .collect()) as unknown as AiDecisionAuditLite[];
 
     // Load historical_revenue for pre-import months (retired accounts + v1 migration)
     const histRows = await ctx.db.query("historical_revenue").collect();
@@ -443,6 +461,18 @@ export const getLifetimeByMonth = query({
 
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+    type AiAttributionMonth = {
+      hard_ai_gbp: number;
+      soft_ai_gbp: number;
+      soft_ai_credit_gbp: number;
+      baseline_gbp: number;
+      assisted_gbp: number;
+      hard_count: number;
+      soft_count: number;
+      assisted_count: number;
+      baseline_count: number;
+    };
+
     type MonthRow = {
       month: string;
       monthLabel: string;
@@ -460,8 +490,29 @@ export const getLifetimeByMonth = query({
       revenue: number;
       byAccount: { dbcinema: number; leo: number; daniel: number; vertus: number };
       damage: number;
-      aiAttribution: number;
+      aiAttribution: AiAttributionMonth;
     };
+
+    // ── Bucket dedup'd, scoped reservations by their effective month ───
+    // We re-use the same scope rules as the gross-summing loop above
+    // (skip obsolete/cancelled/declined/pending; only past/current months).
+    // This array is what tieredCreditTotals classifies per month.
+    const resByMonth = new Map<string, Array<typeof dedupedFiltered[number]>>();
+    for (const res of dedupedFiltered) {
+      const dateStr = effectiveDate(res as any);
+      if (!dateStr) continue;
+      if (res.is_obsolete) continue;
+      if (res.status === "cancelled" || res.status === "declined") continue;
+      if (isPendingVerification(res as any)) continue;
+      const mo = dateStr.slice(0, 7);
+      if (mo > currentMonth) continue;
+      let arr = resByMonth.get(mo);
+      if (!arr) {
+        arr = [];
+        resByMonth.set(mo, arr);
+      }
+      arr.push(res);
+    }
 
     const rows: MonthRow[] = [];
     let cumulative = 0;
@@ -480,6 +531,19 @@ export const getLifetimeByMonth = query({
       let damageClaims = 0;
       let bookedNextVal = 0;
       let pendingNextVal = 0;
+      // AI tiered attribution accumulator (default empty; populated below
+      // whenever the month has live reservations in scope).
+      let aiAttrMonth: AiAttributionMonth = {
+        hard_ai_gbp: 0,
+        soft_ai_gbp: 0,
+        soft_ai_credit_gbp: 0,
+        baseline_gbp: 0,
+        assisted_gbp: 0,
+        hard_count: 0,
+        soft_count: 0,
+        assisted_count: 0,
+        baseline_count: 0,
+      };
 
       if (!isFuture) {
         const dbRaw = dbGross.get(mo) ?? 0;
@@ -536,14 +600,33 @@ export const getLifetimeByMonth = query({
           dbOrganic = hist.total;
           damageClaims = claimsByMonth.get(mo) ?? 0;
         } else {
-          if (mo >= AI_ACTIVE_FROM && boostRate > 0 && totalRaw > 0) {
-            aiBoost = r2(totalRaw * boostRate / (1 + boostRate));
-            const dbFrac = dbRaw / totalRaw;
-            dbOrganic = r2(dbRaw - aiBoost * dbFrac);
-            leoOrganic = r2(leoRaw - aiBoost * (1 - dbFrac));
-          } else {
-            dbOrganic = dbRaw;
-            leoOrganic = leoRaw;
+          // ── AI-BE rework (2026-05-22) ─────────────────────────
+          // Per-account organics no longer have aiBoost subtracted —
+          // aiBoost sits as a chart OVERLAY (additive series), not a
+          // skim from organic. The flat boostRate skim is retired;
+          // aiBoost is computed from real ai_decision tiers below.
+          dbOrganic = dbRaw;
+          leoOrganic = leoRaw;
+
+          const monthReservations = resByMonth.get(mo) ?? [];
+          if (monthReservations.length > 0) {
+            const totals = tieredCreditTotals(
+              monthReservations as any,
+              allAiDecisions,
+              allAiAudits,
+            );
+            aiAttrMonth = {
+              hard_ai_gbp: totals.hard_ai_gbp,
+              soft_ai_gbp: totals.soft_ai_gbp,
+              soft_ai_credit_gbp: totals.soft_ai_credit_gbp,
+              baseline_gbp: totals.baseline_gbp,
+              assisted_gbp: totals.assisted_gbp,
+              hard_count: totals.hard_count,
+              soft_count: totals.soft_count,
+              assisted_count: totals.assisted_count,
+              baseline_count: totals.baseline_count,
+            };
+            aiBoost = r2(totals.total_attributed_gbp);
           }
           damageClaims = claimsByMonth.get(mo) ?? 0;
         }
@@ -608,7 +691,7 @@ export const getLifetimeByMonth = query({
           vertus: vertusOrganic,
         },
         damage: damageClaims,
-        aiAttribution: aiBoost,
+        aiAttribution: aiAttrMonth,
       });
     }
 

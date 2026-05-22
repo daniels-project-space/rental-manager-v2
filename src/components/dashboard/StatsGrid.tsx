@@ -368,19 +368,69 @@ export function StatsGrid() {
           <UpcomingDrawer data={data.upcoming as any} />
         </ExpandableStatCard>
       ),
-      ai_boost: (
-        <ExpandableStatCard
-          id="ai_boost"
-          label="AI Boost"
-          value={fmtGbp(data.ai_boost.total_uplift_gbp)}
-          valueColor="green"
-          subtitle={`${data.ai_boost.breakdown.length} sources`}
-          isExpanded={expandedId === "ai_boost"}
-          onToggle={() => toggle("ai_boost")}
-        >
-          <AiBoostDrawer data={data.ai_boost} />
-        </ExpandableStatCard>
-      ),
+      ai_boost: (() => {
+        const aiBoost = (data.ai_boost ?? {}) as {
+          current_month?: {
+            hard_gbp?: number; soft_gbp?: number; soft_credit_gbp?: number;
+            assisted_gbp?: number; baseline_gbp?: number;
+            hard_count?: number; soft_count?: number; assisted_count?: number; baseline_count?: number;
+            total_credit_gbp?: number;
+          };
+          prior_3mo_median_gbp?: number;
+          delta_vs_p3m_gbp?: number;
+          delta_vs_p3m_pct?: number;
+          confidence?: "low" | "med" | "high";
+          sample_count?: number;
+          drilldown_reservation_ids?: string[];
+          total_uplift_gbp?: number;
+          breakdown?: Array<{ label?: string; count?: number; gbp?: number; weight?: number }>;
+        };
+        const cm = aiBoost.current_month ?? {};
+        const totalCredit = cm.total_credit_gbp ?? aiBoost.total_uplift_gbp ?? 0;
+        const sampleCount = aiBoost.sample_count ?? 0;
+        const hardCount = cm.hard_count ?? 0;
+        const softCount = cm.soft_count ?? 0;
+        const dGbp = aiBoost.delta_vs_p3m_gbp ?? 0;
+        const dPct = aiBoost.delta_vs_p3m_pct ?? 0;
+        const conf = aiBoost.confidence ?? "low";
+        const confColor =
+          conf === "high" ? "text-emerald-300 bg-emerald-500/20 border-emerald-500/40" :
+          conf === "med" ? "text-blue-300 bg-blue-500/20 border-blue-500/40" :
+          "text-amber-300 bg-amber-500/20 border-amber-500/40";
+
+        const noData = sampleCount === 0 && totalCredit === 0;
+        const value = noData ? "—" : fmtGbp(totalCredit);
+        const arrow = dGbp >= 0 ? "▲" : "▼";
+        const deltaColor = dGbp >= 0 ? "text-emerald-400" : "text-rose-400";
+        const subtitleNode = noData ? (
+          <span className="text-[10px] text-slate-500 italic">No AI decisions yet this month</span>
+        ) : (
+          <span className="flex flex-col gap-0.5 text-[10px] leading-tight">
+            <span className="text-slate-400">Hard {hardCount} · Soft {softCount}</span>
+            <span className="flex items-center gap-1">
+              <span className={deltaColor}>
+                {arrow} {dGbp >= 0 ? "+" : ""}£{Math.abs(Math.round(dGbp)).toLocaleString("en-GB")}
+                <span className="ml-0.5 text-slate-500">({dPct >= 0 ? "+" : ""}{Math.round(dPct)}%)</span>
+              </span>
+              <span className={`ml-1 px-1 py-[1px] rounded-full text-[9px] uppercase border ${confColor}`}>{conf}</span>
+            </span>
+          </span>
+        );
+
+        return (
+          <ExpandableStatCard
+            id="ai_boost"
+            label="AI Boost"
+            value={value}
+            valueColor="green"
+            subtitle={subtitleNode}
+            isExpanded={expandedId === "ai_boost"}
+            onToggle={() => toggle("ai_boost")}
+          >
+            <AiBoostDrawer data={aiBoost} />
+          </ExpandableStatCard>
+        );
+      })(),
       out_of_stock: (
         <ExpandableStatCard
           id="out_of_stock"

@@ -22,6 +22,12 @@ import {
   attributeRevenue,
   type RentalForAttribution,
 } from "./lib/revenue_attribution";
+import {
+  tieredCreditTotals,
+  median as medianOfArray,
+  type AiDecisionLite,
+  type AiDecisionAuditLite,
+} from "./lib/ai_attribution";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
@@ -1190,27 +1196,96 @@ export const getStatsDrawerData = query({
       })),
     };
 
-    // ── card: ai_boost ────────────────────────────────────────────
-    // Count accepted ai_decisions in last 90d; estimate uplift via boostRate.
-    const drawerSettings = await ctx.db.query("settings").first();
-    const boostRateVal: number = (drawerSettings as unknown as Record<string, number>)?.ai_boost_rate ?? 0.24;
-    const recentAccepted = await ctx.db
+    // ── card: ai_boost (Wave AI-BE rework, 2026-05-22) ────────────
+    // REAL attribution: classify each reservation in scope as
+    //   hard_ai (100%) | soft_ai (50%) | assisted (0%) | baseline (0%)
+    // using ai_decision + ai_decision_audit. Replaces the previous flat
+    // `monthTotal * ai_boost_rate` skim. `ai_boost_rate` setting is kept
+    // for backwards-compat but NO LONGER used in the £ math here.
+    const allDecisions = (await ctx.db
       .query("ai_decision")
-      .withIndex("by_status", (idx) => idx.eq("status", "approved"))
-      .collect()
-      .then((rows) =>
-        rows.filter(
-          (r) => (r.generatedAt ?? 0) >= ninetyDaysAgo &&
-            (!accountSlug || r.account_slug === accountSlug),
-        ),
-      );
-    const aiAcceptedCount = recentAccepted.length;
-    const aiUpliftGbp = Math.round(monthTotal * boostRateVal * 100) / 100;
+      .collect()) as unknown as AiDecisionLite[];
+    const allAudits = (await ctx.db
+      .query("ai_decision_audit")
+      .collect()) as unknown as AiDecisionAuditLite[];
+
+    // Current-month: tiered totals over `monthEarned` (the canonical
+    // "earned in current month" slice — confirmed/completed, deduped,
+    // already account-filtered above).
+    const currentTotals = tieredCreditTotals(
+      monthEarned as any,
+      allDecisions,
+      allAudits,
+    );
+
+    // Prior-3-month median: bucket earnedPaid by YYYY-MM, take totals
+    // for the three calendar months immediately before the current one.
+    const priorMonthKeys: string[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      priorMonthKeys.push(d.toISOString().slice(0, 7));
+    }
+    const priorMonthlyTotals = priorMonthKeys.map((mo) => {
+      const rowsForMo = earnedPaid.filter((r) => {
+        const ed = effectiveDateStr(r);
+        return ed !== undefined && ed.slice(0, 7) === mo;
+      });
+      const t = tieredCreditTotals(rowsForMo as any, allDecisions, allAudits);
+      return t.total_attributed_gbp;
+    });
+    const p3mMedian = medianOfArray(priorMonthlyTotals);
+
+    const totalCreditGbp = currentTotals.total_attributed_gbp;
+    const sampleCount = currentTotals.hard_count + currentTotals.soft_count;
+    const confidence: "low" | "med" | "high" =
+      sampleCount < 10 ? "low" : sampleCount < 50 ? "med" : "high";
+    const deltaGbp = Math.round((totalCreditGbp - p3mMedian) * 100) / 100;
+    const deltaPct =
+      Math.round(((totalCreditGbp - p3mMedian) / Math.max(p3mMedian, 1)) * 10000) / 100;
+
     const ai_boost = {
-      total_uplift_gbp: aiUpliftGbp,
+      current_month: {
+        hard_gbp: currentTotals.hard_ai_gbp,
+        soft_gbp: currentTotals.soft_ai_gbp,
+        soft_credit_gbp: currentTotals.soft_ai_credit_gbp,
+        assisted_gbp: currentTotals.assisted_gbp,
+        baseline_gbp: currentTotals.baseline_gbp,
+        hard_count: currentTotals.hard_count,
+        soft_count: currentTotals.soft_count,
+        assisted_count: currentTotals.assisted_count,
+        baseline_count: currentTotals.baseline_count,
+        total_credit_gbp: totalCreditGbp,
+      },
+      prior_3mo_median_gbp: p3mMedian,
+      delta_vs_p3m_gbp: deltaGbp,
+      delta_vs_p3m_pct: deltaPct,
+      confidence,
+      sample_count: sampleCount,
+      drilldown_reservation_ids:
+        currentTotals.drilldown_reservation_ids.slice(0, 50),
+      // Legacy field — preserved so existing FE consumers keep working
+      // until the new shape is wired up in the AI-FE rework.
+      total_uplift_gbp: totalCreditGbp,
       breakdown: [
-        { source: `Accepted decisions (90d): ${aiAcceptedCount}`, amount: aiUpliftGbp },
-      ] as Array<{ source: string; amount: number }>,
+        {
+          label: "Hard AI",
+          count: currentTotals.hard_count,
+          gbp: currentTotals.hard_ai_gbp,
+          weight: 1.0,
+        },
+        {
+          label: "Soft AI (edited drafts)",
+          count: currentTotals.soft_count,
+          gbp: currentTotals.soft_ai_credit_gbp,
+          weight: 0.5,
+        },
+        {
+          label: "Assisted (no credit)",
+          count: currentTotals.assisted_count,
+          gbp: 0,
+          weight: 0,
+        },
+      ] as Array<{ label: string; count: number; gbp: number; weight: number }>,
     };
 
     // ── card: out_of_stock ────────────────────────────────────────
