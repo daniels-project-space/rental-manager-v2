@@ -1163,16 +1163,22 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: denied_revenue ──────────────────────────────────────
-    // denial_records: no reservation_id or renter_name; best-effort mapping
+    // denial_records: no reservation_id or renter_name; best-effort mapping.
+    // Net convention (2026-05-22): estimated_value is gross — multiply by
+    // 0.64 (OWNER_SHARE) so this matches the netOf(r) convention used by
+    // every other revenue widget (revenue = take-home post platform fees).
     const ninetyDaysAgo = Date.now() - 90 * 86400000;
+    const DENIED_OWNER_SHARE = 0.64;
     const recentDenials = denialRows.filter((d) => d.created_at >= ninetyDaysAgo);
-    const deniedRevenueTotal = recentDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
+    const deniedRevenueTotalGross = recentDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
+    const deniedRevenueTotal = deniedRevenueTotalGross * DENIED_OWNER_SHARE;
     const denied_revenue = {
       total_gbp: Math.round(deniedRevenueTotal * 100) / 100,
       items: recentDenials.slice(0, 15).map((d) => ({
         reservation_id: d._id as string,
         renter_name: null as string | null,
         gross: d.estimated_value ?? null,
+        net: d.estimated_value != null ? Math.round(d.estimated_value * DENIED_OWNER_SHARE * 100) / 100 : null,
         reason: d.reason ?? null,
       })),
     };
@@ -1181,17 +1187,26 @@ export const getStatsDrawerData = query({
     // Maps denial_type "timeout" and "unmatched" from denial_records as
     // "missed" revenue (distinct from owner_denied).
     // denial_records.reason holds the denial type string (e.g. "timeout", "unmatched", "owner_denied")
+    //
+    // Net convention (2026-05-22): denial_records.estimated_value is GROSS
+    // (Hygglo gross rental £). Project rule: revenue = take-home post platform
+    // fees (~36%). Multiply by OWNER_SHARE = 0.64 so this card matches every
+    // other revenue widget which uses netOf(r) (net_to_owner_gbp).
+    const OWNER_SHARE = 0.64;
     const missedTypes = new Set(["timeout", "unmatched"]);
     const missedDenials = denialRows.filter(
       (d) => d.created_at >= ninetyDaysAgo && missedTypes.has(d.reason ?? ""),
     );
-    const missedRevenueTotal = missedDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
+    const missedRevenueTotalGross = missedDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
+    const missedRevenueTotal = missedRevenueTotalGross * OWNER_SHARE;
     const missed_revenue = {
       total_gbp: Math.round(missedRevenueTotal * 100) / 100,
       items: missedDenials.slice(0, 15).map((d) => ({
         reservation_id: d._id as string,
         renter_name: null as string | null,
+        // gross still emitted for backwards compat (drawer reads `gross`); net is the headline.
         gross: d.estimated_value ?? null,
+        net: d.estimated_value != null ? Math.round(d.estimated_value * OWNER_SHARE * 100) / 100 : null,
         reason: d.reason ?? null,
       })),
     };

@@ -112,12 +112,19 @@ export const getMissedRevenue = query({
     }
     denials = denials.filter((d) => d.created_at >= cutoff.getTime());
 
+    // Net convention (2026-05-22): denial estimated_value + pricing_catalog
+    // daily_price_min are GROSS Hygglo £. Project rule = revenue is take-home
+    // post platform fees (~36%). Multiply by OWNER_SHARE = 0.64 so this
+    // widget matches every other revenue widget (which uses netOf(r) →
+    // net_to_owner_gbp). Without this, missed/gap totals overstate loss ~56%.
+    const OWNER_SHARE = 0.64;
+
     // Compute estimated value per denial via pricing_catalog daily rate
     const denialLosses = await Promise.all(
       denials.map(async (d) => {
         // Use stored estimated_value (backfilled from v1) first; fallback to pricing_catalog.
-        let estimatedValue = d.estimated_value ?? 0;
-        if (estimatedValue === 0 && d.item_name) {
+        let estimatedValueGross = d.estimated_value ?? 0;
+        if (estimatedValueGross === 0 && d.item_name) {
           const priceRow = await ctx.db
             .query("pricing_catalog")
             .withIndex("by_name", (q) =>
@@ -126,14 +133,16 @@ export const getMissedRevenue = query({
             .first();
           if (priceRow) {
             // Assume a 2-day average rental
-            estimatedValue = priceRow.daily_price_min * 2;
+            estimatedValueGross = priceRow.daily_price_min * 2;
           }
         }
+        const estimatedValue = parseFloat((estimatedValueGross * OWNER_SHARE).toFixed(2));
         return {
           denialId: d._id,
           reason: d.reason,
           itemName: d.item_name,
-          estimatedValue,
+          estimatedValue,           // net (post-platform-fee), headline
+          estimatedValueGross,      // gross preserved for any consumer that needs it
           notes: d.notes,
           createdAt: d.created_at,
         };
@@ -181,11 +190,12 @@ export const getMissedRevenue = query({
       if (idleDays <= 0) continue;
       const dailyRate = priceByName.get(itemName);
       if (!dailyRate) continue;
+      // dailyRate is gross Hygglo £ — multiply by OWNER_SHARE for net.
       gapLosses.push({
         itemName,
         rentalDays,
         idleDays,
-        estimatedGapLoss: parseFloat((idleDays * dailyRate).toFixed(2)),
+        estimatedGapLoss: parseFloat((idleDays * dailyRate * OWNER_SHARE).toFixed(2)),
       });
     }
     gapLosses.sort((a, b) => b.estimatedGapLoss - a.estimatedGapLoss);
