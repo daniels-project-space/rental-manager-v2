@@ -632,6 +632,9 @@ export default defineSchema({
     // Stage 2.5: AI boost parameters (replace hardcoded constants in revenue.ts)
     ai_boost_rate: v.optional(v.number()),      // e.g. 0.33 — fraction attributed to AI
     ai_active_from: v.optional(v.string()),     // "YYYY-MM" — first month AI was active
+
+    // EQ-A: runtime-editable listing → MASTER_INVENTORY equivalence map.
+    listing_equivalence_map: v.optional(v.record(v.string(), v.array(v.string()))),
   }),
 
   // ── Price recommendation dismissals (W17) ───────────────────
@@ -1249,7 +1252,9 @@ export default defineSchema({
         v.literal("ai"),
         v.literal("fuzzy"),
         v.literal("manual"),
+        v.literal("equivalence"), // EQ-A: Tier 6.5 equivalence-map fallback
       ),
+      via_equivalence: v.optional(v.boolean()), // EQ-A: audit flag for Tier 6.5
     })),
     status: v.union(
       v.literal("resolved"),
@@ -1479,4 +1484,18 @@ export default defineSchema({
   })
     .index("by_active_start", ["is_active", "start_date"])
     .index("by_active_end", ["is_active", "end_date"]),
+
+  // ── Pending Vacation Confirmations (Wave 4 — Telegram inbound) ─────────
+  // Transient row written when /vacation set hits CONFIRMED_CONFLICTS.
+  // User must reply `/vacation force` within 5 min — handler looks up
+  // the row by chat_id, calls setVacation({force:true}), deletes the row.
+  pending_vacation_confirmations: defineTable({
+    chat_id: v.string(),                     // Telegram chat.id as string
+    start_date: v.string(),                  // YYYY-MM-DD
+    end_date: v.string(),                    // YYYY-MM-DD
+    reason: v.optional(v.string()),
+    expires_at: v.number(),                  // Date.now() + 5*60*1000
+  })
+    .index("by_chat", ["chat_id"])
+    .index("by_expires", ["expires_at"]),
 });

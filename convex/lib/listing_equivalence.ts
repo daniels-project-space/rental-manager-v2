@@ -19,26 +19,32 @@
  *     (DEMAND-GAP agent owns the wire-up in convex/revenue.ts:getMissedAndDeniedByCategory)
  *   - Circle item tracker (per-item / item utilization) — wired here so a denied
  *     "GoPro" request still contributes to the GoPro 12 Hero (or fallback) circle.
+ *   - Listing resolver Tier 6.5 (convex/listing_resolver.ts) — auto-maps
+ *     unresolved listings to closest equivalent before falling to pending_review.
  *
- * EDITING
- * Daniel can extend LISTING_EQUIVALENCE_MAP without code changes elsewhere.
+ * EDITING (EQ-A)
+ * Map is now SETTINGS-BACKED. Daniel can edit at runtime via
+ *   updateEquivalenceMap mutation (convex/listing_equivalence_admin.ts).
+ * The in-code DEFAULT_LISTING_EQUIVALENCE_MAP below is the fallback when no
+ * settings override is present. Existing tests run against the default map.
+ *
  * Keywords are case-insensitive substrings checked against the listing title.
  * Candidate SKUs are the EXACT canonical names from MASTER_INVENTORY
  * (convex/lib/item_matcher.ts:MASTER_INVENTORY). The first candidate present
  * in the live owned-SKU set wins.
- *
- * FOLLOW-UP (not in this commit): move LISTING_EQUIVALENCE_MAP to a Convex
- * `settings` table for runtime edit via dashboard.
  */
 
 import { MASTER_INVENTORY_KEYS } from "./item_matcher";
 
 /**
- * Marketing keyword (lowercase substring) → ordered list of MASTER_INVENTORY
- * canonical SKU names (best match first). SKUs must match MASTER_INVENTORY
- * exactly — validated in tests below.
+ * EQ-A: in-code DEFAULT equivalence map. Used when settings.listing_equivalence_map
+ * is missing/empty. Editable at runtime via the admin mutation.
+ *
+ * Exported as both `DEFAULT_LISTING_EQUIVALENCE_MAP` (preferred new alias) and
+ * `LISTING_EQUIVALENCE_MAP` (legacy back-compat alias) so existing callers and
+ * tests keep working.
  */
-export const LISTING_EQUIVALENCE_MAP: Record<string, string[]> = {
+export const DEFAULT_LISTING_EQUIVALENCE_MAP: Record<string, string[]> = {
   // ── Action cams ──────────────────────────────────────────────────────
   "gopro": ["GoPro 12 Hero", "DJI Osmo Action Pro 5"],
   "go pro": ["GoPro 12 Hero", "DJI Osmo Action Pro 5"],
@@ -47,8 +53,6 @@ export const LISTING_EQUIVALENCE_MAP: Record<string, string[]> = {
   "action camera": ["DJI Osmo Action Pro 5", "GoPro 12 Hero"],
 
   // ── Sony cinema / mirrorless bodies ──────────────────────────────────
-  // Daniel: "FX3" listing → A7V (closest available cinema-ish camera) IF FX3
-  // out of stock. FX3 itself is owned (3 units) so direct match wins normally.
   "fx3": ["Sony FX3", "Sony A7 V", "Sony A7 III"],
   "fx 3": ["Sony FX3", "Sony A7 V", "Sony A7 III"],
   "sony fx": ["Sony FX3", "Sony A7 V"],
@@ -60,22 +64,19 @@ export const LISTING_EQUIVALENCE_MAP: Record<string, string[]> = {
   "a7iii": ["Sony A7 III", "Sony A7 V", "Sony FX3"],
   "a7 ii": ["Sony A7 II", "Sony A7 III"],
   "a7ii": ["Sony A7 II", "Sony A7 III"],
-  "fx30": ["Sony FX3", "Sony A7 V"], // FX30 not owned per listing_photo_reference notes
+  "fx30": ["Sony FX3", "Sony A7 V"],
   "fx 30": ["Sony FX3", "Sony A7 V"],
 
   // ── Blackmagic cinema ────────────────────────────────────────────────
-  // Daniel: "BMPCC 6K Pro" → BMPCC Full Frame (the unit we actually own).
-  // Both Pro and Full Frame are in MASTER_INVENTORY (1 each).
   "bmpcc 6k pro": ["BMPCC 6K Pro", "BMPCC 6K Full Frame"],
   "bmpcc 6k full frame": ["BMPCC 6K Full Frame", "BMPCC 6K Pro"],
   "bmpcc 6k": ["BMPCC 6K Pro", "BMPCC 6K Full Frame"],
   "bmpcc": ["BMPCC 6K Pro", "BMPCC 6K Full Frame"],
   "blackmagic pocket": ["BMPCC 6K Pro", "BMPCC 6K Full Frame"],
   "blackmagic 6k": ["BMPCC 6K Pro", "BMPCC 6K Full Frame"],
-  "pyxis": ["BMPCC 6K Full Frame", "BMPCC 6K Pro"], // Pyxis 6K NOT owned, FF closest
+  "pyxis": ["BMPCC 6K Full Frame", "BMPCC 6K Pro"],
 
   // ── Power stations ──────────────────────────────────────────────────
-  // Daniel: "Anker power station" → Anker Power Station F2000.
   "anker power": ["Anker Power Station F2000"],
   "anker f2000": ["Anker Power Station F2000"],
   "power station": ["Anker Power Station F2000"],
@@ -95,6 +96,12 @@ export const LISTING_EQUIVALENCE_MAP: Record<string, string[]> = {
   "lavalier": ["DJI Mic 2 wireless", "Rode Wireless Mic Pro set", "DJI Wireless Mics"],
 };
 
+/**
+ * Back-compat alias. Existing callers and tests import the old name.
+ * Prefer DEFAULT_LISTING_EQUIVALENCE_MAP in new code.
+ */
+export const LISTING_EQUIVALENCE_MAP = DEFAULT_LISTING_EQUIVALENCE_MAP;
+
 export type EquivalenceMatchType = "direct" | "equivalence" | "none";
 
 export interface EquivalenceResult {
@@ -103,29 +110,41 @@ export interface EquivalenceResult {
 }
 
 /**
- * Resolve a marketing listing to an owned MASTER_INVENTORY SKU.
- *
- * Order:
- *   1. If `directMappedSku` is provided AND present in `ownedSkus` → direct.
- *   2. Else scan LISTING_EQUIVALENCE_MAP keywords against `listingTitle`
- *      (case-insensitive); first keyword match returns the first candidate
- *      that's in `ownedSkus`.
- *   3. Else → none.
- *
- * AVOIDS DOUBLE-ATTRIBUTION: direct match always preferred over equivalence
- * (see task #7).
+ * Resolve a marketing listing to an owned MASTER_INVENTORY SKU using the
+ * in-code DEFAULT map. Kept for back-compat — new callers should use
+ * `loadEquivalenceMap(ctx)` + `resolveListingToInventoryWithMap` to honor the
+ * settings-backed override.
  */
 export function resolveListingToInventory(
   listingTitle: string,
   directMappedSku: string | null,
   ownedSkus: Set<string>,
 ): EquivalenceResult {
+  return resolveListingToInventoryWithMap(
+    listingTitle,
+    directMappedSku,
+    ownedSkus,
+    DEFAULT_LISTING_EQUIVALENCE_MAP,
+  );
+}
+
+/**
+ * EQ-A: pure resolver variant that takes the equivalence map explicitly.
+ * Keeps this helper testable (no DB reads). Callers in Convex queries load
+ * the effective map once via `loadEquivalenceMap(ctx)` and pass it in.
+ */
+export function resolveListingToInventoryWithMap(
+  listingTitle: string,
+  directMappedSku: string | null,
+  ownedSkus: Set<string>,
+  map: Record<string, string[]>,
+): EquivalenceResult {
   if (directMappedSku && ownedSkus.has(directMappedSku)) {
     return { sku: directMappedSku, matchType: "direct" };
   }
   const lc = (listingTitle ?? "").toLowerCase();
   if (!lc) return { sku: null, matchType: "none" };
-  for (const [keyword, candidates] of Object.entries(LISTING_EQUIVALENCE_MAP)) {
+  for (const [keyword, candidates] of Object.entries(map)) {
     if (lc.includes(keyword)) {
       const owned = candidates.find((sku) => ownedSkus.has(sku));
       if (owned) return { sku: owned, matchType: "equivalence" };
@@ -135,39 +154,37 @@ export function resolveListingToInventory(
 }
 
 /**
- * Inline tests / examples — verify against MASTER_INVENTORY_KEYS at runtime.
- * Run via: convex/lib/listing_equivalence.test.ts (jest) — see same dir.
+ * EQ-A: load the effective equivalence map from settings, falling back to
+ * the in-code DEFAULT when the settings row is missing or has no override.
  *
- *   const owned = new Set(MASTER_INVENTORY_KEYS);
- *
- *   resolveListingToInventory("Sony FX3 (rare)", null, owned)
- *     → { sku: "Sony FX3", matchType: "equivalence" }
- *
- *   resolveListingToInventory("GoPro Hero 11 Black", null, owned)
- *     → { sku: "GoPro 12 Hero", matchType: "equivalence" }
- *
- *   resolveListingToInventory("BMPCC 6K Pro w/ rig", null, owned)
- *     → { sku: "BMPCC 6K Pro", matchType: "equivalence" }
- *
- *   resolveListingToInventory("Sony A7 V kit", "Sony A7 V", owned)
- *     → { sku: "Sony A7 V", matchType: "direct" }
- *
- *   resolveListingToInventory("Anker power station F2000", null, owned)
- *     → { sku: "Anker Power Station F2000", matchType: "equivalence" }
- *
- *   resolveListingToInventory("Underwater camera housing", null, owned)
- *     → { sku: null, matchType: "none" }
+ * Accepts a minimal ctx shape — works for QueryCtx and MutationCtx (both have
+ * `db.query("settings").first()`). Action callers (no ctx.db) should call
+ * `internal.listing_equivalence_admin.getEffectiveEquivalenceMap` via
+ * ctx.runQuery instead.
  */
+export async function loadEquivalenceMap(
+  ctx: { db: { query: (name: "settings") => { first: () => Promise<{ listing_equivalence_map?: Record<string, string[]> } | null> } } },
+): Promise<Record<string, string[]>> {
+  try {
+    const settings = await ctx.db.query("settings").first();
+    const override = settings?.listing_equivalence_map;
+    if (override && typeof override === "object" && Object.keys(override).length > 0) {
+      return override;
+    }
+  } catch {
+    // settings table missing or read failed — fall through to default
+  }
+  return DEFAULT_LISTING_EQUIVALENCE_MAP;
+}
 
 /**
- * DEV ASSERT: validate every candidate SKU in LISTING_EQUIVALENCE_MAP is a
- * real MASTER_INVENTORY key. Throws on import in dev if any typo. Skipped at
- * runtime in prod via `process.env.NODE_ENV !== "production"`.
+ * DEV ASSERT: validate every candidate SKU in DEFAULT_LISTING_EQUIVALENCE_MAP
+ * is a real MASTER_INVENTORY key. Throws on import in dev if any typo.
  */
 export function validateEquivalenceMap(): { ok: boolean; errors: string[] } {
   const valid = new Set(MASTER_INVENTORY_KEYS);
   const errors: string[] = [];
-  for (const [keyword, candidates] of Object.entries(LISTING_EQUIVALENCE_MAP)) {
+  for (const [keyword, candidates] of Object.entries(DEFAULT_LISTING_EQUIVALENCE_MAP)) {
     for (const sku of candidates) {
       if (!valid.has(sku)) {
         errors.push(`"${keyword}" → "${sku}" not in MASTER_INVENTORY`);

@@ -12,7 +12,11 @@ import {
 // the "circle item tracker" so e.g. denied GoPro listings still contribute
 // activity to the GoPro 12 Hero (or Osmo Action) circle. See
 // convex/lib/listing_equivalence.ts for the editable keyword map.
-import { resolveListingToInventory } from "./lib/listing_equivalence";
+// EQ-A: load runtime-editable map from settings (override) → in-code default.
+import {
+  loadEquivalenceMap,
+  resolveListingToInventoryWithMap,
+} from "./lib/listing_equivalence";
 
 // Re-export image-resolution helpers for backward compatibility — other widget
 // files may import from `./items` or `./lib/imageResolution` directly.
@@ -95,6 +99,8 @@ export const getItemRevenueRanking = query({
         .map((it) => (it as { name_canonical?: string }).name_canonical ?? "")
         .filter((n) => n.length > 0),
     );
+    // EQ-A: load effective equivalence map (settings override → default).
+    const equivMap = await loadEquivalenceMap(ctx);
     const itemMap = new Map<string, { totalRevenue: number; rentalCount: number; totalDays: number }>();
     for (const r of reservations) {
       const resolved = (r as { resolved_items?: Array<{ item_id?: string; item_name_canonical: string; qty?: number }> }).resolved_items ?? [];
@@ -105,7 +111,7 @@ export const getItemRevenueRanking = query({
         const rawItems = (r as { items?: Array<{ item_name: string }> }).items ?? [];
         const title = rawItems.map((it) => it.item_name).filter(Boolean).join(" | ");
         if (!title) continue;
-        const eq = resolveListingToInventory(title, null, ownedSkus);
+        const eq = resolveListingToInventoryWithMap(title, null, ownedSkus, equivMap);
         if (eq.matchType !== "equivalence" || !eq.sku) continue;
         const gross = r.gross_paid_gbp ?? 0;
         if (gross === 0) continue;
@@ -181,6 +187,8 @@ export const getItemCycles = query({
 
     // LLM-resolved items only — strict per-id match (no substring matching).
     const activeCanonSet = new Set<string>(activeCanonicals);
+    // EQ-A: load effective equivalence map (settings override → default).
+    const equivMap = await loadEquivalenceMap(ctx);
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
       const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
@@ -192,7 +200,7 @@ export const getItemCycles = query({
         const rawItems = (r as { items?: Array<{ item_name: string }> }).items ?? [];
         const title = rawItems.map((it) => it.item_name).filter(Boolean).join(" | ");
         if (!title) continue;
-        const eq = resolveListingToInventory(title, null, activeCanonSet);
+        const eq = resolveListingToInventoryWithMap(title, null, activeCanonSet, equivMap);
         if (eq.matchType === "equivalence" && eq.sku) {
           rentalDaysMap.set(
             eq.sku,
@@ -488,4 +496,3 @@ export const listForReconcile = query({
 // against unrelated reservations was the secondary cross-item-photo
 // contamination path. Replaced by per-reservation `image_hints` written at
 // poll time + `resolveImageForReservationItem` at read time.
-
