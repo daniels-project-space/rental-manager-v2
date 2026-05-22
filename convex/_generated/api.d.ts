@@ -88,6 +88,7 @@ import type * as lib_item_matcher from "../lib/item_matcher.js";
 import type * as lib_item_taxonomy from "../lib/item_taxonomy.js";
 import type * as lib_knowledge_search from "../lib/knowledge_search.js";
 import type * as lib_listing_photo_reference from "../lib/listing_photo_reference.js";
+import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_renter_bot_filters from "../lib/renter_bot_filters.js";
 import type * as lib_renter_bot_intents from "../lib/renter_bot_intents.js";
@@ -234,6 +235,7 @@ declare const fullApi: ApiFromModules<{
   "lib/item_taxonomy": typeof lib_item_taxonomy;
   "lib/knowledge_search": typeof lib_knowledge_search;
   "lib/listing_photo_reference": typeof lib_listing_photo_reference;
+  "lib/missed_revenue": typeof lib_missed_revenue;
   "lib/quiet_hours": typeof lib_quiet_hours;
   "lib/renter_bot_filters": typeof lib_renter_bot_filters;
   "lib/renter_bot_intents": typeof lib_renter_bot_intents;

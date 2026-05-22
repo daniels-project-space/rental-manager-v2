@@ -1314,21 +1314,43 @@ export const getStatsDrawerData = query({
     //
     // Per Daniel: "things that are rented rn and currently out of stock
     // as there is no longer inventory for it".
-    const heldNowByItem = new Map<string, number>();
+    //
+    // Source of truth: reservations.expanded_items[].item_id — the
+    // bundle-decomposed, master-inventory-linked item list. Schema
+    // comment on reservations.expanded_items: "Conflict + out-of-stock
+    // + sell-reco read this, not resolved_items." Falls back to
+    // resolved_items when expanded_items is not yet populated.
+    //
+    // We MUST match by item_id, not by name. The resolver appends a
+    // "[kind]" suffix to item_name_canonical (e.g. "Sony FX3 [camera]")
+    // which never equals the bare items.name_canonical ("Sony FX3"),
+    // and r.items[].item_name is the raw Hygglo listing title that
+    // matches nothing canonical.
+    const heldNowByItemId = new Map<string, number>();
     for (const r of ongoingRentals) {
-      for (const it of r.items ?? []) {
-        const qty = (it as { qty?: number }).qty ?? 1;
-        heldNowByItem.set(it.item_name, (heldNowByItem.get(it.item_name) ?? 0) + qty);
+      const expanded = (r as { expanded_items?: Array<{ item_id: string; qty: number }> }).expanded_items;
+      const resolved = (r as { resolved_items?: Array<{ item_id: string; qty?: number }> }).resolved_items;
+      const source: Array<{ item_id: string; qty?: number }> =
+        expanded && expanded.length > 0
+          ? expanded
+          : resolved ?? [];
+      for (const it of source) {
+        if (!it.item_id) continue;
+        const qty = it.qty ?? 1;
+        heldNowByItemId.set(
+          it.item_id as string,
+          (heldNowByItemId.get(it.item_id as string) ?? 0) + qty,
+        );
       }
     }
     const oosItems = activeItems
-      .filter((i) => (heldNowByItem.get(i.name_canonical) ?? 0) >= i.qty)
+      .filter((i) => (heldNowByItemId.get(i._id as string) ?? 0) >= i.qty)
       .slice(0, 15)
       .map((i) => ({
         item_id: i._id as string,
         name: i.name_canonical,
         qty: i.qty,
-        heldNow: heldNowByItem.get(i.name_canonical) ?? 0,
+        heldNow: heldNowByItemId.get(i._id as string) ?? 0,
       }));
     const out_of_stock = {
       count: oosItems.length,
