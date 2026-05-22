@@ -17,6 +17,36 @@ import {
   attributeRevenue,
   type RentalForAttribution,
 } from "./lib/revenue_attribution";
+import { resolveListingToInventory } from "./lib/listing_equivalence";
+import { MASTER_INVENTORY_KEYS } from "./lib/item_matcher";
+
+/**
+ * Module-scope owner-denied-like predicate (Phase 7.12 + EQ-B).
+ *
+ * Shared between `getMissedAndDeniedByCategory` and `getMissedKindBreakdown`
+ * so drill-down semantics match the parent ring. A row counts as
+ * "owner-denied" if EITHER:
+ *   (a) reclassified_outcome / denial_actor = "owner_denied"  (post-classifier), OR
+ *   (b) is_obsolete=true AND status in {cancelled, declined} AND order_step
+ *       in {REQUEST, APPROVED, FUNDS_RESERVED} — pre-handover owner cancel.
+ * Explicit renter cancel / ghost actors short-circuit to false.
+ */
+function isOwnerDeniedLike(r: {
+  reclassified_outcome?: string | null;
+  denial_actor?: string | null;
+  order_step?: string | null;
+  status?: string | null;
+}): boolean {
+  const actor = r.reclassified_outcome ?? r.denial_actor;
+  if (actor === "owner_denied") return true;
+  if (actor === "renter_cancelled_explicit" || actor === "renter_ghosted") return false;
+  const preHandover =
+    r.order_step === "REQUEST" ||
+    r.order_step === "APPROVED" ||
+    r.order_step === "FUNDS_RESERVED";
+  const ownerCancelStatus = r.status === "cancelled" || r.status === "declined";
+  return preHandover && ownerCancelStatus;
+}
 
 /**
  * W04 Earnings Chart — revenue grouped by month or week
@@ -898,26 +928,8 @@ export const getMissedAndDeniedByCategory = query({
       const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
       return ts >= cutoffMs;
     });
-    // Phase 7.12 — broaden denied predicate to catch just-denied rows where
-    // the reclassifier hasn't yet stamped reclassified_outcome="owner_denied".
-    // A row counts as "owner-denied" if EITHER:
-    //   (a) reclassified_outcome / denial_actor = "owner_denied"  (post-classifier), OR
-    //   (b) is_obsolete=true AND status in {cancelled, declined} AND order_step
-    //       in {REQUEST, APPROVED, FUNDS_RESERVED} — i.e. cancelled BEFORE
-    //       handover, with no explicit renter-side cancel actor. Classifier
-    //       cron will later confirm/override; meanwhile widget reflects reality
-    //       instead of lagging 24h. Reused for gap + demand paths below.
-    const isOwnerDeniedLike = (r: (typeof obsoleteRes)[number]): boolean => {
-      const actor = r.reclassified_outcome ?? r.denial_actor;
-      if (actor === "owner_denied") return true;
-      if (actor === "renter_cancelled_explicit" || actor === "renter_ghosted") return false;
-      const preHandover =
-        r.order_step === "REQUEST" ||
-        r.order_step === "APPROVED" ||
-        r.order_step === "FUNDS_RESERVED";
-      const ownerCancelStatus = r.status === "cancelled" || r.status === "declined";
-      return preHandover && ownerCancelStatus;
-    };
+    // Phase 7.12 — broaden denied predicate. EQ-B: predicate now lives at
+    // module scope so `getMissedKindBreakdown` uses identical semantics.
     const ownerDenied = obsoleteRes.filter(isOwnerDeniedLike);
 
     for (const r of ownerDenied) {
@@ -1130,6 +1142,54 @@ export const getMissedAndDeniedByCategory = query({
       }
     }
 
+    // 3b. EQ-B — Equivalence pass for marketing-only owner-denied listings.
+    //
+    // When a listing has NO direct MASTER_INVENTORY match (resolved_items === [])
+    // but the keyword equivalence map can attribute it (e.g. "GoPro" → "GoPro 12
+    // Hero"), credit demand + gap to the equivalent SKU's kind so Category Mix
+    // reflects real demand for inventory we DO own. Direct matches always win
+    // (already attributed in loops above). Each reservation attributed at most
+    // once via equivalence (best-match — first keyword hit's first owned SKU).
+    const ownedSkus = new Set<string>(MASTER_INVENTORY_KEYS);
+    const viaEquivalenceByKind = new Map<string, number>();
+    const equivAttributedReservationIds = new Set<string>();
+    for (const r of ownerDeniedAll) {
+      const resolved = r.resolved_items ?? [];
+      if (resolved.length > 0) continue; // direct match exists → skip
+      const items = r.items ?? [];
+      const title = items[0]?.item_name ?? "";
+      if (!title) continue;
+      const lcTitle = title.toLowerCase();
+      // Defensive: if title literally contains a canonical SKU name, treat
+      // as direct (would have resolved upstream); skip equivalence.
+      const directHit = Array.from(ownedSkus).some(
+        (sku) => lcTitle.includes(sku.toLowerCase()),
+      );
+      if (directHit) continue;
+
+      const eq = resolveListingToInventory(title, null, ownedSkus);
+      if (eq.matchType !== "equivalence" || !eq.sku) continue;
+      const kind = nameToKind.get(eq.sku);
+      if (!kind) continue;
+
+      let estimatedValue = r.gross_paid_gbp ?? 0;
+      if (estimatedValue === 0) {
+        const dp = priceByName.get(eq.sku) ?? priceByName.get(title);
+        if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
+      }
+      if (estimatedValue <= 0) continue;
+
+      if (equivAttributedReservationIds.has(String(r._id))) continue;
+      equivAttributedReservationIds.add(String(r._id));
+
+      // Treat as marketing_only gap + demand (mirrors gap path's branch).
+      gapBreakdown.marketing_only += estimatedValue;
+      gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + estimatedValue);
+      demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + estimatedValue);
+      totalDemandLost += estimatedValue;
+      viaEquivalenceByKind.set(kind, (viaEquivalenceByKind.get(kind) ?? 0) + 1);
+    }
+
     // 4. Combine per-kind totals.
     const allKinds = new Set<string>([
       ...deniedByKind.keys(),
@@ -1143,6 +1203,7 @@ export const getMissedAndDeniedByCategory = query({
       gap: number;
       demandLost: number;
       count: number;
+      via_equivalence_count: number;
     };
     const combined: Combined[] = [];
     for (const k of allKinds) {
@@ -1158,6 +1219,7 @@ export const getMissedAndDeniedByCategory = query({
         gap: r2(g),
         demandLost: r2(dem),
         count: d.count,
+        via_equivalence_count: viaEquivalenceByKind.get(k) ?? 0,
       });
     }
     combined.sort((a, b) => b.missed - a.missed);
@@ -1166,7 +1228,7 @@ export const getMissedAndDeniedByCategory = query({
     const top = combined.slice(0, 6);
     const rest = combined.slice(6);
     const outerSlices: Array<{
-      kind: string; label: string; missed: number; denied: number; gap: number; demandLost: number; revenue: number; color: string;
+      kind: string; label: string; missed: number; denied: number; gap: number; demandLost: number; revenue: number; color: string; via_equivalence_count: number;
     }> = top.map((c, i) => ({
       kind: c.kind,
       label: missedLabelFor(c.kind),
@@ -1176,12 +1238,14 @@ export const getMissedAndDeniedByCategory = query({
       demandLost: c.demandLost,
       revenue: c.missed,
       color: MISSED_PALETTE[i] ?? MISSED_PALETTE[MISSED_PALETTE.length - 1],
+      via_equivalence_count: c.via_equivalence_count,
     }));
     if (rest.length > 0) {
       const oMissed = rest.reduce((s, c) => s + c.missed, 0);
       const oDenied = rest.reduce((s, c) => s + c.denied, 0);
       const oGap = rest.reduce((s, c) => s + c.gap, 0);
       const oDemand = rest.reduce((s, c) => s + c.demandLost, 0);
+      const oVia = rest.reduce((s, c) => s + c.via_equivalence_count, 0);
       outerSlices.push({
         kind: "other",
         label: "Other",
@@ -1191,6 +1255,7 @@ export const getMissedAndDeniedByCategory = query({
         demandLost: r2(oDemand),
         revenue: r2(oMissed),
         color: MISSED_OTHER_COLOR,
+        via_equivalence_count: oVia,
       });
     }
     if (unmatchedRevenue > 0) {
@@ -1203,6 +1268,7 @@ export const getMissedAndDeniedByCategory = query({
         demandLost: 0,
         revenue: r2(unmatchedRevenue),
         color: MISSED_UNMATCHED_COLOR,
+        via_equivalence_count: 0,
       });
     }
 
