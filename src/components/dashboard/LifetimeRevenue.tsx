@@ -4,7 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -42,6 +42,8 @@ function fmtK(v: number) {
   if (v >= 1000) return "£" + (v / 1000).toFixed(0) + "k";
   return "£" + v.toFixed(0);
 }
+
+const fmtGbp = (n: number) => "£" + Math.round(n).toLocaleString("en-GB");
 
 function fmtMonth(yyyyMM: string): string {
   const NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -115,6 +117,20 @@ export function LifetimeRevenue() {
     };
   }) ?? [];
 
+  const seriesTotals = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const s of SERIES) out[s.key] = 0;
+    for (const row of raw?.months ?? []) {
+      const r = row as unknown as Record<string, number | undefined>;
+      for (const s of SERIES) {
+        if (s.key === "predictedRemainder") continue;
+        out[s.key] += r[s.key] ?? 0;
+      }
+    }
+    out.predictedRemainder = rawData.reduce((a, row) => a + (row.predictedRemainder ?? 0), 0);
+    return out;
+  }, [raw, rawData]);
+
   // To get elegant fade animations on legend toggles, we ZERO OUT hidden
   // series instead of using Recharts' instant <Bar hide />. Bars then animate
   // smoothly between current value ↔ 0 over animationDuration.
@@ -164,7 +180,7 @@ export function LifetimeRevenue() {
               <button
                 key={s.key}
                 onClick={() => toggle(s.key)}
-                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-all"
+                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-all"
                 style={{
                   border: "1px solid " + s.color,
                   color: isHidden ? "#6b7280" : s.color,
@@ -181,14 +197,19 @@ export function LifetimeRevenue() {
                     background: isHidden ? "#6b7280" : s.color,
                   }}
                 />
-                {s.label}
+                <span className="flex flex-col items-start leading-tight">
+                  <span>{s.label}</span>
+                  <span className="text-[10px] opacity-70 tabular-nums">
+                    {fmtGbp(seriesTotals[s.key] ?? 0)}
+                  </span>
+                </span>
               </button>
             );
           })}
           {/* Cumulative toggle */}
           <button
             onClick={() => toggle("cumulative")}
-            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-all"
+            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-all"
             style={{
               border: "1px solid #22c55e",
               color: hidden.cumulative ? "#6b7280" : "#22c55e",
@@ -204,7 +225,10 @@ export function LifetimeRevenue() {
                 background: hidden.cumulative ? "#6b7280" : "#22c55e",
               }}
             />
-            Cumulative
+            <span className="flex flex-col items-start leading-tight">
+              <span>Cumulative</span>
+              <span className="text-[10px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
+            </span>
           </button>
         </div>
 
