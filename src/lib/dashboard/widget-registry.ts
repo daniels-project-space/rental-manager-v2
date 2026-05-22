@@ -65,7 +65,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
 export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "walle",           label: "WallE" },
   { id: "active",          label: "Active" },
-  { id: "earnings",        label: "Earnings" },
+  { id: "earnings",        label: "Earnings Today" },
   { id: "monthly",         label: "Monthly" },
   { id: "confirmed",       label: "Confirmed" },
   { id: "scanner",         label: "Scanner" },

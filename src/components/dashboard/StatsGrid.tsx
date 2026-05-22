@@ -212,7 +212,7 @@ export function StatsGrid() {
       earnings: (
         <ExpandableStatCard
           id="earnings"
-          label="Earnings"
+          label="Earnings Today"
           value={fmtGbp(data.earnings.today)}
           valueColor="green"
           accentColor="green"
