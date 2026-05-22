@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Block commits that stage package.json without a synced pnpm-lock.yaml.
+# Prevents Vercel ERR_PNPM_OUTDATED_LOCKFILE failures.
+
+staged=$(git diff --cached --name-only)
+
+if echo "$staged" | grep -q "^package.json$"; then
+  # If lockfile is not also staged, verify it matches what pnpm would generate.
+  if ! echo "$staged" | grep -q "^pnpm-lock.yaml$"; then
+    echo "⚠  package.json is staged but pnpm-lock.yaml is not."
+    echo "   Running 'pnpm install --lockfile-only' to verify lockfile is in sync..."
+    if ! pnpm install --lockfile-only --prefer-offline >/dev/null 2>&1; then
+      echo "✘  pnpm install failed. Fix dependency issues and re-commit."
+      exit 1
+    fi
+    if ! git diff --quiet pnpm-lock.yaml; then
+      echo "✘  pnpm-lock.yaml is OUT OF SYNC with package.json."
+      echo "   The lockfile has been updated. Stage it and commit again:"
+      echo "     git add pnpm-lock.yaml"
+      echo "     git commit"
+      exit 1
+    fi
+    echo "✓  pnpm-lock.yaml already in sync."
+  fi
+fi

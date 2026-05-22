@@ -15,7 +15,8 @@
     "check:patterns": "node scripts/check-patterns.mjs",
     "verify:trigger-key": "tsx scripts/verify-trigger-key.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "husky"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.0-canary",
@@ -63,6 +64,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "husky": "^9.1.7",
     "tailwindcss": "^4",
     "trigger.dev": "4.4.5",
     "tsx": "^4.21.0",
