@@ -317,15 +317,25 @@ export function LifetimeRevenue() {
           >Lines</button>
         </div>
 
-        {/* Toggleable legend */}
+        {/* Toggleable legend
+            Single-line pills (label + £ inline, tabular-nums) instead of
+            stacked label/amount. The two-line pill design added previously
+            roughly doubled the pill row height, and combined with the new
+            chart-mode toggle row + Projected pill the widget header grew
+            tall enough to push the chart against (and overflow past) the
+            card's overflow-hidden boundary, making neighbour widgets look
+            overlapped on tighter viewports. Keeping pills compact gives
+            the chart predictable vertical space again. */}
         <div className="flex flex-wrap gap-1 mb-3">
           {SERIES.map((s) => {
             const isHidden = hidden[s.key] ?? false;
+            const amount = fmtGbp(seriesTotals[s.key] ?? 0);
             return (
               <button
                 key={s.key}
                 onClick={() => toggle(s.key)}
-                className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
+                title={`${s.label} · ${amount}`}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
                 style={{
                   border: "1px solid " + (isHidden ? "#3a3f4b" : s.color + "80"),
                   color: isHidden ? "#6b7280" : s.color,
@@ -342,19 +352,16 @@ export function LifetimeRevenue() {
                     background: isHidden ? "#6b7280" : s.color,
                   }}
                 />
-                <span className="flex flex-col items-start leading-tight">
-                  <span>{s.label}</span>
-                  <span className="text-[9px] opacity-70 tabular-nums">
-                    {fmtGbp(seriesTotals[s.key] ?? 0)}
-                  </span>
-                </span>
+                <span>{s.label}</span>
+                <span className="text-[9px] opacity-70 tabular-nums">{amount}</span>
               </button>
             );
           })}
           {/* Cumulative toggle */}
           <button
             onClick={() => toggle("cumulative")}
-            className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
+            title={`Cumulative · ${fmtGbp(totalRevenue)}`}
+            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
             style={{
               border: "1px solid " + (hidden.cumulative ? "#3a3f4b" : "#22c55e80"),
               color: hidden.cumulative ? "#6b7280" : "#22c55e",
@@ -371,16 +378,15 @@ export function LifetimeRevenue() {
                 background: hidden.cumulative ? "#6b7280" : "#22c55e",
               }}
             />
-            <span className="flex flex-col items-start leading-tight">
-              <span>Cumulative</span>
-              <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
-            </span>
+            <span>Cumulative</span>
+            <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
           </button>
           {/* Target toggle — gates the current-month projected-total marker */}
           {expectedMonthlyTarget > 0 && (
             <button
               onClick={() => toggle("target")}
-              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
+              title={`Target · ${fmtGbp(expectedMonthlyTarget)}`}
+              className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
               style={{
                 border: "1px solid " + (hidden.target ? "#3a3f4b" : "#eab30880"),
                 color: hidden.target ? "#6b7280" : "#eab308",
@@ -397,10 +403,8 @@ export function LifetimeRevenue() {
                   background: hidden.target ? "#6b7280" : "#eab308",
                 }}
               />
-              <span className="flex flex-col items-start leading-tight">
-                <span>Target</span>
-                <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
-              </span>
+              <span>Target</span>
+              <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
             </button>
           )}
         </div>
