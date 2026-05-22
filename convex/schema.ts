@@ -1447,4 +1447,19 @@ export default defineSchema({
     auto_heal_ok: v.optional(v.boolean()),
     telegram_ok: v.optional(v.boolean()),
   }).index("by_account_slug", ["account_slug"]),
+
+  // ── Phase 3 (WallE) — per-user daily joke quota ───────────────────────
+  // 2-jokes-per-day cap enforced by dashboard_chat.recordJoke. One row per
+  // (user_id, day) where day is YYYY-MM-DD in UTC. count increments on
+  // each joke until the cap is hit. Old rows can be pruned by a daily
+  // cron; quota is per-calendar-day so no rollover logic needed.
+  walle_joke_log: defineTable({
+    user_id: v.string(),
+    day: v.string(),                 // YYYY-MM-DD (UTC)
+    count: v.number(),
+    created_at: v.number(),
+    updated_at: v.optional(v.number()),
+  })
+    .index("by_user_day", ["user_id", "day"])
+    .index("by_day", ["day"]),
 });

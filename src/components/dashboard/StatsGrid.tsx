@@ -19,7 +19,7 @@ import {
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
-import { STAT_WIDGETS } from "@/lib/dashboard/widget-registry";
+import { STAT_WIDGETS, HERO_IDS, HERO_SPANS } from "@/lib/dashboard/widget-registry";
 import { EditableWidget } from "./EditableWidget";
 import ExpandableStatCard from "./ExpandableStatCard";
 import ActiveDrawer from "./stat-cards/ActiveDrawer";
@@ -46,6 +46,7 @@ import { CapacityGapAlert } from "./insights/CapacityGapAlert";
 import { ItemUtilizationRanking } from "./insights/ItemUtilizationRanking";
 import { BelowMinimumCounter } from "./insights/BelowMinimumCounter";
 import { WeeklyRevenueSparkline } from "./insights/WeeklyRevenueSparkline";
+import WallE from "./WallE/WallE";
 
 function fmtGbp(n: number): string {
   if (n >= 1000) return "£" + (n / 1000).toFixed(1) + "k";
@@ -128,9 +129,11 @@ function StatsGridSkeleton() {
   );
 }
 
-// Hero cards span 2 grid columns. Without an outer wrapper this is set on the
-// card itself; with EditableWidget wrapper the col-span must live on the wrapper.
-const HERO_IDS = new Set(["active", "ongoing", "upcoming", "business_intel", "category_volume", "revenue_sparkline"]);
+// Hero sizing is defined in widget-registry.ts:
+//   - HERO_SPANS: explicit { col, row } per widget id (supports 2x2 etc).
+//   - HERO_IDS: legacy 1-row col-span-2 widgets (backwards compat fallback).
+// Tailwind safelist: keep col-span-2 / row-span-2 reachable so JIT emits them.
+// (used as string literals below: "col-span-2", "row-span-2")
 
 export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
@@ -513,6 +516,8 @@ export function StatsGrid() {
       utilization:       <ItemUtilizationRanking  accountSlug={activeAccountSlug} />,
       below_minimum:     <BelowMinimumCounter     accountSlug={activeAccountSlug} />,
       revenue_sparkline: <WeeklyRevenueSparkline  accountSlug={activeAccountSlug} />,
+      // ── Phase 8 — WallE 2x2 hero card (HERO_SPANS.walle) ──
+      walle: <WallE accountSlug={activeAccountSlug} />,
     };
   }, [rawData, expandedId, activeAccountSlug, catVolExpanded]);
 
@@ -543,16 +548,29 @@ export function StatsGrid() {
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 auto-rows-[140px] gap-4 mt-4">
           {visibleIds.map((id) => {
             const label = STAT_WIDGETS.find((w) => w.id === id)?.label ?? id;
+            const span = HERO_SPANS[id];
+            let spanClass = "";
+            if (span) {
+              // Explicit col/row span (supports 2x2 hero cards like WallE).
+              // Tailwind class names must be literal so JIT can detect them:
+              // col-span-2 row-span-2 col-span-1 row-span-1
+              const colCls = span.col === 2 ? "col-span-2" : "col-span-1";
+              const rowCls = span.row === 2 ? "row-span-2" : "row-span-1";
+              spanClass = `${colCls} ${rowCls}`;
+            } else if (HERO_IDS.has(id)) {
+              // Legacy hero treatment: 2 cols, 1 row (default row height).
+              spanClass = "col-span-2";
+            }
             return (
               <EditableWidget
                 key={id}
                 id={id}
                 kind="stat"
                 label={label}
-                className={HERO_IDS.has(id) ? "col-span-2" : ""}
+                className={spanClass}
               >
                 {cards[id]}
               </EditableWidget>

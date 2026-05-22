@@ -18,8 +18,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.0-canary",
     "@ai-sdk/xai": "^3.0.89",
-    "@openrouter/ai-sdk-provider": "^2.9.0",
     "@aws-sdk/client-s3": "^3.1045.0",
     "@aws-sdk/s3-request-presigner": "^3.1045.0",
     "@browserbasehq/stagehand": "^3.4.0",
@@ -29,8 +29,12 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@mastra/core": "^1.32.1",
     "@mastra/loggers": "^1.1.1",
+    "@openrouter/ai-sdk-provider": "^2.9.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
     "@trigger.dev/core": "4.4.5",
     "@trigger.dev/sdk": "4.4.5",
+    "@types/three": "^0.184.1",
     "ai": "^6.0.176",
     "convex": "^1.37.0",
     "dldr": "^0.0.10",
@@ -42,6 +46,7 @@
     "react-is": "^19.2.6",
     "recharts": "^3.8.1",
     "sharp": "^0.34.5",
+    "three": "^0.184.0",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {

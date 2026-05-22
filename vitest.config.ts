@@ -25,6 +25,8 @@ export default defineConfig({
       "convex/lib/capacity_gap.test.ts",
       "convex/lib/double_booking.test.ts",
       "convex/lib/per_listing_merge.test.ts",
+      "convex/dashboard_insights.spec.ts",
+      "convex/dashboard_chat.walle.spec.ts",
     ],
     css: false,
   },

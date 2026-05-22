@@ -63,6 +63,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
+  { id: "walle",           label: "WallE" },
   { id: "active",          label: "Active" },
   { id: "earnings",        label: "Earnings" },
   { id: "monthly",         label: "Monthly" },
@@ -88,6 +89,26 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "below_minimum",     label: "Below Min £" },
   { id: "revenue_sparkline", label: "Revenue Trend" },
 ];
+
+// Widgets requiring multi-cell spans on the StatsGrid. Any id NOT listed here
+// renders at the default 1x1 size. Existing hero behaviour (1-row, col-span-2)
+// can be expressed as `{ col: 2, row: 1 }`. The 2x2 entry (e.g. `walle`)
+// unlocks the WallE hero card without touching StatsGrid for future spans.
+export const HERO_SPANS: Record<string, { col: number; row: number }> = {
+  walle: { col: 2, row: 2 },
+};
+
+// Backwards-compat: legacy 1-row hero ids (col-span-2 only). Keep this list as
+// the single source of truth for the historical "hero" treatment so StatsGrid
+// can fall back to it when an id is not in HERO_SPANS.
+export const HERO_IDS: ReadonlySet<string> = new Set([
+  "active",
+  "ongoing",
+  "upcoming",
+  "business_intel",
+  "category_volume",
+  "revenue_sparkline",
+]);
 
 export const DEFAULT_PANEL_ORDER = PANEL_WIDGETS.map((w) => w.id);
 export const DEFAULT_STAT_ORDER  = STAT_WIDGETS.map((w) => w.id);
