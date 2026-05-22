@@ -76,7 +76,7 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "out_of_stock",    label: "Out of Stock" },
   { id: "denied_revenue",  label: "Denied Revenue" },
   { id: "missed_revenue",  label: "Missed Revenue" },
-  { id: "vacation",        label: "Vacation" },
+  { id: "vacation",        label: "Vacation & Maintenance" },
   { id: "sell_reco",       label: "Sell Reco" },
   { id: "inventory_worth", label: "Inventory Worth" },
   { id: "tax",             label: "Tax" },
