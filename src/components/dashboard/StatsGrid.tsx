@@ -598,7 +598,7 @@ export function StatsGrid() {
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 auto-rows-[140px] gap-4 mt-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 auto-rows-[minmax(140px,auto)] gap-4 mt-4 items-start">
           {visibleIds.map((id) => {
             const label = STAT_WIDGETS.find((w) => w.id === id)?.label ?? id;
             const span = HERO_SPANS[id];
