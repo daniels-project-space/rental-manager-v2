@@ -375,6 +375,65 @@ function buildImageHintsFromHyggloItems(
   return hints;
 }
 
+// ── EQ-C: synchronous listing_resolver dispatch on owner denial ─────────
+//
+// When a Hygglo reservation transitions into the obsolete bucket
+// (owner_denied / renter_cancelled / verification_failed), the gap-detector
+// needs resolved_items[] on the listing_resolution row keyed by
+// (account_slug, hygglo_order_id) to classify the loss. Phase 18.2 only
+// fires the resolver for rows newly inserted in active filters, so a row
+// that's denied between poll cycles (or first appears already obsolete)
+// can sit with resolved_items=[] until the next listing_resolver pass.
+//
+// This helper schedules `listing_resolver.resolveListing` immediately via
+// the Convex scheduler. resolveListing's Tier 1 catalog short-circuit
+// returns instantly when (account_slug, hygglo_order_id) already has a
+// resolved row, so calling it on every denial is cheap — one indexed query
+// + early return when already resolved. We deliberately do NOT runQuery
+// the catalog from inside the mutation: the scheduler call is fire-and-
+// forget, and the resolver action handles its own idempotency.
+//
+// Mutation runtime cannot call actions directly; ctx.scheduler.runAfter(0,
+// ...) is the canonical Convex pattern for kicking off an action from a
+// mutation (see convex/dist/cjs-types/server/scheduler.d.ts examples).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function scheduleListingResolutionOnDenial(
+  ctx: any,
+  args: {
+    account_slug: string;
+    hygglo_order_id: string;
+    items: Array<{ item_name: string }>;
+    order: unknown;
+    notes: string | undefined;
+    photos_urls: string[] | undefined;
+  },
+): Promise<void> {
+  // Pick the first non-INSURANCE item as the listing title (mirrors the
+  // poll-hygglo `newlyInserted` selection in src/trigger/poll-hygglo.ts).
+  const firstItem = (args.items ?? []).find((i) => i?.item_name)?.item_name
+    ?? args.hygglo_order_id;
+  const firstImg = (args.photos_urls ?? [])[0];
+  try {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.listing_resolver.resolveListing,
+      {
+        hygglo_listing_id: args.hygglo_order_id,
+        hygglo_account: args.account_slug,
+        hygglo_title: firstItem,
+        hygglo_description: args.notes,
+        hygglo_detail_payload: args.order,
+        image_url: firstImg,
+      },
+    );
+  } catch (err) {
+    console.warn(
+      "[hygglo.upsertOrderAsReservation] scheduleListingResolutionOnDenial failed",
+      String(err),
+    );
+  }
+}
+
 /**
  * Public mutation called by poll-hygglo-inbox after each order fetch.
  * Upserts a reservation row keyed by hygglo_order_id.
@@ -607,6 +666,14 @@ export const upsertOrderAsReservation = mutation({
 
       const stepPatch =
         incomingStep !== undefined ? { order_step: incomingStep } : {};
+      // EQ-C: capture pre-patch obsolete state so we can detect the
+      // transition into the obsolete bucket and fire listing_resolver
+      // synchronously (rather than waiting up to 60 min for the next poll
+      // cycle to retry resolution). Without this, the gap detector can't
+      // flag a freshly-denied rental until the resolver eventually catches
+      // up — the Anker power station incident (Daniel, 2026-05-22) sat with
+      // resolved_items=[] for the full audit window because of this.
+      const wasObsolete = existing.is_obsolete === true;
       await ctx.db.patch(existing._id, {
         ...baseFields,
         status: finalStatus,
@@ -621,6 +688,17 @@ export const upsertOrderAsReservation = mutation({
         account_slug: args.account_slug,
         items: hyggloItemsUpdate,
       });
+      // EQ-C: schedule listing_resolver on owner-denial transition.
+      if (obsoleteFields.is_obsolete === true && !wasObsolete) {
+        await scheduleListingResolutionOnDenial(ctx, {
+          account_slug: args.account_slug,
+          hygglo_order_id: args.hygglo_order_id,
+          items: args.items,
+          order: args.order,
+          notes,
+          photos_urls,
+        });
+      }
       return { action: "updated" };
     }
 
@@ -642,6 +720,23 @@ export const upsertOrderAsReservation = mutation({
       await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
         account_slug: args.account_slug,
         items: hyggloItemsInsert,
+      });
+    }
+
+    // EQ-C: when a Hygglo order arrives already in the obsolete bucket
+    // (renter never made it past REQUEST → owner denied before we ever saw
+    // the row in pending/current), poll-hygglo's `newlyInserted` collector
+    // does NOT pick it up for resolution (Phase 18.2 only resolves rows
+    // newly inserted in the active filters). Fire the resolver here so the
+    // gap detector has resolved_items to work with on the next sweep.
+    if (obsoleteFields.is_obsolete === true) {
+      await scheduleListingResolutionOnDenial(ctx, {
+        account_slug: args.account_slug,
+        hygglo_order_id: args.hygglo_order_id,
+        items: args.items,
+        order: args.order,
+        notes,
+        photos_urls,
       });
     }
 
