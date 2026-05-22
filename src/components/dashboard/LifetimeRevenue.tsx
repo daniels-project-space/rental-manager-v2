@@ -16,6 +16,7 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceDot,
+  ReferenceLine,
 } from "recharts";
 import type {
   ValueType,
@@ -34,7 +35,7 @@ const SERIES = [
   { key: "damageClaims",       label: "Claims",             color: "#ffffff", fill: "url(#grad-damage)",   roundTop: true  },
   { key: "bookedNext",         label: "Booked (next mo)",   color: "#94a3b8", fill: "url(#grad-booked)",   roundTop: true  },
   { key: "pendingNext",        label: "Pending (next mo)",  color: "#eab308", fill: "url(#pending-stripe)",roundTop: true  },
-  { key: "predictedRemainder", label: "Predicted",          color: "#94a3b8", fill: "url(#grad-predicted)",roundTop: true  },
+  { key: "predictedRemainder", label: "Projected",          color: "#94a3b8", fill: "url(#grad-predicted)",roundTop: true  },
 ] as const;
 
 
@@ -547,6 +548,47 @@ export function LifetimeRevenue() {
                   hide={hidden[s.key] ?? false}
                 />
               ))}
+              {/* Line-mode forecast continuation: dashed slate area showing the
+                  projected remainder for the current + future months. Mirrors
+                  the bar-mode predictedRemainder so the line view also shows
+                  forward-looking expectations. Gated on hidden.predictedRemainder
+                  so the "Projected" toggle controls both modes uniformly. */}
+              {chartMode === "lines" && !hidden.predictedRemainder && (
+                <Area
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="predictedRemainder"
+                  name="predictedRemainder"
+                  stroke="#94a3b8"
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  fill="url(#grad-predictedRemainder)"
+                  fillOpacity={0.6}
+                  isAnimationActive
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                  activeDot={{ r: 4, stroke: "#94a3b8", fill: "#0f1115", strokeWidth: 2 }}
+                />
+              )}
+              {/* Vertical boundary marking where actuals end and projections begin.
+                  Renders in both chart modes. Gated on hidden.predictedRemainder
+                  so the "Projected" legend pill hides this too. */}
+              {rawCurrentMonth && !hidden.predictedRemainder && (
+                <ReferenceLine
+                  yAxisId="right"
+                  x={fmtMonth(rawCurrentMonth)}
+                  stroke="#94a3b8"
+                  strokeDasharray="4 4"
+                  strokeOpacity={0.5}
+                  label={{
+                    value: "Projected →",
+                    position: "top",
+                    fill: "#94a3b8",
+                    fontSize: 10,
+                    opacity: 0.7,
+                  }}
+                />
+              )}
               {/* Cumulative area: gradient falloff. Animation starts AFTER the line
                   finishes drawing (animationBegin) so the gradient doesn't bloom
                   ahead of the line stroke. */}
