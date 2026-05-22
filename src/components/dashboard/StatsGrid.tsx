@@ -163,28 +163,38 @@ export function StatsGrid() {
           hero
           isExpanded={expandedId === "active"}
           onToggle={() => toggle("active")}
-          subtitle={
-            <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-              <span className="inline-flex items-center gap-1 text-amber-300">
-                <Dot color="#f59e0b" />
-                <span className="font-semibold">{data.active.ongoing_count}</span> ongoing
-              </span>
-              <span className="text-slate-600">+</span>
-              <span className="inline-flex items-center gap-1 text-violet-300">
-                <Dot color="#a78bfa" />
-                <span className="font-semibold">{data.active.upcoming_count}</span> upcoming
-              </span>
-              {data.active.pending_count > 0 && (
-                <>
-                  <span className="text-slate-600">+</span>
-                  <span className="inline-flex items-center gap-1 text-pink-300">
-                    <Dot color="#ec4899" />
-                    <span className="font-semibold">{data.active.pending_count}</span> pending
+          subtitle={(() => {
+            const pendingNextMonth = data.active.pending_next_month_count ?? 0;
+            return (
+              <span className="block">
+                <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+                  <span className="inline-flex items-center gap-1 text-amber-300">
+                    <Dot color="#f59e0b" />
+                    <span className="font-semibold">{data.active.ongoing_count}</span> ongoing
                   </span>
-                </>
-              )}
-            </span>
-          }
+                  <span className="text-slate-600">+</span>
+                  <span className="inline-flex items-center gap-1 text-violet-300">
+                    <Dot color="#a78bfa" />
+                    <span className="font-semibold">{data.active.upcoming_count}</span> upcoming
+                  </span>
+                  {data.active.pending_count > 0 && (
+                    <>
+                      <span className="text-slate-600">+</span>
+                      <span className="inline-flex items-center gap-1 text-pink-300">
+                        <Dot color="#ec4899" />
+                        <span className="font-semibold">{data.active.pending_count}</span> pending
+                      </span>
+                    </>
+                  )}
+                </span>
+                {data.active.pending_count > 0 && pendingNextMonth > 0 && (
+                  <span className="block text-[10px] text-zinc-500 mt-0.5 leading-tight">
+                    incl. {pendingNextMonth} starting next month
+                  </span>
+                )}
+              </span>
+            );
+          })()}
           headerExtra={
             <SegmentedBar
               ongoing={data.active.ongoing_count}
