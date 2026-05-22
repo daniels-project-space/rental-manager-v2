@@ -244,7 +244,7 @@ export function LifetimeRevenue() {
   const hiddenDelta = Math.max(0, lifetimeActualsTotal - totalRevenue);
   return (
     <>
-      <Card className="relative overflow-hidden">
+      <Card className="relative overflow-hidden min-h-[460px]">
         <div
           className="absolute inset-0 pointer-events-none"
           style={{ background: "radial-gradient(ellipse at top left, rgba(34,197,94,0.08) 0%, transparent 60%)" }}
@@ -317,16 +317,13 @@ export function LifetimeRevenue() {
           >Lines</button>
         </div>
 
-        {/* Toggleable legend
-            Single-line pills (label + £ inline, tabular-nums) instead of
-            stacked label/amount. The two-line pill design added previously
-            roughly doubled the pill row height, and combined with the new
-            chart-mode toggle row + Projected pill the widget header grew
-            tall enough to push the chart against (and overflow past) the
-            card's overflow-hidden boundary, making neighbour widgets look
-            overlapped on tighter viewports. Keeping pills compact gives
-            the chart predictable vertical space again. */}
-        <div className="flex flex-wrap gap-1 mb-3">
+        {/* Toggleable legend — two-line pills (label on top, £ amount below).
+            Daniel's explicit design. To prevent the taller header from pushing
+            the chart out of the Card's overflow-hidden boundary, the outer
+            Card has min-h-[460px] and the chart was reduced from h=300 → 280.
+            Pill row is capped at max-h-[80px] with overflow-y-auto so 3+ rows
+            of wrapping scroll internally instead of pushing the chart down. */}
+        <div className="flex flex-wrap gap-1 mb-3 max-h-[80px] overflow-y-auto">
           {SERIES.map((s) => {
             const isHidden = hidden[s.key] ?? false;
             const amount = fmtGbp(seriesTotals[s.key] ?? 0);
@@ -352,8 +349,10 @@ export function LifetimeRevenue() {
                     background: isHidden ? "#6b7280" : s.color,
                   }}
                 />
-                <span>{s.label}</span>
-                <span className="text-[9px] opacity-70 tabular-nums">{amount}</span>
+                <span className="flex flex-col items-start leading-tight">
+                  <span>{s.label}</span>
+                  <span className="text-[9px] opacity-70 tabular-nums">{amount}</span>
+                </span>
               </button>
             );
           })}
@@ -378,8 +377,10 @@ export function LifetimeRevenue() {
                 background: hidden.cumulative ? "#6b7280" : "#22c55e",
               }}
             />
-            <span>Cumulative</span>
-            <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
+            <span className="flex flex-col items-start leading-tight">
+              <span>Cumulative</span>
+              <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
+            </span>
           </button>
           {/* Target toggle — gates the current-month projected-total marker */}
           {expectedMonthlyTarget > 0 && (
@@ -403,21 +404,23 @@ export function LifetimeRevenue() {
                   background: hidden.target ? "#6b7280" : "#eab308",
                 }}
               />
-              <span>Target</span>
-              <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
+              <span className="flex flex-col items-start leading-tight">
+                <span>Target</span>
+                <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
+              </span>
             </button>
           )}
         </div>
 
         {/* Chart */}
         {raw === undefined ? (
-          <SkeletonBlock className="h-[300px] w-full" />
+          <SkeletonBlock className="h-[280px] w-full" />
         ) : data.length === 0 ? (
-          <div className="flex items-center justify-center h-[300px] text-sm text-[#8b8fa3]">
+          <div className="flex items-center justify-center h-[280px] text-sm text-[#8b8fa3]">
             No revenue data
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
               <defs>
                 {/* Per-series vertical gradients — lighter at top of bar, darker at base.
