@@ -898,10 +898,27 @@ export const getMissedAndDeniedByCategory = query({
       const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
       return ts >= cutoffMs;
     });
-    const ownerDenied = obsoleteRes.filter((r) => {
+    // Phase 7.12 — broaden denied predicate to catch just-denied rows where
+    // the reclassifier hasn't yet stamped reclassified_outcome="owner_denied".
+    // A row counts as "owner-denied" if EITHER:
+    //   (a) reclassified_outcome / denial_actor = "owner_denied"  (post-classifier), OR
+    //   (b) is_obsolete=true AND status in {cancelled, declined} AND order_step
+    //       in {REQUEST, APPROVED, FUNDS_RESERVED} — i.e. cancelled BEFORE
+    //       handover, with no explicit renter-side cancel actor. Classifier
+    //       cron will later confirm/override; meanwhile widget reflects reality
+    //       instead of lagging 24h. Reused for gap + demand paths below.
+    const isOwnerDeniedLike = (r: (typeof obsoleteRes)[number]): boolean => {
       const actor = r.reclassified_outcome ?? r.denial_actor;
-      return actor === "owner_denied";
-    });
+      if (actor === "owner_denied") return true;
+      if (actor === "renter_cancelled_explicit" || actor === "renter_ghosted") return false;
+      const preHandover =
+        r.order_step === "REQUEST" ||
+        r.order_step === "APPROVED" ||
+        r.order_step === "FUNDS_RESERVED";
+      const ownerCancelStatus = r.status === "cancelled" || r.status === "declined";
+      return preHandover && ownerCancelStatus;
+    };
+    const ownerDenied = obsoleteRes.filter(isOwnerDeniedLike);
 
     for (const r of ownerDenied) {
       // EstimatedValue: prefer gross_paid_gbp (rare on denials), else
@@ -987,10 +1004,8 @@ export const getMissedAndDeniedByCategory = query({
       const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
       return ts >= cutoffMs;
     });
-    const ownerDeniedAll = obsoleteResAll.filter((r) => {
-      const actor = r.reclassified_outcome ?? r.denial_actor;
-      return actor === "owner_denied";
-    });
+    // Phase 7.12 — same broadened predicate as denied path above.
+    const ownerDeniedAll = obsoleteResAll.filter(isOwnerDeniedLike);
 
     // Build a commitment map from COMPLETED rentals (status confirmed/completed,
     // not obsolete) covering the cutoff window forward.
@@ -1023,27 +1038,27 @@ export const getMissedAndDeniedByCategory = query({
       for (const p of diag.per_item_diagnosis) {
         const itemIdStr = p.item_id ? String(p.item_id) : undefined;
         const kind = itemIdStr ? idToKind.get(itemIdStr) ?? "unknown" : "unknown";
+        // Phase 7.12 — Demand semantics rework. Daniel's clarified rule:
+        // demand = "renter wanted this inventory item, system couldn't deliver".
+        // ALL owner-denied rows with a resolved inventory match count as demand,
+        // regardless of whether they're also gap (capacity) or voluntary. demand
+        // and gap are NOT mutually exclusive — a single denial can fire both.
         if (p.classification === "marketing_only") {
           gapBreakdown.marketing_only += sharePer;
           gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-          if (!useNewGapDemand) {
-            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-            totalDemandLost += sharePer;
-          }
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
         } else if (p.classification === "capacity_gap") {
           gapBreakdown.fully_booked += sharePer;
           gapByKind.set(kind, (gapByKind.get(kind) ?? 0) + sharePer);
-          if (!useNewGapDemand) {
-            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-            totalDemandLost += sharePer;
-          }
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
         } else {
-          // voluntary
+          // voluntary — had capacity, chose to deny. Still real demand (renter
+          // wanted it). Just not a gap.
           gapBreakdown.voluntary_demand_lost += sharePer;
-          if (!useNewGapDemand) {
-            demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
-            totalDemandLost += sharePer;
-          }
+          demandByKind.set(kind, (demandByKind.get(kind) ?? 0) + sharePer);
+          totalDemandLost += sharePer;
         }
       }
     }
