@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { dedupByLogicalRental, effectiveDate, isLive } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
 import { diagnoseDenialAvailability } from "./lib/availability";
 import {
   buildCommitmentMap,
@@ -406,9 +406,10 @@ export const getLifetimeByMonth = query({
       if (res.status === "cancelled" || res.status === "declined") continue;
       // Past/current-month bars represent realised revenue — only count
       // confirmed (FUNDS_RESERVED+ per the source-filter rule) or completed.
-      // Pending_review (APPROVED / unverified) is shown ONLY in the next-month
-      // "Pending" overlay, never as historical revenue.
-      const isPending = res.status === "pending_review" || res.status === "pending";
+      // Pending (renter paid, doc verification in flight → order_step==="VERIFIED")
+      // is shown ONLY in the next-month "Pending" overlay, never as historical
+      // revenue. Standardised on canonical isPendingVerification (R2, 2026-05-22).
+      const isPending = isPendingVerification(res as any);
       const amount = res.net_to_owner_gbp ?? 0;
       const slug = res.account_slug ?? "dbcinema";
       const isFutureRes = dateStr.slice(0, 7) > currentMonth;
@@ -573,7 +574,7 @@ export const getLifetimeByMonth = query({
             if (!d || d.slice(0, 7) !== mo) return false;
             if (r.is_obsolete) return false;
             if (r.status === "cancelled" || r.status === "declined") return false;
-            if (r.status === "pending_review" || r.status === "pending") return false;
+            if (isPendingVerification(r as any)) return false;
             return (r.gross_paid_gbp ?? 0) > 0 || (r.net_to_owner_gbp ?? 0) > 0;
           }).length
         : 0;
