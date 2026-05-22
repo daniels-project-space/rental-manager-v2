@@ -1,0 +1,98 @@
+/**
+ * WallE cell layout — dock animation between RESTING and ENGAGED states.
+ *
+ * Single bot DOM node positioned via CSS custom properties --bot-x/--bot-y/
+ * --bot-s. Toggling [data-engaged="true"] on .walle-cell smoothly tweens
+ * those variables (transform + filter) over ~620ms. No layout thrash, no
+ * portal — just one transformed stage.
+ */
+
+.walle-cell {
+  --bot-x: 0px;
+  --bot-y: 0px;
+  --bot-s: 1;
+  --bot-glow: drop-shadow(0 6px 16px rgba(99, 102, 241, 0.18));
+  position: relative;
+}
+
+/* Resting: bot sits in the left half at full size. */
+.walle-cell .walle-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 140px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  transform: translate(var(--bot-x), var(--bot-y)) scale(var(--bot-s));
+  transform-origin: top left;
+  transition:
+    transform 620ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 620ms ease,
+    width 620ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 620ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, filter;
+  filter: var(--bot-glow);
+  z-index: 4;
+}
+
+/* Engaged: bot shrinks and docks at the top-left of the chat (right pane). */
+.walle-cell[data-engaged='true'] {
+  --bot-x: 144px; /* clear the left rail (140px) + 4px gutter */
+  --bot-y: 8px;
+  --bot-s: 0.32;
+  --bot-glow: drop-shadow(0 4px 12px rgba(99, 102, 241, 0.32));
+}
+
+/* Slow idle animations slightly when docked so they read calmer at small size. */
+.walle-cell[data-engaged='true'] .walle-bot {
+  animation-duration: 5s; /* harmless if .walle-bot has no top-level anim */
+}
+.walle-cell[data-engaged='true'] .walle-bot .wb-body,
+.walle-cell[data-engaged='true'] .walle-bot .wb-eye-lid,
+.walle-cell[data-engaged='true'] .walle-bot .wb-antenna {
+  animation-duration: 6s, 5.4s, 5.2s;
+}
+
+/* Click wave cue — short attention pulse on the right arm. */
+.walle-cell[data-wave='true'] .walle-bot .wb-arm-r {
+  transform-origin: 165px 115px;
+  animation: walle-wave 720ms ease-in-out;
+}
+@keyframes walle-wave {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-22deg); }
+  55% { transform: rotate(18deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* When engaged, the left-rail column collapses visually (chat fills). */
+.walle-cell[data-engaged='true'] .walle-left-rail {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+.walle-cell .walle-left-rail {
+  transition: opacity 420ms ease;
+  opacity: 1;
+}
+
+/* Chat panel slides to fill on engagement. */
+.walle-cell .walle-chat-pane {
+  transition:
+    margin-left 620ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.walle-cell[data-engaged='true'] .walle-chat-pane {
+  margin-left: 0;
+}
+
+/* Dock slot — invisible 56x56 anchor inside the chat header area. The bot
+ * lands visually here (the stage is positioned absolute to overlap it). */
+.walle-dock-slot {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}

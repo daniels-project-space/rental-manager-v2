@@ -41,6 +41,12 @@ export interface WallEChatProps {
   emptyHint?: string;
   /** Tighter padding/spacing for narrow inline embeds (e.g. 350-450px). */
   compact?: boolean;
+  /**
+   * When true, renders a 56x56 .walle-dock-slot placeholder at the top-left
+   * of the messages area. The parent WallE shell positions the shared bot
+   * stage to visually overlap this slot when chat is engaged.
+   */
+  showDockSlot?: boolean;
 }
 
 /** Phase 7 — stable client-side identifier for the joke-quota endpoint. */
@@ -76,6 +82,7 @@ export default function WallEChat({
   className,
   emptyHint,
   compact = false,
+  showDockSlot = false,
 }: WallEChatProps) {
   // ── Stable per-mount session id ──
   const sessionIdRef = useRef<string>('');
@@ -138,22 +145,55 @@ export default function WallEChat({
     if (typeof lastSignalChangeAt === 'number') bumpActivity();
   }, [lastSignalChangeAt, bumpActivity]);
 
-  // Idle joke loop intentionally removed (2026-05-22 redesign).
-  // The parent shell <WallE /> now owns the idle-narration loop and pipes
-  // results through the speech bubble instead of injecting fake chat
-  // messages. The pre-existing `/api/walle/joke` route stays available for
-  // future callers; we just don't trigger it from here anymore.
-  void JOKE_IDLE_AFTER_MS;
-  void userIdRef;
-  void jokeFiredInWindowRef;
-  void setJokeMessages;
+  // Idle-joke loop — re-enabled (2026-05-22 dock redesign).
+  // Bubble has been removed; jokes now flow into the chat as italic
+  // assistant messages (data-walle-joke="1"). Fires once per idle window.
+  useEffect(() => {
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      if (isThinking) return;
+      if (jokeFiredInWindowRef.current) return;
+      if (Date.now() - lastActivityRef.current < JOKE_IDLE_AFTER_MS) return;
+      jokeFiredInWindowRef.current = true;
+      try {
+        const res = await fetch('/api/walle/joke', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ userId: userIdRef.current }),
+        });
+        if (!res.ok) return;
+        const data: { line?: string | null } = await res.json();
+        const line = data?.line?.trim();
+        if (!line) return;
+        setJokeMessages((prev) => [
+          ...prev,
+          {
+            id: `walle-joke-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant',
+            text: line,
+            createdAt: Date.now(),
+            isJoke: true,
+          },
+        ]);
+      } catch {
+        // silent — best-effort
+      }
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isThinking]);
 
   // ── Derived chat-state → parent mood mapping ──
+  // 'listening' now fires on focus OR non-empty input (either signals user
+  // engagement with the chat; parent uses this to drive the dock animation).
   useEffect(() => {
     if (!onChatStateChange) return;
     let next: WallEChatState = 'idle';
     if (isThinking) next = 'thinking';
-    else if (focused && input.trim().length > 0) next = 'listening';
+    else if (focused || input.trim().length > 0) next = 'listening';
     onChatStateChange(next);
   }, [isThinking, focused, input, onChatStateChange]);
 
@@ -250,9 +290,12 @@ export default function WallEChat({
         className="flex-1 space-y-3 overflow-y-auto px-4 py-3"
         aria-label="WallE chat history"
       >
+        {showDockSlot ? (
+          <div className="walle-dock-slot" aria-hidden="true" />
+        ) : null}
         {visible.length === 0 ? (
           <p className="select-none text-sm text-zinc-500">
-            Ask WallE about your rentals…
+            {emptyHint ?? 'Ask WallE about your rentals…'}
           </p>
         ) : (
           visible.map((m) => {
