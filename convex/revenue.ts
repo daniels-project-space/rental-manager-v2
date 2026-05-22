@@ -1411,10 +1411,11 @@ export const getMissedKindBreakdown = query({
       const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
       return ts >= cutoffMs;
     });
-    const ownerDenied = obsoleteRes.filter((r) => {
-      const actor = r.reclassified_outcome ?? r.denial_actor;
-      return actor === "owner_denied";
-    });
+    // EQ-B: use shared module-scope `isOwnerDeniedLike` so the drill-down's
+    // population matches the parent ring's broadened predicate (was previously
+    // only narrow `actor === "owner_denied"`, missing pre-handover cancels).
+    const ownerDenied = obsoleteRes.filter(isOwnerDeniedLike);
+    const ownedSkus = new Set<string>(MASTER_INVENTORY_KEYS);
 
     // Per-item aggregator. Each item gets {revenue, count} bucket.
     const perItem = new Map<string, { name: string; revenue: number; count: number }>();
@@ -1517,6 +1518,39 @@ export const getMissedKindBreakdown = query({
             sharePer,
           );
         }
+      }
+
+      // EQ-B: equivalence pass for marketing-only owner-denied (resolved_items
+      // empty). Mirror the parent ring's marketing_only branch — credit demand
+      // + gap to the equivalent SKU's slice so drill-down to a kind reflects
+      // demand from unowned listings (e.g. "GoPro Hero 11" → GoPro 12 Hero).
+      for (const r of ownerDenied) {
+        const resolved = r.resolved_items ?? [];
+        if (resolved.length > 0) continue;
+        const items = r.items ?? [];
+        const title = items[0]?.item_name ?? "";
+        if (!title) continue;
+        const lcTitle = title.toLowerCase();
+        const directHit = Array.from(ownedSkus).some(
+          (sku) => lcTitle.includes(sku.toLowerCase()),
+        );
+        if (directHit) continue;
+        const eq = resolveListingToInventory(title, null, ownedSkus);
+        if (eq.matchType !== "equivalence" || !eq.sku) continue;
+        const eqKind = itemKindByCanonical.get(eq.sku);
+        if (!eqKind || eqKind !== kind) continue;
+
+        let estimatedValue = r.gross_paid_gbp ?? 0;
+        if (estimatedValue === 0) {
+          const dp = priceByName.get(eq.sku) ?? priceByName.get(title);
+          if (dp) estimatedValue = dp * Math.max(1, r.duration_days ?? 2);
+        }
+        if (estimatedValue <= 0) continue;
+
+        // Marketing-only equivalence ⇒ counts as gap + demand (matches parent).
+        const includeAsGap = effView === "all" || effView === "gap" || effView === "demand";
+        if (!includeAsGap) continue;
+        bumpItem(eq.sku, eq.sku, estimatedValue);
       }
     }
 

@@ -62,6 +62,7 @@ import type * as extract_booking_times_q from "../extract_booking_times_q.js";
 import type * as feature_flags from "../feature_flags.js";
 import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
+import type * as http from "../http.js";
 import type * as hygglo from "../hygglo.js";
 import type * as hygglo_inbox from "../hygglo_inbox.js";
 import type * as hygglo_poll_trigger from "../hygglo_poll_trigger.js";
@@ -100,6 +101,7 @@ import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
 import type * as listing_cache from "../listing_cache.js";
+import type * as listing_equivalence_admin from "../listing_equivalence_admin.js";
 import type * as listing_images from "../listing_images.js";
 import type * as listing_resolver from "../listing_resolver.js";
 import type * as listing_resolver_data from "../listing_resolver_data.js";
@@ -147,6 +149,7 @@ import type * as snapshot_jobs from "../snapshot_jobs.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
+import type * as telegram_inbound from "../telegram_inbound.js";
 import type * as vacation from "../vacation.js";
 import type * as walle_ratelimits from "../walle_ratelimits.js";
 
@@ -211,6 +214,7 @@ declare const fullApi: ApiFromModules<{
   feature_flags: typeof feature_flags;
   health: typeof health;
   historical_revenue: typeof historical_revenue;
+  http: typeof http;
   hygglo: typeof hygglo;
   hygglo_inbox: typeof hygglo_inbox;
   hygglo_poll_trigger: typeof hygglo_poll_trigger;
@@ -249,6 +253,7 @@ declare const fullApi: ApiFromModules<{
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;
   listing_cache: typeof listing_cache;
+  listing_equivalence_admin: typeof listing_equivalence_admin;
   listing_images: typeof listing_images;
   listing_resolver: typeof listing_resolver;
   listing_resolver_data: typeof listing_resolver_data;
@@ -296,6 +301,7 @@ declare const fullApi: ApiFromModules<{
   sync_account_profiles: typeof sync_account_profiles;
   sync_state: typeof sync_state;
   tax: typeof tax;
+  telegram_inbound: typeof telegram_inbound;
   vacation: typeof vacation;
   walle_ratelimits: typeof walle_ratelimits;
 }>;

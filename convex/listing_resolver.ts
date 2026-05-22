@@ -35,6 +35,13 @@ import {
 } from "./lib/item_matcher";
 import { CANONICAL_MAP, getRelevantItems } from "./lib/inventory_categories";
 import { lookupPhotoReference } from "./lib/listing_photo_reference";
+// EQ-A: Tier 6.5 equivalence-map fallback. Map loaded via internal query
+// (`getEffectiveEquivalenceMap` in listing_equivalence_admin.ts) because we're
+// in a "use node" module and can't touch ctx.db directly.
+import {
+  resolveListingToInventoryWithMap,
+  DEFAULT_LISTING_EQUIVALENCE_MAP,
+} from "./lib/listing_equivalence";
 import { generateText } from "ai";
 // Reuse the central Convex-side helper (vault fallback + AI_PROVIDER routing).
 // item_resolver.ts is the canonical home for this — see getActionLlmModel.
@@ -60,13 +67,17 @@ type ResolverSource =
   | "detail_api"
   | "ai"
   | "fuzzy"
-  | "manual";
+  | "manual"
+  | "equivalence"; // EQ-A: Tier 6.5 — equivalence-map fallback
 
 interface ResolvedItem {
   item_name: string;
   qty: number;
   confidence: number;
   source: ResolverSource;
+  // EQ-A: true when produced by Tier 6.5 equivalence fallback so consumers
+  // can distinguish "closest available equivalent" from a direct match.
+  via_equivalence?: boolean;
 }
 
 interface Candidate {
@@ -529,6 +540,47 @@ export const resolveListing = internalAction({
         },
       ];
       return writeAndReturn(ctx, args, items, "fuzzy", 0.5, attemptedTiers);
+    }
+
+    // Tier 6.5 — equivalence-map fallback (EQ-A).
+    // After AI + fuzzy fail, try the settings-backed equivalence map. Auto-
+    // maps unresolved listings (e.g. "Sony FX9") to closest owned equivalent
+    // ("Sony FX3") with source="equivalence" + via_equivalence=true so the
+    // row is auditable and distinct from direct matches.
+    attemptedTiers.push("equivalence");
+    let equivMap: Record<string, string[]> = DEFAULT_LISTING_EQUIVALENCE_MAP;
+    try {
+      const loaded = await ctx.runQuery(
+        internal.listing_equivalence_admin.getEffectiveEquivalenceMap,
+        {},
+      );
+      if (loaded && typeof loaded === "object" && Object.keys(loaded).length > 0) {
+        equivMap = loaded as Record<string, string[]>;
+      }
+    } catch (err) {
+      console.warn("[listing_resolver] tier 6.5: failed to load equivMap, using default", String(err));
+    }
+    const ownedSkuSet = new Set<string>(INVENTORY_NAMES);
+    const equivResult = resolveListingToInventoryWithMap(
+      args.hygglo_title,
+      null,
+      ownedSkuSet,
+      equivMap,
+    );
+    if (equivResult.matchType === "equivalence" && equivResult.sku) {
+      console.log(
+        `[listing_resolver] tier 6.5 equivalence: ${args.hygglo_title} → ${equivResult.sku}`,
+      );
+      const items: ResolvedItem[] = [
+        {
+          item_name: equivResult.sku,
+          qty: 1,
+          confidence: 0.4, // below fuzzy(0.5) — explicit "best-guess equivalent"
+          source: "equivalence" as const,
+          via_equivalence: true,
+        },
+      ];
+      return writeAndReturn(ctx, args, items, "equivalence", 0.4, attemptedTiers);
     }
 
     // Tier 7 — pending_review (park for human triage)

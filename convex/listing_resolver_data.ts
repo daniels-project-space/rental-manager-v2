@@ -73,7 +73,9 @@ export const upsertListingResolution = internalMutation({
           v.literal("ai"),
           v.literal("fuzzy"),
           v.literal("manual"),
+          v.literal("equivalence"), // EQ-A: Tier 6.5 fallback
         ),
+        via_equivalence: v.optional(v.boolean()), // EQ-A: audit flag for Tier 6.5
       }),
     ),
     status: v.union(
@@ -150,7 +152,9 @@ export const markReviewed = internalMutation({
           v.literal("ai"),
           v.literal("fuzzy"),
           v.literal("manual"),
+          v.literal("equivalence"), // EQ-A: Tier 6.5 fallback
         ),
+        via_equivalence: v.optional(v.boolean()), // EQ-A: audit flag for Tier 6.5
       }),
     ),
     reviewed_by: v.string(),
@@ -306,7 +310,9 @@ export const upsertListingResolutionPublic = mutation({
           v.literal("ai"),
           v.literal("fuzzy"),
           v.literal("manual"),
+          v.literal("equivalence"), // EQ-A: Tier 6.5 fallback
         ),
+        via_equivalence: v.optional(v.boolean()), // EQ-A: audit flag for Tier 6.5
       }),
     ),
     status: v.union(
