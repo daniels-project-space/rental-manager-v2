@@ -81,6 +81,7 @@ const ACTUAL_KEYS = [
 export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const [chartMode, setChartMode] = useState<"bars" | "lines">("bars");
   const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug });
   // Single source of truth for the current-month target: the Expected Monthly
   // stat card (data.monthly.target_gbp). The lifetime chart mirrors that value
@@ -232,6 +233,28 @@ export function LifetimeRevenue() {
           </div>
         )}
 
+        {/* Chart mode toggle */}
+        <div className="flex gap-1 mb-2">
+          <button
+            onClick={() => setChartMode("bars")}
+            className="text-xs px-2 py-0.5 rounded-md transition-all"
+            style={{
+              border: "1px solid " + (chartMode === "bars" ? "#22c55e" : "#3a3f4b"),
+              color: chartMode === "bars" ? "#22c55e" : "#8b8fa3",
+              background: chartMode === "bars" ? "rgba(34,197,94,0.12)" : "transparent",
+            }}
+          >Bars</button>
+          <button
+            onClick={() => setChartMode("lines")}
+            className="text-xs px-2 py-0.5 rounded-md transition-all"
+            style={{
+              border: "1px solid " + (chartMode === "lines" ? "#22c55e" : "#3a3f4b"),
+              color: chartMode === "lines" ? "#22c55e" : "#8b8fa3",
+              background: chartMode === "lines" ? "rgba(34,197,94,0.12)" : "transparent",
+            }}
+          >Lines</button>
+        </div>
+
         {/* Toggleable legend */}
         <div className="flex flex-wrap gap-1.5 mb-3">
           {SERIES.map((s) => {
@@ -375,6 +398,13 @@ export function LifetimeRevenue() {
                   <rect width="14" height="14" fill="rgba(234,179,8,0.6)" />
                   <line x1="0" y1="0" x2="0" y2="14" stroke="rgba(255,255,255,0.55)" strokeWidth={3} />
                 </pattern>
+                {/* Per-series line-mode gradients — use exact series color faded to transparent. */}
+                {SERIES.map((s) => (
+                  <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={s.color} stopOpacity={0.55} />
+                    <stop offset="100%" stopColor={s.color} stopOpacity={0.02} />
+                  </linearGradient>
+                ))}
                 {/* Cumulative area gradient — green fading to transparent below the line. */}
                 <linearGradient id="cumulative-area" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#22c55e" stopOpacity={0.42} />
@@ -478,7 +508,7 @@ export function LifetimeRevenue() {
                   cap the stack (aiBoost / damage / booked / pending / predictedRemainder)
                   get a rounded top, matching V1's borderRadius:3 selection.
                   Animated toggle: legend click → Recharts fades opacity over 350ms. */}
-              {SERIES.map((s) => {
+              {chartMode === "bars" && SERIES.map((s) => {
                 const isPredicted = s.key === "predictedRemainder";
                 return (
                   <Bar
@@ -499,6 +529,24 @@ export function LifetimeRevenue() {
                   />
                 );
               })}
+              {chartMode === "lines" && SERIES.filter((s) => s.key !== "predictedRemainder").map((s) => (
+                <Area
+                  key={s.key}
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey={s.key}
+                  name={s.key}
+                  stroke={s.color}
+                  strokeWidth={2}
+                  fill={`url(#grad-${s.key})`}
+                  fillOpacity={1}
+                  isAnimationActive
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                  activeDot={{ r: 4, stroke: s.color, fill: "#0f1115", strokeWidth: 2 }}
+                  hide={hidden[s.key] ?? false}
+                />
+              ))}
               {/* Cumulative area: gradient falloff. Animation starts AFTER the line
                   finishes drawing (animationBegin) so the gradient doesn't bloom
                   ahead of the line stroke. */}
