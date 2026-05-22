@@ -121,6 +121,28 @@ export const runBackupPoll = internalAction({
         `orders=${totalOrders} errors=${errors.length}`,
     );
 
+    // Record this run in sync_state under a DISTINCT source so the backup
+    // poller acts as a failover/telemetry signal without stomping the primary
+    // `hygglo_poller` row. The c64020a revert removed the per-order
+    // upsertOrderAsReservation write (data-loss risk); this is a safe
+    // telemetry write only. Wrapped in try/catch so a sync_state outage
+    // never breaks the backup poll itself.
+    try {
+      await ctx.runMutation(api.sync_state.recordSyncRun, {
+        source: "hygglo_backup_poller",
+        succeeded: errors.length === 0,
+        durationMs: elapsedMs,
+        rowsUpserted: { reservations: totalOrders },
+        errorMessage: errors.length > 0 ? errors.join("; ") : undefined,
+      });
+    } catch (writeErr) {
+      console.error(
+        `[backup_poll] sync_state.recordSyncRun failed: ${
+          writeErr instanceof Error ? writeErr.message : String(writeErr)
+        }`,
+      );
+    }
+
     return {
       accounts: perAccount.length,
       orders: totalOrders,

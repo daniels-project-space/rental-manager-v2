@@ -571,6 +571,17 @@ export const pollHyggloInbox = schedules.task({
   retry: { maxAttempts: 2 },
   run: async () => {
     if (isWithinUkQuietHours()) {
+      // Heartbeat: keep dashboard "fresh" indicator alive during quiet hours.
+      try {
+        const hbConvex = new ConvexHttpClient(CONVEX_URL);
+        await hbConvex.mutation(api.sync_state.recordSyncRun, {
+          source: "hygglo_poller",
+          succeeded: true,
+          kind: "heartbeat",
+        });
+      } catch (err) {
+        console.warn("[poll-hygglo] heartbeat write failed:", err);
+      }
       logger.info("[quiet-hours] skipped", { task: "poll-hygglo-inbox" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }
