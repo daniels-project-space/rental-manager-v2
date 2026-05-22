@@ -24,6 +24,21 @@ import { rateLimiter } from "./rate_limit_config";
 export const triggerWorkflow = internalAction({
   args: {},
   handler: async (ctx) => {
+    // S2 fix — heartbeat ungated. Fire on EVERY 15-min cron tick BEFORE any
+    // early return (rate-limit, quiet-hours, missing URL) so the dashboard
+    // pill stays green whenever the cron itself is alive — independent of
+    // whether the downstream workflow actually ran. This is the true
+    // liveness signal of the Convex cron itself.
+    try {
+      await ctx.runMutation(api.sync_state.recordSyncRun, {
+        source: "hygglo_cron",
+        succeeded: true,
+        kind: "heartbeat",
+      });
+    } catch (err) {
+      console.warn("[hygglo_poll_trigger] heartbeat write failed:", err);
+    }
+
     // Rate-limit guard: max 1 trigger per 4 min (prevents cron + manual race).
     // Background crons that are NOT rate-limited: mv_refresh_*, snapshot-*,
     // archive-to-r2-cold, complete stale-confirmed, account profile sync,
@@ -41,16 +56,6 @@ export const triggerWorkflow = internalAction({
     }
 
     if (isWithinUkQuietHours()) {
-      // Heartbeat under distinct "hygglo_cron" source so quiet hours don't appear as a stalled scanner.
-      try {
-        await ctx.runMutation(api.sync_state.recordSyncRun, {
-          source: "hygglo_cron",
-          succeeded: true,
-          kind: "heartbeat",
-        });
-      } catch (err) {
-        console.warn("[hygglo_poll_trigger] heartbeat write failed:", err);
-      }
       console.log("[quiet-hours] skipped", { task: "hygglo_poll_trigger:triggerWorkflow" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }
