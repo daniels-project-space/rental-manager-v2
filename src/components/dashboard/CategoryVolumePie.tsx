@@ -4,7 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 
 type Metric = "count" | "revenue";
@@ -219,15 +219,26 @@ export function CategoryVolumePieBody({
   // Force £ in missed mode (count is meaningless for missed-revenue).
   const effectiveMetric: Metric = isMissed ? "revenue" : metric;
 
-  const data = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug, days }) as
+  const rawData = useQuery(api.dashboard.getRentalVolumeByCategory, { accountSlug, days }) as
     | CatVolData
     | undefined;
 
   // Always-subscribe so toggling Earned↔Missed is instant (no skeleton flash).
-  const missedData = useQuery(
+  const rawMissedData = useQuery(
     api.revenue.getMissedAndDeniedByCategory,
     { accountSlug, days },
   ) as MissedData | undefined;
+
+  // Phase 11 — keep previous data visible during timeframe refetches so the
+  // expanded widget doesn't visually collapse to a 0-height skeleton (which
+  // previously made it look like the drawer was closing when changing days).
+  const lastDataRef = useRef<CatVolData | undefined>(undefined);
+  if (rawData !== undefined) lastDataRef.current = rawData;
+  const data = rawData ?? lastDataRef.current;
+
+  const lastMissedRef = useRef<MissedData | undefined>(undefined);
+  if (rawMissedData !== undefined) lastMissedRef.current = rawMissedData;
+  const missedData = rawMissedData ?? lastMissedRef.current;
 
   const breakdown = useQuery(
     api.dashboard.getRentalVolumeKindBreakdown,
@@ -580,7 +591,9 @@ export function CategoryVolumePieBody({
 
       {isMissed ? (
         missedData === undefined ? (
-          <SkeletonBlock className={`h-[${CHART_HEIGHT}px] w-full`} />
+          <div style={{ height: CHART_HEIGHT, width: "100%" }}>
+            <SkeletonBlock className="h-full w-full" />
+          </div>
         ) : missedData.missed.slices.length === 0 ? (
           <EmptyState message={`No missed revenue in ${periodLabel.toLowerCase()}`} icon="📉" />
         ) : (() => {
@@ -766,7 +779,9 @@ export function CategoryVolumePieBody({
           );
         })()
       ) : data === undefined ? (
-        <SkeletonBlock className={`h-[${CHART_HEIGHT}px] w-full`} />
+        <div style={{ height: CHART_HEIGHT, width: "100%" }}>
+          <SkeletonBlock className="h-full w-full" />
+        </div>
       ) : data.slices.length === 0 ? (
         <EmptyState message={`No rentals in ${periodLabel.toLowerCase()}`} icon="📊" />
       ) : (
