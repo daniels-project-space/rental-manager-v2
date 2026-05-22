@@ -90,6 +90,11 @@ export function LifetimeRevenue() {
   const stats = useQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug });
   const expectedMonthlyTarget = (stats as { monthly?: { target_gbp?: number } } | undefined)
     ?.monthly?.target_gbp ?? 0;
+  // ai_active_from: months earlier than this are PRE-AI; defensively zero out
+  // their aiBoost contribution client-side regardless of what backend returns.
+  const settingsQ = useQuery(api.settings.get);
+  const aiActiveFrom: string =
+    (settingsQ as { ai_active_from?: string } | undefined)?.ai_active_from ?? "2026-02";
 
   const toggle = (key: string) => setHidden((h) => ({ ...h, [key]: !h[key] }));
 
@@ -103,6 +108,12 @@ export function LifetimeRevenue() {
   const rawData = raw?.months.map((row) => {
     const fc = raw.forecast.find((f) => f.month === row.month);
     const r = row as unknown as Record<string, number | undefined>;
+    // Pre-AI months: zero out aiBoost client-side so no green sliver renders
+    // for months earlier than settings.ai_active_from. String compare on YYYY-MM
+    // is sound since the format is fixed-width.
+    if (row.month < aiActiveFrom) {
+      r.aiBoost = 0;
+    }
     const realised = ACTUAL_KEYS.reduce((sum, k) => sum + (r[k] ?? 0), 0);
     // For the CURRENT month, use the Expected Monthly target (dashboard.ts) so the
     // ghost bar and the target marker reference the same number. For other future
@@ -130,12 +141,14 @@ export function LifetimeRevenue() {
       const r = row as unknown as Record<string, number | undefined>;
       for (const s of SERIES) {
         if (s.key === "predictedRemainder") continue;
+        // For aiBoost, respect ai_active_from (pre-AI months contribute 0).
+        if (s.key === "aiBoost" && row.month < aiActiveFrom) continue;
         out[s.key] += r[s.key] ?? 0;
       }
     }
     out.predictedRemainder = rawData.reduce((a, row) => a + (row.predictedRemainder ?? 0), 0);
     return out;
-  }, [raw, rawData]);
+  }, [raw, rawData, aiActiveFrom]);
 
   // To get elegant fade animations on legend toggles, we ZERO OUT hidden
   // series instead of using Recharts' instant <Bar hide />. Bars then animate
@@ -163,7 +176,7 @@ export function LifetimeRevenue() {
 
   // Stats bar reacts to legend toggles: filter ACTUAL_KEYS by visibility,
   // then recompute totals/avg/best/weakest/boost from the visible-only sums.
-  const { totalRevenue, avgMonthly, strongest, weakest, boostPct } = useMemo(() => {
+  const { totalRevenue, avgMonthly, strongest, weakest, boostPct, sumAiBoostGbp } = useMemo(() => {
     const visibleActualKeys = ACTUAL_KEYS.filter((k) => !hidden[k]);
     const months = raw?.months ?? [];
     const perMonth = months.map((row) => {
@@ -202,12 +215,14 @@ export function LifetimeRevenue() {
       if (!worst || m.sum < worst.revenue) worst = { month: m.month, revenue: m.sum };
     }
     let boost = 0;
+    let sumAiBoostGbp = 0;
     if (!hidden.aiBoost && total > 0) {
-      const sumAiBoost = months.reduce((acc, row) => {
+      sumAiBoostGbp = months.reduce((acc, row) => {
+        if (row.month < aiActiveFrom) return acc;
         const r = row as unknown as Record<string, number | undefined>;
         return acc + (r.aiBoost ?? 0);
       }, 0);
-      boost = Math.round((sumAiBoost / total) * 100);
+      boost = Math.round((sumAiBoostGbp / total) * 100);
     }
     return {
       totalRevenue: total,
@@ -215,8 +230,9 @@ export function LifetimeRevenue() {
       strongest: best,
       weakest: worst,
       boostPct: boost,
+      sumAiBoostGbp,
     };
-  }, [raw, hidden]);
+  }, [raw, hidden, aiActiveFrom]);
 
   // hiddenDelta = (sum of ALL ACTUAL_KEYS across months) − (sum of VISIBLE
   // ACTUAL_KEYS, i.e. totalRevenue). Computed client-side from seriesTotals
@@ -251,7 +267,29 @@ export function LifetimeRevenue() {
             {weakest && (
               <span>Weakest: <b style={{ color: "#f59e0b" }}>{fmtMonth(weakest.month)} {"£"}{weakest.revenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
             )}
-            {boostPct > 0 && <span>AI Boost: <b style={{ color: "#22c55e" }}>{boostPct}%</b></span>}
+            {boostPct > 0 && (() => {
+              const aiBoostCur = (stats as { ai_boost?: { current_month?: {
+                hard_gbp?: number; soft_credit_gbp?: number; hard_count?: number; soft_count?: number;
+              } } } | undefined)?.ai_boost?.current_month;
+              const hGbp = aiBoostCur?.hard_gbp ?? 0;
+              const sGbp = aiBoostCur?.soft_credit_gbp ?? 0;
+              const hN = aiBoostCur?.hard_count ?? 0;
+              const sN = aiBoostCur?.soft_count ?? 0;
+              const tooltip =
+                `Hard AI £${Math.round(hGbp).toLocaleString("en-GB")} (n=${hN}), ` +
+                `Soft AI £${Math.round(sGbp).toLocaleString("en-GB")} (n=${sN}, weighted 50%). ` +
+                `Excludes assisted and baseline. Lifetime AI credit: £${Math.round(sumAiBoostGbp).toLocaleString("en-GB")}.`;
+              return (
+                <span title={tooltip} className="inline-flex items-center gap-1 cursor-help">
+                  AI Boost: <b style={{ color: "#22c55e" }}>{boostPct}%</b>
+                  <span style={{ color: "#22c55e" }}>(£{Math.round(sumAiBoostGbp).toLocaleString("en-GB")})</span>
+                  <span
+                    aria-label="AI Boost details"
+                    className="inline-flex items-center justify-center text-[8px] w-[12px] h-[12px] rounded-full border border-[#22c55e80] text-[#22c55e]"
+                  >i</span>
+                </span>
+              );
+            })()}
           </div>
         )}
 
