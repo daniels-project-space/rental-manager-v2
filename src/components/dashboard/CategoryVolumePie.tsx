@@ -324,6 +324,19 @@ export function CategoryVolumePieBody({
   ];
   const periodLabel = days === 365 ? "Last year" : `Last ${days} days`;
 
+  // Plain-English hint for the currently-active toggle combo.
+  const toggleHint = isMissed
+    ? missedComponent === "denied"
+      ? "rentals you cancelled in Hygglo"
+      : missedComponent === "gap"
+        ? "couldn't fulfill — fully booked"
+        : missedComponent === "demand"
+          ? "renter paid then booking fell apart"
+          : "all lost revenue combined"
+    : metric === "count"
+      ? "how many rentals went through"
+      : "money made so far";
+
   const drillLabel = drillKind && data
     ? data.slices.find((s) => s.kind === drillKind)?.label ?? drillKind
     : null;
@@ -445,6 +458,9 @@ export function CategoryVolumePieBody({
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <span className="text-[10px] text-slate-400 uppercase tracking-wider shrink-0">
               {isMissed ? "Missed" : "Category Mix"}
+            </span>
+            <span className="text-[11px] text-zinc-500 italic shrink-0">
+              {toggleHint}
             </span>
             <span className="text-xs text-[#8b8fa3] truncate">
               {isMissed && drillKind ? (
