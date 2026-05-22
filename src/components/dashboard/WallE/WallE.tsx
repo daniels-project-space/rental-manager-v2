@@ -65,7 +65,6 @@ const AUTO_POP_COOLDOWN_MS = 30_000;
 export default function WallE({ accountSlug = null }: WallEProps) {
   // ── Chat-derived activity state. WallEChat reports via callback. ──
   const [chatState, setChatState] = useState<WallEChatState>('idle');
-  const [chatOpen, setChatOpen] = useState(false);
 
   // Mount timestamp for idle proxy.
   const mountedAt = useRef<number>(Date.now());
@@ -182,107 +181,55 @@ export default function WallE({ accountSlug = null }: WallEProps) {
   // ── Render ───────────────────────────────────────────────────────
   return (
     <div
-      className="relative h-full w-full rounded-[1rem] bg-card/85 border border-white/5 p-3 overflow-hidden"
+      className="relative h-full w-full rounded-[1rem] bg-card/85 border border-white/5 p-2 overflow-hidden flex flex-col md:flex-row gap-2"
       data-walle-mood={mood}
     >
-      {/* Character — fills the tile, click triggers narration */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div style={{ width: '78%', height: '88%' }}>
+      {/* LEFT PANEL — character + name + mood chip */}
+      <div className="relative flex md:w-[140px] w-full md:flex-col flex-row md:h-full h-[110px] items-center md:justify-start justify-center md:py-2 shrink-0 rounded-lg bg-white/[0.02]">
+        {/* Character */}
+        <div className="relative flex items-center justify-center md:w-[110px] md:h-[110px] w-[80px] h-[80px] shrink-0">
           <WallEBotLazy mood={mood} onClick={handleCharacterClick} />
+
+          {/* Speech bubble — anchored to character, overlays bot area */}
+          {bubble ? (
+            <div
+              className="absolute pointer-events-none z-10"
+              style={{
+                top: '-4px',
+                left: '50%',
+                transform: 'translateX(-30%)',
+                maxWidth: '180px',
+              }}
+            >
+              <WallESpeechBubble
+                key={bubble.id}
+                id={bubble.id}
+                text={bubble.text}
+                tone={bubble.tone}
+                onDismiss={dismissBubble}
+              />
+            </div>
+          ) : null}
+        </div>
+
+        {/* Identity tag */}
+        <div className="md:mt-2 md:ml-0 ml-3 leading-tight pointer-events-none text-center md:text-center text-left">
+          <div className="text-xs font-semibold text-white/90">WallE</div>
+          <div className="text-[9px] uppercase tracking-wider text-slate-400">
+            {mood}
+          </div>
         </div>
       </div>
 
-      {/* Speech bubble overlay — positioned next to character's head */}
-      {bubble ? (
-        <div
-          className="absolute pointer-events-none"
-          style={{ top: '8%', right: '6%', maxWidth: '60%' }}
-        >
-          <WallESpeechBubble
-            key={bubble.id}
-            id={bubble.id}
-            text={bubble.text}
-            tone={bubble.tone}
-            onDismiss={dismissBubble}
-          />
-        </div>
-      ) : null}
-
-      {/* Identity tag — top-left */}
-      <div className="absolute top-3 left-3 leading-tight pointer-events-none">
-        <div className="text-xs font-semibold text-white/90">WallE</div>
-        <div className="text-[9px] uppercase tracking-wider text-slate-400">
-          {mood}
-        </div>
-      </div>
-
-      {/* Talk-to-WallE button — bottom-right */}
-      <button
-        type="button"
-        onClick={() => setChatOpen(true)}
-        className="absolute bottom-3 right-3 rounded-full bg-indigo-500/85 hover:bg-indigo-500 transition px-3 py-1.5 text-[11px] font-medium text-white shadow-lg shadow-indigo-500/30"
-        aria-label="Open WallE chat"
-      >
-        Talk to WallE →
-      </button>
-
-      {/* Chat drawer overlay */}
-      {chatOpen ? (
-        <WallEChatDrawer onClose={() => setChatOpen(false)}>
-          <WallEChat
-            onChatStateChange={setChatState}
-            lastSignalChangeAt={lastChangeAt}
-          />
-        </WallEChatDrawer>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Lightweight overlay drawer for the chat. Fixed-position, click-outside-
- * to-close, ESC-to-close. No new library — keeps bundle flat.
- */
-function WallEChatDrawer({
-  onClose,
-  children,
-}: {
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-end p-4 sm:p-6"
-      style={{ background: 'rgba(0,0,0,0.5)' }}
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="WallE chat"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="relative w-full sm:w-[420px] h-[80vh] sm:h-[600px] max-h-[90vh] rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl overflow-hidden flex flex-col"
-      >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-2 text-zinc-200">
-          <div className="text-sm font-semibold">WallE</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-white/10 hover:text-white"
-            aria-label="Close WallE chat"
-          >
-            Close
-          </button>
-        </div>
-        <div className="flex-1 min-h-0 flex flex-col">{children}</div>
+      {/* RIGHT PANEL — inline chat */}
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col">
+        <WallEChat
+          onChatStateChange={setChatState}
+          lastSignalChangeAt={lastChangeAt}
+          className="h-full"
+          emptyHint="Talk to WallE — ask about conflicts, revenue, anything…"
+          compact
+        />
       </div>
     </div>
   );
