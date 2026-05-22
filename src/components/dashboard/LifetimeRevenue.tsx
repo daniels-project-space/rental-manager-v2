@@ -138,13 +138,26 @@ export function LifetimeRevenue() {
   // To get elegant fade animations on legend toggles, we ZERO OUT hidden
   // series instead of using Recharts' instant <Bar hide />. Bars then animate
   // smoothly between current value ↔ 0 over animationDuration.
-  const data = rawData.map((row) => {
-    const out: Record<string, unknown> = { ...row };
-    for (const s of SERIES) {
-      if (hidden[s.key]) out[s.key] = 0;
-    }
-    return out as typeof row;
-  });
+  // Also recompute `cumulative` from visible ACTUAL_KEYS so the green growth
+  // curve reacts to legend toggles (server-side row.cumulative is the full
+  // lifetime running sum and doesn't know about client-side hidden state).
+  const data = useMemo(() => {
+    let running = 0;
+    return rawData.map((row) => {
+      const r = row as unknown as Record<string, number | undefined>;
+      const out: Record<string, unknown> = { ...row };
+      for (const s of SERIES) {
+        if (hidden[s.key]) out[s.key] = 0;
+      }
+      let monthSum = 0;
+      for (const k of ACTUAL_KEYS) {
+        if (!hidden[k]) monthSum += r[k] ?? 0;
+      }
+      running += monthSum;
+      out.cumulative = running;
+      return out as typeof row;
+    });
+  }, [rawData, hidden]);
 
   // Stats bar reacts to legend toggles: filter ACTUAL_KEYS by visibility,
   // then recompute totals/avg/best/weakest/boost from the visible-only sums.
