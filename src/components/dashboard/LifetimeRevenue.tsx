@@ -172,11 +172,32 @@ export function LifetimeRevenue() {
       return { month: row.month, sum };
     });
     const total = perMonth.reduce((acc, m) => acc + m.sum, 0);
-    const monthsWithData = perMonth.filter((m) => m.sum > 0);
-    const avg = monthsWithData.length > 0 ? Math.round(total / monthsWithData.length) : 0;
+
+    // Trailing-window boundaries relative to today (auto-shifts each month).
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const monthsBack = (n: number) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - n, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    };
+    const minBestWeakestMonth = monthsBack(12); // [current-12 .. current-1]
+    const minAvgMonth = monthsBack(24); // [current-24 .. current-1]
+
+    const completedMonths = perMonth.filter((m) => m.month < currentMonthKey);
+    const last12 = completedMonths.filter((m) => m.month >= minBestWeakestMonth);
+    const last24 = completedMonths.filter((m) => m.month >= minAvgMonth);
+
+    // Avg/mo from last 24 completed months; denominator = months-with-data
+    // (preserves existing behavior of skipping zero-revenue months).
+    const last24WithData = last24.filter((m) => m.sum > 0);
+    const last24Sum = last24.reduce((acc, m) => acc + m.sum, 0);
+    const avg = last24WithData.length > 0 ? Math.round(last24Sum / last24WithData.length) : 0;
+
+    // Best/Weakest from last 12 completed months, excluding zero-revenue months.
+    const last12NonZero = last12.filter((m) => m.sum > 0);
     let best: { month: string; revenue: number } | undefined;
     let worst: { month: string; revenue: number } | undefined;
-    for (const m of monthsWithData) {
+    for (const m of last12NonZero) {
       if (!best || m.sum > best.revenue) best = { month: m.month, revenue: m.sum };
       if (!worst || m.sum < worst.revenue) worst = { month: m.month, revenue: m.sum };
     }
