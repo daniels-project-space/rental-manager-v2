@@ -1154,6 +1154,41 @@ export default defineSchema({
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_slug", ["slug"]),
 
+  // ── 2026-05-21: deterministic Hygglo product_id → item_id index ─────────
+  // The LLM-based resolver (item_resolver.ts) reads listing titles and is
+  // susceptible to keyword bleed from marketing copy ("Sony FX3 (same as A7s
+  // III)" → spuriously resolves an A7 III). This table is the authoritative
+  // override: when the poller writes a reservation whose hygglo_items[i]
+  // carries a known product_id, expandedIdsOf consults this table first
+  // and bypasses the LLM's choice for that position.
+  //
+  // Bootstrapped from history: scan reservations where hygglo_items + resolved
+  // items align positionally and the same (account, product_id) consistently
+  // resolves to the same item_id. Ambiguous product_ids stay unindexed and
+  // fall through to the LLM with a sanity filter applied.
+  //
+  // source: "auto-bootstrap" | "manual" | "auto-tiebreak". manual entries
+  // override auto ones; auto-tiebreak entries are derived by structural
+  // sanity check (canonical name tokens must appear in the listing title
+  // outside comparison parentheticals).
+  hygglo_product_index: defineTable({
+    account_slug: v.string(),
+    product_id: v.number(),
+    item_id: v.id("items"),
+    source: v.union(
+      v.literal("auto-bootstrap"),
+      v.literal("auto-tiebreak"),
+      v.literal("manual"),
+    ),
+    evidence_count: v.number(),
+    created_at: v.number(),
+    last_seen_at: v.number(),
+    // Last listing title observed for this product_id — debugging only.
+    sample_title: v.optional(v.string()),
+  })
+    .index("by_account_product", ["account_slug", "product_id"])
+    .index("by_item_id", ["item_id"]),
+
   // ── Phase W3b: reservation_vision side table (dual-write) ────────────────
   // Mirror of reservations.resolved_items so the heavy jsonb blob can move
   // off the hot reservations row. DUAL-WRITE phase: every existing

@@ -827,15 +827,46 @@ export const pollHyggloInbox = schedules.task({
 
             // Convex rows use optional account_slug; ReservationInput requires it — filter nulls.
             // Also coerce undefined date fields to null (ReservationInput uses string | null).
+            //
+            // pickup_at / return_at overrides: when extract_booking_times has
+            // determined that the renter agreed to pick up the evening BEFORE
+            // or return the morning AFTER the booking window, we feed those
+            // offset dates through to reconcile-holds so the calendar shows
+            // the gear out across the full real window — not just the
+            // listing's nominal start_date/end_date.
+            const dateAtMs = (d?: string): number | undefined => {
+              if (!d) return undefined;
+              const parsed = Date.parse(d + "T00:00:00Z");
+              return Number.isNaN(parsed) ? undefined : parsed;
+            };
             const reconReservations = reconReservationsRaw
               .filter((r) => r.account_slug != null)
-              .map((r) => ({
-                ...r,
-                _id: r._id as string,
-                account_slug: r.account_slug as string,
-                start_date: r.start_date ?? null,
-                end_date: r.end_date ?? null,
-              }));
+              .map((r) => {
+                const startStr = r.start_date ?? undefined;
+                const endStr = r.end_date ?? undefined;
+                const pickupStr = (r as { pickup_date?: string }).pickup_date;
+                const returnStr = (r as { return_date?: string }).return_date;
+                // Only override when the offset actually extends the hold —
+                // earlier pickup or later return. Equal or invalid offsets
+                // fall back to the booking window (no-op).
+                const pickup_at =
+                  pickupStr && startStr && pickupStr < startStr
+                    ? dateAtMs(pickupStr)
+                    : undefined;
+                const return_at =
+                  returnStr && endStr && returnStr > endStr
+                    ? dateAtMs(returnStr)
+                    : undefined;
+                return {
+                  ...r,
+                  _id: r._id as string,
+                  account_slug: r.account_slug as string,
+                  start_date: r.start_date ?? null,
+                  end_date: r.end_date ?? null,
+                  ...(pickup_at !== undefined && { pickup_at }),
+                  ...(return_at !== undefined && { return_at }),
+                };
+              });
 
             const reconItems = reconItemsRaw.map((i) => ({
               ...i,

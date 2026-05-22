@@ -100,8 +100,13 @@ function deriveStatusFromStep(
   if (sourceFilter === "obsolete") return "cancelled";
   if (sourceFilter === "pending") return "pending_review";
   if (sourceFilter === "current") {
-    // current = "in/just-finished this rental window". RETURNED rows are done.
-    return step === "RETURNED" || step === "REVIEWED" ? "completed" : "confirmed";
+    // Per order_step_semantics: RETURNED is the renter's NEXT-TO-DO step,
+    // meaning gear is still with the renter and the rental is ongoing.
+    // Only REVIEWED truly signals "rental wrapped up, awaiting review". The
+    // previous mapping eagerly marked RETURNED as completed, which hid
+    // in-window rentals from the active widget when their owner hadn't yet
+    // ticked the return on Hygglo (2026-05-21 fix).
+    return step === "REVIEWED" ? "completed" : "confirmed";
   }
   if (sourceFilter === "future") return "confirmed";
   // Unknown source — fall back to step-based heuristic.
@@ -113,8 +118,8 @@ function deriveStatusFromStep(
     case "VERIFIED":
     case "BOOKED_AFTER_VERIFIED":
     case "DELIVERED":
-      return "confirmed";
     case "RETURNED":
+      return "confirmed";
     case "REVIEWED":
       return "completed";
     case "CANCELED":
@@ -507,7 +512,17 @@ export const upsertOrderAsReservation = mutation({
       gross_paid_gbp: args.gross_paid_gbp,
       net_to_owner_gbp: args.net_to_owner_gbp,
       currency: args.currency,
-      items: args.items,
+      // Project to the minimal shape `reservations.items[]` is meant to store.
+      // Rich Hygglo metadata (image, type, product_id, slug) goes to the
+      // dedicated `hygglo_items[]` field instead — preserving that separation
+      // here means a new field added to Hygglo's API cannot trigger a document
+      // validator failure on this table. (Incident 2026-05-16 → 2026-05-21:
+      // `image` started arriving from Hygglo, the validator rejected it, and
+      // the poller auto-paused for six days because of that single new field.)
+      items: args.items.map((i) => ({
+        item_name: i.item_name,
+        ...(i.qty !== undefined && { qty: i.qty }),
+      })),
       duration_days: args.duration_days,
       renter_name: args.renter_name,
       // 2026-05-19 renter linkage

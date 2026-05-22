@@ -4,6 +4,12 @@
 export interface DBRow {
   start_date: string;
   end_date: string;
+  /** Optional override capturing day-before evening pickups. When set and
+   *  earlier than start_date, the gear is treated as out from this date. */
+  pickup_date?: string | null;
+  /** Optional override capturing morning-after returns. When set and later
+   *  than end_date, the gear is treated as out through this date. */
+  return_date?: string | null;
   order_step?: string | null;
   status?: string | null;
   qty: number; // qty of the item this row contributes
@@ -21,20 +27,53 @@ const isoNDaysAgo = (n: number, today: string): string => {
   return t.toISOString().slice(0, 10);
 };
 
+/**
+ * Earliest date on which this rental occupies the gear. Normally start_date,
+ * but a renter who arranges to pick up the evening BEFORE the rental window
+ * makes the gear unavailable from that earlier date. We honour pickup_date
+ * iff it precedes start_date (extracted from chat via extract_booking_times).
+ */
+export const effStart = (r: {
+  start_date: string;
+  pickup_date?: string | null;
+}): string => {
+  if (r.pickup_date && r.pickup_date < r.start_date) return r.pickup_date;
+  return r.start_date;
+};
+
+/**
+ * Latest date on which this rental occupies the gear.
+ *
+ * Two extensions beyond the booking's end_date:
+ *   1. Morning-after returns: return_date later than end_date (renter took
+ *      pickup the day before evening or returns next morning) extends out.
+ *   2. Overdue grace: a RETURNED/DELIVERED row whose end_date has just
+ *      passed gets treated as still-out through today, capped at
+ *      OVERDUE_GRACE_DAYS. Beyond that we presume actually returned.
+ */
 export const effEnd = (
-  r: { end_date: string; order_step?: string | null; status?: string | null },
+  r: {
+    end_date: string;
+    return_date?: string | null;
+    order_step?: string | null;
+    status?: string | null;
+  },
   today: string,
 ): string => {
-  const e = r.end_date;
+  // (1) Morning-after return: trust the chat-extracted return_date when later.
+  const base =
+    r.return_date && r.return_date > r.end_date ? r.return_date : r.end_date;
+  // (2) Overdue grace: only relevant when the rental's booked window already
+  // ended. We extend up to today (capped at OVERDUE_GRACE_DAYS past end).
   if (
     (r.order_step === "RETURNED" || r.order_step === "DELIVERED") &&
     r.status === "confirmed"
   ) {
     const graceCutoff = isoNDaysAgo(OVERDUE_GRACE_DAYS, today);
-    if (e >= graceCutoff) return e > today ? e : today;
-    return e;
+    if (base >= graceCutoff) return base > today ? base : today;
+    return base;
   }
-  return e;
+  return base;
 };
 
 /**
@@ -54,7 +93,7 @@ export function computeWorstOverlap(
 } {
   const scanFrom = today;
   const scanTo = horizonEnd;
-  const startDates = rows.map((r) => r.start_date);
+  const startDates = rows.map((r) => effStart(r));
   const endDates = rows.map((r) => effEnd(r, today));
   const candidates = Array.from(
     new Set<string>(
@@ -68,7 +107,7 @@ export function computeWorstOverlap(
   let worstCount = 0;
   for (const d of candidates) {
     const overlapping = rows.filter(
-      (r) => r.start_date <= d && effEnd(r, today) >= d,
+      (r) => effStart(r) <= d && effEnd(r, today) >= d,
     );
     const qtySum = overlapping.reduce((s, r) => s + r.qty, 0);
     if (qtySum > worstCount) {
@@ -78,7 +117,7 @@ export function computeWorstOverlap(
   }
 
   const overlappingSet = rows.filter(
-    (r) => r.start_date <= worstDay && effEnd(r, today) >= worstDay,
+    (r) => effStart(r) <= worstDay && effEnd(r, today) >= worstDay,
   );
   const earliestEnd = overlappingSet
     .map((r) => effEnd(r, today))

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { effEnd, computeWorstOverlap, type DBRow } from "./double_booking";
+import { effEnd, effStart, computeWorstOverlap, type DBRow } from "./double_booking";
 
 describe("effEnd", () => {
   const today = "2026-05-19";
@@ -88,6 +88,32 @@ describe("effEnd", () => {
     ).toBe("2026-05-11");
   });
 
+  it("morning-after return_date extends beyond end_date", () => {
+    // Milo Cumpstey case: same-day rental 11-Jul, return next morning 12-Jul.
+    expect(
+      effEnd(
+        { end_date: "2026-07-11", return_date: "2026-07-12", order_step: "DELIVERED", status: "confirmed" },
+        "2026-05-21",
+      ),
+    ).toBe("2026-07-12");
+  });
+
+  it("ignores return_date when it equals or precedes end_date", () => {
+    // Sanity: same-day return_date doesn't artificially shorten or extend.
+    expect(
+      effEnd(
+        { end_date: "2026-07-11", return_date: "2026-07-11", order_step: "DELIVERED", status: "confirmed" },
+        "2026-05-21",
+      ),
+    ).toBe("2026-07-11");
+    expect(
+      effEnd(
+        { end_date: "2026-07-11", return_date: "2026-07-10", order_step: "DELIVERED", status: "confirmed" },
+        "2026-05-21",
+      ),
+    ).toBe("2026-07-11");
+  });
+
   it("regression: 1-2 day overdue RETURNED+confirmed still extends to today", () => {
     expect(
       effEnd(
@@ -101,6 +127,49 @@ describe("effEnd", () => {
         today,
       ),
     ).toBe(today);
+  });
+});
+
+describe("effStart", () => {
+  it("returns start_date when no pickup_date is set", () => {
+    expect(effStart({ start_date: "2026-07-11" })).toBe("2026-07-11");
+  });
+  it("returns start_date when pickup_date is the same day", () => {
+    expect(effStart({ start_date: "2026-07-11", pickup_date: "2026-07-11" })).toBe("2026-07-11");
+  });
+  it("returns pickup_date when it's the evening BEFORE the start", () => {
+    // Renter arranged to grab gear Fri evening for a Sat–Sun rental.
+    expect(effStart({ start_date: "2026-07-11", pickup_date: "2026-07-10" })).toBe("2026-07-10");
+  });
+  it("ignores a later-than-start pickup_date (oddball data)", () => {
+    expect(effStart({ start_date: "2026-07-11", pickup_date: "2026-07-12" })).toBe("2026-07-11");
+  });
+});
+
+describe("computeWorstOverlap — date offset scenarios", () => {
+  it("evening-before pickup blocks the previous day", () => {
+    // qty 1 of an item; one rental 11→11, another rental that picked up
+    // evening of the 10th. The 10th itself shows the new rental holding it.
+    const rows: DBRow[] = [
+      { start_date: "2026-07-11", end_date: "2026-07-11", pickup_date: "2026-07-10", status: "confirmed", qty: 1 },
+      { start_date: "2026-07-10", end_date: "2026-07-10", status: "confirmed", qty: 1 },
+    ];
+    const result = computeWorstOverlap(rows, "2026-05-21", "2026-08-19");
+    // Both rows occupy 2026-07-10 → worstCount=2 on that date.
+    expect(result.worstCount).toBe(2);
+    expect(result.worstDay).toBe("2026-07-10");
+  });
+
+  it("morning-after return_date blocks the next day", () => {
+    // Mirror of the above: rental ends 11-Jul but returned 12-Jul morning;
+    // another booking on 12-Jul collides.
+    const rows: DBRow[] = [
+      { start_date: "2026-07-11", end_date: "2026-07-11", return_date: "2026-07-12", status: "confirmed", qty: 1 },
+      { start_date: "2026-07-12", end_date: "2026-07-12", status: "confirmed", qty: 1 },
+    ];
+    const result = computeWorstOverlap(rows, "2026-05-21", "2026-08-19");
+    expect(result.worstCount).toBe(2);
+    expect(result.worstDay).toBe("2026-07-12");
   });
 });
 

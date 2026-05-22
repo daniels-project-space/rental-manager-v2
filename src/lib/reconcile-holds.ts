@@ -21,6 +21,15 @@ export interface ReservationInput {
   status?: string;                    // legacy: confirmed | pending_review | cancelled
   is_obsolete?: boolean;
   items?: Array<{ item_name: string }>;
+  /**
+   * LLM-resolved or bundle-expanded item ids (preferred path). When present,
+   * reconcile uses these directly and skips the naive name match — that
+   * matcher cannot map raw Hygglo titles ("PIONEER RX3 – ALL IN ONE DJ DECK
+   * – DJ CONTROLLER – …") to our canonical item names ("DJ RX3 Pioneer
+   * controller") and silently emits no holds.
+   */
+  resolved_items?: Array<{ item_id: string; qty?: number }>;
+  expanded_items?: Array<{ item_id: string; qty?: number }>;
   renter_name?: string;
 }
 
@@ -233,18 +242,49 @@ export function computeHoldsForReservations(args: {
       order_step && COMPLETED_STEPS.has(order_step) ? "completed" : "confirmed";
 
     // ── Rule 5: Resolve items ─────────────────────────────────────────────────
-    const itemList = res.items ?? [];
-
-    if (itemList.length === 0) {
-      // No items array — skip silently (nothing to hold)
+    // Preferred path: trust the LLM resolver / bundle expander. expanded_items
+    // is bundle-decomposed (e.g. "Sony FX3 kit" → FX3 + 24-70mm lens),
+    // resolved_items is the per-position output. Either gives the item_id
+    // directly so we don't have to canonicalise Hygglo titles ourselves —
+    // the legacy resolveItem() exact-name match can't handle modern Hygglo
+    // titles like "PIONEER RX3 – ALL IN ONE DJ DECK – …".
+    const expanded = res.expanded_items ?? [];
+    const resolved = res.resolved_items ?? [];
+    const idEntries = expanded.length > 0 ? expanded : resolved;
+    if (idEntries.length > 0) {
+      const itemById = new Map(items.map((i) => [i._id, i]));
+      const writtenItemIds = new Set<string>();
+      for (const e of idEntries) {
+        const idStr = String(e.item_id);
+        if (writtenItemIds.has(idStr)) continue;
+        const item = itemById.get(idStr);
+        if (!item) continue;
+        if (item.account_slug && item.account_slug !== account_slug) continue;
+        writtenItemIds.add(idStr);
+        for (const date of filteredDates) {
+          holds.push({
+            item_id: idStr,
+            date,
+            reservation_id: _id,
+            account_slug,
+            status: holdStatus,
+            renter_name: res.renter_name || undefined,
+          });
+        }
+      }
       continue;
     }
+
+    // Legacy fallback: only used when neither expanded_items nor resolved_items
+    // exist on the row (e.g. ancient v1 imports without LLM resolution).
+    const itemList = res.items ?? [];
+    if (itemList.length === 0) continue;
 
     for (const { item_name } of itemList) {
       if (!item_name?.trim()) continue;
 
-      const resolved = resolveItem(item_name, items, account_slug);
-      if (!resolved) {
+      const found = resolveItem(item_name, items, account_slug);
+      if (!found) {
         if (!unmatchedItemNames.includes(item_name)) {
           unmatchedItemNames.push(item_name);
         }
@@ -254,12 +294,11 @@ export function computeHoldsForReservations(args: {
       // ── Rule 6: 1 hold per (item_id, date) per reservation ───────────────
       for (const date of filteredDates) {
         holds.push({
-          item_id: resolved._id,
+          item_id: found._id,
           date,
           reservation_id: _id,
           account_slug,
           status: holdStatus,
-          // qty_held intentionally omitted (Wave-2.5)
           renter_name: res.renter_name || undefined,
         });
       }

@@ -15,7 +15,9 @@
  *
  *   live     = not cancelled/declined/obsolete (i.e. "counts for anything")
  *   confirmed = status === "confirmed" with dates set, not obsolete
- *   ongoing  = confirmed AND start_date <= today (gear out OR overdue)
+ *   ongoing  = confirmed AND start_date <= today <= end_date (gear out today).
+ *              Past-end rentals drop out of the active widget even if the owner
+ *              hasn't ticked RETURNED yet — Daniel does not want them lingering.
  *   upcoming = confirmed AND start_date > today
  *   pending  = order_step === "VERIFIED" AND NOT obsolete
  *              → renter has paid AND is currently in document verification.
@@ -100,9 +102,15 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
       && r.start_date !== undefined && r.end_date !== undefined;
 }
 
-/** Confirmed AND start has happened (gear out today OR overdue). */
+/**
+ * Confirmed AND today falls within [start_date, end_date]. Rentals whose
+ * end_date has passed disappear from the active widget here even if the
+ * owner has not yet marked them RETURNED on Hygglo — that's deliberate.
+ */
 export function isOngoing(r: ReservationRow, today: string): boolean {
-  return isConfirmedWithDates(r) && (r.start_date as string) <= today;
+  return isConfirmedWithDates(r)
+    && (r.start_date as string) <= today
+    && (r.end_date as string) >= today;
 }
 
 /** Confirmed AND start is in the future. */

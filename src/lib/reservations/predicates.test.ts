@@ -59,11 +59,18 @@ describe("isConfirmedWithDates", () => {
 });
 
 describe("isOngoing / isUpcoming", () => {
-  it("ongoing when start <= today (overdue still ongoing)", () => {
-    assert.equal(isOngoing(row({ start_date: "2026-05-14" }), TODAY), true);   // today
-    assert.equal(isOngoing(row({ start_date: "2026-04-01" }), TODAY), true);   // overdue
-    assert.equal(isOngoing(row({ start_date: "2026-05-20" }), TODAY), false);  // future
+  it("ongoing when today falls within [start, end]", () => {
+    assert.equal(isOngoing(row({ start_date: "2026-05-14", end_date: "2026-05-22" }), TODAY), true);   // today, in window
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-22" }), TODAY), true);   // started early, still in window
+    assert.equal(isOngoing(row({ start_date: "2026-05-20" }), TODAY), false);  // future start
     assert.equal(isOngoing(row({ status: "pending_review", start_date: "2026-05-14" }), TODAY), false);
+  });
+  it("not ongoing once end_date has passed, even if not marked RETURNED", () => {
+    // Mirrors the dashboard-widget rule: a confirmed rental whose end_date is
+    // before today disappears from active even if order_step is RETURNED or
+    // DELIVERED (i.e. owner forgot to tick "returned" on Hygglo).
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "RETURNED" }), TODAY), false);
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "DELIVERED" }), TODAY), false);
   });
   it("upcoming when start > today", () => {
     assert.equal(isUpcoming(row({ start_date: "2026-05-20" }), TODAY), true);

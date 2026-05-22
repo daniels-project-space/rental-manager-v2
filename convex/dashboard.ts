@@ -16,7 +16,7 @@ import {
   buildSharedImageBlacklist,
   type ImageHint,
 } from "./lib/imageResolution";
-import { effEnd as effEndImpl } from "./lib/double_booking";
+import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_booking";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
@@ -283,6 +283,50 @@ export const getStatsDrawerData = query({
       (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
     );
 
+    // ── COLLECT 8: hygglo_product_index — deterministic product_id→item_id ─
+    // Bootstrapped from history (admin_bootstrap_pidindex). When present,
+    // overrides the LLM resolver's per-position guess. Closes the keyword-
+    // bleed hole where listings containing "(same sensor as a7s iii)" would
+    // hallucinate a Sony A7 III line even though only Sony FX3 was rented.
+    const productIndexRows = await ctx.db.query("hygglo_product_index").collect();
+    const productIndex = new Map<string, string>();
+    for (const row of productIndexRows) {
+      productIndex.set(`${row.account_slug}:${row.product_id}`, String(row.item_id));
+    }
+
+    /**
+     * Structural sanity check for LLM-resolved item names. Strips parentheticals
+     * containing comparison keywords ("same sensor as ...", "like ...") then
+     * looks for any model-identifier token of the canonical name in the cleaned
+     * titles. Used as a per-position filter in expandedIdsOf so spurious LLM
+     * picks driven by marketing copy don't enter the conflict graph.
+     */
+    function stripParentheticalComparisons(s: string): string {
+      return s.replace(
+        /\([^)]*\b(same|like|equivalent|comparable|as good as|similar|alternative)\b[^)]*\)/gi,
+        " ",
+      );
+    }
+    function modelTokensOf(name: string): string[] {
+      const out = new Set<string>();
+      const re = /\b([a-z]+\d+\w*|[a-z]+\s*[ivx]{1,4}\b|\d+\.\d+|\d+[a-z]+)/gi;
+      for (const m of name.toLowerCase().matchAll(re)) {
+        out.add(m[1].replace(/\s+/g, ""));
+      }
+      return Array.from(out);
+    }
+    function passesNameSanityCheck(
+      canonical: string,
+      titles: Array<{ name?: string }>,
+    ): boolean {
+      const toks = modelTokensOf(canonical);
+      if (toks.length === 0) return true; // no discriminating tokens — accept
+      const cleaned = titles
+        .map((t) => stripParentheticalComparisons(t.name ?? "").toLowerCase().replace(/\s+/g, ""))
+        .filter((s) => s.length > 0);
+      return toks.some((t) => cleaned.some((c) => c.includes(t)));
+    }
+
     // ────────────────────────────────────────────────────────────
     // Derived sets from reservations
     // ────────────────────────────────────────────────────────────
@@ -410,17 +454,68 @@ export const getStatsDrawerData = query({
     // calls Grok 4.3 with strict instructions to respect II/III/Mk2/Mk3 etc.
     type ExpandedItem = { item_id: string; item_name_canonical: string; qty: number; via_bundle?: string };
     type ResolvedItem = { item_id: string; item_name_canonical: string; confidence: number; qty?: number };
-    /** Expanded-items map for conflict / untracked / sell-reco. Falls back to
-     *  resolved_items when bundle expansion hasn't run yet (the resolver
-     *  cron will populate expanded_items shortly after a new poll). */
+    type HyggloItemSlim = { name?: string; product_id?: number; qty?: number };
+    /**
+     * Per-reservation item lookup used by conflict / untracked / sell-reco.
+     *
+     * Resolution priority (high → low):
+     *   1. Per-position product_id → item_id from hygglo_product_index.
+     *      This is the deterministic ground truth — Hygglo's product_id is
+     *      a stable listing identifier, and the bootstrapped index covers
+     *      every product_id whose history resolves unambiguously.
+     *   2. Per-position resolved_items[i] from the LLM, IF its canonical
+     *      name tokens actually appear in the listing title with comparison
+     *      parentheticals stripped. Catches the marketing-copy bleed (e.g.
+     *      "Sony FX 3 (same sensor as a7s iii)" must not pull in A7 III).
+     *   3. Expanded_items[] (bundle-decomposed) — used only when no index
+     *      coverage AND no positional resolved_items (e.g. v1 imports).
+     */
     function expandedIdsOf(r: ResRow): Map<string, number> {
+      const hItems = ((r as { hygglo_items?: HyggloItemSlim[] }).hygglo_items) ?? [];
+      const resolved = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
       const expanded = ((r as { expanded_items?: ExpandedItem[] }).expanded_items) ?? [];
+      const accountSlug = (r as { account_slug?: string }).account_slug ?? "";
+
+      // Path A: per-position resolution using hygglo_items[] when present.
+      if (hItems.length > 0) {
+        const out = new Map<string, number>();
+        let allPositionsResolved = true;
+        for (let i = 0; i < hItems.length; i++) {
+          const h = hItems[i];
+          const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+          // (1) product_id index.
+          if (typeof h.product_id === "number") {
+            const itemId = productIndex.get(`${accountSlug}:${h.product_id}`);
+            if (itemId) {
+              out.set(itemId, (out.get(itemId) ?? 0) + q);
+              continue;
+            }
+          }
+          // (2) LLM resolved_items[i] with structural sanity check.
+          const ri = resolved[i];
+          if (ri) {
+            if (passesNameSanityCheck(ri.item_name_canonical, hItems)) {
+              const qty = ri.qty ?? q;
+              out.set(String(ri.item_id), (out.get(String(ri.item_id)) ?? 0) + qty);
+              continue;
+            }
+          }
+          allPositionsResolved = false;
+        }
+        // If every position resolved via (1)/(2), trust this output.
+        if (allPositionsResolved && out.size > 0) return out;
+        // Partial coverage: also return what we have. The conflict path
+        // tolerates missing items (they fall into the untracked bucket).
+        if (out.size > 0) return out;
+      }
+
+      // Path B: legacy fallback for rows without hygglo_items[] (v1 imports).
+      // Trust expanded_items (bundle-decomposed) when present, else resolved.
       if (expanded.length > 0) {
         const m = new Map<string, number>();
         for (const x of expanded) m.set(x.item_id, (m.get(x.item_id) ?? 0) + x.qty);
         return m;
       }
-      const resolved = ((r as { resolved_items?: ResolvedItem[] }).resolved_items) ?? [];
       const m = new Map<string, number>();
       for (const x of resolved) m.set(x.item_id, (m.get(x.item_id) ?? 0) + (x.qty ?? 1));
       return m;
@@ -548,28 +643,38 @@ export const getStatsDrawerData = query({
       if (sumQty(matchingRes) <= item.qty) continue;
 
       // Sweep dates within horizon, count concurrency per day.
-      // `effEnd` extends end_date to `today` for overdue gear-out rentals
-      // (order_step=RETURNED|DELIVERED + status=confirmed) — Hygglo's "current"
-      // bucket still has the item physically with the renter.
+      // `effStart` honours an evening-before pickup_date (gear out earlier);
+      // `effEnd` honours a morning-after return_date (gear out later) plus
+      // the overdue-grace extension for RETURNED/DELIVERED + confirmed rows.
       const todayIso = today;
       const effEnd = (r: ResRow): string =>
         effEndImpl(
-          { end_date: r.end_date as string, order_step: r.order_step as string | null | undefined, status: r.status as string | null | undefined },
+          {
+            end_date: r.end_date as string,
+            return_date: (r as any).return_date as string | null | undefined,
+            order_step: r.order_step as string | null | undefined,
+            status: r.status as string | null | undefined,
+          },
           todayIso,
         );
+      const effStart = (r: ResRow): string =>
+        effStartImpl({
+          start_date: r.start_date as string,
+          pickup_date: r.pickup_date as string | null | undefined,
+        });
       let worstStart = "";
       let worstCount = 0;
       let worstEnd = "";
       const scanFrom = todayIso;
       const scanTo = horizonEnd;
-      const startDates = matchingRes.map((m) => m.r.start_date as string);
+      const startDates = matchingRes.map((m) => effStart(m.r as ResRow));
       const endDates = matchingRes.map((m) => effEnd(m.r as ResRow));
       const candidates = Array.from(
         new Set<string>([scanFrom, ...startDates, ...endDates].filter((d) => d >= scanFrom && d <= scanTo)),
       ).sort();
       for (const d of candidates) {
         const overlapping = matchingRes.filter(
-          (m) => (m.r.start_date as string) <= d && effEnd(m.r as ResRow) >= d,
+          (m) => effStart(m.r as ResRow) <= d && effEnd(m.r as ResRow) >= d,
         );
         const qtySum = overlapping.reduce(
           (s, m) => s + (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0),
@@ -584,7 +689,7 @@ export const getStatsDrawerData = query({
       if (worstCount > item.qty && worstStart) {
         // Compute the inclusive range these reservations all share
         const overlappingSet = matchingRes.filter(
-          (m) => (m.r.start_date as string) <= worstStart && effEnd(m.r as ResRow) >= worstStart,
+          (m) => effStart(m.r as ResRow) <= worstStart && effEnd(m.r as ResRow) >= worstStart,
         );
         const earliestEnd = overlappingSet
           .map((m) => effEnd(m.r as ResRow))
@@ -688,23 +793,44 @@ export const getStatsDrawerData = query({
           names_in_group: string[];
           qty: number;
         };
+        // Per-row image hints (positionally aligned with items[] at poll time).
+        // Used ONLY as a within-row name fallback when bank + hygglo image_url
+        // are missing or stale — safe because the map is built from this row
+        // alone (no cross-rental aliasing risk that Phase 12.3 was rolling back).
+        const hintByName = new Map<string, string>();
+        const imageHintsRaw = ((r as any).image_hints ?? []) as Array<{
+          item_name?: string;
+          image_url?: string;
+        }>;
+        for (const hint of imageHintsRaw) {
+          if (hint?.item_name && hint.image_url) {
+            hintByName.set(hint.item_name, hint.image_url);
+          }
+        }
         const tilesByImage = new Map<string, HygTile>();
         const tileOrderH: string[] = [];
         const noImage: string[] = [];
         for (const h of hItems) {
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-          // Phase 12.3 (revised 2026-05-15 23:15): correctness > coverage.
-          // Previous name-substring fallback aliased the wrong listing image
-          // for kit rentals. Removed entirely — only the bank and the per-row
-          // hygglo image_url are trusted now. Missing images stay missing
-          // until the poller refreshes the row with product_id.
+          // Resolution order:
           //   1. listing_images bank (account_slug, product_id) — trusted.
           //   2. hygglo_items[i].image_url — per-row poller snapshot.
-          //   3. null → noImage[] pill.
+          //   3. image_hints[] by exact item_name — same-row fallback only.
+          //   4. null → noImage[] pill.
+          // The image_hints lookup was added back 2026-05-21 (image-hints
+          // table held real Hygglo URLs that hygglo_items had lost — some
+          // rows even contained the "https://example.com/test.jpg" seed value).
+          // Phase 12.3's removal-of-name-fallback was a cross-rental concern;
+          // a same-row name match cannot mis-attribute another rental's image.
           const bankUrl = h.product_id
             ? bankByProduct.get(`${r.account_slug}#${h.product_id}`)
             : undefined;
-          const url: string | null = bankUrl ?? h.image_url ?? null;
+          const hyggloUrl =
+            h.image_url && !h.image_url.includes("example.com")
+              ? h.image_url
+              : undefined;
+          const hintUrl = hintByName.get(h.name);
+          const url: string | null = bankUrl ?? hyggloUrl ?? hintUrl ?? null;
           if (url) {
             const ex = tilesByImage.get(url);
             if (ex) {

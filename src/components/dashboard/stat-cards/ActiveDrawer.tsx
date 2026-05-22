@@ -209,6 +209,18 @@ export function RentalRow({ r }: { r: Rental }) {
               )}
               <span className="text-slate-500">·</span>
               <span>{fmtDate((r.pickup_date ?? r.start_date) as string)}</span>
+              {/* Day-before pickup hint: renter arranged to collect the
+                  evening before the rental starts. Highlights so it's
+                  obvious in the active card that gear is out earlier. */}
+              {r.pickup_date && r.start_date && r.pickup_date < r.start_date && (
+                <span
+                  className="text-[9px] font-bold px-1 rounded"
+                  style={{ background: "rgba(139,92,246,0.22)", color: "#c4b5fd" }}
+                  title="Pickup is the day BEFORE the rental window starts"
+                >
+                  −1d
+                </span>
+              )}
               {r.pickup_method === "delivery" && (
                 <span className="text-[9px] px-1 rounded" style={{ background: "rgba(245,158,11,0.18)", color: "#fbbf24" }}>DEL</span>
               )}
@@ -228,6 +240,17 @@ export function RentalRow({ r }: { r: Rental }) {
               )}
               <span className="text-slate-500">·</span>
               <span>{fmtDate((r.return_date ?? r.end_date) as string)}</span>
+              {/* Morning-after return hint: renter is dropping off the next
+                  day. The calendar holds the gear through this date. */}
+              {r.return_date && r.end_date && r.return_date > r.end_date && (
+                <span
+                  className="text-[9px] font-bold px-1 rounded"
+                  style={{ background: "rgba(139,92,246,0.22)", color: "#c4b5fd" }}
+                  title="Return is the morning AFTER the rental window ends"
+                >
+                  +1d
+                </span>
+              )}
               {r.return_method === "delivery" && (
                 <span className="text-[9px] px-1 rounded" style={{ background: "rgba(245,158,11,0.18)", color: "#fbbf24" }}>DEL</span>
               )}
