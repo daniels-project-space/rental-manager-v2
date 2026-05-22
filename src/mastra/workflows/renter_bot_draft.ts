@@ -118,6 +118,39 @@ const agentBatch = createStep({
     const agent = await getRenterBotAgent();
     const modelId = getLlmModelId();
 
+    // Soft proactive nudge (wave 3 vacation-mode): load active vacations once
+    // per batch and surface any starting within the next 14 days as a primer
+    // line, so the bot can weave them in naturally without an extra tool call.
+    let upcomingVacationPrimer = "";
+    try {
+      const activeVacs: Array<{
+        start_date: string;
+        end_date: string;
+        reason?: string;
+      }> = await c.query(anyApi.vacation.getActiveVacations, {});
+      const today = new Date().toISOString().slice(0, 10);
+      const cutoff = new Date(Date.now() + 14 * 86400_000)
+        .toISOString()
+        .slice(0, 10);
+      const soon = (activeVacs ?? []).filter(
+        (v) => v.start_date >= today && v.start_date <= cutoff,
+      );
+      if (soon.length > 0) {
+        upcomingVacationPrimer =
+          "UPCOMING OWNER VACATIONS (next 14 days):\n" +
+          soon
+            .map(
+              (v) =>
+                `- ${v.start_date} → ${v.end_date}${v.reason ? ` (${v.reason})` : ""}`,
+            )
+            .join("\n");
+      }
+    } catch (err) {
+      console.warn(
+        `[renter-bot] failed to load upcoming vacations: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     let written = 0;
     let skipped = 0;
     let escalations = 0;
@@ -138,6 +171,7 @@ const agentBatch = createStep({
           content: [
             `THREAD: ${cand.thread_id}`,
             `ACCOUNT: ${cand.account_slug}`,
+            ...(upcomingVacationPrimer ? [upcomingVacationPrimer] : []),
             `LATEST INBOUND MESSAGE FROM RENTER:`,
             cand.last_inbound_body,
           ].join("\n"),

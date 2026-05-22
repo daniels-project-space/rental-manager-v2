@@ -177,6 +177,73 @@ export const getTemplateTool = createTool({
   },
 });
 
+// ── Tool 8: check_vacation ────────────────────────────────────
+
+export const checkVacationTool = createTool({
+  id: "check_vacation",
+  description:
+    "Check whether a requested date range overlaps an active owner-vacation period. Call BEFORE drafting ANY rental confirmation, quote, or availability-affirming reply. If in_vacation=true, the requested window is closed — propose `before` and/or `after` alternative windows in the draft instead of confirming. Returns {in_vacation, vacation?, before?, after?}.",
+  inputSchema: z.object({
+    start_date: z.string().describe("ISO YYYY-MM-DD"),
+    end_date: z.string().describe("ISO YYYY-MM-DD"),
+    item_id: z.string().optional().describe("Convex item id when checking a specific listing."),
+    requested_qty: z.number().int().positive().optional(),
+  }),
+  outputSchema: z.object({
+    in_vacation: z.boolean(),
+    vacation: z
+      .object({ start: z.string(), end: z.string() })
+      .optional(),
+    before: z.object({ start: z.string(), end: z.string() }).optional(),
+    after: z.object({ start: z.string(), end: z.string() }).optional(),
+  }),
+  execute: async ({ start_date, end_date, item_id, requested_qty }) => {
+    const res = await convex().query(
+      anyApi.vacation.getClosestAvailableDates,
+      {
+        requested_start: start_date,
+        requested_end: end_date,
+        ...(item_id ? { item_id } : {}),
+        ...(requested_qty ? { requested_qty } : {}),
+      },
+    );
+    return {
+      in_vacation: !!res?.inVacation,
+      vacation: res?.vacationPeriod,
+      before: res?.before,
+      after: res?.after,
+    };
+  },
+});
+
+// ── Tool 9: get_active_vacations ──────────────────────────────
+
+export const getActiveVacationsTool = createTool({
+  id: "get_active_vacations",
+  description:
+    "List all currently-active owner vacation periods (ordered by start date). Use to proactively mention upcoming breaks when relevant (e.g. renter asks about future availability). Returns an array of {start_date, end_date, reason?} objects.",
+  inputSchema: z.object({}),
+  outputSchema: z.array(
+    z.object({
+      start_date: z.string(),
+      end_date: z.string(),
+      reason: z.string().optional(),
+    }),
+  ),
+  execute: async () => {
+    const rows: Array<{
+      start_date: string;
+      end_date: string;
+      reason?: string;
+    }> = await convex().query(anyApi.vacation.getActiveVacations, {});
+    return (rows ?? []).map((r) => ({
+      start_date: r.start_date,
+      end_date: r.end_date,
+      reason: r.reason,
+    }));
+  },
+});
+
 // ── Aggregate export ──────────────────────────────────────────
 
 export const RENTER_BOT_TOOLS = {
@@ -187,4 +254,6 @@ export const RENTER_BOT_TOOLS = {
   search_knowledge: searchKnowledgeTool,
   get_negotiation_stance: getNegotiationStanceTool,
   get_template: getTemplateTool,
+  check_vacation: checkVacationTool,
+  get_active_vacations: getActiveVacationsTool,
 } as const;
