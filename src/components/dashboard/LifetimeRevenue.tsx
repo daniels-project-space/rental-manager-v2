@@ -142,11 +142,43 @@ export function LifetimeRevenue() {
     return out as typeof row;
   });
 
-  const totalRevenue = raw?.totalRevenue ?? 0;
-  const avgMonthly = raw?.avgMonthly ?? 0;
-  const strongest = raw?.strongestMonth;
-  const weakest = raw?.weakestMonth;
-  const boostPct = Math.round((raw?.boostRate ?? 0) * 100);
+  // Stats bar reacts to legend toggles: filter ACTUAL_KEYS by visibility,
+  // then recompute totals/avg/best/weakest/boost from the visible-only sums.
+  const { totalRevenue, avgMonthly, strongest, weakest, boostPct } = useMemo(() => {
+    const visibleActualKeys = ACTUAL_KEYS.filter((k) => !hidden[k]);
+    const months = raw?.months ?? [];
+    const perMonth = months.map((row) => {
+      const r = row as unknown as Record<string, number | undefined>;
+      const sum = visibleActualKeys.reduce((acc, k) => acc + (r[k] ?? 0), 0);
+      return { month: row.month, sum };
+    });
+    const total = perMonth.reduce((acc, m) => acc + m.sum, 0);
+    const monthsWithData = perMonth.filter((m) => m.sum > 0);
+    const avg = monthsWithData.length > 0 ? Math.round(total / monthsWithData.length) : 0;
+    let best: { month: string; revenue: number } | undefined;
+    let worst: { month: string; revenue: number } | undefined;
+    for (const m of monthsWithData) {
+      if (!best || m.sum > best.revenue) best = { month: m.month, revenue: m.sum };
+      if (!worst || m.sum < worst.revenue) worst = { month: m.month, revenue: m.sum };
+    }
+    let boost = 0;
+    if (!hidden.aiBoost && total > 0) {
+      const sumAiBoost = months.reduce((acc, row) => {
+        const r = row as unknown as Record<string, number | undefined>;
+        return acc + (r.aiBoost ?? 0);
+      }, 0);
+      boost = Math.round((sumAiBoost / total) * 100);
+    }
+    return {
+      totalRevenue: total,
+      avgMonthly: avg,
+      strongest: best,
+      weakest: worst,
+      boostPct: boost,
+    };
+  }, [raw, hidden]);
+
+  const hiddenDelta = (raw?.totalRevenue ?? 0) - totalRevenue;
   return (
     <>
       <Card className="relative overflow-hidden">
@@ -160,7 +192,11 @@ export function LifetimeRevenue() {
         {/* Stats bar */}
         {raw !== undefined && (
           <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-xs text-[#8b8fa3]">
-            <span>Total: <b style={{ color: "#22c55e" }}>{"£"}{totalRevenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
+            <span>Total: <b style={{ color: "#22c55e" }}>{"£"}{totalRevenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b>
+              {hiddenDelta > 0 && (
+                <span className="ml-1 text-[#6b7280]">(−£{hiddenDelta.toLocaleString("en-GB", { maximumFractionDigits: 0 })})</span>
+              )}
+            </span>
             <span>Avg/mo: <b style={{ color: "#e4e6eb" }}>{"£"}{avgMonthly.toLocaleString("en-GB")}</b></span>
             {strongest && (
               <span>Best: <b style={{ color: "#22c55e" }}>{fmtMonth(strongest.month)} {"£"}{strongest.revenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
