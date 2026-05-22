@@ -329,9 +329,9 @@ export function CategoryVolumePieBody({
     ? missedComponent === "denied"
       ? "rentals you cancelled in Hygglo"
       : missedComponent === "gap"
-        ? "couldn't fulfill — fully booked"
+        ? "inventory unavailable — couldn't fulfill"
         : missedComponent === "demand"
-          ? "renter paid then booking fell apart"
+          ? "renter wanted it — measured demand"
           : "all lost revenue combined"
     : metric === "count"
       ? "how many rentals went through"
@@ -540,8 +540,8 @@ export function CategoryVolumePieBody({
               {(
                 [
                   { val: "denied", label: "Denials", tip: "You actively cancelled the rental in Hygglo." },
-                  { val: "gap", label: "Gaps", tip: "You couldn't fulfill — fully booked or marketing-only." },
-                  { val: "demand", label: "Demand", tip: "Renter paid/progressed then the booking fell apart." },
+                  { val: "gap", label: "Gaps", tip: "Inventory was unavailable — fully booked or marketing-only." },
+                  { val: "demand", label: "Demand", tip: "Renter wanted it — measured demand for the inventory item." },
                 ] as const
               ).map((c) => {
                 const active = missedComponent === c.val;
