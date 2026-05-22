@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
   tieredCreditTotals,
   type AiDecisionLite,
@@ -97,123 +98,19 @@ export const getMissedRevenue = query({
     days: v.number(),
   },
   handler: async (ctx, { accountSlug, days }) => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-
-    let denials = await ctx.db.query("denial_records").collect();
-    if (accountSlug) {
-      const accountRow = await ctx.db
-        .query("accounts")
-        .withIndex("by_slug", (q) => q.eq("slug", accountSlug as string))
-        .first();
-      if (accountRow) {
-        denials = denials.filter((d) => d.account_id === accountRow._id);
-      }
-    }
-    denials = denials.filter((d) => d.created_at >= cutoff.getTime());
-
-    // Net convention (2026-05-22): denial estimated_value + pricing_catalog
-    // daily_price_min are GROSS Hygglo £. Project rule = revenue is take-home
-    // post platform fees (~36%). Multiply by OWNER_SHARE = 0.64 so this
-    // widget matches every other revenue widget (which uses netOf(r) →
-    // net_to_owner_gbp). Without this, missed/gap totals overstate loss ~56%.
-    const OWNER_SHARE = 0.64;
-
-    // Compute estimated value per denial via pricing_catalog daily rate
-    const denialLosses = await Promise.all(
-      denials.map(async (d) => {
-        // Use stored estimated_value (backfilled from v1) first; fallback to pricing_catalog.
-        let estimatedValueGross = d.estimated_value ?? 0;
-        if (estimatedValueGross === 0 && d.item_name) {
-          const priceRow = await ctx.db
-            .query("pricing_catalog")
-            .withIndex("by_name", (q) =>
-              q.eq("item_name_canonical", d.item_name as string)
-            )
-            .first();
-          if (priceRow) {
-            // Assume a 2-day average rental
-            estimatedValueGross = priceRow.daily_price_min * 2;
-          }
-        }
-        const estimatedValue = parseFloat((estimatedValueGross * OWNER_SHARE).toFixed(2));
-        return {
-          denialId: d._id,
-          reason: d.reason,
-          itemName: d.item_name,
-          estimatedValue,           // net (post-platform-fee), headline
-          estimatedValueGross,      // gross preserved for any consumer that needs it
-          notes: d.notes,
-          createdAt: d.created_at,
-        };
-      })
-    );
-
-    const denialTotal = denialLosses.reduce(
-      (sum, d) => sum + d.estimatedValue,
-      0
-    );
-
-    // ── Idle-gap losses ──────────────────────────────────────────
-    // For each active item that had ANY rental in the lookback window,
-    // estimate idle days = (days - actual_rental_days) × daily_price_min.
-    // This gives an upper-bound on opportunity cost from un-rented inventory.
-    // Conservative: items with zero bookings in the period are excluded
-    // (no demand signal → gap is not reliably a loss).
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    let allResForGap = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
-    }
-
-    // Accumulate rental days per item name across the window
-    const rentalDaysPerItem = new Map<string, number>();
-    for (const r of allResForGap) {
-      for (const item of r.items ?? []) {
-        rentalDaysPerItem.set(
-          item.item_name,
-          (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0)
-        );
-      }
-    }
-
-    // Only items that actually had at least one booking in the window
-    const gapLosses: Array<{ itemName: string; rentalDays: number; idleDays: number; estimatedGapLoss: number }> = [];
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
-    const priceByName = new Map(pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]));
-
-    for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
-      const idleDays = Math.max(0, days - Math.min(rentalDays, days));
-      if (idleDays <= 0) continue;
-      const dailyRate = priceByName.get(itemName);
-      if (!dailyRate) continue;
-      // dailyRate is gross Hygglo £ — multiply by OWNER_SHARE for net.
-      gapLosses.push({
-        itemName,
-        rentalDays,
-        idleDays,
-        estimatedGapLoss: parseFloat((idleDays * dailyRate * OWNER_SHARE).toFixed(2)),
-      });
-    }
-    gapLosses.sort((a, b) => b.estimatedGapLoss - a.estimatedGapLoss);
-
-    const gapTotal = gapLosses.reduce((s, g) => s + g.estimatedGapLoss, 0);
-    // Headline 'total missed' is denials only (concrete demand we declined).
-    // Idle-gap is informational — it assumes 100% utilization as baseline,
-    // which inflates the number 3-5x vs realistic targets. v1 chat reports
-    // denials + unavailable as 'lost revenue', NOT idle capacity. Keeping
-    // gapTotal separate so the agent can mention it without combining.
-    const totalMissed = denialTotal;
-
+    // Delegated to convex/lib/missed_revenue.ts (single source of truth).
+    // The dashboard top tile (`missed_revenue` in getStatsDrawerData) calls
+    // the same helper so panel + tile never disagree.
+    //
+    // Headline `totalMissed` now combines denials + idle-gap (NET). Both
+    // are concrete signals of lost revenue (declined demand + idle stock).
+    const result = await computeMissedRevenue(ctx, accountSlug, days);
     return {
-      totalMissed,
-      denialLosses,
-      gapLosses,
-      gapTotal: parseFloat(gapTotal.toFixed(2)),
-      denialTotal: parseFloat(denialTotal.toFixed(2)),
+      totalMissed: result.totalMissed,
+      denialLosses: result.denialLosses,
+      gapLosses: result.gapLosses,
+      gapTotal: result.gapTotal,
+      denialTotal: result.denialTotal,
     };
   },
 });

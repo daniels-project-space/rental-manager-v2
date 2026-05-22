@@ -28,6 +28,7 @@ import {
   type AiDecisionLite,
   type AiDecisionAuditLite,
 } from "./lib/ai_attribution";
+import { computeMissedRevenue } from "./lib/missed_revenue";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
@@ -1184,31 +1185,33 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: missed_revenue ──────────────────────────────────────
-    // Maps denial_type "timeout" and "unmatched" from denial_records as
-    // "missed" revenue (distinct from owner_denied).
-    // denial_records.reason holds the denial type string (e.g. "timeout", "unmatched", "owner_denied")
-    //
-    // Net convention (2026-05-22): denial_records.estimated_value is GROSS
-    // (Hygglo gross rental £). Project rule: revenue = take-home post platform
-    // fees (~36%). Multiply by OWNER_SHARE = 0.64 so this card matches every
-    // other revenue widget which uses netOf(r) (net_to_owner_gbp).
-    const OWNER_SHARE = 0.64;
-    const missedTypes = new Set(["timeout", "unmatched"]);
-    const missedDenials = denialRows.filter(
-      (d) => d.created_at >= ninetyDaysAgo && missedTypes.has(d.reason ?? ""),
-    );
-    const missedRevenueTotalGross = missedDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
-    const missedRevenueTotal = missedRevenueTotalGross * OWNER_SHARE;
+    // Mirrors the standalone MissedRevenue panel (api.revenue.getMissedRevenue):
+    // headline = denialLosses + gapLosses (NET, post platform-fee).
+    // Previous behaviour filtered denials.reason ∈ {timeout, unmatched} — 999/1000
+    // are owner_denied, so the tile always read £0. Now sourced from the shared
+    // helper in convex/lib/missed_revenue.ts (single source of truth).
+    // Window = 30 days (top-row widgets default), panel can switch to 90.
+    const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30);
     const missed_revenue = {
-      total_gbp: Math.round(missedRevenueTotal * 100) / 100,
-      items: missedDenials.slice(0, 15).map((d) => ({
-        reservation_id: d._id as string,
-        renter_name: null as string | null,
-        // gross still emitted for backwards compat (drawer reads `gross`); net is the headline.
-        gross: d.estimated_value ?? null,
-        net: d.estimated_value != null ? Math.round(d.estimated_value * OWNER_SHARE * 100) / 100 : null,
-        reason: d.reason ?? null,
-      })),
+      total_gbp: missedRevenueResult.totalMissed,
+      items: [
+        ...missedRevenueResult.denialLosses.slice(0, 10).map((d) => ({
+          reservation_id: d.denialId as string,
+          renter_name: null as string | null,
+          gross: d.estimatedValueGross ?? null,
+          net: d.estimatedValue,
+          reason: d.reason ?? null,
+          kind: "denial" as const,
+        })),
+        ...missedRevenueResult.gapLosses.slice(0, 10).map((g) => ({
+          reservation_id: g.itemName as string,
+          renter_name: null as string | null,
+          gross: null as number | null,
+          net: g.estimatedGapLoss,
+          reason: `idle_gap (${g.idleDays}d)` as string | null,
+          kind: "gap" as const,
+        })),
+      ].slice(0, 15),
     };
 
     // ── card: ai_boost (Wave AI-BE rework, 2026-05-22) ────────────
@@ -1304,38 +1307,29 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: out_of_stock ────────────────────────────────────────
-    // Items where confirmed bookings in next 30d cover all their qty.
-    const holdCountsByItem = new Map<string, number>();
-    for (const r of confirmedWithDates) {
-      if ((r.start_date as string) <= next30 && (r.end_date as string) >= today) {
-        for (const it of r.items ?? []) {
-          holdCountsByItem.set(it.item_name, (holdCountsByItem.get(it.item_name) ?? 0) + 1);
-        }
+    // NOW-based (not next-30d): items whose currently-active rentals
+    // (isOngoing predicate — confirmed + today ∈ [start, end]) hold qty
+    // equal to or greater than the item's total stock. Zero units
+    // physically available right now.
+    //
+    // Per Daniel: "things that are rented rn and currently out of stock
+    // as there is no longer inventory for it".
+    const heldNowByItem = new Map<string, number>();
+    for (const r of ongoingRentals) {
+      for (const it of r.items ?? []) {
+        const qty = (it as { qty?: number }).qty ?? 1;
+        heldNowByItem.set(it.item_name, (heldNowByItem.get(it.item_name) ?? 0) + qty);
       }
     }
     const oosItems = activeItems
-      .filter((i) => (holdCountsByItem.get(i.name_canonical) ?? 0) >= i.qty)
+      .filter((i) => (heldNowByItem.get(i.name_canonical) ?? 0) >= i.qty)
       .slice(0, 15)
-      .map((i) => {
-        // count how many of the next 30 days have holds
-        let blockedDays = 0;
-        const itemHolds = confirmedWithDates.filter((r) =>
-          (r.items ?? []).some((it) => it.item_name === i.name_canonical) &&
-          (r.start_date as string) <= next30 &&
-          (r.end_date as string) >= today,
-        );
-        // simple day-count: iterate each hold span
-        for (const r of itemHolds) {
-          const s = new Date(Math.max(Date.parse(r.start_date as string), Date.now()));
-          const e = new Date(Math.min(Date.parse(r.end_date as string), Date.now() + 30 * 86400000));
-          blockedDays += Math.max(0, Math.round((e.getTime() - s.getTime()) / 86400000) + 1);
-        }
-        return {
-          item_id: i._id as string,
-          name: i.name_canonical,
-          blocked_days_next_30: Math.min(30, blockedDays),
-        };
-      });
+      .map((i) => ({
+        item_id: i._id as string,
+        name: i.name_canonical,
+        qty: i.qty,
+        heldNow: heldNowByItem.get(i.name_canonical) ?? 0,
+      }));
     const out_of_stock = {
       count: oosItems.length,
       items: oosItems,
