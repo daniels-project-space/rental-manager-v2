@@ -27,6 +27,7 @@ export default defineConfig({
       "convex/lib/per_listing_merge.test.ts",
       "convex/dashboard_insights.spec.ts",
       "convex/dashboard_chat.walle.spec.ts",
+      "src/lib/dashboard/edit-mode-context.spec.ts",
     ],
     css: false,
   },
