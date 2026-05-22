@@ -7,6 +7,12 @@ import {
   attributeRevenue,
   type RentalForAttribution,
 } from "./lib/revenue_attribution";
+// Equivalence-class fallback: maps marketing-listing titles to the closest
+// OWNED MASTER_INVENTORY SKU when direct resolution returns nothing. Powers
+// the "circle item tracker" so e.g. denied GoPro listings still contribute
+// activity to the GoPro 12 Hero (or Osmo Action) circle. See
+// convex/lib/listing_equivalence.ts for the editable keyword map.
+import { resolveListingToInventory } from "./lib/listing_equivalence";
 
 // Re-export image-resolution helpers for backward compatibility — other widget
 // files may import from `./items` or `./lib/imageResolution` directly.
@@ -78,11 +84,39 @@ export const getItemRevenueRanking = query({
     // LLM-resolved items: revenue attributed strictly to inventory items
     // returned by item_resolver, never substring matched. Multi-item bundles
     // split gross by pricing_catalog weights (equal split if no prices).
+    //
+    // EQUIVALENCE FALLBACK (circle item tracker): when resolved_items is
+    // empty (resolver never ran or returned nothing for this listing), fall
+    // back to mapping raw items[].item_name → owned MASTER_INVENTORY SKU via
+    // listing_equivalence. So e.g. a paid GoPro Hero 11 rental still shows on
+    // the GoPro 12 Hero circle. Direct match always wins (no double-attribution).
+    const ownedSkus = new Set<string>(
+      itemsAll.filter((it) => (it as { is_marketing_only?: boolean }).is_marketing_only !== true)
+        .map((it) => (it as { name_canonical?: string }).name_canonical ?? "")
+        .filter((n) => n.length > 0),
+    );
     const itemMap = new Map<string, { totalRevenue: number; rentalCount: number; totalDays: number }>();
     for (const r of reservations) {
       const resolved = (r as { resolved_items?: Array<{ item_id?: string; item_name_canonical: string; qty?: number }> }).resolved_items ?? [];
-      if (resolved.length === 0) continue;
       const days = r.duration_days ?? 0;
+
+      // Equivalence fallback path — no direct resolution, try keyword-map.
+      if (resolved.length === 0) {
+        const rawItems = (r as { items?: Array<{ item_name: string }> }).items ?? [];
+        const title = rawItems.map((it) => it.item_name).filter(Boolean).join(" | ");
+        if (!title) continue;
+        const eq = resolveListingToInventory(title, null, ownedSkus);
+        if (eq.matchType !== "equivalence" || !eq.sku) continue;
+        const gross = r.gross_paid_gbp ?? 0;
+        if (gross === 0) continue;
+        const cleanName = eq.sku.replace(/\s*\[[^\]]+\]\s*$/, "");
+        const existing = itemMap.get(cleanName) ?? { totalRevenue: 0, rentalCount: 0, totalDays: 0 };
+        existing.totalRevenue += gross;
+        existing.rentalCount += 1;
+        existing.totalDays += days;
+        itemMap.set(cleanName, existing);
+        continue;
+      }
 
       const rental: RentalForAttribution = {
         _id: r._id,
@@ -150,6 +184,23 @@ export const getItemCycles = query({
     const rentalDaysMap = new Map<string, number>();
     for (const r of reservations) {
       const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
+      // EQUIVALENCE FALLBACK: when resolver yielded nothing, map listing
+      // title → owned SKU via listing_equivalence so denied/unresolved
+      // rentals still register utilization on the closest available item's
+      // circle. Direct (already-resolved) match always wins.
+      if (resolved.length === 0) {
+        const rawItems = (r as { items?: Array<{ item_name: string }> }).items ?? [];
+        const title = rawItems.map((it) => it.item_name).filter(Boolean).join(" | ");
+        if (!title) continue;
+        const eq = resolveListingToInventory(title, null, activeCanonSet);
+        if (eq.matchType === "equivalence" && eq.sku) {
+          rentalDaysMap.set(
+            eq.sku,
+            (rentalDaysMap.get(eq.sku) ?? 0) + (r.duration_days ?? 0),
+          );
+        }
+        continue;
+      }
       for (const x of resolved) {
         if (!activeCanonSet.has(x.item_name_canonical)) continue;
         rentalDaysMap.set(
