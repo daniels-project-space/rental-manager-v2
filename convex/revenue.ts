@@ -1071,8 +1071,13 @@ export const getMissedAndDeniedByCategory = query({
     // Mutually exclusive with Denied + Gap (those are sourced from owner_denied).
     if (useNewGapDemand) {
       const demandRows = obsoleteResAll.filter((r) => {
+        // Phase 7.12 — exclude owner-denied (incl. broadened predicate). These
+        // already added to demand via the gap path above (denial implies demand
+        // by definition under Daniel's clarified semantics). Without this
+        // exclusion, owner-denied rows that ALSO hit the paid-then-system path
+        // would double-count in demand.
+        if (isOwnerDeniedLike(r)) return false;
         const actor = r.reclassified_outcome ?? r.denial_actor;
-        if (actor === "owner_denied") return false;
         if (actor === "renter_cancelled_explicit") return true;
         if (actor === "renter_ghosted") return true;
         // paid-then-system-failed: no actor or system_or_other AND money changed hands
