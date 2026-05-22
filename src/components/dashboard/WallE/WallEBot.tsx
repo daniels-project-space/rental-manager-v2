@@ -24,7 +24,9 @@
 "use client";
 
 import { forwardRef } from "react";
+import { motion } from "framer-motion";
 import type { Mood } from "./walle.types";
+import { useWalleIdle } from "./walle.idle";
 import "./character-vendor/walle-bot.css";
 
 export interface WallEBotProps {
@@ -35,6 +37,8 @@ export interface WallEBotProps {
   onClick?: () => void;
   /** Aria label override (defaults reference mood). */
   ariaLabel?: string;
+  /** When true the character is "speaking" → tiny lean-forward variant. */
+  speaking?: boolean;
 }
 
 /**
@@ -43,18 +47,56 @@ export interface WallEBotProps {
  * `.walle-bot` element so a single `data-mood` swap restyles every part.
  */
 const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
-  function WallEBot({ mood, size, onClick, ariaLabel }, ref) {
+  function WallEBot({ mood, size, onClick, ariaLabel, speaking = false }, ref) {
     const sizeStyle: React.CSSProperties | undefined =
       typeof size === "number" ? { width: size, height: size } : undefined;
+
+    // Idle scheduler — randomized micro-behaviors + cursor tracking.
+    const idle = useWalleIdle(mood);
+
+    // Map mood + speaking → body lean variant. Subtle but reads as "alive".
+    const bodyVariant = speaking
+      ? "speaking"
+      : mood === "alert"
+        ? "alert"
+        : mood === "celebrating"
+          ? "cheer"
+          : idle.yawn
+            ? "yawn"
+            : "rest";
+
+    // Pupil offset — combine cursor tracking + idle glance pulses.
+    const cursorPx = 2.4; // max travel from cursor follow (svg units ≈ px)
+    const glancePx = 4;
+    const px =
+      idle.glanceLeft
+        ? -glancePx
+        : idle.glanceRight
+          ? glancePx
+          : idle.cursorX * cursorPx;
+    const py = idle.cursorY * 1.2;
+
     return (
-      <button
+      <motion.button
         ref={ref}
         type="button"
         className="walle-bot"
         data-mood={mood}
+        data-speaking={speaking ? "true" : "false"}
         onClick={onClick}
         style={sizeStyle}
         aria-label={ariaLabel ?? `WallE character, mood ${mood}. Click to talk.`}
+        animate={bodyVariant}
+        variants={{
+          rest:     { y: 0, rotate: 0, scale: 1 },
+          speaking: { y: -2, rotate: -1.5, scale: 1.015 },
+          alert:    { y: 0, rotate: 0, scale: 1.03 },
+          cheer:    { y: -3, rotate: 0, scale: 1.04 },
+          yawn:     { y: 1, rotate: 1, scale: 1.005 },
+        }}
+        transition={{ type: "spring", stiffness: 200, damping: 18, mass: 0.7 }}
+        whileHover={{ y: -3, transition: { duration: 0.2 } }}
+        whileTap={{ scale: 0.96 }}
       >
         <svg
           viewBox="0 0 200 220"
@@ -72,7 +114,18 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
           />
 
           {/* ── Antenna ─────────────────────────────────────────── */}
-          <g className="wb-antenna">
+          <g
+            className="wb-antenna"
+            style={
+              idle.antennaTwitch
+                ? {
+                    transform: "rotate(14deg)",
+                    transformOrigin: "100px 50px",
+                    transition: "transform 220ms cubic-bezier(0.34,1.56,0.64,1)",
+                  }
+                : undefined
+            }
+          >
             <line
               x1="100"
               y1="50"
@@ -204,7 +257,18 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
             </g>
 
             {/* ── Head + binocular goggles ───────────────────── */}
-            <g className="wb-head">
+            <g
+              className="wb-head"
+              style={
+                idle.headTilt
+                  ? {
+                      transform: "rotate(3.5deg)",
+                      transformOrigin: "100px 100px",
+                      transition: "transform 700ms cubic-bezier(0.22,1,0.36,1)",
+                    }
+                  : undefined
+              }
+            >
               {/* Neck */}
               <rect
                 x="92"
@@ -245,7 +309,13 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   strokeWidth="2"
                 />
                 {/* Pupil */}
-                <g className="wb-eye-pupil">
+                <g
+                  className="wb-eye-pupil"
+                  style={{
+                    transform: `translate(${px}px, ${py}px)`,
+                    transition: "transform 320ms cubic-bezier(0.22,1,0.36,1)",
+                  }}
+                >
                   <circle cx="74" cy="74" r="8" fill="var(--walle-eye)" />
                   <circle cx="77" cy="71" r="3" fill="#ffffff" opacity="0.8" />
                 </g>
@@ -258,6 +328,11 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   height="36"
                   rx="18"
                   fill="var(--walle-body)"
+                  style={
+                    idle.blink
+                      ? { transform: "scaleY(0.05)", transformOrigin: "50% 50%" }
+                      : undefined
+                  }
                 />
               </g>
 
@@ -272,7 +347,13 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   stroke="var(--walle-body-edge)"
                   strokeWidth="2"
                 />
-                <g className="wb-eye-pupil">
+                <g
+                  className="wb-eye-pupil"
+                  style={{
+                    transform: `translate(${px}px, ${py}px)`,
+                    transition: "transform 320ms cubic-bezier(0.22,1,0.36,1)",
+                  }}
+                >
                   <circle cx="126" cy="74" r="8" fill="var(--walle-eye)" />
                   <circle cx="129" cy="71" r="3" fill="#ffffff" opacity="0.8" />
                 </g>
@@ -284,12 +365,17 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   height="36"
                   rx="18"
                   fill="var(--walle-body)"
+                  style={
+                    idle.blink
+                      ? { transform: "scaleY(0.05)", transformOrigin: "50% 50%" }
+                      : undefined
+                  }
                 />
               </g>
             </g>
           </g>
         </svg>
-      </button>
+      </motion.button>
     );
   },
 );

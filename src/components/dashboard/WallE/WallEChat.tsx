@@ -1,56 +1,66 @@
 /**
- * Phase 5 — WallE chat panel.
+ * WallEChat — Option C layout: character-hosted chat with head-tethered bubble.
  *
- * - Uses `useChat` from `@ai-sdk/react` (AI SDK v6 companion) pointing at
- *   `/api/walle/chat`.
- * - Generates a per-mount `sessionId` (UUID) sent with every request so
- *   the Convex `appendTurn` mutation can group rows. The same id is used
- *   on unmount for a stub `compactSession` summary write — Phase 6 will
- *   replace the naive count summary with an LLM-generated digest.
- * - Surfaces a derived `chatState: 'idle' | 'listening' | 'thinking'` via
- *   the optional `onChatStateChange` prop so the parent shell can map it
- *   to an orb mood (Phase 8 will wire this).
+ * Layout:
+ *   Top:     <slot> for character + LATEST assistant message rendered as a
+ *            head-tethered speech bubble (parent renders the bot in the slot).
+ *   Middle:  scroll area with OLDER messages — assistant messages get a tiny
+ *            WallE-face avatar + speech-bubble styling; user messages are
+ *            right-aligned rounded bubbles. AnimatePresence drives enter/exit
+ *            spring-physics; `layout` prop reflows smoothly.
+ *   Bottom:  textarea + Send.
  *
- * No tools, no persona, no rate limit, no joke loop — those land later.
+ * Mood/speaking signals:
+ *   - onChatStateChange fires (idle | listening | thinking) for parent mood.
+ *   - onSpeakingChange fires when a *new* assistant turn arrived in the last
+ *     2.4s so the parent can lean WallE forward.
+ *
+ * Idle jokes still load locally and render in the bubble queue.
  */
 'use client';
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../../../../convex/_generated/api';
 import type { WallEChatState } from './walle.types';
 import { JOKE_IDLE_AFTER_MS } from './walle.jokes';
+import WallESpeechBubble, { type BubbleTone } from './WallESpeechBubble';
 
 export interface WallEChatProps {
   /**
-   * Called whenever the derived chat state changes. The parent shell
-   * (Phase 8) feeds this into the orb mood reducer.
+   * Called whenever the derived chat state changes. The parent shell feeds
+   * this into the mood reducer.
    */
   onChatStateChange?: (state: WallEChatState) => void;
+  /** Called true when a fresh assistant message arrived in the last ~2.4s. */
+  onSpeakingChange?: (speaking: boolean) => void;
   /**
-   * Phase 7 — when provided, dashboard-signal updates reset the idle
-   * timer so jokes don't fire on top of fresh alerts. Phase 8 will wire
-   * this from the parent shell (single subscription).
+   * Optional — dashboard-signal updates reset the idle timer so jokes don't
+   * fire on top of fresh alerts.
    */
   lastSignalChangeAt?: number;
-  /** Optional extra className on the root container (for inline embed). */
-  className?: string;
-  /** Override empty-state placeholder text. */
+  /** Slot rendered at the top-left of the chat area (the character itself). */
+  characterSlot?: ReactNode;
+  /** Optional empty-state hint. */
   emptyHint?: string;
-  /** Tighter padding/spacing for narrow inline embeds (e.g. 350-450px). */
+  /** Tighter padding/spacing for narrow inline embeds. */
   compact?: boolean;
-  /**
-   * When true, renders a 56x56 .walle-dock-slot placeholder at the top-left
-   * of the messages area. The parent WallE shell positions the shared bot
-   * stage to visually overlap this slot when chat is engaged.
-   */
-  showDockSlot?: boolean;
+  /** Optional className on the root container. */
+  className?: string;
+  /** Mood tone for the top-tethered bubble (drives color). */
+  bubbleTone?: BubbleTone;
 }
 
-/** Phase 7 — stable client-side identifier for the joke-quota endpoint. */
-// TODO(phase-9): swap for real auth user id once login lands.
 function getOrCreateWalleUserId(): string {
   if (typeof window === 'undefined') return 'ssr';
   try {
@@ -67,8 +77,9 @@ function getOrCreateWalleUserId(): string {
   }
 }
 
-// ── Tiny UI helper: extract a flat string from an AI SDK v6 UIMessage ──
-function messageText(parts: ReadonlyArray<{ type: string; text?: string }> | undefined): string {
+function messageText(
+  parts: ReadonlyArray<{ type: string; text?: string }> | undefined,
+): string {
   if (!parts) return '';
   return parts
     .filter((p) => p.type === 'text' && typeof p.text === 'string')
@@ -76,15 +87,39 @@ function messageText(parts: ReadonlyArray<{ type: string; text?: string }> | und
     .join('');
 }
 
+/** Tiny WallE-face avatar — appears next to older assistant messages. */
+function WallEMini() {
+  return (
+    <svg
+      viewBox="0 0 40 40"
+      width={26}
+      height={26}
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      <rect x="3" y="11" width="34" height="22" rx="6" fill="#d9b56b" />
+      <rect x="3" y="11" width="34" height="5" rx="3" fill="#a48144" opacity="0.45" />
+      <circle cx="14" cy="22" r="6" fill="#1a2331" />
+      <circle cx="26" cy="22" r="6" fill="#1a2331" />
+      <circle cx="14" cy="22" r="2.4" fill="#8ec5ff" />
+      <circle cx="26" cy="22" r="2.4" fill="#8ec5ff" />
+      <line x1="20" y1="11" x2="20" y2="6" stroke="#a48144" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="20" cy="5" r="1.6" fill="#8ec5ff" />
+    </svg>
+  );
+}
+
 export default function WallEChat({
   onChatStateChange,
+  onSpeakingChange,
   lastSignalChangeAt,
-  className,
+  characterSlot,
   emptyHint,
   compact = false,
-  showDockSlot = false,
+  className,
+  bubbleTone = 'neutral',
 }: WallEChatProps) {
-  // ── Stable per-mount session id ──
+  // Stable per-mount session id.
   const sessionIdRef = useRef<string>('');
   if (!sessionIdRef.current) {
     sessionIdRef.current =
@@ -94,11 +129,9 @@ export default function WallEChat({
   }
   const sessionId = sessionIdRef.current;
 
-  // ── Local input state (v6 `useChat` no longer owns the textarea value) ──
   const [input, setInput] = useState('');
   const [focused, setFocused] = useState(false);
 
-  // ── Chat transport: pipe sessionId in the body of every POST ──
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -107,25 +140,17 @@ export default function WallEChat({
           body: { messages, sessionId },
         }),
       }),
-    [sessionId]
+    [sessionId],
   );
 
   const { messages, sendMessage, status } = useChat({ transport });
-
   const isThinking = status === 'submitted' || status === 'streaming';
 
-  // ── Phase 7: idle-joke trigger ─────────────────────────────────────
+  // Idle-joke trigger
   const userIdRef = useRef<string>('');
   if (!userIdRef.current) userIdRef.current = getOrCreateWalleUserId();
-
-  // Tracks the timestamp of the last "user activity" or "system event".
-  // Updated on: keypress, message change, parent-supplied signal change.
   const lastActivityRef = useRef<number>(Date.now());
-  // One-shot guard so we don't spam the endpoint within the same idle
-  // window. Resets when fresh activity bumps the clock.
   const jokeFiredInWindowRef = useRef<boolean>(false);
-  // Locally-injected joke messages (kept separate from the AI-SDK list
-  // and merged at render time so streaming chunks don't clobber them).
   const [jokeMessages, setJokeMessages] = useState<
     Array<{ id: string; role: 'assistant'; text: string; createdAt: number; isJoke: true }>
   >([]);
@@ -135,19 +160,14 @@ export default function WallEChat({
     jokeFiredInWindowRef.current = false;
   }, []);
 
-  // Any new chat message counts as activity (user sent or assistant replied).
   useEffect(() => {
     bumpActivity();
   }, [messages, bumpActivity]);
 
-  // Parent-supplied signal change resets idle window (optional prop).
   useEffect(() => {
     if (typeof lastSignalChangeAt === 'number') bumpActivity();
   }, [lastSignalChangeAt, bumpActivity]);
 
-  // Idle-joke loop — re-enabled (2026-05-22 dock redesign).
-  // Bubble has been removed; jokes now flow into the chat as italic
-  // assistant messages (data-walle-joke="1"). Fires once per idle window.
   useEffect(() => {
     let cancelled = false;
     const interval = setInterval(async () => {
@@ -177,7 +197,7 @@ export default function WallEChat({
           },
         ]);
       } catch {
-        // silent — best-effort
+        // best-effort
       }
     }, 30_000);
     return () => {
@@ -186,9 +206,7 @@ export default function WallEChat({
     };
   }, [isThinking]);
 
-  // ── Derived chat-state → parent mood mapping ──
-  // 'listening' now fires on focus OR non-empty input (either signals user
-  // engagement with the chat; parent uses this to drive the dock animation).
+  // Derived chat-state
   useEffect(() => {
     if (!onChatStateChange) return;
     let next: WallEChatState = 'idle';
@@ -197,14 +215,13 @@ export default function WallEChat({
     onChatStateChange(next);
   }, [isThinking, focused, input, onChatStateChange]);
 
-  // ── Autoscroll to bottom on new message / streaming chunk ──
+  // Autoscroll
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, jokeMessages]);
 
-  // ── Send handler ──
   const handleSend = () => {
     const text = input.trim();
     if (!text || isThinking) return;
@@ -212,28 +229,19 @@ export default function WallEChat({
     void sendMessage({ text });
   };
 
-  // ── On unmount, fire LLM-digest compaction via the server endpoint. ──
-  // The server holds the OpenRouter key; we just ship the transcript.
-  // Captures the latest messages via ref so the cleanup uses fresh data.
+  // Compaction on unmount
   const messagesRef = useRef<typeof messages>(messages);
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
-
   useEffect(() => {
     return () => {
       const list = messagesRef.current;
       if (!list || list.length === 0) return;
-
       const transcript = list.map((m) => ({
         role: m.role,
         content: messageText(m.parts),
       }));
-
-      // Server route does the LLM digest + Convex compactSession write.
-      // beacon-style: fire-and-forget; keepalive lets the request survive
-      // tab teardown. Falls back to naive client-side compaction if the
-      // endpoint fails or is unreachable.
       const payload = JSON.stringify({ sessionId, messages: transcript });
       fetch('/api/walle/compact', {
         method: 'POST',
@@ -241,7 +249,6 @@ export default function WallEChat({
         body: payload,
         keepalive: true,
       }).catch(() => {
-        // Fallback: naive count summary written directly from the client.
         const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
         if (!convexUrl) return;
         try {
@@ -259,11 +266,14 @@ export default function WallEChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Render — merge AI-SDK messages with locally-injected jokes,
-  //          chronological by index/createdAt, take last ~10. ──
-  type Visible =
-    | { kind: 'chat'; id: string; role: 'user' | 'assistant' | 'system'; text: string; isJoke?: false }
-    | { kind: 'joke'; id: string; role: 'assistant'; text: string; createdAt: number; isJoke: true };
+  // ── Build the unified visible list ─────────────────────────────────
+  type Visible = {
+    kind: 'chat' | 'joke';
+    id: string;
+    role: 'user' | 'assistant' | 'system';
+    text: string;
+    isJoke?: boolean;
+  };
 
   const chatVisible: Visible[] = messages.map((m) => ({
     kind: 'chat',
@@ -276,56 +286,155 @@ export default function WallEChat({
     id: j.id,
     role: 'assistant',
     text: j.text,
-    createdAt: j.createdAt,
-    isJoke: true as const,
+    isJoke: true,
   }));
-  // Append jokes after chat in arrival order (jokes only fire while idle,
-  // so trailing them is correct without per-event timestamps on chat msgs).
-  const visible = [...chatVisible, ...jokesVisible].slice(-10);
+  const visible = [...chatVisible, ...jokesVisible].slice(-12);
 
-  return (
-    <div className="flex h-full min-h-[320px] flex-col rounded-xl border border-white/5 bg-zinc-950/60 text-zinc-100">
-      <div
-        ref={scrollRef}
-        className="flex-1 space-y-3 overflow-y-auto px-4 py-3"
-        aria-label="WallE chat history"
+  // Split: the LATEST assistant turn (chat or joke) is the head-tethered bubble.
+  // Everything else flows in the scroll area.
+  const latestAssistantIdx = (() => {
+    for (let i = visible.length - 1; i >= 0; i--) {
+      if (visible[i].role === 'assistant') return i;
+    }
+    return -1;
+  })();
+  const tethered = latestAssistantIdx >= 0 ? visible[latestAssistantIdx] : null;
+  const olderMsgs =
+    latestAssistantIdx >= 0
+      ? visible.filter((_, i) => i !== latestAssistantIdx)
+      : visible;
+
+  // Speaking detector — fresh assistant content within last 2.4s.
+  const lastAssistantIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onSpeakingChange) return;
+    const id = tethered?.id ?? null;
+    if (id && id !== lastAssistantIdRef.current) {
+      lastAssistantIdRef.current = id;
+      onSpeakingChange(true);
+      const t = window.setTimeout(() => onSpeakingChange(false), 2400);
+      return () => window.clearTimeout(t);
+    }
+    // Streaming text — keep "speaking" true while thinking.
+    if (isThinking) {
+      onSpeakingChange(true);
+    } else {
+      onSpeakingChange(false);
+    }
+  }, [tethered?.id, tethered?.text, isThinking, onSpeakingChange]);
+
+  // Render-helper for older messages
+  function olderAssistantBubble(m: Visible) {
+    return (
+      <motion.div
+        key={m.id}
+        layout
+        initial={{ opacity: 0, y: 8, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -4, scale: 0.96 }}
+        transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+        className="flex items-end gap-1.5 justify-start"
       >
-        {showDockSlot ? (
-          <div className="walle-dock-slot" aria-hidden="true" />
-        ) : null}
-        {visible.length === 0 ? (
-          <p className="select-none text-sm text-zinc-500">
-            {emptyHint ?? 'Ask WallE about your rentals…'}
-          </p>
-        ) : (
-          visible.map((m) => {
-            const mine = m.role === 'user';
-            const isJoke = m.kind === 'joke';
-            return (
-              <div
-                key={m.id}
-                className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+        <WallEMini />
+        <div
+          data-walle-joke={m.isJoke ? '1' : undefined}
+          className={[
+            'relative max-w-[78%] whitespace-pre-wrap rounded-2xl rounded-bl-md px-3 py-2 text-[12.5px] leading-snug',
+            'border border-white/10 shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
+            m.isJoke
+              ? 'bg-white/5 italic text-zinc-400'
+              : 'bg-zinc-900/70 text-zinc-100',
+          ].join(' ')}
+        >
+          {m.text}
+        </div>
+      </motion.div>
+    );
+  }
+
+  function userBubble(m: Visible) {
+    return (
+      <motion.div
+        key={m.id}
+        layout
+        initial={{ opacity: 0, y: 8, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -4, scale: 0.96 }}
+        transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+        className="flex justify-end"
+      >
+        <div className="max-w-[78%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-indigo-500/25 px-3 py-2 text-[12.5px] leading-snug text-indigo-100 border border-indigo-400/30 shadow-[0_4px_14px_rgba(99,102,241,0.18)]">
+          {m.text}
+        </div>
+      </motion.div>
+    );
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────
+  return (
+    <div
+      className={[
+        'flex h-full min-h-[260px] flex-col rounded-2xl border border-white/5 bg-gradient-to-b from-zinc-950/70 to-zinc-950/40 text-zinc-100',
+        className ?? '',
+      ].join(' ')}
+    >
+      {/* TOP — character + head-tethered bubble */}
+      <div className="relative flex items-start gap-2.5 px-3 pt-2.5 pb-1.5">
+        <div className="shrink-0">{characterSlot}</div>
+        <div className="min-w-0 flex-1 self-start pt-2">
+          <AnimatePresence mode="popLayout" initial={false}>
+            {tethered ? (
+              <WallESpeechBubble
+                key={tethered.id}
+                id={tethered.id}
+                tone={tethered.isJoke ? 'thinking' : bubbleTone}
+                tailSide="left"
+                className="!px-3.5 !py-2.5 !text-[13px]"
               >
-                <div
-                  data-walle-joke={isJoke ? '1' : undefined}
-                  className={[
-                    'max-w-[80%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm leading-snug',
-                    mine
-                      ? 'bg-indigo-500/20 text-indigo-100'
-                      : isJoke
-                        ? 'bg-white/5 italic text-zinc-400'
-                        : 'bg-white/5 text-zinc-100',
-                  ].join(' ')}
-                >
-                  {m.text || (m.role === 'assistant' && isThinking ? '…' : '')}
-                </div>
-              </div>
-            );
-          })
-        )}
+                <span className={tethered.isJoke ? 'italic text-zinc-400' : ''}>
+                  {tethered.text ||
+                    (isThinking ? (
+                      <ThinkingDots />
+                    ) : (
+                      ''
+                    ))}
+                </span>
+              </WallESpeechBubble>
+            ) : (
+              <WallESpeechBubble
+                key="empty-hint"
+                id="empty-hint"
+                tone={bubbleTone}
+                tailSide="left"
+                className="!px-3.5 !py-2.5 !text-[13px]"
+              >
+                {emptyHint ?? 'Ask WallE about your rentals…'}
+              </WallESpeechBubble>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
-      <div className={['border-t border-white/5', compact ? 'px-2 py-1.5' : 'px-3 py-2'].join(' ')}>
+      {/* MIDDLE — scroll area with older messages */}
+      <div
+        ref={scrollRef}
+        className="flex-1 space-y-2 overflow-y-auto px-3 pt-1 pb-2"
+        aria-label="WallE chat history"
+      >
+        <AnimatePresence initial={false}>
+          {olderMsgs.map((m) =>
+            m.role === 'user' ? userBubble(m) : olderAssistantBubble(m),
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* BOTTOM — textarea + send */}
+      <div
+        className={[
+          'border-t border-white/5 backdrop-blur-sm',
+          compact ? 'px-2 py-1.5' : 'px-3 py-2',
+        ].join(' ')}
+      >
         <div className={['flex items-end', compact ? 'gap-1.5' : 'gap-2'].join(' ')}>
           <textarea
             value={input}
@@ -345,37 +454,55 @@ export default function WallEChat({
             rows={1}
             placeholder="Message WallE…"
             className={[
-              'flex-1 resize-none rounded-md border border-white/10 bg-zinc-900/80 text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-400/40 focus:outline-none',
-              compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm',
+              'flex-1 resize-none rounded-lg border border-white/10 bg-zinc-900/80 text-zinc-100 placeholder:text-zinc-500',
+              'focus:border-indigo-400/40 focus:outline-none focus:ring-1 focus:ring-indigo-400/30 transition',
+              compact ? 'px-2.5 py-1.5 text-[12.5px]' : 'px-3 py-2 text-sm',
             ].join(' ')}
           />
-          <button
+          <motion.button
             type="button"
             onClick={handleSend}
             disabled={isThinking || input.trim().length === 0}
+            whileTap={{ scale: 0.94 }}
             className={[
-              'rounded-md bg-indigo-500/80 font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-indigo-500',
-              compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm',
+              'rounded-lg font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40',
+              'bg-gradient-to-br from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500',
+              'shadow-[0_4px_12px_rgba(99,102,241,0.35)]',
+              compact ? 'px-2.5 py-1.5 text-[12.5px]' : 'px-3 py-2 text-sm',
             ].join(' ')}
           >
-            {isThinking ? '…' : 'Send'}
-          </button>
+            {isThinking ? <ThinkingDots small /> : 'Send'}
+          </motion.button>
         </div>
       </div>
     </div>
   );
 }
 
-/**
- * Convenience hook for any caller that doesn't want to use the callback
- * prop. Wraps the component's derived `chatState` in local state and a
- * setter exposed by the component prop. Phase 8 can either use this or
- * the prop directly.
- */
-export function useWallEChatState(): [
-  WallEChatState,
-  (next: WallEChatState) => void,
-] {
+function ThinkingDots({ small = false }: { small?: boolean }) {
+  const dot = small
+    ? 'inline-block w-1 h-1 mx-0.5 rounded-full bg-white/80'
+    : 'inline-block w-1.5 h-1.5 mx-0.5 rounded-full bg-zinc-400';
+  return (
+    <span className="inline-flex items-center">
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className={dot}
+          animate={{ y: [0, -3, 0], opacity: [0.4, 1, 0.4] }}
+          transition={{
+            duration: 0.9,
+            repeat: Infinity,
+            ease: 'easeInOut',
+            delay: i * 0.15,
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+export function useWallEChatState(): [WallEChatState, (next: WallEChatState) => void] {
   const [state, setState] = useState<WallEChatState>('idle');
   return [state, setState];
 }
