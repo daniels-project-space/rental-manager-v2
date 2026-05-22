@@ -35,6 +35,12 @@ export interface WallEChatProps {
    * this from the parent shell (single subscription).
    */
   lastSignalChangeAt?: number;
+  /** Optional extra className on the root container (for inline embed). */
+  className?: string;
+  /** Override empty-state placeholder text. */
+  emptyHint?: string;
+  /** Tighter padding/spacing for narrow inline embeds (e.g. 350-450px). */
+  compact?: boolean;
 }
 
 /** Phase 7 — stable client-side identifier for the joke-quota endpoint. */
@@ -64,7 +70,13 @@ function messageText(parts: ReadonlyArray<{ type: string; text?: string }> | und
     .join('');
 }
 
-export default function WallEChat({ onChatStateChange, lastSignalChangeAt }: WallEChatProps) {
+export default function WallEChat({
+  onChatStateChange,
+  lastSignalChangeAt,
+  className,
+  emptyHint,
+  compact = false,
+}: WallEChatProps) {
   // ── Stable per-mount session id ──
   const sessionIdRef = useRef<string>('');
   if (!sessionIdRef.current) {
@@ -270,8 +282,8 @@ export default function WallEChat({ onChatStateChange, lastSignalChangeAt }: Wal
         )}
       </div>
 
-      <div className="border-t border-white/5 px-3 py-2">
-        <div className="flex items-end gap-2">
+      <div className={['border-t border-white/5', compact ? 'px-2 py-1.5' : 'px-3 py-2'].join(' ')}>
+        <div className={['flex items-end', compact ? 'gap-1.5' : 'gap-2'].join(' ')}>
           <textarea
             value={input}
             onChange={(e) => {
@@ -289,15 +301,21 @@ export default function WallEChat({ onChatStateChange, lastSignalChangeAt }: Wal
             }}
             rows={1}
             placeholder="Message WallE…"
-            className="flex-1 resize-none rounded-md border border-white/10 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-400/40 focus:outline-none"
+            className={[
+              'flex-1 resize-none rounded-md border border-white/10 bg-zinc-900/80 text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-400/40 focus:outline-none',
+              compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm',
+            ].join(' ')}
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={isThinking || input.trim().length === 0}
-            className="rounded-md bg-indigo-500/80 px-3 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-indigo-500"
+            className={[
+              'rounded-md bg-indigo-500/80 font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-indigo-500',
+              compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm',
+            ].join(' ')}
           >
-            {isThinking ? 'Thinking…' : 'Send'}
+            {isThinking ? '…' : 'Send'}
           </button>
         </div>
       </div>
