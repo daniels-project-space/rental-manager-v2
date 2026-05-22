@@ -758,6 +758,7 @@ export default defineSchema({
       conversations: v.optional(v.number()),
     })),
     errorMessage: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("run"), v.literal("heartbeat"))),
   }).index("by_source", ["source"]),
 
   // -- Dashboard AI Chat (Phase B-1) ----

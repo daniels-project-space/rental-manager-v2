@@ -264,10 +264,24 @@ export const getStatsDrawerData = query({
     const unavailRows = await ctx.db.query("owner_unavailability").collect();
 
     // ── COLLECT 5: sync_state ─────────────────────────────────────
-    const syncRow = await ctx.db
-      .query("sync_state")
-      .withIndex("by_source", (q) => q.eq("source", "hygglo_poller"))
-      .first();
+    // Fetch all three poller sources in parallel and pick max(lastRunAt) so
+    // the scanner card reflects the most recent successful scan regardless
+    // of which layer (primary Trigger.dev / backup poller / cron heartbeat)
+    // ran last.
+    const [primaryRow, backupRow, cronRow] = await Promise.all([
+      ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_poller")).first(),
+      ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_backup_poller")).first(),
+      ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_cron")).first(),
+    ]);
+    const syncRow = primaryRow; // preserve legacy fields (lastRunSucceeded, rowsUpserted) from primary poller
+    const scanCandidates: Array<{ source: string; lastRunAt: number }> = [
+      primaryRow && { source: "hygglo_poller", lastRunAt: primaryRow.lastRunAt },
+      backupRow && { source: "hygglo_backup_poller", lastRunAt: backupRow.lastRunAt },
+      cronRow && { source: "hygglo_cron", lastRunAt: cronRow.lastRunAt },
+    ].filter(Boolean) as Array<{ source: string; lastRunAt: number }>;
+    const winningScan = scanCandidates.length > 0
+      ? scanCandidates.reduce((a, b) => (a.lastRunAt >= b.lastRunAt ? a : b))
+      : null;
 
     // ── COLLECT 6: insurance_claims (account-scoped) ──────────────
     let claimRows = accountSlug
@@ -738,6 +752,15 @@ export const getStatsDrawerData = query({
     const pendingTrackedCount = pendingTracked.length;
     const pendingTrackedValue = pendingTracked.reduce((s, r) => s + netOf(r), 0);
 
+    // Sub-count: pending verifications whose start_date falls in the NEXT
+    // calendar month (UTC, matching the YYYY-MM-DD slicing used elsewhere
+    // in this query). Pure additive — does not affect pendingTrackedCount.
+    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+    const monthAfterStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 1)).toISOString().slice(0, 10);
+    const pendingNextMonthCount = pendingTracked.filter(
+      (r) => !!r.start_date && r.start_date >= nextMonthStart && r.start_date < monthAfterStart,
+    ).length;
+
     const daysBetween = (a: string, b: string): number => {
       const ms = Date.parse(b) - Date.parse(a);
       return Math.max(1, Math.round(ms / 86400000) + 1);
@@ -1123,8 +1146,12 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: scanner ─────────────────────────────────────────────
+    // last_scan_at = max across primary/backup/cron sources (see COLLECT 5).
+    // last_scan_source surfaces WHICH layer produced the most recent scan
+    // so the UI can flag failover state.
     const scanner = {
-      last_scan_at: syncRow?.lastRunAt ?? null,
+      last_scan_at: winningScan?.lastRunAt ?? null,
+      last_scan_source: winningScan?.source ?? null,
       last_run_succeeded: syncRow?.lastRunSucceeded ?? null,
       rows_upserted_last: syncRow?.rowsUpserted?.reservations ?? 0,
     };
@@ -1415,6 +1442,7 @@ export const getStatsDrawerData = query({
         ongoing_count: ongoingUniq.length,
         upcoming_count: upcomingUniq.length,
         pending_count: pendingTrackedCount,
+        pending_next_month_count: pendingNextMonthCount,
         pending_value_gbp: Math.round(pendingTrackedValue * 100) / 100,
         rentals: activeRentals,
       },

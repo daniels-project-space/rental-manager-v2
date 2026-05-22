@@ -17,6 +17,7 @@
  * exits fast).
  */
 import { internalAction } from "./_generated/server";
+import { api } from "./_generated/api";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
 import { rateLimiter } from "./rate_limit_config";
 
@@ -40,6 +41,16 @@ export const triggerWorkflow = internalAction({
     }
 
     if (isWithinUkQuietHours()) {
+      // Heartbeat under distinct "hygglo_cron" source so quiet hours don't appear as a stalled scanner.
+      try {
+        await ctx.runMutation(api.sync_state.recordSyncRun, {
+          source: "hygglo_cron",
+          succeeded: true,
+          kind: "heartbeat",
+        });
+      } catch (err) {
+        console.warn("[hygglo_poll_trigger] heartbeat write failed:", err);
+      }
       console.log("[quiet-hours] skipped", { task: "hygglo_poll_trigger:triggerWorkflow" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }

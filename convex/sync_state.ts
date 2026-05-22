@@ -44,12 +44,31 @@ export const recordSyncRun = mutation({
       conversations: v.optional(v.number()),
     })),
     errorMessage: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("run"), v.literal("heartbeat"))),
   },
-  handler: async (ctx, { source, succeeded, durationMs, rowsUpserted, errorMessage }): Promise<void> => {
+  handler: async (ctx, { source, succeeded, durationMs, rowsUpserted, errorMessage, kind }): Promise<void> => {
     const existing = await ctx.db
       .query("sync_state")
       .withIndex("by_source", (q) => q.eq("source", source))
       .first();
+
+    const effectiveKind = kind ?? "run";
+
+    // For heartbeats: only stamp liveness; do not advance counters/duration.
+    if (effectiveKind === "heartbeat") {
+      const hbFields = {
+        source,
+        lastRunAt: Date.now(),
+        lastRunSucceeded: true,
+        kind: effectiveKind,
+      };
+      if (existing) {
+        await ctx.db.patch(existing._id, hbFields);
+      } else {
+        await ctx.db.insert("sync_state", hbFields);
+      }
+      return;
+    }
 
     const fields = {
       source,
@@ -58,6 +77,7 @@ export const recordSyncRun = mutation({
       durationMs,
       rowsUpserted,
       errorMessage,
+      kind: effectiveKind,
     };
 
     if (existing) {
