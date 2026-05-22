@@ -66,6 +66,21 @@ crons.interval(
   internal.hygglo_poll_trigger.triggerWorkflow,
 );
 
+// ── S2 fix — direct backup_poll cron ─────────────────────────────
+// Prior to this, runBackupPoll only ran when poller_health.runStalenessCheck
+// detected the primary writer as stale (>30 min). If staleness detection
+// itself failed (or threshold mismatch), the backup pill went red because
+// no row in sync_state for source=hygglo_backup_poller was ever written.
+// Schedule the backup poll on a direct 10-min cron so it ALWAYS heartbeats
+// independent of primary health. fetchOrdersMinimal caps work at 50 orders
+// per account so cost is bounded.
+crons.interval(
+  "hygglo backup poll",
+  { minutes: 10 },
+  internal.backup_poll.runBackupPoll,
+  {},
+);
+
 // Demote stale-confirmed rows (Hygglo dropped them from every filter) to
 // completed so they stop appearing as ongoing/overdue in the Active widget.
 crons.interval(
