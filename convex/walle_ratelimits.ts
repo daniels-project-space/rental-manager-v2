@@ -1,13 +1,15 @@
 /**
  * Phase 9 — WallE rate-limiter buckets.
  *
- * Three named limits (per-user, token bucket):
- *   walle_chat    — 30 req/hour   (interactive streaming)
- *   walle_joke    — 10 req/hour   (server hard-caps at 2/day in recordJoke; this
- *                                  is a belt-and-suspenders guard against client
- *                                  bugs that hammer the route)
- *   walle_compact —  6 req/hour   (compaction is rare; protects against
- *                                  pathological unmount loops)
+ * Four named limits (per-user, token bucket):
+ *   walle_chat     — 30 req/hour   (interactive streaming)
+ *   walle_joke     — 10 req/hour   (server hard-caps at 2/day in recordJoke; this
+ *                                   is a belt-and-suspenders guard against client
+ *                                   bugs that hammer the route)
+ *   walle_compact  —  6 req/hour   (compaction is rare; protects against
+ *                                   pathological unmount loops)
+ *   walle_narrate  — 12 req/hour   (speech-bubble narration; greeting + click +
+ *                                   alert auto-pops should fit comfortably)
  *
  * Routes call `checkWalleLimit` from a Convex action / HTTP handler before
  * any LLM call. Returns `{ ok, retryAfter }` (`retryAfter` is ms-until-reset
@@ -46,6 +48,12 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
     period: HOUR,
     capacity: 6,
   },
+  walle_narrate: {
+    kind: "token bucket",
+    rate: 12,
+    period: HOUR,
+    capacity: 12,
+  },
 });
 
 /**
@@ -60,6 +68,7 @@ export const checkWalleLimit = mutation({
       v.literal("walle_chat"),
       v.literal("walle_joke"),
       v.literal("walle_compact"),
+      v.literal("walle_narrate"),
     ),
     key: v.string(),
   },

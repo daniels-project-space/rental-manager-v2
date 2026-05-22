@@ -1,0 +1,218 @@
+/*
+ * WallE character CSS — idle animations + mood-driven CSS variables.
+ *
+ * Mood is applied as a data attribute on the root `.walle-bot` element:
+ *   [data-mood="idle"]
+ *   [data-mood="listening"]
+ *   [data-mood="thinking"]
+ *   [data-mood="alert"]
+ *   [data-mood="celebrating"]
+ *
+ * Pure CSS — no JS animation loop. All keyframes obey
+ * `prefers-reduced-motion: reduce`.
+ */
+
+.walle-bot {
+  --walle-body: #d9b56b;       /* warm sun-bleached metal */
+  --walle-body-edge: #a48144;
+  --walle-screen: #1a2331;     /* face screen background */
+  --walle-eye: #8ec5ff;        /* eye highlights */
+  --walle-glow: rgba(142, 197, 255, 0.4);
+  --walle-tread: #2a2018;
+  --walle-arm: #c0a05a;
+
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 0;
+  /* color transitions smooth out mood changes */
+  transition:
+    filter 600ms ease,
+    transform 200ms ease;
+  filter: drop-shadow(0 0 18px var(--walle-glow));
+}
+
+.walle-bot:hover {
+  transform: translateY(-2px);
+}
+
+.walle-bot:focus-visible {
+  outline: 2px solid var(--walle-eye);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
+.walle-bot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* ── Body bob — slow breathing-like sway ─────────────────────────── */
+.walle-bot .wb-body {
+  transform-origin: 50% 80%;
+  animation: walle-breathe 3.6s ease-in-out infinite;
+}
+
+/* ── Head tilt — gentle idle attention ───────────────────────────── */
+.walle-bot .wb-head {
+  transform-origin: 50% 100%;
+  animation: walle-head-tilt 7s ease-in-out infinite;
+}
+
+/* ── Antenna sway ────────────────────────────────────────────────── */
+.walle-bot .wb-antenna {
+  transform-origin: 50% 100%;
+  animation: walle-antenna 2.8s ease-in-out infinite;
+}
+
+/* ── Eyes — glance + blink. Two separate keyframes stacked. ─────── */
+.walle-bot .wb-eye-pupil {
+  animation: walle-eye-glance 7s ease-in-out infinite;
+}
+
+.walle-bot .wb-eye-lid {
+  transform-origin: 50% 50%;
+  animation: walle-blink 4.4s ease-in-out infinite;
+}
+
+.walle-bot .wb-eye-lid-r {
+  animation-delay: -0.05s; /* near-sync but not perfect */
+}
+
+/* ── Treads hum ──────────────────────────────────────────────────── */
+.walle-bot .wb-treads {
+  transform-origin: 50% 100%;
+  animation: walle-tread-hum 0.9s ease-in-out infinite;
+}
+
+/* ── Right arm — waves only in celebrating mood ──────────────────── */
+.walle-bot .wb-arm-r {
+  transform-origin: 80% 20%;
+  transform: rotate(0deg);
+  transition: transform 400ms ease;
+}
+
+/* ── Mood overrides ──────────────────────────────────────────────── */
+
+/* Idle is the baseline — no overrides */
+
+.walle-bot[data-mood="listening"] {
+  --walle-eye: #c4e1ff;
+  --walle-glow: rgba(196, 225, 255, 0.55);
+}
+.walle-bot[data-mood="listening"] .wb-eye-pupil {
+  animation:
+    walle-eye-glance 3s ease-in-out infinite,
+    walle-eye-attentive 1.6s ease-in-out infinite;
+}
+
+.walle-bot[data-mood="thinking"] {
+  --walle-eye: #c4b5fd;
+  --walle-glow: rgba(167, 139, 250, 0.5);
+  --walle-screen: #1e1b3a;
+}
+.walle-bot[data-mood="thinking"] .wb-head {
+  animation: walle-head-think 3.2s ease-in-out infinite;
+}
+
+.walle-bot[data-mood="alert"] {
+  --walle-eye: #fca5a5;
+  --walle-glow: rgba(248, 113, 113, 0.55);
+  --walle-screen: #2b1010;
+  animation: walle-alert-shake 0.32s ease-in-out infinite;
+}
+.walle-bot[data-mood="alert"] .wb-eye-pupil {
+  animation: walle-eye-dart 1.1s ease-in-out infinite;
+}
+
+.walle-bot[data-mood="celebrating"] {
+  --walle-eye: #86efac;
+  --walle-glow: rgba(74, 222, 128, 0.55);
+  --walle-screen: #102b1a;
+}
+.walle-bot[data-mood="celebrating"] .wb-arm-r {
+  animation: walle-wave 0.9s ease-in-out infinite;
+}
+.walle-bot[data-mood="celebrating"] .wb-body {
+  animation: walle-bounce 0.9s ease-in-out infinite;
+}
+
+/* ── Keyframes ───────────────────────────────────────────────────── */
+
+@keyframes walle-breathe {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50%      { transform: translateY(-1.5px) scaleY(0.995); }
+}
+
+@keyframes walle-bounce {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50%      { transform: translateY(-3px) scaleY(1.02); }
+}
+
+@keyframes walle-head-tilt {
+  0%, 100% { transform: rotate(-1.2deg); }
+  50%      { transform: rotate(1.4deg); }
+}
+
+@keyframes walle-head-think {
+  0%, 100% { transform: rotate(0deg) translateX(0); }
+  25%      { transform: rotate(-2deg) translateX(-1px); }
+  75%      { transform: rotate(2deg) translateX(1px); }
+}
+
+@keyframes walle-antenna {
+  0%, 100% { transform: rotate(-6deg); }
+  50%      { transform: rotate(7deg); }
+}
+
+@keyframes walle-eye-glance {
+  0%, 60%, 100% { transform: translate(0, 0); }
+  15%           { transform: translate(2px, 0); }
+  30%           { transform: translate(-2px, 1px); }
+  45%           { transform: translate(0, -1px); }
+}
+
+@keyframes walle-eye-attentive {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(0, 0) scale(1.1); }
+}
+
+@keyframes walle-eye-dart {
+  0%, 100% { transform: translate(-2px, 0); }
+  50%      { transform: translate(2px, 0); }
+}
+
+@keyframes walle-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95%, 98%      { transform: scaleY(0.05); }
+}
+
+@keyframes walle-tread-hum {
+  0%, 100% { transform: scaleX(1); }
+  50%      { transform: scaleX(0.985); }
+}
+
+@keyframes walle-alert-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-1.5px); }
+  75%      { transform: translateX(1.5px); }
+}
+
+@keyframes walle-wave {
+  0%, 100% { transform: rotate(-10deg); }
+  50%      { transform: rotate(30deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .walle-bot,
+  .walle-bot * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

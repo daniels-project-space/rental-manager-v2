@@ -126,41 +126,15 @@ export default function WallEChat({ onChatStateChange, lastSignalChangeAt }: Wal
     if (typeof lastSignalChangeAt === 'number') bumpActivity();
   }, [lastSignalChangeAt, bumpActivity]);
 
-  // Idle poll — 30 s interval, fires at most once per idle window.
-  useEffect(() => {
-    let cancelled = false;
-    const interval = setInterval(() => {
-      if (cancelled) return;
-      if (isThinking) return; // chatState !== 'idle'
-      if (jokeFiredInWindowRef.current) return;
-      if (Date.now() - lastActivityRef.current < JOKE_IDLE_AFTER_MS) return;
-
-      jokeFiredInWindowRef.current = true; // optimistic latch
-      fetch('/api/walle/joke', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId: userIdRef.current }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data: { joke: string | null } | null) => {
-          if (cancelled) return;
-          const joke = data?.joke?.trim();
-          if (!joke) return;
-          const id = `walle-joke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          setJokeMessages((prev) => [
-            ...prev,
-            { id, role: 'assistant', text: joke, createdAt: Date.now(), isJoke: true },
-          ]);
-        })
-        .catch(() => {
-          // silent — UX requirement
-        });
-    }, 30 * 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [isThinking]);
+  // Idle joke loop intentionally removed (2026-05-22 redesign).
+  // The parent shell <WallE /> now owns the idle-narration loop and pipes
+  // results through the speech bubble instead of injecting fake chat
+  // messages. The pre-existing `/api/walle/joke` route stays available for
+  // future callers; we just don't trigger it from here anymore.
+  void JOKE_IDLE_AFTER_MS;
+  void userIdRef;
+  void jokeFiredInWindowRef;
+  void setJokeMessages;
 
   // ── Derived chat-state → parent mood mapping ──
   useEffect(() => {

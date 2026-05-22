@@ -63,7 +63,7 @@ function hasKeys(): boolean {
  * vars are missing so callers don't have to branch.
  */
 export function traceWalle(opts: {
-  name: "walle_chat" | "walle_joke" | "walle_compact";
+  name: "walle_chat" | "walle_joke" | "walle_compact" | "walle_narrate";
   userId?: string;
   sessionId?: string;
   metadata?: Record<string, unknown>;

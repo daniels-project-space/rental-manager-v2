@@ -72,6 +72,7 @@ import type * as item_resolver from "../item_resolver.js";
 import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
 import type * as knowledge from "../knowledge.js";
+import type * as lib_ai_attribution from "../lib/ai_attribution.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_capacity_gap from "../lib/capacity_gap.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
@@ -217,6 +218,7 @@ declare const fullApi: ApiFromModules<{
   item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;
   knowledge: typeof knowledge;
+  "lib/ai_attribution": typeof lib_ai_attribution;
   "lib/availability": typeof lib_availability;
   "lib/capacity_gap": typeof lib_capacity_gap;
   "lib/co_occurrence": typeof lib_co_occurrence;

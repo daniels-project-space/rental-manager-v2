@@ -8,6 +8,7 @@
  * Used by:
  *   - src/app/api/walle/chat/route.ts       (streamText with tools)
  *   - src/app/api/walle/compact/route.ts    (generateText for digest)
+ *   - src/app/api/walle/narrate/route.ts    (generateText for bubble lines)
  *
  * All tools are READ-ONLY. No mutations. WallE is internal (Daniel only),
  * so no PII redaction is applied to tool outputs.
@@ -79,6 +80,52 @@ export function buildWalleSystemPrompt(snapshotLine: string): string {
 export const WALLE_COMPACT_SYSTEM =
   "Summarize this WallE chat in 80 words or fewer, preserving facts, " +
   "decisions, and any open questions. Output bullet points. No preamble.";
+
+/**
+ * Narration instructions — appended to the persona for speech-bubble lines.
+ * The character has very little real estate, so every word counts.
+ *
+ * Modes:
+ *   greeting — first paint after dashboard mount. Friendly, observational.
+ *   alert    — a new high-severity signal just fired. Crisp, urgent, useful.
+ *   click    — Daniel poked the character. Conversational, brief, on-topic
+ *              with the current snapshot.
+ *   idle     — long idle window. Replaces the chat-style joke with a
+ *              character aside / pun. Stays in voice; no setup-punchline.
+ */
+export const WALLE_NARRATION_INSTRUCTIONS = `
+[NARRATION MODE]
+You are speaking through a tiny speech bubble that floats next to your
+animated character body. The bubble holds AT MOST two sentences. Hard rules:
+- Maximum 2 sentences. Prefer 1.
+- Maximum 160 characters total.
+- No bullet points. No headings. No code blocks.
+- No "Hi there!" / "Hello!" / preambles.
+- Stay in character voice — dry, warm, terse, observant.
+- Refer to live numbers from the snapshot if they help.
+- No emoji. No exclamation marks.
+
+Mode-specific guidance:
+- greeting: a single warm line acknowledging what's on the dashboard right now.
+- alert:    a single line naming the new problem and one tiny next step.
+- click:    react to being poked — like a colleague leaning over their desk.
+- idle:     dry one-liner aside about the rental world (no setup/punchline).
+`;
+
+export type NarrationMode = "greeting" | "alert" | "click" | "idle";
+
+/**
+ * Build the system prompt for a single-shot narration generation. Mode-aware
+ * so the model knows what tone to land. Snapshot is the same single-line
+ * dashboard string that streamContext exposes elsewhere.
+ */
+export function buildWalleNarrationPrompt(
+  snapshotLine: string,
+  mode: NarrationMode,
+): string {
+  const base = buildWalleSystemPrompt(snapshotLine);
+  return `${base}\n${WALLE_NARRATION_INSTRUCTIONS}\nCurrent mode: ${mode}.`;
+}
 
 /**
  * Builds the AI SDK v6 tool registry. Caller supplies a ConvexHttpClient
