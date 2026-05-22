@@ -63,6 +63,11 @@ function tooltipFmt(value: ValueType, name: NameType): [string, string] {
 }
 
 // Series counted toward "how much of the predicted total is already realised".
+// pendingNext is SPECULATIVE (renter paid but still in doc verification — can
+// fall through). It feeds the chart's forward overlay bar but must NOT count
+// toward Total / Avg / Best / Weakest, or it would inflate stats with
+// not-yet-realised revenue. bookedNext stays — those are confirmed-and-paid
+// future bookings (FUNDS_RESERVED+), real expected revenue.
 const ACTUAL_KEYS = [
   "danielOrganic",
   "vertusOrganic",
@@ -71,7 +76,6 @@ const ACTUAL_KEYS = [
   "aiBoost",
   "damageClaims",
   "bookedNext",
-  "pendingNext",
 ] as const;
 
 export function LifetimeRevenue() {
@@ -178,7 +182,14 @@ export function LifetimeRevenue() {
     };
   }, [raw, hidden]);
 
-  const hiddenDelta = (raw?.totalRevenue ?? 0) - totalRevenue;
+  // hiddenDelta = (sum of ALL ACTUAL_KEYS across months) − (sum of VISIBLE
+  // ACTUAL_KEYS, i.e. totalRevenue). Computed client-side from seriesTotals
+  // so the baseline matches what the chart can actually show — server-side
+  // raw.totalRevenue may include legacy series (e.g. pendingNext) that the
+  // stats bar no longer counts, which would otherwise leave a permanent
+  // positive delta even with nothing hidden.
+  const lifetimeActualsTotal = ACTUAL_KEYS.reduce((a, k) => a + (seriesTotals[k] ?? 0), 0);
+  const hiddenDelta = Math.max(0, lifetimeActualsTotal - totalRevenue);
   return (
     <>
       <Card className="relative overflow-hidden">
@@ -266,6 +277,32 @@ export function LifetimeRevenue() {
               <span className="text-[10px] opacity-70 tabular-nums">{fmtGbp(totalRevenue)}</span>
             </span>
           </button>
+          {/* Target toggle — gates the current-month projected-total marker */}
+          {expectedMonthlyTarget > 0 && (
+            <button
+              onClick={() => toggle("target")}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-all"
+              style={{
+                border: "1px solid #facc15",
+                color: hidden.target ? "#6b7280" : "#facc15",
+                background: hidden.target ? "rgba(255,255,255,0.03)" : "rgba(250,204,21,0.12)",
+                opacity: hidden.target ? 0.45 : 1,
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 8,
+                  height: 3,
+                  background: hidden.target ? "#6b7280" : "#facc15",
+                }}
+              />
+              <span className="flex flex-col items-start leading-tight">
+                <span>Target</span>
+                <span className="text-[10px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Chart */}
@@ -501,7 +538,7 @@ export function LifetimeRevenue() {
               {/* Current-month expected ceiling: small dashed T-marker drawn at the
                   projected total. Lets you see at-a-glance whether realised + booked
                   + pending has already reached target. */}
-              {raw && expectedMonthlyTarget > 0 && (() => {
+              {raw && expectedMonthlyTarget > 0 && !hidden.target && (() => {
                 // Target marker only appears once the current month is ≥7 days in
                 // — before that there isn't enough month-to-date data to make the
                 // projection meaningful, and the marker would be misleading.

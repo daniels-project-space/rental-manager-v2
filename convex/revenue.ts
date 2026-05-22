@@ -414,17 +414,24 @@ export const getLifetimeByMonth = query({
       const slug = res.account_slug ?? "dbcinema";
       const isFutureRes = dateStr.slice(0, 7) > currentMonth;
 
-      if (isFutureRes) {
-        const futureMo = (res.start_date ?? dateStr).slice(0, 7);
-        if (futureMo === nextMonthKey) {
-          if (!isPending) bookedNextTotal = r2(bookedNextTotal + amount);
-          else pendingNextTotal = r2(pendingNextTotal + amount);
-        }
+      // Pending bucket = ALL currently-pending verifications (regardless of
+      // start_date). This matches the Active Rentals widget's pending_value_gbp,
+      // which sums netOf(r) for every isPendingVerification(r) row (see
+      // convex/dashboard.ts:getStatsDrawerData → pendingValueGbp). Rolling
+      // them into the next-month overlay bucket lets the lifetime chart
+      // surface the same forward-looking pending revenue figure.
+      if (isPending) {
+        pendingNextTotal = r2(pendingNextTotal + amount);
         continue;
       }
 
-      // Past + current month: exclude pending — it isn't paid revenue.
-      if (isPending) continue;
+      if (isFutureRes) {
+        const futureMo = (res.start_date ?? dateStr).slice(0, 7);
+        if (futureMo === nextMonthKey) {
+          bookedNextTotal = r2(bookedNextTotal + amount);
+        }
+        continue;
+      }
 
       const key = dateStr.slice(0, 7);
       if (slug === "leo") {
