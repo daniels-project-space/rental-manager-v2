@@ -147,7 +147,7 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
             style={{ transformOrigin: "50% 65%" }}
           >
             <DotLottieReact
-              src="/walle-vendor/robot.lottie"
+              src="/walle-vendor/robot.json"
               autoplay
               loop
               renderConfig={{ autoResize: true }}
