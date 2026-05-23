@@ -186,15 +186,36 @@ export function RentalRow({ r }: { r: Rental }) {
             )}
           </div>
         )}
-        {/* PASS-8: single-line summary (was 2-line in PASS-7).
-            Distinct-image tiles above now carry the visual signal;
-            this text line is for scan + screen readers. */}
-        <div
-          className="mt-0.5 text-[11px] leading-snug text-slate-300 truncate"
-          title={summary}
-        >
-          {summary}
-        </div>
+        {/* Canonical inventory-matched item chips (was: comma-joined SEO
+            summary). One chip per item from r.item_tiles, qty suffix when
+            > 1. Falls back to the old single-line summary if item_tiles is
+            empty (stale API responses during deploys). */}
+        {r.item_tiles && r.item_tiles.length > 0 ? (
+          <div
+            className="mt-0.5 flex flex-wrap items-center gap-1"
+            title={summary}
+          >
+            {r.item_tiles.map((t, i) => (
+              <span
+                key={`${t.name}-${i}`}
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700 text-slate-300"
+                title={t.name}
+              >
+                {t.name}
+                {t.qty > 1 && (
+                  <span className="ml-1 text-slate-500">×{t.qty}</span>
+                )}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div
+            className="mt-0.5 text-[11px] leading-snug text-slate-300 truncate"
+            title={summary}
+          >
+            {summary}
+          </div>
+        )}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
           {(r.pickup_date || r.start_date) && (
             <span
