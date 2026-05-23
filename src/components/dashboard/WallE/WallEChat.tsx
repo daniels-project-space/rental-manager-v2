@@ -34,7 +34,7 @@ import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../../../../convex/_generated/api';
 import type { WallEChatState } from './walle.types';
 import { JOKE_IDLE_AFTER_MS } from './walle.jokes';
-import WallESpeechBubble, { type BubbleTone } from './WallESpeechBubble';
+import type { BubbleTone } from './WallESpeechBubble';
 
 export interface WallEChatProps {
   /**
@@ -289,28 +289,25 @@ export default function WallEChat({
     isJoke: true,
   }));
   const visible = [...chatVisible, ...jokesVisible].slice(-12);
+  const hasAnyMessage = visible.length > 0;
 
-  // Split: the LATEST assistant turn (chat or joke) is the head-tethered bubble.
-  // Everything else flows in the scroll area.
-  const latestAssistantIdx = (() => {
+  // 2026-05-23: Daniel asked for a normal chat scroll layout — the latest
+  // exchange (one user bubble + one assistant bubble) sits at the bottom and
+  // is visible by default; older turns are scrollable above. So all messages
+  // flow through one list instead of the previous head-tethered split.
+  const latestAssistantId = (() => {
     for (let i = visible.length - 1; i >= 0; i--) {
-      if (visible[i].role === 'assistant') return i;
+      if (visible[i].role === 'assistant') return visible[i].id;
     }
-    return -1;
+    return null;
   })();
-  const tethered = latestAssistantIdx >= 0 ? visible[latestAssistantIdx] : null;
-  const olderMsgs =
-    latestAssistantIdx >= 0
-      ? visible.filter((_, i) => i !== latestAssistantIdx)
-      : visible;
 
   // Speaking detector — fresh assistant content within last 2.4s.
   const lastAssistantIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!onSpeakingChange) return;
-    const id = tethered?.id ?? null;
-    if (id && id !== lastAssistantIdRef.current) {
-      lastAssistantIdRef.current = id;
+    if (latestAssistantId && latestAssistantId !== lastAssistantIdRef.current) {
+      lastAssistantIdRef.current = latestAssistantId;
       onSpeakingChange(true);
       const t = window.setTimeout(() => onSpeakingChange(false), 2400);
       return () => window.clearTimeout(t);
@@ -321,10 +318,10 @@ export default function WallEChat({
     } else {
       onSpeakingChange(false);
     }
-  }, [tethered?.id, tethered?.text, isThinking, onSpeakingChange]);
+  }, [latestAssistantId, isThinking, onSpeakingChange]);
 
-  // Render-helper for older messages
-  function olderAssistantBubble(m: Visible) {
+  // Render-helper for assistant message (left-aligned with mini-face avatar).
+  function assistantBubble(m: Visible, isLatest: boolean) {
     return (
       <motion.div
         key={m.id}
@@ -338,12 +335,16 @@ export default function WallEChat({
         <WallEMini />
         <div
           data-walle-joke={m.isJoke ? '1' : undefined}
+          data-walle-latest={isLatest ? '1' : undefined}
           className={[
-            'relative max-w-[78%] whitespace-pre-wrap rounded-2xl rounded-bl-md px-3 py-2 text-[12.5px] leading-snug',
-            'border border-white/10 shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
+            'relative max-w-[78%] whitespace-pre-wrap rounded-2xl rounded-bl-md px-3 py-2 leading-snug',
+            'border shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
+            isLatest
+              ? 'text-[13px] border-white/15 bg-zinc-900/85'
+              : 'text-[12.5px] border-white/10 bg-zinc-900/70',
             m.isJoke
-              ? 'bg-white/5 italic text-zinc-400'
-              : 'bg-zinc-900/70 text-zinc-100',
+              ? 'italic text-zinc-400'
+              : 'text-zinc-100',
           ].join(' ')}
         >
           {m.text}
@@ -371,59 +372,64 @@ export default function WallEChat({
   }
 
   // ── Render ─────────────────────────────────────────────────────────
+  //
+  // Layout (Daniel-spec 2026-05-23):
+  //  - The character sits pinned at top-left and stays put.
+  //  - Below him, a *bounded* scroll area shows the conversation. The list
+  //    auto-scrolls to the bottom on every new message, so the visible-by-
+  //    default state is the latest user bubble + latest assistant bubble
+  //    (one exchange). Older turns sit above and are reachable by scrolling
+  //    up.
+  //  - The widget never grows past the parent grid cell (h-full + max-h on
+  //    the scroller plus overflow-hidden on the root).
   return (
     <div
       className={[
-        'flex h-full min-h-[260px] flex-col rounded-2xl border border-white/5 bg-gradient-to-b from-zinc-950/70 to-zinc-950/40 text-zinc-100',
+        'flex h-full max-h-full min-h-[260px] flex-col overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-zinc-950/70 to-zinc-950/40 text-zinc-100',
         className ?? '',
       ].join(' ')}
     >
-      {/* TOP — character + head-tethered bubble */}
-      <div className="relative flex items-start gap-2.5 px-3 pt-2.5 pb-1.5">
+      {/* TOP — pinned character. No tethered bubble; the latest assistant
+          turn now lives in the scroll list below so user + assistant
+          bubbles read as one continuous chat. */}
+      <div className="flex shrink-0 items-center gap-2.5 px-3 pt-2.5 pb-1.5">
         <div className="shrink-0">{characterSlot}</div>
-        <div className="min-w-0 flex-1 self-start pt-2">
-          <AnimatePresence mode="popLayout" initial={false}>
-            {tethered ? (
-              <WallESpeechBubble
-                key={tethered.id}
-                id={tethered.id}
-                tone={tethered.isJoke ? 'thinking' : bubbleTone}
-                tailSide="left"
-                className="!px-3.5 !py-2.5 !text-[13px]"
-              >
-                <span className={tethered.isJoke ? 'italic text-zinc-400' : ''}>
-                  {tethered.text ||
-                    (isThinking ? (
-                      <ThinkingDots />
-                    ) : (
-                      ''
-                    ))}
-                </span>
-              </WallESpeechBubble>
-            ) : (
-              <WallESpeechBubble
-                key="empty-hint"
-                id="empty-hint"
-                tone={bubbleTone}
-                tailSide="left"
-                className="!px-3.5 !py-2.5 !text-[13px]"
-              >
-                {emptyHint ?? 'Ask WallE about your rentals…'}
-              </WallESpeechBubble>
-            )}
-          </AnimatePresence>
-        </div>
+        {!hasAnyMessage && (
+          <div className="min-w-0 flex-1 text-[12.5px] leading-snug text-zinc-400">
+            {emptyHint ?? 'Ask WallE about your rentals…'}
+          </div>
+        )}
       </div>
 
-      {/* MIDDLE — scroll area with older messages */}
+      {/* MIDDLE — bounded scroll area. flex-1 + overflow-y-auto means it
+          fills the leftover height inside the parent grid cell, never
+          exceeding it. New messages append at the bottom and the
+          scrollToBottom effect keeps the latest exchange visible. */}
       <div
         ref={scrollRef}
-        className="flex-1 space-y-2 overflow-y-auto px-3 pt-1 pb-2"
+        className="flex-1 min-h-0 space-y-2 overflow-y-auto px-3 pt-1 pb-2"
         aria-label="WallE chat history"
       >
         <AnimatePresence initial={false}>
-          {olderMsgs.map((m) =>
-            m.role === 'user' ? userBubble(m) : olderAssistantBubble(m),
+          {visible.map((m) =>
+            m.role === 'user'
+              ? userBubble(m)
+              : assistantBubble(m, m.id === latestAssistantId),
+          )}
+          {isThinking && (
+            <motion.div
+              key="thinking-bubble"
+              layout
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="flex items-end gap-1.5 justify-start"
+            >
+              <WallEMini />
+              <div className="rounded-2xl rounded-bl-md border border-white/10 bg-zinc-900/70 px-3 py-2">
+                <ThinkingDots />
+              </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
