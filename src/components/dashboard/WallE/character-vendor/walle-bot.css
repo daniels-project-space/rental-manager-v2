@@ -13,13 +13,16 @@
  */
 
 .walle-bot {
-  --walle-body: #d9b56b;       /* warm sun-bleached metal */
-  --walle-body-edge: #a48144;
-  --walle-screen: #1a2331;     /* face screen background */
-  --walle-eye: #8ec5ff;        /* eye highlights */
-  --walle-glow: rgba(142, 197, 255, 0.4);
-  --walle-tread: #2a2018;
-  --walle-arm: #c0a05a;
+  /* Default palette: BLUE + stable. WallE only switches to a red, slow
+     wiggling state while he is actively replying (data-speaking="true"
+     set by WallE.tsx based on /api/walle/chat stream activity). */
+  --walle-body: #4a7fbd;       /* cool steel-blue body */
+  --walle-body-edge: #2f5688;
+  --walle-screen: #0e1830;     /* face screen background */
+  --walle-eye: #9ec9ff;        /* eye highlights */
+  --walle-glow: rgba(110, 168, 254, 0.42);
+  --walle-tread: #1b2638;
+  --walle-arm: #3e6aa1;
 
   position: relative;
   display: inline-block;
@@ -96,6 +99,61 @@
   transform-origin: 80% 20%;
   transform: rotate(0deg);
   transition: transform 400ms ease;
+}
+
+/* ── Speaking override (Daniel 2026-05-23) ───────────────────────────
+   When WallE is actively replying we want one thing: a slow, warm red
+   wiggle. When he isn't, he sits perfectly still in the blue baseline.
+   So `[data-speaking="true"]` slows every idle keyframe down and adds a
+   gentle horizontal sway; the absence of it pauses all the loops.
+*/
+
+.walle-bot {
+  /* Default = stable. No bob, no head-tilt, no antenna sway, no tread
+     hum. Eyes still blink + glance occasionally (those are the only
+     loops left running) because total stillness reads as broken. */
+  animation: none !important;
+}
+.walle-bot .wb-body,
+.walle-bot .wb-head,
+.walle-bot .wb-antenna,
+.walle-bot .wb-treads {
+  animation: none !important;
+}
+
+/* Speaking selectors are listed BEFORE the mood overrides to keep the file
+   readable, but mood selectors that come later have equal specificity and
+   would win the cascade. Use !important on the variable declarations so the
+   red speaking palette beats any mood tint. */
+.walle-bot[data-speaking="true"] {
+  --walle-body: #c44a3a !important;
+  --walle-body-edge: #8c2f24 !important;
+  --walle-screen: #2a0e0b !important;
+  --walle-eye: #ffd2c4 !important;
+  --walle-glow: rgba(255, 120, 100, 0.55) !important;
+  --walle-tread: #2a0e0b !important;
+  --walle-arm: #a13c2e !important;
+  /* Slow gentle wiggle — only while speaking. */
+  animation: walle-speak-wiggle 1.6s ease-in-out infinite !important;
+}
+.walle-bot[data-speaking="true"] .wb-body {
+  animation: walle-breathe 6s ease-in-out infinite !important; /* slowed from 3.6s */
+}
+.walle-bot[data-speaking="true"] .wb-head {
+  animation: walle-head-tilt 12s ease-in-out infinite !important; /* slowed from 7s */
+}
+.walle-bot[data-speaking="true"] .wb-antenna {
+  animation: walle-antenna 5s ease-in-out infinite !important; /* slowed from 2.8s */
+}
+.walle-bot[data-speaking="true"] .wb-treads {
+  animation: none !important; /* don't shake the chassis while he talks */
+}
+
+@keyframes walle-speak-wiggle {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  25%      { transform: translateX(-2px) rotate(-1deg); }
+  50%      { transform: translateX(0)     rotate(0); }
+  75%      { transform: translateX(2px)  rotate(1deg); }
 }
 
 /* ── Mood overrides ──────────────────────────────────────────────── */
