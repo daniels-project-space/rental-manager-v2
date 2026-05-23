@@ -23,6 +23,19 @@ function parseTime(date: string, time: string): number {
 }
 
 /**
+ * Effective return date for a reservation: prefer AI-extracted `return_date`
+ * (e.g. extension agreed in chat) over the raw Hygglo `end_date`. end_date
+ * remains canonical for invoicing/utilization and is never mutated; this
+ * helper is for calendar bucketing/display only. Mirrors the pattern at
+ * dashboard.ts:1669 / 899 / 950.
+ */
+function effectiveReturnDate(
+  r: { return_date?: string | null; end_date?: string },
+): string | undefined {
+  return (r.return_date ?? r.end_date) ?? undefined;
+}
+
+/**
  * 2-tier item name resolver.
  * Tier 1: exact canonical match (case-insensitive)
  * Tier 2: exact alias match (case-insensitive)
@@ -391,6 +404,7 @@ export const getCalendarStrip = query({
         orderStep: (r as { order_step?: string | null }).order_step ?? null,
         startDate: r.start_date ?? null,
         endDate: r.end_date ?? null,
+        returnDate: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
         pickupTime: rType.pickup_time ?? null,
         returnTime: rType.return_time ?? null,
         pickupMethod: rType.pickup_method ?? null,
@@ -400,7 +414,12 @@ export const getCalendarStrip = query({
         notes: rType.notes ?? null,
         imageUrl: firstImage,
         multi_item_image_urls: distinctImages.length > 1 ? distinctImages : null,
-        progressPercent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
+        progressPercent: chipProgress(
+          r.start_date,
+          effectiveReturnDate(r as { return_date?: string | null; end_date?: string }),
+          rType.pickup_time,
+          rType.return_time,
+        ),
       };
     }
 
@@ -413,23 +432,24 @@ export const getCalendarStrip = query({
       // Exclude same-day rentals from returns (already counted in pickups above).
       const pickupIds = new Set(pickups.map((p) => p.reservationId));
       const returns = reservations
-        .filter((r) => r.end_date === date && !pickupIds.has(r._id))
+        .filter((r) => effectiveReturnDate(r) === date && !pickupIds.has(r._id))
         .map((r) => buildChip(r, "return"));
 
       // "Away" — rental days strictly between pickup and return (V1 parity).
+      // Uses effective return date so AI-extended rentals stay "away" through
+      // the new return day instead of flipping to "return" on the original
+      // Hygglo end_date.
       const dayIds = new Set([
         ...pickups.map((p) => p.reservationId),
         ...returns.map((r) => r.reservationId),
       ]);
       const away = reservations
-        .filter(
-          (r) =>
-            r.start_date !== undefined &&
-            r.end_date !== undefined &&
-            r.start_date < date &&
-            r.end_date > date &&
-            !dayIds.has(r._id),
-        )
+        .filter((r) => {
+          if (r.start_date === undefined) return false;
+          const ret = effectiveReturnDate(r);
+          if (!ret) return false;
+          return r.start_date < date && ret > date && !dayIds.has(r._id);
+        })
         .map((r) => buildChip(r, "away"));
 
       const dayHolds = holds
@@ -693,13 +713,12 @@ export const getWeeklyCalendar = query({
       days: dates.map((date) => ({
         date,
         reservations: reservations
-          .filter(
-            (r) =>
-              r.start_date !== undefined &&
-              r.end_date !== undefined &&
-              r.start_date <= date &&
-              r.end_date >= date,
-          )
+          .filter((r) => {
+            if (r.start_date === undefined) return false;
+            const ret = effectiveReturnDate(r);
+            if (!ret) return false;
+            return r.start_date <= date && ret >= date;
+          })
           .map((r) => {
             const rType = r as {
               pickup_time?: string | null;
@@ -718,9 +737,10 @@ export const getWeeklyCalendar = query({
               imageUrl: imageForItem(i.item_name, hintsForR),
               qty: i.qty ?? 1,
             }));
+            const effRet = effectiveReturnDate(r);
             const isPickupDay = r.start_date === date;
-            const isReturnDay = r.end_date === date && r.start_date !== date;
-            const isAwayDay = r.start_date! < date && r.end_date! > date;
+            const isReturnDay = effRet === date && r.start_date !== date;
+            const isAwayDay = r.start_date! < date && (effRet ?? "") > date;
             return {
               reservationId: r._id,
               itemNames,
@@ -729,6 +749,7 @@ export const getWeeklyCalendar = query({
               status: r.status,
               startDate: r.start_date,
               endDate: r.end_date,
+              returnDate: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
               renterName:
                 rType.renter_name ??
                 (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?"),
@@ -748,7 +769,7 @@ export const getWeeklyCalendar = query({
                 : ("pickup" as const),
               progressPercent: chipProgress(
                 r.start_date,
-                r.end_date,
+                effRet,
                 rType.pickup_time,
                 rType.return_time,
               ),
@@ -933,13 +954,19 @@ export const getGanttWeek = query({
           reservation_id: r._id,
           start_date: r.start_date,
           end_date: r.end_date,
+          return_date: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
           renter_name: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
           order_step: rType.order_step ?? null,
           pickup_time: rType.pickup_time ?? null,
           return_time: rType.return_time ?? null,
           pickup_method: rType.pickup_method ?? null,
           return_method: rType.return_method ?? null,
-          progress_percent: chipProgress(r.start_date, r.end_date, rType.pickup_time, rType.return_time),
+          progress_percent: chipProgress(
+            r.start_date,
+            effectiveReturnDate(r),
+            rType.pickup_time,
+            rType.return_time,
+          ),
         };
       });
 

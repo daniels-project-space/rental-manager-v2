@@ -20,6 +20,15 @@ type ReservationRow = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RenterRow = any;
 
+/**
+ * Effective return date for a reservation: prefer AI-extracted `return_date`
+ * (e.g. extension agreed in chat) over the raw Hygglo `end_date`. Mirrors
+ * the pattern at dashboard.ts:1669. end_date stays canonical for invoicing.
+ */
+function effectiveReturnDate(r: ReservationRow): string | undefined {
+  return (r.return_date ?? r.end_date) ?? undefined;
+}
+
 export type UpcomingReturnRow = {
   rentalId: string;
   renterName: string;
@@ -67,8 +76,9 @@ export function computeUpcomingReturns(args: {
       : confirmed.filter((r) => r.account_slug === account);
 
     const inWindow = scoped.filter((r) => {
-      if (!r.end_date) return false;
-      return r.end_date <= windowEndStr;
+      const ret = effectiveReturnDate(r);
+      if (!ret) return false;
+      return ret <= windowEndStr;
     });
 
     const rows: UpcomingReturnRow[] = inWindow.map((r) => {
@@ -77,15 +87,16 @@ export function computeUpcomingReturns(args: {
         const rt = rentersById.get(r.renter_id);
         renterName = rt?.display_name ?? "Unknown";
       }
-      const endMs = new Date(r.end_date as string).getTime();
+      const effRet = (effectiveReturnDate(r) ?? r.end_date) as string;
+      const endMs = new Date(effRet).getTime();
       const todayMs = new Date(today).getTime();
       const daysUntilReturn = Math.round((endMs - todayMs) / 86_400_000);
-      const overdue = (r.end_date as string) < today;
+      const overdue = effRet < today;
       return {
         rentalId: r._id,
         renterName,
         items: (r.items ?? []).map((i: { item_name: string }) => i.item_name),
-        returnDate: r.end_date as string,
+        returnDate: effRet,
         daysUntilReturn,
         overdue,
       };
