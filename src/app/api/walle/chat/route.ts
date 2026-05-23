@@ -129,7 +129,13 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-  const openrouter = createOpenRouter({ apiKey });
+  // Pin OpenRouter sub-providers: SiliconFlow's fp8 quant has corrupted
+  // tool-call JSON on this surface in the past. See memory note
+  // [[feedback_deepseek_quirks]].
+  const openrouter = createOpenRouter({
+    apiKey,
+    extraBody: { provider: { only: ["deepseek", "alibaba"] } },
+  });
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
 
@@ -163,10 +169,14 @@ export async function POST(req: Request) {
     system,
     messages: modelMessages,
     tools,
-    // Phase 9 cost guardrail — cap output per turn.
-    maxOutputTokens: 800,
-    // Allow up to 3 tool-call hops before forcing a final answer.
-    stopWhen: stepCountIs(3),
+    // DeepSeek reasoning model burns hidden reasoning tokens against this
+    // budget before emitting visible text; 800 left no room after a tool
+    // call so the model silently finished without answering. >=1500 is the
+    // known-good floor (see [[feedback_deepseek_quirks]]).
+    maxOutputTokens: 1800,
+    // Allow up to 4 hops — one tool call + one summary is the common case,
+    // a follow-up tool call needs the extra step.
+    stopWhen: stepCountIs(4),
     onFinish: async ({ text, usage }) => {
       try {
         generation.end({
