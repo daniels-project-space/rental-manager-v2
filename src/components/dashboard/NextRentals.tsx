@@ -196,7 +196,7 @@ function OutChips({
                     width={thumbPx}
                     height={thumbPx}
                     sizes={`${thumbPx}px`}
-                    className="rounded-l shrink-0 object-cover bg-slate-800"
+                    className="zoom-img rounded-l shrink-0 object-cover bg-slate-800"
                     style={{ width: thumbPx, height: thumbPx }}
                   />
                 ) : (

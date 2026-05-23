@@ -47,6 +47,7 @@ export default function ExpandableStatCard(props: ExpandableStatCardProps) {
 
   return (
     <div
+      data-dashboard-card
       className={`stat-card hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(110,168,254,0.1)] active:scale-[0.99] ${props.hero ? "col-span-2" : ""} ${props.className ?? ""}`}
       style={{
         background: "rgba(14,17,28,0.35)",

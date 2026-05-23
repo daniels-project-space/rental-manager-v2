@@ -124,7 +124,7 @@ function ItemAvatar({ name, imageUrl }: { name: string; imageUrl: string | null 
       <img
         src={imageUrl}
         alt={name}
-        className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+        className="zoom-img w-10 h-10 rounded-lg object-cover flex-shrink-0"
       />
     );
   }

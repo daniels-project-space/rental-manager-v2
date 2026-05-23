@@ -247,7 +247,7 @@ function ConflictRow({ conflict }: { conflict: Conflict }) {
           <img
             src={conflict.item_image_url}
             alt={conflict.item_canonical}
-            className="flex-shrink-0 rounded-md object-cover"
+            className="zoom-img flex-shrink-0 rounded-md object-cover"
             style={{ width: 44, height: 44, border: "1px solid rgba(239,68,68,0.35)" }}
             loading="lazy"
           />

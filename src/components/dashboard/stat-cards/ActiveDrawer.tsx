@@ -101,15 +101,16 @@ export function RentalRow({ r }: { r: Rental }) {
     <div
       className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
     >
-      {/* Master Thumbnail — v1 pattern (one 56×56 photo per rental) */}
-      <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-md bg-slate-900/60 ring-1 ring-slate-800">
+      {/* Master Thumbnail — v1 pattern (one 56×56 photo per rental).
+          Rounding lives on the <img> so hover-zoom is not clipped. */}
+      <div className="relative h-14 w-14 flex-shrink-0 rounded-md bg-slate-900/60 ring-1 ring-slate-800">
         {masterImg ? (
           <Image
             src={masterImg}
             alt={masterAlt}
             fill
             sizes="56px"
-            className="object-cover"
+            className="object-cover rounded-md"
             unoptimized
           />
         ) : (
@@ -145,7 +146,7 @@ export function RentalRow({ r }: { r: Rental }) {
             {visibleAddl.map((t) => (
               <div
                 key={t.image_url}
-                className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-md bg-slate-900/60 ring-1 ring-slate-800"
+                className="relative h-10 w-10 flex-shrink-0 rounded-md bg-slate-900/60 ring-1 ring-slate-800"
                 title={t.names_in_group.join(", ")}
               >
                 <Image
@@ -153,7 +154,7 @@ export function RentalRow({ r }: { r: Rental }) {
                   alt={t.name}
                   fill
                   sizes="40px"
-                  className="object-cover"
+                  className="object-cover rounded-md"
                   unoptimized
                 />
               </div>
