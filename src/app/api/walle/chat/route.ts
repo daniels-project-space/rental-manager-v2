@@ -129,13 +129,7 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-  // Pin OpenRouter sub-providers: SiliconFlow's fp8 quant has corrupted
-  // tool-call JSON on this surface in the past. See memory note
-  // [[feedback_deepseek_quirks]].
-  const openrouter = createOpenRouter({
-    apiKey,
-    extraBody: { provider: { only: ["deepseek", "alibaba"] } },
-  });
+  const openrouter = createOpenRouter({ apiKey });
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
 
