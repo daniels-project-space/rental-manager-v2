@@ -26,6 +26,10 @@ export function AIChat() {
   const [streaming, setStreaming] = useState(false);
   const [streamDraft, setStreamDraft] = useState("");
   const [streamError, setStreamError] = useState<string | null>(null);
+  // Optimistic user-message buffer — shown instantly on send so the user
+  // never wonders "where did my question go?" while we wait for the Convex
+  // sync that eventually persists it. Cleared once the persisted row arrives.
+  const [optimisticUser, setOptimisticUser] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -36,19 +40,20 @@ export function AIChat() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, streamDraft, scrollToBottom]);
+  }, [messages, streamDraft, optimisticUser, scrollToBottom]);
 
-  // Clear the local streaming bubble once the persisted assistant row arrives.
-  // A turn appends both the user message and the assistant message to the
-  // server, so we wait for messages.length to grow by >=2 from baseline.
+  // Clear the local streaming bubble + optimistic user message once the
+  // persisted rows arrive. A turn appends both turns, so wait for
+  // messages.length to grow by >=2 from baseline.
   useEffect(() => {
-    if (!streamDraft) return;
+    if (!streamDraft && !optimisticUser) return;
     if (streaming) return;
     const len = messages?.length ?? 0;
     if (len >= baselineCountRef.current + 2) {
       setStreamDraft("");
+      setOptimisticUser("");
     }
-  }, [messages, streaming, streamDraft]);
+  }, [messages, streaming, streamDraft, optimisticUser]);
 
   // Tracks how many persisted messages existed when the current turn started.
   // We keep the streaming bubble on screen until messages.length grows enough
@@ -63,6 +68,7 @@ export function AIChat() {
     setStreaming(true);
     setStreamDraft("");
     setStreamError(null);
+    setOptimisticUser(text);
 
     try {
       const res = await fetch("/api/chat", {
@@ -112,6 +118,7 @@ export function AIChat() {
       console.error("[AIChat] stream error:", err);
       setStreamError("Connection error: " + msg);
       setStreamDraft("");
+      setOptimisticUser("");
     } finally {
       setStreaming(false);
     }
@@ -125,6 +132,7 @@ export function AIChat() {
     await clearThread({ thread_id: "dashboard" });
     setStreamDraft("");
     setStreamError(null);
+    setOptimisticUser("");
   }
 
   const hasHistory = (messages?.length ?? 0) > 0;
@@ -138,7 +146,7 @@ export function AIChat() {
           title="AI Assistant"
           badge={
             <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(110,168,254,0.12)", color: "#6ea8fe" }}>
-              DeepSeek · 10 tools
+              DeepSeek · 10 tools · build-v3
             </span>
           }
           actions={
@@ -202,6 +210,18 @@ export function AIChat() {
             </div>
           )}
 
+          {optimisticUser && (
+            <div className="flex flex-col gap-1 items-end">
+              <div
+                className="max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
+                style={{ background: "#6ea8fe", color: "#070910", borderRadius: "16px 16px 4px 16px" }}
+              >
+                {optimisticUser}
+              </div>
+              <span className="text-xs px-1" style={{ color: "#8b8fa3" }}>sending…</span>
+            </div>
+          )}
+
           {(streaming || streamDraft) && (
             <div className="flex flex-col gap-1 items-start">
               <div className="max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap" style={{ background: "rgba(14,17,28,0.85)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb", borderRadius: "16px 16px 16px 4px" }}>
@@ -210,7 +230,7 @@ export function AIChat() {
                     <span className="w-1.5 h-1.5 rounded-full animate-bounce bg-current" style={{ animationDelay: "0ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full animate-bounce bg-current" style={{ animationDelay: "150ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full animate-bounce bg-current" style={{ animationDelay: "300ms" }} />
-                    <span className="text-xs ml-1">thinking...</span>
+                    <span className="text-xs ml-1">thinking…</span>
                   </span>
                 )}
               </div>
