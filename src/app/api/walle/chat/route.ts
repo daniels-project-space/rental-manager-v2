@@ -27,14 +27,42 @@ import { traceWalle } from "../../../../lib/walle/langfuse";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+interface IncomingMessagePart {
+  type: string;
+  text?: string;
+}
+
+/**
+ * AI SDK v6 `useChat` posts messages shaped as
+ *   { id, role, parts: [{type:'text', text:'...'}, ...] }
+ * whereas this route was originally written against the v4/v5 shape
+ *   { role, content: '...' }
+ * which left `content` undefined and silenced the model. Accept BOTH so
+ * direct-curl callers (and the older v5 transport) continue to work while
+ * the v6 widget actually gets its user turn through.
+ */
 interface IncomingMessage {
   role: "user" | "assistant" | "system";
-  content: string;
+  content?: string;
+  parts?: ReadonlyArray<IncomingMessagePart>;
 }
 
 interface ChatRequestBody {
   messages: IncomingMessage[];
   sessionId: string;
+}
+
+function extractText(m: IncomingMessage): string {
+  if (typeof m.content === "string" && m.content.length > 0) return m.content;
+  if (Array.isArray(m.parts)) {
+    return m.parts
+      .filter((p): p is IncomingMessagePart & { text: string } =>
+        p.type === "text" && typeof p.text === "string",
+      )
+      .map((p) => p.text)
+      .join("");
+  }
+  return "";
 }
 
 export async function POST(req: Request) {
@@ -110,11 +138,12 @@ export async function POST(req: Request) {
 
   // Last user content (for persistence — assistant text gathered on finish)
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const lastUserContent = lastUser?.content ?? "";
+  const lastUserContent = lastUser ? extractText(lastUser) : "";
 
   const modelMessages: ModelMessage[] = messages
     .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role, content: m.content }) as ModelMessage);
+    .map((m) => ({ role: m.role, content: extractText(m) }) as ModelMessage)
+    .filter((m) => typeof m.content === "string" && m.content.length > 0);
 
   // ── Langfuse trace (no-op if env keys absent) ──
   const trace = traceWalle({
