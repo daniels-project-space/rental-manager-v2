@@ -17,6 +17,7 @@ import { InvestmentScorecard } from "@/components/dashboard/InvestmentScorecard"
 import { SellRecommender } from "@/components/dashboard/SellRecommender";
 import { PriceRecommendations } from "@/components/dashboard/PriceRecommendations";
 import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsights";
+import { AIChat } from "@/components/dashboard/AIChat";
 import { HealthScanner } from "@/components/dashboard/HealthScanner";
 import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
 import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
@@ -55,6 +56,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "sell-recommender",    label: "Sell Recommender",       component: SellRecommender },
   { id: "price-recos",         label: "Price Recommendations",  component: PriceRecommendations },
   { id: "ai-insights",         label: "AI Investment Insights", component: AIInvestmentInsights },
+  { id: "ai-chat",            label: "AI Assistant",           component: AIChat },
   { id: "health-scanner",      label: "Health & Scanner",       component: HealthScanner },
   { id: "hygglo-inbox",        label: "Hygglo Inbox",           component: HyggloInbox },
   { id: "item-roi",            label: "Item ROI",              component: ItemROIPanel },
