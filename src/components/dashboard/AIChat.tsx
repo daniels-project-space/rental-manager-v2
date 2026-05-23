@@ -138,7 +138,7 @@ export function AIChat() {
           title="AI Assistant"
           badge={
             <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(110,168,254,0.12)", color: "#6ea8fe" }}>
-              Grok 4.1 Fast
+              DeepSeek · 10 tools
             </span>
           }
           actions={

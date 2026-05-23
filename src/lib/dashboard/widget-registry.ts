@@ -37,6 +37,7 @@ export type StatWidget = {
 
 export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "stats-grid",          label: "Stats Grid",             component: StatsGrid },
+  { id: "ai-chat",            label: "AI Assistant",           component: AIChat },
   { id: "lifetime",            label: "Lifetime Revenue",       component: LifetimeRevenue },
   { id: "earnings-chart",      label: "Earnings Chart",         component: EarningsChart },
   { id: "tax-summary",         label: "Tax Summary",            component: TaxSummary },
@@ -56,7 +57,6 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "sell-recommender",    label: "Sell Recommender",       component: SellRecommender },
   { id: "price-recos",         label: "Price Recommendations",  component: PriceRecommendations },
   { id: "ai-insights",         label: "AI Investment Insights", component: AIInvestmentInsights },
-  { id: "ai-chat",            label: "AI Assistant",           component: AIChat },
   { id: "health-scanner",      label: "Health & Scanner",       component: HealthScanner },
   { id: "hygglo-inbox",        label: "Hygglo Inbox",           component: HyggloInbox },
   { id: "item-roi",            label: "Item ROI",              component: ItemROIPanel },

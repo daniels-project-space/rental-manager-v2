@@ -28,6 +28,7 @@ import { DashboardHydrationProvider } from "@/lib/dashboard/hydration-context";
 // until it enters the viewport — cuts cold-paint Convex bandwidth ~50%.
 const EAGER_PANELS = new Set([
   "stats-grid",
+  "ai-chat",
   "lifetime",
   "earnings-chart",
   "live-activity",
