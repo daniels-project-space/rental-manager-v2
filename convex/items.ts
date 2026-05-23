@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
@@ -70,6 +71,22 @@ export const getItemRevenueRanking = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
+    // REVENUE-SUM CANON (order_step_semantics.ts): the by_start_date index
+    // pulls everything from cutoff forward — including FUTURE-dated and
+    // not-yet-paid rows. Item revenue must reflect realised cash only, so:
+    //   • exclude cancelled / declined / obsolete,
+    //   • exclude future-dated rows (haven't earned yet),
+    //   • require isPaid(order_step) when order_step is set,
+    //   • accept v1-imported rows (no order_step, status="completed").
+    const todayIso = new Date().toISOString().slice(0, 10);
+    reservations = reservations.filter((r) => {
+      if (r.is_obsolete) return false;
+      if (r.status === "cancelled" || r.status === "declined") return false;
+      const sd = r.start_date as string | undefined;
+      if (sd && sd > todayIso) return false;
+      if (r.order_step) return isPaid(r.order_step);
+      return r.status === "confirmed" || r.status === "completed";
+    });
 
     // Fetch pricing for weighted split
     const pricingAll = await ctx.db.query("pricing_catalog").collect();

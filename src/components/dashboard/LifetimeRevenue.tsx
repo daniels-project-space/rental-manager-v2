@@ -27,15 +27,16 @@ import type { TooltipContentProps } from "recharts";
 // V1 colour palette (matches /home/ubuntu/rental-manager/src/public/js/dashboard-core.js).
 // Order is bottom → top of the stack. Only segments that can crown the stack get radius.
 const SERIES = [
-  { key: "danielOrganic",      label: "Daniel (retired)",  color: "#f97316", fill: "url(#grad-daniel)",   roundTop: false },
-  { key: "vertusOrganic",      label: "Vertus (retired)",  color: "#8b5a2b", fill: "url(#grad-vertus)",   roundTop: false },
-  { key: "dbcinemaOrganic",    label: "DB Cinema",          color: "#6366f1", fill: "url(#grad-dbcinema)", roundTop: false },
-  { key: "leoOrganic",         label: "Leo Adams",          color: "#a855f7", fill: "url(#grad-leo)",      roundTop: false },
-  { key: "aiBoost",            label: "AI Boost",           color: "#22c55e", fill: "url(#grad-ai)",       roundTop: true  },
-  { key: "damageClaims",       label: "Claims",             color: "#ffffff", fill: "url(#grad-damage)",   roundTop: true  },
-  { key: "bookedNext",         label: "Booked (next mo)",   color: "#94a3b8", fill: "url(#grad-booked)",   roundTop: true  },
-  { key: "pendingNext",        label: "Pending (next mo)",  color: "#eab308", fill: "url(#pending-stripe)",roundTop: true  },
-  { key: "predictedRemainder", label: "Projected",          color: "#94a3b8", fill: "url(#grad-predicted)",roundTop: true  },
+  { key: "danielOrganic",       label: "Daniel (retired)",        color: "#f97316", fill: "url(#grad-daniel)",      roundTop: false },
+  { key: "vertusOrganic",       label: "Vertus (retired)",        color: "#8b5a2b", fill: "url(#grad-vertus)",      roundTop: false },
+  { key: "dbcinemaOrganic",     label: "DB Cinema",               color: "#6366f1", fill: "url(#grad-dbcinema)",    roundTop: false },
+  { key: "leoOrganic",          label: "Leo Adams",               color: "#a855f7", fill: "url(#grad-leo)",         roundTop: false },
+  { key: "aiBoost",             label: "AI Boost",                color: "#22c55e", fill: "url(#grad-ai)",          roundTop: true  },
+  { key: "damageClaims",        label: "Claims",                  color: "#ffffff", fill: "url(#grad-damage)",      roundTop: true  },
+  { key: "bookedNext",          label: "Booked (next mo)",        color: "#94a3b8", fill: "url(#grad-booked)",      roundTop: true  },
+  { key: "awaitingPaymentNext", label: "Awaiting payment (next mo)", color: "#fb923c", fill: "url(#awaiting-stripe)",  roundTop: true  },
+  { key: "pendingNext",         label: "Pending (next mo)",       color: "#eab308", fill: "url(#pending-stripe)",   roundTop: true  },
+  { key: "predictedRemainder",  label: "Projected",               color: "#94a3b8", fill: "url(#grad-predicted)",   roundTop: true  },
 ] as const;
 
 
@@ -64,11 +65,16 @@ function tooltipFmt(value: ValueType, name: NameType): [string, string] {
 }
 
 // Series counted toward "how much of the predicted total is already realised".
-// pendingNext is SPECULATIVE (renter paid but still in doc verification — can
-// fall through). It feeds the chart's forward overlay bar but must NOT count
-// toward Total / Avg / Best / Weakest, or it would inflate stats with
-// not-yet-realised revenue. bookedNext stays — those are confirmed-and-paid
-// future bookings (FUNDS_RESERVED+), real expected revenue.
+// Speculative buckets are EXCLUDED so Total / Avg / Best / Weakest cannot be
+// inflated by not-yet-realised money:
+//   • pendingNext — renter has paid (VERIFIED) but is still in doc verification,
+//     can fall through.
+//   • awaitingPaymentNext — owner accepted but renter has NOT paid yet
+//     (APPROVED / FUNDS_RESERVED). FUNDS_RESERVED is the ACTIVE next-to-do
+//     step on the order, not a completed state — see
+//     convex/order_step_semantics.ts.
+// bookedNext stays — only rows where the renter has actually paid escrow
+// (isPaid: VERIFIED / BOOKED_AFTER_VERIFIED / DELIVERED / RETURNED / REVIEWED).
 const ACTUAL_KEYS = [
   "danielOrganic",
   "vertusOrganic",
@@ -467,6 +473,19 @@ export function LifetimeRevenue() {
                   patternTransform="rotate(-45)"
                 >
                   <rect width="14" height="14" fill="rgba(234,179,8,0.6)" />
+                  <line x1="0" y1="0" x2="0" y2="14" stroke="rgba(255,255,255,0.55)" strokeWidth={3} />
+                </pattern>
+                {/* Awaiting payment = orange caution-tape pattern (opposite stripe
+                    angle from Pending so the two read distinctly when both stack
+                    on the next-month bar). */}
+                <pattern
+                  id="awaiting-stripe"
+                  patternUnits="userSpaceOnUse"
+                  width="14"
+                  height="14"
+                  patternTransform="rotate(45)"
+                >
+                  <rect width="14" height="14" fill="rgba(251,146,60,0.55)" />
                   <line x1="0" y1="0" x2="0" y2="14" stroke="rgba(255,255,255,0.55)" strokeWidth={3} />
                 </pattern>
                 {/* Per-series line-mode gradients — use exact series color faded to transparent. */}

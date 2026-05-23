@@ -4,6 +4,14 @@
  *  Mirror: src/lib/order_step_semantics.ts (keep in sync).
  * ──────────────────────────────────────────────────────────────────────────
  *
+ * REVENUE-SUM CANON (incident 2026-05-23, lifetime-revenue future bucket):
+ *   Always filter reservation rows by isPaid(order_step) before summing
+ *   net_to_owner_gbp / gross_paid_gbp into ANY revenue total. APPROVED and
+ *   FUNDS_RESERVED rows carry poller-populated price fields but represent
+ *   owner-accepted, renter-not-yet-paid commitments — they MUST surface as
+ *   "awaiting payment" (see isAwaitingPayment), never as realised or booked
+ *   revenue.
+ *
  * Hygglo's API returns a steps[] funnel per order, each step having both:
  *   { key, active: boolean, completed: boolean, failure?: boolean }
  *
@@ -89,10 +97,22 @@ export const OUT_ORDER_STEPS = ["RETURNED", "REVIEWED"] as const;
 /** Terminal failure / cancellation. */
 export const DEAD_ORDER_STEPS = ["CANCELED", "VERIFICATION_FAILED"] as const;
 
+/**
+ * Owner has accepted but renter has NOT funded escrow yet. These rows carry
+ * poller-populated price fields (gross_paid_gbp / net_to_owner_gbp) but the
+ * money has not actually moved — surface them as "awaiting payment", never
+ * as realised or booked revenue. See REVENUE-SUM CANON above.
+ *
+ * REQUEST is excluded because the owner has not accepted yet (no commitment).
+ */
+export const AWAITING_PAYMENT_ORDER_STEPS = ["APPROVED", "FUNDS_RESERVED"] as const;
+export type AwaitingPaymentOrderStep = typeof AWAITING_PAYMENT_ORDER_STEPS[number];
+
 const PAID_SET = new Set<string>(PAID_ORDER_STEPS);
 const VERIFIED_SET = new Set<string>(VERIFIED_ORDER_STEPS);
 const OUT_SET = new Set<string>(OUT_ORDER_STEPS);
 const DEAD_SET = new Set<string>(DEAD_ORDER_STEPS);
+const AWAITING_PAYMENT_SET = new Set<string>(AWAITING_PAYMENT_ORDER_STEPS);
 
 /** True if the renter has paid (escrow funded). */
 export function isPaid(step: string | null | undefined): boolean {
@@ -112,6 +132,15 @@ export function isGearOut(step: string | null | undefined): boolean {
 /** True if order is cancelled or failed verification. */
 export function isDead(step: string | null | undefined): boolean {
   return step != null && DEAD_SET.has(step);
+}
+
+/**
+ * True if owner has accepted but renter has not yet funded escrow.
+ * Money on the row is poller-projected, not realised — exclude from every
+ * revenue sum; surface only as a separate "awaiting payment" total.
+ */
+export function isAwaitingPayment(step: string | null | undefined): boolean {
+  return step != null && AWAITING_PAYMENT_SET.has(step);
 }
 
 /** True if active step is VERIFIED — paid AND currently in verification. */

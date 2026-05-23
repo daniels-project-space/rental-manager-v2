@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
   tieredCreditTotals,
@@ -178,7 +179,26 @@ export const getInvestmentScorecard = query({
         (r) => r.account_slug === accountSlug
       );
     }
-    const totalRevenue = reservations.reduce(
+    // REVENUE-SUM CANON (order_step_semantics.ts): exclude
+    //   • obsolete / cancelled / declined rows,
+    //   • future-dated rows (haven't earned yet),
+    //   • rows where the renter has not paid escrow yet (APPROVED /
+    //     FUNDS_RESERVED carry poller-populated gross_paid_gbp but it's
+    //     a would-pay projection, not a cash event).
+    // Older rows imported from v1 have null order_step + status="completed"
+    // — those ARE realised revenue, so accept them via the v1-legacy escape
+    // hatch (mirrors isPaidWithV1Legacy in predicates.ts).
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const realisedReservations = reservations.filter((r) => {
+      if (r.is_obsolete) return false;
+      if (r.status === "cancelled" || r.status === "declined") return false;
+      const startDate = r.start_date as string | undefined;
+      if (startDate && startDate > todayStr) return false;
+      if (r.order_step) return isPaid(r.order_step);
+      // v1 imports: no order_step, but status="completed" on every paid row.
+      return r.status === "confirmed" || r.status === "completed";
+    });
+    const totalRevenue = realisedReservations.reduce(
       (sum, r) => sum + (r.gross_paid_gbp ?? 0),
       0
     );
@@ -188,7 +208,7 @@ export const getInvestmentScorecard = query({
       totalInvested > 0 ? (netProfit / totalInvested) * 100 : 0;
 
     // Monthly rate from earliest reservation
-    const sortedDates = reservations
+    const sortedDates = realisedReservations
       .filter((r) => r.start_date)
       .map((r) => r.start_date as string)
       .sort();
@@ -347,6 +367,11 @@ export const getLifetimeByMonth = query({
     const leoGross = new Map<string, number>();
     let bookedNextTotal = 0;
     let pendingNextTotal = 0;
+    // "Awaiting payment" = owner-accepted but renter not-yet-paid (APPROVED |
+    // FUNDS_RESERVED). Surfaced separately from bookedNext so commitments
+    // are visible without inflating realised/booked revenue. See
+    // order_step_semantics.ts REVENUE-SUM CANON.
+    let awaitingPaymentNextTotal = 0;
 
     // Dedup by canonical logical-rental key (hygglo_order_id > v1_rental_id
     // > renter+dates+account composite). Collisions keep the row with the
@@ -383,7 +408,18 @@ export const getLifetimeByMonth = query({
       if (isFutureRes) {
         const futureMo = (res.start_date ?? dateStr).slice(0, 7);
         if (futureMo === nextMonthKey) {
-          bookedNextTotal = r2(bookedNextTotal + amount);
+          // REVENUE-SUM CANON: only paid rows count as booked revenue.
+          // APPROVED / FUNDS_RESERVED rows have poller-populated prices but
+          // the renter has not funded escrow yet — surface them in the
+          // awaitingPayment bucket so commitments stay visible without
+          // inflating booked / realised totals. (incident 2026-05-23: June
+          // 2026 dbcinema showed £970 booked vs only £281 actually paid.)
+          if (isPaid(res.order_step)) {
+            bookedNextTotal = r2(bookedNextTotal + amount);
+          } else if (isAwaitingPayment(res.order_step)) {
+            awaitingPaymentNextTotal = r2(awaitingPaymentNextTotal + amount);
+          }
+          // REQUEST / null / dead rows: deliberately dropped (no commitment).
         }
         continue;
       }
@@ -421,6 +457,7 @@ export const getLifetimeByMonth = query({
       damageClaims: number;
       bookedNext: number;
       pendingNext: number;
+      awaitingPaymentNext: number;
       cumulative: number;
       count: number;
       // v1-parity response shape
@@ -468,6 +505,7 @@ export const getLifetimeByMonth = query({
       let damageClaims = 0;
       let bookedNextVal = 0;
       let pendingNextVal = 0;
+      let awaitingPaymentNextVal = 0;
       // AI tiered attribution accumulator (default empty; populated below
       // whenever the month has live reservations in scope).
       let aiAttrMonth: AiAttributionMonth = {
@@ -590,6 +628,7 @@ export const getLifetimeByMonth = query({
       } else if (isNextMo) {
         bookedNextVal = bookedNextTotal;
         pendingNextVal = pendingNextTotal;
+        awaitingPaymentNextVal = awaitingPaymentNextTotal;
       }
 
       const monthTotal = dbOrganic + leoOrganic + danielOrganic + vertusOrganic + aiBoost + damageClaims + bookedNextVal + pendingNextVal;
@@ -617,6 +656,7 @@ export const getLifetimeByMonth = query({
         damageClaims,
         bookedNext: bookedNextVal,
         pendingNext: pendingNextVal,
+        awaitingPaymentNext: awaitingPaymentNextVal,
         cumulative,
         count,
         // v1-parity response shape
