@@ -685,11 +685,12 @@ export const pollHyggloInbox = schedules.task({
           }
           totalHyggloMessagesUpserted += totalInserted;
 
-          // Upsert reservations (batched 50)
+          // Upsert reservations in a single mutation per chunk. Convex cost rule
+          // (CLAUDE.md): "one mutation per cron run, not per row". We chunk at 50
+          // to stay under the per-call payload limit, which still drops ~100
+          // per-order mutations down to ~2-3 batch calls per account per cycle.
           let resInserted = 0;
           let resUpdated = 0;
-          // Phase 18.2 — collect freshly-inserted reservation metadata so we can
-          // call listing_resolver on-demand instead of waiting up to 60 min.
           const newlyInserted: Array<{
             reservation_id: string;
             hygglo_order_id: string;
@@ -698,29 +699,47 @@ export const pollHyggloInbox = schedules.task({
             hygglo_detail_payload?: unknown;
             image_url?: string;
           }> = [];
+
           for (let i = 0; i < reservations.length; i += 50) {
             const batch = reservations.slice(i, i + 50);
-            for (const payload of batch) {
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const {
-                sourceFilter: _sf,
-                order: _order,
-                hygglo_system_signal: _hss,
-                hygglo_system_signal_text: _hsst,
-                ...mutationPayload
-              } = payload;
-              const resResult = await convex.mutation(api.hygglo.upsertOrderAsReservation, {
-                account_slug: account.slug,
-                ...mutationPayload,
-                order: payload.order,
-                sourceFilter: payload.sourceFilter,
-                hygglo_system_signal: payload.hygglo_system_signal,
-                hygglo_system_signal_text: payload.hygglo_system_signal_text,
-              });
+            const orderArgs = batch.map((payload) => ({
+              account_slug: account.slug,
+              hygglo_order_id: payload.hygglo_order_id,
+              status: payload.status,
+              start_date: payload.start_date,
+              end_date: payload.end_date,
+              gross_paid_gbp: payload.gross_paid_gbp,
+              net_to_owner_gbp: payload.net_to_owner_gbp,
+              currency: payload.currency,
+              items: payload.items,
+              duration_days: payload.duration_days,
+              order: payload.order,
+              sourceFilter: payload.sourceFilter,
+              renter_name: payload.renter_name,
+              hygglo_user_id: payload.hygglo_user_id,
+              booking_status: payload.booking_status,
+              pickup_time: payload.pickup_time,
+              return_time: payload.return_time,
+              pickup_method: payload.pickup_method,
+              return_method: payload.return_method,
+              notes: payload.notes,
+              photos_urls: payload.photos_urls,
+              latest_activity: payload.latest_activity,
+              hygglo_system_signal: payload.hygglo_system_signal,
+              hygglo_system_signal_text: payload.hygglo_system_signal_text,
+            }));
+
+            const batchResults = await convex.mutation(
+              api.hygglo.upsertOrdersAsReservationsBatch,
+              { orders: orderArgs },
+            );
+
+            for (let j = 0; j < batchResults.length; j++) {
+              const resResult = batchResults[j];
+              const payload = batch[j];
               if (resResult.action === "inserted") {
                 resInserted++;
                 if (resResult.reservation_id) {
-                  // Collect metadata for on-demand listing resolution
                   const firstItem = payload.items[0];
                   newlyInserted.push({
                     reservation_id: resResult.reservation_id,

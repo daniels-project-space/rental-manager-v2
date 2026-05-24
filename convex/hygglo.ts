@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
 
 // ── order_step helpers ────────────────────────────────────────
@@ -385,20 +386,13 @@ function buildImageHintsFromHyggloItems(
 // that's denied between poll cycles (or first appears already obsolete)
 // can sit with resolved_items=[] until the next listing_resolver pass.
 //
-// This helper schedules `listing_resolver.resolveListing` immediately via
-// the Convex scheduler. resolveListing's Tier 1 catalog short-circuit
-// returns instantly when (account_slug, hygglo_order_id) already has a
-// resolved row, so calling it on every denial is cheap — one indexed query
-// + early return when already resolved. We deliberately do NOT runQuery
-// the catalog from inside the mutation: the scheduler call is fire-and-
-// forget, and the resolver action handles its own idempotency.
-//
-// Mutation runtime cannot call actions directly; ctx.scheduler.runAfter(0,
-// ...) is the canonical Convex pattern for kicking off an action from a
-// mutation (see convex/dist/cjs-types/server/scheduler.d.ts examples).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// resolveListing's Tier 1 catalog short-circuit returns instantly when
+// (account_slug, hygglo_order_id) already has a resolved row, so calling
+// it on every denial is cheap. We deliberately fire-and-forget via the
+// scheduler — mutations cannot call actions directly, and the resolver
+// action handles its own idempotency.
 async function scheduleListingResolutionOnDenial(
-  ctx: any,
+  ctx: MutationCtx,
   args: {
     account_slug: string;
     hygglo_order_id: string;
@@ -408,8 +402,6 @@ async function scheduleListingResolutionOnDenial(
     photos_urls: string[] | undefined;
   },
 ): Promise<void> {
-  // Pick the first non-INSURANCE item as the listing title (mirrors the
-  // poll-hygglo `newlyInserted` selection in src/trigger/poll-hygglo.ts).
   const firstItem = (args.items ?? []).find((i) => i?.item_name)?.item_name
     ?? args.hygglo_order_id;
   const firstImg = (args.photos_urls ?? [])[0];
@@ -428,308 +420,257 @@ async function scheduleListingResolutionOnDenial(
     );
   } catch (err) {
     console.warn(
-      "[hygglo.upsertOrderAsReservation] scheduleListingResolutionOnDenial failed",
+      "[hygglo.upsertOrderImpl] scheduleListingResolutionOnDenial failed",
       String(err),
     );
   }
 }
 
+// Shared arg shape for both the singleton and batch reservation upsert mutations.
+const upsertOrderArgsFields = {
+  account_slug: v.string(),
+  hygglo_order_id: v.string(),
+  status: v.string(),
+  start_date: v.string(),
+  end_date: v.string(),
+  gross_paid_gbp: v.optional(v.number()),
+  net_to_owner_gbp: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  items: v.array(orderItemArgs),
+  duration_days: v.optional(v.number()),
+  /** Raw Hygglo order object — used to extract order_step. */
+  order: v.optional(v.any()),
+  /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
+  sourceFilter: v.optional(v.string()),
+  renter_name: v.optional(v.string()),
+  /** 2026-05-19 — Hygglo renter user id (detail.users.otherPart.id). Stored
+   *  on the row + used to resolve `renter_id` via renters by_hygglo_user_id. */
+  hygglo_user_id: v.optional(v.string()),
+  /** Raw Hygglo booking status (e.g. "pending_review", "confirmed"). */
+  booking_status: v.optional(v.string()),
+  /** Pickup/return time strings ("HH:MM") from booking detail. */
+  pickup_time: v.optional(v.string()),
+  return_time: v.optional(v.string()),
+  /** Pickup/return method ("delivery" | "self_pickup" | etc). */
+  pickup_method: v.optional(v.string()),
+  return_method: v.optional(v.string()),
+  /** Owner notes on the order. */
+  notes: v.optional(v.string()),
+  /** Raw CDN photo URLs from the order detail. */
+  photos_urls: v.optional(v.array(v.string())),
+  /** Phase 18.2 — monotonic activity timestamp from Hygglo list response.
+   *  Stored verbatim so the next poll cycle can compare and skip the
+   *  detail fetch when unchanged. */
+  latest_activity: v.optional(v.union(v.number(), v.string())),
+  /** Phase 3d — Hygglo system event signal derived from activity.event.content. */
+  hygglo_system_signal: v.optional(v.union(
+    v.literal("owner_denied"),
+    v.literal("renter_cancelled"),
+    v.literal("auto_cancelled"),
+    v.literal("verification_failed"),
+    v.literal("approved"),
+    v.literal("none"),
+  )),
+  hygglo_system_signal_text: v.optional(v.string()),
+} as const;
+
+const upsertOrderArgsValidator = v.object(upsertOrderArgsFields);
+type UpsertOrderArgs = Infer<typeof upsertOrderArgsValidator>;
+
+type BankItem = {
+  name: string;
+  image_url: string | null;
+  type: string;
+  qty?: number;
+  product_id?: number;
+  slug?: string;
+};
+
+type UpsertResult = {
+  action: "inserted" | "updated" | "skipped";
+  reservation_id?: string;
+};
+
 /**
- * Public mutation called by poll-hygglo-inbox after each order fetch.
- * Upserts a reservation row keyed by hygglo_order_id.
- * Does NOT overwrite rows that have v1_rental_id set (historical imports stay authoritative).
+ * Core per-order upsert. Returns the per-order result PLUS the hygglo_items
+ * snapshot that should be flushed into the product_id-keyed image bank.
+ * Callers are responsible for invoking internal.listing_images.upsertFromHyggloItems
+ * with the returned bankItems — the batch mutation aggregates them across
+ * orders so the bank flush is a single sub-mutation per cron run.
  */
-export const upsertOrderAsReservation = mutation({
-  args: {
-    account_slug: v.string(),
-    hygglo_order_id: v.string(),
-    status: v.string(),
-    start_date: v.string(),
-    end_date: v.string(),
-    gross_paid_gbp: v.optional(v.number()),
-    net_to_owner_gbp: v.optional(v.number()),
-    currency: v.optional(v.string()),
-    items: v.array(orderItemArgs),
-    duration_days: v.optional(v.number()),
-    /** Raw Hygglo order object — used to extract order_step. */
-    order: v.optional(v.any()),
-    /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
-    sourceFilter: v.optional(v.string()),
-    renter_name: v.optional(v.string()),
-    /** 2026-05-19 — Hygglo renter user id (detail.users.otherPart.id). Stored
-     *  on the row + used to resolve `renter_id` via renters by_hygglo_user_id. */
-    hygglo_user_id: v.optional(v.string()),
-    /** Raw Hygglo booking status (e.g. "pending_review", "confirmed"). */
-    booking_status: v.optional(v.string()),
-    /** Pickup/return time strings ("HH:MM") from booking detail. */
-    pickup_time: v.optional(v.string()),
-    return_time: v.optional(v.string()),
-    /** Pickup/return method ("delivery" | "self_pickup" | etc). */
-    pickup_method: v.optional(v.string()),
-    return_method: v.optional(v.string()),
-    /** Owner notes on the order. */
-    notes: v.optional(v.string()),
-    /** Raw CDN photo URLs from the order detail. */
-    photos_urls: v.optional(v.array(v.string())),
-    /** Phase 18.2 — monotonic activity timestamp from Hygglo list response.
-     *  Stored verbatim so the next poll cycle can compare and skip the
-     *  detail fetch when unchanged. */
-    latest_activity: v.optional(v.union(v.number(), v.string())),
-    /** Phase 3d — Hygglo system event signal derived from activity.event.content. */
-    hygglo_system_signal: v.optional(v.union(
-      v.literal("owner_denied"),
-      v.literal("renter_cancelled"),
-      v.literal("auto_cancelled"),
-      v.literal("verification_failed"),
-      v.literal("approved"),
-      v.literal("none"),
-    )),
-    hygglo_system_signal_text: v.optional(v.string()),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ action: "inserted" | "updated" | "skipped"; reservation_id?: string }> => {
-    const existing = await ctx.db
-      .query("reservations")
-      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
+async function upsertOrderImpl(
+  ctx: MutationCtx,
+  args: UpsertOrderArgs,
+): Promise<UpsertResult & { bankItems: BankItem[] }> {
+  const existing = await ctx.db
+    .query("reservations")
+    .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
+    .first();
+
+  const now = Date.now();
+
+  const order = args.order;
+  const pickup_time = args.pickup_time ?? order?.booking?.pickup_time ?? undefined;
+  const return_time = args.return_time ?? order?.booking?.return_time ?? undefined;
+  const pickup_method = args.pickup_method ?? order?.booking?.pickup_method ?? undefined;
+  const return_method = args.return_method ?? order?.booking?.return_method ?? undefined;
+  const notes = args.notes ?? order?.notes ?? order?.detail?.notes ?? undefined;
+  const photos_urls_raw: string[] | undefined =
+    args.photos_urls ?? order?.photos_urls ?? order?.detail?.photos_urls;
+  const photos_urls = Array.isArray(photos_urls_raw)
+    ? photos_urls_raw.filter((u): u is string => typeof u === "string")
+    : undefined;
+
+  // null = no active step found (treat as undefined); undefined = unrecognised key
+  const incomingStepRaw = extractActiveOrderStep(args.order);
+  const incomingStep = incomingStepRaw === null ? undefined : (incomingStepRaw as
+    | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
+    | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED"
+    | undefined);
+
+  let obsoleteFields: {
+    is_obsolete?: boolean;
+    obsolete_reason?: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
+  } = {};
+  if (args.sourceFilter === "obsolete") {
+    let reason: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
+    if (incomingStep === "REQUEST") {
+      reason = "owner_denied";
+    } else if (incomingStep === "CANCELED") {
+      reason = "renter_cancelled";
+    } else if (
+      incomingStep === "VERIFIED" ||
+      incomingStep === "FUNDS_RESERVED"
+    ) {
+      reason = "verification_failed";
+    } else {
+      reason = "other";
+    }
+    obsoleteFields = { is_obsolete: true, obsolete_reason: reason };
+  }
+
+  const incomingStatus = deriveStatusFromStep(incomingStep, args.sourceFilter);
+
+  // ── renter linkage (2026-05-19) ────────────────────────────
+  // Resolve renter_id via hygglo_user_id (indexed). Falls back to undefined
+  // when the renter row hasn't been inserted yet — renters are upserted in
+  // the same poll cycle, so the link lands on the next poll. The denormalized
+  // hygglo_user_id is still stored so backfill can re-link without refetching.
+  let resolved_renter_id: import("./_generated/dataModel").Id<"renters"> | undefined;
+  if (args.hygglo_user_id && args.hygglo_user_id.length > 0) {
+    const renter = await ctx.db
+      .query("renters")
+      .withIndex("by_hygglo_user_id", (q) =>
+        q.eq("hygglo_user_id", args.hygglo_user_id),
+      )
       .first();
+    resolved_renter_id = renter?._id;
+  }
 
-    const now = Date.now();
+  const baseFields = {
+    account_slug: args.account_slug,
+    hygglo_order_id: args.hygglo_order_id,
+    status: incomingStatus,
+    source_filter: args.sourceFilter,
+    last_polled_at: now,
+    start_date: args.start_date,
+    end_date: args.end_date,
+    gross_paid_gbp: args.gross_paid_gbp,
+    net_to_owner_gbp: args.net_to_owner_gbp,
+    currency: args.currency,
+    // Project to the minimal shape `reservations.items[]` is meant to store.
+    // Rich Hygglo metadata (image, type, product_id, slug) lives in
+    // `hygglo_items[]` instead — keeping that separation means a new Hygglo
+    // API field cannot trigger a document-validator failure on this table.
+    // (Incident 2026-05-16 → 2026-05-21: `image` started arriving from
+    // Hygglo, the validator rejected it, and the poller auto-paused for six
+    // days because of that single new field.)
+    items: args.items.map((i) => ({
+      item_name: i.item_name,
+      ...(i.qty !== undefined && { qty: i.qty }),
+    })),
+    duration_days: args.duration_days,
+    renter_name: args.renter_name,
+    ...(args.hygglo_user_id !== undefined && { hygglo_user_id: args.hygglo_user_id }),
+    ...(resolved_renter_id !== undefined && { renter_id: resolved_renter_id }),
+    booking_status: args.booking_status,
+    ...(pickup_time !== undefined && { pickup_time }),
+    ...(return_time !== undefined && { return_time }),
+    ...(pickup_method !== undefined && { pickup_method }),
+    ...(return_method !== undefined && { return_method }),
+    ...(notes !== undefined && { notes }),
+    ...(photos_urls !== undefined && { photos_urls }),
+    ...(args.latest_activity !== undefined && { latest_activity: args.latest_activity }),
+    // Phase 3d: always write when present (even "none") so the denial
+    // classifier can rely on field existence to know we've checked events.
+    ...(args.hygglo_system_signal !== undefined && { hygglo_system_signal: args.hygglo_system_signal }),
+    ...(args.hygglo_system_signal_text !== undefined && { hygglo_system_signal_text: args.hygglo_system_signal_text }),
+  };
 
-    // ── new field extraction from raw order ───────────────────
-    const order = args.order;
-    const pickup_time = args.pickup_time ?? order?.booking?.pickup_time ?? undefined;
-    const return_time = args.return_time ?? order?.booking?.return_time ?? undefined;
-    const pickup_method = args.pickup_method ?? order?.booking?.pickup_method ?? undefined;
-    const return_method = args.return_method ?? order?.booking?.return_method ?? undefined;
-    const notes = args.notes ?? order?.notes ?? order?.detail?.notes ?? undefined;
-    const photos_urls_raw: string[] | undefined =
-      args.photos_urls ?? order?.photos_urls ?? order?.detail?.photos_urls;
-    const photos_urls = Array.isArray(photos_urls_raw)
-      ? photos_urls_raw.filter((u): u is string => typeof u === "string")
-      : undefined;
-
-    // ── order_step extraction ──────────────────────────────────
-    // null = no active step found (treat as undefined for schema compat); undefined = unrecognised key
-    const incomingStepRaw = extractActiveOrderStep(args.order);
-    const incomingStep = incomingStepRaw === null ? undefined : (incomingStepRaw as
-      | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
-      | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED"
-      | undefined);
-
-    // ── obsolete classification ────────────────────────────────
-    let obsoleteFields: {
-      is_obsolete?: boolean;
-      obsolete_reason?: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
-    } = {};
-    if (args.sourceFilter === "obsolete") {
-      let reason: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
-      if (incomingStep === "REQUEST") {
-        reason = "owner_denied";
-      } else if (incomingStep === "CANCELED") {
-        reason = "renter_cancelled";
-      } else if (
-        incomingStep === "VERIFIED" ||
-        incomingStep === "FUNDS_RESERVED"
-      ) {
-        reason = "verification_failed";
-      } else {
-        reason = "other";
-      }
-      obsoleteFields = { is_obsolete: true, obsolete_reason: reason };
-    }
-
-    // ── status derivation (Fix A) ──────────────────────────────
-    const incomingStatus = deriveStatusFromStep(incomingStep, args.sourceFilter);
-
-    // ── renter linkage (2026-05-19) ────────────────────────────
-    // Resolve renter_id via hygglo_user_id (indexed). Cheap when present;
-    // falls back to undefined when the renter row hasn't been inserted yet
-    // (renters list is written in the same poll cycle, so this resolves on
-    // the next poll). The denormalized hygglo_user_id is still written so
-    // the backfill action can re-link without refetching the order.
-    let resolved_renter_id: import("./_generated/dataModel").Id<"renters"> | undefined;
-    if (args.hygglo_user_id && args.hygglo_user_id.length > 0) {
-      const renter = await ctx.db
-        .query("renters")
-        .withIndex("by_hygglo_user_id", (q) =>
-          q.eq("hygglo_user_id", args.hygglo_user_id),
-        )
-        .first();
-      resolved_renter_id = renter?._id;
-    }
-
-    const baseFields = {
-      account_slug: args.account_slug,
-      hygglo_order_id: args.hygglo_order_id,
-      status: incomingStatus,
-      source_filter: args.sourceFilter,
-      last_polled_at: now,
-      start_date: args.start_date,
-      end_date: args.end_date,
-      gross_paid_gbp: args.gross_paid_gbp,
-      net_to_owner_gbp: args.net_to_owner_gbp,
-      currency: args.currency,
-      // Project to the minimal shape `reservations.items[]` is meant to store.
-      // Rich Hygglo metadata (image, type, product_id, slug) goes to the
-      // dedicated `hygglo_items[]` field instead — preserving that separation
-      // here means a new field added to Hygglo's API cannot trigger a document
-      // validator failure on this table. (Incident 2026-05-16 → 2026-05-21:
-      // `image` started arriving from Hygglo, the validator rejected it, and
-      // the poller auto-paused for six days because of that single new field.)
-      items: args.items.map((i) => ({
-        item_name: i.item_name,
-        ...(i.qty !== undefined && { qty: i.qty }),
-      })),
-      duration_days: args.duration_days,
-      renter_name: args.renter_name,
-      // 2026-05-19 renter linkage
-      ...(args.hygglo_user_id !== undefined && { hygglo_user_id: args.hygglo_user_id }),
-      ...(resolved_renter_id !== undefined && { renter_id: resolved_renter_id }),
-      booking_status: args.booking_status,
-      ...(pickup_time !== undefined && { pickup_time }),
-      ...(return_time !== undefined && { return_time }),
-      ...(pickup_method !== undefined && { pickup_method }),
-      ...(return_method !== undefined && { return_method }),
-      ...(notes !== undefined && { notes }),
-      ...(photos_urls !== undefined && { photos_urls }),
-      ...(args.latest_activity !== undefined && { latest_activity: args.latest_activity }),
-      // Phase 3d — Hygglo system signal (ground truth for denial classifier).
-      // Always write when present (even "none") so the classifier can rely on
-      // the field's existence to know whether we've checked the events stream.
-      ...(args.hygglo_system_signal !== undefined && { hygglo_system_signal: args.hygglo_system_signal }),
-      ...(args.hygglo_system_signal_text !== undefined && { hygglo_system_signal_text: args.hygglo_system_signal_text }),
-    };
-
-    if (existing) {
-      // Historical-import rows (v1_rental_id set) used to be unconditionally
-      // skipped. That locked in undercounted nets when V1 import sourced from
-      // `rental` (one price per rental) instead of `booking` (sum of per-item
-      // line nets). Now we allow ONLY the net/gross fields to be corrected
-      // when the live Hygglo poller sees a materially HIGHER value
-      // (≥ £10 OR ≥ 10% increase). Other fields stay frozen on imported rows.
-      if (existing.v1_rental_id) {
-        const storedNet = existing.net_to_owner_gbp ?? 0;
-        const incomingNet = args.net_to_owner_gbp ?? 0;
-        const diff = incomingNet - storedNet;
-        const isMaterialIncrease =
-          diff >= 10 || (storedNet > 0 && diff / storedNet >= 0.1);
-        if (!isMaterialIncrease) return { action: "skipped" };
-        await ctx.db.patch(existing._id, {
-          net_to_owner_gbp: incomingNet,
-          ...(args.gross_paid_gbp !== undefined && {
-            gross_paid_gbp: args.gross_paid_gbp,
-          }),
-        });
-        console.info(
-          `[hygglo] v1_rental_id ${existing.v1_rental_id}: net corrected £${storedNet.toFixed(2)} → £${incomingNet.toFixed(2)}`,
-        );
-        return { action: "updated" };
-      }
-
-      // ── step-priority dedup ──────────────────────────────────
-      const storedStep = (existing as any).order_step ?? null;
-      const isObsoleteUpsert = args.sourceFilter === "obsolete";
-
-      if (
-        !isObsoleteUpsert &&
-        incomingStep !== undefined &&
-        isStepRegression(storedStep, incomingStep)
-      ) {
-        // Stale filter response — don't roll back an advanced step.
-        console.info(
-          `[hygglo] Step regression skipped for order ${args.hygglo_order_id}: ` +
-            `stored="${storedStep}" incoming="${incomingStep}"`
-        );
-        // Still apply non-step fields (dates, amounts) but preserve order_step.
-        await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
-        const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-        const hyggloItemsRegression = buildHyggloItems(args.items);
-        await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
-        // Phase 12.2: write-through to product_id-keyed image bank.
-        await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
-          account_slug: args.account_slug,
-          items: hyggloItemsRegression,
-        });
-        return { action: "updated" };
-      }
-
-      // The poller fetches all four Hygglo filters every cycle, so each row
-      // either appears in exactly one filter or is missing. The sourceFilter
-      // is therefore authoritative for the current bucket and we trust the
-      // freshly-derived status verbatim. (The old priority-guard was rolling
-      // back legitimate downgrades, e.g. confirmed→pending_review when a
-      // renter let their Stripe hold lapse and Hygglo moved them back to
-      // filter=pending.)
-      const finalStatus = incomingStatus;
-
-      const stepPatch =
-        incomingStep !== undefined ? { order_step: incomingStep } : {};
-      // EQ-C: capture pre-patch obsolete state so we can detect the
-      // transition into the obsolete bucket and fire listing_resolver
-      // synchronously (rather than waiting up to 60 min for the next poll
-      // cycle to retry resolution). Without this, the gap detector can't
-      // flag a freshly-denied rental until the resolver eventually catches
-      // up — the Anker power station incident (Daniel, 2026-05-22) sat with
-      // resolved_items=[] for the full audit window because of this.
-      const wasObsolete = existing.is_obsolete === true;
+  if (existing) {
+    // Historical v1_rental_id rows used to be unconditionally skipped, which
+    // locked in undercounted nets from `rental`-sourced imports. We now allow
+    // ONLY the net/gross fields to be corrected when the live poller sees a
+    // materially higher value (≥ £10 OR ≥ 10% increase).
+    if (existing.v1_rental_id) {
+      const storedNet = existing.net_to_owner_gbp ?? 0;
+      const incomingNet = args.net_to_owner_gbp ?? 0;
+      const diff = incomingNet - storedNet;
+      const isMaterialIncrease =
+        diff >= 10 || (storedNet > 0 && diff / storedNet >= 0.1);
+      if (!isMaterialIncrease) return { action: "skipped", bankItems: [] };
       await ctx.db.patch(existing._id, {
-        ...baseFields,
-        status: finalStatus,
-        ...stepPatch,
-        ...obsoleteFields,
+        net_to_owner_gbp: incomingNet,
+        ...(args.gross_paid_gbp !== undefined && {
+          gross_paid_gbp: args.gross_paid_gbp,
+        }),
       });
-      const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-      const hyggloItemsUpdate = buildHyggloItems(args.items);
-      await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
-      // Phase 12.2: write-through to product_id-keyed image bank.
-      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
-        account_slug: args.account_slug,
-        items: hyggloItemsUpdate,
-      });
-      // EQ-C: schedule listing_resolver on owner-denial transition.
-      if (obsoleteFields.is_obsolete === true && !wasObsolete) {
-        await scheduleListingResolutionOnDenial(ctx, {
-          account_slug: args.account_slug,
-          hygglo_order_id: args.hygglo_order_id,
-          items: args.items,
-          order: args.order,
-          notes,
-          photos_urls,
-        });
-      }
-      return { action: "updated" };
+      console.info(
+        `[hygglo] v1_rental_id ${existing.v1_rental_id}: net corrected £${storedNet.toFixed(2)} → £${incomingNet.toFixed(2)}`,
+      );
+      return { action: "updated", bankItems: [] };
     }
 
-    // ── INSERT ────────────────────────────────────────────────
-    const stepInsert =
+    const storedStep = (existing as { order_step?: string }).order_step ?? null;
+    const isObsoleteUpsert = args.sourceFilter === "obsolete";
+
+    if (
+      !isObsoleteUpsert &&
+      incomingStep !== undefined &&
+      isStepRegression(storedStep, incomingStep)
+    ) {
+      // Stale filter response — preserve order_step but apply non-step fields.
+      console.info(
+        `[hygglo] Step regression skipped for order ${args.hygglo_order_id}: ` +
+          `stored="${storedStep}" incoming="${incomingStep}"`
+      );
+      await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
+      const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
+      const hyggloItemsRegression = buildHyggloItems(args.items);
+      await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
+      return { action: "updated", bankItems: hyggloItemsRegression };
+    }
+
+    // sourceFilter is authoritative — the poller fetches all four buckets each
+    // cycle, so the row is in exactly one. Trust the freshly-derived status.
+    const finalStatus = incomingStatus;
+    const stepPatch =
       incomingStep !== undefined ? { order_step: incomingStep } : {};
-    const hintsInsert = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-    const hyggloItemsInsert = buildHyggloItems(args.items);
-    const newId = await ctx.db.insert("reservations", {
+    // EQ-C: capture pre-patch obsolete state so a transition into the
+    // obsolete bucket fires listing_resolver synchronously rather than
+    // waiting up to 60 min for the next poll cycle (Anker power-station
+    // incident, 2026-05-22).
+    const wasObsolete = existing.is_obsolete === true;
+    await ctx.db.patch(existing._id, {
       ...baseFields,
-      ...stepInsert,
+      status: finalStatus,
+      ...stepPatch,
       ...obsoleteFields,
-      ...(hintsInsert.length > 0 && { image_hints: hintsInsert }),
-      ...(hyggloItemsInsert.length > 0 && { hygglo_items: hyggloItemsInsert }),
-      created_at: now,
     });
-    // Phase 12.2: write-through to product_id-keyed image bank.
-    if (hyggloItemsInsert.length > 0) {
-      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
-        account_slug: args.account_slug,
-        items: hyggloItemsInsert,
-      });
-    }
-
-    // EQ-C: when a Hygglo order arrives already in the obsolete bucket
-    // (renter never made it past REQUEST → owner denied before we ever saw
-    // the row in pending/current), poll-hygglo's `newlyInserted` collector
-    // does NOT pick it up for resolution (Phase 18.2 only resolves rows
-    // newly inserted in the active filters). Fire the resolver here so the
-    // gap detector has resolved_items to work with on the next sweep.
-    if (obsoleteFields.is_obsolete === true) {
+    const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
+    const hyggloItemsUpdate = buildHyggloItems(args.items);
+    await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
+    if (obsoleteFields.is_obsolete === true && !wasObsolete) {
       await scheduleListingResolutionOnDenial(ctx, {
         account_slug: args.account_slug,
         hygglo_order_id: args.hygglo_order_id,
@@ -739,10 +680,102 @@ export const upsertOrderAsReservation = mutation({
         photos_urls,
       });
     }
+    return { action: "updated", bankItems: hyggloItemsUpdate };
+  }
 
-    // Phase 18.2 — return the new ID so poll-hygglo can trigger the
-    // on-demand resolver task for fresh reservations.
-    return { action: "inserted", reservation_id: newId as unknown as string };
+  // ── INSERT ────────────────────────────────────────────────
+  const stepInsert =
+    incomingStep !== undefined ? { order_step: incomingStep } : {};
+  const hintsInsert = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
+  const hyggloItemsInsert = buildHyggloItems(args.items);
+  const newId = await ctx.db.insert("reservations", {
+    ...baseFields,
+    ...stepInsert,
+    ...obsoleteFields,
+    ...(hintsInsert.length > 0 && { image_hints: hintsInsert }),
+    ...(hyggloItemsInsert.length > 0 && { hygglo_items: hyggloItemsInsert }),
+    created_at: now,
+  });
+
+  // EQ-C: when an order first appears already in the obsolete bucket (renter
+  // never made it past REQUEST → owner denied before we ever saw it in
+  // pending/current), poll-hygglo's `newlyInserted` collector does NOT pick
+  // it up for resolution. Fire the resolver here so the gap detector has
+  // resolved_items to work with on the next sweep.
+  if (obsoleteFields.is_obsolete === true) {
+    await scheduleListingResolutionOnDenial(ctx, {
+      account_slug: args.account_slug,
+      hygglo_order_id: args.hygglo_order_id,
+      items: args.items,
+      order: args.order,
+      notes,
+      photos_urls,
+    });
+  }
+
+  return {
+    action: "inserted",
+    reservation_id: newId as unknown as string,
+    bankItems: hyggloItemsInsert,
+  };
+}
+
+/**
+ * Per-order public mutation. Kept for callers that upsert a single order at a
+ * time (e.g. scripts/historical/import-missing-orders.mjs). The hot poller path
+ * uses upsertOrdersAsReservationsBatch — DO NOT call this from a cron loop.
+ */
+export const upsertOrderAsReservation = mutation({
+  args: upsertOrderArgsFields,
+  handler: async (ctx, args): Promise<UpsertResult> => {
+    const { action, reservation_id, bankItems } = await upsertOrderImpl(ctx, args);
+    if (bankItems.length > 0) {
+      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
+        account_slug: args.account_slug,
+        items: bankItems,
+      });
+    }
+    return reservation_id !== undefined ? { action, reservation_id } : { action };
+  },
+});
+
+/**
+ * Batch upsert used by the poll-hygglo cron. Processes every order in a single
+ * Convex mutation invocation, then flushes one internal listing_images upsert
+ * containing the deduped union of bank items across the batch.
+ *
+ * Cost shape: ONE mutation call per cron run regardless of order count, vs.
+ * the legacy per-order path which incurred one top-level mutation + one
+ * internal sub-mutation per order. This enforces CLAUDE.md's "one mutation
+ * per cron run, not per row" rule on the poller's hot path.
+ *
+ * Results are returned aligned with the input array (same length, same order).
+ */
+export const upsertOrdersAsReservationsBatch = mutation({
+  args: { orders: v.array(upsertOrderArgsValidator) },
+  handler: async (ctx, { orders }): Promise<UpsertResult[]> => {
+    const results: UpsertResult[] = [];
+    // account_slug -> aggregated bank items (one flush per account at the end).
+    const perAccountBank = new Map<string, BankItem[]>();
+
+    for (const args of orders) {
+      const { action, reservation_id, bankItems } = await upsertOrderImpl(ctx, args);
+      results.push(reservation_id !== undefined ? { action, reservation_id } : { action });
+      if (bankItems.length > 0) {
+        const bucket = perAccountBank.get(args.account_slug);
+        if (bucket) bucket.push(...bankItems);
+        else perAccountBank.set(args.account_slug, [...bankItems]);
+      }
+    }
+
+    for (const [account_slug, items] of perAccountBank) {
+      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
+        account_slug,
+        items,
+      });
+    }
+
+    return results;
   },
 });
 
