@@ -48,23 +48,17 @@ crons.daily(
 );
 
 // ── Wave 4 — Hygglo polling workflow trigger ──────────────────
+// REMOVED 2026-05-24 (Convex pro-plan cost audit).
 //
-// Every 3 min. Cadence tuned so:
-//   - faster than Trigger.dev's 5-min scrape, so any new Hygglo order
-//     picked up by the scraper gets an AI decision in under 3 min
-//     (decision-latency SLO for Daniel's admin review).
-//   - slow enough that with 2 accounts × ~50 orders/day, AI decision
-//     calls per day stay around 100 — well within xAI rate limits.
-//
-// The Convex action `fetch()`es a Next.js API route which owns the
-// Mastra workflow invocation (the workflow runs in Node, not Convex).
-// Until POLL_TRIGGER_URL env var is set, the action no-ops — keeping
-// the cron registered is harmless.
-crons.interval(
-  "hygglo_poll workflow",
-  { minutes: 15 },
-  internal.hygglo_poll_trigger.triggerWorkflow,
-);
+// This was a 15-min Convex action that fetch()ed a Next.js API route to
+// invoke the Mastra `hygglo_poll` workflow on top of the Trigger.dev
+// scraper. The Trigger.dev `poll-hygglo-inbox` task at 5 min has been
+// the source-of-truth scraper for months; the Mastra workflow was
+// idempotent and detected "nothing new" on every fire — meaning every
+// 15 min the cron burned a Convex action runtime + an HTTPS round-trip
+// + a sync_state heartbeat write for zero downstream effect (~96 wasted
+// invocations/day per account). Removed entirely. Reinstate by reading
+// git history if a future flow genuinely needs Convex-side polling.
 
 // ── S2 fix — direct backup_poll cron ─────────────────────────────
 // DISABLED 2026-05-23 (Convex pro-plan over quota): this cron has been
@@ -169,30 +163,35 @@ crons.daily(
 // roughly doubling action runtime for this code path. To check:
 //   npx trigger.dev@latest env list --env prod | grep SNAPSHOTS_VIA_CONVEX
 // Or set it explicitly via Trigger.dev dashboard → Project → Env vars.
-crons.cron(
-  "snapshot-intel-rankings",
-  "0 */4 * * *",
-  internal.snapshot_jobs.snapshotIntelRankings,
-  {},
-);
-// Bumped 2026-05-24 from "*/10 * * * *" to "7 * * * *" (hourly, off-minute):
-// the source MV (mv_refresh_fast) refreshes hourly, so the other 5 runs of
-// every 6 wrote identical R2 payloads. Saves ~120 Convex action runs/day.
+// snapshot-daily-briefing stays hourly: its source MV (`mv_refresh_fast`)
+// refreshes hourly too, so hourly snapshots match data churn 1:1.
 crons.cron(
   "snapshot-daily-briefing",
   "7 * * * *",
   internal.snapshot_jobs.snapshotDailyBriefing,
   {},
 );
-crons.cron(
+// Realigned 2026-05-24: intel/top-renters/inventory all read from
+// `mv_refresh_slow` which only runs daily at 04:00 UTC (see line 43-48).
+// Previously these snapshotted every 4h/6h/12h respectively, meaning
+// 95% of their runs wrote identical R2 payloads from stale MV data.
+// Now fire once daily at 04:05 UTC — 5 min after mv_refresh_slow lands.
+// Saves ~28 wasted Convex action runs/day (was 6+4+2=12 runs/day, now 3).
+crons.daily(
+  "snapshot-intel-rankings",
+  { hourUTC: 4, minuteUTC: 5 },
+  internal.snapshot_jobs.snapshotIntelRankings,
+  {},
+);
+crons.daily(
   "snapshot-top-renters",
-  "0 */6 * * *",
+  { hourUTC: 4, minuteUTC: 10 },
   internal.snapshot_jobs.snapshotTopRenters,
   {},
 );
-crons.cron(
+crons.daily(
   "snapshot-inventory-overview",
-  "0 */12 * * *",
+  { hourUTC: 4, minuteUTC: 15 },
   internal.snapshot_jobs.snapshotInventoryOverview,
   {},
 );
