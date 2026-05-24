@@ -74,10 +74,25 @@ export const getEarningsByPeriod = query({
       )
       .first();
     if (row) {
-      const wantedTail = granularity === "monthly"
-        ? months
-        : Math.ceil(months * 4.345);
-      return row.buckets.slice(-wantedTail);
+      // Date-cutoff filter mirrors the legacy live query so bucket counts
+      // match. MV's first bucket is a full-month/week total — slightly
+      // higher than the legacy partial-slice but more accurate accounting.
+      const cutoff = new Date();
+      cutoff.setMonth(cutoff.getMonth() - months);
+      if (granularity === "monthly") {
+        const cutoffMonth = cutoff.toISOString().slice(0, 7);
+        return row.buckets.filter((b) => b.period >= cutoffMonth);
+      }
+      const cutoffWeekKey = (() => {
+        const d = new Date(cutoff);
+        const dayOfWeek = (d.getDay() + 6) % 7;
+        const thursday = new Date(d);
+        thursday.setDate(d.getDate() - dayOfWeek + 3);
+        const jan1 = new Date(thursday.getFullYear(), 0, 1);
+        const weekNum = 1 + Math.round((thursday.getTime() - jan1.getTime()) / 604_800_000);
+        return thursday.getFullYear() + "-W" + String(weekNum).padStart(2, "0");
+      })();
+      return row.buckets.filter((b) => b.period >= cutoffWeekKey);
     }
 
     // Cold-start fallback — same algorithm as the legacy live query.

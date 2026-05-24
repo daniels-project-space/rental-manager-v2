@@ -157,9 +157,13 @@ export const refresh = internalMutation({
 });
 
 /**
- * Reader — returns the buckets for the most recent `months` months/weeks.
- * `granularity` is passed through verbatim. Returns null if MV not yet
- * populated; callers should fall back to live compute in that case.
+ * Reader — returns the buckets covering the most recent N months.
+ *
+ * The cutoff math mirrors the legacy live query so the chart shows the
+ * same number of bars (live used a date-based cutoff, which typically
+ * includes a partial bucket for the cutoff month). The MV's first bucket
+ * is a full-month total (more accurate than live's partial-month slice).
+ * Document divergence — verified by mv_parity:check (2026-05-24).
  */
 export const get = query({
   args: {
@@ -176,12 +180,22 @@ export const get = query({
       )
       .first();
     if (!row) return null;
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - months);
     if (granularity === "monthly") {
-      // Tail-slice to the requested month count.
-      return row.buckets.slice(-months);
+      const cutoffMonth = cutoff.toISOString().slice(0, 7);
+      return row.buckets.filter((b) => b.period >= cutoffMonth);
     }
-    // Weekly: 1 month ≈ 4.345 weeks; round up.
-    const wantedWeeks = Math.ceil(months * 4.345);
-    return row.buckets.slice(-wantedWeeks);
+    // Weekly: derive ISO-week key for the cutoff date, then filter.
+    const cutoffWeekKey = (() => {
+      const d = new Date(cutoff);
+      const dayOfWeek = (d.getDay() + 6) % 7;
+      const thursday = new Date(d);
+      thursday.setDate(d.getDate() - dayOfWeek + 3);
+      const jan1 = new Date(thursday.getFullYear(), 0, 1);
+      const weekNum = 1 + Math.round((thursday.getTime() - jan1.getTime()) / 604_800_000);
+      return thursday.getFullYear() + "-W" + String(weekNum).padStart(2, "0");
+    })();
+    return row.buckets.filter((b) => b.period >= cutoffWeekKey);
   },
 });
