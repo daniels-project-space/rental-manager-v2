@@ -57,6 +57,7 @@ import { computeUpcomingReturns } from "./upcoming_returns";
 import { computeChurnRisk } from "./churn_risk";
 import { computePurchaseSignals } from "./purchase_signals";
 import { computeMissedRevenue } from "./missed_revenue";
+import { computeEarningsByPeriod, RETENTION_MONTHS as EARNINGS_RETENTION_MONTHS } from "./earnings_by_period";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -224,6 +225,30 @@ export const writeMissedRevenue = internalMutation({
   },
 });
 
+/**
+ * Phase 6b (2026-05-24) — mv_earnings_by_period keyed by (account, granularity).
+ */
+export const writeEarningsByPeriod = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, granularity, ...rest } = r;
+      const existing = await ctx.db
+        .query("mv_earnings_by_period")
+        .withIndex("by_account_granularity", (q) =>
+          q.eq("account", account).eq("granularity", granularity),
+        )
+        .first();
+      if (existing) {
+        await ctx.db.patch(existing._id, rest);
+      } else {
+        await ctx.db.insert("mv_earnings_by_period", { account, granularity, ...rest });
+      }
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
 // ──────────────────────────────────────────────────────────────
 // Master refresh actions.
 // ──────────────────────────────────────────────────────────────
@@ -253,17 +278,15 @@ export const refreshFast = internalAction({
   args: {},
   handler: async (ctx): Promise<{ batch: "fast"; results: StepResult[] }> => {
     const startedAt = Date.now();
-    // Phase 6a (2026-05-24) — widened reservations window from 30d → 90d so
-    // missed_revenue's 90d MV can share the same collect. utilization slices
-    // 30d in-memory from the wider input. Added denials + pricing + accounts
-    // collects so missed_revenue can compute without a slow-batch dependency.
-    // Net per-fast-run cost: +denials(~500) + pricing(~50) + accounts(~5) +
-    // ~600 widened reservations rows = ~1.2k extra row reads/run × 24/day
-    // = ~28k row reads/day. Easily offset by removing live denial_records
-    // collects from dashboard subscriptions (millions of reads/day).
-    const cutoff90 = isoDaysAgo(90);
+    // Phase 6b (2026-05-24) — widened reservations window from 90d → 24mo
+    // (~730d) so mv_earnings_by_period can share the same collect.
+    // missed_revenue + utilization slice their own narrower windows in-memory.
+    // Per-run cost: ~600-800 reservation rows × 24 runs/day ≈ 15-20k row
+    // reads/day. Offsets the millions of read reductions on the dashboard
+    // side once subscriptions stop touching `reservations` for earnings.
+    const cutoffWide = isoDaysAgo(EARNINGS_RETENTION_MONTHS * 31);
     const [reservationsWindow, confirmedReservations, items, renters, denials, pricing, accounts] = await Promise.all([
-      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoff90 }),
+      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoffWide }),
       ctx.runQuery(internal.mv.master.collectConfirmedReservations, {}),
       ctx.runQuery(internal.mv.master.collectItems, {}),
       ctx.runQuery(internal.mv.master.collectRenters, {}),
@@ -301,6 +324,14 @@ export const refreshFast = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeMissedRevenue, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "earnings_by_period", async () => {
+      const rows = computeEarningsByPeriod({
+        reservations: reservationsWindow,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeEarningsByPeriod, { rows });
     }));
 
     return { batch: "fast", results };

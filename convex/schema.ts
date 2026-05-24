@@ -858,6 +858,23 @@ export default defineSchema({
     fleetUtilizationPct: v.number(),
   }).index("by_account", ["account"]),
 
+  // Phase 6b (2026-05-24) — earnings buckets per (account, granularity).
+  // Stores 24 months of buckets so EarningsChart slices the requested window
+  // server-side without re-collecting the reservations table on every
+  // poller mutation. Refreshed by master.refreshFast (hourly).
+  mv_earnings_by_period: defineTable({
+    account: v.string(),                  // "dbcinema" | "leo" | "all"
+    granularity: v.string(),              // "monthly" | "weekly"
+    generatedAt: v.number(),
+    // Buckets sorted ascending by period (YYYY-MM for monthly, YYYY-Www
+    // for weekly). Caller slices the tail to keep N months/weeks.
+    buckets: v.array(v.object({
+      period: v.string(),
+      revenue: v.number(),
+      bookings: v.number(),
+    })),
+  }).index("by_account_granularity", ["account", "granularity"]),
+
   // Phase 6a (2026-05-24) — denial+gap rollup, pre-aggregated per
   // (account, days) so the dashboard panel + top tile read 1 indexed row
   // instead of collecting denial_records + pricing_catalog + 30d

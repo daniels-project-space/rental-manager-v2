@@ -50,9 +50,12 @@ function isOwnerDeniedLike(r: {
 }
 
 /**
- * W04 Earnings Chart — revenue grouped by month or week
- * granularity: "monthly" | "weekly"
- * months: how many months back to include
+ * W04 Earnings Chart — revenue grouped by month or week.
+ *
+ * Phase 6b (2026-05-24): swapped from live compute to mv_earnings_by_period.
+ * The MV stores 24 months of buckets per (account, granularity); this query
+ * slices the tail to the requested `months` window. Cold-start fallback
+ * runs the live compute for the first cron tick post-deploy.
  */
 export const getEarningsByPeriod = query({
   args: {
@@ -61,13 +64,27 @@ export const getEarningsByPeriod = query({
     months: v.number(),
   },
   handler: async (ctx, { accountSlug, granularity, months }) => {
+    const account = accountSlug ?? "all";
+    const row = await ctx.db
+      .query("mv_earnings_by_period")
+      .withIndex("by_account_granularity", (q) =>
+        q.eq("account", account).eq("granularity", granularity),
+      )
+      .first();
+    if (row) {
+      const wantedTail = granularity === "monthly"
+        ? months
+        : Math.ceil(months * 4.345);
+      return row.buckets.slice(-wantedTail);
+    }
+
+    // Cold-start fallback — same algorithm as the legacy live query.
     const now = new Date();
     const currentMonth = now.toISOString().slice(0, 7);
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - months);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    // Use by_start_date index for efficient range scan
     let rows = await ctx.db
       .query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
@@ -75,29 +92,20 @@ export const getEarningsByPeriod = query({
     if (accountSlug) {
       rows = rows.filter((r) => r.account_slug === accountSlug);
     }
-    // Exclude cancelled/declined/obsolete reservations. Earlier code used the
-    // typo "denied" (matched zero rows because schema enum is "declined");
-    // canonicalised via isLive from predicates so revenue, dashboard and chat
-    // all use the same definition.
     rows = rows.filter(isLive);
 
     const buckets = new Map<string, { revenue: number; bookings: number }>();
-
     for (const r of rows) {
-      // BF-06: use pickup_date if available, fall back to start_date
       const dateStr = effectiveDate(r as any);
       if (!dateStr) continue;
-      // Cap to current month — don't show future months in the earnings chart
       const effectiveMo = dateStr.slice(0, 7);
       if (effectiveMo > currentMonth) continue;
       let key: string;
       if (granularity === "monthly") {
         key = effectiveMo;
       } else {
-        // ISO 8601 week: use proper ISO week number (not naive day-of-year / 7)
         const d = new Date(dateStr);
-        // ISO week: Monday-based, week 1 = week containing first Thursday
-        const dayOfWeek = (d.getDay() + 6) % 7; // Mon=0 .. Sun=6
+        const dayOfWeek = (d.getDay() + 6) % 7;
         const thursday = new Date(d);
         thursday.setDate(d.getDate() - dayOfWeek + 3);
         const jan1 = new Date(thursday.getFullYear(), 0, 1);
@@ -109,7 +117,6 @@ export const getEarningsByPeriod = query({
       existing.bookings += 1;
       buckets.set(key, existing);
     }
-
     return Array.from(buckets.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([period, { revenue, bookings }]) => ({
