@@ -7,8 +7,10 @@
  * node" directive is required for the AI SDK (`generateObject`) and crypto
  * primitives. All DB touches delegate to internal queries/mutations.
  *
- * Phase 1: text-only structured extraction via DeepSeek-v4-flash through
- * getActionLlmModel(). No vision pass yet (added in Phase 2).
+ * Text-only structured extraction via DeepSeek-v4-flash through
+ * getActionLlmModel(). The pool is a ONE-TIME lookup table — each
+ * (account_slug, product_id) derives once at first insert; the manual
+ * forceReDerive mutation is the only re-derive path. No vision pass.
  *
  * Hard rules (mirror docs/listing-info-pool-plan.md):
  *   - Structured output (zod schema), temperature 0.
@@ -310,18 +312,15 @@ export const deriveOne = internalAction({
     components_count?: number;
     error?: string;
   }> => {
-    // Resolve raw title (and image URLs for Phase 2 vision fallback) from
-    // reservations if caller didn't pass one explicitly.
+    // Resolve raw title from reservations if caller didn't pass one explicitly.
     let title = raw_title;
-    let imageUrls: string[] = [];
     if (!title) {
-      const fetched: { raw_title: string | null; image_urls: string[]; order_photos: string[] } =
+      const fetched: { raw_title: string | null } =
         await ctx.runQuery(internal.listing_info_pool.lookupRawForProduct, {
           account_slug,
           product_id,
         });
       title = fetched.raw_title ?? undefined;
-      imageUrls = fetched.image_urls;
     }
     if (!title) {
       return { status: "no_title" };
@@ -445,7 +444,6 @@ export const deriveOne = internalAction({
         product_id,
         source_title: title,
         source_title_hash: hash,
-        source_image_urls: imageUrls,
         derivation_method: "passthrough_fallback",
         short_name: shortNamePassthrough,
         display_name: shortNamePassthrough,
@@ -552,7 +550,6 @@ export const deriveOne = internalAction({
       product_id,
       source_title: title,
       source_title_hash: hash,
-      source_image_urls: imageUrls,
       derivation_method: "text",
       short_name: shortName,
       bundle_summary: summary ?? undefined,
@@ -655,7 +652,7 @@ export const backfillFx3Sample = action({
 
     for (const t of targets) {
       // Pull raw title via lookupRawForProduct so the sample log can show it.
-      const fetched: { raw_title: string | null; image_urls: string[]; order_photos: string[] } =
+      const fetched: { raw_title: string | null } =
         await ctx.runQuery(internal.listing_info_pool.lookupRawForProduct, {
           account_slug: t.account_slug,
           product_id: t.product_id,
@@ -710,18 +707,12 @@ export const backfillFx3Sample = action({
   },
 });
 
-// ── Full active backfill (Phase 2) ────────────────────────────────────────
+// ── Full active backfill ──────────────────────────────────────────────────
 //
 // Processes every listing with at least one active or upcoming reservation in
 // the last 60 days. Sequential with delay_ms throttle to keep DeepSeek happy.
-//
-// Vision fallback note: the design called for a vision pass when text-only
-// confidence < 0.7 OR plus_token_unparsed fires, but rental-manager-v2's
-// codebase currently does not expose a hooked-up vision model. The Phase 1
-// derivation step is text-only via DeepSeek-v4-flash. Confidence below 0.7
-// and the plus_token_unparsed guard still emit needs_review=true, so Daniel
-// can manually override those via the Phase 4 UI. Vision fallback will be
-// added once an OpenRouter or Gemini vision endpoint is wired in.
+// Text-only derivation; needs_review rows surface in the edit-in-place UI
+// for manual override (the manual path is the only re-derive trigger).
 
 export const backfillActive = action({
   args: {
@@ -745,8 +736,6 @@ export const backfillActive = action({
     cached: number;
     no_components: number;
     needs_review: number;
-    text_only: number;
-    vision_fallback: number;
     errors: number;
     samples: Array<{
       account_slug: string;
@@ -772,7 +761,6 @@ export const backfillActive = action({
       account_slug: string;
       product_id: number;
       raw_title: string;
-      image_urls: string[];
     }> = await ctx.runQuery(internal.listing_info_pool.listActiveDistinctProducts, {
       since_iso: sinceIso,
     });
@@ -795,8 +783,6 @@ export const backfillActive = action({
     let cachedHits = 0;
     let needsReview = 0;
     let noComponents = 0;
-    let textOnly = 0;
-    let visionFallback = 0;
     let errors = 0;
     let processed = 0;
     const samples: Array<{
@@ -845,7 +831,6 @@ export const backfillActive = action({
       });
       if (res.status === "derived") {
         derived++;
-        textOnly++;
         if (res.needs_review) needsReview++;
       } else if (res.status === "cached") {
         cachedHits++;
@@ -872,7 +857,7 @@ export const backfillActive = action({
     }
 
     console.log(
-      `[listing_info_pool] backfillActive: candidates=${tuples.length} processed=${processed} derived=${derived} cached=${cachedHits} no_components=${noComponents} needs_review=${needsReview} text_only=${textOnly} vision_fallback=${visionFallback} errors=${errors}`,
+      `[listing_info_pool] backfillActive: candidates=${tuples.length} processed=${processed} derived=${derived} cached=${cachedHits} no_components=${noComponents} needs_review=${needsReview} errors=${errors}`,
     );
 
     return {
@@ -882,8 +867,6 @@ export const backfillActive = action({
       cached: cachedHits,
       no_components: noComponents,
       needs_review: needsReview,
-      text_only: textOnly,
-      vision_fallback: visionFallback,
       errors,
       samples,
     };

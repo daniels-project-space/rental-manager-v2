@@ -808,7 +808,9 @@ export default defineSchema({
     generatedAt: v.number(),
     rows: v.array(v.object({
       itemName: v.string(),
-      gross30dGbp: v.number(),
+      // Phase 1.2 (2026-05-24): NET take-home only. Legacy gross30dGbp
+      // field removed — rankings now reflect what the owner actually
+      // keeps after platform fees.
       net30dGbp: v.number(),
       rentalCount: v.number(),
       utilizationPct: v.number(),
@@ -1240,12 +1242,16 @@ export default defineSchema({
     source_title_hash: v.string(),
     source_description: v.optional(v.string()),
     source_description_hash: v.optional(v.string()),
-    source_image_urls: v.array(v.string()),
+    // DEPRECATED 2026-05-24: vision pass removed. Optional so legacy rows
+    // (written before the strip) remain valid.
+    source_image_urls: v.optional(v.array(v.string())),
     source_image_phash_blob: v.optional(v.string()),
     derived_at: v.number(),
     derivation_method: v.union(
       v.literal("text"),
       v.literal("text+attrs"),
+      // text+image / text+image+attrs deprecated 2026-05-24 (vision removed).
+      // Kept in the union so already-persisted rows pass schema validation.
       v.literal("text+image"),
       v.literal("text+image+attrs"),
       v.literal("manual"),

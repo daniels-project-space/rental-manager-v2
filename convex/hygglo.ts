@@ -426,13 +426,13 @@ async function scheduleListingResolutionOnDenial(
   }
 }
 
-// 2026-05-24: same cache-hit-no-op semantics for the listing_info_pool —
-// successor to listing_short_names with bundle decomposition + source spans.
-// Fired alongside scheduleShortNameDerivation. The deriveOne action checks
-// source_title_hash and skips work when unchanged. New listings get a fresh
-// derivation; existing listings whose title (or image-hash blob) drifts
-// trigger a re-derivation that overwrites only derived fields — manual
-// overrides survive. Errors swallowed so the poller never blocks.
+// 2026-05-24: ONE-TIME fill semantics for the listing_info_pool. Each
+// (account_slug, product_id) derives exactly once at first insert; the row
+// is then a stable lookup table that downstream services reference by
+// listing_id to cross-ref bundle_components against the items inventory.
+// Title/image drift on subsequent polls does NOT re-trigger derivation —
+// the manual forceReDerive mutation (invoked from the edit-in-place UI) is
+// the only re-derive path. Errors swallowed so the poller never blocks.
 async function scheduleInfoPoolDerivation(
   ctx: MutationCtx,
   account_slug: string,
@@ -720,7 +720,7 @@ async function upsertOrderImpl(
       const hyggloItemsRegression = buildHyggloItems(args.items);
       await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
       await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsRegression);
-      await scheduleInfoPoolDerivation(ctx, args.account_slug, hyggloItemsRegression);
+      // listing_info_pool: one-time fill at insert only — no re-derive on update.
       return { action: "updated", bankItems: hyggloItemsRegression };
     }
 
@@ -744,7 +744,7 @@ async function upsertOrderImpl(
     const hyggloItemsUpdate = buildHyggloItems(args.items);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
     await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);
-    await scheduleInfoPoolDerivation(ctx, args.account_slug, hyggloItemsUpdate);
+    // listing_info_pool: one-time fill at insert only — no re-derive on update.
     if (obsoleteFields.is_obsolete === true && !wasObsolete) {
       await scheduleListingResolutionOnDenial(ctx, {
         account_slug: args.account_slug,

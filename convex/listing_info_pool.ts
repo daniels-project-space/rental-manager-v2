@@ -8,8 +8,7 @@
  *
  * Split layout (mirrors listing_short_names):
  *   - V8 runtime (this file): cache reads/writes + manual override surface.
- *   - listing_info_pool_actions.ts ("use node"): LLM derivation, vision
- *     fallback, backfills.
+ *   - listing_info_pool_actions.ts ("use node"): LLM derivation + backfills.
  */
 
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
@@ -29,8 +28,6 @@ const sourceKindV = v.union(
 const derivationMethodV = v.union(
   v.literal("text"),
   v.literal("text+attrs"),
-  v.literal("text+image"),
-  v.literal("text+image+attrs"),
   v.literal("manual"),
   v.literal("passthrough_fallback"),
 );
@@ -235,8 +232,8 @@ export const listNeedsReview = query({
 });
 
 /** Active-rentals derivation candidates. Like
- *  listing_short_names:listActiveDistinctProducts but also surfaces per-item
- *  image_url so vision fallback can pick up source images. */
+ *  listing_short_names:listActiveDistinctProducts. Text-only; info pool
+ *  derivation is title-driven so per-item image surfacing is not needed. */
 export const listActiveDistinctProducts = internalQuery({
   args: { since_iso: v.optional(v.string()) },
   handler: async (ctx, { since_iso }) => {
@@ -250,7 +247,6 @@ export const listActiveDistinctProducts = internalQuery({
       account_slug: string;
       product_id: number;
       raw_title: string;
-      image_urls: string[];
     };
     const seen = new Map<string, Tup>();
     for (const r of rows) {
@@ -260,7 +256,7 @@ export const listActiveDistinctProducts = internalQuery({
       if (!endDate || endDate < today) continue;
       const slug = r.account_slug;
       const items = (r as any).hygglo_items as
-        | Array<{ name?: string; product_id?: number; type?: string; image_url?: string }>
+        | Array<{ name?: string; product_id?: number; type?: string }>
         | undefined;
       if (!slug || !Array.isArray(items)) continue;
       for (const it of items) {
@@ -268,27 +264,21 @@ export const listActiveDistinctProducts = internalQuery({
         if (typeof it.product_id !== "number") continue;
         if (!it.name) continue;
         const key = `${slug}#${it.product_id}`;
-        const cur = seen.get(key);
-        if (!cur) {
-          seen.set(key, {
-            account_slug: slug,
-            product_id: it.product_id,
-            raw_title: it.name,
-            image_urls: it.image_url ? [it.image_url] : [],
-          });
-        } else if (it.image_url && !cur.image_urls.includes(it.image_url)) {
-          cur.image_urls.push(it.image_url);
-        }
+        if (seen.has(key)) continue;
+        seen.set(key, {
+          account_slug: slug,
+          product_id: it.product_id,
+          raw_title: it.name,
+        });
       }
     }
     return Array.from(seen.values());
   },
 });
 
-/** Single-product raw signal lookup — used by deriveOne when called outside
- *  a poll context to gather title + image hints. Scans ALL reservations so
- *  product_ids that only appear in a single historical rental are still
- *  resolvable. */
+/** Single-product raw title lookup — used by deriveOne when called outside
+ *  a poll context. Scans ALL reservations so product_ids that only appear
+ *  in a single historical rental are still resolvable. Text-only. */
 export const lookupRawForProduct = internalQuery({
   args: { account_slug: v.string(), product_id: v.number() },
   handler: async (ctx, { account_slug, product_id }) => {
@@ -298,18 +288,14 @@ export const lookupRawForProduct = internalQuery({
       .collect();
     let raw_title: string | null = null;
     let mostRecentEnd: string = "";
-    const image_urls = new Set<string>();
-    let order_photos: string[] = [];
     for (const r of rows) {
       if (r.account_slug !== account_slug) continue;
       const items = (r as any).hygglo_items as
-        | Array<{ name?: string; product_id?: number; image_url?: string }>
+        | Array<{ name?: string; product_id?: number }>
         | undefined;
       if (!Array.isArray(items)) continue;
-      let touched = false;
       for (const it of items) {
         if (it.product_id !== product_id) continue;
-        touched = true;
         const endDate = (r as any).return_date ?? r.end_date ?? "";
         // Prefer the title from the most recent reservation that touches this
         // product_id (Hygglo titles drift; latest is most representative).
@@ -317,20 +303,9 @@ export const lookupRawForProduct = internalQuery({
           raw_title = it.name;
           mostRecentEnd = endDate;
         }
-        if (it.image_url) image_urls.add(it.image_url);
-      }
-      if (touched) {
-        const photos = (r as any).photos_urls as string[] | undefined;
-        if (Array.isArray(photos) && photos.length > 0 && order_photos.length === 0) {
-          order_photos = photos;
-        }
       }
     }
-    return {
-      raw_title,
-      image_urls: Array.from(image_urls),
-      order_photos,
-    };
+    return { raw_title };
   },
 });
 
@@ -365,7 +340,9 @@ export const upsert = internalMutation({
     source_title_hash: v.string(),
     source_description: v.optional(v.string()),
     source_description_hash: v.optional(v.string()),
-    source_image_urls: v.array(v.string()),
+    // DEPRECATED 2026-05-24: vision pass removed. Optional so already-persisted
+    // rows remain valid; new writes pass an empty array (or omit).
+    source_image_urls: v.optional(v.array(v.string())),
     source_image_phash_blob: v.optional(v.string()),
     derivation_method: derivationMethodV,
 
