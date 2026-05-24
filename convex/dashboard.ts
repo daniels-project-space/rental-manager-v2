@@ -1427,7 +1427,7 @@ export const getStatsDrawerData = query({
     // ── card: sell_reco ───────────────────────────────────────────
     // items.getSellRecommendations logic inlined: low-utilization or high-age items.
     const SELL_LOOKBACK_DAYS = 90;
-    const SELL_UTIL_THRESHOLD = 0.25;
+    const SELL_UTIL_THRESHOLD = 25;
     const sellCutoffStr = new Date(Date.now() - SELL_LOOKBACK_DAYS * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -1452,7 +1452,8 @@ export const getStatsDrawerData = query({
     const sellReco: Array<{ item_name: string; reason: string; suggested_price_gbp: number | null }> = [];
     for (const i of activeItems) {
       const rentalDays = sellRentalDays.get(i.name_canonical) ?? 0;
-      const utilizationPct = rentalDays / SELL_LOOKBACK_DAYS;
+      const qty = i.qty ?? 1;
+      const utilizationPct = Math.min(100, (rentalDays / Math.max(1, qty * SELL_LOOKBACK_DAYS)) * 100);
       const ageMonths = (Date.now() - i.created_at) / (1000 * 60 * 60 * 24 * 30);
       if (utilizationPct > SELL_UTIL_THRESHOLD && ageMonths < 24) continue;
       const priceRow = await ctx.db

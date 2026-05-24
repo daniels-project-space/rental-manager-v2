@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { isPaid } from "./order_step_semantics";
+import { isPendingVerification, netOf, type ReservationRow } from "./lib/reservations/predicates";
 
 // ── Queries ────────────────────────────────────────────────────
 
@@ -131,10 +132,13 @@ function isLiveStatus(s: string | undefined | null): boolean {
  * system prompt.
  *
  * Snapshot fields:
- *   pendingCount         — reservations awaiting owner review.
- *   conflictCount        — active (non-dismissed) double-bookings.
- *   mtdRevenue           — month-to-date gross_paid_gbp.
- *   topUtilizationDelta  — biggest mover (|deltaPct|) in last 7d vs prior 7d.
+ *   pendingCount       — dashboard-equivalent pending (isPendingVerification).
+ *   pendingReview      — legacy status==="pending_review" count, kept for diffing.
+ *   conflictCount      — active (non-dismissed) double-bookings, qty-aware.
+ *   mtdEarningsNet     — month-to-date NET take-home (net_to_owner_gbp).
+ *   mtdGrossPaid       — month-to-date gross_paid_gbp (transparency).
+ *   topUtilization     — highest 30-day utilization item (corrected formula).
+ *   topWoWMover        — biggest mover (|deltaPct|) in last 7d vs prior 7d.
  */
 export const streamContext = query({
   args: {
@@ -157,10 +161,20 @@ export const streamContext = query({
     // ── Fresh signal snapshot (inline, no cross-file calls) ──
     const allRes = await ctx.db.query("reservations").collect();
 
-    // pendingCount: status = "pending_review".
-    const pendingCount = allRes.filter((r) => r.status === "pending_review").length;
+    // pendingCount: dashboard-equivalent (isPendingVerification = order_step==="VERIFIED").
+    // Reuses the canonical predicate from convex/lib/reservations/predicates.ts
+    // so chat surfaces the same number the user sees on the dashboard.
+    const pendingCount = allRes.filter((r) => isPendingVerification(r as unknown as ReservationRow)).length;
+    // pendingReview: legacy status==="pending_review" — kept so an operator can
+    // diff the two counts and spot pollers that mislabel order_step vs status.
+    const pendingReview = allRes.filter((r) => r.status === "pending_review").length;
 
-    // conflictCount: replicates getActiveConflicts but only the count.
+    // conflictCount: qty-aware concurrency over expanded_items, with dismissals.
+    // CHOICE: inline a stricter version (matches dashboard's qtySum > item.qty rule
+    // at the reservation level) rather than extract dashboard.ts:602-765 — that
+    // helper is tightly coupled to >200 lines of local state (productIndex,
+    // expandedIdsOf, effEndImpl, activeItems) and Convex queries cannot call
+    // other queries. See dashboard.ts:602-765 for the authoritative widget logic.
     const dismissed = new Set<string>(
       (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
     );
@@ -172,41 +186,68 @@ export const streamContext = query({
         r.end_date !== undefined &&
         r.end_date >= lookback,
     );
-    const buckets = new Map<string, { item_id: string; rows: typeof live }>();
+    // Load item qty map so the chat applies the same qty-vs-concurrent-demand
+    // rule the dashboard does (an item with qty=2 is NOT in conflict at 2x demand).
+    const itemRows = await ctx.db.query("items").collect();
+    const itemQty = new Map<string, number>();
+    for (const it of itemRows) {
+      if ((it as { status?: string }).status === "active" || (it as { status?: string }).status === "marketing_only") {
+        itemQty.set(it._id as unknown as string, (it as { qty?: number }).qty ?? 1);
+      }
+    }
+    type LiveRow = typeof live[number];
+    const buckets = new Map<string, { item_id: string; rows: Array<{ r: LiveRow; q: number }> }>();
     for (const r of live) {
       const items = r.expanded_items ?? r.resolved_items ?? [];
       for (const ei of items) {
         const k = ei.item_id as unknown as string;
+        const q = (ei as { qty?: number }).qty ?? 1;
         const cur = buckets.get(k);
-        if (cur) cur.rows.push(r);
-        else buckets.set(k, { item_id: k, rows: [r] });
+        if (cur) cur.rows.push({ r, q });
+        else buckets.set(k, { item_id: k, rows: [{ r, q }] });
       }
     }
     let conflictCount = 0;
     for (const b of buckets.values()) {
+      const capacity = itemQty.get(b.item_id);
+      if (capacity === undefined) continue; // untracked → not a conflict here
       if (b.rows.length < 2) continue;
-      let hasOverlap = false;
+      let conflicted = false;
       const seen = new Set<string>();
-      for (let i = 0; i < b.rows.length && !hasOverlap; i++) {
-        for (let j = i + 1; j < b.rows.length; j++) {
-          if (b.rows[i].start_date! <= b.rows[j].end_date! && b.rows[j].start_date! <= b.rows[i].end_date!) {
-            hasOverlap = true;
-            for (const r of b.rows) seen.add(r._id as unknown as string);
-            break;
+      // Per-day concurrency: scan reservation start/end candidates and check
+      // if summed qty ever exceeds capacity. Matches dashboard's "worstCount > item.qty".
+      const candidates = Array.from(new Set<string>([
+        ...b.rows.map((x) => x.r.start_date!),
+        ...b.rows.map((x) => x.r.end_date!),
+      ])).sort();
+      for (const d of candidates) {
+        let qSum = 0;
+        const touched: string[] = [];
+        for (const x of b.rows) {
+          if (x.r.start_date! <= d && x.r.end_date! >= d) {
+            qSum += x.q;
+            touched.push(x.r._id as unknown as string);
           }
         }
+        if (qSum > capacity) {
+          conflicted = true;
+          for (const id of touched) seen.add(id);
+        }
       }
-      if (!hasOverlap) continue;
+      if (!conflicted) continue;
       const key = `${b.item_id}|${[...seen].sort().join(",")}`;
       if (!dismissed.has(key)) conflictCount += 1;
     }
 
-    // mtdRevenue.
+    // MTD earnings — NET take-home (net_to_owner_gbp), matching dashboard
+    // `monthly.current_earnings` via `monthEarned` (dashboard.ts:428-436).
+    // mtdGrossPaid kept for transparency / fee-rate sanity checks.
     const now = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
     const curStart = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-01`;
     const curEnd = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}`;
-    let mtdRevenue = 0;
+    let mtdEarningsNet = 0;
+    let mtdGrossPaid = 0;
     for (const r of allRes) {
       if (!isLiveStatus(r.status)) continue;
       // REVENUE-SUM CANON (order_step_semantics.ts): require the renter
@@ -221,19 +262,25 @@ export const streamContext = query({
       if (r.order_step ? !isPaid(r.order_step) : r.status !== "confirmed" && r.status !== "completed") continue;
       if (!r.start_date) continue;
       if (r.start_date >= curStart && r.start_date <= curEnd) {
-        mtdRevenue += r.gross_paid_gbp ?? 0;
+        mtdEarningsNet += netOf(r as unknown as ReservationRow);
+        mtdGrossPaid += r.gross_paid_gbp ?? 0;
       }
     }
-    mtdRevenue = Math.round(mtdRevenue * 100) / 100;
+    mtdEarningsNet = Math.round(mtdEarningsNet * 100) / 100;
+    mtdGrossPaid = Math.round(mtdGrossPaid * 100) / 100;
 
-    // topUtilizationDelta — find biggest mover this week vs last.
+    // topWoWMover — biggest mover this week vs last (renamed from topUtilizationDelta).
+    // topUtilization — highest 30-day utilization using the CORRECTED formula
+    // min(100, rentalDays / (qty * 30) * 100) — matches convex/mv/utilization.ts:101.
     const today = todayIsoUtc();
     const start7 = isoNDaysAgoUtc(7);
     const start14 = isoNDaysAgoUtc(14);
+    const start30 = isoNDaysAgoUtc(30);
     const dayMs = 86400000;
     const tToday = Date.parse(today + "T00:00:00Z");
     const t7 = Date.parse(start7 + "T00:00:00Z");
     const t14 = Date.parse(start14 + "T00:00:00Z");
+    const t30 = Date.parse(start30 + "T00:00:00Z");
     function overlapDays(sIso: string, eIso: string, ws: number, we: number): number {
       const s = Date.parse(sIso + "T00:00:00Z");
       const e = Date.parse(eIso + "T00:00:00Z");
@@ -247,9 +294,9 @@ export const streamContext = query({
         isLiveStatus(r.status) &&
         r.start_date !== undefined &&
         r.end_date !== undefined &&
-        r.end_date >= start14,
+        r.end_date >= start30,
     );
-    type UAcc = { name: string; cur: number; prev: number };
+    type UAcc = { name: string; cur: number; prev: number; days30: number };
     const uagg = new Map<string, UAcc>();
     for (const r of recent) {
       const items = r.expanded_items ?? r.resolved_items ?? [];
@@ -258,21 +305,30 @@ export const streamContext = query({
         const qty = (ei as { qty?: number }).qty ?? 1;
         const dC = overlapDays(r.start_date!, r.end_date!, t7, tToday) * qty;
         const dP = overlapDays(r.start_date!, r.end_date!, t14, t7 - dayMs) * qty;
+        const d30 = overlapDays(r.start_date!, r.end_date!, t30, tToday) * qty;
         const cur = uagg.get(k);
         if (cur) {
           cur.cur += dC;
           cur.prev += dP;
+          cur.days30 += d30;
         } else {
-          uagg.set(k, { name: ei.item_name_canonical, cur: dC, prev: dP });
+          uagg.set(k, { name: ei.item_name_canonical, cur: dC, prev: dP, days30: d30 });
         }
       }
     }
-    let topUtilizationDelta: { name: string; deltaPct: number } | null = null;
-    for (const a of uagg.values()) {
+    let topWoWMover: { name: string; deltaPct: number; prev: number; cur: number } | null = null;
+    let topUtilization: { name: string; pct: number; qty: number; rentalDays: number } | null = null;
+    for (const [item_id, a] of uagg.entries()) {
       const base = a.prev === 0 ? Math.max(a.cur, 1) : a.prev;
       const d = ((a.cur - a.prev) / base) * 100;
-      if (!topUtilizationDelta || Math.abs(d) > Math.abs(topUtilizationDelta.deltaPct)) {
-        topUtilizationDelta = { name: a.name, deltaPct: Math.round(d * 10) / 10 };
+      if (!topWoWMover || Math.abs(d) > Math.abs(topWoWMover.deltaPct)) {
+        topWoWMover = { name: a.name, deltaPct: Math.round(d * 10) / 10, prev: a.prev, cur: a.cur };
+      }
+      // 30-day utilization — CORRECT formula (matches mv/utilization.ts:101).
+      const qty = itemQty.get(item_id) ?? 1;
+      const pct = Math.min(100, (a.days30 / (qty * 30)) * 100);
+      if (!topUtilization || pct > topUtilization.pct) {
+        topUtilization = { name: a.name, pct: Math.round(pct * 10) / 10, qty, rentalDays: a.days30 };
       }
     }
 
@@ -284,9 +340,12 @@ export const streamContext = query({
       })),
       snapshot: {
         pendingCount,
+        pendingReview,
         conflictCount,
-        mtdRevenue,
-        topUtilizationDelta,
+        mtdEarningsNet,
+        mtdGrossPaid,
+        topUtilization,
+        topWoWMover,
       },
     };
   },

@@ -237,13 +237,14 @@ export const getItemCycles = query({
 
     return activeItems.map((item) => {
         const rentalDays = rentalDaysMap.get(item.name_canonical) ?? 0;
+        const qty = item.qty ?? 1;
         return {
           itemId: item._id,
           name: item.name_canonical,
           rentalDays,
           idleDays: Math.max(0, days - rentalDays),
           unavailDays: 0,
-          utilizationPct: days > 0 ? rentalDays / days : 0,
+          utilizationPct: days > 0 && qty > 0 ? Math.min(100, (rentalDays / (qty * days)) * 100) : 0,
         };
       });
   },
@@ -385,7 +386,8 @@ export const getSellRecommendations = query({
     const flagged = await Promise.all(
       Array.from(groups.values()).map(async (g) => {
         const rentalDays = rentalDaysMap.get(g.name_canonical) ?? 0;
-        const utilizationPct = rentalDays / LOOKBACK_DAYS;
+        const qty = g.total_qty ?? 1;
+        const utilizationPct = LOOKBACK_DAYS > 0 && qty > 0 ? Math.min(100, (rentalDays / (qty * LOOKBACK_DAYS)) * 100) : 0;
         const ageMonths =
           (Date.now() - g.earliest_created_at) / (1000 * 60 * 60 * 24 * 30);
 

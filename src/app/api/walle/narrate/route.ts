@@ -90,11 +90,14 @@ export async function POST(req: Request) {
     const ctx = await convex.query(api.dashboard_chat.streamContext, { limit: 1 });
     const s = ctx?.snapshot;
     if (s) {
-      const td = s.topUtilizationDelta;
-      const topUtil = td ? `${td.name}:${td.deltaPct.toFixed(2)}` : "none";
+      const mover = s.topWoWMover;
+      const util = s.topUtilization;
+      const moverStr = mover ? `${mover.name}:${mover.deltaPct.toFixed(2)}%` : "none";
+      const utilStr = util ? `${util.name}:${util.pct.toFixed(0)}%` : "none";
       snapshotLine =
         `Live signals — pending:${s.pendingCount} conflicts:${s.conflictCount} ` +
-        `mtdRevenue:£${s.mtdRevenue.toFixed(0)} topUtil:${topUtil}`;
+        `mtdNet:£${s.mtdEarningsNet.toFixed(0)} (gross £${s.mtdGrossPaid.toFixed(0)}) ` +
+        `topUtil:${utilStr} topMover:${moverStr}`;
     }
   } catch {
     // best-effort

@@ -110,14 +110,27 @@ export async function POST(req: Request) {
       const ctx = await convexClient.query(api.dashboard_chat.streamContext, { limit: 10 });
       const s = ctx?.snapshot;
       if (s) {
-        const td = s.topUtilizationDelta;
-        const topUtil = td ? `${td.name}:${td.deltaPct.toFixed(2)}` : "none";
-        snapshotLine =
-          `Live signals — pending:${s.pendingCount} conflicts:${s.conflictCount} ` +
-          `mtdRevenue:£${s.mtdRevenue.toFixed(0)} topUtil:${topUtil}`;
+        snapshotLine = [
+          `Live signals (as of ${new Date().toISOString().slice(0, 10)}):`,
+          `- Pending reservations awaiting review (dashboard count): ${s.pendingCount}`,
+          `- Items in 'pending_review' status (broader count): ${s.pendingReview}`,
+          `- Active confirmed conflicts: ${s.conflictCount}`,
+          `- Month-to-date NET earnings (take-home, after Hygglo ~36% platform fee): £${s.mtdEarningsNet.toFixed(2)}`,
+          `- Month-to-date GROSS paid (before platform fees): £${s.mtdGrossPaid.toFixed(2)}`,
+          s.topUtilization
+            ? `- Top utilization (30-day, capped 100%): ${s.topUtilization.name} at ${s.topUtilization.pct.toFixed(1)}% (qty ${s.topUtilization.qty}, ${s.topUtilization.rentalDays} rental-days)`
+            : `- Top utilization: none`,
+          s.topWoWMover
+            ? `- Biggest week-over-week mover: ${s.topWoWMover.name} (${s.topWoWMover.deltaPct >= 0 ? "+" : ""}${s.topWoWMover.deltaPct}% vs prior 7d). This is a CHANGE %, not utilization.`
+            : `- Top WoW mover: none`,
+        ].join("\n");
       }
-    } catch {
-      // swallow — best-effort snapshot
+    } catch (err) {
+      console.error(
+        "[walle/chat] streamContext failed:",
+        err instanceof Error ? err.stack : err,
+      );
+      snapshotLine = "(no live signals available — error fetching dashboard context)";
     }
   }
 
