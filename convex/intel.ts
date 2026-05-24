@@ -96,12 +96,32 @@ export const getItemROIRanking = query({
     include_unknown_cost: v.optional(v.boolean()),
   },
   handler: async (ctx, { limit, include_unknown_cost }) => {
+    // Phase 6c (2026-05-24) — served from mv_item_roi_rankings, refreshed
+    // daily by master.refreshSlow. Cold-start fallback runs the legacy
+    // live compute for the first cron tick after deploy.
+    const cached = await ctx.db
+      .query("mv_item_roi_rankings")
+      .withIndex("by_account", (q) => q.eq("account", "all"))
+      .first();
+    if (cached) {
+      const all = cached.rows;
+      const filtered = include_unknown_cost
+        ? all
+        : all.filter((r) => r.acquisitionCostGbp !== null);
+      return {
+        ok: true as const,
+        count: filtered.length,
+        rows: filtered.slice(0, limit ?? 20),
+        note:
+          all.length > filtered.length && !include_unknown_cost
+            ? `${all.length - filtered.length} items have no acquisition cost recorded — pass include_unknown_cost:true to include them.`
+            : undefined,
+      };
+    }
+
     const allItems = await ctx.db.query("items").collect();
     const active = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
-    // 2-year window for ROI ranking. Forward-safe today (Daniel's full
-    // dataset is <2y). When history exceeds 2y the ranking will start
-    // understating older items' ROI — at that point migrate to an MV
-    // (cron-refreshed lifetime totals per item).
+    // 2-year fallback window — mirrors mv/item_roi_rankings.ts:ROI_WINDOW_DAYS.
     const roiCutoff = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
     const reservations = await ctx.db
       .query("reservations")

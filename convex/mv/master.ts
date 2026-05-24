@@ -58,6 +58,7 @@ import { computeChurnRisk } from "./churn_risk";
 import { computePurchaseSignals } from "./purchase_signals";
 import { computeMissedRevenue } from "./missed_revenue";
 import { computeEarningsByPeriod, RETENTION_MONTHS as EARNINGS_RETENTION_MONTHS } from "./earnings_by_period";
+import { computeItemRoiRanking } from "./item_roi_rankings";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -249,6 +250,31 @@ export const writeEarningsByPeriod = internalMutation({
   },
 });
 
+/**
+ * Phase 6c (2026-05-24) — mv_item_roi_rankings, single "all" singleton.
+ * Wraps the row payload (rows[] array) into an upsert at "all".
+ */
+export const writeItemRoiRanking = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    const startedAt = Date.now();
+    const existing = await ctx.db
+      .query("mv_item_roi_rankings")
+      .withIndex("by_account", (q) => q.eq("account", "all"))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { generatedAt: startedAt, rows });
+    } else {
+      await ctx.db.insert("mv_item_roi_rankings", {
+        account: "all",
+        generatedAt: startedAt,
+        rows,
+      });
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
 // ──────────────────────────────────────────────────────────────
 // Master refresh actions.
 // ──────────────────────────────────────────────────────────────
@@ -403,6 +429,17 @@ export const refreshSlow = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writePurchaseSignals, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "item_roi_rankings", async () => {
+      // ROI uses the full 2-year window. The slow batch already collects
+      // all reservations + items, so it's a free piggyback.
+      const rows = computeItemRoiRanking({
+        items,
+        reservations: allReservations,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeItemRoiRanking, { rows });
     }));
 
     return { batch: "slow", results };

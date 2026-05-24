@@ -858,6 +858,30 @@ export default defineSchema({
     fleetUtilizationPct: v.number(),
   }).index("by_account", ["account"]),
 
+  // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
+  // master.refreshSlow. Single "all" row holding the full ranking sorted by
+  // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer
+  // slice from this row instead of re-running a 2y reservations.collect()
+  // on every dashboard mutation.
+  mv_item_roi_rankings: defineTable({
+    account: v.string(),                  // "all" — ROI is global
+    generatedAt: v.number(),
+    rows: v.array(v.object({
+      itemId: v.string(),
+      name: v.string(),
+      kind: v.optional(v.string()),
+      qty: v.optional(v.number()),
+      acquisitionCostGbp: v.union(v.number(), v.null()),
+      lifetimeGrossGbp: v.number(),
+      lifetimeNetGbp: v.number(),
+      rentalCount: v.number(),
+      monthsOwned: v.number(),
+      monthlyAvgNetGbp: v.number(),
+      roiPct: v.union(v.number(), v.null()),
+      annualizedROIPct: v.union(v.number(), v.null()),
+    })),
+  }).index("by_account", ["account"]),
+
   // Phase 6b (2026-05-24) — earnings buckets per (account, granularity).
   // Stores 24 months of buckets so EarningsChart slices the requested window
   // server-side without re-collecting the reservations table on every
