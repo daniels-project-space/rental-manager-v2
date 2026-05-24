@@ -11,6 +11,7 @@ import {
   isUpcoming,
   netOf,
 } from "./lib/reservations/predicates";
+import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
 import {
   resolveImageForReservationItem,
   buildSharedImageBlacklist,
@@ -403,15 +404,17 @@ export const getStatsDrawerData = query({
     // Monthly booked rentals = everything non-cancelled (confirmed OR completed)
     // whose effective date falls in the month. v1 parity: a returned rental
     // still counts toward "Month Confirmed" revenue.
-    const monthBookedRentals = dedupRes(
-      allRes.filter((r) => {
-        if (r.is_obsolete) return false;
-        if (r.status !== "confirmed" && r.status !== "completed") return false;
-        if (!r.start_date || !r.end_date) return false;
-        const d = effectiveDateStr(r);
-        return d !== undefined && d >= monthStart && d <= monthEnd;
-      }),
-    );
+    //
+    // SOURCE OF TRUTH: derived from `realisedMonthRevenue` in
+    // lib/reservations/monthRevenue.ts. The same helper backs the lifetime
+    // chart's current-month per-renter buckets, so the Month Confirmed tile
+    // and the live-month bar cannot drift.
+    const _currentMonthKey = monthStart.slice(0, 7);
+    const monthBookedRentals = realisedMonthRevenue(
+      allRes as unknown as ResRow[],
+      _currentMonthKey,
+      accountSlug,
+    ).rentals;
 
     // Revenue slices — net_to_owner_gbp, deduped per rental
     const earnedPaid = dedupRes(

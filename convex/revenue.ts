@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
+import { realisedMonthRevenue, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
@@ -453,23 +454,36 @@ export const getLifetimeByMonth = query({
       }
 
       const key = dateStr.slice(0, 7);
-      // RCA (2026-05-24): Hygglo poller populates `net_to_owner_gbp` on
-      // mid-lifecycle rows (status ∈ APPROVED/FUNDS_RESERVED/REQUEST/null)
-      // before the renter has actually paid. These rows correctly belong
-      // in `awaitingPaymentNextTotal` (for next-month) but historically
-      // they would also slip into the CURRENT-month bar via the
-      // blacklist-only filter above. Monthly Confirmed's tile uses a
-      // strict `confirmed|completed` whitelist for the same month, so
-      // the two diverged. Apply the same whitelist ONLY for the live
-      // month — historical bars (key < currentMonth) keep the legacy
-      // loose predicate since v1-migrated rows lack confirmed-status
-      // semantics and a strict filter would zero them out incorrectly.
-      if (key === currentMonth && !isConfirmedWithDates(res as any)) continue;
+      // CURRENT-MONTH bar is computed below from `realisedMonthRevenue`
+      // (single source of truth — same helper backs the Month Confirmed
+      // tile). Skip the live month here so this loop only fills
+      // HISTORICAL bars (key < currentMonth), where we deliberately keep
+      // the legacy loose predicate because v1-migrated rows lack
+      // confirmed-status semantics and a strict filter would zero them
+      // out incorrectly.
+      if (key === currentMonth) continue;
       if (slug === "leo") {
         leoGross.set(key, r2((leoGross.get(key) ?? 0) + amount));
       } else {
         dbGross.set(key, r2((dbGross.get(key) ?? 0) + amount));
       }
+    }
+
+    // ── CURRENT-MONTH per-slug buckets — single source of truth ──────
+    // Replace the inline loop with `realisedMonthRevenue`, which is the
+    // same helper called by `dashboard.getStatsDrawerData` for the Month
+    // Confirmed tile. Per-account scoped so the lifetime chart's renter
+    // breakdown adds up to the tile.
+    //
+    // Note: dedup runs PER ACCOUNT here (matching the dashboard's
+    // accountSlug-scoped path). Cross-account dedup would only matter if
+    // the same hygglo_order_id appeared under two slugs, which never
+    // happens in this dataset.
+    {
+      const dbRes = realisedMonthRevenue(filtered as any, currentMonth, "dbcinema");
+      const leoRes = realisedMonthRevenue(filtered as any, currentMonth, "leo");
+      if (dbRes.netGbp > 0) dbGross.set(currentMonth, r2(dbRes.netGbp));
+      if (leoRes.netGbp > 0) leoGross.set(currentMonth, r2(leoRes.netGbp));
     }
 
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
