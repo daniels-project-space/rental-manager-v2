@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification } from "./lib/reservations/predicates";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
@@ -425,6 +425,13 @@ export const getLifetimeByMonth = query({
       }
 
       const key = dateStr.slice(0, 7);
+      // Current-month bar must agree with Monthly Confirmed tile
+      // (dashboard.getStatsDrawerData → monthly.confirmed_revenue), which
+      // uses a strict confirmed|completed whitelist. Historical months keep
+      // the legacy loose predicate (legitimately includes v1-migrated rows
+      // without confirmed-status semantics).
+      if (key === currentMonth && !isConfirmedWithDates(res as any)) continue;
+
       if (slug === "leo") {
         leoGross.set(key, r2((leoGross.get(key) ?? 0) + amount));
       } else {
