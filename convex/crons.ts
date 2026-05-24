@@ -67,19 +67,19 @@ crons.interval(
 );
 
 // ── S2 fix — direct backup_poll cron ─────────────────────────────
-// Prior to this, runBackupPoll only ran when poller_health.runStalenessCheck
-// detected the primary writer as stale (>30 min). If staleness detection
-// itself failed (or threshold mismatch), the backup pill went red because
-// no row in sync_state for source=hygglo_backup_poller was ever written.
-// Schedule the backup poll on a direct 10-min cron so it ALWAYS heartbeats
-// independent of primary health. fetchOrdersMinimal caps work at 50 orders
-// per account so cost is bounded.
-crons.interval(
-  "hygglo backup poll",
-  { minutes: 10 },
-  internal.backup_poll.runBackupPoll,
-  {},
-);
+// DISABLED 2026-05-23 (Convex pro-plan over quota): this cron has been
+// READ-ONLY since 2026-05-20 — fetchOrdersMinimal returns telemetry only
+// and writes no domain rows. 144 wasted action runs/day × Hygglo round-trips.
+// The `poller staleness check` cron below already invokes runBackupPoll
+// on-demand when the primary poller goes stale (>30 min), so the heartbeat
+// is preserved via staleness-driven invocation.
+// Re-enable by uncommenting the block below if telemetry/heartbeat gaps appear.
+// crons.interval(
+//   "hygglo backup poll",
+//   { minutes: 10 },
+//   internal.backup_poll.runBackupPoll,
+//   {},
+// );
 
 // Demote stale-confirmed rows (Hygglo dropped them from every filter) to
 // completed so they stop appearing as ongoing/overdue in the Active widget.
@@ -152,15 +152,26 @@ crons.daily(
 // Each writes the same R2 key its Trigger counterpart did. While both run,
 // the Trigger versions short-circuit when SNAPSHOTS_VIA_CONVEX=1 to avoid
 // double-writes (last-writer wins regardless via the wrapSnapshot envelope).
+//
+// TODO (audit 2026-05-23, Convex over-quota): VERIFY the env var
+// SNAPSHOTS_VIA_CONVEX=1 is actually set on Trigger.dev (project
+// proj_cdhxwycwcjdmxnsodsmc, prod env). If unset, the 4 snapshot tasks below
+// fire TWICE per cadence — once here on Convex AND once on Trigger.dev —
+// roughly doubling action runtime for this code path. To check:
+//   npx trigger.dev@latest env list --env prod | grep SNAPSHOTS_VIA_CONVEX
+// Or set it explicitly via Trigger.dev dashboard → Project → Env vars.
 crons.cron(
   "snapshot-intel-rankings",
   "0 */4 * * *",
   internal.snapshot_jobs.snapshotIntelRankings,
   {},
 );
+// Bumped 2026-05-24 from "*/10 * * * *" to "7 * * * *" (hourly, off-minute):
+// the source MV (mv_refresh_fast) refreshes hourly, so the other 5 runs of
+// every 6 wrote identical R2 payloads. Saves ~120 Convex action runs/day.
 crons.cron(
   "snapshot-daily-briefing",
-  "*/10 * * * *",
+  "7 * * * *",
   internal.snapshot_jobs.snapshotDailyBriefing,
   {},
 );

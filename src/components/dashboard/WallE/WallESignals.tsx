@@ -48,13 +48,16 @@ const SEVERITY_STYLES: Record<
 export function useWallESignals(
   accountSlug: string | null = null,
 ): { signals: Signal[]; lastChangeAt: number } {
-  const conflicts = useQuery(api.dashboard_insights.getActiveConflicts, {});
+  // No-arg queries: pass undefined instead of `{}` so we don't churn a fresh
+  // object reference every render (audit 2026-05-23: cuts unnecessary Convex
+  // arg serialization on each re-render of the WallE signal hook).
+  const conflicts = useQuery(api.dashboard_insights.getActiveConflicts);
   const pending = useQuery(api.reservations.listPendingWithoutDecision, {
     limit: 10,
   });
   const dueReturns = useQuery(api.reservations.getDueReturns, { accountSlug });
-  const revenue = useQuery(api.dashboard_insights.getRevenueDelta, {});
-  const utilization = useQuery(api.dashboard_insights.getUtilizationDelta, {});
+  const revenue = useQuery(api.dashboard_insights.getRevenueDelta);
+  const utilization = useQuery(api.dashboard_insights.getUtilizationDelta);
 
   // Stable timestamp per render-result so chips show "recent first" without
   // a wall-clock churn on every render. Updates whenever any query payload

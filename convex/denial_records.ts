@@ -137,14 +137,22 @@ export const listUnresolvedDenials = internalQuery({
   },
 });
 
+// Hard cap on per-invocation scheduler fan-out. Each scheduled
+// `resolveItemFor` call triggers an LLM round-trip (Grok) plus 3-5 internal
+// Convex writes. Backfills that scheduled hundreds of jobs at once were a
+// major Convex credit drain (audit 2026-05-23). 25 keeps the per-run cost
+// bounded — operator can re-run as many times as needed to clear the queue.
+const MAX_BACKFILL_PER_RUN = 25;
+
 /** Public: kick off a backfill of all historical denials. Does NOT run
  *  automatically — operator triggers via:
- *    npx convex run denial_records:backfillResolveAll '{"limit": 50}'
+ *    npx convex run denial_records:backfillResolveAll '{"limit": 25}'
  *  Scheduled in small batches to keep within Convex action budgets. */
 export const backfillResolveAll = mutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
-    const cap = limit ?? 50;
+    const requested = limit ?? MAX_BACKFILL_PER_RUN;
+    const cap = Math.min(requested, MAX_BACKFILL_PER_RUN);
     const rows = await ctx.db
       .query("denial_records")
       .collect();

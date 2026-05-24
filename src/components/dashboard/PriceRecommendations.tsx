@@ -16,7 +16,9 @@ export function PriceRecommendations() {
   const data = useQuery(api.items.getPriceRecommendations, {
     accountSlug: activeAccountSlug,
   });
-  const dismissedNames = useQuery(api.pricing_catalog.getDismissedItemNames, {});
+  // No-arg query: pass undefined so we don't churn a fresh `{}` reference
+  // every render (audit 2026-05-23: cuts unnecessary Convex serialization).
+  const dismissedNames = useQuery(api.pricing_catalog.getDismissedItemNames);
 
   const applyMutation = useMutation(api.pricing_catalog.applyRecommendation);
   const dismissMutation = useMutation(api.pricing_catalog.dismissRecommendation);
