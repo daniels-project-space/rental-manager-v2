@@ -1,6 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import { useState, useCallback } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
 
 export type Kind = "ongoing" | "upcoming" | "pending";
 
@@ -16,7 +20,15 @@ export interface Rental {
   return_time?: string | null;
   pickup_method?: string | null;
   return_method?: string | null;
-  item_tiles?: Array<{ name: string; image_url: string | null; qty: number; raw_name?: string }>;
+  item_tiles?: Array<{
+    name: string;
+    image_url: string | null;
+    qty: number;
+    raw_name?: string;
+    // 2026-05-24 — listing info pool fields (null when flag OFF or no row).
+    info_pool_badge?: "manual" | "needs_review" | "llm" | null;
+    product_id?: number | null;
+  }>;
   // PASS-8: distinct-image tiles (deduped by image_url). First entry = master.
   item_image_tiles?: Array<{
     image_url: string;
@@ -67,6 +79,356 @@ export const fmtTime = (t?: string | null) => {
   return t.length >= 5 ? t.slice(0, 5) : t;
 };
 
+// ── Phase 4: tile chip with edit affordance ───────────────────────────────
+//
+// Renders the canonical name chip + a small badge (🤖 / ✏️ / ⚠️) showing
+// derivation provenance. Hover surfaces a pencil → opens edit modal that
+// calls setManualOverride. Click the 🤖 badge → confirm re-derive prompt
+// that calls forceReDerive.
+//
+// Renders identically to the legacy chip when info_pool_badge is null
+// (flag OFF or no pool row), so this component is a drop-in replacement.
+
+const BADGE_DEF: Record<"manual" | "needs_review" | "llm", { glyph: string; color: string; title: string }> = {
+  manual: { glyph: "✏️", color: "#a78bfa", title: "manually overridden" },          // pencil
+  needs_review: { glyph: "⚠️", color: "#fbbf24", title: "needs review" },           // warning
+  llm: { glyph: "🤖", color: "#94a3b8", title: "LLM-derived (click to re-derive)" }, // robot
+};
+
+function ItemTileChip({
+  tile,
+  accountSlug,
+}: {
+  tile: NonNullable<Rental["item_tiles"]>[number];
+  accountSlug: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const forceReDerive = useMutation(api.listing_info_pool.forceReDerive);
+  const badge = tile.info_pool_badge ? BADGE_DEF[tile.info_pool_badge] : null;
+  const canEdit = !!tile.product_id; // pool wired only when product_id known
+
+  const handleReDeriveClick = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!tile.product_id) return;
+      if (!window.confirm(`Re-derive "${tile.name}" from the source title?\n\nThis will overwrite the LLM result with a fresh derivation but will NOT touch manual overrides.`)) {
+        return;
+      }
+      setBusy(true);
+      try {
+        await forceReDerive({ account_slug: accountSlug, product_id: tile.product_id });
+        // The poller / next render will pick up the fresh value once the
+        // background action completes; nothing to do client-side.
+      } finally {
+        setBusy(false);
+      }
+    },
+    [tile.product_id, tile.name, accountSlug, forceReDerive],
+  );
+
+  return (
+    <>
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700 text-slate-300 group"
+        title={tile.raw_name ?? tile.name}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+      >
+        {tile.name}
+        {tile.qty > 1 && (
+          <span className="ml-1 text-slate-500">×{tile.qty}</span>
+        )}
+        {badge && (
+          <button
+            type="button"
+            className="ml-1 cursor-pointer"
+            style={{ color: badge.color }}
+            title={badge.title}
+            onClick={tile.info_pool_badge === "llm" ? handleReDeriveClick : undefined}
+            disabled={busy}
+            aria-label={badge.title}
+          >
+            {badge.glyph}
+          </button>
+        )}
+        {canEdit && (hover || editing) && (
+          <button
+            type="button"
+            className="ml-1 text-slate-500 hover:text-slate-200"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditing(true);
+            }}
+            title="Edit canonical name + components"
+            aria-label="Edit"
+          >
+            ✏
+          </button>
+        )}
+      </span>
+      {editing && tile.product_id && (
+        <TileEditor
+          accountSlug={accountSlug}
+          productId={tile.product_id}
+          initialDisplayName={tile.name}
+          onClose={() => setEditing(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// ── Edit-in-place modal ───────────────────────────────────────────────────
+//
+// Two fields:
+//   1. Display name (free text).
+//   2. Bundle components (newline-separated list of canonical item names).
+//      Each line is fuzzy-matched against the items table to resolve item_id.
+//      Unresolvable lines are flagged inline; user can save with them
+//      unresolved (the pool row stays needs_review).
+//
+// Calls listing_info_pool:setManualOverride. Override fields are per-field;
+// unchanged inputs leave the existing override (or null) untouched.
+
+function TileEditor({
+  accountSlug,
+  productId,
+  initialDisplayName,
+  onClose,
+}: {
+  accountSlug: string;
+  productId: number;
+  initialDisplayName: string;
+  onClose: () => void;
+}) {
+  const current = useQuery(api.listing_info_pool.getEffective, {
+    account_slug: accountSlug,
+    product_id: productId,
+  });
+  const inventory = useQuery(api.items.listActive, {});
+  const setOverride = useMutation(api.listing_info_pool.setManualOverride);
+
+  const [displayName, setDisplayName] = useState(initialDisplayName);
+  const [componentsText, setComponentsText] = useState("");
+  const [initialised, setInitialised] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Hydrate the editor with the latest effective view once it arrives.
+  if (current && !initialised) {
+    setDisplayName(current.display_name);
+    setComponentsText(
+      current.bundle_components
+        .filter((c) => c.source_kind !== "comparison_reference")
+        .map((c) => `${c.item_name_canonical ?? c.source_span ?? "(unknown)"}${c.qty > 1 ? ` x${c.qty}` : ""}`)
+        .join("\n"),
+    );
+    setInitialised(true);
+  }
+
+  // Resolve each line to an item_id by case-insensitive canonical match.
+  // Unmatched lines surface inline so the user sees them before saving.
+  const resolvedLines = (() => {
+    if (!inventory) return [] as Array<{ line: string; match: { id: Id<"items">; name: string } | null; qty: number }>;
+    return componentsText
+      .split("\n")
+      .map((raw) => raw.trim())
+      .filter((s) => s.length > 0)
+      .map((line) => {
+        // Extract trailing " x2" / " ×2" qty annotation.
+        let qty = 1;
+        let nameOnly = line;
+        const m = line.match(/^(.*?)\s+[x×]\s*(\d+)\s*$/i);
+        if (m) {
+          nameOnly = m[1].trim();
+          qty = Math.max(1, parseInt(m[2], 10) || 1);
+        }
+        const lc = nameOnly.toLowerCase();
+        let best: { id: Id<"items">; name: string } | null = null;
+        for (const it of inventory) {
+          if (it.name.toLowerCase() === lc) {
+            best = { id: it.id as Id<"items">, name: it.name };
+            break;
+          }
+        }
+        if (!best) {
+          // Fuzzy: contains-match
+          for (const it of inventory) {
+            if (it.name.toLowerCase().includes(lc) || lc.includes(it.name.toLowerCase())) {
+              best = { id: it.id as Id<"items">, name: it.name };
+              break;
+            }
+          }
+        }
+        return { line: nameOnly, match: best, qty };
+      });
+  })();
+
+  const allResolved = resolvedLines.length === 0 || resolvedLines.every((r) => r.match !== null);
+
+  const onSave = async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      // Don't ship a bundle_summary; let the read-side derive it from display_name.
+      const args: {
+        account_slug: string;
+        product_id: number;
+        set_by: string;
+        short_name?: string;
+        bundle_summary?: string;
+        bundle_components?: Array<{ item_id: Id<"items">; qty: number }>;
+      } = {
+        account_slug: accountSlug,
+        product_id: productId,
+        set_by: "dashboard-ui",
+      };
+      if (displayName.trim() !== (current?.display_name ?? "")) {
+        // Split display into short_name + bundle_summary on the FIRST " + ".
+        const idx = displayName.indexOf(" + ");
+        if (idx > 0) {
+          args.short_name = displayName.slice(0, idx).trim();
+          args.bundle_summary = "+ " + displayName.slice(idx + 3).trim();
+        } else {
+          args.short_name = displayName.trim();
+          args.bundle_summary = "";
+        }
+      }
+      const components = resolvedLines
+        .filter((r) => r.match !== null)
+        .map((r) => ({ item_id: r.match!.id, qty: r.qty }));
+      if (components.length > 0) {
+        args.bundle_components = components;
+      }
+      await setOverride(args);
+      onClose();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-100">
+            Edit listing info
+            <span className="ml-2 text-[10px] text-slate-500">
+              {accountSlug}#{productId}
+            </span>
+          </h3>
+          <button
+            type="button"
+            className="text-slate-500 hover:text-slate-200"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <label className="mb-3 block">
+          <span className="mb-1 block text-[11px] uppercase tracking-wider text-slate-400">
+            Display name
+          </span>
+          <input
+            type="text"
+            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder='e.g. "Sony FX3 + 24-70mm GM"'
+          />
+          <span className="mt-1 block text-[10px] text-slate-500">
+            Split at the first " + " into short_name + bundle_summary.
+          </span>
+        </label>
+
+        <label className="mb-3 block">
+          <span className="mb-1 block text-[11px] uppercase tracking-wider text-slate-400">
+            Bundle components (one per line)
+          </span>
+          <textarea
+            className="h-32 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 font-mono"
+            value={componentsText}
+            onChange={(e) => setComponentsText(e.target.value)}
+            placeholder={"Sony FX3\nSony GM 24-70mm f2.8\nAtomos Ninja V"}
+          />
+          <span className="mt-1 block text-[10px] text-slate-500">
+            Each line matched against items table. Add " x2" for multi-unit
+            (e.g. "Sony FX3 x2"). Unresolvable lines are flagged below.
+          </span>
+        </label>
+
+        {!inventory ? (
+          <div className="mb-3 text-[11px] text-slate-500">Loading inventory...</div>
+        ) : resolvedLines.length > 0 && (
+          <div className="mb-3 max-h-32 overflow-y-auto rounded border border-slate-800 p-2 text-[11px]">
+            {resolvedLines.map((r, i) => (
+              <div key={i} className="flex items-center gap-2 py-0.5">
+                <span className={r.match ? "text-emerald-400" : "text-amber-400"}>
+                  {r.match ? "✓" : "⚠"}
+                </span>
+                <span className="text-slate-300">
+                  {r.line} {r.qty > 1 && <span className="text-slate-500">x{r.qty}</span>}
+                </span>
+                {r.match && (
+                  <span className="text-slate-500">
+                    → {r.match.name}
+                  </span>
+                )}
+                {!r.match && (
+                  <span className="text-amber-500">unresolved</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!allResolved && (
+          <div className="mb-3 rounded border border-amber-700 bg-amber-900/30 p-2 text-[11px] text-amber-300">
+            Some lines unresolved. They will be dropped from the saved
+            components list (but display_name is saved). To save them, add
+            matching aliases in the items table or rename the lines.
+          </div>
+        )}
+        {err && (
+          <div className="mb-3 rounded border border-red-700 bg-red-900/30 p-2 text-[11px] text-red-300">
+            {err}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-800"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="rounded bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+            onClick={onSave}
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save override"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function RentalRow({ r }: { r: Rental }) {
   const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
   const s = SECTION[kind];
@@ -101,7 +463,7 @@ export function RentalRow({ r }: { r: Rental }) {
     <div
       className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
     >
-      {/* Master Thumbnail — v1 pattern (one 56×56 photo per rental).
+      {/* Master Thumbnail — v1 pattern (one 56x56 photo per rental).
           Rounding lives on the <img> so hover-zoom is not clipped. */}
       <div className="relative h-14 w-14 flex-shrink-0 rounded-md bg-slate-900/60 ring-1 ring-slate-800">
         {masterImg ? (
@@ -189,23 +551,22 @@ export function RentalRow({ r }: { r: Rental }) {
         {/* Canonical inventory-matched item chips (was: comma-joined SEO
             summary). One chip per item from r.item_tiles, qty suffix when
             > 1. Falls back to the old single-line summary if item_tiles is
-            empty (stale API responses during deploys). */}
+            empty (stale API responses during deploys).
+            2026-05-24: chip rendering moved to ItemTileChip which adds the
+            listing-info-pool badge + edit-in-place affordance when the per-
+            account flag is ON (info_pool_badge non-null). When OFF, the
+            chip renders identically to the pre-pool design. */}
         {r.item_tiles && r.item_tiles.length > 0 ? (
           <div
             className="mt-0.5 flex flex-wrap items-center gap-1"
             title={summary}
           >
             {r.item_tiles.map((t, i) => (
-              <span
+              <ItemTileChip
                 key={`${t.name}-${i}`}
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700 text-slate-300"
-                title={t.raw_name ?? t.name}
-              >
-                {t.name}
-                {t.qty > 1 && (
-                  <span className="ml-1 text-slate-500">×{t.qty}</span>
-                )}
-              </span>
+                tile={t}
+                accountSlug={r.account_slug}
+              />
             ))}
           </div>
         ) : (

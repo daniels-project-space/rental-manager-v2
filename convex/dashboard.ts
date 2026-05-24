@@ -1032,6 +1032,7 @@ export const getStatsDrawerData = query({
               info_pool_badge: pool
                 ? (pool.is_manually_overridden ? "manual" : (pool.needs_review ? "needs_review" : "llm"))
                 : null,
+              product_id: pid ?? null,
             };
           }),
           kind,
