@@ -8,9 +8,10 @@
  *
  * READ-ONLY on Hygglo: only GET requests after auth. No mutations sent to Hygglo.
  */
-import { schedules, logger } from "@trigger.dev/sdk/v3";
+import { schedules, logger, tasks } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
+import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 
@@ -699,6 +700,14 @@ export const pollHyggloInbox = schedules.task({
             hygglo_detail_payload?: unknown;
             image_url?: string;
           }> = [];
+          // Per-item info-pool targets harvested from newly-inserted
+          // reservations. De-duped by (account, product_id) inside the
+          // loop; fired as a single tasks.trigger() call after upserts
+          // complete.
+          const infoPoolTargets = new Map<
+            string,
+            { account_slug: string; product_id: number; raw_title: string }
+          >();
 
           for (let i = 0; i < reservations.length; i += 50) {
             const batch = reservations.slice(i, i + 50);
@@ -749,6 +758,21 @@ export const pollHyggloInbox = schedules.task({
                     hygglo_detail_payload: payload.order,
                     image_url: firstItem?.image?.fullSizeUrl ?? firstItem?.image?.largeUrl ?? firstItem?.image?.url,
                   });
+                  // Harvest per-item info-pool targets. One pool row per
+                  // (account, product_id); skip INSURANCE rows and items
+                  // without a product_id (Hygglo "manual" items).
+                  for (const it of payload.items) {
+                    if (!it || it.type === "INSURANCE") continue;
+                    if (typeof it.product_id !== "number") continue;
+                    if (!it.item_name) continue;
+                    const key = `${account.slug}#${it.product_id}`;
+                    if (infoPoolTargets.has(key)) continue;
+                    infoPoolTargets.set(key, {
+                      account_slug: account.slug,
+                      product_id: it.product_id,
+                      raw_title: it.item_name,
+                    });
+                  }
                 }
               } else if (resResult.action === "updated") resUpdated++;
             }
@@ -801,6 +825,31 @@ export const pollHyggloInbox = schedules.task({
                   });
                 }
               }
+            }
+          }
+
+          // 2026-05-24: kick the listing_info_pool derive task for fresh
+          // listings. Trigger.dev's tasks.trigger is async/fire-and-forget
+          // — we don't await the run, just the enqueue. The Convex
+          // mutation that used to do this in-line was deleted (LLM work
+          // belongs on Trigger, per CLAUDE.md).
+          if (infoPoolTargets.size > 0) {
+            try {
+              const handle = await tasks.trigger<typeof deriveListingInfoPoolOnDemandTask>(
+                "derive-listing-info-pool-on-demand",
+                { targets: Array.from(infoPoolTargets.values()) },
+              );
+              logger.info("[poll-hygglo] info-pool derive enqueued", {
+                account: account.slug,
+                target_count: infoPoolTargets.size,
+                run_id: handle.id,
+              });
+            } catch (poolErr) {
+              logger.warn("[poll-hygglo] info-pool derive enqueue failed", {
+                account: account.slug,
+                target_count: infoPoolTargets.size,
+                err: String(poolErr),
+              });
             }
           }
 

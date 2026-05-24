@@ -426,43 +426,13 @@ async function scheduleListingResolutionOnDenial(
   }
 }
 
-// 2026-05-24: ONE-TIME fill semantics for the listing_info_pool. Each
-// (account_slug, product_id) derives exactly once at first insert; the row
-// is then a stable lookup table that downstream services reference by
-// listing_id to cross-ref bundle_components against the items inventory.
-// Title/image drift on subsequent polls does NOT re-trigger derivation —
-// the manual forceReDerive mutation (invoked from the edit-in-place UI) is
-// the only re-derive path. Errors swallowed so the poller never blocks.
-async function scheduleInfoPoolDerivation(
-  ctx: MutationCtx,
-  account_slug: string,
-  hyggloItems: Array<{ name: string; product_id?: number; type: string }>,
-): Promise<void> {
-  const seen = new Set<number>();
-  for (const it of hyggloItems) {
-    if (!it || it.type === "INSURANCE") continue;
-    if (typeof it.product_id !== "number") continue;
-    if (!it.name) continue;
-    if (seen.has(it.product_id)) continue;
-    seen.add(it.product_id);
-    try {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.listing_info_pool_actions.deriveOne,
-        {
-          account_slug,
-          product_id: it.product_id,
-          raw_title: it.name,
-        },
-      );
-    } catch (err) {
-      console.warn(
-        "[hygglo.upsertOrderImpl] scheduleInfoPoolDerivation failed",
-        String(err),
-      );
-    }
-  }
-}
+// 2026-05-24: listing_info_pool derivation now lives on Trigger.dev
+// (src/trigger/derive-listing-info-pool.ts). The Hygglo poll task in
+// src/trigger/poll-hygglo.ts fires `tasks.trigger("derive-listing-info-pool-
+// on-demand", { targets })` after a fresh insert batch for low-latency
+// fills; the half-hourly cron task is the backstop for anything missed +
+// for forceReDerive (UI) rows. This mutation no longer schedules derivation
+// itself — Convex actions are not allowed for LLM work (CLAUDE.md).
 
 // Fire-and-forget short_name derivation for each Hygglo per-item product.
 // Mutations can't call actions directly - scheduler-only. The action itself
@@ -772,7 +742,11 @@ async function upsertOrderImpl(
     created_at: now,
   });
   await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsInsert);
-  await scheduleInfoPoolDerivation(ctx, args.account_slug, hyggloItemsInsert);
+  // listing_info_pool derivation: handled by Trigger.dev. poll-hygglo fires
+  // `tasks.trigger("derive-listing-info-pool-on-demand", { targets })` after
+  // the upsert batch completes — see src/trigger/poll-hygglo.ts. The
+  // half-hourly cron in src/trigger/derive-listing-info-pool.ts is the
+  // backstop for any rows missed by the on-demand path.
 
   // EQ-C: when an order first appears already in the obsolete bucket (renter
   // never made it past REQUEST → owner denied before we ever saw it in
