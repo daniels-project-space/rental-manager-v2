@@ -149,8 +149,9 @@ export const runStalenessCheck = internalAction({
 
     if (toAlert.length === 0) return report;
 
-    // 2026-05-20: DISABLED — backup poller writes stripped data, overwrites primary-enriched rows. Re-enable only after backup_poll fix.
-    // const backupResult = await ctx.runAction(internal.backup_poll.runBackupPoll, {});
+    // Auto-heal removed 2026-05-24 (phase 7c) along with backup_poll.ts
+    // (was disabled 2026-05-20 due to data-stripping bug; never re-enabled).
+    // Stale-poll alerting via Telegram still fires below.
     report.autoHealInvoked = false;
 
     for (const s of toAlert) {
@@ -181,53 +182,8 @@ export const runStalenessCheck = internalAction({
   },
 });
 
-// ── Wave 4 — Test-only helpers (failover validation) ─────────────────
-// internalMutation = not callable from HTTP/clients. These exist for the
-// failover test and admin debug; safe to leave in production.
-
-export const test_setStaleAccount = internalMutation({
-  args: { account: v.string(), staleMinutes: v.number() },
-  handler: async (ctx, { account, staleMinutes }) => {
-    const row = await ctx.db
-      .query("account_state")
-      .withIndex("by_account", (q) => q.eq("account", account))
-      .first();
-    if (!row) return { ok: false, reason: "not_found" } as const;
-    const previousLast = row.lastSuccessfulPollAt;
-    await ctx.db.patch(row._id, {
-      lastSuccessfulPollAt: Date.now() - staleMinutes * 60_000,
-    });
-    return { ok: true, previousLast } as const;
-  },
-});
-
-export const test_restoreAccount = internalMutation({
-  args: { account: v.string(), lastSuccessfulPollAt: v.number() },
-  handler: async (ctx, { account, lastSuccessfulPollAt }) => {
-    const row = await ctx.db
-      .query("account_state")
-      .withIndex("by_account", (q) => q.eq("account", account))
-      .first();
-    if (!row) return { ok: false } as const;
-    await ctx.db.patch(row._id, { lastSuccessfulPollAt });
-    return { ok: true } as const;
-  },
-});
-
-export const test_clearAlertsForAccount = internalMutation({
-  args: { account_slug: v.string(), since: v.number() },
-  handler: async (ctx, { account_slug, since }) => {
-    const rows = await ctx.db
-      .query("poller_alerts")
-      .withIndex("by_account_slug", (q) => q.eq("account_slug", account_slug))
-      .collect();
-    let deleted = 0;
-    for (const r of rows) {
-      if (r.sent_at >= since) {
-        await ctx.db.delete(r._id);
-        deleted += 1;
-      }
-    }
-    return { deleted };
-  },
-});
+// Wave 4 failover test helpers (test_setStaleAccount, test_restoreAccount,
+// test_clearAlertsForAccount) deleted 2026-05-24. Wave 4 cutover landed
+// 2026-05-13 and was validated end-to-end; the helpers were never wired into
+// any automated test suite and had zero runtime callers. Restore from git
+// history if a future failover incident needs hands-on simulation.

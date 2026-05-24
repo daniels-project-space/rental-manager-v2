@@ -435,7 +435,11 @@ export default defineSchema({
     .index("by_start_date", ["start_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])
     .index("by_hygglo_order_id", ["hygglo_order_id"])
-    .index("by_demand_loss_class", ["demand_loss_class"]),
+    .index("by_demand_loss_class", ["demand_loss_class"])
+    // Phase 7a (2026-05-24) — composite for audit_qty_drift + dashboard
+    // status-scoped queries. Cuts unindexed full-table scans down to the
+    // confirmed-only slice (~300 rows vs ~1700).
+    .index("by_account_status", ["account_slug", "status"]),
 
   // ── Layer B (2026-05-19) — qty-drift safety net ────────────────────────
   // Nightly audit (convex/audit_qty_drift.ts) detects reservations whose

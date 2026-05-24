@@ -60,20 +60,11 @@ crons.daily(
 // invocations/day per account). Removed entirely. Reinstate by reading
 // git history if a future flow genuinely needs Convex-side polling.
 
-// ── S2 fix — direct backup_poll cron ─────────────────────────────
-// DISABLED 2026-05-23 (Convex pro-plan over quota): this cron has been
-// READ-ONLY since 2026-05-20 — fetchOrdersMinimal returns telemetry only
-// and writes no domain rows. 144 wasted action runs/day × Hygglo round-trips.
-// The `poller staleness check` cron below already invokes runBackupPoll
-// on-demand when the primary poller goes stale (>30 min), so the heartbeat
-// is preserved via staleness-driven invocation.
-// Re-enable by uncommenting the block below if telemetry/heartbeat gaps appear.
-// crons.interval(
-//   "hygglo backup poll",
-//   { minutes: 10 },
-//   internal.backup_poll.runBackupPoll,
-//   {},
-// );
+// backup_poll cron + runBackupPoll action both deleted 2026-05-24 (phase 7c).
+// Was disabled 2026-05-23 and the implementation file was orphaned; the
+// poller_health staleness check no longer invokes it either (line 152 comment
+// in convex/poller_health.ts). Telegram alerts still fire on staleness, just
+// without an auto-heal action. Restore from git history if needed.
 
 // Demote stale-confirmed rows (Hygglo dropped them from every filter) to
 // completed so they stop appearing as ongoing/overdue in the Active widget.

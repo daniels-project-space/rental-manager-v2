@@ -32,12 +32,32 @@ export const listAuditCandidates = internalQuery({
     const today = new Date().toISOString().slice(0, 10);
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 
-    const rows = account_slug
-      ? await ctx.db
-          .query("reservations")
-          .withIndex("by_account_slug", (q) => q.eq("account_slug", account_slug))
-          .collect()
-      : await ctx.db.query("reservations").collect();
+    // Phase 7a (2026-05-24): swap the unindexed full-table collect on the
+    // global path (`account_slug` omitted) for a status-indexed read.
+    // The weekly cron always passes only_active=true; combined with the
+    // by_status / by_account_status index, that drops the scan from
+    // ~1700 rows → ~300 confirmed rows per run.
+    let rows;
+    if (account_slug && only_active) {
+      rows = await ctx.db
+        .query("reservations")
+        .withIndex("by_account_status", (q) =>
+          q.eq("account_slug", account_slug).eq("status", "confirmed"),
+        )
+        .collect();
+    } else if (account_slug) {
+      rows = await ctx.db
+        .query("reservations")
+        .withIndex("by_account_slug", (q) => q.eq("account_slug", account_slug))
+        .collect();
+    } else if (only_active) {
+      rows = await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+        .collect();
+    } else {
+      rows = await ctx.db.query("reservations").collect();
+    }
 
     const out: AuditCandidate[] = [];
     for (const r of rows) {

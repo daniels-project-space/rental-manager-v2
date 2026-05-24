@@ -257,36 +257,6 @@ export const extractForReservation = action({
   },
 });
 
-/** Cron-friendly batch: find reservations needing extraction. */
-export const extractBatch = internalAction({
-  args: { limit: v.optional(v.number()) },
-  handler: async (
-    ctx,
-    { limit },
-  ): Promise<{ ids: number; ok: number; skipped: number }> => {
-    if (isWithinUkQuietHours()) {
-      console.log("[quiet-hours] skip extractBatch");
-      return { ids: 0, ok: 0, skipped: 0 };
-    }
-    const ids: Array<string> = await ctx.runQuery(
-      internal.extract_booking_times_q.listNeedingExtraction,
-      { limit: limit ?? 10 },
-    );
-    let ok = 0;
-    let skipped = 0;
-    for (const id of ids) {
-      try {
-        const res = (await ctx.runAction(
-          api.extract_booking_times.extractForReservation,
-          { reservation_id: id as never },
-        )) as { ok: boolean; skipped?: unknown };
-        if (res.ok && !res.skipped) ok++;
-        else skipped++;
-      } catch (err) {
-        console.error("[extract-batch] failed for", id, err);
-        skipped++;
-      }
-    }
-    return { ids: ids.length, ok, skipped };
-  },
-});
+// extractBatch deleted 2026-05-24 — lifted to src/trigger/extract-booking-times.ts
+// in Phase 18.5 (LLM-on-Trigger rule from CLAUDE.md). The Convex action was
+// orphaned with zero callers after the lift.
