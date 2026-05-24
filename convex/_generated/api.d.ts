@@ -126,6 +126,7 @@ import type * as mv_master from "../mv/master.js";
 import type * as mv_missed_revenue from "../mv/missed_revenue.js";
 import type * as mv_purchase_signals from "../mv/purchase_signals.js";
 import type * as mv_refresh_dispatch from "../mv/refresh_dispatch.js";
+import type * as mv_stats_drawer from "../mv/stats_drawer.js";
 import type * as mv_top_earners from "../mv/top_earners.js";
 import type * as mv_upcoming_returns from "../mv/upcoming_returns.js";
 import type * as mv_utilization from "../mv/utilization.js";
@@ -285,6 +286,7 @@ declare const fullApi: ApiFromModules<{
   "mv/missed_revenue": typeof mv_missed_revenue;
   "mv/purchase_signals": typeof mv_purchase_signals;
   "mv/refresh_dispatch": typeof mv_refresh_dispatch;
+  "mv/stats_drawer": typeof mv_stats_drawer;
   "mv/top_earners": typeof mv_top_earners;
   "mv/upcoming_returns": typeof mv_upcoming_returns;
   "mv/utilization": typeof mv_utilization;

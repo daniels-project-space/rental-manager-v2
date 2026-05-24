@@ -866,6 +866,19 @@ export default defineSchema({
     fleetUtilizationPct: v.number(),
   }).index("by_account", ["account"]),
 
+  // Phase 7d (2026-05-24) — wrap-and-cache the 16-card getStatsDrawerData
+  // megaquery. The refresher runs the existing handler internally per
+  // (accountSlug) and stores the full payload as v.any(). Dashboard
+  // subscriptions read a single indexed row instead of re-running the
+  // 8-collect + 16-card compute on every reservation mutation.
+  // Refreshed by master.refreshFast (hourly). One row per slug; "all"
+  // represents accountSlug=null.
+  mv_stats_drawer: defineTable({
+    account: v.string(),                  // "dbcinema" | "leo" | "all"
+    generatedAt: v.number(),
+    payload: v.any(),                     // full StatsDrawerData JSON
+  }).index("by_account", ["account"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer

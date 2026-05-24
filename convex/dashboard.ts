@@ -203,8 +203,55 @@ const ACTIVE_ORDER_STEPS = new Set([
 ]);
 
 export const getStatsDrawerData = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    // Phase 7d (2026-05-24): when true, skip the mv_stats_drawer lookup and
+    // run the live compute below. Set ONLY by mv/stats_drawer.ts:refreshAll
+    // so the refresher avoids an infinite loop (MV reader → MV → ... ).
+    // Public callers should leave this undefined; the shim runs the cached
+    // path by default.
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, _bypassMv }) => {
+    if (!_bypassMv) {
+      // Phase 7d cached path: read the mv_stats_drawer row written hourly
+      // by master.refreshFast. Falls through to live compute below when the
+      // row is missing (cold-start window after deploy or after table wipe).
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_stats_drawer")
+        .withIndex("by_account", (q) => q.eq("account", accountKey))
+        .first();
+      if (cached) {
+        // Scanner card needs real-time freshness (drives the "stale poller"
+        // warning). Overlay the cached payload with fresh sync_state reads
+        // so the widget reflects actual seconds-ago, not last-MV-refresh-ago.
+        const [pRow, bRow, cRow] = await Promise.all([
+          ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_poller")).first(),
+          ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_backup_poller")).first(),
+          ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_cron")).first(),
+        ]);
+        const candidates: Array<{ source: string; lastRunAt: number }> = [
+          pRow && { source: "hygglo_poller", lastRunAt: pRow.lastRunAt },
+          bRow && { source: "hygglo_backup_poller", lastRunAt: bRow.lastRunAt },
+          cRow && { source: "hygglo_cron", lastRunAt: cRow.lastRunAt },
+        ].filter(Boolean) as Array<{ source: string; lastRunAt: number }>;
+        const winning = candidates.length > 0
+          ? candidates.reduce((a, b) => (a.lastRunAt >= b.lastRunAt ? a : b))
+          : null;
+        const cachedPayload = cached.payload as Record<string, unknown>;
+        const cachedScanner = (cachedPayload.scanner ?? {}) as Record<string, unknown>;
+        // Match the live shape verbatim — same field names + types as the
+        // legacy compute (line ~1336 of this file).
+        const freshScanner = {
+          last_scan_at: winning?.lastRunAt ?? cachedScanner.last_scan_at ?? null,
+          last_scan_source: winning?.source ?? cachedScanner.last_scan_source ?? null,
+          last_run_succeeded: pRow?.lastRunSucceeded ?? cachedScanner.last_run_succeeded ?? null,
+          rows_upserted_last: pRow?.rowsUpserted?.reservations ?? 0,
+        };
+        return { ...cachedPayload, scanner: freshScanner };
+      }
+    }
     const today = new Date().toISOString().slice(0, 10);
     const now = new Date();
 

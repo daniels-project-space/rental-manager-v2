@@ -59,6 +59,7 @@ import { computePurchaseSignals } from "./purchase_signals";
 import { computeMissedRevenue } from "./missed_revenue";
 import { computeEarningsByPeriod, RETENTION_MONTHS as EARNINGS_RETENTION_MONTHS } from "./earnings_by_period";
 import { computeItemRoiRanking } from "./item_roi_rankings";
+import { refreshAll as refreshStatsDrawer } from "./stats_drawer";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -358,6 +359,15 @@ export const refreshFast = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeEarningsByPeriod, { rows });
+    }));
+
+    // Phase 7d (2026-05-24): wrap-and-cache the 16-card getStatsDrawerData
+    // megaquery per (account). Runs the existing live handler for each slug
+    // and stores the full payload — dashboard subscriptions now read 1
+    // indexed row instead of re-running 8 collects + 16 cards on every
+    // reservation mutation.
+    results.push(await safeStep(ctx, "stats_drawer", async () => {
+      await refreshStatsDrawer(ctx);
     }));
 
     return { batch: "fast", results };
