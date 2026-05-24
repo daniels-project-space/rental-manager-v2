@@ -13,6 +13,7 @@ import {
   netOf,
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
+import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import {
   resolveImageForReservationItem,
   buildSharedImageBlacklist,
@@ -1200,6 +1201,46 @@ export const getStatsDrawerData = query({
       }
     }
     claims_value_gbp = Math.round(claims_value_gbp * 100) / 100;
+
+    // INVARIANT: per-slug sum from realisedMonthRevenue must equal the
+    // all-accounts confirmed_revenue (monthBookedRevenue) computed above —
+    // single source of truth in convex/lib/reservations/monthRevenue.ts.
+    // If this warns, a code change reintroduced a predicate fork — fix it
+    // in monthRevenue.ts, not by patching here. monthBookedRevenue is
+    // already derived from realisedMonthRevenue (commit cc38126), so the
+    // per-slug comparison is the meaningful guard.
+    {
+      const perSlugSum = ACCOUNT_SLUGS.reduce(
+        (s, slug) =>
+          s + realisedMonthRevenue(allRes as unknown as ResRow[], currentMonth, slug).netGbp,
+        0,
+      );
+      const totalAll = realisedMonthRevenue(
+        allRes as unknown as ResRow[],
+        currentMonth,
+        null,
+      ).netGbp;
+      // When accountSlug is set, `allRes` is already pre-filtered to one slug,
+      // so per-slug sum collapses to a single non-zero term and the all-accounts
+      // call returns the same number — invariant still holds. When accountSlug
+      // is null we get the full fan-out.
+      const deltaPerSlug = totalAll - perSlugSum;
+      if (Math.abs(deltaPerSlug) > 0.01) {
+        console.warn(
+          "[INVARIANT] month-revenue drift",
+          {
+            currentMonth,
+            accountSlug,
+            totalAll,
+            perSlugSum,
+            monthBookedRevenue,
+            delta_to_per_slug: deltaPerSlug,
+            delta_to_inline: totalAll - monthBookedRevenue,
+            known_slugs: ACCOUNT_SLUGS,
+          },
+        );
+      }
+    }
 
     const confirmed = {
       month_count: monthBookedRentals.length,

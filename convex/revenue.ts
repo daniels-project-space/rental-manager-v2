@@ -2,6 +2,7 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
 import { realisedMonthRevenue, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
+import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
@@ -480,10 +481,18 @@ export const getLifetimeByMonth = query({
     // the same hygglo_order_id appeared under two slugs, which never
     // happens in this dataset.
     {
-      const dbRes = realisedMonthRevenue(filtered as any, currentMonth, "dbcinema");
-      const leoRes = realisedMonthRevenue(filtered as any, currentMonth, "leo");
-      if (dbRes.netGbp > 0) dbGross.set(currentMonth, r2(dbRes.netGbp));
-      if (leoRes.netGbp > 0) leoGross.set(currentMonth, r2(leoRes.netGbp));
+      // Iterate ACCOUNT_SLUGS so adding a 5th account picks up automatically
+      // here AND in dashboard.getStatsDrawerData's runtime invariant. Today
+      // only dbcinema and leo have legacy gross maps; daniel/vertus join the
+      // per-account `byAccount` totals below via hist + isFuture branches.
+      const perSlug = Object.fromEntries(
+        ACCOUNT_SLUGS.map((slug) => [slug, realisedMonthRevenue(filtered as any, currentMonth, slug)]),
+      ) as Record<(typeof ACCOUNT_SLUGS)[number], ReturnType<typeof realisedMonthRevenue>>;
+      if (perSlug.dbcinema.netGbp > 0) dbGross.set(currentMonth, r2(perSlug.dbcinema.netGbp));
+      if (perSlug.leo.netGbp > 0) leoGross.set(currentMonth, r2(perSlug.leo.netGbp));
+      // daniel/vertus realised current-month buckets are derived elsewhere
+      // (hist columns + paid filter); if a future account joins the realised
+      // bar directly, surface it here by extending the map writes above.
     }
 
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];

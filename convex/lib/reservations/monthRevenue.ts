@@ -3,11 +3,27 @@
  *  Realised month revenue — SINGLE SOURCE OF TRUTH (BACKEND).
  * ──────────────────────────────────────────────────────────────────────────
  *
- * The canonical "realised confirmed revenue for month M, account A (or all)".
- * Both `dashboard.getStatsDrawerData.confirmed.month_revenue` and
- * `revenue.getLifetimeByMonth` (current-month per-renter buckets) MUST derive
- * their numbers from this helper. Any divergence between the Month Confirmed
- * tile and the lifetime chart's live-month bar is a bug here.
+ * SINGLE SOURCE OF TRUTH for "realised confirmed revenue for month M".
+ *
+ * INVARIANT: For any month M and account A:
+ *   dashboard.getStatsDrawerData.confirmed.month_revenue (minus claims_value_gbp)
+ *     === sum over slugs s of realisedMonthRevenue(rows, M, s).netGbp
+ *     === realisedMonthRevenue(rows, M, null).netGbp
+ *
+ * DO NOT inline the filter chain in another file. Both dashboard.ts and
+ * revenue.ts MUST call this helper for the current-month bucket. Drift
+ * between the Month Confirmed tile and the LifetimeRevenue chart's live
+ * bar is a bug HERE and only here.
+ *
+ * Past divergences fixed by this helper:
+ *  - 2026-05-24: isConfirmedWithDates rejected `completed` rows;
+ *    dashboard accepted them → £800.80 missing from lifetime (commit cc38126)
+ *  - 2026-05-24: lifetime's loose blacklist accepted poller-populated
+ *    APPROVED/FUNDS_RESERVED rows; dashboard whitelist did not → drift in
+ *    the opposite direction (commit 7939e57)
+ *
+ * If you find yourself wanting to "tweak the predicate for X", add the
+ * tweak HERE so all consumers stay aligned. Do NOT branch the predicate.
  *
  * Filter chain (mirrors the Month Confirmed tile, which is the source of
  * truth per Daniel):
