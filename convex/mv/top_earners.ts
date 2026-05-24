@@ -62,7 +62,6 @@ type ReservationLike = {
 
 export type TopEarnerRow = {
   itemName: string;
-  gross30dGbp: number;
   net30dGbp: number;
   rentalCount: number;
   utilizationPct: number;
@@ -153,13 +152,15 @@ export function computeTopEarnersForAccount(args: {
       );
       return {
         itemName,
-        gross30dGbp: Math.round(a.gross * 100) / 100,
         net30dGbp: Math.round(a.net * 100) / 100,
         rentalCount: a.count,
         utilizationPct,
       };
     })
-    .sort((a, b) => b.gross30dGbp - a.gross30dGbp)
+    // Phase 1.2 (2026-05-24): rank by NET (post-platform-fee owner take-home)
+    // instead of legacy gross. Daniel's deprecation — schema field is now
+    // optional and the compute no longer emits it.
+    .sort((a, b) => b.net30dGbp - a.net30dGbp)
     .slice(0, 20);
 }
 

@@ -813,8 +813,10 @@ export default defineSchema({
     rows: v.array(v.object({
       itemName: v.string(),
       // Phase 1.2 (2026-05-24): NET take-home only. Legacy gross30dGbp
-      // field removed — rankings now reflect what the owner actually
-      // keeps after platform fees.
+      // field is being migrated out — kept optional until the MV
+      // refresher rewrites existing rows without it (next master.refreshSlow
+      // tick). Schema can drop to non-optional after one full cron cycle.
+      gross30dGbp: v.optional(v.number()),
       net30dGbp: v.number(),
       rentalCount: v.number(),
       utilizationPct: v.number(),

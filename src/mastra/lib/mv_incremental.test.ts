@@ -109,7 +109,7 @@ describe("top_earners_30d aggregation parity", () => {
     expect(JSON.stringify(incremental)).toBe(JSON.stringify(full));
     // sanity: actually computed something
     expect(full.length).toBe(3);
-    expect(full[0]!.gross30dGbp).toBe(500);
+    expect(full[0]!.net30dGbp).toBe(320);
   });
 
   it("excludes cancelled and declined reservations the same way", () => {
@@ -138,7 +138,9 @@ describe("top_earners_30d aggregation parity", () => {
       cutoff: CUTOFF_30D,
     });
     expect(rows.length).toBe(1);
-    expect(rows[0]!.gross30dGbp).toBe(100);
+    // Phase 1.2 (2026-05-24): rankings on NET. makeReservation default
+    // net_to_owner_gbp = 192 (gross_paid_gbp 100 override doesn't reset net).
+    expect(rows[0]!.net30dGbp).toBe(192);
   });
 
   it("excludes reservations OUTSIDE the 30d window", () => {
@@ -164,7 +166,9 @@ describe("top_earners_30d aggregation parity", () => {
       cutoff: CUTOFF_30D,
     });
     expect(rows.length).toBe(1);
-    expect(rows[0]!.gross30dGbp).toBe(100);
+    // Phase 1.2 (2026-05-24): rankings on NET. makeReservation default
+    // net_to_owner_gbp = 192 (gross_paid_gbp 100 override doesn't reset net).
+    expect(rows[0]!.net30dGbp).toBe(192);
   });
 
   it("excludes FUTURE reservations (beyond today)", () => {
@@ -188,7 +192,9 @@ describe("top_earners_30d aggregation parity", () => {
       cutoff: CUTOFF_30D,
     });
     expect(rows.length).toBe(1);
-    expect(rows[0]!.gross30dGbp).toBe(100);
+    // Phase 1.2 (2026-05-24): rankings on NET. makeReservation default
+    // net_to_owner_gbp = 192 (gross_paid_gbp 100 override doesn't reset net).
+    expect(rows[0]!.net30dGbp).toBe(192);
   });
 });
 
