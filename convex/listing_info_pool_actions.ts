@@ -710,4 +710,184 @@ export const backfillFx3Sample = action({
   },
 });
 
+// ── Full active backfill (Phase 2) ────────────────────────────────────────
+//
+// Processes every listing with at least one active or upcoming reservation in
+// the last 60 days. Sequential with delay_ms throttle to keep DeepSeek happy.
+//
+// Vision fallback note: the design called for a vision pass when text-only
+// confidence < 0.7 OR plus_token_unparsed fires, but rental-manager-v2's
+// codebase currently does not expose a hooked-up vision model. The Phase 1
+// derivation step is text-only via DeepSeek-v4-flash. Confidence below 0.7
+// and the plus_token_unparsed guard still emit needs_review=true, so Daniel
+// can manually override those via the Phase 4 UI. Vision fallback will be
+// added once an OpenRouter or Gemini vision endpoint is wired in.
+
+export const backfillActive = action({
+  args: {
+    force: v.optional(v.boolean()),
+    delay_ms: v.optional(v.number()),
+    /** Limit derivation pass — useful for staged ramp. 0 = unbounded. */
+    max_listings: v.optional(v.number()),
+    /** Only derive listings whose pool row is missing or older than this many
+     *  ms. 0 = derive every active listing. Default 0 (no time gate). */
+    older_than_ms: v.optional(v.number()),
+    /** When true, do NOT call the LLM — just count what would be derived. */
+    dry_run: v.optional(v.boolean()),
+  },
+  handler: async (
+    ctx,
+    { force, delay_ms, max_listings, older_than_ms, dry_run },
+  ): Promise<{
+    candidate_count: number;
+    processed: number;
+    derived: number;
+    cached: number;
+    no_components: number;
+    needs_review: number;
+    text_only: number;
+    vision_fallback: number;
+    errors: number;
+    samples: Array<{
+      account_slug: string;
+      product_id: number;
+      raw_title: string;
+      short_name?: string;
+      display_name?: string;
+      needs_review?: boolean;
+      review_reasons?: string[];
+      components_count?: number;
+      status: string;
+    }>;
+  }> => {
+    const cap = typeof max_listings === "number" && max_listings > 0 ? max_listings : 0;
+    const olderThan = typeof older_than_ms === "number" ? older_than_ms : 0;
+    const wait = typeof delay_ms === "number" ? delay_ms : 250;
+
+    // 1. Pull candidate (account_slug, product_id, raw_title) tuples from
+    //    active reservations (last 60 days).
+    const sinceMs = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    const sinceIso = new Date(sinceMs).toISOString().slice(0, 10);
+    const tuples: Array<{
+      account_slug: string;
+      product_id: number;
+      raw_title: string;
+      image_urls: string[];
+    }> = await ctx.runQuery(internal.listing_info_pool.listActiveDistinctProducts, {
+      since_iso: sinceIso,
+    });
+
+    // 2. Pull existing pool rows to decide cache vs re-derive.
+    const cached: Array<{
+      account_slug: string;
+      product_id: number;
+      source_title_hash: string;
+      derivation_method: string;
+      derivation_confidence: number;
+      needs_review: boolean;
+    }> = await ctx.runQuery(internal.listing_info_pool.getAllCached, {});
+    const cacheMap = new Map<string, typeof cached[number]>();
+    for (const c of cached) {
+      cacheMap.set(`${c.account_slug}#${c.product_id}`, c);
+    }
+
+    let derived = 0;
+    let cachedHits = 0;
+    let needsReview = 0;
+    let noComponents = 0;
+    let textOnly = 0;
+    let visionFallback = 0;
+    let errors = 0;
+    let processed = 0;
+    const samples: Array<{
+      account_slug: string;
+      product_id: number;
+      raw_title: string;
+      short_name?: string;
+      display_name?: string;
+      needs_review?: boolean;
+      review_reasons?: string[];
+      components_count?: number;
+      status: string;
+    }> = [];
+
+    for (const t of tuples) {
+      if (cap > 0 && processed >= cap) break;
+      const hash = sha256Hex(t.raw_title);
+      const cur = cacheMap.get(`${t.account_slug}#${t.product_id}`);
+      if (!force && cur && cur.source_title_hash === hash && olderThan === 0) {
+        cachedHits++;
+        if (samples.length < 20) {
+          samples.push({
+            account_slug: t.account_slug,
+            product_id: t.product_id,
+            raw_title: t.raw_title,
+            status: "cached",
+          });
+        }
+        continue;
+      }
+      processed++;
+      if (dry_run) {
+        samples.push({
+          account_slug: t.account_slug,
+          product_id: t.product_id,
+          raw_title: t.raw_title,
+          status: "dry_run_would_derive",
+        });
+        continue;
+      }
+      const res: any = await ctx.runAction(internal.listing_info_pool_actions.deriveOne, {
+        account_slug: t.account_slug,
+        product_id: t.product_id,
+        raw_title: t.raw_title,
+        force: !!force,
+      });
+      if (res.status === "derived") {
+        derived++;
+        textOnly++;
+        if (res.needs_review) needsReview++;
+      } else if (res.status === "cached") {
+        cachedHits++;
+      } else if (res.status === "no_components") {
+        noComponents++;
+        needsReview++;
+      } else if (res.status === "error") {
+        errors++;
+      }
+      if (samples.length < 20) {
+        samples.push({
+          account_slug: t.account_slug,
+          product_id: t.product_id,
+          raw_title: t.raw_title,
+          short_name: res.short_name,
+          display_name: res.display_name,
+          needs_review: res.needs_review,
+          review_reasons: res.review_reasons,
+          components_count: res.components_count,
+          status: res.status,
+        });
+      }
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    }
+
+    console.log(
+      `[listing_info_pool] backfillActive: candidates=${tuples.length} processed=${processed} derived=${derived} cached=${cachedHits} no_components=${noComponents} needs_review=${needsReview} text_only=${textOnly} vision_fallback=${visionFallback} errors=${errors}`,
+    );
+
+    return {
+      candidate_count: tuples.length,
+      processed,
+      derived,
+      cached: cachedHits,
+      no_components: noComponents,
+      needs_review: needsReview,
+      text_only: textOnly,
+      vision_fallback: visionFallback,
+      errors,
+      samples,
+    };
+  },
+});
+
 export { sha256Hex as _sha256HexForTest };
