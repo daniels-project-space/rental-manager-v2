@@ -82,19 +82,31 @@ function ConfirmedBar({
   active,
   upcoming,
   pending,
-}: { done: number; active: number; upcoming: number; pending: number }) {
-  const total = done + active + upcoming + pending;
+  claims,
+}: { done: number; active: number; upcoming: number; pending: number; claims: number }) {
+  const total = done + active + upcoming + pending + claims;
   if (total === 0) return null;
   const pct = (n: number) => (n > 0 ? Math.max(3, (n / total) * 100) : 0);
-  const raw = [pct(done), pct(active), pct(upcoming), pct(pending)];
+  const raw = [pct(done), pct(active), pct(upcoming), pct(pending), pct(claims)];
   const sum = raw.reduce((a, b) => a + b, 0) || 1;
-  const [wD, wA, wU, wP] = raw.map((p) => (p / sum) * 100);
+  const [wD, wA, wU, wP, wC] = raw.map((p) => (p / sum) * 100);
   return (
     <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-900/60">
       {wD > 0 && <div style={{ width: `${wD}%`, background: "linear-gradient(90deg,#22c55e,#34d399)" }} />}
       {wA > 0 && <div style={{ width: `${wA}%`, background: "linear-gradient(90deg,#f59e0b,#fbbf24)" }} />}
       {wU > 0 && <div style={{ width: `${wU}%`, background: "linear-gradient(90deg,#a78bfa,#8b5cf6)" }} />}
       {wP > 0 && <div style={{ width: `${wP}%`, background: "linear-gradient(90deg,#f472b6,#ec4899)" }} />}
+      {wC > 0 && (
+        <div
+          style={{
+            width: `${wC}%`,
+            // Match LifetimeRevenue's grad-damage white-bar (rgba 0.85 → translucent),
+            // plus a subtle inset border so pure white reads on a light dark slate bg.
+            background: "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.78))",
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.35)",
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -284,6 +296,7 @@ export function StatsGrid() {
                 active={data.confirmed.active_count}
                 upcoming={data.confirmed.upcoming_count}
                 pending={data.confirmed.pending_count}
+                claims={(data.confirmed as any).claims_count ?? 0}
               />
               <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px]">
                 {data.confirmed.done_count > 0 && (
@@ -297,6 +310,9 @@ export function StatsGrid() {
                 )}
                 {data.confirmed.pending_count > 0 && (
                   <span className="inline-flex items-center gap-1 text-pink-300"><Dot color="#ec4899" />{data.confirmed.pending_count} pending</span>
+                )}
+                {((data.confirmed as any).claims_count ?? 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 text-slate-100"><Dot color="#ffffff" />{(data.confirmed as any).claims_count} claims</span>
                 )}
               </div>
             </div>

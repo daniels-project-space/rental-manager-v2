@@ -1096,14 +1096,33 @@ export const getStatsDrawerData = query({
     for (const b of daily) b.revenue = Math.round(b.revenue * 100) / 100;
 
     const todayDay = parseInt(today.slice(8, 10), 10);
+
+    // Insurance claims credited to the current month — match the SAME predicate
+    // revenue.ts:343-351 uses for the lifetime chart's white bar so the Month
+    // Confirmed tile and the lifetime current-month claims agree.
+    const currentMonth = monthStart.slice(0, 7); // "YYYY-MM"
+    let claims_count = 0;
+    let claims_value_gbp = 0;
+    for (const c of claimRows) {
+      const credited = (c as any).credited_to_month as string | undefined;
+      const payout   = (c as any).payout_amount_gbp as number | undefined;
+      if (credited === currentMonth && typeof payout === "number") {
+        claims_count += 1;
+        claims_value_gbp += payout;
+      }
+    }
+    claims_value_gbp = Math.round(claims_value_gbp * 100) / 100;
+
     const confirmed = {
       month_count: monthBookedRentals.length,
-      month_revenue: Math.round(monthBookedRevenue * 100) / 100,
+      month_revenue: Math.round((monthBookedRevenue + claims_value_gbp) * 100) / 100,
       done_count: monthDone.length,
       active_count: monthActive.length,
       upcoming_count: monthUpcoming.length,
       pending_count: monthPending.length,
       pending_value_gbp: Math.round(monthPendingValue * 100) / 100,
+      claims_count,
+      claims_value_gbp,
       total_rentals: monthDone.length + monthActive.length + monthUpcoming.length + monthPending.length,
       today_day: today >= monthStart && today <= monthEnd ? todayDay : null,
       month_label: monthStart,
