@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import {
   dedupByLogicalRental,
   effectiveDate,
@@ -271,6 +272,56 @@ export const getStatsDrawerData = query({
       shortNameByProduct.set(`${sn.account_slug}#${sn.product_id}`, sn.short_name);
     }
 
+    // ── Listing info pool (2026-05-24) ──
+    // Per-account opt-in via feature_flag `listing_info_pool:<slug>`.
+    // When the flag is ON, display reads pool.display_name (which
+    // includes bundle suffix like "+ 24-70mm GM"). When OFF, the
+    // legacy listing_short_names path runs verbatim — see
+    // mapRental.useHygglo below.
+    const candidateSlugs = Array.from(new Set(
+      allRes.map((r) => r.account_slug).filter((s): s is string => !!s)
+    ));
+    const poolEnabledAccounts = await infoPoolEnabledAccounts(ctx, candidateSlugs);
+    const infoPoolByProduct = new Map<string, { display_name: string; needs_review: boolean; is_manually_overridden: boolean }>();
+    /** components[] for double-booking + out-of-stock. Key
+     *  `${slug}#${pid}` -> [{item_id, qty}]. Includes ONLY components with
+     *  a resolved item_id (the equivalence guarantee). Excludes
+     *  comparison_reference + standard_included so accessories never
+     *  contribute to capacity conflicts. */
+    const infoPoolComponentsByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+    if (poolEnabledAccounts.size > 0) {
+      const poolRows = await ctx.db.query("listing_info_pool").collect();
+      for (const pr of poolRows) {
+        if (!poolEnabledAccounts.has(pr.account_slug)) continue;
+        const mo = pr.manual_override;
+        const sn = mo?.short_name ?? pr.short_name;
+        const bs = mo?.bundle_summary !== undefined ? mo.bundle_summary : (pr.bundle_summary ?? null);
+        const display = bs ? `${sn} ${bs}`.replace(/\s+/g, " ").trim() : sn;
+        infoPoolByProduct.set(`${pr.account_slug}#${pr.product_id}`, {
+          display_name: display,
+          needs_review: pr.needs_review,
+          is_manually_overridden: !!mo,
+        });
+        // Component map (equivalence semantics). Manual override component
+        // list, if present, wins over the LLM derivation.
+        const moComps = mo?.bundle_components;
+        const comps: Array<{ item_id: string; qty: number }> = [];
+        if (moComps && moComps.length > 0) {
+          for (const c of moComps) comps.push({ item_id: String(c.item_id), qty: c.qty });
+        } else {
+          for (const c of pr.bundle_components) {
+            if (!c.item_id) continue;
+            if (c.source_kind === "comparison_reference") continue;
+            if (c.source_kind === "standard_included") continue;
+            comps.push({ item_id: String(c.item_id), qty: c.qty });
+          }
+        }
+        if (comps.length > 0) {
+          infoPoolComponentsByProduct.set(`${pr.account_slug}#${pr.product_id}`, comps);
+        }
+      }
+    }
+
     // ── COLLECT 3: denial_records ────────────────────────────────
     let denialRows = await ctx.db.query("denial_records").collect();
     if (accountSlug) {
@@ -517,6 +568,29 @@ export const getStatsDrawerData = query({
         for (let i = 0; i < hItems.length; i++) {
           const h = hItems[i];
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+          // (A.5) Listing info pool components, gated by per-account flag.
+          // When the pool has multiple resolved components for this
+          // product_id, ALL contribute to capacity tally (×listing-qty).
+          // Sanity guard: when hygglo_product_index also covers the
+          // product_id, pool's primary_item_id must match it; otherwise
+          // we skip pool and fall through to the legacy LLM path
+          // (qty_drift_alerts entry would be the follow-up — out of scope
+          // for the flag-flip Phase 3 commit).
+          if (typeof h.product_id === "number") {
+            const comps = infoPoolComponentsByProduct.get(`${accountSlug}#${h.product_id}`);
+            if (comps && comps.length > 0) {
+              const indexItemId = productIndex.get(`${accountSlug}:${h.product_id}`);
+              const primary = comps[0]?.item_id;
+              const sanityOk = !indexItemId || indexItemId === primary;
+              if (sanityOk) {
+                for (const c of comps) {
+                  // Multiply by listing-level qty from the line.
+                  out.set(c.item_id, (out.get(c.item_id) ?? 0) + c.qty * q);
+                }
+                continue;
+              }
+            }
+          }
           // (1) product_id index.
           if (typeof h.product_id === "number") {
             const itemId = productIndex.get(`${accountSlug}:${h.product_id}`);
@@ -940,14 +1014,24 @@ export const getStatsDrawerData = query({
                 break;
               }
             }
+            // 2026-05-24: pool override takes precedence when the per-
+            // account flag is ON. Otherwise the legacy listing_short_names
+            // lookup runs verbatim (preserves pre-pool display behaviour).
+            const pool = pid != null
+              ? infoPoolByProduct.get(`${r.account_slug}#${pid}`)
+              : undefined;
             const sn = pid != null
               ? shortNameByProduct.get(`${r.account_slug}#${pid}`)
               : undefined;
+            const displayName = pool ? pool.display_name : (sn ?? t.name);
             return {
-              name: sn ?? t.name,
+              name: displayName,
               raw_name: t.name,
               qty: t.qty,
               image_url: t.image_url,
+              info_pool_badge: pool
+                ? (pool.is_manually_overridden ? "manual" : (pool.needs_review ? "needs_review" : "llm"))
+                : null,
             };
           }),
           kind,

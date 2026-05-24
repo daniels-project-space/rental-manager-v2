@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
+import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import type { Doc } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
@@ -102,6 +103,38 @@ export const getItemRevenueRanking = query({
       if (nm) itemByCanonical.set(nm, it);
     }
 
+    // 2026-05-24: listing info pool override prep for attributeRevenue.
+    // When a per-account flag is ON, build a (account#product_id) ->
+    // [{item_id, item_name_canonical, qty}] map. Each rental passes
+    // through this map keyed by its hygglo_items[i].product_id. When the
+    // flag is OFF or no pool entry exists, attributeRevenue uses the
+    // legacy expanded/resolved cascade verbatim.
+    const candidateSlugsForPool = Array.from(new Set(
+      reservations.map((r) => r.account_slug).filter((s): s is string => !!s)
+    ));
+    const poolEnabledAccountsAttrib = await infoPoolEnabledAccounts(ctx, candidateSlugsForPool);
+    const poolOverrideByProduct = new Map<string, Array<{ item_id: typeof itemsAll[number]["_id"]; item_name_canonical: string; qty: number }>>();
+    if (poolEnabledAccountsAttrib.size > 0) {
+      const poolRows = await ctx.db.query("listing_info_pool").collect();
+      for (const pr of poolRows) {
+        if (!poolEnabledAccountsAttrib.has(pr.account_slug)) continue;
+        const mo = pr.manual_override;
+        const compsRaw = mo?.bundle_components && mo.bundle_components.length > 0
+          ? mo.bundle_components.map((c) => ({ item_id: c.item_id, qty: c.qty }))
+          : pr.bundle_components
+              .filter((c) => c.source_kind !== "comparison_reference" && c.source_kind !== "standard_included")
+              .map((c) => ({ item_id: c.item_id, qty: c.qty }));
+        const out: Array<{ item_id: typeof itemsAll[number]["_id"]; item_name_canonical: string; qty: number }> = [];
+        for (const c of compsRaw) {
+          if (!c.item_id) continue;
+          const inv = itemById.get(c.item_id);
+          if (!inv) continue;
+          out.push({ item_id: c.item_id, item_name_canonical: inv.name_canonical, qty: c.qty });
+        }
+        if (out.length > 0) poolOverrideByProduct.set(`${pr.account_slug}#${pr.product_id}`, out);
+      }
+    }
+
     // LLM-resolved items: revenue attributed strictly to inventory items
     // returned by item_resolver, never substring matched. Multi-item bundles
     // split gross by pricing_catalog weights (equal split if no prices).
@@ -141,12 +174,38 @@ export const getItemRevenueRanking = query({
         continue;
       }
 
+      // 2026-05-24: pool_override — sum per-position pool components when
+      // the per-account flag is ON. Reservations may have multiple
+      // hygglo_items[] with different product_ids; we union the components
+      // (sum qty by item_id) and pass to attributeRevenue.
+      let poolOverride: RentalForAttribution["pool_override"] = undefined;
+      if (poolEnabledAccountsAttrib.has(r.account_slug ?? "")) {
+        const hItemsR = (r as { hygglo_items?: Array<{ product_id?: number; qty?: number }> }).hygglo_items ?? [];
+        if (hItemsR.length > 0) {
+          const agg = new Map<string, { item_id: typeof itemsAll[number]["_id"]; item_name_canonical: string; qty: number }>();
+          for (const h of hItemsR) {
+            if (typeof h.product_id !== "number") continue;
+            const comps = poolOverrideByProduct.get(`${r.account_slug}#${h.product_id}`);
+            if (!comps || comps.length === 0) continue;
+            const lineQty = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+            for (const c of comps) {
+              const k = String(c.item_id);
+              const cur = agg.get(k);
+              if (cur) cur.qty += c.qty * lineQty;
+              else agg.set(k, { item_id: c.item_id, item_name_canonical: c.item_name_canonical, qty: c.qty * lineQty });
+            }
+          }
+          if (agg.size > 0) poolOverride = Array.from(agg.values());
+        }
+      }
+
       const rental: RentalForAttribution = {
         _id: r._id,
         gross_gbp: r.gross_paid_gbp ?? 0,
         duration_days: r.duration_days,
         expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
         resolved_items: resolved as RentalForAttribution["resolved_items"],
+        pool_override: poolOverride,
       };
       const lines = attributeRevenue(rental, {
         itemById,
@@ -283,12 +342,73 @@ export const getOutOfStockItems = query({
     const allItems = await ctx.db.query("items").collect();
     const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
 
-    // resolved_items (LLM-driven) — strict item lookup, no substring fuzz.
+    // 2026-05-24: listing info pool components — gated per-account.
+    // When the flag is ON for an account, the pool's bundle_components
+    // are summed per item_id (lens + body each count toward their own
+    // capacity). When OFF, the legacy resolved_items strict-canonical-
+    // name match runs verbatim. Components flagged as comparison_reference
+    // or standard_included never contribute to OOS counts.
+    const candidateSlugs = Array.from(new Set(
+      reservations.map((r) => r.account_slug).filter((s): s is string => !!s)
+    ));
+    const poolEnabledAccounts = await infoPoolEnabledAccounts(ctx, candidateSlugs);
+    const itemIdToCanonical = new Map<string, string>();
+    for (const i of activeItems) itemIdToCanonical.set(String(i._id), i.name_canonical);
+
+    const poolComponentsByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+    if (poolEnabledAccounts.size > 0) {
+      const poolRows = await ctx.db.query("listing_info_pool").collect();
+      for (const pr of poolRows) {
+        if (!poolEnabledAccounts.has(pr.account_slug)) continue;
+        const mo = pr.manual_override;
+        const moComps = mo?.bundle_components;
+        const comps: Array<{ item_id: string; qty: number }> = [];
+        if (moComps && moComps.length > 0) {
+          for (const c of moComps) comps.push({ item_id: String(c.item_id), qty: c.qty });
+        } else {
+          for (const c of pr.bundle_components) {
+            if (!c.item_id) continue;
+            if (c.source_kind === "comparison_reference") continue;
+            if (c.source_kind === "standard_included") continue;
+            comps.push({ item_id: String(c.item_id), qty: c.qty });
+          }
+        }
+        if (comps.length > 0) poolComponentsByProduct.set(`${pr.account_slug}#${pr.product_id}`, comps);
+      }
+    }
+
     const canonicalNames = activeItems.map((i) => i.name_canonical);
     const canonSet = new Set<string>(canonicalNames);
     const holdCounts = new Map<string, number>();
     const nextAvailMap = new Map<string, string>();
     for (const r of reservations) {
+      // Pool path — when ANY hygglo_items[].product_id has a pool entry,
+      // tally those components and skip the resolved_items fallback for
+      // this reservation (the pool is authoritative). Listings without a
+      // pool match still get the legacy path.
+      const hItems = (r as { hygglo_items?: Array<{ product_id?: number; qty?: number }> }).hygglo_items ?? [];
+      const slug = r.account_slug ?? "";
+      let usedPool = false;
+      if (hItems.length > 0 && poolEnabledAccounts.has(slug)) {
+        for (const h of hItems) {
+          if (typeof h.product_id !== "number") continue;
+          const comps = poolComponentsByProduct.get(`${slug}#${h.product_id}`);
+          if (!comps || comps.length === 0) continue;
+          const lineQty = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+          for (const c of comps) {
+            const canon = itemIdToCanonical.get(c.item_id);
+            if (!canon || !canonSet.has(canon)) continue;
+            holdCounts.set(canon, (holdCounts.get(canon) ?? 0) + c.qty * lineQty);
+            const existing = nextAvailMap.get(canon);
+            if (!existing || (r.end_date && r.end_date > existing)) {
+              nextAvailMap.set(canon, r.end_date ?? endStr);
+            }
+            usedPool = true;
+          }
+        }
+      }
+      if (usedPool) continue;
+      // Legacy path (flag OFF, no pool row, or pool components all dropped).
       const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
       for (const x of resolved) {
         if (!canonSet.has(x.item_name_canonical)) continue;

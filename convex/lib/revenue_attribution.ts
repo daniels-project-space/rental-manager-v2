@@ -87,6 +87,20 @@ export type RentalForAttribution = {
   expanded_items?: ExpandedItem[];
   resolved_items?: ResolvedItem[];
   items?: RawItem[];
+  /**
+   * 2026-05-24: listing info pool override.
+   * When provided (caller has resolved hygglo_items[].product_id ->
+   * pool.bundle_components and the per-account flag is ON), this field
+   * takes precedence over expanded_items / resolved_items / items so
+   * attribution math runs over the same components used by
+   * double-booking + out-of-stock. Caller is responsible for the
+   * feature-flag check; engine treats this as authoritative.
+   */
+  pool_override?: Array<{
+    item_id: Id<"items">;
+    item_name_canonical: string;
+    qty: number;
+  }>;
 };
 
 /**
@@ -138,6 +152,13 @@ type LineSource = {
  * Mirrors `dashboard.ts:1434 readResolverItems` plus a `raw items[]` fallback.
  */
 function pickLines(r: RentalForAttribution): LineSource[] {
+  if (r.pool_override && r.pool_override.length > 0) {
+    return r.pool_override.map((x) => ({
+      item_id: x.item_id,
+      item_name_canonical: x.item_name_canonical,
+      qty: x.qty,
+    }));
+  }
   if (r.expanded_items && r.expanded_items.length > 0) {
     return r.expanded_items.map((x) => ({
       item_id: x.item_id,
