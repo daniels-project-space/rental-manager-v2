@@ -426,6 +426,44 @@ async function scheduleListingResolutionOnDenial(
   }
 }
 
+// 2026-05-24: same cache-hit-no-op semantics for the listing_info_pool —
+// successor to listing_short_names with bundle decomposition + source spans.
+// Fired alongside scheduleShortNameDerivation. The deriveOne action checks
+// source_title_hash and skips work when unchanged. New listings get a fresh
+// derivation; existing listings whose title (or image-hash blob) drifts
+// trigger a re-derivation that overwrites only derived fields — manual
+// overrides survive. Errors swallowed so the poller never blocks.
+async function scheduleInfoPoolDerivation(
+  ctx: MutationCtx,
+  account_slug: string,
+  hyggloItems: Array<{ name: string; product_id?: number; type: string }>,
+): Promise<void> {
+  const seen = new Set<number>();
+  for (const it of hyggloItems) {
+    if (!it || it.type === "INSURANCE") continue;
+    if (typeof it.product_id !== "number") continue;
+    if (!it.name) continue;
+    if (seen.has(it.product_id)) continue;
+    seen.add(it.product_id);
+    try {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.listing_info_pool_actions.deriveOne,
+        {
+          account_slug,
+          product_id: it.product_id,
+          raw_title: it.name,
+        },
+      );
+    } catch (err) {
+      console.warn(
+        "[hygglo.upsertOrderImpl] scheduleInfoPoolDerivation failed",
+        String(err),
+      );
+    }
+  }
+}
+
 // Fire-and-forget short_name derivation for each Hygglo per-item product.
 // Mutations can't call actions directly - scheduler-only. The action itself
 // is a cache-hit no-op when (account_slug, product_id, title_hash) is
@@ -682,6 +720,7 @@ async function upsertOrderImpl(
       const hyggloItemsRegression = buildHyggloItems(args.items);
       await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
       await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsRegression);
+      await scheduleInfoPoolDerivation(ctx, args.account_slug, hyggloItemsRegression);
       return { action: "updated", bankItems: hyggloItemsRegression };
     }
 
@@ -705,6 +744,7 @@ async function upsertOrderImpl(
     const hyggloItemsUpdate = buildHyggloItems(args.items);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
     await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);
+    await scheduleInfoPoolDerivation(ctx, args.account_slug, hyggloItemsUpdate);
     if (obsoleteFields.is_obsolete === true && !wasObsolete) {
       await scheduleListingResolutionOnDenial(ctx, {
         account_slug: args.account_slug,
@@ -732,6 +772,7 @@ async function upsertOrderImpl(
     created_at: now,
   });
   await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsInsert);
+  await scheduleInfoPoolDerivation(ctx, args.account_slug, hyggloItemsInsert);
 
   // EQ-C: when an order first appears already in the obsolete bucket (renter
   // never made it past REQUEST → owner denied before we ever saw it in
