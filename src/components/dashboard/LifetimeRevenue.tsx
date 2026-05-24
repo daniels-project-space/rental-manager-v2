@@ -41,7 +41,7 @@ const SERIES = [
 
 
 function fmtK(v: number) {
-  if (v >= 1000) return "£" + (v / 1000).toFixed(0) + "k";
+  if (v >= 1000) return "£" + (v / 1000).toFixed(1).replace(/\.0$/, "") + "k";
   return "£" + v.toFixed(0);
 }
 
