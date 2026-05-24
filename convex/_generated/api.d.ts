@@ -103,6 +103,8 @@ import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.
 import type * as listing_cache from "../listing_cache.js";
 import type * as listing_equivalence_admin from "../listing_equivalence_admin.js";
 import type * as listing_images from "../listing_images.js";
+import type * as listing_info_pool from "../listing_info_pool.js";
+import type * as listing_info_pool_actions from "../listing_info_pool_actions.js";
 import type * as listing_resolver from "../listing_resolver.js";
 import type * as listing_resolver_data from "../listing_resolver_data.js";
 import type * as listing_short_names from "../listing_short_names.js";
@@ -257,6 +259,8 @@ declare const fullApi: ApiFromModules<{
   listing_cache: typeof listing_cache;
   listing_equivalence_admin: typeof listing_equivalence_admin;
   listing_images: typeof listing_images;
+  listing_info_pool: typeof listing_info_pool;
+  listing_info_pool_actions: typeof listing_info_pool_actions;
   listing_resolver: typeof listing_resolver;
   listing_resolver_data: typeof listing_resolver_data;
   listing_short_names: typeof listing_short_names;
