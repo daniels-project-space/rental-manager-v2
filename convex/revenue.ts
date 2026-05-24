@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
@@ -391,7 +391,7 @@ export const getLifetimeByMonth = query({
       // revenue. Standardised on canonical isPendingVerification (R2, 2026-05-22).
       const isPending = isPendingVerification(res as any);
       const amount = res.net_to_owner_gbp ?? 0;
-      const slug = res.account_slug;
+      const slug = res.account_slug ?? "dbcinema";
       const isFutureRes = dateStr.slice(0, 7) > currentMonth;
 
       // Pending bucket = ALL currently-pending verifications (regardless of
@@ -423,13 +423,6 @@ export const getLifetimeByMonth = query({
         }
         continue;
       }
-
-      // Past/current-month bars: realised revenue only — same whitelist as
-      // dashboard.getStatsDrawerData → monthly.confirmed_revenue, so the
-      // chart's current-month bar equals the Monthly Confirmed tile.
-      if (!isConfirmedWithDates(res as any)) continue;
-
-      if (slug !== "leo" && slug !== "dbcinema") continue; // unknown/legacy: don't bucket
 
       const key = dateStr.slice(0, 7);
       if (slug === "leo") {
