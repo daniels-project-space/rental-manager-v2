@@ -673,6 +673,9 @@ export default defineSchema({
     description: v.optional(v.string()),
     status: v.string(),                // "open" | "settled" | "denied"
     created_at: v.number(),
+    credited_to_month: v.optional(v.string()), // YYYY-MM bucket for revenue chart
+    payout_amount_gbp: v.optional(v.number()), // recovered amount (may differ from amount_gbp)
+    credited_at: v.optional(v.number()),       // Date.now() when creditToRevenue ran
   }).index("by_account", ["account_slug"])
     .index("by_claim_date", ["claim_date"]),
 
@@ -1149,6 +1152,99 @@ export default defineSchema({
   })
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_account", ["account_slug"]),
+
+  // ── Phase Listing-Pool: per-(account, product) info pool (2026-05-24) ────
+  // Successor to listing_short_names. Source-grounded extraction of bundle
+  // components with explicit source_spans + per-field manual override. One
+  // row per (account_slug, product_id). See docs/listing-info-pool-plan.md
+  // for the design rationale (Olivia FX3 bundle-collision bug, May 2026).
+  listing_info_pool: defineTable({
+    // ── Key ──
+    account_slug: v.string(),
+    product_id: v.number(),
+
+    // ── Source provenance + cache-invalidation triggers ──
+    source_title: v.string(),
+    source_title_hash: v.string(),
+    source_description: v.optional(v.string()),
+    source_description_hash: v.optional(v.string()),
+    source_image_urls: v.array(v.string()),
+    source_image_phash_blob: v.optional(v.string()),
+    derived_at: v.number(),
+    derivation_method: v.union(
+      v.literal("text"),
+      v.literal("text+attrs"),
+      v.literal("text+image"),
+      v.literal("text+image+attrs"),
+      v.literal("manual"),
+      v.literal("passthrough_fallback"),
+    ),
+
+    // ── Display ──
+    short_name: v.string(),
+    bundle_summary: v.optional(v.string()),
+    display_name: v.string(),
+
+    // ── Equivalence (consumed by double-booking, out-of-stock, attribution) ──
+    primary_item_id: v.optional(v.id("items")),
+    primary_item_name_canonical: v.optional(v.string()),
+    primary_item_confidence: v.number(),
+
+    bundle_components: v.array(v.object({
+      item_id: v.optional(v.id("items")),
+      item_name_canonical: v.optional(v.string()),
+      qty: v.number(),
+      confidence: v.number(),
+      source_kind: v.union(
+        v.literal("primary"),
+        v.literal("bundled_required"),
+        v.literal("bundled_optional"),
+        v.literal("comparison_reference"),
+        v.literal("standard_included"),
+      ),
+      source_span: v.optional(v.string()),
+    })),
+
+    canonical_bundle_signature: v.string(),
+
+    // ── Per-item attribution shares ──
+    attribution_shares: v.array(v.object({
+      item_id: v.optional(v.id("items")),
+      item_name_canonical: v.optional(v.string()),
+      share_pct: v.number(),
+      weight_method: v.string(),
+    })),
+
+    // ── Confidence + review gate ──
+    derivation_confidence: v.number(),
+    needs_review: v.boolean(),
+    review_reasons: v.array(v.string()),
+
+    // ── Manual override (per-field; always wins over derivation) ──
+    manual_override: v.optional(v.object({
+      short_name: v.optional(v.string()),
+      bundle_summary: v.optional(v.string()),
+      bundle_components: v.optional(v.array(v.object({
+        item_id: v.id("items"),
+        qty: v.number(),
+      }))),
+      set_by: v.string(),
+      set_at: v.number(),
+      note: v.optional(v.string()),
+    })),
+
+    // ── Raw LLM dump for re-derivation under improved prompts ──
+    llm_raw_response: v.optional(v.string()),
+    llm_model_id: v.optional(v.string()),
+    llm_cost_usd: v.optional(v.number()),
+
+    updated_at: v.number(),
+  })
+    .index("by_account_product", ["account_slug", "product_id"])
+    .index("by_canonical_bundle_signature", ["canonical_bundle_signature"])
+    .index("by_primary_item", ["primary_item_id"])
+    .index("by_needs_review", ["needs_review"]),
+
 
   // ── market_search 24h cache (Grok live-search results) ────────────────────
   market_search_cache: defineTable({
