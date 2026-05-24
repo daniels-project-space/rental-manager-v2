@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { dedupByLogicalRental, effectiveDate, isLive, isPendingVerification } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification } from "./lib/reservations/predicates";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue } from "./lib/missed_revenue";
 import {
@@ -425,6 +425,18 @@ export const getLifetimeByMonth = query({
       }
 
       const key = dateStr.slice(0, 7);
+      // RCA (2026-05-24): Hygglo poller populates `net_to_owner_gbp` on
+      // mid-lifecycle rows (status ∈ APPROVED/FUNDS_RESERVED/REQUEST/null)
+      // before the renter has actually paid. These rows correctly belong
+      // in `awaitingPaymentNextTotal` (for next-month) but historically
+      // they would also slip into the CURRENT-month bar via the
+      // blacklist-only filter above. Monthly Confirmed's tile uses a
+      // strict `confirmed|completed` whitelist for the same month, so
+      // the two diverged. Apply the same whitelist ONLY for the live
+      // month — historical bars (key < currentMonth) keep the legacy
+      // loose predicate since v1-migrated rows lack confirmed-status
+      // semantics and a strict filter would zero them out incorrectly.
+      if (key === currentMonth && !isConfirmedWithDates(res as any)) continue;
       if (slug === "leo") {
         leoGross.set(key, r2((leoGross.get(key) ?? 0) + amount));
       } else {
