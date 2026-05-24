@@ -1233,13 +1233,18 @@ export const getStatsDrawerData = query({
     };
 
     // ── card: missed_revenue ──────────────────────────────────────
-    // Mirrors the standalone MissedRevenue panel (api.revenue.getMissedRevenue):
-    // headline = denialLosses + gapLosses (NET, post platform-fee).
-    // Previous behaviour filtered denials.reason ∈ {timeout, unmatched} — 999/1000
-    // are owner_denied, so the tile always read £0. Now sourced from the shared
-    // helper in convex/lib/missed_revenue.ts (single source of truth).
-    // Window = 30 days (top-row widgets default), panel can switch to 90.
-    const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30);
+    // Phase 6a (2026-05-24): served from mv_missed_revenue (per
+    // (account, days=30) row), refreshed hourly by master.refreshFast.
+    // Cold-start fallback to live computeMissedRevenue keeps numbers
+    // present for the first hour after deploy.
+    const missedRevenueAccount = accountSlug ?? "all";
+    const missedRevenueRow = await ctx.db
+      .query("mv_missed_revenue")
+      .withIndex("by_account_days", (q) =>
+        q.eq("account", missedRevenueAccount).eq("days", 30),
+      )
+      .first();
+    const missedRevenueResult = missedRevenueRow ?? await computeMissedRevenue(ctx, accountSlug, 30);
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: [

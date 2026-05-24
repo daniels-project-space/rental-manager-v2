@@ -56,6 +56,7 @@ import { computeUtilization } from "./utilization";
 import { computeUpcomingReturns } from "./upcoming_returns";
 import { computeChurnRisk } from "./churn_risk";
 import { computePurchaseSignals } from "./purchase_signals";
+import { computeMissedRevenue } from "./missed_revenue";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -197,6 +198,32 @@ export const writePurchaseSignals = internalMutation({
   },
 });
 
+/**
+ * Phase 6a (2026-05-24) — mv_missed_revenue is keyed by (account, days),
+ * not a single-account singleton, so it cannot reuse upsertSingleton.
+ * Indexed via by_account_days.
+ */
+export const writeMissedRevenue = internalMutation({
+  args: { rows: v.array(ANY_ROW) },
+  handler: async (ctx, { rows }) => {
+    for (const r of rows) {
+      const { account, days, ...rest } = r;
+      const existing = await ctx.db
+        .query("mv_missed_revenue")
+        .withIndex("by_account_days", (q) =>
+          q.eq("account", account).eq("days", days),
+        )
+        .first();
+      if (existing) {
+        await ctx.db.patch(existing._id, rest);
+      } else {
+        await ctx.db.insert("mv_missed_revenue", { account, days, ...rest });
+      }
+    }
+    return { ok: true, written: rows.length };
+  },
+});
+
 // ──────────────────────────────────────────────────────────────
 // Master refresh actions.
 // ──────────────────────────────────────────────────────────────
@@ -226,20 +253,30 @@ export const refreshFast = internalAction({
   args: {},
   handler: async (ctx): Promise<{ batch: "fast"; results: StepResult[] }> => {
     const startedAt = Date.now();
-    // 30-day window covers utilization. upcoming_returns uses confirmed-status.
-    const cutoff30 = isoDaysAgo(30);
-    const [reservations30, confirmedReservations, items, renters] = await Promise.all([
-      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoff30 }),
+    // Phase 6a (2026-05-24) — widened reservations window from 30d → 90d so
+    // missed_revenue's 90d MV can share the same collect. utilization slices
+    // 30d in-memory from the wider input. Added denials + pricing + accounts
+    // collects so missed_revenue can compute without a slow-batch dependency.
+    // Net per-fast-run cost: +denials(~500) + pricing(~50) + accounts(~5) +
+    // ~600 widened reservations rows = ~1.2k extra row reads/run × 24/day
+    // = ~28k row reads/day. Easily offset by removing live denial_records
+    // collects from dashboard subscriptions (millions of reads/day).
+    const cutoff90 = isoDaysAgo(90);
+    const [reservationsWindow, confirmedReservations, items, renters, denials, pricing, accounts] = await Promise.all([
+      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoff90 }),
       ctx.runQuery(internal.mv.master.collectConfirmedReservations, {}),
       ctx.runQuery(internal.mv.master.collectItems, {}),
       ctx.runQuery(internal.mv.master.collectRenters, {}),
+      ctx.runQuery(internal.mv.master.collectDenials, {}),
+      ctx.runQuery(internal.mv.master.collectPricing, {}),
+      ctx.runQuery(internal.mv.master.collectAccounts, {}),
     ]);
 
     const results: StepResult[] = [];
 
     results.push(await safeStep(ctx, "utilization", async () => {
       const rows = computeUtilization({
-        reservations: reservations30,
+        reservations: reservationsWindow,
         items,
         generatedAt: startedAt,
       });
@@ -253,6 +290,17 @@ export const refreshFast = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeUpcomingReturns, { rows });
+    }));
+
+    results.push(await safeStep(ctx, "missed_revenue", async () => {
+      const rows = computeMissedRevenue({
+        denials,
+        pricing,
+        reservations: reservationsWindow,
+        accounts,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeMissedRevenue, { rows });
     }));
 
     return { batch: "fast", results };

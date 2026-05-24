@@ -858,6 +858,37 @@ export default defineSchema({
     fleetUtilizationPct: v.number(),
   }).index("by_account", ["account"]),
 
+  // Phase 6a (2026-05-24) — denial+gap rollup, pre-aggregated per
+  // (account, days) so the dashboard panel + top tile read 1 indexed row
+  // instead of collecting denial_records + pricing_catalog + 30d
+  // reservations on every poller mutation. Refreshed by master.refreshFast
+  // (hourly). One row per (account, days) — currently {30, 90} windows.
+  mv_missed_revenue: defineTable({
+    account: v.string(),                  // "dbcinema" | "leo" | "all"
+    days: v.number(),                     // 30 | 90
+    generatedAt: v.number(),
+    totalMissed: v.number(),
+    denialTotal: v.number(),
+    gapTotal: v.number(),
+    denialLosses: v.array(v.object({
+      denialId: v.string(),
+      reason: v.optional(v.string()),
+      itemName: v.optional(v.string()),
+      estimatedValue: v.number(),
+      estimatedValueGross: v.number(),
+      notes: v.optional(v.string()),
+      createdAt: v.number(),
+    })),
+    gapLosses: v.array(v.object({
+      itemName: v.string(),
+      rentalDays: v.number(),
+      idleDays: v.number(),
+      estimatedGapLoss: v.number(),
+    })),
+  })
+    .index("by_account_days", ["account", "days"])
+    .index("by_account", ["account"]),
+
   upcoming_returns: defineTable({
     account: v.string(),
     generatedAt: v.number(),

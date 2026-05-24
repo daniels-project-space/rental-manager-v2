@@ -1,16 +1,16 @@
 /**
- * Wave 3b — Redundant L3 backup for Hygglo poller.
+ * Wave 3b — Manual L3 backup for Hygglo poller.
  *
  * POST /api/poll-hygglo
  *
- * Called by:
- *   1. The Convex cron action (`convex/hygglo_poll_trigger.ts`) — every 15 min.
- *   2. Manual invocations via curl for ops/debug.
+ * Called by: manual invocations via curl for ops/debug only. The Convex
+ * cron that previously called this (every 15 min) was deleted 2026-05-24
+ * — it was redundant with the Trigger.dev 5-min scrape and burned ~192
+ * action-runs/day for no downstream effect. Keep this route as a manual
+ * "poke the inbox" escape hatch for incident response.
  *
  * Purpose: enqueue a one-shot run of the `poll-hygglo-inbox` Trigger.dev
- * task. This is the redundant L3 backup — if Trigger.dev's own every-5-min
- * cron schedule on the task ever stops firing, the 15-min Convex cron will
- * keep poking the inbox. Idempotent (poller detects "nothing new" fast).
+ * task. Idempotent (poller detects "nothing new" fast).
  *
  * Auth: `Authorization: Bearer <token>` header must match env
  * `POLL_TRIGGER_SECRET`. If the env var is unset on the server, all

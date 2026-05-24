@@ -121,7 +121,14 @@ export const getEarningsByPeriod = query({
 });
 
 /**
- * W14 Missed Revenue — denial losses + pricing_catalog estimated gap
+ * W14 Missed Revenue — denial losses + pricing_catalog estimated gap.
+ *
+ * Phase 6a (2026-05-24): swapped from live compute to mv_missed_revenue
+ * lookup. The MV refresher (master.refreshFast, hourly) pre-aggregates
+ * per (account, days), so this query is now a single indexed row read
+ * regardless of how many reservations/denials mutate. Cold-start fallback
+ * delegates to the live helper for the first cron tick after deploy and
+ * for any non-standard `days` window the MV doesn't pre-compute.
  */
 export const getMissedRevenue = query({
   args: {
@@ -129,12 +136,26 @@ export const getMissedRevenue = query({
     days: v.number(),
   },
   handler: async (ctx, { accountSlug, days }) => {
-    // Delegated to convex/lib/missed_revenue.ts (single source of truth).
-    // The dashboard top tile (`missed_revenue` in getStatsDrawerData) calls
-    // the same helper so panel + tile never disagree.
-    //
-    // Headline `totalMissed` now combines denials + idle-gap (NET). Both
-    // are concrete signals of lost revenue (declined demand + idle stock).
+    const account = accountSlug ?? "all";
+    const isStandardWindow = days === 30 || days === 90;
+    if (isStandardWindow) {
+      const row = await ctx.db
+        .query("mv_missed_revenue")
+        .withIndex("by_account_days", (q) =>
+          q.eq("account", account).eq("days", days),
+        )
+        .first();
+      if (row) {
+        return {
+          totalMissed: row.totalMissed,
+          denialLosses: row.denialLosses,
+          gapLosses: row.gapLosses,
+          gapTotal: row.gapTotal,
+          denialTotal: row.denialTotal,
+        };
+      }
+      // Cold-start: MV row not yet written. Fall through to live compute.
+    }
     const result = await computeMissedRevenue(ctx, accountSlug, days);
     return {
       totalMissed: result.totalMissed,

@@ -3,9 +3,11 @@
  *
  * POST /api/workflows/hygglo-poll
  *
- * Called by:
- *   1. The Convex cron action (`convex/hygglo_poll_trigger.ts`) — every 3 min.
- *   2. Manual invocations via curl for ops/debug.
+ * Called by: manual invocations via curl for ops/debug only. The Convex
+ * cron that previously called this (every 15 min) was deleted 2026-05-24
+ * during the cost audit — Trigger.dev's `poll-hygglo-inbox` task at 5 min
+ * is the canonical scraper and writes the same data. This route still
+ * works manually and is kept for debug runs of the Mastra workflow.
  *
  * Auth: `Authorization: Bearer <POLL_TRIGGER_SECRET>` if env var is set.
  * Returns the final workflow state (newRentalsCount, decisionsGeneratedCount,
