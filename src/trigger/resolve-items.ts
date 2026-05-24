@@ -294,10 +294,14 @@ export const resolveItemsTask = schedules.task({
   },
 });
 
-// Separate task for the slower notes-only backfill cohort. Cron hourly.
+// Separate task for the slower notes-only backfill cohort.
+// Loosened 2026-05-24 from hourly → weekly (Sunday 04:30 UTC). Backfill is
+// of a historical cohort that drains by ~5-10 rows/day; hourly cadence was
+// wasting 167 of 168 fires/week. Re-enable hourly only if the unresolved
+// notes-only queue exceeds 100 (check via dashboard or convex query).
 export const resolveItemsNotesBackfillTask = schedules.task({
   id: "resolve-items-notes-backfill",
-  cron: "0 * * * *",
+  cron: "30 4 * * 0",
   maxDuration: 180,
   run: async (_payload, { ctx }) => {
     if (isWithinUkQuietHours()) {

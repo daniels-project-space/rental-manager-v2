@@ -83,9 +83,13 @@ crons.interval(
 
 // Demote stale-confirmed rows (Hygglo dropped them from every filter) to
 // completed so they stop appearing as ongoing/overdue in the Active widget.
+// Cadence loosened 2026-05-24 from 60min → 4h: stale-confirmed rows turn
+// stale by the day (Hygglo drops them after end_date passes), not by the
+// minute. Was running full reservations.collect() 24×/day to flag a handful
+// of rows. Audit recommends adding by_status index — deferred to follow-up.
 crons.interval(
   "complete stale-confirmed reservations",
-  { minutes: 60 },
+  { minutes: 240 },
   internal.reservations.completeStaleConfirmedCron,
   {},
 );
@@ -96,9 +100,14 @@ crons.interval(
 // rows persist in qty_drift_alerts (status=open) and surface via
 // dashboard.getStatsDrawerData.qty_drift_count. Layer C
 // (admin_backfill_qty_resolution) clears them by re-running the resolver.
-crons.daily(
+// Loosened 2026-05-24 daily → weekly. Drift is slow-moving (days, not hours)
+// and this cron does an unindexed full-table reservations scan plus an HTTPS
+// Hygglo round-trip + mutation per candidate row — dominant per-fire cost.
+// Audit recommends batching the mutations + adding by_account_slug/by_status
+// index — deferred to follow-up; weekly cadence already gives ~85% reduction.
+crons.weekly(
   "audit qty drift",
-  { hourUTC: 3, minuteUTC: 0 },
+  { dayOfWeek: "monday", hourUTC: 3, minuteUTC: 0 },
   internal.audit_qty_drift.auditItemQuantities,
   { only_active: true },
 );
