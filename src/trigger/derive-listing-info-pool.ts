@@ -136,8 +136,13 @@ function resolveCanonical(
   phrase: string,
   inventory: InventoryItem[],
 ): { item_id: Id<"items"> | null; name_canonical: string | null; score: number } {
-  const inventoryNames = inventory.map((i) => i.name_canonical);
-  const match = findBestMatchWithScore(phrase, inventoryNames);
+  // Pass {name, aliases} so the matcher scores against both name_canonical
+  // and each alias and keeps the max (tie-break: canonical wins).
+  const candidates = inventory.map((i) => ({
+    name: i.name_canonical,
+    aliases: i.aliases,
+  }));
+  const match = findBestMatchWithScore(phrase, candidates);
   if (!match || match.score < RESOLUTION_THRESHOLD) {
     return { item_id: null, name_canonical: null, score: match?.score ?? 0 };
   }

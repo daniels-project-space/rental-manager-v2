@@ -640,6 +640,63 @@ export const listForReconcile = query({
   },
 });
 
+/**
+ * Append aliases to an item, de-duplicated (case-insensitive). Used by the
+ * listing_info_pool resolver-fix backfill — when the LLM's free-form guess
+ * doesn't match name_canonical, we store the guess as an alias so future
+ * guesses of the same variant resolve immediately. See item_matcher.ts
+ * bug A fix (aliases are now scored against the query).
+ */
+export const admin_appendAliases = mutation({
+  args: {
+    item_id: v.id("items"),
+    aliases: v.array(v.string()),
+  },
+  handler: async (ctx, { item_id, aliases }) => {
+    const item = await ctx.db.get(item_id);
+    if (!item) throw new Error(`item not found: ${item_id}`);
+    const existing = (item.aliases ?? []).map((a) => a.trim()).filter(Boolean);
+    const existingLower = new Set(existing.map((a) => a.toLowerCase()));
+    const additions: string[] = [];
+    for (const raw of aliases) {
+      const a = raw.trim();
+      if (!a) continue;
+      const lower = a.toLowerCase();
+      if (existingLower.has(lower)) continue;
+      existingLower.add(lower);
+      additions.push(lower);
+    }
+    if (additions.length === 0) {
+      return { item_id, name_canonical: item.name_canonical, added: [], aliases: existing };
+    }
+    const merged = [...existing, ...additions];
+    await ctx.db.patch(item_id, { aliases: merged, updated_at: Date.now() });
+    return { item_id, name_canonical: item.name_canonical, added: additions, aliases: merged };
+  },
+});
+
+/** Replace the aliases array on an item (deduplicated, lowercased). */
+export const admin_setAliases = mutation({
+  args: {
+    item_id: v.id("items"),
+    aliases: v.array(v.string()),
+  },
+  handler: async (ctx, { item_id, aliases }) => {
+    const item = await ctx.db.get(item_id);
+    if (!item) throw new Error(`item not found: ${item_id}`);
+    const seen = new Set<string>();
+    const cleaned: string[] = [];
+    for (const raw of aliases) {
+      const a = raw.trim().toLowerCase();
+      if (!a || seen.has(a)) continue;
+      seen.add(a);
+      cleaned.push(a);
+    }
+    await ctx.db.patch(item_id, { aliases: cleaned, updated_at: Date.now() });
+    return { item_id, name_canonical: item.name_canonical, aliases: cleaned };
+  },
+});
+
 // `backfillImagesFuzzy` removed (Phase 7 / FIX-DESIGN §4.3): substring matching
 // against unrelated reservations was the secondary cross-item-photo
 // contamination path. Replaced by per-reservation `image_hints` written at

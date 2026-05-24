@@ -343,21 +343,27 @@ export function findBestMatch(input: string, inventory: string[]): string | null
 }
 
 /**
- * Compute the SAME score as findBestMatch for a single (query, candidate) pair.
+ * Compute the SAME score as findBestMatch for a single (query, candidateString) pair.
  * Returns null if the pair fails any gate (cross-brand, focal-length conflict,
  * model-number conflict, variant conflict, A7-designator conflict, coverage>=0.5,
- * overlap>=0.25, specific-token >=1, total-tokens >=2, brand-mismatch).
+ * overlap>=0.25, specific-token >=1 OR coverage>=0.7 high-coverage relaxation,
+ * total-tokens >=2, brand-mismatch).
+ *
+ * `displayName` is the canonical name reported in the result. `candidateString`
+ * is the string actually compared against the query — either the canonical name
+ * itself, or one of the item's aliases (when called via scoreCandidateWithAliases).
  *
  * This is the single source of truth for scoring — used by both findBestMatch
  * (top-1 path) and findTopNMatches (top-N path) so both surface identical results.
  */
 function scoreCandidate(
   query: string,
-  candidate: string,
+  candidateString: string,
+  displayName: string = candidateString,
 ): { name: string; score: number; coverage: number; overlap: number } | null {
   const normalized = normalizeItemName(query);
   if (!normalized) return null;
-  const normItem = normalizeItemName(candidate);
+  const normItem = normalizeItemName(candidateString);
   const inputTokens = normalized.split(' ');
   const itemTokens = normItem.split(' ');
 
@@ -389,10 +395,26 @@ function scoreCandidate(
     }
   }
 
-  // Require at least 1 specific (non-generic) matching token
-  if (specificMatches === 0) return null;
   // Require at least 2 matching tokens total
   if (score < 2) return null;
+
+  // Coverage + overlap (computed early so we can use it in the specific-token gate)
+  const coverage = score / Math.min(inputTokens.length, itemTokens.length);
+  const overlap = score / Math.max(inputTokens.length, itemTokens.length);
+
+  // Specific-token gate with high-coverage escape hatch.
+  // Normal rule: at least 1 non-generic matching token.
+  // Relaxation: when ≥70% of the shorter side's tokens overlap AND ≥50% of
+  // the longer side's, the query is effectively the same product even if
+  // every matched token is "generic" (wireless, mics, dji, jbl, etc.).
+  // This unblocks queries like "DJI Mic 2 wireless" → "DJI Mic 2 wireless"
+  // and "JBL wireless microphones" → "JBL wireless microphones" where the
+  // canonical name itself is built from generic vocabulary.
+  const HIGH_COVERAGE = 0.7;
+  const HIGH_COVERAGE_OVERLAP = 0.5;
+  if (specificMatches === 0 && !(coverage >= HIGH_COVERAGE && overlap >= HIGH_COVERAGE_OVERLAP)) {
+    return null;
+  }
 
   // Focal length conflict
   const mmPattern = /^\d+mm$/;
@@ -435,14 +457,53 @@ function scoreCandidate(
   if (inputA7Des !== null && itemA7Des !== null && inputA7Des !== itemA7Des) return null;
 
   // Coverage + overlap gates (same as findBestMatch)
-  const coverage = score / Math.min(inputTokens.length, itemTokens.length);
-  const overlap = score / Math.max(inputTokens.length, itemTokens.length);
   if (coverage < 0.5 || overlap < 0.25) return null;
 
-  // Final brand-mismatch gate (uses extractPrimaryBrand semantics on raw names)
-  if (detectBrandMismatch(query, candidate).isMismatch) return null;
+  // Final brand-mismatch gate (uses extractPrimaryBrand semantics on raw names).
+  // Compare against displayName (canonical), not the alias, so brand extraction
+  // works the same regardless of which alias scored.
+  if (detectBrandMismatch(query, displayName).isMismatch) return null;
 
-  return { name: candidate, score: coverage, coverage, overlap };
+  return { name: displayName, score: coverage, coverage, overlap };
+}
+
+/** Inventory candidate with optional alternate spellings. */
+export type ScoredCandidate = {
+  /** Canonical / display name returned in match results. */
+  name: string;
+  /** Extra spellings to score against. Empty = canonical-only. */
+  aliases?: string[];
+};
+
+/**
+ * Score a candidate against [name, ...aliases] and return the best-scoring
+ * result. Ties prefer name_canonical over aliases so logging stays clean.
+ */
+function scoreCandidateWithAliases(
+  query: string,
+  candidate: ScoredCandidate,
+): { name: string; score: number; coverage: number; overlap: number } | null {
+  const canonicalHit = scoreCandidate(query, candidate.name, candidate.name);
+  let best = canonicalHit;
+  for (const alias of candidate.aliases ?? []) {
+    if (!alias) continue;
+    const aliasHit = scoreCandidate(query, alias, candidate.name);
+    if (!aliasHit) continue;
+    // Tie-break: prefer canonical when score is equal (logging stays clean).
+    if (!best || aliasHit.score > best.score) {
+      best = aliasHit;
+    }
+  }
+  return best;
+}
+
+/** Accept either a bare name list or a list of {name, aliases} objects. */
+function normalizeCandidates(
+  candidates: ReadonlyArray<string | ScoredCandidate>,
+): ScoredCandidate[] {
+  return candidates.map((c) =>
+    typeof c === 'string' ? { name: c, aliases: [] } : { name: c.name, aliases: c.aliases ?? [] },
+  );
 }
 
 /**
@@ -450,16 +511,21 @@ function scoreCandidate(
  * scoring rule as findBestMatch (GENERIC_TOKENS exclusion, coverage>=0.5,
  * overlap>=0.25, brand-mismatch + conflict gates). Sorted by score desc.
  *
+ * `candidates` may be either a flat string[] (canonical names only) or
+ * {name, aliases}[] — when aliases are supplied each is also scored and
+ * the max wins (tie-breaks on the canonical name).
+ *
  * If fewer than N items pass thresholds, returns what we have (may be empty).
  */
 export function findTopNMatches(
   query: string,
-  candidates: string[],
+  candidates: ReadonlyArray<string | ScoredCandidate>,
   n: number = 3,
 ): Array<{ name: string; score: number; coverage: number; overlap: number }> {
+  const norm = normalizeCandidates(candidates);
   const scored: Array<{ name: string; score: number; coverage: number; overlap: number }> = [];
-  for (const cand of candidates) {
-    const hit = scoreCandidate(query, cand);
+  for (const cand of norm) {
+    const hit = scoreCandidateWithAliases(query, cand);
     if (hit) scored.push(hit);
   }
   scored.sort((a, b) => b.score - a.score);
@@ -469,11 +535,13 @@ export function findTopNMatches(
 /**
  * Score-returning variant of findBestMatch for callers that need confidence.
  * Thin wrapper over findTopNMatches for backwards compatibility.
+ * Accepts either a bare canonical-name list or {name, aliases}[] (aliases
+ * are scored against the query and the best score wins).
  * Returns null if nothing matches; otherwise { name, score } where score is coverageRatio.
  */
 export function findBestMatchWithScore(
   input: string,
-  inventory: string[],
+  inventory: ReadonlyArray<string | ScoredCandidate>,
 ): { name: string; score: number } | null {
   const top = findTopNMatches(input, inventory, 1);
   if (top.length === 0) return null;
