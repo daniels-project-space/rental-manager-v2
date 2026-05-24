@@ -20,6 +20,7 @@ import {
   isLive,
   type ReservationRow,
 } from "./lib/reservations/predicates";
+import { isPaid } from "./order_step_semantics";
 
 // ── Tax year math ────────────────────────────────────────────────────────────
 
@@ -119,11 +120,28 @@ async function loadReservationsForYear(
   // Live rentals whose effective date falls in the tax year, deduped per
   // logical rental (Hygglo poll + v1 import can produce two rows for the
   // same booking — dedup picks the one with the larger net).
+  //
+  // REVENUE-SUM CANON (order_step_semantics.ts): tax filings are cash-basis
+  // — only rentals the renter has actually paid for count. APPROVED /
+  // FUNDS_RESERVED rows carry poller-populated gross_paid_gbp but the
+  // escrow has not been funded, so they MUST be excluded from every tax
+  // total (audit 2026-05-23 measured £3823 gross / £2517 net of leakage
+  // across the 2026-27 tax year if this filter is omitted).
+  // v1-imported rows have no order_step but trustworthy status="completed"
+  // — accept them via the v1-legacy escape hatch (mirrors
+  // isPaidWithV1Legacy in predicates.ts and the realisedReservations
+  // pattern in revenue.ts:getInvestmentScorecard).
+  const isRealisedForTax = (r: RichReservation): boolean => {
+    if (r.order_step) return isPaid(r.order_step);
+    return r.status === "confirmed" || r.status === "completed";
+  };
   const inRange = all.filter((r) => {
     const d = effectiveDate(r);
     return d !== undefined && d >= start && d <= end;
   });
-  const inYear = dedupByLogicalRental(inRange.filter(isLive)) as RichReservation[];
+  const inYear = dedupByLogicalRental(
+    inRange.filter(isLive).filter(isRealisedForTax),
+  ) as RichReservation[];
 
   return { inYear, refundCandidates };
 }

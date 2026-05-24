@@ -37,6 +37,7 @@
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
 import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
+import { isPaid } from "../order_step_semantics";
 
 type ItemTotal = { name: string; gbp: number; count: number };
 
@@ -46,6 +47,7 @@ type ReservationLike = {
   end_date?: string;
   pickup_date?: string;
   account_slug?: string;
+  order_step?: string;
   gross_paid_gbp?: number;
   last_polled_at?: number;
   items?: Array<{ item_name: string }>;
@@ -80,10 +82,24 @@ export function computeBriefingForAccount(args: {
   const effectiveDate = (r: { start_date?: string; pickup_date?: string }) =>
     r.pickup_date ?? r.start_date;
 
+  // REVENUE-SUM CANON (order_step_semantics.ts): today's earnings count
+  // only realised cash. APPROVED / FUNDS_RESERVED rows carry poller-
+  // populated gross_paid_gbp but the renter hasn't funded escrow — they
+  // would inflate "Today: £X from N rentals" with would-pay money. The
+  // dated-today guard does NOT block them on its own (audit 2026-05-23
+  // found 7 unpaid rows summing £450 dated today across both accounts).
+  // v1-imported rows have no order_step but trustworthy status="completed"
+  // — accept via the v1-legacy escape hatch (mirrors isPaidWithV1Legacy
+  // in predicates.ts).
+  const isRealisedRow = (r: ReservationLike): boolean => {
+    if (r.order_step) return isPaid(r.order_step);
+    return r.status === "confirmed" || r.status === "completed";
+  };
   const earnedToday = scoped.filter(
     (r) =>
       r.status !== "cancelled" &&
       r.status !== "declined" &&
+      isRealisedRow(r) &&
       effectiveDate(r) === today,
   );
   const todayEarningsGbp = earnedToday.reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);

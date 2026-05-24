@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { isPaid } from "./order_step_semantics";
 
 // ── Queries ────────────────────────────────────────────────────
 
@@ -208,6 +209,16 @@ export const streamContext = query({
     let mtdRevenue = 0;
     for (const r of allRes) {
       if (!isLiveStatus(r.status)) continue;
+      // REVENUE-SUM CANON (order_step_semantics.ts): require the renter
+      // has funded escrow before counting toward MTD revenue. Today
+      // isLiveStatus (confirmed|completed) already excludes APPROVED /
+      // FUNDS_RESERVED because those carry status="pending_review", but
+      // we add the explicit isPaid guard so a poller change that
+      // re-routes the status field can't silently leak unpaid rows into
+      // the WallE chat snapshot. v1-imported rows have no order_step but
+      // trustworthy status="completed" — accept via the v1-legacy escape
+      // hatch (mirrors isPaidWithV1Legacy in predicates.ts).
+      if (r.order_step ? !isPaid(r.order_step) : r.status !== "confirmed" && r.status !== "completed") continue;
       if (!r.start_date) continue;
       if (r.start_date >= curStart && r.start_date <= curEnd) {
         mtdRevenue += r.gross_paid_gbp ?? 0;

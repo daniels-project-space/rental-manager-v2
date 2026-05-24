@@ -38,6 +38,7 @@ import { internalMutation, query } from "../_generated/server";
 import type { MutationCtx } from "../_generated/server";
 import { getAccountSlugs, upsertSingleton, isoDaysAgo, todayISO, ACCOUNT_ALL } from "./_helpers";
 import { OWNER_SHARE } from "./constants";
+import { isPaid } from "../order_step_semantics";
 
 type ItemLike = {
   name_canonical: string;
@@ -51,6 +52,7 @@ type ReservationLike = {
   end_date?: string;
   pickup_date?: string;
   account_slug?: string;
+  order_step?: string;
   gross_paid_gbp?: number;
   net_to_owner_gbp?: number;
   last_polled_at?: number;
@@ -95,8 +97,21 @@ export function computeTopEarnersForAccount(args: {
     ? reservations
     : reservations.filter((r) => r.account_slug === account);
 
+  // REVENUE-SUM CANON (order_step_semantics.ts): item rankings reflect
+  // realised earnings only. APPROVED / FUNDS_RESERVED rows have poller-
+  // populated gross_paid_gbp but the renter hasn't funded escrow — they
+  // would inflate the ranking with would-pay money. Past-dated unpaid
+  // rows can already exist in the 30d window today (audit 2026-05-23:
+  // £1462 across 17 rows). v1-imported rows have no order_step but
+  // trustworthy status="completed" — accept via the v1-legacy escape
+  // hatch (mirrors isPaidWithV1Legacy in predicates.ts).
+  const isRealisedRow = (r: ReservationLike): boolean => {
+    if (r.order_step) return isPaid(r.order_step);
+    return r.status === "confirmed" || r.status === "completed";
+  };
   const earned = scoped.filter((r) => {
     if (r.status === "cancelled" || r.status === "declined") return false;
+    if (!isRealisedRow(r)) return false;
     const d = r.pickup_date ?? r.start_date;
     return d !== undefined && d >= cutoff && d <= today;
   });

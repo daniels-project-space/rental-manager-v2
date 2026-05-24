@@ -4,6 +4,7 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { isPaid } from "./order_step_semantics";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -482,6 +483,16 @@ export const getRevenueDelta = query({
     let prevGbp = 0;
     for (const r of all) {
       if (!isLiveStatus(r.status)) continue;
+      // REVENUE-SUM CANON (order_step_semantics.ts): require renter has
+      // funded escrow before counting toward MTD revenue. Today
+      // isLiveStatus (confirmed|completed) already excludes APPROVED /
+      // FUNDS_RESERVED because those carry status="pending_review", but
+      // we add the explicit isPaid guard so a poller change that
+      // re-routes the status field can't silently leak unpaid rows into
+      // the MTD total. v1-imported rows have no order_step but
+      // trustworthy status="completed" — accept via the v1-legacy escape
+      // hatch (mirrors isPaidWithV1Legacy in predicates.ts).
+      if (r.order_step ? !isPaid(r.order_step) : r.status !== "confirmed" && r.status !== "completed") continue;
       const sd = r.start_date;
       if (!sd) continue;
       const rev = r.gross_paid_gbp ?? 0;
