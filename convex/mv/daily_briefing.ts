@@ -36,6 +36,7 @@
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
 import { isPaid } from "../order_step_semantics";
 
@@ -208,71 +209,19 @@ export function computeDailyBriefing(args: {
 }
 
 /**
- * Internal mutation — runs the refresh. Incremental by default; pass
- * `force: true` to bypass the skip-when-clean check.
+ * @deprecated Phase 2.1 — independent per-MV scan removed. Forwards to
+ * canonical `master.refreshFast` which collects source tables ONCE and
+ * fans out to all MVs (daily_briefing included). Per-account + force
+ * args become no-ops; master rebuilds the full fleet unconditionally.
  */
 export const refresh = internalMutation({
   args: {
     account: v.optional(v.string()),
     force: v.optional(v.boolean()),
   },
-  handler: async (ctx, { account, force }) => {
-    const startedAt = Date.now();
-    const today = todayISO();
-    // 90-day rolling window. daily_briefing reports today's earnings +
-    // active rentals (start_date<=today<=end_date) + 'this month' counters.
-    // Anything older than 90 days can't appear in those buckets. Indexed
-    // read drops ~1767 rows → ~200 rows per refresh.
-    const cutoff = isoDaysAgo(90);
-    const reservations = await ctx.db.query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
-      .collect();
-
-    const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
-
-    const existingByAccount = new Map<string, { generatedAt?: number; cutoffISO?: string } | null>();
-    for (const acc of targets) {
-      const existing = await ctx.db
-        .query("daily_briefing")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .withIndex("by_account" as any, (q) => q.eq("account", acc))
-        .first();
-      existingByAccount.set(acc, existing as { generatedAt?: number; cutoffISO?: string } | null);
-    }
-    const accountsNeedingRebuild = targets.filter((acc) => {
-      const decision = shouldRebuildBriefing({
-        force: force ?? false,
-        existing: existingByAccount.get(acc) ?? null,
-        currentCutoff: cutoff,
-        windowedReservations: acc === ACCOUNT_ALL
-          ? reservations
-          : reservations.filter((r) => r.account_slug === acc),
-      });
-      return decision.rebuild;
-    });
-
-    if (accountsNeedingRebuild.length === 0) {
-      return {
-        ok: true,
-        rowsAffected: 0,
-        durationMs: Date.now() - startedAt,
-        skipped: true,
-        reason: "clean",
-      };
-    }
-
-    let rowsAffected = 0;
-    for (const acc of accountsNeedingRebuild) {
-      const computed = computeBriefingForAccount({ account: acc, reservations, today });
-      await upsertSingleton(ctx, "daily_briefing", acc, {
-        generatedAt: startedAt,
-        cutoffISO: cutoff,
-        ...computed,
-      });
-      rowsAffected += 1;
-    }
-
-    return { ok: true, rowsAffected, durationMs: Date.now() - startedAt };
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.mv.master.refreshFast, {});
+    return { ok: true, rowsAffected: 0, durationMs: 0, scheduled: "master.refreshFast" as const };
   },
 });
 

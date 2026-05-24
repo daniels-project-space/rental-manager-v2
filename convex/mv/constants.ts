@@ -14,8 +14,11 @@
 /** MIRROR OF src/mastra/data/constants.ts:PLATFORM_FEE_RATE */
 export const PLATFORM_FEE_RATE = 0.36;
 
-/** MIRROR OF src/mastra/data/constants.ts:OWNER_SHARE */
-export const OWNER_SHARE = 0.64;
+/**
+ * MIRROR OF src/mastra/data/constants.ts:OWNER_SHARE
+ * Wave 1.4: re-export from canonical helper to keep one source of truth.
+ */
+export { OWNER_SHARE } from "../lib/revenue_attribution";
 
 /** MIRROR OF src/mastra/data/constants.ts:ACCOUNTS */
 export const ACCOUNTS = ["dbcinema", "leo"] as const;

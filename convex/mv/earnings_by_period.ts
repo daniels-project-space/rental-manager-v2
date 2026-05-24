@@ -12,7 +12,7 @@
  * truth.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { query } from "../_generated/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { effectiveDate, isLive } from "../lib/reservations/predicates";
 
@@ -118,43 +118,9 @@ export function computeEarningsByPeriod(args: {
   return rows;
 }
 
-/**
- * Standalone refresh — direct invocation. Hot path goes through
- * master.refreshFast which reuses its 24-month reservations collect.
- */
-export const refresh = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const startedAt = Date.now();
-    const cutoffDate = new Date(startedAt);
-    cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
-    const cutoffISO = cutoffDate.toISOString().slice(0, 10);
-    const reservations = await ctx.db.query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffISO))
-      .collect();
-    const rows = computeEarningsByPeriod({
-      reservations: reservations as unknown as ReservationLike[],
-      generatedAt: startedAt,
-    });
-    let written = 0;
-    for (const row of rows) {
-      const { account, granularity, ...rest } = row;
-      const existing = await ctx.db
-        .query("mv_earnings_by_period")
-        .withIndex("by_account_granularity", (q) =>
-          q.eq("account", account).eq("granularity", granularity),
-        )
-        .first();
-      if (existing) {
-        await ctx.db.patch(existing._id, rest);
-      } else {
-        await ctx.db.insert("mv_earnings_by_period", { account, granularity, ...rest });
-      }
-      written += 1;
-    }
-    return { ok: true, written, durationMs: Date.now() - startedAt };
-  },
-});
+// Phase 2.1 — legacy `refresh` internalMutation REMOVED (no callers).
+// Canonical refresh path: master.refreshFast → computeEarningsByPeriod →
+// master.writeEarningsByPeriod (shared-collect, scans source tables once).
 
 /**
  * Reader — returns the buckets covering the most recent N months.

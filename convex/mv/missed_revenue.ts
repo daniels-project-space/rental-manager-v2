@@ -14,7 +14,7 @@
  * existing query handlers can swap the source verbatim.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { query } from "../_generated/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { OWNER_SHARE } from "../lib/missed_revenue";
 
@@ -196,51 +196,9 @@ export function computeMissedRevenue(args: {
   return rows;
 }
 
-/**
- * Standalone refresh — direct invocation path (ops, manual triggers).
- * The hot path goes through master.refreshFast which reuses its
- * pre-fetched collects. Both call computeMissedRevenue() and write via
- * the master.writeMissedRevenue mutation.
- */
-export const refresh = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const startedAt = Date.now();
-    const cutoff90 = new Date(startedAt - 90 * 86_400_000).toISOString().slice(0, 10);
-    const [denials, pricing, reservations, accounts] = await Promise.all([
-      ctx.db.query("denial_records").collect(),
-      ctx.db.query("pricing_catalog").collect(),
-      ctx.db.query("reservations")
-        .withIndex("by_start_date", (q) => q.gte("start_date", cutoff90))
-        .collect(),
-      ctx.db.query("accounts").collect(),
-    ]);
-    const rows = computeMissedRevenue({
-      denials: denials as unknown as DenialLikeRow[],
-      pricing: pricing as unknown as PricingRow[],
-      reservations: reservations as unknown as ReservationLike[],
-      accounts: accounts as unknown as AccountRow[],
-      generatedAt: startedAt,
-    });
-    let written = 0;
-    for (const row of rows) {
-      const { account, days, ...rest } = row;
-      const existing = await ctx.db
-        .query("mv_missed_revenue")
-        .withIndex("by_account_days", (q) =>
-          q.eq("account", account).eq("days", days),
-        )
-        .first();
-      if (existing) {
-        await ctx.db.patch(existing._id, rest);
-      } else {
-        await ctx.db.insert("mv_missed_revenue", { account, days, ...rest });
-      }
-      written += 1;
-    }
-    return { ok: true, written, durationMs: Date.now() - startedAt };
-  },
-});
+// Phase 2.1 — legacy `refresh` internalMutation REMOVED (no callers).
+// Canonical refresh path: master.refreshFast → computeMissedRevenue →
+// master.writeMissedRevenue (shared-collect, scans source tables once).
 
 /**
  * Read the cached row for (account, days). Returns null if not yet

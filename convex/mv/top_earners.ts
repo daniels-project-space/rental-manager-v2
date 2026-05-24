@@ -36,6 +36,7 @@
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
 import type { MutationCtx } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { getAccountSlugs, upsertSingleton, isoDaysAgo, todayISO, ACCOUNT_ALL } from "./_helpers";
 import { OWNER_SHARE } from "./constants";
 import { isPaid } from "../order_step_semantics";
@@ -241,59 +242,20 @@ async function recomputeForAccount(
   });
 }
 
+/**
+ * @deprecated Phase 2.1 — independent per-MV scan removed. Forwards to
+ * canonical `master.refreshFast` which collects source tables ONCE and
+ * fans out to all MVs (top_earners included). Per-account + force args
+ * become no-ops; master rebuilds the full fleet unconditionally.
+ */
 export const refresh = internalMutation({
   args: {
     account: v.optional(v.string()),
     force: v.optional(v.boolean()),
   },
-  handler: async (ctx, { account, force }) => {
-    const startedAt = Date.now();
-    const today = todayISO();
-    const cutoff = isoDaysAgo(30);
-    const reservations = await ctx.db.query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
-      .collect();
-
-    const targets = account ? [account, ACCOUNT_ALL] : getAccountSlugs();
-
-    const existingByAccount = new Map<string, { generatedAt?: number; cutoffISO?: string } | null>();
-    for (const acc of targets) {
-      const existing = await ctx.db
-        .query("top_earners_30d")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .withIndex("by_account" as any, (q) => q.eq("account", acc))
-        .first();
-      existingByAccount.set(acc, existing as { generatedAt?: number; cutoffISO?: string } | null);
-    }
-    const accountsNeedingRebuild = targets.filter((acc) => {
-      const decision = shouldRebuildTopEarners({
-        force: force ?? false,
-        existing: existingByAccount.get(acc) ?? null,
-        currentCutoff: cutoff,
-        windowedReservations: acc === ACCOUNT_ALL
-          ? reservations
-          : reservations.filter((r) => r.account_slug === acc),
-      });
-      return decision.rebuild;
-    });
-
-    if (accountsNeedingRebuild.length === 0) {
-      return {
-        ok: true,
-        rowsAffected: 0,
-        durationMs: Date.now() - startedAt,
-        skipped: true,
-        reason: "clean",
-      };
-    }
-
-    const items = await ctx.db.query("items").collect();
-    let totalAffected = 0;
-    for (const acc of accountsNeedingRebuild) {
-      await recomputeForAccount(ctx, acc, startedAt, reservations, items, today, cutoff);
-      totalAffected += 1;
-    }
-    return { ok: true, rowsAffected: totalAffected, durationMs: Date.now() - startedAt };
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.mv.master.refreshFast, {});
+    return { ok: true, rowsAffected: 0, durationMs: 0, scheduled: "master.refreshFast" as const };
   },
 });
 
@@ -362,5 +324,34 @@ export const get = query({
       .query("top_earners_30d")
       .withIndex("by_account", (q) => q.eq("account", key))
       .first();
+  },
+});
+
+/**
+ * Phase 2.2 (2026-05-24): MV-backed ranking for ItemRevenuePanel.
+ * Returns the cached top-N rows from `top_earners_30d` instead of triggering
+ * a live `.collect()` over reservations + pricing + items on every mount.
+ *
+ * Row shape: `{ itemName, gross30dGbp, net30dGbp, rentalCount, utilizationPct }`.
+ * MV is rebuilt by `master.refreshFast` (hourly) and caps at top-20 per account.
+ *
+ * Returns `[]` when the singleton is missing (e.g. fresh deploy before the
+ * first cron tick). The Convex `useQuery` hook returns `undefined` while the
+ * query itself is loading, so callers can still distinguish loading vs empty.
+ */
+export const getRanking = query({
+  args: {
+    account: v.optional(v.union(v.string(), v.null())),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { account, limit }) => {
+    const key = account ?? ACCOUNT_ALL;
+    const doc = await ctx.db
+      .query("top_earners_30d")
+      .withIndex("by_account", (q) => q.eq("account", key))
+      .first();
+    if (!doc) return [];
+    const rows = doc.rows ?? [];
+    return limit !== undefined ? rows.slice(0, limit) : rows;
   },
 });

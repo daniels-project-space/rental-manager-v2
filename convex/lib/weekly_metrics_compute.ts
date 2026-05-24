@@ -24,6 +24,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import {
   attributeRevenue,
+  OWNER_SHARE,
   type AttributionContext,
   type RentalForAttribution,
 } from "./revenue_attribution";
@@ -330,7 +331,7 @@ export function computeRevenueMetrics(
     if (filter.granularity === "global") {
       gross += g;
       attributed += g;
-      net += r.net_to_owner_gbp ?? g * 0.64;
+      net += r.net_to_owner_gbp ?? g * OWNER_SHARE;
     } else {
       const share = attributedShareFor(r, filter, attrCtx);
       if (share <= 0) continue;
@@ -339,7 +340,7 @@ export function computeRevenueMetrics(
       const shareRatio = g > 0 ? share / g : 0;
       gross += share;
       attributed += share;
-      net += (r.net_to_owner_gbp ?? g * 0.64) * shareRatio;
+      net += (r.net_to_owner_gbp ?? g * OWNER_SHARE) * shareRatio;
     }
   }
   return {

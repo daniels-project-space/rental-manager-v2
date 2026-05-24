@@ -70,7 +70,19 @@ async function computeConflicts(
   start_date: string,
   end_date: string,
 ): Promise<{ confirmed: ConflictRow[]; pending: ConflictRow[] }> {
-  const all = await ctx.db.query("reservations").collect();
+  // Phase 2.1 — bounded scan. A reservation overlaps [start_date, end_date]
+  // iff `r.start_date <= end_date && r.end_date >= start_date`. The schema
+  // only indexes `start_date`, so we widen the lower bound by the longest
+  // plausible rental (90d) to catch reservations that started before the
+  // window but extend into it. Drops a ~2y full-table scan to a windowed
+  // slice of ~weeks-to-months worth of reservations.
+  const lowerBound = addDays(start_date, -90);
+  const all = await ctx.db
+    .query("reservations")
+    .withIndex("by_start_date", (q) =>
+      q.gte("start_date", lowerBound).lte("start_date", end_date),
+    )
+    .collect();
   const confirmed: ConflictRow[] = [];
   const pending: ConflictRow[] = [];
 

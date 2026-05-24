@@ -23,6 +23,7 @@ import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_boo
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
+  OWNER_SHARE as OWNER_SHARE_CANONICAL,
   type RentalForAttribution,
 } from "./lib/revenue_attribution";
 import {
@@ -1346,7 +1347,7 @@ export const getStatsDrawerData = query({
     // 0.64 (OWNER_SHARE) so this matches the netOf(r) convention used by
     // every other revenue widget (revenue = take-home post platform fees).
     const ninetyDaysAgo = Date.now() - 90 * 86400000;
-    const DENIED_OWNER_SHARE = 0.64;
+    const DENIED_OWNER_SHARE = OWNER_SHARE_CANONICAL;
     const recentDenials = denialRows.filter((d) => d.created_at >= ninetyDaysAgo);
     const deniedRevenueTotalGross = recentDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
     const deniedRevenueTotal = deniedRevenueTotalGross * DENIED_OWNER_SHARE;

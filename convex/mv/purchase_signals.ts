@@ -9,6 +9,7 @@
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { getAccountSlugs, upsertSingleton, ACCOUNT_ALL } from "./_helpers";
 import { OWNER_SHARE } from "./constants";
 
@@ -137,35 +138,17 @@ export function computePurchaseSignals(args: {
   return result;
 }
 
+/**
+ * @deprecated Phase 2.1 — independent per-MV scan removed. Forwards to
+ * canonical `master.refreshFast` which collects source tables ONCE and
+ * fans out to all MVs (purchase_signals included). Per-account targeting
+ * is lost — master always refreshes the full fleet.
+ */
 export const refresh = internalMutation({
   args: { account: v.optional(v.string()) },
-  handler: async (ctx, { account: targetAccount }) => {
-    const startedAt = Date.now();
-    const denials = await ctx.db.query("denial_records").collect();
-    const items = await ctx.db.query("items").collect();
-    const pricing = await ctx.db.query("pricing_catalog").collect();
-    const accounts = await ctx.db.query("accounts").collect();
-
-    const computed = computePurchaseSignals({
-      denials,
-      items,
-      pricing,
-      accounts,
-      targetAccount,
-      generatedAt: startedAt,
-    });
-
-    let rowsAffected = 0;
-    for (const row of computed) {
-      await upsertSingleton(ctx, "purchase_signals", row.account, {
-        generatedAt: row.generatedAt,
-        signals: row.signals,
-        topInsight: row.topInsight,
-      });
-      rowsAffected += 1;
-    }
-
-    return { ok: true, rowsAffected, durationMs: Date.now() - startedAt };
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.mv.master.refreshFast, {});
+    return { ok: true, rowsAffected: 0, durationMs: 0, scheduled: "master.refreshFast" as const };
   },
 });
 

@@ -13,7 +13,8 @@
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
-import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
+import { internal } from "../_generated/api";
+import { getAccountSlugs, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ReservationRow = any;
@@ -122,34 +123,17 @@ export function computeUtilization(args: {
   return result;
 }
 
+/**
+ * @deprecated Phase 2.1 — independent per-MV scan removed. Forwards to
+ * canonical `master.refreshFast` which collects source tables ONCE and
+ * fans out to all MVs (utilization included). Per-account targeting
+ * lost — master always refreshes the full fleet.
+ */
 export const refresh = internalMutation({
   args: { account: v.optional(v.string()) },
-  handler: async (ctx, { account: targetAccount }) => {
-    const startedAt = Date.now();
-    const items = await ctx.db.query("items").collect();
-    const cutoff = isoDaysAgo(30);
-    const reservations = await ctx.db.query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
-      .collect();
-
-    const computed = computeUtilization({
-      reservations,
-      items,
-      targetAccount,
-      generatedAt: startedAt,
-    });
-
-    let rowsAffected = 0;
-    for (const row of computed) {
-      await upsertSingleton(ctx, "utilization_today", row.account, {
-        generatedAt: row.generatedAt,
-        rows: row.rows,
-        fleetUtilizationPct: row.fleetUtilizationPct,
-      });
-      rowsAffected += 1;
-    }
-
-    return { ok: true, rowsAffected, durationMs: Date.now() - startedAt };
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.mv.master.refreshFast, {});
+    return { ok: true, rowsAffected: 0, durationMs: 0, scheduled: "master.refreshFast" as const };
   },
 });
 

@@ -20,8 +20,7 @@
  */
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-
-const OWNER_SHARE = 0.64;
+import { OWNER_SHARE } from "./lib/revenue_attribution";
 /** V1 assumption for converting daily rate → average rental length when no
  *  reservation history exists. V1 short rentals average ~3 days. */
 const ASSUMED_AVG_RENTAL_DAYS = 3;

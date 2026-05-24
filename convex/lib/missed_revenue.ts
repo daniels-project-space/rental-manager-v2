@@ -17,8 +17,10 @@
  *    revenue widget (netOf(r) → net_to_owner_gbp).
  */
 import type { QueryCtx } from "../_generated/server";
+import { OWNER_SHARE } from "./revenue_attribution";
 
-export const OWNER_SHARE = 0.64;
+// Re-export so existing import sites stay valid after consolidation (Wave 1.4).
+export { OWNER_SHARE };
 
 export type DenialLoss = {
   denialId: string;

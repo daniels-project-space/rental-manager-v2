@@ -53,7 +53,16 @@ function readResolverItems(r: {
 }
 
 /**
- * W10 Item Revenue Panel - ranked list by revenue over a period
+ * W10 Item Revenue Panel - ranked list by revenue over a period.
+ *
+ * @deprecated for UI use (Phase 2.2, 2026-05-24). The dashboard panel now
+ * reads from the cached MV via `api.mv.top_earners.getRanking` to avoid the
+ * per-mount live `.collect()` over reservations + pricing_catalog + items.
+ *
+ * STILL IN USE by `src/trigger/snapshot-inventory-overview.ts`, which needs
+ * fields the MV does not store (`totalRevenue`/`totalDays`/`avgValue`) and
+ * runs on a Trigger.dev cron — not a hot UI path. Do NOT delete without
+ * migrating that caller or expanding the MV row shape.
  */
 export const getItemRevenueRanking = query({
   args: {

@@ -47,6 +47,34 @@ export { ITEM_KINDS, STANDARD_INCLUDED_KINDS, normalizeKind };
 export type { ItemKind };
 
 // ──────────────────────────────────────────────────────────────────────────
+// Canonical money constants (Wave 1.4 — single source of truth).
+// Mirrors src/mastra/data/constants.ts. Every Convex module that needs to
+// convert gross → net-to-owner MUST import OWNER_SHARE from here rather than
+// redefining a local literal.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Hygglo platform fee fraction (~36%). */
+export const PLATFORM_FEE_SHARE = 0.36;
+
+/** Owner take-home fraction after platform fee (1 - PLATFORM_FEE_SHARE). */
+export const OWNER_SHARE = 0.64;
+
+/**
+ * Per-rental whole NET take-home. Prefers explicit `net_to_owner_gbp` when the
+ * sync layer captured it; otherwise applies the platform-fee fallback.
+ */
+export function netOfTotal(r: {
+  net_to_owner_gbp?: number | null;
+  gross_paid_gbp?: number | null;
+  gross_gbp?: number | null;
+}): number {
+  const explicit = r.net_to_owner_gbp;
+  if (typeof explicit === "number") return explicit;
+  const gross = r.gross_paid_gbp ?? r.gross_gbp ?? 0;
+  return gross * OWNER_SHARE;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Public types
 // ──────────────────────────────────────────────────────────────────────────
 

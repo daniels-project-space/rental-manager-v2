@@ -115,7 +115,7 @@ export const snapshotDailyBriefing = internalAction({
 const TR_LOOKBACK_DAYS = 90;
 const TR_LIMIT_90D = 50;
 const TR_OUTPUT_CAP = 100;
-const TR_NET_FALLBACK_RATIO = 0.64;
+import { OWNER_SHARE as TR_NET_FALLBACK_RATIO } from "./lib/revenue_attribution";
 
 interface TopSpendersRow {
   renterId: string | null;
