@@ -105,6 +105,8 @@ import type * as listing_equivalence_admin from "../listing_equivalence_admin.js
 import type * as listing_images from "../listing_images.js";
 import type * as listing_resolver from "../listing_resolver.js";
 import type * as listing_resolver_data from "../listing_resolver_data.js";
+import type * as listing_short_names from "../listing_short_names.js";
+import type * as listing_short_names_actions from "../listing_short_names_actions.js";
 import type * as lost_revenue from "../lost_revenue.js";
 import type * as market_search from "../market_search.js";
 import type * as market_search_cache from "../market_search_cache.js";
@@ -257,6 +259,8 @@ declare const fullApi: ApiFromModules<{
   listing_images: typeof listing_images;
   listing_resolver: typeof listing_resolver;
   listing_resolver_data: typeof listing_resolver_data;
+  listing_short_names: typeof listing_short_names;
+  listing_short_names_actions: typeof listing_short_names_actions;
   lost_revenue: typeof lost_revenue;
   market_search: typeof market_search;
   market_search_cache: typeof market_search_cache;

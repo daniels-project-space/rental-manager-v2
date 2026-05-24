@@ -16,7 +16,7 @@ export interface Rental {
   return_time?: string | null;
   pickup_method?: string | null;
   return_method?: string | null;
-  item_tiles?: Array<{ name: string; image_url: string | null; qty: number }>;
+  item_tiles?: Array<{ name: string; image_url: string | null; qty: number; raw_name?: string }>;
   // PASS-8: distinct-image tiles (deduped by image_url). First entry = master.
   item_image_tiles?: Array<{
     image_url: string;
@@ -199,7 +199,7 @@ export function RentalRow({ r }: { r: Rental }) {
               <span
                 key={`${t.name}-${i}`}
                 className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700 text-slate-300"
-                title={t.name}
+                title={t.raw_name ?? t.name}
               >
                 {t.name}
                 {t.qty > 1 && (

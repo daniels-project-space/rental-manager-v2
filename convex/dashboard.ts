@@ -260,6 +260,16 @@ export const getStatsDrawerData = query({
       bankByProduct.set(`${li.account_slug}#${li.product_id}`, li.image_url);
     }
 
+    // Per-Hygglo-product short canonical names (2026-05-23). Keyed by
+    // `${account_slug}#${product_id}`. Looked up per item_tiles entry in
+    // mapRental.useHygglo to replace SEO-stuffed Hygglo titles with the
+    // canonical short form. Missing entries fall back to the raw name.
+    const shortNameRows = await ctx.db.query("listing_short_names").collect();
+    const shortNameByProduct = new Map<string, string>();
+    for (const sn of shortNameRows) {
+      shortNameByProduct.set(`${sn.account_slug}#${sn.product_id}`, sn.short_name);
+    }
+
     // ── COLLECT 3: denial_records ────────────────────────────────
     let denialRows = await ctx.db.query("denial_records").collect();
     if (accountSlug) {
@@ -913,11 +923,30 @@ export const getStatsDrawerData = query({
               : null),
           net_gbp: r.net_to_owner_gbp ?? null,
           order_step: r.order_step ?? null,
-          item_tiles: item_image_tiles_h.map((t) => ({
-            name: t.name,
-            qty: t.qty,
-            image_url: t.image_url,
-          })),
+          item_tiles: item_image_tiles_h.map((t) => {
+            // 2026-05-23: prefer cached short_name (derived from Hygglo
+            // SEO blob via DeepSeek). Fall back to raw name when no
+            // cache row exists yet. We resolve the product_id by walking
+            // hItems and matching on name+image_url - cheap (<=10 items
+            // per rental). Tooltip / hover gets the raw t.name via
+            // raw_name field below.
+            let pid: number | undefined;
+            for (const hi of hItems) {
+              if (hi?.product_id != null && hi.name === t.name) {
+                pid = hi.product_id;
+                break;
+              }
+            }
+            const sn = pid != null
+              ? shortNameByProduct.get(`${r.account_slug}#${pid}`)
+              : undefined;
+            return {
+              name: sn ?? t.name,
+              raw_name: t.name,
+              qty: t.qty,
+              image_url: t.image_url,
+            };
+          }),
           kind,
           is_ongoing: kind === "ongoing",
         };

@@ -1129,6 +1129,27 @@ export default defineSchema({
     .index("by_title_hash", ["title_hash"])
     .index("by_account_listing", ["account_slug", "hygglo_listing_id"]),
 
+  // ── Per-Hygglo-product short canonical name cache (2026-05-23) ───────────
+  //  Hygglo per-item names are SEO blobs ("2x JBL PartyBox Club 120 Speakers
+  //  | Portable Bluetooth Party Speaker Pair + Bass Boost + RGB Light Show
+  //  + 2x Stands (like JBL PartyBox 310 / PartyBox 710)"). Active-rentals
+  //  cards need the canonical form ("2x JBL Club 120 Speakers"). One row
+  //  per (account_slug, product_id) - derived once via DeepSeek, reused
+  //  for every rental that touches the listing. Re-derived when the raw
+  //  title hash changes.
+  listing_short_names: defineTable({
+    account_slug: v.string(),
+    product_id: v.number(),                     // Hygglo product_id (stable per listing)
+    raw_title: v.string(),                      // last raw title we derived from
+    raw_title_hash: v.string(),                 // sha-256 of raw_title (invalidation key)
+    short_name: v.string(),                     // "<qty>x <brand> <model> <noun>" (<=50 chars)
+    derivation_method: v.string(),              // "llm" | "manual" | "passthrough"
+    derived_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_account_product", ["account_slug", "product_id"])
+    .index("by_account", ["account_slug"]),
+
   // ── market_search 24h cache (Grok live-search results) ────────────────────
   market_search_cache: defineTable({
     query_norm: v.string(),     // lowercase trimmed query (with optional focus prefix)

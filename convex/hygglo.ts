@@ -426,6 +426,39 @@ async function scheduleListingResolutionOnDenial(
   }
 }
 
+// Fire-and-forget short_name derivation for each Hygglo per-item product.
+// Mutations can't call actions directly - scheduler-only. The action itself
+// is a cache-hit no-op when (account_slug, product_id, title_hash) is
+// unchanged, so we can schedule on every poll cycle without burning LLM
+// budget. Errors are swallowed so the poller never blocks on this.
+async function scheduleShortNameDerivation(
+  ctx: MutationCtx,
+  account_slug: string,
+  hyggloItems: Array<{ name: string; product_id?: number; type: string }>,
+): Promise<void> {
+  const seen = new Set<number>();
+  for (const it of hyggloItems) {
+    if (!it || it.type === "INSURANCE") continue;
+    if (typeof it.product_id !== "number") continue;
+    if (!it.name) continue;
+    if (seen.has(it.product_id)) continue;
+    seen.add(it.product_id);
+    try {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.listing_short_names_actions.deriveOne,
+        {
+          account_slug,
+          product_id: it.product_id,
+          raw_title: it.name,
+        },
+      );
+    } catch (err) {
+      console.warn("[hygglo.upsertOrderImpl] scheduleShortNameDerivation failed", String(err));
+    }
+  }
+}
+
 // Shared arg shape for both the singleton and batch reservation upsert mutations.
 const upsertOrderArgsFields = {
   account_slug: v.string(),
@@ -648,6 +681,7 @@ async function upsertOrderImpl(
       const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
       const hyggloItemsRegression = buildHyggloItems(args.items);
       await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
+      await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsRegression);
       return { action: "updated", bankItems: hyggloItemsRegression };
     }
 
@@ -670,6 +704,7 @@ async function upsertOrderImpl(
     const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
     const hyggloItemsUpdate = buildHyggloItems(args.items);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
+    await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);
     if (obsoleteFields.is_obsolete === true && !wasObsolete) {
       await scheduleListingResolutionOnDenial(ctx, {
         account_slug: args.account_slug,
@@ -696,6 +731,7 @@ async function upsertOrderImpl(
     ...(hyggloItemsInsert.length > 0 && { hygglo_items: hyggloItemsInsert }),
     created_at: now,
   });
+  await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsInsert);
 
   // EQ-C: when an order first appears already in the obsolete bucket (renter
   // never made it past REQUEST → owner denied before we ever saw it in
