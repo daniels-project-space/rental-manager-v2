@@ -27,6 +27,7 @@ import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
+import { OWNER_SHARE } from "./lib/revenue_attribution";
 
 const DAY_MS = 86_400_000;
 const DEDUP_WINDOW_MS = 2 * DAY_MS;
@@ -199,7 +200,14 @@ export const classifyObsoleteReservations = internalMutation({
         const usedRate = rate ?? medianRate;
         const { start, end } = dateRangeMs(r);
         const days = inclusiveDays(start, end);
-        if (usedRate > 0) estimated = Math.round(usedRate * days * 100) / 100;
+        // NET attribution: pricing_catalog rates are Hygglo *gross* daily
+        // prices, but every other money field on the dashboard is NET
+        // take-home (after the ~36% platform fee). Apply OWNER_SHARE so
+        // demand_loss_estimated_gbp is comparable to lost_revenue.ts outputs
+        // and the rest of the dashboard. Sister file convex/lost_revenue.ts
+        // does the same (see L320 — `* OWNER_SHARE`).
+        if (usedRate > 0)
+          estimated = Math.round(usedRate * days * OWNER_SHARE * 100) / 100;
 
         // Phase 10.4 — dedup vs denial_records for owner_denied rows.
         if (r.obsolete_reason === "owner_denied" && name) {

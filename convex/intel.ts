@@ -23,6 +23,7 @@ import {
   isPaidWithV1Legacy,
   type ReservationRow,
 } from "./lib/reservations/predicates";
+import { OWNER_SHARE } from "./lib/revenue_attribution";
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -287,13 +288,15 @@ export const getSmartBuyRanking = query({
           : null;
 
       // Estimate annual revenue: scale request count to a 365-day window,
-      // assume average rental is 3 days, owner share 0.78 (Hygglo cut).
+      // assume average rental is 3 days, owner share = OWNER_SHARE (0.64,
+      // Hygglo takes 36%). Was 0.78 prior to Wave 1.4 — wrong literal, the
+      // platform fee is 36% not 22%. Now sourced from canonical constant.
       const scaledRequests = (agg.requestCount / windowDays) * 365;
       let estAnnualNet = 0;
       if (rate !== null) {
-        estAnnualNet = Math.round(scaledRequests * rate * 3 * 0.78);
+        estAnnualNet = Math.round(scaledRequests * rate * 3 * OWNER_SHARE);
       } else if (agg.lostGbp > 0) {
-        estAnnualNet = Math.round((agg.lostGbp / windowDays) * 365 * 0.78);
+        estAnnualNet = Math.round((agg.lostGbp / windowDays) * 365 * OWNER_SHARE);
       }
       const firstYearROI =
         estCost && estCost > 0 ? Math.round((estAnnualNet / estCost) * 1000) / 10 : null;
