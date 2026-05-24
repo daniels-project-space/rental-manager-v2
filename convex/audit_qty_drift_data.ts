@@ -56,6 +56,8 @@ export const listAuditCandidates = internalQuery({
         .withIndex("by_status", (q) => q.eq("status", "confirmed"))
         .collect();
     } else {
+      // check-patterns:ok — unreachable in production (cron always passes
+      // only_active=true). Admin-only escape hatch for full-table audit.
       rows = await ctx.db.query("reservations").collect();
     }
 

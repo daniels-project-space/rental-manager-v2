@@ -28,7 +28,7 @@
  *        npx convex run listing_info_pool_actions:deriveOne ... (force=true)
  */
 import { internalMutation } from "../_generated/server";
-import { internal } from "../_generated/api";
+import { api } from "../_generated/api";
 
 type NewItem = {
   canonical_name: string;
@@ -55,7 +55,7 @@ export const run = internalMutation({
     const rows: Array<{ name: string; action: string }> = [];
     for (const it of NEW_ITEMS) {
       const res: { action: "inserted" | "exists"; item_id: unknown; canonical: string } =
-        await ctx.runMutation(internal.admin_item_attribution.addItemIfMissing, {
+        await ctx.runMutation(api.admin_item_attribution.addItemIfMissing, {
           canonical_name: it.canonical_name,
           name_input: it.canonical_name,
           kind: it.kind,
