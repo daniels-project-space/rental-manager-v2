@@ -89,7 +89,14 @@ export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [chartMode, setChartMode] = useState<"bars" | "lines">("bars");
-  const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug });
+  // Pass 11a (2026-05-25): MV-back returns v.any() so useQuery infers
+  // any — cast to a permissive Record shape so callbacks pick up
+  // Record<string, any> instead of implicit any.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type RawRow = Record<string, any>;
+  const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug }) as
+    | { months: RawRow[]; forecast: RawRow[]; currentMonth?: string; [k: string]: unknown }
+    | undefined;
   // Single source of truth for the current-month target: the Expected Monthly
   // stat card (data.monthly.target_gbp). The lifetime chart mirrors that value
   // so the two widgets cannot disagree.
@@ -111,8 +118,10 @@ export function LifetimeRevenue() {
   const showCurrentMonthPrediction = todayDayOfMonth >= 7 && expectedMonthlyTarget > 0;
   const rawCurrentMonth = (raw as { currentMonth?: string } | undefined)?.currentMonth;
 
-  const rawData = raw?.months.map((row) => {
-    const fc = raw.forecast.find((f) => f.month === row.month);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawData = raw?.months.map((row: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fc = raw.forecast.find((f: any) => f.month === row.month);
     const r = row as unknown as Record<string, number | undefined>;
     // Pre-AI months: zero out aiBoost client-side so no green sliver renders
     // for months earlier than settings.ai_active_from. String compare on YYYY-MM

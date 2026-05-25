@@ -89,8 +89,19 @@ export const getConversionFunnel = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
     days: v.number(),
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, days }) => {
+  handler: async (ctx, { accountSlug, days, _bypassMv }) => {
+    if (!_bypassMv) {
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_conversion_funnel")
+        .withIndex("by_account_days", (q) =>
+          q.eq("account", accountKey).eq("days", days),
+        )
+        .first();
+      if (cached) return cached.payload;
+    }
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);

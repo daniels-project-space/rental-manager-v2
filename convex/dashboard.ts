@@ -1988,14 +1988,20 @@ export const getRentalVolumeByCategory = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
     days: v.optional(v.number()),
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, days }) => {
-    // Rolling window matching getItemRevenueRanking (convex/items.ts:31-89).
-    // Gross-based, pricing_catalog-weighted split across resolved_items.
-    // PASS-5: `days` made optional (frontend was not passing it, which
-    // crashed the entire Stats Grid via error boundary and hid the
-    // Active Drawer).
+  handler: async (ctx, { accountSlug, days, _bypassMv }) => {
     const effectiveDays = typeof days === "number" ? days : 30;
+    if (!_bypassMv) {
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_rental_volume_by_category")
+        .withIndex("by_account_days", (q) =>
+          q.eq("account", accountKey).eq("days", effectiveDays),
+        )
+        .first();
+      if (cached) return cached.payload;
+    }
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - effectiveDays);
     const cutoffStr = cutoff.toISOString().slice(0, 10);

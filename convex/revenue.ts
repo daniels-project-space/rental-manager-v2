@@ -195,8 +195,19 @@ export const getMissedRevenue = query({
  * W15 Investment Scorecard — ROI using items.acquisition_cost_gbp
  */
 export const getInvestmentScorecard = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, _bypassMv }) => {
+    if (!_bypassMv) {
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_investment_scorecard")
+        .withIndex("by_account", (q) => q.eq("account", accountKey))
+        .first();
+      if (cached) return cached.payload;
+    }
     const allItems = await ctx.db.query("items").collect();
     // Only count active non-marketing items WITH known acquisition cost (null items excluded, not treated as 0)
     const itemsWithCost = allItems.filter(
@@ -293,8 +304,19 @@ export const getInvestmentScorecard = query({
  * accountSlug: null = all accounts combined
  */
 export const getLifetimeByMonth = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, _bypassMv }) => {
+    if (!_bypassMv) {
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_lifetime_revenue")
+        .withIndex("by_account", (q) => q.eq("account", accountKey))
+        .first();
+      if (cached) return cached.payload;
+    }
     // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
     const AI_ACTIVE_FROM: string = (settings as unknown as Record<string, string>)?.ai_active_from ?? "2026-02";

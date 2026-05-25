@@ -920,6 +920,36 @@ export default defineSchema({
     payload: v.any(),                     // full getRentalVolumeKindBreakdown response
   }).index("by_account_days_kind", ["account", "days", "kind"]),
 
+  // Pass 11 (2026-05-25) — four more wrap-and-cache MVs to eliminate
+  // remaining gigabyte-scale Convex bandwidth costs. All follow the same
+  // pattern as 9d/10a: live handler runs once daily, frontend reads
+  // single indexed MV row.
+  mv_lifetime_revenue: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    payload: v.any(),                     // full getLifetimeByMonth response
+  }).index("by_account", ["account"]),
+
+  mv_investment_scorecard: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    payload: v.any(),                     // full getInvestmentScorecard response
+  }).index("by_account", ["account"]),
+
+  mv_conversion_funnel: defineTable({
+    account: v.string(),
+    days: v.number(),                     // 30 | 90 | 365
+    generatedAt: v.number(),
+    payload: v.any(),                     // full getConversionFunnel response
+  }).index("by_account_days", ["account", "days"]),
+
+  mv_rental_volume_by_category: defineTable({
+    account: v.string(),
+    days: v.number(),                     // 30 | 90 | 365
+    generatedAt: v.number(),
+    payload: v.any(),                     // full getRentalVolumeByCategory response
+  }).index("by_account_days", ["account", "days"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer

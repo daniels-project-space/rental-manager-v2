@@ -62,6 +62,10 @@ import { computeItemRoiRanking } from "./item_roi_rankings";
 import { refreshAll as refreshStatsDrawer } from "./stats_drawer";
 import { refreshAll as refreshMissedDeniedByCategory } from "./missed_denied_by_category";
 import { refreshAll as refreshRentalVolumeKindBreakdown } from "./rental_volume_kind_breakdown";
+import { refreshAll as refreshLifetimeRevenue } from "./lifetime_revenue";
+import { refreshAll as refreshInvestmentScorecard } from "./investment_scorecard";
+import { refreshAll as refreshConversionFunnel } from "./conversion_funnel";
+import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_category";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -476,6 +480,21 @@ export const refreshSlow = internalAction({
     // × 3 accounts = 72 rows pre-computed daily.
     results.push(await safeStep(ctx, "rental_volume_kind_breakdown", async () => {
       await refreshRentalVolumeKindBreakdown(ctx);
+    }));
+
+    // Pass 11 (2026-05-25): 4 additional wrap-and-cache MVs to eliminate
+    // the gigabyte-scale per-call bandwidth on heavy aggregation queries.
+    results.push(await safeStep(ctx, "lifetime_revenue", async () => {
+      await refreshLifetimeRevenue(ctx);
+    }));
+    results.push(await safeStep(ctx, "investment_scorecard", async () => {
+      await refreshInvestmentScorecard(ctx);
+    }));
+    results.push(await safeStep(ctx, "conversion_funnel", async () => {
+      await refreshConversionFunnel(ctx);
+    }));
+    results.push(await safeStep(ctx, "rental_volume_by_category", async () => {
+      await refreshRentalVolumeByCategory(ctx);
     }));
 
     return { batch: "slow", results };
