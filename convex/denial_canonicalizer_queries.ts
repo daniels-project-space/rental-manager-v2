@@ -1,12 +1,17 @@
 /**
- * Internal queries/mutations for the denial canonicalizer.
- * Split from the action so the node-runtime file stays minimal.
+ * Public admin surface for the canonicalize-denials Trigger.dev task.
+ *
+ * Was internalQuery/internalMutation consumed by a Convex action; the task
+ * now runs on Trigger.dev and reaches Convex via unauthenticated HTTP
+ * (matches the listing_info_pool / resolve-items pattern), so these
+ * functions must be public. Prefix admin_* flags them as Trigger-side
+ * entry points — not for UI callers.
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 
-export const listUnresolvedDenials = internalQuery({
+export const admin_listUnresolvedDenials = query({
   args: { limit: v.number() },
   handler: async (ctx, { limit }) => {
     const all = await ctx.db.query("denial_records").collect();
@@ -25,7 +30,7 @@ export const listUnresolvedDenials = internalQuery({
   },
 });
 
-export const setDenialCanonical = internalMutation({
+export const admin_setDenialCanonical = mutation({
   args: {
     denial_id: v.id("denial_records"),
     canonical_product: v.string(),

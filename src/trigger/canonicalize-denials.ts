@@ -83,7 +83,7 @@ async function listUnresolved(limit: number): Promise<UnresolvedDenial[]> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      path: "denial_canonicalizer_queries:listUnresolvedDenials",
+      path: "denial_canonicalizer_queries:admin_listUnresolvedDenials",
       args: { limit },
       format: "json",
     }),
@@ -109,7 +109,7 @@ async function setCanonical(args: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      path: "denial_canonicalizer_queries:setDenialCanonical",
+      path: "denial_canonicalizer_queries:admin_setDenialCanonical",
       args,
       format: "json",
     }),
