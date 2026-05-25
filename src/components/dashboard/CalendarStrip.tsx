@@ -40,10 +40,8 @@ type ChipData = {
   pickupMethod: string | null;
   returnMethod: string | null;
   grossPaidGbp?: number | null;
-  netToOwnerGbp?: number | null;
   notes?: string | null;
   imageUrl: string | null;
-  progressPercent: number | null;
 };
 
 type HoldData = {
