@@ -883,6 +883,19 @@ export default defineSchema({
     payload: v.any(),                     // full StatsDrawerData JSON
   }).index("by_account", ["account"]),
 
+  // Pass 9d (2026-05-25) — wrap-and-cache the getMissedAndDeniedByCategory
+  // handler. The live compute reads ~40MB of reservations data (full
+  // obsolete scan + completed-scope collect) on every dashboard mount to
+  // produce a ~100KB aggregate. Per Convex billing, this was 56.99 GB/day
+  // — the single largest cost driver. Now refreshed once daily per
+  // (account, days) combo; frontend reads a 1-row indexed lookup.
+  mv_missed_and_denied_by_category: defineTable({
+    account: v.string(),                  // "dbcinema" | "leo" | "all"
+    days: v.number(),                     // 30 | 90 | 365 (or any window)
+    generatedAt: v.number(),
+    payload: v.any(),                     // full getMissedAndDeniedByCategory response
+  }).index("by_account_days", ["account", "days"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer

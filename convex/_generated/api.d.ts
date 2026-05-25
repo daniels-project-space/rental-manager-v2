@@ -122,6 +122,7 @@ import type * as mv_daily_briefing from "../mv/daily_briefing.js";
 import type * as mv_earnings_by_period from "../mv/earnings_by_period.js";
 import type * as mv_item_roi_rankings from "../mv/item_roi_rankings.js";
 import type * as mv_master from "../mv/master.js";
+import type * as mv_missed_denied_by_category from "../mv/missed_denied_by_category.js";
 import type * as mv_missed_revenue from "../mv/missed_revenue.js";
 import type * as mv_purchase_signals from "../mv/purchase_signals.js";
 import type * as mv_refresh_dispatch from "../mv/refresh_dispatch.js";
@@ -280,6 +281,7 @@ declare const fullApi: ApiFromModules<{
   "mv/earnings_by_period": typeof mv_earnings_by_period;
   "mv/item_roi_rankings": typeof mv_item_roi_rankings;
   "mv/master": typeof mv_master;
+  "mv/missed_denied_by_category": typeof mv_missed_denied_by_category;
   "mv/missed_revenue": typeof mv_missed_revenue;
   "mv/purchase_signals": typeof mv_purchase_signals;
   "mv/refresh_dispatch": typeof mv_refresh_dispatch;

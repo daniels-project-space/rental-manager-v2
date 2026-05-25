@@ -990,8 +990,29 @@ export const getMissedAndDeniedByCategory = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
     days: v.number(),
+    // Pass 9d (2026-05-25): when true, skip mv_missed_and_denied_by_category
+    // and run the live compute below. Set ONLY by
+    // mv/missed_denied_by_category.ts:refreshAll. Public callers leave it
+    // undefined to hit the cached path.
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, days }) => {
+  handler: async (ctx, { accountSlug, days, _bypassMv }) => {
+    if (!_bypassMv) {
+      // Pass 9d cached path. The MV refresher (master.refreshSlow) writes
+      // 9 rows total (3 accounts × {30, 90, 365}). Falls through to live
+      // compute below when the row is missing (cold-start window after
+      // deploy OR a non-standard days arg).
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_missed_and_denied_by_category")
+        .withIndex("by_account_days", (q) =>
+          q.eq("account", accountKey).eq("days", days),
+        )
+        .first();
+      if (cached) {
+        return cached.payload;
+      }
+    }
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffMs = cutoff.getTime();

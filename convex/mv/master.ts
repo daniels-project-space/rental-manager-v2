@@ -60,6 +60,7 @@ import { computeMissedRevenue } from "./missed_revenue";
 import { computeEarningsByPeriod } from "./earnings_by_period";
 import { computeItemRoiRanking } from "./item_roi_rankings";
 import { refreshAll as refreshStatsDrawer } from "./stats_drawer";
+import { refreshAll as refreshMissedDeniedByCategory } from "./missed_denied_by_category";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -458,6 +459,15 @@ export const refreshSlow = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeEarningsByPeriod, { rows });
+    }));
+
+    // Pass 9d (2026-05-25): wrap-and-cache the getMissedAndDeniedByCategory
+    // handler. Per Convex billing, the live compute was 56.99 GB/day — the
+    // largest single cost source after the post-spending-limit audit. Now
+    // refreshed once daily for the 3 standard windows that the dashboard
+    // toggle exposes (30 / 90 / 365 days × 3 accounts = 9 rows).
+    results.push(await safeStep(ctx, "missed_denied_by_category", async () => {
+      await refreshMissedDeniedByCategory(ctx);
     }));
 
     return { batch: "slow", results };
