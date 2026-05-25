@@ -301,20 +301,12 @@ export function CategoryVolumePieBody({
       }>
     | undefined;
 
-  // Prefetch top-3 kind breakdowns for snappy drills.
-  const top3 = (data?.slices ?? []).slice(0, 3).map((s) => s.kind);
-  useQuery(
-    api.dashboard.getRentalVolumeKindBreakdown,
-    top3[0] && top3[0] !== "other" ? { accountSlug, days, kind: top3[0] } : "skip",
-  );
-  useQuery(
-    api.dashboard.getRentalVolumeKindBreakdown,
-    top3[1] && top3[1] !== "other" ? { accountSlug, days, kind: top3[1] } : "skip",
-  );
-  useQuery(
-    api.dashboard.getRentalVolumeKindBreakdown,
-    top3[2] && top3[2] !== "other" ? { accountSlug, days, kind: top3[2] } : "skip",
-  );
+  // Eager top-3 prefetch deleted 2026-05-25 (pass 9c). Was firing 3 extra
+  // useQuery subscriptions per dashboard mount that scanned the full
+  // reservations table just in case the user clicks. ~60% of getRentalVolume
+  // KindBreakdown's 62K calls/day came from these prefetches. Drill-down
+  // when user actually clicks (the conditional useQuery on `drillKind`
+  // above) is cheap enough on its own.
 
   const periodOpts: { label: string; val: Days }[] = [
     { label: "30d", val: 30 }, { label: "90d", val: 90 }, { label: "1y", val: 365 },

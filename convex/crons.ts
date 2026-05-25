@@ -142,50 +142,17 @@ crons.daily(
   { limit: 100 },
 );
 
-// ── Phase 3a / Wave 2b — R2 snapshot writers moved from Trigger.dev.
-// Each writes the same R2 key its Trigger counterpart did. While both run,
-// the Trigger versions short-circuit when SNAPSHOTS_VIA_CONVEX=1 to avoid
-// double-writes (last-writer wins regardless via the wrapSnapshot envelope).
+// All 4 R2 snapshot cron entries + their snapshot_jobs.ts handlers deleted
+// 2026-05-25 (pass 9a). Grep across the codebase confirmed ZERO consumers
+// for the R2 keys (`cold/v1/indexes/{daily_briefing,intel_rankings,
+// top_renters,inventory_overview}.json`). Chat tools and dashboard widgets
+// all read from the Convex MVs directly, not from R2.
 //
-// TODO (audit 2026-05-23, Convex over-quota): VERIFY the env var
-// SNAPSHOTS_VIA_CONVEX=1 is actually set on Trigger.dev (project
-// proj_cdhxwycwcjdmxnsodsmc, prod env). If unset, the 4 snapshot tasks below
-// fire TWICE per cadence — once here on Convex AND once on Trigger.dev —
-// roughly doubling action runtime for this code path. To check:
-//   npx trigger.dev@latest env list --env prod | grep SNAPSHOTS_VIA_CONVEX
-// Or set it explicitly via Trigger.dev dashboard → Project → Env vars.
-// snapshot-daily-briefing stays hourly: its source MV (`mv_refresh_fast`)
-// refreshes hourly too, so hourly snapshots match data churn 1:1.
-crons.cron(
-  "snapshot-daily-briefing",
-  "7 * * * *",
-  internal.snapshot_jobs.snapshotDailyBriefing,
-  {},
-);
-// Realigned 2026-05-24: intel/top-renters/inventory all read from
-// `mv_refresh_slow` which only runs daily at 04:00 UTC (see line 43-48).
-// Previously these snapshotted every 4h/6h/12h respectively, meaning
-// 95% of their runs wrote identical R2 payloads from stale MV data.
-// Now fire once daily at 04:05 UTC — 5 min after mv_refresh_slow lands.
-// Saves ~28 wasted Convex action runs/day (was 6+4+2=12 runs/day, now 3).
-crons.daily(
-  "snapshot-intel-rankings",
-  { hourUTC: 4, minuteUTC: 5 },
-  internal.snapshot_jobs.snapshotIntelRankings,
-  {},
-);
-crons.daily(
-  "snapshot-top-renters",
-  { hourUTC: 4, minuteUTC: 10 },
-  internal.snapshot_jobs.snapshotTopRenters,
-  {},
-);
-crons.daily(
-  "snapshot-inventory-overview",
-  { hourUTC: 4, minuteUTC: 15 },
-  internal.snapshot_jobs.snapshotInventoryOverview,
-  {},
-);
+// The hourly snapshot-daily-briefing was costing ~0.85 GBh/day across Prod
+// + Dev with nobody reading the output. Trigger.dev's snapshot-all task
+// was also deleted along with the 4 individual src/trigger/snapshot-*.ts
+// files. Restore from git history if a future consumer needs cold-storage
+// snapshots.
 
 // ── Phase 3a / Wave 3a — R2 cold-storage archiver (DRY-RUN DEFAULT).
 //

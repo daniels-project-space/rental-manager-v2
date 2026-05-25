@@ -771,24 +771,13 @@ async function upsertOrderImpl(
   };
 }
 
-/**
- * Per-order public mutation. Kept for callers that upsert a single order at a
- * time (e.g. scripts/historical/import-missing-orders.mjs). The hot poller path
- * uses upsertOrdersAsReservationsBatch — DO NOT call this from a cron loop.
- */
-export const upsertOrderAsReservation = mutation({
-  args: upsertOrderArgsFields,
-  handler: async (ctx, args): Promise<UpsertResult> => {
-    const { action, reservation_id, bankItems } = await upsertOrderImpl(ctx, args);
-    if (bankItems.length > 0) {
-      await ctx.runMutation(internal.listing_images.upsertFromHyggloItems, {
-        account_slug: args.account_slug,
-        items: bankItems,
-      });
-    }
-    return reservation_id !== undefined ? { action, reservation_id } : { action };
-  },
-});
+// upsertOrderAsReservation deleted 2026-05-25 (pass 9b). Was costing 386K
+// call invocations on the Dev deployment (likely a stale test loop or
+// orphaned backfill script — zero live callers in the codebase after
+// pass 4 migrated the poller to upsertOrdersAsReservationsBatch). One-off
+// callers can wrap a single order: `upsertOrdersAsReservationsBatch({orders:[x]})`.
+//
+// Restore from git history if needed.
 
 /**
  * Batch upsert used by the poll-hygglo cron. Processes every order in a single
