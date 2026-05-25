@@ -152,7 +152,6 @@ import type * as seed_renter_bot_memories from "../seed/renter_bot_memories.js";
 import type * as seed_renter_bot_rules from "../seed/renter_bot_rules.js";
 import type * as seed_settings from "../seed/settings.js";
 import type * as settings from "../settings.js";
-import type * as snapshot_jobs from "../snapshot_jobs.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
@@ -311,7 +310,6 @@ declare const fullApi: ApiFromModules<{
   "seed/renter_bot_rules": typeof seed_renter_bot_rules;
   "seed/settings": typeof seed_settings;
   settings: typeof settings;
-  snapshot_jobs: typeof snapshot_jobs;
   sync_account_profiles: typeof sync_account_profiles;
   sync_state: typeof sync_state;
   tax: typeof tax;

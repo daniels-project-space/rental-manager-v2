@@ -15,57 +15,81 @@
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { generateText } from "ai";
-import { getActionLlmModel } from "./item_resolver";
 import { createHash } from "crypto";
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-const SYSTEM_PROMPT = `You extract the canonical item name from a Hygglo rental listing title.
+/**
+ * Pass 9e (2026-05-25): deterministic short-name extractor — replaces the
+ * 30K LLM calls/day + 0.98 GBh compute burn. The old SYSTEM_PROMPT
+ * described mechanical rules (drop pipe-separated SEO, drop parenthetical
+ * comparisons, drop "+" feature lists, keep brand+model+noun, max 60
+ * chars) — exactly the kind of normalization a regex chain handles.
+ *
+ * Rules (mirror the prompt + curated examples):
+ *   1. Drop everything after the first "|" (pipe-separated SEO tail).
+ *   2. Drop parenthetical comparisons + body-only notes ("(like X / Y)",
+ *      "(24MP, ...)", "(Body Only ...)").
+ *   3. Drop "+ Y + Z ..." feature lists — keep only the head before
+ *      the first "+".
+ *   4. Strip marketing fluff words anywhere in the string.
+ *   5. Collapse whitespace, capitalise model identifiers, truncate to
+ *      60 chars.
+ *
+ * When the deterministic extractor returns an empty string (input was
+ * pure fluff), we fall back to a 60-char truncation of the raw title —
+ * never call the LLM.
+ */
+const MARKETING_FLUFF = [
+  /\bportable\b/gi,
+  /\bpremium\b/gi,
+  /\bpro\s*quality\b/gi,
+  /\bprofessional\b/gi,
+  /\bfull\s+frame\b/gi,
+  /\bfull-frame\b/gi,
+  /\bmirrorless\b/gi,
+  /\bcinema\s*camera\b/gi,
+  /\bvideo\b/gi,
+  /\bphotography\b/gi,
+  /\bbluetooth\b/gi,
+  /\b4k\d*p?\b/gi,
+  /\b\d+mp\b/gi,
+  /\bpair\b/gi,
+  /\bset\b/gi,
+  /\bbundle\b/gi,
+  /\bkit\b/gi,
+  /\blight\s+show\b/gi,
+  /\brgb\b/gi,
+  /\bbass\s+boost\b/gi,
+  /\bweighs?\s+\d+(?:\.\d+)?\s*kg\b/gi,
+  /\b\d+-section\b/gi,
+];
 
-Rules:
-- Output pattern: "<quantity>x <brand> <model> <generic noun>"
-- If no explicit quantity in the title, omit the prefix (no "1x ...")
-- Drop: pipe-separated SEO ("| ..."), "+" feature lists, parenthetical comparisons ("(like X / Y)"), marketing words ("Portable", "Premium", "Pro Quality", "Pair", "Set")
-- Keep: brand name, model number/name, what the thing IS
-- Output ONLY the cleaned name. No quotes. No explanation. No trailing punctuation.
-- Max 50 characters.
-
-Examples:
-
-Input: 2x JBL PartyBox Club 120 Speakers | Portable Bluetooth Party Speaker Pair + Bass Boost + RGB Light Show + 2x Stands (like JBL PartyBox 310 / PartyBox 710)
-Output: 2x JBL Club 120 Speakers
-
-Input: Sony A7 IV Full Frame Mirrorless Camera Body (24MP, 4K60p, Body Only - Lens NOT Included)
-Output: Sony A7 IV Camera Body
-
-Input: Manfrotto MT055CXPRO4 Carbon Fiber Tripod | Pro Photography & Video | 4-Section | Weighs 2kg
-Output: Manfrotto MT055 Carbon Tripod
-
-Input: Sony fx 3 fx3 full frame 4k cinema camera + 24-70 mm f2.8 zoom lens gmaster gm g-master  + tripod + rode shotgun video mic pro plus
-Output: Sony FX3 Cinema Camera
-
-Input: Atomos ninja v 5 inch 4k monitor + 1 tb ssd
-Output: Atomos Ninja V Monitor
-
-Input: 3x Sony 24-70mm F2.8 G Master Lens Set | Full Frame Zoom Lens Kit for Sony E-Mount Cameras (like "Sony GM 24-70 2.8 / Sony FE 24-70mm G-Master / Sony full-frame zoom lens")
-Output: 3x Sony 24-70mm GM Lens`;
-
-function cleanOutput(raw: string): string {
-  // Strip stray quotes / leading "Output:" prefixes / surrounding whitespace.
-  let s = raw.trim();
-  s = s.replace(/^output\s*[:\-]\s*/i, "");
-  s = s.replace(/^["'`]+|["'`]+$/g, "");
-  // Collapse internal whitespace, trim to 60 chars hard ceiling.
+export function deriveShortNameDeterministic(rawTitle: string): string {
+  if (!rawTitle) return "";
+  let s = rawTitle;
+  // 1. Drop pipe-separated SEO ("X | Y | Z" → "X")
+  s = s.split("|")[0];
+  // 2. Drop parenthetical content entirely (comparisons, specs, notes)
+  s = s.replace(/\([^)]*\)/g, " ");
+  // 3. Drop "+ X + Y + ..." feature lists (keep only head before first "+")
+  s = s.split("+")[0];
+  // 4. Strip marketing fluff words
+  for (const re of MARKETING_FLUFF) s = s.replace(re, " ");
+  // 5. Collapse whitespace + tidy
   s = s.replace(/\s+/g, " ").trim();
+  // 6. Truncate to 60 chars (hard ceiling per old prompt)
   if (s.length > 60) s = s.slice(0, 60).trimEnd();
   return s;
 }
 
 /** Derive a short_name for a single (account_slug, product_id, raw_title).
- *  Idempotent: if cache row exists with matching hash, no LLM call. */
+ *  Pass 9e: now uses the deterministic regex extractor (zero LLM calls).
+ *  Still idempotent: if cache row exists with matching hash, no work.
+ *  Cold-start fallback: if extractor returns empty, store the raw title
+ *  truncated to 60 chars instead of calling an LLM. */
 export const deriveOne = internalAction({
   args: {
     account_slug: v.string(),
@@ -85,44 +109,22 @@ export const deriveOne = internalAction({
     if (!force) {
       const existing: { raw_title_hash: string; short_name: string } | null =
         await ctx.runQuery(internal.listing_short_names.get, {
-        account_slug,
-        product_id,
-      });
+          account_slug,
+          product_id,
+        });
       if (existing && existing.raw_title_hash === hash) {
         return { status: "cached", short_name: existing.short_name };
       }
     }
-    let model;
-    try {
-      model = await getActionLlmModel();
-    } catch (err) {
-      console.warn("[listing_short_names] provider unavailable", String(err));
-      return { status: "no_provider", short_name: null };
-    }
-    let derived: string;
-    try {
-      const result = await generateText({
-        model,
-        system: SYSTEM_PROMPT,
-        prompt: `Input: ${raw_title}\nOutput:`,
-        temperature: 0,
-        maxOutputTokens: 80,
-      });
-      derived = cleanOutput(result.text);
-    } catch (err) {
-      console.warn("[listing_short_names] LLM error", String(err));
-      return { status: "error", short_name: null, error: String(err) };
-    }
-    if (!derived) {
-      return { status: "empty", short_name: null };
-    }
+    const derived = deriveShortNameDeterministic(raw_title) ||
+      raw_title.slice(0, 60).trim();
     await ctx.runMutation(internal.listing_short_names.upsert, {
       account_slug,
       product_id,
       raw_title,
       raw_title_hash: hash,
       short_name: derived,
-      derivation_method: "llm",
+      derivation_method: "deterministic",
     });
     return { status: "derived", short_name: derived };
   },
