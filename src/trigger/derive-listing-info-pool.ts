@@ -641,10 +641,12 @@ async function runBatch(
 
 export const deriveListingInfoPoolTask = schedules.task({
   id: "derive-listing-info-pool",
-  // Half-hourly cadence — new-listing latency dominated by poll-hygglo's
-  // on-demand trigger (see below); cron is a backstop for forceReDerive +
-  // any listings the on-demand path missed.
-  cron: "*/30 * * * *",
+  // Pass 9f (2026-05-25): bumped */30 → daily 04:20 UTC. Every-30-min was
+  // 48 runs/day with 95%+ idle (queue empty). New-listing latency is
+  // handled by poll-hygglo's on-demand trigger (`deriveListingInfoPoolOn
+  // DemandTask`) so the cron is only a backstop for forceReDerive +
+  // listings the on-demand path missed. Daily cadence is plenty.
+  cron: "20 4 * * *",
   maxDuration: 240,
   run: async (payload, { ctx }) => {
     if (isWithinUkQuietHours()) {
