@@ -22,7 +22,7 @@ const INPUT_STYLE = {
 export function ClaimsRecordingModal({ onClose }: { onClose: () => void }) {
   const { activeAccountSlug } = useAccount();
   const createClaim = useMutation(api.insurance_claims.create);
-  const items = useQuery(api.items.listActive, {});
+  const items = useQuery(api.items.listActive);
 
   const [itemName, setItemName] = useState("");
   const [amountGbp, setAmountGbp] = useState("");

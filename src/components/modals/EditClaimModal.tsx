@@ -36,7 +36,7 @@ interface Props {
 
 export function EditClaimModal({ claim, onClose }: Props) {
   const updateClaim = useMutation(api.insurance_claims.update);
-  const items = useQuery(api.items.listActive, {});
+  const items = useQuery(api.items.listActive);
 
   const [itemName, setItemName] = useState(claim.itemNameCanonical ?? "");
   const [amountGbp, setAmountGbp] = useState(String(claim.amountGbp));

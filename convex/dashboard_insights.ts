@@ -275,10 +275,18 @@ export const getActiveConflicts = query({
       (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
     );
 
-    // Pull recent live reservations. Filter in-memory — reservations table
-    // small enough at v2 scale (cf. dashboard.ts pattern).
-    const allRes = await ctx.db.query("reservations").collect();
-    const live = allRes.filter(
+    // Pass 8c (2026-05-25): replaced unindexed full-table .collect() with a
+    // by_start_date indexed range scan. Any rental with end_date >= 14d_ago
+    // has start_date >= ~60d_ago (rentals typically last <30 days). The
+    // 60d cutoff is a safe over-fetch that drops the scan from ~1700 rows
+    // to ~250. Subscribed by WallESignals so it re-evals on every
+    // reservation mutation — this is the highest-impact WallE fix.
+    const conflictsCutoff = isoNDaysAgoUtc(60);
+    const recentRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", conflictsCutoff))
+      .collect();
+    const live = recentRes.filter(
       (r) =>
         isLiveStatus(r.status) &&
         r.start_date !== undefined &&
@@ -374,9 +382,16 @@ export const getUtilizationDelta = query({
     const start14 = isoNDaysAgoUtc(14);
     const start7 = isoNDaysAgoUtc(7);
 
-    // Recent live reservations whose date span intersects last 14 days.
-    const allRes = await ctx.db.query("reservations").collect();
-    const recent = allRes.filter(
+    // Pass 8c (2026-05-25): by_start_date indexed scan w/ 60d cutoff to
+    // bound the read (any rental whose end_date intersects last 14d had
+    // start_date within ~45d ago). Same WallE re-eval fix as
+    // getActiveConflicts.
+    const utilCutoff = isoNDaysAgoUtc(60);
+    const recentRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", utilCutoff))
+      .collect();
+    const recent = recentRes.filter(
       (r) =>
         isLiveStatus(r.status) &&
         r.start_date !== undefined &&
@@ -478,7 +493,14 @@ export const getRevenueDelta = query({
     const prevDay = Math.min(dayOfMonth, daysInPrev);
     const prevEnd = `${prevY}-${pad(prevM + 1)}-${pad(prevDay)}`;
 
-    const all = await ctx.db.query("reservations").collect();
+    // Pass 8c (2026-05-25): by_start_date indexed scan bounded to start of
+    // last month (the earliest date the prev-month window can reach).
+    // Drops the scan from full table to ~150-300 rows for the MTD vs
+    // prev-month comparison the WallE widget renders.
+    const all = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", prevStart))
+      .collect();
     let mtdGbp = 0;
     let prevGbp = 0;
     for (const r of all) {

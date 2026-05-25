@@ -207,7 +207,7 @@ function TileEditor({
     account_slug: accountSlug,
     product_id: productId,
   });
-  const inventory = useQuery(api.items.listActive, {});
+  const inventory = useQuery(api.items.listActive);
   const setOverride = useMutation(api.listing_info_pool.setManualOverride);
 
   const [displayName, setDisplayName] = useState(initialDisplayName);

@@ -24,7 +24,7 @@ const INPUT_STYLE = {
 export function DenialRecordingModal({ onClose }: { onClose: () => void }) {
   const { activeAccountSlug } = useAccount();
   const createDenial = useMutation(api.denial_records.createDenial);
-  const items = useQuery(api.items.listActive, {});
+  const items = useQuery(api.items.listActive);
 
   const [itemName, setItemName] = useState("");
   const [reason, setReason] = useState<DenialReason>("price_too_high");

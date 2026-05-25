@@ -57,7 +57,7 @@ import { computeUpcomingReturns } from "./upcoming_returns";
 import { computeChurnRisk } from "./churn_risk";
 import { computePurchaseSignals } from "./purchase_signals";
 import { computeMissedRevenue } from "./missed_revenue";
-import { computeEarningsByPeriod, RETENTION_MONTHS as EARNINGS_RETENTION_MONTHS } from "./earnings_by_period";
+import { computeEarningsByPeriod } from "./earnings_by_period";
 import { computeItemRoiRanking } from "./item_roi_rankings";
 import { refreshAll as refreshStatsDrawer } from "./stats_drawer";
 
@@ -305,15 +305,15 @@ export const refreshFast = internalAction({
   args: {},
   handler: async (ctx): Promise<{ batch: "fast"; results: StepResult[] }> => {
     const startedAt = Date.now();
-    // Phase 6b (2026-05-24) — widened reservations window from 90d → 24mo
-    // (~730d) so mv_earnings_by_period can share the same collect.
-    // missed_revenue + utilization slice their own narrower windows in-memory.
-    // Per-run cost: ~600-800 reservation rows × 24 runs/day ≈ 15-20k row
-    // reads/day. Offsets the millions of read reductions on the dashboard
-    // side once subscriptions stop touching `reservations` for earnings.
-    const cutoffWide = isoDaysAgo(EARNINGS_RETENTION_MONTHS * 31);
+    // Pass 8a (2026-05-25) — narrowed back to 90d. The 6b widening to 24mo
+    // for earnings_by_period was costing ~700MB/day in fast-batch bandwidth
+    // because the fat reservations rows (with raw Hygglo `order` JSON
+    // ~30-50KB each) got re-collected 24×/day. earnings_by_period moved to
+    // refreshSlow (daily) where the 24mo collect runs once. utilization +
+    // missed_revenue stay in fast batch with the 90d collect.
+    const cutoffFast = isoDaysAgo(90);
     const [reservationsWindow, confirmedReservations, items, renters, denials, pricing, accounts] = await Promise.all([
-      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoffWide }),
+      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoffFast }),
       ctx.runQuery(internal.mv.master.collectConfirmedReservations, {}),
       ctx.runQuery(internal.mv.master.collectItems, {}),
       ctx.runQuery(internal.mv.master.collectRenters, {}),
@@ -353,19 +353,13 @@ export const refreshFast = internalAction({
       await ctx.runMutation(internal.mv.master.writeMissedRevenue, { rows });
     }));
 
-    results.push(await safeStep(ctx, "earnings_by_period", async () => {
-      const rows = computeEarningsByPeriod({
-        reservations: reservationsWindow,
-        generatedAt: startedAt,
-      });
-      await ctx.runMutation(internal.mv.master.writeEarningsByPeriod, { rows });
-    }));
-
     // Phase 7d (2026-05-24): wrap-and-cache the 16-card getStatsDrawerData
     // megaquery per (account). Runs the existing live handler for each slug
     // and stores the full payload — dashboard subscriptions now read 1
     // indexed row instead of re-running 8 collects + 16 cards on every
-    // reservation mutation.
+    // reservation mutation. Pass 8a (2026-05-25): added skip-when-clean
+    // inside refreshAll so quiet ticks short-circuit without running the
+    // heavy live handler.
     results.push(await safeStep(ctx, "stats_drawer", async () => {
       await refreshStatsDrawer(ctx);
     }));
@@ -450,6 +444,20 @@ export const refreshSlow = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeItemRoiRanking, { rows });
+    }));
+
+    // Pass 8a (2026-05-25): moved earnings_by_period from refreshFast →
+    // refreshSlow. The 24mo bucket window doesn't shift between hours
+    // (closed past months are immutable; current month only changes when
+    // a fresh reservation lands, which is rare enough that 24h staleness
+    // is acceptable for chart bars). Eliminates ~700MB/day of duplicated
+    // 730d reservation collects from fast batch.
+    results.push(await safeStep(ctx, "earnings_by_period", async () => {
+      const rows = computeEarningsByPeriod({
+        reservations: allReservations,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeEarningsByPeriod, { rows });
     }));
 
     return { batch: "slow", results };

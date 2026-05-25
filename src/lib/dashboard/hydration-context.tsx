@@ -49,8 +49,8 @@ interface DashboardHydration {
 const HydrationContext = createContext<DashboardHydration | null>(null);
 
 export function DashboardHydrationProvider({ children }: { children: ReactNode }): ReactNode {
-  const accounts = useQuery(api.accounts.list, {}) as AccountRow[] | undefined;
-  const settings = useQuery(api.settings.get, {}) as SettingsRow;
+  const accounts = useQuery(api.accounts.list) as AccountRow[] | undefined;
+  const settings = useQuery(api.settings.get) as SettingsRow;
 
   const value: DashboardHydration = {
     accounts,

@@ -36,7 +36,7 @@ interface Props {
 
 export function EditDenialModal({ denial, onClose }: Props) {
   const updateDenial = useMutation(api.denial_records.update);
-  const items = useQuery(api.items.listActive, {});
+  const items = useQuery(api.items.listActive);
 
   const [itemName, setItemName] = useState(denial.itemName ?? "");
   const [reason, setReason] = useState<DenialReason>(
