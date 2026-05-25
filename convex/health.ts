@@ -28,13 +28,15 @@ export const getHealthReport = query({
       for (const it of p.items ?? []) photoNames.add(it.item_name);
     }
 
+    // Pass 11g (2026-05-25): mirror the listing_photos hoist for pricing.
+    // Was running 1 indexed query per active item (~70 calls per request);
+    // now one collect + Set lookup.
+    const allPricing = await ctx.db.query("pricing_catalog").collect();
+    const pricingNames = new Set<string>();
+    for (const p of allPricing) pricingNames.add(p.item_name_canonical);
+
     for (const item of activeItems) {
-      // No pricing entry
-      const priceRow = await ctx.db
-        .query("pricing_catalog")
-        .withIndex("by_name", (q) => q.eq("item_name_canonical", item.name_canonical))
-        .first();
-      if (!priceRow) {
+      if (!pricingNames.has(item.name_canonical)) {
         issues.push({
           severity: "warning",
           type: "missing_pricing",

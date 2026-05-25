@@ -394,6 +394,10 @@ export const getCalendarStrip = query({
         }
       }
       const firstImage = distinctImages[0] ?? null;
+      // Pass 11e (2026-05-25) — dropped 3 unused fields:
+      //   - progressPercent: frontend re-computes locally (CalendarStrip.tsx:486)
+      //   - netToOwnerGbp + multi_item_image_urls: type-declared but never read
+      // Saves ~250 bytes per chip × ~5 chips/day × 7 days = ~9KB per response.
       return {
         reservationId: r._id,
         kind,
@@ -411,16 +415,8 @@ export const getCalendarStrip = query({
         pickupMethod: rType.pickup_method ?? null,
         returnMethod: rType.return_method ?? null,
         grossPaidGbp: rType.gross_paid_gbp ?? null,
-        netToOwnerGbp: rType.net_to_owner_gbp ?? null,
         notes: rType.notes ?? null,
         imageUrl: firstImage,
-        multi_item_image_urls: distinctImages.length > 1 ? distinctImages : null,
-        progressPercent: chipProgress(
-          r.start_date,
-          effectiveReturnDate(r as { return_date?: string | null; end_date?: string }),
-          rType.pickup_time,
-          rType.return_time,
-        ),
       };
     }
 
