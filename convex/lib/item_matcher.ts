@@ -342,6 +342,18 @@ export function findBestMatch(input: string, inventory: string[]): string | null
   return bestItem;
 }
 
+/** Internal score record. `matchedTokens` = token count of the actually-
+ *  matched string (canonical OR alias). Used by findTopNMatches for the
+ *  specificity tie-break — when two candidates score within ε, the one
+ *  whose matched string has more tokens wins. */
+type ScoredHit = {
+  name: string;
+  score: number;
+  coverage: number;
+  overlap: number;
+  matchedTokens: number;
+};
+
 /**
  * Compute the SAME score as findBestMatch for a single (query, candidateString) pair.
  * Returns null if the pair fails any gate (cross-brand, focal-length conflict,
@@ -360,7 +372,7 @@ function scoreCandidate(
   query: string,
   candidateString: string,
   displayName: string = candidateString,
-): { name: string; score: number; coverage: number; overlap: number } | null {
+): ScoredHit | null {
   const normalized = normalizeItemName(query);
   if (!normalized) return null;
   const normItem = normalizeItemName(candidateString);
@@ -464,7 +476,17 @@ function scoreCandidate(
   // works the same regardless of which alias scored.
   if (detectBrandMismatch(query, displayName).isMismatch) return null;
 
-  return { name: displayName, score: coverage, coverage, overlap };
+  return {
+    name: displayName,
+    score: coverage,
+    coverage,
+    overlap,
+    // Token count of the ACTUAL matched string (canonical or alias). Used
+    // as the specificity tie-break in findTopNMatches so a long-aliased
+    // candidate doesn't lose to a short alias from a competing item when
+    // scores are within ε of each other.
+    matchedTokens: itemTokens.length,
+  };
 }
 
 /** Inventory candidate with optional alternate spellings. */
@@ -482,7 +504,7 @@ export type ScoredCandidate = {
 function scoreCandidateWithAliases(
   query: string,
   candidate: ScoredCandidate,
-): { name: string; score: number; coverage: number; overlap: number } | null {
+): ScoredHit | null {
   const canonicalHit = scoreCandidate(query, candidate.name, candidate.name);
   let best = canonicalHit;
   for (const alias of candidate.aliases ?? []) {
@@ -507,6 +529,15 @@ function normalizeCandidates(
 }
 
 /**
+ * Score window for the specificity tie-break. When two candidates score
+ * within this delta, the one whose MATCHED string (canonical or alias)
+ * has more tokens wins. Bias is toward more specific matches when scores
+ * are roughly equal. Set deliberately small — non-tied scores stay
+ * untouched, so the existing 32 matcher tests continue to pass.
+ */
+const TIE_BREAK_EPSILON = 0.05;
+
+/**
  * Return the top-N inventory matches for a query, applying the EXACT same
  * scoring rule as findBestMatch (GENERIC_TOKENS exclusion, coverage>=0.5,
  * overlap>=0.25, brand-mismatch + conflict gates). Sorted by score desc.
@@ -514,6 +545,18 @@ function normalizeCandidates(
  * `candidates` may be either a flat string[] (canonical names only) or
  * {name, aliases}[] — when aliases are supplied each is also scored and
  * the max wins (tie-breaks on the canonical name).
+ *
+ * Sort order: primary = score desc. Tie-break (|Δscore| ≤ ε): prefer the
+ * candidate whose MATCHED string (canonical or alias) has more tokens —
+ * biases towards more specific matches when scores are close. Final
+ * fallback = alphabetical, so results stay deterministic across runs.
+ *
+ * Why the tie-break exists: short aliases inflate coverage. A 3-token
+ * alias "dji mic 2" attached to "DJI Mic 2 wireless" would otherwise hit
+ * coverage=1.0 on ambiguous queries and beat a longer canonical from a
+ * competing item that scored ~0.95 — even though the longer match is
+ * more specific. ε=0.05 keeps the tie-break narrow; non-tied results
+ * stay untouched and the 32 existing matcher tests continue to pass.
  *
  * If fewer than N items pass thresholds, returns what we have (may be empty).
  */
@@ -523,13 +566,24 @@ export function findTopNMatches(
   n: number = 3,
 ): Array<{ name: string; score: number; coverage: number; overlap: number }> {
   const norm = normalizeCandidates(candidates);
-  const scored: Array<{ name: string; score: number; coverage: number; overlap: number }> = [];
+  const scored: ScoredHit[] = [];
   for (const cand of norm) {
     const hit = scoreCandidateWithAliases(query, cand);
     if (hit) scored.push(hit);
   }
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, n);
+  scored.sort((a, b) => {
+    const dScore = b.score - a.score;
+    if (Math.abs(dScore) > TIE_BREAK_EPSILON) return dScore;
+    // Specificity tie-break: prefer the candidate whose matched string
+    // (canonical OR alias, whichever produced the score) has more tokens.
+    const dTokens = b.matchedTokens - a.matchedTokens;
+    if (dTokens !== 0) return dTokens;
+    // Fully equal — fall back to alphabetical for determinism.
+    return a.name.localeCompare(b.name);
+  });
+  return scored
+    .slice(0, n)
+    .map(({ name, score, coverage, overlap }) => ({ name, score, coverage, overlap }));
 }
 
 /**

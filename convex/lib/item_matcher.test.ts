@@ -285,3 +285,54 @@ describe('findBestMatchWithScore — alias scoring (bug A)', () => {
     expect(m).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// DJI mic disambiguation — specificity tie-break
+//
+// Both inventory items share the {dji, wireless, mic*} token space. With
+// aliases re-added (rolled back in 6686a23), short aliases would otherwise
+// score perfect coverage on ambiguous queries and beat longer canonical
+// hits from the competing item. The TIE_BREAK_EPSILON sort rule routes
+// ties to the more-specific (longer-matched-string) candidate.
+// ─────────────────────────────────────────────────────────────────────────
+describe('findBestMatchWithScore — DJI mic alias disambiguation', () => {
+  // Mirror the live inventory aliases that will be re-added once this
+  // tie-break ships. Keeping the test self-contained so future inventory
+  // edits don't break it.
+  const inv = [
+    {
+      name: 'DJI Mic 2 wireless',
+      aliases: ['dji mic 2', 'dji mic2', 'dji wireless mic 2'],
+    },
+    {
+      name: 'DJI Wireless Mics',
+      aliases: ['dji wireless mics', 'dji wireless microphones'],
+    },
+  ];
+
+  it('"DJI Wireless Mics" canonical query routes to DJI Wireless Mics (not Mic 2)', () => {
+    const m = findBestMatchWithScore('DJI Wireless Mics', inv);
+    expect(m?.name).toBe('DJI Wireless Mics');
+  });
+
+  it('"dji wireless microphones" routes to DJI Wireless Mics via alias', () => {
+    const m = findBestMatchWithScore('dji wireless microphones', inv);
+    expect(m?.name).toBe('DJI Wireless Mics');
+  });
+
+  it('"dji mic2 wireless" routes to DJI Mic 2 wireless (alias hit)', () => {
+    // Hits alias "dji mic2" + input "wireless" against canonical "wireless".
+    // Mic 2 wireless wins via coverage on either canonical or alias path,
+    // and the competing DJI Wireless Mics fails the high-coverage relaxation.
+    const m = findBestMatchWithScore('dji mic2 wireless', inv);
+    expect(m?.name).toBe('DJI Mic 2 wireless');
+  });
+
+  it('"DJI wireless mic 2" routes to DJI Mic 2 wireless (longer matched string wins)', () => {
+    // Tie risk: both items could score high on this query. Tie-break by
+    // matched-string length prefers the Mic 2 alias (4 tokens) over the
+    // shorter Wireless Mics canonical (3 tokens).
+    const m = findBestMatchWithScore('DJI wireless mic 2', inv);
+    expect(m?.name).toBe('DJI Mic 2 wireless');
+  });
+});
