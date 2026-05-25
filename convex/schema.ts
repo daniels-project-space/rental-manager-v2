@@ -880,7 +880,19 @@ export default defineSchema({
   mv_stats_drawer: defineTable({
     account: v.string(),                  // "dbcinema" | "leo" | "all"
     generatedAt: v.number(),
-    payload: v.any(),                     // full StatsDrawerData JSON
+    payload: v.any(),                     // trimmed StatsDrawerData JSON (no fat rentals arrays — see mv_stats_drawer_rentals)
+  }).index("by_account", ["account"]),
+
+  // Pass 10b (2026-05-25) — drawer drill-down rentals split out of the
+  // main mv_stats_drawer payload. The 4 rentals arrays
+  // (active/ongoing/upcoming/confirmed) accounted for ~72KB of the 78KB
+  // total, but are only consumed when a drawer is expanded. Splitting
+  // lets the always-subscribed widgets read ~6KB while drawer detail
+  // loads on-demand (frontend gates the fetch with `expandedId !== null`).
+  mv_stats_drawer_rentals: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    rentals: v.any(),                     // { active, ongoing, upcoming, confirmed } arrays
   }).index("by_account", ["account"]),
 
   // Pass 9d (2026-05-25) — wrap-and-cache the getMissedAndDeniedByCategory

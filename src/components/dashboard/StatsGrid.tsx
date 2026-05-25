@@ -161,9 +161,42 @@ export function StatsGrid() {
   const rawData = useQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
+  // Pass 10b (2026-05-25) — drawer drill-down rentals split into a
+  // separate MV row. Fetch only when a drawer is currently expanded so
+  // the headline subscription stays at ~6KB instead of ~78KB. Drawers
+  // need rentals only for the {active, ongoing, upcoming, confirmed}
+  // cards — other expanded cards (insurance, vacation, etc.) don't
+  // require the rentals payload.
+  const RENTAL_DRAWER_IDS = new Set(["active", "ongoing", "upcoming", "confirmed"]);
+  const needsRentals = expandedId !== null && RENTAL_DRAWER_IDS.has(expandedId);
+  const rentalsRow = useQuery(
+    api.mv.stats_drawer.getRentals,
+    needsRentals ? { account: activeAccountSlug ?? "all" } : "skip",
+  ) as { rentals?: { active?: unknown[]; ongoing?: unknown[]; upcoming?: unknown[]; confirmed?: unknown[] } } | undefined | null;
+
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
     if (!rawData) return null;
-    const data = rawData as any;
+    // Merge the split rentals back into the data shape that drawer
+    // components expect (data.active.rentals, etc.). Three states:
+    //   1. Drawer collapsed: rentalsRow is "skip" → empty arrays (unused).
+    //   2. Drawer expanded + MV row available: rentalsRow.rentals.X.
+    //   3. Cold-start fallback path: rawData itself was a live compute
+    //      that included the embedded rentals → use those.
+    const r = rentalsRow?.rentals;
+    const rawAsAny = rawData as any;
+    const pickRentals = (card: "active" | "ongoing" | "upcoming" | "confirmed") => {
+      if (r?.[card]) return r[card];
+      // Cold-start safety: live-compute fallback embeds rentals inline.
+      if (Array.isArray(rawAsAny?.[card]?.rentals)) return rawAsAny[card].rentals;
+      return [];
+    };
+    const data = {
+      ...rawData,
+      active: { ...rawAsAny.active, rentals: pickRentals("active") },
+      ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
+      upcoming: { ...rawAsAny.upcoming, rentals: pickRentals("upcoming") },
+      confirmed: { ...rawAsAny.confirmed, rentals: pickRentals("confirmed") },
+    } as any;
     const toggle = (id: string) =>
       setExpandedId((prev) => (prev === id ? null : id));
 
@@ -585,7 +618,7 @@ export function StatsGrid() {
       // ── Phase 8 — WallE 2x2 hero card (HERO_SPANS.walle) ──
       walle: <WallE accountSlug={activeAccountSlug} />,
     };
-  }, [rawData, expandedId, activeAccountSlug, catVolExpanded]);
+  }, [rawData, rentalsRow, expandedId, activeAccountSlug, catVolExpanded]);
 
   if (!cards) return <StatsGridSkeleton />;
 

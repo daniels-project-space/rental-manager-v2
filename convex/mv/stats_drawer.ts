@@ -26,9 +26,9 @@ import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
  * action's `refreshAll` helper directly to avoid the extra action hop.
  */
 export const refresh = internalAction({
-  args: {},
-  handler: async (ctx): Promise<{ ok: true; written: number; durationMs: number }> => {
-    return await refreshAll(ctx);
+  args: { force: v.optional(v.boolean()) },
+  handler: async (ctx, { force }): Promise<{ ok: true; written: number; durationMs: number; skipped?: number }> => {
+    return await refreshAll(ctx, force);
   },
 });
 
@@ -48,6 +48,7 @@ export const refresh = internalAction({
 export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
+  force: boolean = false,
 ): Promise<{ ok: true; written: number; durationMs: number; skipped: number }> {
   const startedAt = Date.now();
   const slugs: Array<{ key: string; arg: string | null }> = [
@@ -67,7 +68,7 @@ export async function refreshAll(
   const earliestPriorGen = Math.min(...priorGeneratedAts);
   // Cold start (any row missing) → must rebuild.
   const isColdStart = priorGeneratedAts.some((g) => g === 0);
-  if (!isColdStart) {
+  if (!force && !isColdStart) {
     // Skip-when-clean probe: is there ANY reservation row with
     // last_polled_at > earliestPriorGen? If not, all 3 MV rows are still
     // current relative to the source data and we can skip the rebuild.
@@ -83,13 +84,42 @@ export async function refreshAll(
 
   let written = 0;
   for (const { key, arg } of slugs) {
-    const payload = await ctx.runQuery(api.dashboard.getStatsDrawerData, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fullPayload: any = await ctx.runQuery(api.dashboard.getStatsDrawerData, {
       accountSlug: arg,
       _bypassMv: true,
     });
+    // Pass 10b (2026-05-25) — split the fat rentals arrays out of the
+    // payload before the main MV write. The 4 arrays (active.rentals,
+    // ongoing.rentals, upcoming.rentals, confirmed.rentals) accounted for
+    // ~72KB of the 78KB total. They're only read by drawer drill-downs,
+    // so we cache them in mv_stats_drawer_rentals and fetch on-demand.
+    const rentalsSplit = {
+      active: fullPayload?.active?.rentals ?? [],
+      ongoing: fullPayload?.ongoing?.rentals ?? [],
+      upcoming: fullPayload?.upcoming?.rentals ?? [],
+      confirmed: fullPayload?.confirmed?.rentals ?? [],
+    };
+    const trimmed = {
+      ...fullPayload,
+      active: { ...(fullPayload?.active ?? {}), rentals: undefined },
+      ongoing: { ...(fullPayload?.ongoing ?? {}), rentals: undefined },
+      upcoming: { ...(fullPayload?.upcoming ?? {}), rentals: undefined },
+      confirmed: { ...(fullPayload?.confirmed ?? {}), rentals: undefined },
+    };
+    // Drop the undefined `rentals` keys cleanly so they don't appear in
+    // the stored JSON.
+    for (const card of ["active", "ongoing", "upcoming", "confirmed"] as const) {
+      if (trimmed[card]) delete trimmed[card].rentals;
+    }
     await ctx.runMutation(anyApi.mv.stats_drawer.write, {
       account: key,
-      payload,
+      payload: trimmed,
+      generatedAt: startedAt,
+    });
+    await ctx.runMutation(anyApi.mv.stats_drawer.writeRentals, {
+      account: key,
+      rentals: rentalsSplit,
       generatedAt: startedAt,
     });
     written += 1;
@@ -114,6 +144,44 @@ export const write = internalMutation({
       await ctx.db.insert("mv_stats_drawer", { account, payload, generatedAt });
     }
     return { ok: true };
+  },
+});
+
+/** Pass 10b — drawer drill-down rentals lists split into a separate MV
+ *  row so always-subscribed dashboard widgets only read the trimmed
+ *  headline payload (~6KB vs 78KB). */
+export const writeRentals = internalMutation({
+  args: {
+    account: v.string(),
+    rentals: v.any(),
+    generatedAt: v.number(),
+  },
+  handler: async (ctx, { account, rentals, generatedAt }) => {
+    const existing = await ctx.db
+      .query("mv_stats_drawer_rentals")
+      .withIndex("by_account", (q) => q.eq("account", account))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { rentals, generatedAt });
+    } else {
+      await ctx.db.insert("mv_stats_drawer_rentals", { account, rentals, generatedAt });
+    }
+    return { ok: true };
+  },
+});
+
+/** Drawer drill-down reader — frontend subscribes to this ONLY when a
+ *  stat-card drawer is expanded. Returns the 4 rentals arrays
+ *  (active / ongoing / upcoming / confirmed) for the requested account. */
+export const getRentals = query({
+  args: { account: v.optional(v.string()) },
+  handler: async (ctx, { account }) => {
+    const key = account ?? ACCOUNT_ALL;
+    const row = await ctx.db
+      .query("mv_stats_drawer_rentals")
+      .withIndex("by_account", (q) => q.eq("account", key))
+      .first();
+    return row;
   },
 });
 
