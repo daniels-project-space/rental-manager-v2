@@ -178,7 +178,10 @@ export const getCalendarStrip = query({
       })
     );
 
-    // Calendar holds for the date range
+    // Calendar holds for the date range.
+    // Phase 7e (2026-05-24): cross-account path now uses by_date indexed
+    // range scan instead of a full-table .collect(). Calendar_holds has
+    // ~50-200 rows per day × N days; the window is bounded by `days` arg.
     const holds: Doc<"calendar_holds">[] = [];
     if (accountSlug) {
       for (const date of dates) {
@@ -191,13 +194,11 @@ export const getCalendarStrip = query({
         holds.push(...dayHolds);
       }
     } else {
-      // OPEN_INDEX_NEED: index by (date) alone for account-agnostic date range scan.
-      const allHolds = await ctx.db.query("calendar_holds").collect();
-      holds.push(
-        ...allHolds.filter(
-          (h) => h.date !== undefined && h.date >= startDate && h.date <= endDate
-        )
-      );
+      const rangeHolds = await ctx.db
+        .query("calendar_holds")
+        .withIndex("by_date", (q) => q.gte("date", startDate).lte("date", endDate))
+        .collect();
+      holds.push(...rangeHolds);
     }
 
     // Item name + image lookup for holds AND for reservation image projection
@@ -637,6 +638,8 @@ export const getWeeklyCalendar = query({
       (reservations as ReservationRow[]).filter(isConfirmedWithDates),
     ) as typeof reservations;
 
+    // Phase 7e (2026-05-24): cross-account path uses by_date indexed range
+    // scan instead of full-table .collect().
     const holds: Doc<"calendar_holds">[] = [];
     if (accountSlug) {
       for (const date of dates) {
@@ -649,15 +652,11 @@ export const getWeeklyCalendar = query({
         holds.push(...dayHolds);
       }
     } else {
-      const allHolds = await ctx.db.query("calendar_holds").collect();
-      holds.push(
-        ...allHolds.filter(
-          (h) =>
-            h.date !== undefined &&
-            h.date >= weekStartDate &&
-            h.date <= weekEnd
-        )
-      );
+      const rangeHolds = await ctx.db
+        .query("calendar_holds")
+        .withIndex("by_date", (q) => q.gte("date", weekStartDate).lte("date", weekEnd))
+        .collect();
+      holds.push(...rangeHolds);
     }
 
     // Renter name lookup (denorm + fallback to renters table).

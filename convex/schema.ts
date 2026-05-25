@@ -484,7 +484,11 @@ export default defineSchema({
     .index("by_item_date_range", ["item_id", "start_at"])
     .index("by_item_date", ["item_id", "date"])
     .index("by_reservation", ["reservation_id"])
-    .index("by_account_date", ["account_slug", "date"]),
+    .index("by_account_date", ["account_slug", "date"])
+    // Phase 7e (2026-05-24) — cross-account date-range scans for the
+    // dashboard CalendarStrip + WeeklyCalendar when accountSlug is null.
+    // Replaces a full-table .collect() with an indexed range read.
+    .index("by_date", ["date"]),
 
   // ── Owner unavailability blocks (Phase 3 calendar) ───────────
   owner_unavailability: defineTable({
