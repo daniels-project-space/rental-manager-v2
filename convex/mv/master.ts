@@ -66,6 +66,7 @@ import { refreshAll as refreshLifetimeRevenue } from "./lifetime_revenue";
 import { refreshAll as refreshInvestmentScorecard } from "./investment_scorecard";
 import { refreshAll as refreshConversionFunnel } from "./conversion_funnel";
 import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_category";
+import { refreshAll as refreshWalleSignals } from "./walle_signals";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -495,6 +496,14 @@ export const refreshSlow = internalAction({
     }));
     results.push(await safeStep(ctx, "rental_volume_by_category", async () => {
       await refreshRentalVolumeByCategory(ctx);
+    }));
+
+    // Pass 11h (2026-05-25): unified WallE-widget signals (active
+    // conflicts + revenue delta + utilization delta) into one MV row.
+    // Pass 8c made each of the 3 underlying queries indexed but they
+    // still read ~250 rich-payload rows per re-eval × 3 widget subs.
+    results.push(await safeStep(ctx, "walle_signals", async () => {
+      await refreshWalleSignals(ctx);
     }));
 
     return { batch: "slow", results };

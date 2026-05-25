@@ -265,8 +265,15 @@ function isLiveStatus(s: string | undefined | null): boolean {
 // Returns: { id, item, dates, severity }[]
 //   severity = "high" if 3+ reservations on same item, else "medium".
 export const getActiveConflicts = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _bypassMv: v.optional(v.boolean()) },
+  handler: async (ctx, { _bypassMv }) => {
+    if (!_bypassMv) {
+      const cached = await ctx.db
+        .query("mv_walle_signals")
+        .withIndex("by_account", (q) => q.eq("account", "all"))
+        .first();
+      if (cached) return cached.activeConflicts;
+    }
     const today = todayIso();
     const lookback = isoNDaysAgoUtc(14);
 
@@ -376,8 +383,15 @@ export const getActiveConflicts = query({
 // booked-days this-week (last 7d) vs last-week (prior 7d). Return items
 // with absolute delta >= 20%, sorted by abs(deltaPct) desc, top 10.
 export const getUtilizationDelta = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _bypassMv: v.optional(v.boolean()) },
+  handler: async (ctx, { _bypassMv }) => {
+    if (!_bypassMv) {
+      const cached = await ctx.db
+        .query("mv_walle_signals")
+        .withIndex("by_account", (q) => q.eq("account", "all"))
+        .first();
+      if (cached) return cached.utilizationDelta;
+    }
     const today = todayIso();
     const start14 = isoNDaysAgoUtc(14);
     const start7 = isoNDaysAgoUtc(7);
@@ -470,8 +484,15 @@ export const getUtilizationDelta = query({
 // Returns: { mtdGbp, vsLastMonthPct, vsForecastPct }
 //   vsForecastPct = null (no forecast table in v2 yet).
 export const getRevenueDelta = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _bypassMv: v.optional(v.boolean()) },
+  handler: async (ctx, { _bypassMv }) => {
+    if (!_bypassMv) {
+      const cached = await ctx.db
+        .query("mv_walle_signals")
+        .withIndex("by_account", (q) => q.eq("account", "all"))
+        .first();
+      if (cached) return cached.revenueDelta;
+    }
     const now = new Date();
     const y = now.getUTCFullYear();
     const m = now.getUTCMonth(); // 0-based

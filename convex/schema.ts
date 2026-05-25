@@ -950,6 +950,20 @@ export default defineSchema({
     payload: v.any(),                     // full getRentalVolumeByCategory response
   }).index("by_account_days", ["account", "days"]),
 
+  // Pass 11h (2026-05-25) — single MV row per account holding ALL three
+  // WallE-widget aggregates (active_conflicts, revenue_delta, utilization
+  // _delta). Even with pass-8c's by_start_date indexed scans, each call
+  // reads ~250 rich-payload rows × 3 queries × 3 widget subscribers =
+  // multi-GB/day. Combine into one row keyed by (account); WallE widgets
+  // read it instead of subscribing to 3 separate live queries.
+  mv_walle_signals: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    activeConflicts: v.any(),             // getActiveConflicts response
+    revenueDelta: v.any(),                // getRevenueDelta response
+    utilizationDelta: v.any(),            // getUtilizationDelta response
+  }).index("by_account", ["account"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer
