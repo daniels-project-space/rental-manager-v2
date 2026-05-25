@@ -896,6 +896,18 @@ export default defineSchema({
     payload: v.any(),                     // full getMissedAndDeniedByCategory response
   }).index("by_account_days", ["account", "days"]),
 
+  // Pass 10a (2026-05-25) — wrap-and-cache getRentalVolumeKindBreakdown.
+  // Second-biggest query cost (24.27 GB + 62K calls/day pre-pass-9c).
+  // Pre-computed per (account, days, kind). At ~8 kinds × 3 windows ×
+  // 3 accounts = 72 rows.
+  mv_rental_volume_kind_breakdown: defineTable({
+    account: v.string(),                  // "dbcinema" | "leo" | "all"
+    days: v.number(),                     // 30 | 90 | 365
+    kind: v.string(),                     // "camera_body" | "lens" | etc.
+    generatedAt: v.number(),
+    payload: v.any(),                     // full getRentalVolumeKindBreakdown response
+  }).index("by_account_days_kind", ["account", "days", "kind"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer

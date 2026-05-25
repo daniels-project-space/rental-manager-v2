@@ -2156,8 +2156,22 @@ export const getRentalVolumeKindBreakdown = query({
     accountSlug: v.union(v.string(), v.null()),
     days: v.number(),
     kind: v.string(),
+    // Pass 10a (2026-05-25): _bypassMv true ONLY for the refresher path.
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, days, kind }) => {
+  handler: async (ctx, { accountSlug, days, kind, _bypassMv }) => {
+    if (!_bypassMv) {
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_rental_volume_kind_breakdown")
+        .withIndex("by_account_days_kind", (q) =>
+          q.eq("account", accountKey).eq("days", days).eq("kind", kind),
+        )
+        .first();
+      if (cached) {
+        return cached.payload;
+      }
+    }
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);

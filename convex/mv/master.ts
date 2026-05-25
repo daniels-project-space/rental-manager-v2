@@ -61,6 +61,7 @@ import { computeEarningsByPeriod } from "./earnings_by_period";
 import { computeItemRoiRanking } from "./item_roi_rankings";
 import { refreshAll as refreshStatsDrawer } from "./stats_drawer";
 import { refreshAll as refreshMissedDeniedByCategory } from "./missed_denied_by_category";
+import { refreshAll as refreshRentalVolumeKindBreakdown } from "./rental_volume_kind_breakdown";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -468,6 +469,13 @@ export const refreshSlow = internalAction({
     // toggle exposes (30 / 90 / 365 days × 3 accounts = 9 rows).
     results.push(await safeStep(ctx, "missed_denied_by_category", async () => {
       await refreshMissedDeniedByCategory(ctx);
+    }));
+
+    // Pass 10a (2026-05-25): wrap-and-cache getRentalVolumeKindBreakdown.
+    // Second-biggest cost (24.27 GB/day + 62K calls). 8 kinds × 3 windows
+    // × 3 accounts = 72 rows pre-computed daily.
+    results.push(await safeStep(ctx, "rental_volume_kind_breakdown", async () => {
+      await refreshRentalVolumeKindBreakdown(ctx);
     }));
 
     return { batch: "slow", results };
