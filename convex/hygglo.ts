@@ -765,8 +765,28 @@ async function upsertOrderImpl(
     // directions matter: a row newly-obsoleted needs to drop out of cached
     // active/upcoming lists; a row un-obsoleted (Matthew Holden case) needs
     // to re-appear in them. One scheduler call per batch covers both.
+    //
+    // Pass 16a (2026-05-26): also fire when order_step crosses the
+    // "picked up" threshold. The Earnings Today widget is gated by
+    // PICKED_UP_STEPS (BOOKED_AFTER_VERIFIED / DELIVERED / RETURNED /
+    // REVIEWED) — when a row crosses INTO that set the number should
+    // jump up; when it crosses OUT (rare — only via the un-obsolete path
+    // re-syncing an older row) it should drop. Without this signal a
+    // pickup at 09:00 wouldn't appear in the widget until the hourly
+    // cron caught up.
+    const PICKED_UP_STEPS_HOT = new Set([
+      "BOOKED_AFTER_VERIFIED",
+      "DELIVERED",
+      "RETURNED",
+      "REVIEWED",
+    ]);
+    const wasPickedUp =
+      typeof storedStep === "string" && PICKED_UP_STEPS_HOT.has(storedStep);
+    const nowPickedUp =
+      typeof incomingStep === "string" && PICKED_UP_STEPS_HOT.has(incomingStep);
     const transitionedToObsolete = obsoleteFields.is_obsolete === true && !wasObsolete;
     const transitionedFromObsolete = clearObsolete;
+    const pickupStateChanged = wasPickedUp !== nowPickedUp;
     if (transitionedToObsolete) {
       await scheduleListingResolutionOnDenial(ctx, {
         account_slug: args.account_slug,
@@ -780,7 +800,10 @@ async function upsertOrderImpl(
     return {
       action: "updated",
       bankItems: hyggloItemsUpdate,
-      transitionedToObsolete: transitionedToObsolete || transitionedFromObsolete,
+      // The field is conceptually "any dashboard-visible state change";
+      // kept under its original name to avoid renaming the API. Covers
+      // obsolete transitions (both directions) and pickup-step crossings.
+      transitionedToObsolete: transitionedToObsolete || transitionedFromObsolete || pickupStateChanged,
     };
   }
 
@@ -820,6 +843,18 @@ async function upsertOrderImpl(
     });
   }
 
+  // Pass 16a (2026-05-26): newly-inserted rows that come in already-picked-up
+  // (Hygglo's first poll picked up the order after it had already been
+  // delivered) also count as a state change for MV-refresh purposes —
+  // their gross will land in the Earnings Today widget.
+  const NEWLY_PICKED_UP_STEPS = new Set([
+    "BOOKED_AFTER_VERIFIED",
+    "DELIVERED",
+    "RETURNED",
+    "REVIEWED",
+  ]);
+  const insertedAsPickedUp =
+    typeof incomingStep === "string" && NEWLY_PICKED_UP_STEPS.has(incomingStep);
   return {
     action: "inserted",
     reservation_id: newId as unknown as string,
@@ -828,7 +863,8 @@ async function upsertOrderImpl(
     // (renter cancelled before we ever saw it active) count as a transition
     // for MV-refresh purposes. The mv_stats_drawer cached "active" list won't
     // know to exclude them otherwise.
-    transitionedToObsolete: obsoleteFields.is_obsolete === true,
+    transitionedToObsolete:
+      obsoleteFields.is_obsolete === true || insertedAsPickedUp,
   };
 }
 

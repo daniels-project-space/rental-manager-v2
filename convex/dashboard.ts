@@ -528,11 +528,34 @@ export const getStatsDrawerData = query({
       accountSlug,
     ).rentals;
 
-    // Revenue slices — net_to_owner_gbp, deduped per rental
+    // Revenue slices — net_to_owner_gbp, deduped per rental.
+    //
+    // Pass 16a (2026-05-26): the "Earnings Today" widget should reflect
+    // money from rentals that have ACTUALLY been picked up that day, not
+    // just rentals whose start_date happens to be today (which inflates
+    // the number with bookings still sitting in REQUEST / APPROVED /
+    // FUNDS_RESERVED / VERIFIED — pre-handover). Gating by order_step
+    // brings the number in line with what Daniel sees as "earned cash":
+    // gear is with the renter, the rental is realised.
+    //
+    // PICKED_UP_STEPS = post-handover steps. BOOKED_AFTER_VERIFIED is
+    // included because Hygglo applies it the moment escrow lands AFTER
+    // a verification handshake — at that point the rental is committed
+    // and the handover follows immediately (same-day or next-morning).
+    // DELIVERED is the explicit "renter has the gear" marker.
+    const PICKED_UP_STEPS = new Set([
+      "BOOKED_AFTER_VERIFIED",
+      "DELIVERED",
+      "RETURNED",
+      "REVIEWED",
+    ]);
+    const isPickedUp = (r: { order_step?: string }): boolean =>
+      typeof r.order_step === "string" && PICKED_UP_STEPS.has(r.order_step);
     const earnedPaid = dedupRes(
       paidRes.filter((r) => {
         const d = effectiveDateStr(r);
-        return d !== undefined && d <= today;
+        if (d === undefined || d > today) return false;
+        return isPickedUp(r as { order_step?: string });
       }),
     );
     const todayEarned = earnedPaid.filter((r) => effectiveDateStr(r) === today);
