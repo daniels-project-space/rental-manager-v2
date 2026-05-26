@@ -67,6 +67,7 @@ import { refreshAll as refreshInvestmentScorecard } from "./investment_scorecard
 import { refreshAll as refreshConversionFunnel } from "./conversion_funnel";
 import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_category";
 import { refreshAll as refreshWalleSignals } from "./walle_signals";
+import { refreshAll as refreshDueReturns } from "./due_returns";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -369,6 +370,14 @@ export const refreshFast = internalAction({
     // heavy live handler.
     results.push(await safeStep(ctx, "stats_drawer", async () => {
       await refreshStatsDrawer(ctx);
+    }));
+
+    // Pass 12a (2026-05-26): wrap-and-cache getDueReturns. WallESignals
+    // (in eager StatsGrid) subscribes on every cold-mount, so every
+    // reservation mutation triggers a 12MB re-eval. Hourly refresh keeps
+    // the "due today" boundary correct within ~1h.
+    results.push(await safeStep(ctx, "due_returns", async () => {
+      await refreshDueReturns(ctx);
     }));
 
     return { batch: "fast", results };

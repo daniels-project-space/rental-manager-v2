@@ -108,9 +108,10 @@ function ReturnModal({
 
 export function ReturnHub() {
   const { activeAccountSlug } = useAccount();
+  // MV-backed (pass 12a) — v.any() payload, recast to the local DueReturn shape.
   const rows = useQuery(api.reservations.getDueReturns, {
     accountSlug: activeAccountSlug,
-  });
+  }) as DueReturn[] | undefined;
   const [active, setActive] = useState<DueReturn | null>(null);
   const markReturned = useMutation(api.reservations.markReturned);
 

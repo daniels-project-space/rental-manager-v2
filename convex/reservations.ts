@@ -41,10 +41,26 @@ export const getRecentActivity = query({
 
 /**
  * W07 Return Hub — active reservations due today or overdue
+ *
+ * Pass 12a (2026-05-26): wrap-and-cache via mv_due_returns. Live handler
+ * reads ~250 confirmed rich rows + N+1 renter lookups; eager-subscribed by
+ * WallESignals so every reservation mutation re-evaluates. Refresher runs
+ * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 export const getDueReturns = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, _bypassMv }) => {
+    if (!_bypassMv) {
+      const accountKey = accountSlug ?? "all";
+      const cached = await ctx.db
+        .query("mv_due_returns")
+        .withIndex("by_account", (q) => q.eq("account", accountKey))
+        .first();
+      if (cached) return cached.payload;
+    }
     const today = TODAY();
     // OPEN_INDEX_NEED: composite index (status, end_date) for efficient due/overdue scan.
     let active = await ctx.db

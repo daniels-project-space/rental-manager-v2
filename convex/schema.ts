@@ -964,6 +964,17 @@ export default defineSchema({
     utilizationDelta: v.any(),            // getUtilizationDelta response
   }).index("by_account", ["account"]),
 
+  // Pass 12a (2026-05-26) — wrap-and-cache getDueReturns. Live handler does
+  // by_status("confirmed").collect() = ~250 rich rows × 50KB + N+1 renter
+  // lookups per call. WallESignals (in eager StatsGrid) subscribes on every
+  // dashboard cold-mount, and every reservation mutation triggers a reactive
+  // re-eval. Cached payload is a small renter-name + due-date array.
+  mv_due_returns: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    payload: v.any(),                     // getDueReturns return array
+  }).index("by_account", ["account"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer

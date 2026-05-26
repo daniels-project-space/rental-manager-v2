@@ -120,6 +120,7 @@ import type * as mv_churn_risk from "../mv/churn_risk.js";
 import type * as mv_constants from "../mv/constants.js";
 import type * as mv_conversion_funnel from "../mv/conversion_funnel.js";
 import type * as mv_daily_briefing from "../mv/daily_briefing.js";
+import type * as mv_due_returns from "../mv/due_returns.js";
 import type * as mv_earnings_by_period from "../mv/earnings_by_period.js";
 import type * as mv_investment_scorecard from "../mv/investment_scorecard.js";
 import type * as mv_item_roi_rankings from "../mv/item_roi_rankings.js";
@@ -285,6 +286,7 @@ declare const fullApi: ApiFromModules<{
   "mv/constants": typeof mv_constants;
   "mv/conversion_funnel": typeof mv_conversion_funnel;
   "mv/daily_briefing": typeof mv_daily_briefing;
+  "mv/due_returns": typeof mv_due_returns;
   "mv/earnings_by_period": typeof mv_earnings_by_period;
   "mv/investment_scorecard": typeof mv_investment_scorecard;
   "mv/item_roi_rankings": typeof mv_item_roi_rankings;
