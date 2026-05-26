@@ -1077,9 +1077,11 @@ export const getMissedAndDeniedByCategory = query({
     // Source = reservations table filtered by reclassified_outcome (Phase 3a
     // re-classifier output). Fall back to denial_actor if reclassified is
     // missing on an older row.
+    // Pass 13e (2026-05-26): use by_is_obsolete index — was scanning the
+    // full 1700-row table to filter to ~50 obsolete rows.
     let obsoleteRes = await ctx.db
       .query("reservations")
-      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
       .collect();
     if (accountSlug) {
       obsoleteRes = obsoleteRes.filter((r) => r.account_slug === accountSlug);
@@ -1164,9 +1166,10 @@ export const getMissedAndDeniedByCategory = query({
     const demandByKind = new Map<string, number>();
     let totalDemandLost = 0;
 
+    // Pass 13e (2026-05-26): use by_is_obsolete index.
     let obsoleteResAll = await ctx.db
       .query("reservations")
-      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
       .collect();
     if (accountSlug) {
       obsoleteResAll = obsoleteResAll.filter(
@@ -1561,9 +1564,11 @@ export const getMissedKindBreakdown = query({
     );
 
     // Owner-denied reservations within the window.
+    // Pass 13e (2026-05-26): use by_is_obsolete index — was scanning the
+    // full 1700-row table to filter to ~50 obsolete rows.
     let obsoleteRes = await ctx.db
       .query("reservations")
-      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
       .collect();
     if (accountSlug) {
       obsoleteRes = obsoleteRes.filter((r) => r.account_slug === accountSlug);

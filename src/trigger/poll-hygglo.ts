@@ -711,32 +711,69 @@ export const pollHyggloInbox = schedules.task({
 
           for (let i = 0; i < reservations.length; i += 50) {
             const batch = reservations.slice(i, i + 50);
-            const orderArgs = batch.map((payload) => ({
-              account_slug: account.slug,
-              hygglo_order_id: payload.hygglo_order_id,
-              status: payload.status,
-              start_date: payload.start_date,
-              end_date: payload.end_date,
-              gross_paid_gbp: payload.gross_paid_gbp,
-              net_to_owner_gbp: payload.net_to_owner_gbp,
-              currency: payload.currency,
-              items: payload.items,
-              duration_days: payload.duration_days,
-              order: payload.order,
-              sourceFilter: payload.sourceFilter,
-              renter_name: payload.renter_name,
-              hygglo_user_id: payload.hygglo_user_id,
-              booking_status: payload.booking_status,
-              pickup_time: payload.pickup_time,
-              return_time: payload.return_time,
-              pickup_method: payload.pickup_method,
-              return_method: payload.return_method,
-              notes: payload.notes,
-              photos_urls: payload.photos_urls,
-              latest_activity: payload.latest_activity,
-              hygglo_system_signal: payload.hygglo_system_signal,
-              hygglo_system_signal_text: payload.hygglo_system_signal_text,
-            }));
+            // Pass 13b (2026-05-26): pre-extract order_step + drop the raw
+            // `order` blob on the common (non-denial) path. The ~30KB
+            // Hygglo JSON was uploaded for every row × 288 polls/day even
+            // though server only used it to read a single step string. Only
+            // denial transitions need the full payload (for listing
+            // resolution context). ~95% of polled rows are non-denial =>
+            // ~95% upload-bandwidth reduction on this mutation.
+            const DENIAL_SIGNALS = new Set([
+              "owner_denied",
+              "renter_cancelled",
+              "auto_cancelled",
+              "verification_failed",
+            ]);
+            const extractStep = (order: unknown): string | undefined => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const o = order as any;
+              const steps = o?.steps ?? o?.detail?.steps ?? o?._detail?.steps;
+              if (!Array.isArray(steps)) return undefined;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const active = steps.find((s: any) => s?.active === true);
+              return active?.key;
+            };
+            const VALID_STEP_KEYS = new Set([
+              "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED",
+              "BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED",
+              "CANCELED", "VERIFICATION_FAILED",
+            ]);
+            const orderArgs = batch.map((payload) => {
+              const stepRaw = extractStep(payload.order);
+              const orderStepExtracted = stepRaw && VALID_STEP_KEYS.has(stepRaw)
+                ? (stepRaw as "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED"
+                  | "BOOKED_AFTER_VERIFIED" | "DELIVERED" | "RETURNED" | "REVIEWED"
+                  | "CANCELED" | "VERIFICATION_FAILED")
+                : undefined;
+              const needsRawOrder = DENIAL_SIGNALS.has(payload.hygglo_system_signal ?? "");
+              return {
+                account_slug: account.slug,
+                hygglo_order_id: payload.hygglo_order_id,
+                status: payload.status,
+                start_date: payload.start_date,
+                end_date: payload.end_date,
+                gross_paid_gbp: payload.gross_paid_gbp,
+                net_to_owner_gbp: payload.net_to_owner_gbp,
+                currency: payload.currency,
+                items: payload.items,
+                duration_days: payload.duration_days,
+                ...(needsRawOrder && { order: payload.order }),
+                ...(orderStepExtracted && { order_step_extracted: orderStepExtracted }),
+                sourceFilter: payload.sourceFilter,
+                renter_name: payload.renter_name,
+                hygglo_user_id: payload.hygglo_user_id,
+                booking_status: payload.booking_status,
+                pickup_time: payload.pickup_time,
+                return_time: payload.return_time,
+                pickup_method: payload.pickup_method,
+                return_method: payload.return_method,
+                notes: payload.notes,
+                photos_urls: payload.photos_urls,
+                latest_activity: payload.latest_activity,
+                hygglo_system_signal: payload.hygglo_system_signal,
+                hygglo_system_signal_text: payload.hygglo_system_signal_text,
+              };
+            });
 
             const batchResults = await convex.mutation(
               api.hygglo.upsertOrdersAsReservationsBatch,

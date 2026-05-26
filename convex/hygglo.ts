@@ -479,8 +479,28 @@ const upsertOrderArgsFields = {
   currency: v.optional(v.string()),
   items: v.array(orderItemArgs),
   duration_days: v.optional(v.number()),
-  /** Raw Hygglo order object — used to extract order_step. */
+  /** Raw Hygglo order object. Pass 13b (2026-05-26): now OPTIONAL on the
+   *  hot path — caller pre-extracts `order_step` and only sends `order`
+   *  when the row needs listing-resolver context (denial transitions). The
+   *  ~30KB Hygglo blob × ~250 rentals × 288 polls/day was the dominant
+   *  upload-bandwidth cost on this mutation (~253 MB/day). */
   order: v.optional(v.any()),
+  /** Pass 13b (2026-05-26): pre-extracted active order step. When set the
+   *  server uses it verbatim; when absent the server falls back to
+   *  extractActiveOrderStep(args.order). Eliminates the need to send the
+   *  full `order` blob on the common (non-denial) update path. */
+  order_step_extracted: v.optional(v.union(
+    v.literal("REQUEST"),
+    v.literal("APPROVED"),
+    v.literal("FUNDS_RESERVED"),
+    v.literal("VERIFIED"),
+    v.literal("BOOKED_AFTER_VERIFIED"),
+    v.literal("DELIVERED"),
+    v.literal("RETURNED"),
+    v.literal("REVIEWED"),
+    v.literal("CANCELED"),
+    v.literal("VERIFICATION_FAILED"),
+  )),
   /** Filter label from the poll cycle (e.g. "obsolete", "active"). */
   sourceFilter: v.optional(v.string()),
   renter_name: v.optional(v.string()),
@@ -562,12 +582,19 @@ async function upsertOrderImpl(
     ? photos_urls_raw.filter((u): u is string => typeof u === "string")
     : undefined;
 
+  // Pass 13b (2026-05-26): prefer pre-extracted step from caller; only fall
+  // back to extracting from args.order when caller didn't send it (legacy
+  // path / one-off invocations).
   // null = no active step found (treat as undefined); undefined = unrecognised key
-  const incomingStepRaw = extractActiveOrderStep(args.order);
-  const incomingStep = incomingStepRaw === null ? undefined : (incomingStepRaw as
-    | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
-    | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED"
-    | undefined);
+  const incomingStep: "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
+    | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED" | undefined =
+    args.order_step_extracted ?? (() => {
+      const raw = extractActiveOrderStep(args.order);
+      return raw === null ? undefined : (raw as
+        | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
+        | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED"
+        | undefined);
+    })();
 
   let obsoleteFields: {
     is_obsolete?: boolean;

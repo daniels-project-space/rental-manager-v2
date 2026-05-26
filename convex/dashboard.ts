@@ -223,6 +223,18 @@ export const getStatsDrawerData = query({
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
       if (cached) {
+        // Pass 13c (2026-05-26): skip the 3-row sync_state overlay when the
+        // cached scanner snapshot is < 5 min old. Was costing ~6KB × 17000
+        // reads/day = ~100MB/day in unnecessary indexed lookups. The
+        // "stale poller" warning fires at 30+ min staleness, so a 5-min
+        // freshness threshold preserves the alert behaviour while
+        // eliminating the overlay on most reads.
+        const cachedPayloadPeek = cached.payload as { scanner?: { last_scan_at?: number | null } } | null;
+        const cachedScanAt = cachedPayloadPeek?.scanner?.last_scan_at ?? null;
+        const SCANNER_OVERLAY_SKIP_MS = 5 * 60 * 1000;
+        if (cachedScanAt && Date.now() - cachedScanAt < SCANNER_OVERLAY_SKIP_MS) {
+          return cached.payload;
+        }
         // Scanner card needs real-time freshness (drives the "stale poller"
         // warning). Overlay the cached payload with fresh sync_state reads
         // so the widget reflects actual seconds-ago, not last-MV-refresh-ago.

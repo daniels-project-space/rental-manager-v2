@@ -290,16 +290,40 @@ export const getPipelineCounts = internalQuery({
 });
 
 /**
- * Wave 2 Task 5: listForReconcile — full reservation rows for hold reconciliation.
- * Returns all fields needed by reconcile-holds.ts for a given account.
+ * Wave 2 Task 5: listForReconcile — projection-trimmed reservation rows for
+ * hold reconciliation. Returns only the ~15 fields that
+ * src/lib/reconcile-holds.ts:ReservationInput actually reads, not the full
+ * 50KB rich payload (which includes raw Hygglo `order` JSON, photos_urls,
+ * ai_decision blobs, notes, etc.).
+ *
+ * Pass 13a (2026-05-26): replaced `.filter().collect()` full-table scan
+ * with `withIndex("by_account_slug")` lookup and explicit projection. Was
+ * the largest single Convex-bandwidth cost source (~729 MB/day) — invoked
+ * every 5 min from poll-hygglo.ts × 2 accounts.
  */
 export const listForReconcile = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
-    return await ctx.db
+    const rows = await ctx.db
       .query("reservations")
-      .filter((q) => q.eq(q.field("account_slug"), account_slug))
+      .withIndex("by_account_slug", (q) => q.eq("account_slug", account_slug))
       .collect();
+    return rows.map((r) => ({
+      _id: r._id,
+      hygglo_order_id: r.hygglo_order_id,
+      account_slug: r.account_slug,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      pickup_date: (r as { pickup_date?: string }).pickup_date,
+      return_date: (r as { return_date?: string }).return_date,
+      order_step: r.order_step,
+      status: r.status,
+      is_obsolete: r.is_obsolete,
+      items: r.items,
+      resolved_items: (r as { resolved_items?: Array<{ item_id: string; qty?: number }> }).resolved_items,
+      expanded_items: (r as { expanded_items?: Array<{ item_id: string; qty?: number }> }).expanded_items,
+      renter_name: r.renter_name,
+    }));
   },
 });
 
