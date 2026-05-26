@@ -28,7 +28,58 @@ async function sha256Hex(input: string): Promise<string> {
 
 export { sha256Hex as _sha256Hex };
 
-/** Look up cached short_name for a single (account, product). */
+/**
+ * Pass 14a (2026-05-26): mirror of the deterministic extractor from
+ * listing_short_names_actions.ts. Moved here so the V8 runtime can run
+ * the derivation inline inside a mutation instead of spawning a Node
+ * action per item. Pure JS — no LLM, no I/O. Kept byte-identical to the
+ * Node-side version so existing rows produce identical short_names.
+ */
+const MARKETING_FLUFF_RE: RegExp[] = [
+  /\bportable\b/gi,
+  /\bpremium\b/gi,
+  /\bpro\s*quality\b/gi,
+  /\bprofessional\b/gi,
+  /\bfull\s+frame\b/gi,
+  /\bfull-frame\b/gi,
+  /\bmirrorless\b/gi,
+  /\bcinema\s*camera\b/gi,
+  /\bvideo\b/gi,
+  /\bphotography\b/gi,
+  /\bbluetooth\b/gi,
+  /\b4k\d*p?\b/gi,
+  /\b\d+mp\b/gi,
+  /\bpair\b/gi,
+  /\bset\b/gi,
+  /\bbundle\b/gi,
+  /\bkit\b/gi,
+  /\blight\s+show\b/gi,
+  /\brgb\b/gi,
+  /\bbass\s+boost\b/gi,
+  /\bweighs?\s+\d+(?:\.\d+)?\s*kg\b/gi,
+  /\b\d+-section\b/gi,
+];
+
+function deriveShortName(rawTitle: string): string {
+  if (!rawTitle) return "";
+  let s = rawTitle;
+  s = s.split("|")[0];
+  s = s.replace(/\([^)]*\)/g, " ");
+  s = s.split("+")[0];
+  for (const re of MARKETING_FLUFF_RE) s = s.replace(re, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  if (s.length > 60) s = s.slice(0, 60).trimEnd();
+  return s;
+}
+
+export { deriveShortName as _deriveShortName };
+
+/** Look up cached short_name for a single (account, product).
+ *
+ *  Pass 14a (2026-05-26): kept as a compatibility shim for the legacy
+ *  per-item action path (listing_short_names_actions.deriveOne). The new
+ *  hot path is upsertShortNamesBatch which does its lookups inline in
+ *  one mutation transaction instead of N action+query roundtrips. */
 export const get = internalQuery({
   args: { account_slug: v.string(), product_id: v.number() },
   handler: async (ctx, { account_slug, product_id }) => {
@@ -38,6 +89,81 @@ export const get = internalQuery({
         q.eq("account_slug", account_slug).eq("product_id", product_id),
       )
       .unique();
+  },
+});
+
+/**
+ * Pass 14a (2026-05-26): batched derive + upsert. Replaces the per-item
+ * `scheduleShortNameDerivation` → `deriveOne` action chain that was
+ * costing ~216K function calls/day (~750 items × 288 polls/day).
+ *
+ * Each input tuple either hits the cache (raw_title_hash unchanged →
+ * no write) or computes the deterministic short_name inline and patches
+ * the row. ONE mutation per poll cycle vs ~750 actions. The deterministic
+ * extractor is pure regex — runs in V8 runtime with zero LLM cost.
+ *
+ * Hash collision handling: cache hit when raw_title_hash matches.
+ * Different raw_title => recompute (rare; only when Hygglo title shifts).
+ */
+export const upsertShortNamesBatch = internalMutation({
+  args: {
+    items: v.array(
+      v.object({
+        account_slug: v.string(),
+        product_id: v.number(),
+        raw_title: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, { items }): Promise<{ checked: number; derived: number; cached: number }> => {
+    if (items.length === 0) return { checked: 0, derived: 0, cached: 0 };
+
+    let derived = 0;
+    let cached = 0;
+    const now = Date.now();
+    // De-dupe within the batch first (the caller may send the same
+    // product_id multiple times if it appears across orders in one poll).
+    const seen = new Set<string>();
+    for (const item of items) {
+      const key = `${item.account_slug}#${item.product_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const hash = await sha256Hex(item.raw_title);
+      const existing = await ctx.db
+        .query("listing_short_names")
+        .withIndex("by_account_product", (q) =>
+          q.eq("account_slug", item.account_slug).eq("product_id", item.product_id),
+        )
+        .unique();
+      if (existing && existing.raw_title_hash === hash) {
+        cached++;
+        continue;
+      }
+      const shortName = deriveShortName(item.raw_title) || item.raw_title.slice(0, 60).trim();
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          raw_title: item.raw_title,
+          raw_title_hash: hash,
+          short_name: shortName,
+          derivation_method: "deterministic",
+          updated_at: now,
+        });
+      } else {
+        await ctx.db.insert("listing_short_names", {
+          account_slug: item.account_slug,
+          product_id: item.product_id,
+          raw_title: item.raw_title,
+          raw_title_hash: hash,
+          short_name: shortName,
+          derivation_method: "deterministic",
+          derived_at: now,
+          updated_at: now,
+        });
+      }
+      derived++;
+    }
+    return { checked: seen.size, derived, cached };
   },
 });
 

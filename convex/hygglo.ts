@@ -435,35 +435,35 @@ async function scheduleListingResolutionOnDenial(
 // itself — Convex actions are not allowed for LLM work (CLAUDE.md).
 
 // Fire-and-forget short_name derivation for each Hygglo per-item product.
-// Mutations can't call actions directly - scheduler-only. The action itself
-// is a cache-hit no-op when (account_slug, product_id, title_hash) is
-// unchanged, so we can schedule on every poll cycle without burning LLM
-// budget. Errors are swallowed so the poller never blocks on this.
+// Pass 14a (2026-05-26): collapsed from N scheduler.runAfter calls (one per
+// item, each spawning a "use node" deriveOne action) to ONE scheduled V8
+// mutation that processes the whole batch. Was ~750 actions per poll ×
+// 288 polls/day = 216K function calls/day even though >99% were cache-hit
+// no-ops. New path: 1 mutation per poll cycle = 288 calls/day.
 async function scheduleShortNameDerivation(
   ctx: MutationCtx,
   account_slug: string,
   hyggloItems: Array<{ name: string; product_id?: number; type: string }>,
 ): Promise<void> {
   const seen = new Set<number>();
+  const items: Array<{ account_slug: string; product_id: number; raw_title: string }> = [];
   for (const it of hyggloItems) {
     if (!it || it.type === "INSURANCE") continue;
     if (typeof it.product_id !== "number") continue;
     if (!it.name) continue;
     if (seen.has(it.product_id)) continue;
     seen.add(it.product_id);
-    try {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.listing_short_names_actions.deriveOne,
-        {
-          account_slug,
-          product_id: it.product_id,
-          raw_title: it.name,
-        },
-      );
-    } catch (err) {
-      console.warn("[hygglo.upsertOrderImpl] scheduleShortNameDerivation failed", String(err));
-    }
+    items.push({ account_slug, product_id: it.product_id, raw_title: it.name });
+  }
+  if (items.length === 0) return;
+  try {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.listing_short_names.upsertShortNamesBatch,
+      { items },
+    );
+  } catch (err) {
+    console.warn("[hygglo.upsertOrderImpl] scheduleShortNameDerivation failed", String(err));
   }
 }
 
