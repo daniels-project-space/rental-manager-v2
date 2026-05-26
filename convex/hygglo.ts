@@ -552,6 +552,13 @@ type UpsertResult = {
   reservation_id?: string;
 };
 
+// Internal impl result shape — adds the obsolete-transition flag + bank items
+// that the batch handler uses but never exposes to callers.
+type UpsertImplResult = UpsertResult & {
+  bankItems: BankItem[];
+  transitionedToObsolete?: boolean;
+};
+
 /**
  * Core per-order upsert. Returns the per-order result PLUS the hygglo_items
  * snapshot that should be flushed into the product_id-keyed image bank.
@@ -562,7 +569,7 @@ type UpsertResult = {
 async function upsertOrderImpl(
   ctx: MutationCtx,
   args: UpsertOrderArgs,
-): Promise<UpsertResult & { bankItems: BankItem[] }> {
+): Promise<UpsertImplResult> {
   const existing = await ctx.db
     .query("reservations")
     .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
@@ -731,18 +738,36 @@ async function upsertOrderImpl(
     // waiting up to 60 min for the next poll cycle (Anker power-station
     // incident, 2026-05-22).
     const wasObsolete = existing.is_obsolete === true;
+    // Pass 15b (2026-05-26): un-obsolete path. Original logic only ever SET
+    // is_obsolete=true (when sourceFilter==="obsolete") and never cleared
+    // it. Result: rows that briefly appeared in Hygglo's obsolete bucket
+    // (transient classification error / Hygglo system bug) got stuck with
+    // is_obsolete=true forever, hidden from the dashboard, even when the
+    // next poll cycle re-classified them to current/confirmed. Symptom:
+    // "Matthew Holden" leo rental — status=confirmed, order_step=DELIVERED,
+    // is_obsolete=true (wrong). Clear the flag when the row appears in a
+    // non-obsolete bucket. obsolete_reason is preserved for audit; only
+    // the boolean gate flips back.
+    const clearObsolete = !isObsoleteUpsert && wasObsolete;
     await ctx.db.patch(existing._id, {
       ...baseFields,
       status: finalStatus,
       ...stepPatch,
       ...obsoleteFields,
+      ...(clearObsolete && { is_obsolete: false }),
     });
     const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
     const hyggloItemsUpdate = buildHyggloItems(args.items);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
     await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);
     // listing_info_pool: one-time fill at insert only — no re-derive on update.
-    if (obsoleteFields.is_obsolete === true && !wasObsolete) {
+    // Transition signal feeds the batch handler's reactive MV refresh. Both
+    // directions matter: a row newly-obsoleted needs to drop out of cached
+    // active/upcoming lists; a row un-obsoleted (Matthew Holden case) needs
+    // to re-appear in them. One scheduler call per batch covers both.
+    const transitionedToObsolete = obsoleteFields.is_obsolete === true && !wasObsolete;
+    const transitionedFromObsolete = clearObsolete;
+    if (transitionedToObsolete) {
       await scheduleListingResolutionOnDenial(ctx, {
         account_slug: args.account_slug,
         hygglo_order_id: args.hygglo_order_id,
@@ -752,7 +777,11 @@ async function upsertOrderImpl(
         photos_urls,
       });
     }
-    return { action: "updated", bankItems: hyggloItemsUpdate };
+    return {
+      action: "updated",
+      bankItems: hyggloItemsUpdate,
+      transitionedToObsolete: transitionedToObsolete || transitionedFromObsolete,
+    };
   }
 
   // ── INSERT ────────────────────────────────────────────────
@@ -795,6 +824,11 @@ async function upsertOrderImpl(
     action: "inserted",
     reservation_id: newId as unknown as string,
     bankItems: hyggloItemsInsert,
+    // Pass 15a (2026-05-26): newly-inserted rows that come in already-obsolete
+    // (renter cancelled before we ever saw it active) count as a transition
+    // for MV-refresh purposes. The mv_stats_drawer cached "active" list won't
+    // know to exclude them otherwise.
+    transitionedToObsolete: obsoleteFields.is_obsolete === true,
   };
 }
 
@@ -824,15 +858,23 @@ export const upsertOrdersAsReservationsBatch = mutation({
     const results: UpsertResult[] = [];
     // account_slug -> aggregated bank items (one flush per account at the end).
     const perAccountBank = new Map<string, BankItem[]>();
+    // Pass 15a (2026-05-26): track obsolete transitions so we can fire a
+    // SINGLE reactive MV refresh at the end of the batch — converging the
+    // dashboard's mv_stats_drawer (active/ongoing/upcoming/confirmed lists)
+    // within seconds of a cancellation instead of waiting up to ~60 min for
+    // the next refreshFast cron. One refresh per batch covers N transitions.
+    let anyTransitionedToObsolete = false;
 
     for (const args of orders) {
-      const { action, reservation_id, bankItems } = await upsertOrderImpl(ctx, args);
+      const { action, reservation_id, bankItems, transitionedToObsolete } =
+        await upsertOrderImpl(ctx, args);
       results.push(reservation_id !== undefined ? { action, reservation_id } : { action });
       if (bankItems.length > 0) {
         const bucket = perAccountBank.get(args.account_slug);
         if (bucket) bucket.push(...bankItems);
         else perAccountBank.set(args.account_slug, [...bankItems]);
       }
+      if (transitionedToObsolete) anyTransitionedToObsolete = true;
     }
 
     for (const [account_slug, items] of perAccountBank) {
@@ -840,6 +882,20 @@ export const upsertOrdersAsReservationsBatch = mutation({
         account_slug,
         items,
       });
+    }
+
+    if (anyTransitionedToObsolete) {
+      // Fire-and-forget refresh of the two MVs that cache "active" rentals
+      // lists. Both refreshers are skip-when-clean inside (so back-to-back
+      // batches that touch nothing new short-circuit cheaply), and we
+      // intentionally do not await — the poller's hot path must not block
+      // on MV rebuild latency.
+      try {
+        await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, { force: true });
+        await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
+      } catch (err) {
+        console.warn("[hygglo.upsertOrdersAsReservationsBatch] MV refresh schedule failed", String(err));
+      }
     }
 
     return results;
