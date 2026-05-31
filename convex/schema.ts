@@ -444,7 +444,13 @@ export default defineSchema({
     // Phase 7a (2026-05-24) — composite for audit_qty_drift + dashboard
     // status-scoped queries. Cuts unindexed full-table scans down to the
     // confirmed-only slice (~300 rows vs ~1700).
-    .index("by_account_status", ["account_slug", "status"]),
+    .index("by_account_status", ["account_slug", "status"])
+    // Pass 8b (2026-05-31): the stats_drawer MV dirty-probe needs to detect ANY
+    // reservation mutation cheaply. The poller bumps last_polled_at on every
+    // touched row, so an indexed max(last_polled_at) lets the probe catch status
+    // changes on PAST/ongoing rentals that the old top-50-by-future-start_date
+    // scan missed (which left the MV — and the dashboard tile — stale for hours).
+    .index("by_last_polled_at", ["last_polled_at"]),
 
   // ── Layer B (2026-05-19) — qty-drift safety net ────────────────────────
   // Nightly audit (convex/audit_qty_drift.ts) detects reservations whose

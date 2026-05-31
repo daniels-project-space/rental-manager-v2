@@ -213,21 +213,26 @@ export const get = query({
 export const hasReservationMutationsSince = query({
   args: { sinceMs: v.number() },
   handler: async (ctx, { sinceMs }): Promise<boolean> => {
-    // last_polled_at isn't indexed; use _creationTime as the cheap probe.
-    // A reservation written or updated since the cutoff bumps _creationTime
-    // (insert) OR last_polled_at (poller patch). We check the latter via a
-    // bounded indexed scan on by_start_date (most-recently-rented first).
-    // Bounded .take(1) — if any row in the recent window has a stale stamp
-    // we return true. Fallback path scans the most-recent 50 reservations.
-    const candidates = await ctx.db
+    // Newest poller patch. last_polled_at is bumped on ANY touched reservation
+    // (insert or status change) regardless of its start_date, so the max of it
+    // is the true "anything changed?" signal. The previous probe scanned the
+    // top-50 by future start_date and therefore MISSED status changes on
+    // past/ongoing rentals — leaving the MV (and the dashboard tile) stale for
+    // hours. One indexed read of the most-recent stamp.
+    const newestPolled = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date")
+      .withIndex("by_last_polled_at")
       .order("desc")
-      .take(50);
-    for (const r of candidates) {
-      const stamp = (r as { last_polled_at?: number })?.last_polled_at ?? r._creationTime;
-      if (stamp > sinceMs) return true;
-    }
+      .first();
+    const polledStamp = (newestPolled as { last_polled_at?: number } | null)?.last_polled_at;
+    if (typeof polledStamp === "number" && polledStamp > sinceMs) return true;
+    // Belt-and-braces for rows inserted but not yet poller-stamped.
+    const newestCreated = await ctx.db
+      .query("reservations")
+      .withIndex("by_creation_time")
+      .order("desc")
+      .first();
+    if (newestCreated && newestCreated._creationTime > sinceMs) return true;
     return false;
   },
 });
