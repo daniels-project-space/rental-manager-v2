@@ -48,13 +48,15 @@ These tools read the SAME data the dashboard tiles render, so your numbers MUST 
 
 When you list specific rentals, items, renters, dates or amounts, use ONLY rows a tool actually returned — NEVER invent or fill in rows from memory. If you don't have the list, call the tool that returns it (or say you don't have it). If a tool gives counts but no list, report the count and don't fabricate the entries.
 
+Respect each tool's stated SORT order and field meanings — report rows in the order returned and don't re-rank or recompute. (E.g. "Idle Inventory" is ranked by idle cost, not by utilization; per-item income is already split cost-proportionally; "best earner" means most NET income.)
+
 Tools:
   query_active_rentals   — rentals active NOW (the "Active Rentals" tile): total = ongoing + upcoming
   query_revenue          — revenue & earnings, all NET take-home, matching the dashboard revenue tiles exactly
   query_conflicts        — REAL overbooking conflicts (qty-aware, dismissals applied) — the dashboard's true count
   query_catalog          — inventory worth, out-of-stock, sell recommendations, qty drift (items/catalog cards)
   query_issues           — operational alerts: untracked, out-of-stock, qty drift, missed/denied revenue, insurance, capacity gaps, below-minimum
-  query_utilization      — item utilization ranking (the "Item Utilization" card)
+  query_utilization      — Idle Inventory: items costing the most while sitting idle (sorted by idle £/week)
   query_pending          — new booking requests awaiting your accept/decline (decision inbox, not the tile's pending)
   query_funnel           — reservation conversion funnel for last N days
   query_calendar         — weekly calendar view (booked/free/partial)
@@ -62,7 +64,9 @@ Tools:
   query_recent_activity  — last N rental events (newest first)
   query_item_earnings    — per-item income, cost-proportional (the income pie's method; NET); correct 'best earner' / 'how much did item X make'; window 30/90/365 days
   query_income_distribution — income split across categories (the income pie; NET); window 30/90/365 days
-  query_smart_buys       — Smart-Buy ranking — items the model thinks Daniel should acquire`;
+  query_smart_buys       — Smart-Buy ranking — NEW items to acquire (unmet demand, ROI-sorted)
+  query_revenue_trend    — weekly NET revenue trend (the revenue sparkline)
+  query_status           — UK tax estimate, business-intel KPIs, scanner state, vacation, AI-Boost (£0 by design)`;
 
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
 // Saves re-fetching aggregated data within a single multi-step LLM turn AND
@@ -146,6 +150,17 @@ type DrawerData = {
     total_count?: number;
   };
   business_intel?: { kpis?: Array<Record<string, unknown>> };
+  tax?: { years?: Array<{ year?: number; estimated_tax?: number; gross?: number }> };
+  scanner?: {
+    last_run_succeeded?: boolean;
+    last_scan_source?: string;
+    rows_upserted_last?: number;
+  };
+  vacation?: { active_blocks?: unknown[] };
+  ai_boost?: {
+    breakdown?: Array<{ label?: string; gbp?: number; weight?: number }>;
+    confidence?: string;
+  };
 };
 
 /** One rental row from the Active Rentals drawer (mv.stats_drawer.getRentals). */
@@ -259,13 +274,30 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     }),
     query_utilization: tool({
       description:
-        "Item utilization ranking, matching the dashboard 'Item Utilization' card. Returns rows of " +
-        "{ name, utilization (0-1 fraction), idle_cost_per_week, replacement_cost_gbp }, lowest-utilization first.",
+        "Idle Inventory — the items COSTING the most money while sitting unused (the dashboard 'Idle Inventory' " +
+        "card). Sorted by idle_cost_per_week_gbp DESC (biggest money-drain first); top items only. Each: " +
+        "{ name, utilization (0-1 = fraction of time rented), idle_cost_per_week_gbp, replacement_cost_gbp }. " +
+        "The top row is the biggest idle-money drain (expensive AND under-used) — it is NOT necessarily the " +
+        "single lowest-utilization item. Don't re-rank; report in the order given.",
       inputSchema: z.object({}),
-      execute: async () =>
-        cached("util:ranking", () =>
+      execute: async () => {
+        const rows = (await cached("util:ranking", () =>
           convex.query(api.dashboard_insights.getItemUtilizationRanking, { accountSlug: null }),
-        ),
+        )) as unknown as Array<{
+          name?: string;
+          utilization?: number;
+          idle_cost_per_week?: number;
+          replacement_cost_gbp?: number;
+        }>;
+        return {
+          items: (Array.isArray(rows) ? rows : []).map((r) => ({
+            name: r.name,
+            utilization: r.utilization,
+            idle_cost_per_week_gbp: r.idle_cost_per_week,
+            replacement_cost_gbp: r.replacement_cost_gbp,
+          })),
+        };
+      },
     }),
 
     query_catalog: tool({
@@ -460,8 +492,10 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
       description:
         "Income distribution across CATEGORIES — the dashboard income pie. Uses cost-proportional attribution " +
         "(each rental's income split across its items by item value), NET take-home. Returns categories sorted " +
-        "by income: { category, net_gbp, share_pct, rentals }. Args: window_days 30/90/365 (default 30, matching " +
-        "the pie). For per-ITEM breakdown use query_item_earnings.",
+        "by income (£) DESC: { category, net_gbp, share_pct, rentals }. NOTE: the on-screen pie orders its " +
+        "slices by rental COUNT, so the visual slice order can differ — use the £ here for 'which category earns " +
+        "most'. Args: window_days 30/90/365 (default 30, matching the pie). For per-ITEM breakdown use " +
+        "query_item_earnings.",
       inputSchema: z.object({
         window_days: z.number().optional().describe("30, 90, or 365. Default 30 (matches the pie)."),
       }),
@@ -493,7 +527,11 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
       },
     }),
     query_smart_buys: tool({
-      description: "Items the Smart-Buy model thinks Daniel should acquire next.",
+      description:
+        "Smart-Buy ranking — NEW items to acquire (driven by unmet demand for gear Daniel does NOT already own), " +
+        "sorted by first-year ROI DESC. Each: { itemName, recommendation, requestCount, estAnnualNetGbp, " +
+        "estDailyRateGbp, firstYearROIPct, estAcquisitionCostGbp }. Use for 'what should I buy'. For 'should I " +
+        "buy ANOTHER X' (already owned), use query_item_earnings + query_utilization instead.",
       inputSchema: z.object({
         limit: z.number().min(1).max(30).optional(),
       }),
@@ -502,6 +540,54 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
         return cached(`smart_buys:${l}`, () =>
           convex.query(api.intel.getSmartBuyRanking, { limit: l }),
         );
+      },
+    }),
+
+    query_revenue_trend: tool({
+      description:
+        "Weekly NET revenue trend — the revenue sparkline. Returns recent weeks oldest→newest, each " +
+        "{ week_start, net_gbp }. Use for 'how is revenue trending / weekly revenue / the last few weeks'.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const rows = (await cached("spark:weekly", () =>
+          convex.query(api.dashboard_insights.getWeeklyRevenueSparkline, { accountSlug: null }),
+        )) as unknown as Array<{ week_start?: string; revenue_net_gbp?: number }>;
+        return {
+          weeks: (Array.isArray(rows) ? rows : []).map((r) => ({
+            week_start: r.week_start,
+            net_gbp: r.revenue_net_gbp,
+          })),
+        };
+      },
+    }),
+
+    query_status: tool({
+      description:
+        "Misc dashboard status: estimated UK tax per year (tax_years: { year, estimated_tax_gbp, gross_gbp }), " +
+        "business-intel KPIs (e.g. top unmet demand, renter churn risk), the data-scanner state, vacation " +
+        "blocks, and AI-Boost credit. AI Boost is £0 by design (the AI-approval pipeline is unbuilt in dev) — " +
+        "report it honestly as £0; do NOT explain it away or inflate it.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const d = await fetchDrawer(convex);
+        const aiCredit = (d.ai_boost?.breakdown ?? []).reduce((s, b) => s + (b.gbp ?? 0), 0);
+        return {
+          tax_years: (d.tax?.years ?? []).map((y) => ({
+            year: y.year,
+            estimated_tax_gbp: y.estimated_tax,
+            gross_gbp: y.gross,
+          })),
+          business_intel_kpis: d.business_intel?.kpis ?? [],
+          scanner: d.scanner
+            ? {
+                healthy: d.scanner.last_run_succeeded,
+                source: d.scanner.last_scan_source,
+                rows_upserted_last_run: d.scanner.rows_upserted_last,
+              }
+            : undefined,
+          vacation_active_blocks: d.vacation?.active_blocks?.length ?? 0,
+          ai_boost_credit_gbp: Math.round(aiCredit * 100) / 100,
+        };
       },
     }),
   };

@@ -142,7 +142,7 @@ export async function POST(req: Request) {
       try {
         const result = streamText({
           model,
-          system: SYSTEM_PROMPT,
+          system: `${SYSTEM_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.`,
           messages: modelMessages,
           tools,
           maxOutputTokens: 1500,

@@ -128,7 +128,7 @@ export async function POST(req: Request) {
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
 
-  const system = WALLE_CHAT_SYSTEM;
+  const system = `${WALLE_CHAT_SYSTEM}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.`;
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
 
   // Last user content (for persistence — assistant text gathered on finish)
