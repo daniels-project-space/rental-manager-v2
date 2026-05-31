@@ -69,16 +69,30 @@ export async function refreshAll(
   // Cold start (any row missing) → must rebuild.
   const isColdStart = priorGeneratedAts.some((g) => g === 0);
   if (!force && !isColdStart) {
-    // Skip-when-clean probe: is there ANY reservation row with
-    // last_polled_at > earliestPriorGen? If not, all 3 MV rows are still
-    // current relative to the source data and we can skip the rebuild.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const isDirty: boolean = await ctx.runQuery(
-      anyApi.mv.stats_drawer.hasReservationMutationsSince,
-      { sinceMs: earliestPriorGen },
-    );
-    if (!isDirty) {
-      return { ok: true, written: 0, skipped: slugs.length, durationMs: Date.now() - startedAt };
+    // Date-driven metrics (active / ongoing / upcoming counts, today/week
+    // earnings) shift with the CALENDAR even when NO reservation mutates — a
+    // rental flips upcoming→ongoing→completed purely because today's date
+    // crossed its start/end, with zero DB writes. So a "clean" but previous-day
+    // (or simply old) snapshot is still stale. ONLY consider skipping when the
+    // snapshot is from the same UTC day AND recent; otherwise always rebuild.
+    // (This is why the MV could sit ~6 days stale: no mutations, so the old
+    // mutation-only probe skipped every rebuild indefinitely.)
+    const sameDay =
+      new Date(earliestPriorGen).toISOString().slice(0, 10) ===
+      new Date(startedAt).toISOString().slice(0, 10);
+    const recent = startedAt - earliestPriorGen < 6 * 60 * 60 * 1000;
+    if (sameDay && recent) {
+      // Same-day & recent: only skip if no reservation mutated since the last
+      // write (the indexed max(last_polled_at) probe catches inserts AND status
+      // changes on any rental, not just future-dated ones).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const isDirty: boolean = await ctx.runQuery(
+        anyApi.mv.stats_drawer.hasReservationMutationsSince,
+        { sinceMs: earliestPriorGen },
+      );
+      if (!isDirty) {
+        return { ok: true, written: 0, skipped: slugs.length, durationMs: Date.now() - startedAt };
+      }
     }
   }
 
