@@ -36,8 +36,10 @@ These tools read the SAME data the dashboard tiles render, so your numbers MUST 
 Tools:
   query_active_rentals   — rentals active NOW (the "Active Rentals" tile): total = ongoing + upcoming
   query_revenue          — revenue & earnings, all NET take-home, matching the dashboard revenue tiles exactly
-  query_conflicts        — active double-bookings, not yet dismissed
-  query_utilization      — top items by util-delta WoW (>=20% movers)
+  query_conflicts        — REAL overbooking conflicts (qty-aware, dismissals applied) — the dashboard's true count
+  query_catalog          — inventory worth, out-of-stock, sell recommendations, qty drift (items/catalog cards)
+  query_issues           — operational alerts: untracked, out-of-stock, qty drift, missed/denied revenue, insurance, capacity gaps, below-minimum
+  query_utilization      — item utilization ranking (the "Item Utilization" card)
   query_pending          — new booking requests awaiting your accept/decline (decision inbox, not the tile's pending)
   query_funnel           — reservation conversion funnel for last N days
   query_calendar         — weekly calendar view (booked/free/partial)
@@ -99,6 +101,29 @@ type DrawerData = {
   };
   earnings?: { today?: number; week?: number };
   confirmed?: { month_revenue?: number; month_label?: string };
+  conflicts?: Array<{
+    item_canonical?: string;
+    qty?: number;
+    overlap_count?: number;
+    conflict_start?: string;
+    conflict_end?: string;
+    reservations?: unknown[];
+  }>;
+  untracked?: { count?: number; total_value_gbp?: number };
+  out_of_stock?: { count?: number; items?: Array<Record<string, unknown>> };
+  inventory_worth?: { total_gbp?: number; by_category?: Array<Record<string, unknown>> };
+  sell_reco?: { recommendations?: Array<Record<string, unknown>> };
+  qty_drift_count?: number;
+  qty_drift_sample?: Array<Record<string, unknown>>;
+  missed_revenue?: { total_gbp?: number; items?: unknown[] };
+  denied_revenue?: { total_gbp?: number; items?: unknown[] };
+  insurance?: {
+    open_count?: number;
+    open_amount_gbp?: number;
+    settled_count_ytd?: number;
+    total_count?: number;
+  };
+  business_intel?: { kpis?: Array<Record<string, unknown>> };
 };
 
 function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
@@ -118,12 +143,26 @@ function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
 export function buildDashboardTools(convex: ConvexHttpClient): Record<string, Tool> {
   return {
     query_conflicts: tool({
-      description: "Active double-bookings (same item, overlapping dates) not yet dismissed.",
+      description:
+        "REAL overbooking conflicts, matching the dashboard's Critical Alerts. QTY-AWARE: only flags an item " +
+        "when concurrent confirmed/tracked bookings exceed that item's quantity, with dismissed conflicts removed. " +
+        "Returns { count, conflicts: [{ item, qty, overlap_count, start, end }] }. `count` is the TRUE conflict " +
+        "count — do NOT inflate it; an item with qty 3 and 2 overlapping bookings is NOT a conflict.",
       inputSchema: z.object({}),
-      execute: async () =>
-        cached("conflicts:all", () =>
-          convex.query(api.dashboard_insights.getActiveConflicts, {}),
-        ),
+      execute: async () => {
+        const d = await fetchDrawer(convex);
+        const list = Array.isArray(d.conflicts) ? d.conflicts : [];
+        return {
+          count: list.length,
+          conflicts: list.slice(0, 25).map((c) => ({
+            item: c.item_canonical,
+            qty: c.qty,
+            overlap_count: c.overlap_count,
+            start: c.conflict_start,
+            end: c.conflict_end,
+          })),
+        };
+      },
     }),
     query_active_rentals: tool({
       description:
@@ -172,12 +211,72 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
       },
     }),
     query_utilization: tool({
-      description: "Top item utilization movers week-over-week (filtered to >=20% delta).",
+      description:
+        "Item utilization ranking, matching the dashboard 'Item Utilization' card. Returns rows of " +
+        "{ name, utilization (0-1 fraction), idle_cost_per_week, replacement_cost_gbp }, lowest-utilization first.",
       inputSchema: z.object({}),
       execute: async () =>
-        cached("utilization:movers", () =>
-          convex.query(api.dashboard_insights.getUtilizationDelta, {}),
+        cached("util:ranking", () =>
+          convex.query(api.dashboard_insights.getItemUtilizationRanking, { accountSlug: null }),
         ),
+    }),
+
+    query_catalog: tool({
+      description:
+        "Inventory / catalog snapshot, matching the dashboard cards. Returns { inventory_worth_gbp, " +
+        "inventory_by_category, out_of_stock_count, out_of_stock_items, sell_recommendations, qty_drift_count }. " +
+        "out_of_stock = items currently held >= their quantity; sell_recommendations = items the dashboard " +
+        "suggests selling (low utilization / aged).",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const d = await fetchDrawer(convex);
+        return {
+          inventory_worth_gbp: d.inventory_worth?.total_gbp,
+          inventory_by_category: (d.inventory_worth?.by_category ?? []).slice(0, 25),
+          out_of_stock_count: d.out_of_stock?.count,
+          out_of_stock_items: (d.out_of_stock?.items ?? []).slice(0, 25),
+          sell_recommendations: (d.sell_reco?.recommendations ?? []).slice(0, 25),
+          qty_drift_count: d.qty_drift_count,
+          qty_drift_sample: (d.qty_drift_sample ?? []).slice(0, 10),
+        };
+      },
+    }),
+
+    query_issues: tool({
+      description:
+        "Operational issues / alerts, matching the dashboard alert cards. Use for 'what needs attention / any " +
+        "problems'. Returns overbooking conflicts, untracked rentals, out-of-stock, qty drift, missed & denied " +
+        "revenue (NET £), open insurance claims, and capacity-gap / below-minimum / voluntary-deny alerts. All " +
+        "counts are the true dashboard figures.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const [d, capacityGaps, belowMin, voluntaryDeny] = await Promise.all([
+          fetchDrawer(convex),
+          cached("cap:gap", () =>
+            convex.query(api.dashboard_insights.getCapacityGapAlert, { accountSlug: null }),
+          ),
+          cached("below:min", () =>
+            convex.query(api.dashboard_insights.getBelowMinimumCounter, { accountSlug: null }),
+          ),
+          cached("vol:deny", () =>
+            convex.query(api.dashboard_insights.getVoluntaryDenyHotList, { accountSlug: null }),
+          ),
+        ]);
+        const conflicts = Array.isArray(d.conflicts) ? d.conflicts : [];
+        return {
+          overbooking_conflicts: conflicts.length,
+          untracked_rentals: d.untracked?.count,
+          out_of_stock_count: d.out_of_stock?.count,
+          qty_drift_count: d.qty_drift_count,
+          missed_revenue_gbp: d.missed_revenue?.total_gbp,
+          denied_revenue_gbp: d.denied_revenue?.total_gbp,
+          open_insurance_claims: d.insurance?.open_count,
+          open_insurance_amount_gbp: d.insurance?.open_amount_gbp,
+          capacity_gap_count: Array.isArray(capacityGaps) ? capacityGaps.length : capacityGaps,
+          below_minimum: belowMin,
+          voluntary_deny_count: Array.isArray(voluntaryDeny) ? voluntaryDeny.length : voluntaryDeny,
+        };
+      },
     }),
     query_pending: tool({
       description:
