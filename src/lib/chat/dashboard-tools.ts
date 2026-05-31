@@ -33,6 +33,8 @@ export const DASHBOARD_GROUNDING_RULES = `You have full read-only access to the 
 
 These tools read the SAME data the dashboard tiles render, so your numbers MUST match the tiles exactly. All revenue/earnings figures are NET take-home (after Hygglo ~36% fees) unless a field name says otherwise.
 
+When you list specific rentals, items, renters, dates or amounts, use ONLY rows a tool actually returned — NEVER invent or fill in rows from memory. If you don't have the list, call the tool that returns it (or say you don't have it). If a tool gives counts but no list, report the count and don't fabricate the entries.
+
 Tools:
   query_active_rentals   — rentals active NOW (the "Active Rentals" tile): total = ongoing + upcoming
   query_revenue          — revenue & earnings, all NET take-home, matching the dashboard revenue tiles exactly
