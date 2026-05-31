@@ -31,11 +31,14 @@ import { api } from "../../../convex/_generated/api";
  */
 export const DASHBOARD_GROUNDING_RULES = `You have full read-only access to the live operational data via the tools below. ALWAYS call a tool before answering a data question; never guess at numbers. If a user's question is ambiguous between two tools, call both. Cite every number with its unit (£, %, items, days).
 
+These tools read the SAME data the dashboard tiles render, so your numbers MUST match the tiles exactly. All revenue/earnings figures are NET take-home (after Hygglo ~36% fees) unless a field name says otherwise.
+
 Tools:
+  query_active_rentals   — rentals active NOW (the "Active Rentals" tile): total = ongoing + upcoming
+  query_revenue          — revenue & earnings, all NET take-home, matching the dashboard revenue tiles exactly
   query_conflicts        — active double-bookings, not yet dismissed
-  query_revenue          — month-to-date revenue + WoW delta vs last month
   query_utilization      — top items by util-delta WoW (>=20% movers)
-  query_pending          — pending reservations awaiting decision
+  query_pending          — new booking requests awaiting your accept/decline (decision inbox, not the tile's pending)
   query_funnel           — reservation conversion funnel for last N days
   query_calendar         — weekly calendar view (booked/free/partial)
   query_due_returns      — items overdue or due-soon for return
@@ -71,8 +74,42 @@ async function cached<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * The dashboard's "Active Rentals" tile AND every revenue/earnings tile render
+ * from ONE Convex query: `dashboard.getStatsDrawerData`. The chat tools read
+ * that exact query (cached 60s) so the chatbot's numbers match the tiles by
+ * construction — NET take-home, pickup-gated, deduped — instead of the older
+ * `dashboard_insights` gross / start-date logic that drifted from reality.
+ */
+type DrawerData = {
+  active?: {
+    total?: number;
+    ongoing_count?: number;
+    upcoming_count?: number;
+    pending_count?: number;
+    pending_value_gbp?: number;
+  };
+  monthly?: {
+    confirmed_revenue?: number;
+    current_earnings?: number;
+    projected?: number;
+    target_gbp?: number;
+    pct_of_target?: number;
+    avg_daily_rate?: number;
+    days_remaining?: number;
+  };
+  earnings?: { today?: number; week?: number };
+  confirmed?: { month_revenue?: number; month_label?: string };
+};
+
+function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
+  return cached("drawer:all", () =>
+    convex.query(api.dashboard.getStatsDrawerData, { accountSlug: null }),
+  ) as Promise<DrawerData>;
+}
+
+/**
  * Builds the AI SDK v6 tool registry. Caller supplies a ConvexHttpClient so
- * each route can reuse one client per request. This is the ONE place the 10
+ * each route can reuse one client per request. This is the ONE place the
  * dashboard tools are defined.
  *
  * NOTE: getPipelineCounts is an internalQuery (not callable from HTTP), so the
@@ -88,13 +125,51 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
           convex.query(api.dashboard_insights.getActiveConflicts, {}),
         ),
     }),
-    query_revenue: tool({
-      description: "Month-to-date take-home revenue (GBP) and percentage vs last month.",
+    query_active_rentals: tool({
+      description:
+        "Rentals active RIGHT NOW — matches the dashboard 'Active Rentals' tile exactly. " +
+        "Returns { total, ongoing, upcoming, pending_verification, pending_value_gbp }. " +
+        "total = ongoing + upcoming. ongoing = currently out on rent; upcoming = confirmed but not started yet. " +
+        "pending_verification is the tile's pending count (rentals awaiting verification) — NOT the decision " +
+        "inbox; use query_pending for new requests awaiting your accept/decline.",
       inputSchema: z.object({}),
-      execute: async () =>
-        cached("revenue:mtd", () =>
-          convex.query(api.dashboard_insights.getRevenueDelta, {}),
-        ),
+      execute: async () => {
+        const d = await fetchDrawer(convex);
+        const a = d.active ?? {};
+        return {
+          total: a.total,
+          ongoing: a.ongoing_count,
+          upcoming: a.upcoming_count,
+          pending_verification: a.pending_count,
+          pending_value_gbp: a.pending_value_gbp,
+        };
+      },
+    }),
+
+    query_revenue: tool({
+      description:
+        "Revenue & earnings — ALL NET take-home (after Hygglo ~36% fees), pulled from the dashboard so they " +
+        "match the revenue tiles exactly. Fields: month_confirmed_net_gbp = month-to-date confirmed revenue " +
+        "(the 'Month Confirmed' tile — use this for 'this month's revenue / take-home'); current_earnings_net_gbp = " +
+        "earned so far this month, gated by actual pickup; expected_monthly_net_gbp = projected month total " +
+        "('Expected Monthly' tile); target_gbp + pct_of_target; earnings_today_net_gbp / earnings_week_net_gbp = " +
+        "today's / this week's net earnings ('Earnings Today' tile).",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const d = await fetchDrawer(convex);
+        const m = d.monthly ?? {};
+        const e = d.earnings ?? {};
+        const c = d.confirmed ?? {};
+        return {
+          month_confirmed_net_gbp: c.month_revenue ?? m.confirmed_revenue,
+          current_earnings_net_gbp: m.current_earnings,
+          expected_monthly_net_gbp: m.projected,
+          target_gbp: m.target_gbp,
+          pct_of_target: m.pct_of_target,
+          earnings_today_net_gbp: e.today,
+          earnings_week_net_gbp: e.week,
+        };
+      },
     }),
     query_utilization: tool({
       description: "Top item utilization movers week-over-week (filtered to >=20% delta).",
@@ -106,9 +181,10 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     }),
     query_pending: tool({
       description:
-        "Pending reservations awaiting Daniel's decision (status 'pending_review', no AI decision row yet). " +
-        "Returns { total_awaiting_decision, items }. ALWAYS report total_awaiting_decision as THE count; " +
-        "`items` is only a capped preview, never the count.",
+        "Daniel's DECISION INBOX — new booking requests awaiting his accept/decline (status 'pending_review', " +
+        "no AI decision row yet). This is NOT the 'Active Rentals' tile's pending count (that is pending-verification, " +
+        "available via query_active_rentals). Returns { total_awaiting_decision, items }. ALWAYS report " +
+        "total_awaiting_decision as THE count; `items` is only a capped preview, never the count.",
       inputSchema: z.object({
         sample: z
           .number()
