@@ -109,6 +109,11 @@ type DrawerData = {
     pending_count?: number;
     pending_value_gbp?: number;
   };
+  // Live getStatsDrawerData(_bypassMv) returns the rental lists inline (the MV
+  // strips them into a separate, staler row). Read them here so the snapshot's
+  // list and counts always come from the same live computation.
+  ongoing?: { count?: number; rentals?: RentalRow[] };
+  upcoming?: { count?: number; rentals?: RentalRow[] };
   monthly?: {
     confirmed_revenue?: number;
     current_earnings?: number;
@@ -187,9 +192,8 @@ function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
  * them. Everything here is the dashboard's own LIVE value (matches the tiles).
  */
 export async function buildLiveSnapshot(convex: ConvexHttpClient): Promise<string> {
-  const [d, rentalsRaw, pendingRaw] = await Promise.all([
+  const [d, pendingRaw] = await Promise.all([
     fetchDrawer(convex),
-    cached("rentals:list", () => convex.query(api.mv.stats_drawer.getRentals, {})),
     cached("pending:inbox", () =>
       convex.query(api.reservations.listPendingWithoutDecision, { limit: 500 }),
     ),
@@ -199,13 +203,11 @@ export async function buildLiveSnapshot(convex: ConvexHttpClient): Promise<strin
   const m = d.monthly ?? {};
   const e = d.earnings ?? {};
   const c = d.confirmed ?? {};
-  const groups =
-    (rentalsRaw as unknown as { rentals?: { ongoing?: RentalRow[]; upcoming?: RentalRow[] } })
-      ?.rentals ?? {};
   const fmt = (x: RentalRow) =>
     `${x.item_names_summary ?? "item"} — ${x.renter_name ?? "renter"}, ${x.start_date}→${x.end_date}, £${x.net_gbp ?? "?"} net`;
-  const ongoing = (groups.ongoing ?? []).map(fmt);
-  const upcoming = (groups.upcoming ?? []).map(fmt);
+  // Lists from the SAME live payload as the counts → always consistent.
+  const ongoing = (d.ongoing?.rentals ?? []).map(fmt);
+  const upcoming = (d.upcoming?.rentals ?? []).map(fmt);
   const conflicts = Array.isArray(d.conflicts) ? d.conflicts : [];
   const asOf = new Date().toISOString().slice(0, 16).replace("T", " ");
   return [
