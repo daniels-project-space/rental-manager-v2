@@ -45,19 +45,23 @@ const SEVERITY_STYLES: Record<
  * timestamp so parent components can detect "something new happened"
  * without doing array equality themselves.
  */
+// Stable empty-args reference. These queries take only optional args, but the
+// generated Convex types still require the args object to be passed — omitting
+// it fails `next build` type-check (which silently broke every prod deploy from
+// 2026-05-26). A single shared ref avoids the per-render arg churn the
+// 2026-05-23 audit cared about while keeping the build green.
+const NO_ARGS = {} as const;
+
 export function useWallESignals(
   accountSlug: string | null = null,
 ): { signals: Signal[]; lastChangeAt: number } {
-  // No-arg queries: pass undefined instead of `{}` so we don't churn a fresh
-  // object reference every render (audit 2026-05-23: cuts unnecessary Convex
-  // arg serialization on each re-render of the WallE signal hook).
-  const conflicts = useQuery(api.dashboard_insights.getActiveConflicts);
+  const conflicts = useQuery(api.dashboard_insights.getActiveConflicts, NO_ARGS);
   const pending = useQuery(api.reservations.listPendingWithoutDecision, {
     limit: 10,
   });
   const dueReturns = useQuery(api.reservations.getDueReturns, { accountSlug });
-  const revenue = useQuery(api.dashboard_insights.getRevenueDelta);
-  const utilization = useQuery(api.dashboard_insights.getUtilizationDelta);
+  const revenue = useQuery(api.dashboard_insights.getRevenueDelta, NO_ARGS);
+  const utilization = useQuery(api.dashboard_insights.getUtilizationDelta, NO_ARGS);
 
   // Stable timestamp per render-result so chips show "recent first" without
   // a wall-clock churn on every render. Updates whenever any query payload
