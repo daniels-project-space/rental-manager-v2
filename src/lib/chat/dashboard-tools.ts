@@ -47,7 +47,7 @@ Tools:
   query_calendar         — weekly calendar view (booked/free/partial)
   query_due_returns      — items overdue or due-soon for return
   query_recent_activity  — last N rental events (newest first)
-  query_top_earners      — top items by ROI ranking
+  query_item_earnings    — per-item lifetime earnings + ROI for ALL items (look up any item; rank by lifetime_net_gbp for 'best earner / made the most')
   query_smart_buys       — Smart-Buy ranking — items the model thinks Daniel should acquire`;
 
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
@@ -375,16 +375,35 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
           limit: limit ?? 15,
         }),
     }),
-    query_top_earners: tool({
-      description: "Top items by ROI ranking.",
-      inputSchema: z.object({
-        limit: z.number().min(1).max(30).optional(),
-      }),
-      execute: async ({ limit }: { limit?: number }) => {
-        const l = limit ?? 10;
-        return cached(`roi:${l}`, () =>
-          convex.query(api.intel.getItemROIRanking, { limit: l }),
-        );
+    query_item_earnings: tool({
+      description:
+        "Per-item earnings & ROI for ALL items — use this to look up ANY item by name. Each row: " +
+        "{ name, qty, lifetime_net_gbp (all-time take-home), lifetime_gross_gbp, roi_pct, rental_count, " +
+        "monthly_avg_net_gbp (lifetime average per month), acquisition_cost_gbp }. " +
+        "For 'best earner / made the most money', rank by lifetime_net_gbp — NOT roi_pct (a high ROI% just means a " +
+        "cheap item like a C-stand, not the most money). Figures are LIFETIME totals plus a monthly AVERAGE: there " +
+        "is NO per-item figure for a specific past month, so if asked 'how much did X make last month', give the " +
+        "lifetime total and the monthly average and say you don't have that exact month — never present a lifetime " +
+        "figure as a single month's earnings.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const res = (await cached("item_earnings:all", () =>
+          convex.query(api.intel.getItemROIRanking, { limit: 100, include_unknown_cost: true }),
+        )) as unknown as { rows?: Array<Record<string, number | string | null>> };
+        const rows = Array.isArray(res?.rows) ? res.rows : [];
+        return {
+          count: rows.length,
+          items: rows.map((r) => ({
+            name: r.name,
+            qty: r.qty,
+            lifetime_net_gbp: r.lifetimeNetGbp,
+            lifetime_gross_gbp: r.lifetimeGrossGbp,
+            roi_pct: r.roiPct,
+            rental_count: r.rentalCount,
+            monthly_avg_net_gbp: r.monthlyAvgNetGbp,
+            acquisition_cost_gbp: r.acquisitionCostGbp,
+          })),
+        };
       },
     }),
     query_smart_buys: tool({
