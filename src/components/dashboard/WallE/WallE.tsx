@@ -70,7 +70,7 @@ export default function WallE({ accountSlug = null }: WallEProps) {
 
   return (
     <div
-      className="walle-cell relative h-full w-full rounded-[1rem] bg-card/85 border border-white/5 p-2 overflow-hidden"
+      className="walle-cell relative h-[360px] w-full rounded-[1rem] bg-card/85 border border-white/5 p-2 overflow-hidden"
       data-walle-mood={mood}
       data-wave={waving ? 'true' : 'false'}
     >

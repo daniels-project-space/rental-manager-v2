@@ -4,11 +4,13 @@
  * POST /api/walle/chat
  *   body: { messages: WallEChatMessage[], sessionId: string }
  *
- *   1. Pulls fresh dashboard context via Convex `dashboard_chat:streamContext`.
- *   2. Builds the full WallE persona prompt + injects the live snapshot.
- *   3. Streams the LLM response via OpenRouter → DEEPSEEK_MODEL, with
- *      read-only Convex query tools available to the model (max 3 hops).
- *   4. On completion, persists the last user turn + the full assistant text
+ *   1. Builds the grounded WallE chat prompt (`WALLE_CHAT_SYSTEM`) — persona
+ *      voice + the shared grounding contract. No snapshot is injected; every
+ *      number is fetched live through a tool call (same as the AI-assistant
+ *      widget), which is what keeps WallE's answers accurate.
+ *   2. Streams the LLM response via OpenRouter → DEEPSEEK_MODEL, with the
+ *      shared read-only Convex query tools available to the model (max 4 hops).
+ *   3. On completion, persists the last user turn + the full assistant text
  *      through Convex `dashboard_chat:appendTurn`.
  *
  * No auth: WallE is internal. Session identity comes from the client-
@@ -21,7 +23,8 @@ import { streamText, stepCountIs, type ModelMessage } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
-import { buildWalleSystemPrompt, buildWalleTools } from "../../../../mastra/agents/walle";
+import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
+import { buildDashboardTools } from "../../../../lib/chat/dashboard-tools";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
@@ -81,7 +84,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "missing_session_id" }, { status: 400 });
   }
 
-  // ── Convex client (shared by snapshot fetch + tool execution) ──
+  // ── Convex client (rate-limit + tool execution + persistence) ──
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const convexClient = convexUrl ? new ConvexHttpClient(convexUrl) : null;
 
@@ -103,36 +106,15 @@ export async function POST(req: Request) {
     }
   }
 
-  // ── Build context snapshot (best-effort; chat still works on failure) ──
-  let snapshotLine = "";
-  if (convexClient) {
-    try {
-      const ctx = await convexClient.query(api.dashboard_chat.streamContext, { limit: 10 });
-      const s = ctx?.snapshot;
-      if (s) {
-        snapshotLine = [
-          `Live signals (as of ${new Date().toISOString().slice(0, 10)}):`,
-          `- Pending reservations awaiting review (dashboard count): ${s.pendingCount}`,
-          `- Items in 'pending_review' status (broader count): ${s.pendingReview}`,
-          `- Active confirmed conflicts: ${s.conflictCount}`,
-          `- Month-to-date NET earnings (take-home, after Hygglo ~36% platform fee): £${s.mtdEarningsNet.toFixed(2)}`,
-          `- Month-to-date GROSS paid (before platform fees): £${s.mtdGrossPaid.toFixed(2)}`,
-          s.topUtilization
-            ? `- Top utilization (30-day, capped 100%): ${s.topUtilization.name} at ${s.topUtilization.pct.toFixed(1)}% (qty ${s.topUtilization.qty}, ${s.topUtilization.rentalDays} rental-days)`
-            : `- Top utilization: none`,
-          s.topWoWMover
-            ? `- Biggest week-over-week mover: ${s.topWoWMover.name} (${s.topWoWMover.deltaPct >= 0 ? "+" : ""}${s.topWoWMover.deltaPct}% vs prior 7d). This is a CHANGE %, not utilization.`
-            : `- Top WoW mover: none`,
-        ].join("\n");
-      }
-    } catch (err) {
-      console.error(
-        "[walle/chat] streamContext failed:",
-        err instanceof Error ? err.stack : err,
-      );
-      snapshotLine = "(no live signals available — error fetching dashboard context)";
-    }
-  }
+  // ── No snapshot injection (2026-05-31) ──
+  // WallE used to pull a pre-rendered `dashboard_chat:streamContext` snapshot
+  // here and bake it into the prompt with "lean on this so you don't waste a
+  // tool call". That snapshot is computed by a separate code path from the
+  // tools, so its numbers drifted from the live tool answers — the root cause
+  // of WallE quoting wrong/stale figures. The chat now grounds every number
+  // through a real tool call (WALLE_CHAT_SYSTEM + shared tools), exactly like
+  // the AI-assistant widget. (Narration bubbles still use the snapshot — they
+  // run tool-less generateText and have no other source.)
 
   // ── Model (lazy provider, no vault fallback here; route runs on Vercel) ──
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -146,8 +128,8 @@ export async function POST(req: Request) {
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
 
-  const system = buildWalleSystemPrompt(snapshotLine);
-  const tools = convexClient ? buildWalleTools(convexClient) : undefined;
+  const system = WALLE_CHAT_SYSTEM;
+  const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
 
   // Last user content (for persistence — assistant text gathered on finish)
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
@@ -163,7 +145,7 @@ export async function POST(req: Request) {
     name: "walle_chat",
     userId: sessionId,
     sessionId,
-    metadata: { model: modelId, hasSnapshot: snapshotLine.length > 0 },
+    metadata: { model: modelId, grounding: "tools-only" },
   });
   const generation = trace.generation({
     name: "streamText",

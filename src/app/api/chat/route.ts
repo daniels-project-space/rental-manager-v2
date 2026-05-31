@@ -31,11 +31,14 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
-import { streamText, stepCountIs, tool, type ModelMessage } from "ai";
+import { streamText, stepCountIs, type ModelMessage } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
-import { z } from "zod";
 import { api } from "../../../../convex/_generated/api";
+import {
+  buildDashboardTools,
+  DASHBOARD_GROUNDING_RULES,
+} from "../../../lib/chat/dashboard-tools";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,153 +50,9 @@ interface ChatRequestBody {
 
 const SYSTEM_PROMPT = `You are Daniel's dashboard AI assistant for Rental Manager v2 — a rental business operations platform.
 
-You have full read-only access to the live operational data via the tools below. ALWAYS call a tool before answering a data question; never guess at numbers. If a user's question is ambiguous between two tools, call both. Cite a number with the unit (£, %, items, days).
-
-Tools:
-  query_conflicts        — active double-bookings, not yet dismissed
-  query_revenue          — month-to-date revenue + WoW delta vs last month
-  query_utilization      — top items by util-delta WoW (>=20% movers)
-  query_pending          — pending reservations awaiting decision
-  query_funnel           — reservation conversion funnel for last N days
-  query_calendar         — weekly calendar view (booked/free/partial)
-  query_due_returns      — items overdue or due-soon for return
-  query_recent_activity  — last N rental events (newest first)
-  query_top_earners      — top items by ROI ranking
-  query_smart_buys       — Smart-Buy ranking — items the model thinks Daniel should acquire
+${DASHBOARD_GROUNDING_RULES}
 
 Style: concise, plain UK English, no filler ("As an AI…", "I'd be happy to…"). Numbers first, prose second.`;
-
-// Phase 7b (2026-05-24) — module-scoped 60s TTL cache for chat tool calls.
-// Saves re-fetching aggregated data within a single multi-step LLM turn AND
-// across concurrent chat turns landing within 60s of each other. Applied
-// only to read-only aggregates that don't change minute-to-minute. Live
-// state (pending, due_returns) is intentionally uncached so Daniel sees the
-// freshest action queue.
-type CacheEntry = { value: unknown; exp: number };
-const TOOL_CACHE = new Map<string, CacheEntry>();
-const TOOL_CACHE_TTL_MS = 60_000;
-
-async function cached<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
-  const now = Date.now();
-  const hit = TOOL_CACHE.get(key);
-  if (hit && hit.exp > now) return hit.value as T;
-  const fresh = await fetcher();
-  TOOL_CACHE.set(key, { value: fresh, exp: now + TOOL_CACHE_TTL_MS });
-  // Opportunistic GC: drop the oldest 25% of entries once the map crosses 200.
-  if (TOOL_CACHE.size > 200) {
-    const oldest = [...TOOL_CACHE.entries()]
-      .sort((a, b) => a[1].exp - b[1].exp)
-      .slice(0, 50);
-    for (const [k] of oldest) TOOL_CACHE.delete(k);
-  }
-  return fresh;
-}
-
-function buildTools(convex: ConvexHttpClient) {
-  return {
-    query_conflicts: tool({
-      description: "Active double-bookings (same item, overlapping dates) not yet dismissed.",
-      inputSchema: z.object({}),
-      execute: async () =>
-        cached("conflicts:all", () =>
-          convex.query(api.dashboard_insights.getActiveConflicts, {}),
-        ),
-    }),
-    query_revenue: tool({
-      description: "Month-to-date take-home revenue (GBP) and percentage vs last month.",
-      inputSchema: z.object({}),
-      execute: async () =>
-        cached("revenue:mtd", () =>
-          convex.query(api.dashboard_insights.getRevenueDelta, {}),
-        ),
-    }),
-    query_utilization: tool({
-      description: "Top item utilization movers week-over-week (filtered to >=20% delta).",
-      inputSchema: z.object({}),
-      execute: async () =>
-        cached("utilization:movers", () =>
-          convex.query(api.dashboard_insights.getUtilizationDelta, {}),
-        ),
-    }),
-    query_pending: tool({
-      description: "Pending reservations awaiting Daniel's decision.",
-      inputSchema: z.object({
-        limit: z.number().min(1).max(50).optional().describe("Max rows; default 10."),
-      }),
-      execute: async ({ limit }: { limit?: number }) =>
-        convex.query(api.reservations.listPendingWithoutDecision, { limit: limit ?? 10 }),
-    }),
-    query_funnel: tool({
-      description:
-        "Reservation conversion funnel for the last N days. Returns bookings / declines / cancellations.",
-      inputSchema: z.object({
-        days: z.number().min(1).max(180).optional().describe("Lookback days; default 30."),
-      }),
-      execute: async ({ days }: { days?: number }) => {
-        const d = days ?? 30;
-        return cached(`funnel:${d}`, () =>
-          convex.query(api.reservations.getConversionFunnel, {
-            accountSlug: null,
-            days: d,
-          }),
-        );
-      },
-    }),
-    query_calendar: tool({
-      description: "Weekly calendar — items booked / partial / free over the next 7 days.",
-      inputSchema: z.object({}),
-      execute: async () => {
-        const weekStartDate = new Date().toISOString().slice(0, 10);
-        return cached(`calendar:${weekStartDate}`, () =>
-          convex.query(api.calendar.getWeeklyCalendar, {
-            accountSlug: null,
-            weekStartDate,
-          }),
-        );
-      },
-    }),
-    query_due_returns: tool({
-      description: "Items overdue or due-soon for return.",
-      inputSchema: z.object({}),
-      execute: async () => convex.query(api.reservations.getDueReturns, { accountSlug: null }),
-    }),
-    query_recent_activity: tool({
-      description: "Newest rental events (status changes, new bookings, etc).",
-      inputSchema: z.object({
-        limit: z.number().min(1).max(50).optional(),
-      }),
-      execute: async ({ limit }: { limit?: number }) =>
-        convex.query(api.reservations.getRecentActivity, {
-          accountSlug: null,
-          limit: limit ?? 15,
-        }),
-    }),
-    query_top_earners: tool({
-      description: "Top items by ROI ranking.",
-      inputSchema: z.object({
-        limit: z.number().min(1).max(30).optional(),
-      }),
-      execute: async ({ limit }: { limit?: number }) => {
-        const l = limit ?? 10;
-        return cached(`roi:${l}`, () =>
-          convex.query(api.intel.getItemROIRanking, { limit: l }),
-        );
-      },
-    }),
-    query_smart_buys: tool({
-      description: "Items the Smart-Buy model thinks Daniel should acquire next.",
-      inputSchema: z.object({
-        limit: z.number().min(1).max(30).optional(),
-      }),
-      execute: async ({ limit }: { limit?: number }) => {
-        const l = limit ?? 10;
-        return cached(`smart_buys:${l}`, () =>
-          convex.query(api.intel.getSmartBuyRanking, { limit: l }),
-        );
-      },
-    }),
-  };
-}
 
 export async function POST(req: Request) {
   let body: ChatRequestBody;
@@ -268,7 +127,7 @@ export async function POST(req: Request) {
   const openrouter = createOpenRouter({ apiKey });
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
-  const tools = convexClient ? buildTools(convexClient) : undefined;
+  const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
 
   const modelMessages: ModelMessage[] = [
     ...history,
