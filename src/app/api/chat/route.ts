@@ -37,6 +37,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import {
   buildDashboardTools,
+  buildLiveSnapshot,
   DASHBOARD_GROUNDING_RULES,
 } from "../../../lib/chat/dashboard-tools";
 
@@ -128,6 +129,11 @@ export async function POST(req: Request) {
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
+  // v1-style compute-then-phrase: live dashboard snapshot injected as trusted
+  // context so headline numbers aren't re-derived by the model.
+  const snapshot = convexClient
+    ? await buildLiveSnapshot(convexClient).catch(() => "")
+    : "";
 
   const modelMessages: ModelMessage[] = [
     ...history,
@@ -142,7 +148,7 @@ export async function POST(req: Request) {
       try {
         const result = streamText({
           model,
-          system: `${SYSTEM_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.`,
+          system: `${SYSTEM_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.${snapshot ? `\n\n${snapshot}` : ""}`,
           messages: modelMessages,
           tools,
           maxOutputTokens: 1500,

@@ -24,7 +24,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
-import { buildDashboardTools } from "../../../../lib/chat/dashboard-tools";
+import { buildDashboardTools, buildLiveSnapshot } from "../../../../lib/chat/dashboard-tools";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
@@ -128,7 +128,19 @@ export async function POST(req: Request) {
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const model = openrouter(modelId);
 
-  const system = `${WALLE_CHAT_SYSTEM}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.`;
+  // v1-style compute-then-phrase: inject the LIVE dashboard snapshot so the
+  // model quotes trusted headline numbers instead of choosing tools and
+  // re-deriving them. Tools below are only for drill-down the snapshot lacks.
+  let snapshot = "";
+  if (convexClient) {
+    try {
+      snapshot = await buildLiveSnapshot(convexClient);
+    } catch (err) {
+      console.error("[walle/chat] snapshot failed:", err instanceof Error ? err.stack : err);
+    }
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const system = `${WALLE_CHAT_SYSTEM}\n\nToday's date is ${today} — use it for "this year / this month / last month" reasoning.${snapshot ? `\n\n${snapshot}` : ""}`;
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
 
   // Last user content (for persistence — assistant text gathered on finish)

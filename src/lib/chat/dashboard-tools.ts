@@ -42,31 +42,24 @@ const getRentalVolumeKindBreakdownRef = makeFunctionReference<"query">(
  * its own persona/voice; this block carries the non-negotiable rules + the
  * authoritative tool list so neither widget can drift from the other.
  */
-export const DASHBOARD_GROUNDING_RULES = `You have full read-only access to the live operational data via the tools below. ALWAYS call a tool before answering a data question; never guess at numbers. If a user's question is ambiguous between two tools, call both. Cite every number with its unit (£, %, items, days).
+export const DASHBOARD_GROUNDING_RULES = `Your headline figures come from the LIVE DASHBOARD SNAPSHOT provided below the persona — active rentals (count + the real ongoing/upcoming list), month-to-date revenue & earnings, overbooking conflicts, pending requests, stock. QUOTE THE SNAPSHOT DIRECTLY for those; it is the dashboard's own current data — never recompute, re-derive or override it. All money is NET take-home (after Hygglo ~36% fees).
 
-These tools read the SAME data the dashboard tiles render, so your numbers MUST match the tiles exactly. All revenue/earnings figures are NET take-home (after Hygglo ~36% fees) unless a field name says otherwise.
+Use the tools below ONLY for drill-down the snapshot does not contain. Cite every number with its unit (£, %, items, days). NEVER invent rentals, items, renters, dates or amounts — if you don't have it, say so. Respect each tool's stated sort order and field meanings; don't re-rank or recompute (e.g. "Idle Inventory" is ranked by idle cost, not utilization; per-item income is already cost-proportional; "best earner" = most NET income).
 
-When you list specific rentals, items, renters, dates or amounts, use ONLY rows a tool actually returned — NEVER invent or fill in rows from memory. If you don't have the list, call the tool that returns it (or say you don't have it). If a tool gives counts but no list, report the count and don't fabricate the entries.
-
-Respect each tool's stated SORT order and field meanings — report rows in the order returned and don't re-rank or recompute. (E.g. "Idle Inventory" is ranked by idle cost, not by utilization; per-item income is already split cost-proportionally; "best earner" means most NET income.)
-
-Tools:
-  query_active_rentals   — rentals active NOW (the "Active Rentals" tile): total = ongoing + upcoming
-  query_revenue          — revenue & earnings, all NET take-home, matching the dashboard revenue tiles exactly
-  query_conflicts        — REAL overbooking conflicts (qty-aware, dismissals applied) — the dashboard's true count
-  query_catalog          — inventory worth, out-of-stock, sell recommendations, qty drift (items/catalog cards)
-  query_issues           — operational alerts: untracked, out-of-stock, qty drift, missed/denied revenue, insurance, capacity gaps, below-minimum
-  query_utilization      — Idle Inventory: items costing the most while sitting idle (sorted by idle £/week)
-  query_pending          — new booking requests awaiting your accept/decline (decision inbox, not the tile's pending)
-  query_funnel           — reservation conversion funnel for last N days
-  query_calendar         — weekly calendar view (booked/free/partial)
+Drill-down tools:
+  query_item_earnings    — per-item income, cost-proportional (the income pie's method; NET); 'best earner' / 'how much did item X make'; window 30/90/365
+  query_income_distribution — income split across categories (the income pie; NET); window 30/90/365
+  query_catalog          — inventory worth, out-of-stock items list, sell recommendations, qty drift
+  query_issues           — missed/denied revenue, qty drift, capacity gaps, below-minimum, voluntary-deny
+  query_utilization      — Idle Inventory: items costing the most while idle (sorted by idle £/week)
   query_due_returns      — items overdue or due-soon for return
+  query_pending          — the full list of booking requests awaiting your accept/decline
   query_recent_activity  — last N rental events (newest first)
-  query_item_earnings    — per-item income, cost-proportional (the income pie's method; NET); correct 'best earner' / 'how much did item X make'; window 30/90/365 days
-  query_income_distribution — income split across categories (the income pie; NET); window 30/90/365 days
-  query_smart_buys       — Smart-Buy ranking — NEW items to acquire (unmet demand, ROI-sorted)
-  query_revenue_trend    — weekly NET revenue trend (the revenue sparkline)
-  query_status           — UK tax estimate, business-intel KPIs, scanner state, vacation, AI-Boost (£0 by design)`;
+  query_funnel           — reservation conversion funnel for last N days
+  query_calendar         — weekly calendar (booked/free/partial)
+  query_smart_buys       — NEW items to acquire (unmet demand, ROI-sorted)
+  query_revenue_trend    — weekly NET revenue trend
+  query_status           — UK tax estimate, business-intel KPIs, scanner, vacation, AI-Boost (£0 by design)`;
 
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
 // Saves re-fetching aggregated data within a single multi-step LLM turn AND
@@ -173,9 +166,60 @@ type RentalRow = {
 };
 
 function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
-  return cached("drawer:all", () =>
-    convex.query(api.dashboard.getStatsDrawerData, { accountSlug: null }),
+  // _bypassMv:true → LIVE compute, NOT the hourly `mv_stats_drawer` cache. That
+  // cache goes stale for hours: its dirty-probe only scans the 50 most-recent
+  // reservations by future start_date, so a status change on a past/ongoing
+  // rental (ended/cancelled) never marks it dirty and the rebuild is skipped.
+  // The chat MUST reflect the live reservations table (≤5 min behind Hygglo),
+  // not an old snapshot. Chat is low-volume so the live compute cost is fine.
+  return cached("drawer:live", () =>
+    convex.query(api.dashboard.getStatsDrawerData, {
+      accountSlug: null,
+      _bypassMv: true,
+    } as { accountSlug: string | null }),
   ) as Promise<DrawerData>;
+}
+
+/**
+ * v1-style compute-then-phrase: build ONE live snapshot of the headline
+ * dashboard figures as plain text, injected into the chat system prompt so the
+ * model quotes trusted numbers instead of choosing among tools and re-deriving
+ * them. Everything here is the dashboard's own LIVE value (matches the tiles).
+ */
+export async function buildLiveSnapshot(convex: ConvexHttpClient): Promise<string> {
+  const [d, rentalsRaw, pendingRaw] = await Promise.all([
+    fetchDrawer(convex),
+    cached("rentals:list", () => convex.query(api.mv.stats_drawer.getRentals, {})),
+    cached("pending:inbox", () =>
+      convex.query(api.reservations.listPendingWithoutDecision, { limit: 500 }),
+    ),
+  ]);
+  const pendingInbox = Array.isArray(pendingRaw) ? pendingRaw.length : 0;
+  const a = d.active ?? {};
+  const m = d.monthly ?? {};
+  const e = d.earnings ?? {};
+  const c = d.confirmed ?? {};
+  const groups =
+    (rentalsRaw as unknown as { rentals?: { ongoing?: RentalRow[]; upcoming?: RentalRow[] } })
+      ?.rentals ?? {};
+  const fmt = (x: RentalRow) =>
+    `${x.item_names_summary ?? "item"} — ${x.renter_name ?? "renter"}, ${x.start_date}→${x.end_date}, £${x.net_gbp ?? "?"} net`;
+  const ongoing = (groups.ongoing ?? []).map(fmt);
+  const upcoming = (groups.upcoming ?? []).map(fmt);
+  const conflicts = Array.isArray(d.conflicts) ? d.conflicts : [];
+  const asOf = new Date().toISOString().slice(0, 16).replace("T", " ");
+  return [
+    `LIVE DASHBOARD SNAPSHOT (the dashboard's own current figures as of ${asOf} UTC — quote these directly, never recompute or override them):`,
+    `- Active rentals: ${a.total ?? 0} total = ${a.ongoing_count ?? 0} out right now + ${a.upcoming_count ?? 0} upcoming.`,
+    ongoing.length ? `  Out right now: ${ongoing.join(" | ")}.` : `  Out right now: nothing.`,
+    upcoming.length ? `  Upcoming: ${upcoming.join(" | ")}.` : `  Upcoming: none.`,
+    `- Month-to-date confirmed revenue (NET take-home): £${c.month_revenue ?? m.confirmed_revenue ?? "?"}. Earned so far this month (pickup-gated): £${m.current_earnings ?? "?"}. Target £${m.target_gbp ?? "?"} (${m.pct_of_target ?? "?"}% of target).`,
+    `- Earnings: today £${e.today ?? 0} net, this week £${e.week ?? 0} net.`,
+    conflicts.length
+      ? `- Overbooking conflicts (REAL, qty-aware): ${conflicts.length} — ${conflicts.map((x) => `${x.item_canonical} (qty ${x.qty}, ${x.overlap_count} overlapping) on ${x.conflict_start}`).join("; ")}.`
+      : `- Overbooking conflicts: 0.`,
+    `- New booking requests awaiting your accept/decline: ${pendingInbox}. Out of stock: ${d.out_of_stock?.count ?? 0}. Untracked rentals: ${d.untracked?.count ?? 0}. Open insurance claims: ${d.insurance?.open_count ?? 0}.`,
+  ].join("\n");
 }
 
 /**
@@ -188,90 +232,6 @@ function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
  */
 export function buildDashboardTools(convex: ConvexHttpClient): Record<string, Tool> {
   return {
-    query_conflicts: tool({
-      description:
-        "REAL overbooking conflicts, matching the dashboard's Critical Alerts. QTY-AWARE: only flags an item " +
-        "when concurrent confirmed/tracked bookings exceed that item's quantity, with dismissed conflicts removed. " +
-        "Returns { count, conflicts: [{ item, qty, overlap_count, start, end }] }. `count` is the TRUE conflict " +
-        "count — do NOT inflate it; an item with qty 3 and 2 overlapping bookings is NOT a conflict.",
-      inputSchema: z.object({}),
-      execute: async () => {
-        const d = await fetchDrawer(convex);
-        const list = Array.isArray(d.conflicts) ? d.conflicts : [];
-        return {
-          count: list.length,
-          conflicts: list.slice(0, 25).map((c) => ({
-            item: c.item_canonical,
-            qty: c.qty,
-            overlap_count: c.overlap_count,
-            start: c.conflict_start,
-            end: c.conflict_end,
-          })),
-        };
-      },
-    }),
-    query_active_rentals: tool({
-      description:
-        "Rentals active RIGHT NOW — matches the dashboard 'Active Rentals' tile. Returns counts " +
-        "{ total, ongoing_count, upcoming_count, pending_verification } AND the REAL lists `ongoing` and " +
-        "`upcoming` (each rental = { item, renter, start, end, net_gbp }). `ongoing` = items OUT right now " +
-        "(start <= today <= end); `upcoming` = confirmed but not started yet. When asked what's out / happening " +
-        "today, list the `ongoing` array verbatim. NEVER invent rentals, renters, dates or amounts — if a list " +
-        "is empty, say there are none.",
-      inputSchema: z.object({}),
-      execute: async () => {
-        const [d, rentalsRaw] = await Promise.all([
-          fetchDrawer(convex),
-          cached("rentals:list", () => convex.query(api.mv.stats_drawer.getRentals, {})),
-        ]);
-        const a = d.active ?? {};
-        const groups =
-          (rentalsRaw as unknown as {
-            rentals?: { ongoing?: RentalRow[]; upcoming?: RentalRow[] };
-          })?.rentals ?? {};
-        const slim = (x: RentalRow) => ({
-          item: x.item_names_summary,
-          renter: x.renter_name,
-          start: x.start_date,
-          end: x.end_date,
-          net_gbp: x.net_gbp,
-        });
-        return {
-          total: a.total,
-          ongoing_count: a.ongoing_count,
-          upcoming_count: a.upcoming_count,
-          pending_verification: a.pending_count,
-          ongoing: (groups.ongoing ?? []).map(slim),
-          upcoming: (groups.upcoming ?? []).slice(0, 15).map(slim),
-        };
-      },
-    }),
-
-    query_revenue: tool({
-      description:
-        "Revenue & earnings — ALL NET take-home (after Hygglo ~36% fees), pulled from the dashboard so they " +
-        "match the revenue tiles exactly. Fields: month_confirmed_net_gbp = month-to-date confirmed revenue " +
-        "(the 'Month Confirmed' tile — use this for 'this month's revenue / take-home'); current_earnings_net_gbp = " +
-        "earned so far this month, gated by actual pickup; expected_monthly_net_gbp = projected month total " +
-        "('Expected Monthly' tile); target_gbp + pct_of_target; earnings_today_net_gbp / earnings_week_net_gbp = " +
-        "today's / this week's net earnings ('Earnings Today' tile).",
-      inputSchema: z.object({}),
-      execute: async () => {
-        const d = await fetchDrawer(convex);
-        const m = d.monthly ?? {};
-        const e = d.earnings ?? {};
-        const c = d.confirmed ?? {};
-        return {
-          month_confirmed_net_gbp: c.month_revenue ?? m.confirmed_revenue,
-          current_earnings_net_gbp: m.current_earnings,
-          expected_monthly_net_gbp: m.projected,
-          target_gbp: m.target_gbp,
-          pct_of_target: m.pct_of_target,
-          earnings_today_net_gbp: e.today,
-          earnings_week_net_gbp: e.week,
-        };
-      },
-    }),
     query_utilization: tool({
       description:
         "Idle Inventory — the items COSTING the most money while sitting unused (the dashboard 'Idle Inventory' " +
