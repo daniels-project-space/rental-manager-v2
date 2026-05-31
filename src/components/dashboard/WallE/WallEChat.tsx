@@ -215,11 +215,22 @@ export default function WallEChat({
     onChatStateChange(next);
   }, [isThinking, focused, input, onChatStateChange]);
 
-  // Autoscroll
+  // Autoscroll — pin the latest question near the top so a long reply below it
+  // reads from its START. (Scrolling to the absolute bottom hid long replies in
+  // the bounded widget: you only saw the tail.) Falls back to bottom pre-first-turn.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const nodes = el.querySelectorAll('[data-walle-role="user"]');
+    const lastUser = nodes.length ? (nodes[nodes.length - 1] as HTMLElement) : null;
+    if (lastUser) {
+      const offset =
+        lastUser.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      el.scrollTop = Math.max(0, offset - 8);
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages, jokeMessages]);
 
   const handleSend = () => {
@@ -358,6 +369,7 @@ export default function WallEChat({
       <motion.div
         key={m.id}
         layout
+        data-walle-role="user"
         initial={{ opacity: 0, y: 8, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -4, scale: 0.96 }}
