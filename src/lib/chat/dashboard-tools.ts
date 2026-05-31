@@ -126,6 +126,15 @@ type DrawerData = {
   business_intel?: { kpis?: Array<Record<string, unknown>> };
 };
 
+/** One rental row from the Active Rentals drawer (mv.stats_drawer.getRentals). */
+type RentalRow = {
+  item_names_summary?: string;
+  renter_name?: string;
+  start_date?: string;
+  end_date?: string;
+  net_gbp?: number;
+};
+
 function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
   return cached("drawer:all", () =>
     convex.query(api.dashboard.getStatsDrawerData, { accountSlug: null }),
@@ -166,21 +175,37 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     }),
     query_active_rentals: tool({
       description:
-        "Rentals active RIGHT NOW — matches the dashboard 'Active Rentals' tile exactly. " +
-        "Returns { total, ongoing, upcoming, pending_verification, pending_value_gbp }. " +
-        "total = ongoing + upcoming. ongoing = currently out on rent; upcoming = confirmed but not started yet. " +
-        "pending_verification is the tile's pending count (rentals awaiting verification) — NOT the decision " +
-        "inbox; use query_pending for new requests awaiting your accept/decline.",
+        "Rentals active RIGHT NOW — matches the dashboard 'Active Rentals' tile. Returns counts " +
+        "{ total, ongoing_count, upcoming_count, pending_verification } AND the REAL lists `ongoing` and " +
+        "`upcoming` (each rental = { item, renter, start, end, net_gbp }). `ongoing` = items OUT right now " +
+        "(start <= today <= end); `upcoming` = confirmed but not started yet. When asked what's out / happening " +
+        "today, list the `ongoing` array verbatim. NEVER invent rentals, renters, dates or amounts — if a list " +
+        "is empty, say there are none.",
       inputSchema: z.object({}),
       execute: async () => {
-        const d = await fetchDrawer(convex);
+        const [d, rentalsRaw] = await Promise.all([
+          fetchDrawer(convex),
+          cached("rentals:list", () => convex.query(api.mv.stats_drawer.getRentals, {})),
+        ]);
         const a = d.active ?? {};
+        const groups =
+          (rentalsRaw as unknown as {
+            rentals?: { ongoing?: RentalRow[]; upcoming?: RentalRow[] };
+          })?.rentals ?? {};
+        const slim = (x: RentalRow) => ({
+          item: x.item_names_summary,
+          renter: x.renter_name,
+          start: x.start_date,
+          end: x.end_date,
+          net_gbp: x.net_gbp,
+        });
         return {
           total: a.total,
-          ongoing: a.ongoing_count,
-          upcoming: a.upcoming_count,
+          ongoing_count: a.ongoing_count,
+          upcoming_count: a.upcoming_count,
           pending_verification: a.pending_count,
-          pending_value_gbp: a.pending_value_gbp,
+          ongoing: (groups.ongoing ?? []).map(slim),
+          upcoming: (groups.upcoming ?? []).slice(0, 15).map(slim),
         };
       },
     }),
