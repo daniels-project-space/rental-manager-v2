@@ -22,7 +22,20 @@
 import { tool, type Tool } from "ai";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import { api } from "../../../convex/_generated/api";
+
+// The income-pie functions are recent additions that the committed
+// `convex/_generated/api` lags behind (the perf-passes work keeps it stale), so
+// referencing them through the typed `api` object breaks the local build. They
+// are deployed on prod and power the dashboard income pie, so reference them by
+// name — robust against generated-api drift, identical behaviour at runtime.
+const getRentalVolumeByCategoryRef = makeFunctionReference<"query">(
+  "dashboard:getRentalVolumeByCategory",
+);
+const getRentalVolumeKindBreakdownRef = makeFunctionReference<"query">(
+  "dashboard:getRentalVolumeKindBreakdown",
+);
 
 /**
  * The grounding contract shared by both system prompts. Each widget prepends
@@ -47,7 +60,8 @@ Tools:
   query_calendar         — weekly calendar view (booked/free/partial)
   query_due_returns      — items overdue or due-soon for return
   query_recent_activity  — last N rental events (newest first)
-  query_item_earnings    — per-item lifetime earnings + ROI for ALL items (look up any item; rank by lifetime_net_gbp for 'best earner / made the most')
+  query_item_earnings    — per-item income, cost-proportional (the income pie's method; NET); correct 'best earner' / 'how much did item X make'; window 30/90/365 days
+  query_income_distribution — income split across categories (the income pie; NET); window 30/90/365 days
   query_smart_buys       — Smart-Buy ranking — items the model thinks Daniel should acquire`;
 
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
@@ -60,6 +74,12 @@ Tools:
 type CacheEntry = { value: unknown; exp: number };
 const TOOL_CACHE = new Map<string, CacheEntry>();
 const TOOL_CACHE_TTL_MS = 60_000;
+
+/** Hygglo take-home ≈ 64% of gross. The income-pie queries
+ *  (getRentalVolumeByCategory / getRentalVolumeKindBreakdown) return
+ *  GROSS-attributed revenue, so per-item / per-category figures are × this to
+ *  report NET take-home (the distribution / ranking is identical either way). */
+const OWNER_SHARE = 0.64;
 
 async function cached<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
   const now = Date.now();
@@ -377,32 +397,98 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     }),
     query_item_earnings: tool({
       description:
-        "Per-item earnings & ROI for ALL items — use this to look up ANY item by name. Each row: " +
-        "{ name, qty, lifetime_net_gbp (all-time take-home), lifetime_gross_gbp, roi_pct, rental_count, " +
-        "monthly_avg_net_gbp (lifetime average per month), acquisition_cost_gbp }. " +
-        "For 'best earner / made the most money', rank by lifetime_net_gbp — NOT roi_pct (a high ROI% just means a " +
-        "cheap item like a C-stand, not the most money). Figures are LIFETIME totals plus a monthly AVERAGE: there " +
-        "is NO per-item figure for a specific past month, so if asked 'how much did X make last month', give the " +
-        "lifetime total and the monthly average and say you don't have that exact month — never present a lifetime " +
-        "figure as a single month's earnings.",
-      inputSchema: z.object({}),
-      execute: async () => {
-        const res = (await cached("item_earnings:all", () =>
-          convex.query(api.intel.getItemROIRanking, { limit: 100, include_unknown_cost: true }),
-        )) as unknown as { rows?: Array<Record<string, number | string | null>> };
-        const rows = Array.isArray(res?.rows) ? res.rows : [];
+        "Per-item income using the dashboard's COST-PROPORTIONAL attribution — the SAME method the income pie " +
+        "uses: each rental's income is split across the items in that rental in proportion to each item's " +
+        "value/cost (so an expensive camera in a set earns most of that rental, a cheap accessory little). NET " +
+        "take-home. This is the CORRECT source for 'who earns the most / how much did item X make' — items are " +
+        "sorted by net_gbp desc, each { name, kind, rentals, net_gbp, share_pct }. Args: window_days 30/90/365 " +
+        "(default 365 = last 12 months). For 'last month' use 30. There is no exact calendar-month or >365-day " +
+        "figure, so state the window you used (e.g. 'over the last year').",
+      inputSchema: z.object({
+        window_days: z.number().optional().describe("30, 90, or 365. Default 365."),
+      }),
+      execute: async ({ window_days }: { window_days?: number }) => {
+        const days = window_days === 30 || window_days === 90 ? window_days : 365;
+        const cat = (await cached(`pie:${days}`, () =>
+          convex.query(getRentalVolumeByCategoryRef, { accountSlug: null, days }),
+        )) as unknown as { slices?: Array<{ kind?: string }> };
+        const kinds = (cat.slices ?? [])
+          .map((s) => s.kind)
+          .filter((k): k is string => typeof k === "string");
+        const breakdowns = await Promise.all(
+          kinds.map((kind) =>
+            cached(`brk:${days}:${kind}`, () =>
+              convex.query(getRentalVolumeKindBreakdownRef, {
+                accountSlug: null,
+                days,
+                kind,
+              }),
+            ),
+          ),
+        );
+        type Brk = { items?: Array<{ name?: string; count?: number; revenue?: number }> };
+        const items: Array<{ name?: string; kind: string; rentals?: number; net_gbp: number }> = [];
+        breakdowns.forEach((bRaw, i) => {
+          const b = bRaw as unknown as Brk;
+          (b.items ?? []).forEach((it) => {
+            items.push({
+              name: it.name,
+              kind: kinds[i],
+              rentals: it.count,
+              net_gbp: Math.round((it.revenue ?? 0) * OWNER_SHARE * 100) / 100,
+            });
+          });
+        });
+        items.sort((a, b) => b.net_gbp - a.net_gbp);
+        const totalNet = items.reduce((s, it) => s + it.net_gbp, 0);
         return {
-          count: rows.length,
-          items: rows.map((r) => ({
-            name: r.name,
-            qty: r.qty,
-            lifetime_net_gbp: r.lifetimeNetGbp,
-            lifetime_gross_gbp: r.lifetimeGrossGbp,
-            roi_pct: r.roiPct,
-            rental_count: r.rentalCount,
-            monthly_avg_net_gbp: r.monthlyAvgNetGbp,
-            acquisition_cost_gbp: r.acquisitionCostGbp,
+          window_days: days,
+          window_note: days === 30 ? "last 30 days" : days === 90 ? "last 90 days" : "last 12 months",
+          total_net_gbp: Math.round(totalNet * 100) / 100,
+          items: items.map((it) => ({
+            name: it.name,
+            kind: it.kind,
+            rentals: it.rentals,
+            net_gbp: it.net_gbp,
+            share_pct: totalNet > 0 ? Math.round((it.net_gbp / totalNet) * 1000) / 10 : 0,
           })),
+        };
+      },
+    }),
+
+    query_income_distribution: tool({
+      description:
+        "Income distribution across CATEGORIES — the dashboard income pie. Uses cost-proportional attribution " +
+        "(each rental's income split across its items by item value), NET take-home. Returns categories sorted " +
+        "by income: { category, net_gbp, share_pct, rentals }. Args: window_days 30/90/365 (default 30, matching " +
+        "the pie). For per-ITEM breakdown use query_item_earnings.",
+      inputSchema: z.object({
+        window_days: z.number().optional().describe("30, 90, or 365. Default 30 (matches the pie)."),
+      }),
+      execute: async ({ window_days }: { window_days?: number }) => {
+        const days = window_days === 90 || window_days === 365 ? window_days : 30;
+        const cat = (await cached(`pie:${days}`, () =>
+          convex.query(getRentalVolumeByCategoryRef, { accountSlug: null, days }),
+        )) as unknown as {
+          slices?: Array<{ kind?: string; label?: string; revenue?: number; count?: number }>;
+        };
+        const slices = (cat.slices ?? []).map((s) => ({
+          category: s.label ?? s.kind,
+          net_gbp: Math.round((s.revenue ?? 0) * OWNER_SHARE * 100) / 100,
+          rentals: s.count,
+        }));
+        const totalNet = slices.reduce((sum, s) => sum + s.net_gbp, 0);
+        return {
+          window_days: days,
+          total_net_gbp: Math.round(totalNet * 100) / 100,
+          categories: slices
+            .sort((a, b) => b.net_gbp - a.net_gbp)
+            .map((s) => ({
+              category: s.category,
+              net_gbp: s.net_gbp,
+              rentals: s.rentals,
+              share_pct: totalNet > 0 ? Math.round((s.net_gbp / totalNet) * 1000) / 10 : 0,
+            })),
         };
       },
     }),
