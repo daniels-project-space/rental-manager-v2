@@ -27,7 +27,8 @@
 
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalAction, internalMutation, mutation, query } from "./_generated/server";
+import { api } from "./_generated/api";
 import type { AttributionContext } from "./lib/revenue_attribution";
 import {
   computeCapacityMetrics,
@@ -308,14 +309,20 @@ export const backfillBatch = mutation({
     let endWeek = args.end_week ?? cursor?.end_week ?? null;
 
     if (!startWeek || !endWeek) {
-      // Earliest reservation _creationTime → first Monday >= that.
-      // Current Monday is the end_week if not specified.
-      const earliestReservation = await ctx.db
+      // Earliest real rental date (start_date), NOT _creationTime: reservations
+      // were bulk-imported, so _creationTime clusters at ~May 2026 even though
+      // actual start_dates span 12+ months. Keying off _creationTime truncated
+      // the trend to ~4 weeks. The by_start_date index, asc, gives the earliest
+      // real rental; fall back to _creationTime only if start_date is missing.
+      const earliestByStart = await ctx.db
         .query("reservations")
+        .withIndex("by_start_date")
         .order("asc")
         .first();
-      const earliestMs = earliestReservation?._creationTime ?? Date.now();
-      const earliestMonday = isoMondayOf(new Date(earliestMs));
+      const earliestStart = earliestByStart?.start_date;
+      const earliestMonday = earliestStart
+        ? isoMondayOf(new Date(`${earliestStart}T00:00:00Z`))
+        : isoMondayOf(new Date(earliestByStart?._creationTime ?? Date.now()));
       startWeek = startWeek ?? earliestMonday;
       endWeek = endWeek ?? isoMondayOf(new Date());
     }
@@ -532,6 +539,52 @@ export const backfillBatch = mutation({
       run_finished_at: Date.now(),
       error: lastError,
     };
+  },
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pagination-safe FULL backfill orchestrator.
+//
+// backfillBatch with batch_weeks>1 reads many overlapping ±30d reservation
+// windows in ONE mutation and blew past Convex's 16MB per-execution read limit
+// on the dense recent data. A single week fits comfortably, so this action
+// drives the loop — each iteration is a SEPARATE mutation execution with its
+// own read budget — advancing the cursor until the range is done.
+//
+//   npx convex run admin_backfill_weekly_metrics:backfillAll '{}'
+//
+// Idempotent + cursor-backed: safe to re-run; it resumes where it left off.
+// ──────────────────────────────────────────────────────────────────────────
+export const backfillAll = internalAction({
+  args: {
+    start_week: v.optional(v.string()),
+    end_week: v.optional(v.string()),
+    /** Safety cap on iterations (one week each). Default 120 (~2.3 years). */
+    max_weeks: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ weeks: number; rows_written: number; rows_skipped: number; next_week: string | null }> => {
+    const cap = Math.max(1, args.max_weeks ?? 120);
+    let weeks = 0;
+    let rowsWritten = 0;
+    let rowsSkipped = 0;
+    let nextWeek: string | null = null;
+    for (let i = 0; i < cap; i++) {
+      const res = (await ctx.runMutation(api.admin_backfill_weekly_metrics.backfillBatch, {
+        batch_weeks: 1,
+        ...(i === 0
+          ? { reset_cursor: true, start_week: args.start_week, end_week: args.end_week }
+          : {}),
+      })) as { weeks_processed: number; rows_written: number; rows_skipped: number; next_week: string | null };
+      weeks += res.weeks_processed ?? 0;
+      rowsWritten += res.rows_written ?? 0;
+      rowsSkipped += res.rows_skipped ?? 0;
+      nextWeek = res.next_week;
+      if (!res.next_week) break;
+    }
+    return { weeks, rows_written: rowsWritten, rows_skipped: rowsSkipped, next_week: nextWeek };
   },
 });
 
