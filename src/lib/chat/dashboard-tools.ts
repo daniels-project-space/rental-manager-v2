@@ -42,9 +42,15 @@ const getRentalVolumeKindBreakdownRef = makeFunctionReference<"query">(
  * its own persona/voice; this block carries the non-negotiable rules + the
  * authoritative tool list so neither widget can drift from the other.
  */
-export const DASHBOARD_GROUNDING_RULES = `Your headline figures come from the LIVE DASHBOARD SNAPSHOT provided below the persona — active rentals (count + the real ongoing/upcoming list), month-to-date revenue & earnings, overbooking conflicts, pending requests, stock. QUOTE THE SNAPSHOT DIRECTLY for those; it is the dashboard's own current data — never recompute, re-derive or override it. All money is NET take-home (after Hygglo ~36% fees).
+export const DASHBOARD_GROUNDING_RULES = `GROUNDING — read this before every answer.
 
-Use the tools below ONLY for drill-down the snapshot does not contain. Cite every number with its unit (£, %, items, days). NEVER invent rentals, items, renters, dates or amounts — if you don't have it, say so. Respect each tool's stated sort order and field meanings; don't re-rank or recompute (e.g. "Idle Inventory" is ranked by idle cost, not utilization; per-item income is already cost-proportional; "best earner" = most NET income).
+The LIVE DASHBOARD SNAPSHOT below the persona is the ONLY data you have without calling a tool. It contains EXACTLY: the active-rentals count, the ongoing and upcoming rental list (each with renter, pickup + return date/time/method and £net), today's pickups/deliveries and returns, month-to-date NET revenue & earnings vs target, today's and this-week's earnings, overbooking conflicts, the count of pending requests, and stock / out-of-stock / untracked / insurance counts. QUOTE THESE DIRECTLY — never recompute, re-derive or override them. All money is NET take-home (after Hygglo ~36% fees).
+
+For ANYTHING NOT in that list you MUST call the matching tool and answer ONLY from what it returns this turn. You do NOT know — and must NEVER guess, estimate, extrapolate, or recall from earlier — any of: per-item earnings, an item's utilization %, idle cost, inventory worth, what to buy or sell, revenue trends, the conversion funnel, missed/denied revenue, catalog / out-of-stock detail, due returns, recent activity, or tax/KPIs. Stating any such figure without having called its tool this turn is fabrication — the single worst thing you can do here. In particular there is NO utilization percentage anywhere except the value query_utilization returns for the handful of idle-ranked items; never invent an "X% rented" figure, and never quote a per-item £ amount from memory.
+
+If a tool didn't give you a number, say you don't have it rather than inventing one. Cite every number with its unit (£, %, items, days) and the window it covers. Respect each tool's stated sort order and field meanings; don't re-rank or recompute (e.g. "Idle Inventory" is ranked by idle £/week, not utilization; per-item income is already cost-proportional; "best earner" = most NET income).
+
+Worked example — for "should I buy another X / is X worth getting / how is X doing / what should I buy", call query_item_earnings (window 30 or 365) for X's real NET income, query_utilization for its idle cost/utilization, and query_smart_buys for unmet-demand picks, THEN reason from those numbers. Never answer a buy/sell/performance question from the snapshot alone.
 
 Drill-down tools:
   query_item_earnings    — per-item income, cost-proportional (the income pie's method; NET); 'best earner' / 'how much did item X make'; window 30/90/365

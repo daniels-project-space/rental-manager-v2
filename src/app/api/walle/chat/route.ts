@@ -5,9 +5,11 @@
  *   body: { messages: WallEChatMessage[], sessionId: string }
  *
  *   1. Builds the grounded WallE chat prompt (`WALLE_CHAT_SYSTEM`) — persona
- *      voice + the shared grounding contract. No snapshot is injected; every
- *      number is fetched live through a tool call (same as the AI-assistant
- *      widget), which is what keeps WallE's answers accurate.
+ *      voice + the shared grounding contract — and injects the LIVE dashboard
+ *      snapshot for headline figures. Everything OUTSIDE the snapshot (per-item
+ *      earnings, utilization, buy/sell advice, trends, issues) must come from a
+ *      tool call; analytical questions force `toolChoice:'required'` on step 0
+ *      (see prepareStep) so the model can't skip the tool and confabulate.
  *   2. Streams the LLM response via OpenRouter → DEEPSEEK_MODEL, with the
  *      shared read-only Convex query tools available to the model (max 4 hops).
  *   3. On completion, persists the last user turn + the full assistant text
@@ -29,6 +31,16 @@ import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Questions whose answer is NOT in the headline snapshot (per-item earnings,
+// utilization/idle, buy/sell, trends, issues, catalog, funnel…) — these need a
+// real tool call. When the user's turn matches, we force toolChoice:'required'
+// on the first step so DeepSeek-chat can't answer from the snapshot alone and
+// fabricate the numbers (it ignored the "never invent" prompt rule on its own).
+// Deliberately broad: a false positive costs one extra grounded tool call; a
+// false negative risks a confabulated figure.
+const ANALYTICAL_INTENT =
+  /\b(buy|buying|bought|purchas|invest|acqui|sell|selling|sold|worth|earn|earning|income|profit|roi|return on|best|worst|top|how much (did|does|has)|per[- ]?item|utili[sz]|idle|unused|sitting|under[- ]?used|trend|growing|declin|missed|denied|lost|capacity|below[- ]?min|funnel|conver|catalog|inventor|out[- ]?of[- ]?stock|overdue|due (back|return)|tax|kpi|recommend|should i)\b/i;
 
 interface IncomingMessagePart {
   type: string;
@@ -146,6 +158,9 @@ export async function POST(req: Request) {
   // Last user content (for persistence — assistant text gathered on finish)
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const lastUserContent = lastUser ? extractText(lastUser) : "";
+  // Force a grounded tool call when the question needs drill-down data the
+  // snapshot doesn't carry (see ANALYTICAL_INTENT above).
+  const needsForcedTool = ANALYTICAL_INTENT.test(lastUserContent);
 
   const modelMessages: ModelMessage[] = messages
     .filter((m) => m.role === "user" || m.role === "assistant")
@@ -178,6 +193,14 @@ export async function POST(req: Request) {
     // Allow up to 4 hops — one tool call + one summary is the common case,
     // a follow-up tool call needs the extra step.
     stopWhen: stepCountIs(4),
+    // For analytical questions, force a tool call on the FIRST step so the
+    // model grounds its answer instead of confabulating per-item earnings /
+    // utilization / buy advice (none of which live in the snapshot). Later
+    // steps revert to auto so the model can summarise the tool results.
+    prepareStep: needsForcedTool
+      ? ({ stepNumber }) =>
+          stepNumber === 0 ? { toolChoice: "required" } : {}
+      : undefined,
     onFinish: async ({ text, usage }) => {
       try {
         generation.end({
