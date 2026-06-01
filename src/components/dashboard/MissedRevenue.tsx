@@ -78,43 +78,43 @@ export function MissedRevenue() {
           {/* Summary */}
           <div className="mb-4 pb-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
             <p className="text-xs uppercase tracking-wider mb-1" style={{ color: "#8b8fa3" }}>
-              Total Missed
+              Missed — idle capacity
             </p>
             <p className="text-3xl font-bold" style={{ color: "#ef4444" }}>
               £{data.totalMissed.toFixed(2)}
             </p>
             <p className="text-xs mt-1" style={{ color: "#8b8fa3" }}>
-              {data.denialLosses.length} denial{data.denialLosses.length !== 1 ? "s" : ""} — last {days} days
+              Theoretical idle-capacity opportunity — last {days} days. Declined requests are counted separately under Denied Revenue.
             </p>
           </div>
 
-          {/* Denial losses */}
-          {data.denialLosses.length === 0 ? (
-            <EmptyState message="No denial records this period" icon="✓" />
+          {/* Idle-capacity gap losses */}
+          {data.gapLosses.length === 0 ? (
+            <EmptyState message="No idle-capacity gaps this period" icon="✓" />
           ) : (
             <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
               <p className="text-xs font-medium mb-2" style={{ color: "#8b8fa3" }}>
-                Denial Losses
+                Top idle items
               </p>
-              {data.denialLosses.map((d) => (
+              {data.gapLosses.slice(0, 12).map((g) => (
                 <div
-                  key={d.denialId as string}
+                  key={g.itemName}
                   className="flex items-center justify-between px-2.5 py-2 rounded-lg"
                   style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.1)" }}
                 >
                   <div className="min-w-0">
                     <p className="text-xs font-medium truncate" style={{ color: "#e4e6eb" }}>
-                      {d.itemName ?? "Unknown item"}
+                      {g.itemName}
                     </p>
                     <p className="text-xs truncate" style={{ color: "#8b8fa3" }}>
-                      {d.reason ?? "No reason"}
+                      {g.idleDays}d idle of {days}d
                     </p>
                   </div>
                   <span
                     className="text-xs font-semibold flex-shrink-0 ml-2"
-                    style={{ color: d.estimatedValue > 0 ? "#ef4444" : "#8b8fa3" }}
+                    style={{ color: g.estimatedGapLoss > 0 ? "#ef4444" : "#8b8fa3" }}
                   >
-                    {d.estimatedValue > 0 ? `−£${d.estimatedValue.toFixed(2)}` : "—"}
+                    {g.estimatedGapLoss > 0 ? `−£${g.estimatedGapLoss.toFixed(2)}` : "—"}
                   </span>
                 </div>
               ))}

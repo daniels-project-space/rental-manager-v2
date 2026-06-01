@@ -340,9 +340,11 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     query_issues: tool({
       description:
         "Operational issues / alerts, matching the dashboard alert cards. Use for 'what needs attention / any " +
-        "problems'. Returns overbooking conflicts, untracked rentals, out-of-stock, qty drift, missed & denied " +
-        "revenue (NET £), open insurance claims, and capacity-gap / below-minimum / voluntary-deny alerts. All " +
-        "counts are the true dashboard figures.",
+        "problems'. Returns overbooking conflicts, untracked rentals, out-of-stock, qty drift, denied revenue " +
+        "(NET £ of requests explicitly DECLINED) and missed revenue (NET £ theoretical idle-capacity opportunity " +
+        "— gear sitting unused), open insurance claims, and capacity-gap / below-minimum / voluntary-deny alerts. " +
+        "denied_revenue and missed_revenue are DISTINCT, NOT additive: one is turned-away demand, the other is idle " +
+        "capacity. All counts are the true dashboard figures.",
       inputSchema: z.object({}),
       execute: async () => {
         const [d, capacityGaps, belowMin, voluntaryDeny] = await Promise.all([

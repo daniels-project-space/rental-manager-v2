@@ -117,33 +117,48 @@ export async function computeMissedRevenue(
     allResForGap = allResForGap.filter((r) => r.account_slug === accountSlug);
   }
 
+  // Attribute by CANONICAL item name (the resolver's expanded_items) so it
+  // matches pricing_catalog.item_name_canonical — the old raw item_name lookup
+  // always missed and gapTotal collapsed to £0. Fall back to raw names for rows
+  // the resolver hasn't processed yet.
   const rentalDaysPerItem = new Map<string, number>();
   for (const r of allResForGap) {
-    for (const item of r.items ?? []) {
+    const canon =
+      r.expanded_items && r.expanded_items.length
+        ? r.expanded_items
+        : r.resolved_items && r.resolved_items.length
+          ? r.resolved_items
+          : null;
+    const names = canon
+      ? canon
+          .map((x) => x.item_name_canonical)
+          .filter((n): n is string => !!n)
+      : (r.items ?? []).map((it) => it.item_name);
+    for (const name of names) {
       rentalDaysPerItem.set(
-        item.item_name,
-        (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0),
+        name,
+        (rentalDaysPerItem.get(name) ?? 0) + (r.duration_days ?? 0),
       );
     }
   }
 
   const pricingRows = await ctx.db.query("pricing_catalog").collect();
-  const priceByName = new Map(
-    pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
-  );
 
+  // Iterate the full priced inventory so fully-idle items count too (not only
+  // those that rented). gapTotal is the THEORETICAL idle-capacity opportunity
+  // (assumes 100% utilisation).
   const gapLosses: GapLoss[] = [];
-  for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
+  for (const p of pricingRows) {
+    const rentalDays = rentalDaysPerItem.get(p.item_name_canonical) ?? 0;
     const idleDays = Math.max(0, days - Math.min(rentalDays, days));
     if (idleDays <= 0) continue;
-    const dailyRate = priceByName.get(itemName);
-    if (!dailyRate) continue;
+    if (!p.daily_price_min) continue;
     gapLosses.push({
-      itemName,
+      itemName: p.item_name_canonical,
       rentalDays,
       idleDays,
       estimatedGapLoss: parseFloat(
-        (idleDays * dailyRate * OWNER_SHARE).toFixed(2),
+        (idleDays * p.daily_price_min * OWNER_SHARE).toFixed(2),
       ),
     });
   }
@@ -153,8 +168,10 @@ export async function computeMissedRevenue(
     gapLosses.reduce((s, g) => s + g.estimatedGapLoss, 0).toFixed(2),
   );
 
-  // Headline total now combines denials + gap (per panel convention).
-  const totalMissed = parseFloat((denialTotal + gapTotal).toFixed(2));
+  // Missed = idle-capacity opportunity ONLY (disjoint from denied_revenue,
+  // which counts declined requests). denialTotal/denialLosses are still
+  // returned for the breakdown panel.
+  const totalMissed = gapTotal;
 
   return {
     totalMissed,

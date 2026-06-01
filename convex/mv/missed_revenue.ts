@@ -38,6 +38,9 @@ type ReservationLike = {
   start_date?: string;
   duration_days?: number;
   items?: Array<{ item_name: string }>;
+  // Resolver output — canonical names that match pricing_catalog.item_name_canonical.
+  expanded_items?: Array<{ item_name_canonical?: string; qty?: number }>;
+  resolved_items?: Array<{ item_name_canonical?: string; qty?: number }>;
 };
 
 type AccountRow = { _id: string; slug: string };
@@ -148,28 +151,45 @@ export function computeMissedRevenue(args: {
               r.start_date >= cutoffISO,
           );
 
+      // Attribute rental days by CANONICAL item name (the resolver's
+      // expanded_items), NOT the raw listing title — pricing_catalog is keyed by
+      // item_name_canonical, so the old raw-name lookup always missed and
+      // gapTotal collapsed to £0. Fall back to raw names for rows the resolver
+      // hasn't processed yet.
       const rentalDaysPerItem = new Map<string, number>();
       for (const r of scopedReservations) {
-        for (const item of r.items ?? []) {
+        const canon =
+          r.expanded_items && r.expanded_items.length
+            ? r.expanded_items
+            : r.resolved_items && r.resolved_items.length
+              ? r.resolved_items
+              : null;
+        const names = canon
+          ? canon.map((x) => x.item_name_canonical).filter((n): n is string => !!n)
+          : (r.items ?? []).map((it) => it.item_name);
+        for (const name of names) {
           rentalDaysPerItem.set(
-            item.item_name,
-            (rentalDaysPerItem.get(item.item_name) ?? 0) + (r.duration_days ?? 0),
+            name,
+            (rentalDaysPerItem.get(name) ?? 0) + (r.duration_days ?? 0),
           );
         }
       }
 
+      // Iterate the full priced inventory so fully-idle items count too (not
+      // only those that rented in the window). gapTotal is the THEORETICAL
+      // idle-capacity opportunity (assumes 100% utilisation).
       const gapLosses: GapLossRow[] = [];
-      for (const [itemName, rentalDays] of rentalDaysPerItem.entries()) {
+      for (const p of pricing) {
+        const rentalDays = rentalDaysPerItem.get(p.item_name_canonical) ?? 0;
         const idleDays = Math.max(0, days - Math.min(rentalDays, days));
         if (idleDays <= 0) continue;
-        const dailyRate = priceByName.get(itemName);
-        if (!dailyRate) continue;
+        if (!p.daily_price_min) continue;
         gapLosses.push({
-          itemName,
+          itemName: p.item_name_canonical,
           rentalDays,
           idleDays,
           estimatedGapLoss: parseFloat(
-            (idleDays * dailyRate * OWNER_SHARE).toFixed(2),
+            (idleDays * p.daily_price_min * OWNER_SHARE).toFixed(2),
           ),
         });
       }
@@ -178,7 +198,11 @@ export function computeMissedRevenue(args: {
       const gapTotal = parseFloat(
         gapLosses.reduce((s, g) => s + g.estimatedGapLoss, 0).toFixed(2),
       );
-      const totalMissed = parseFloat((denialTotal + gapTotal).toFixed(2));
+      // Missed = idle-capacity opportunity ONLY, DISJOINT from denied_revenue
+      // (declined requests). They previously overlapped — `missed` was
+      // denials+gaps, so with gapTotal=0 both tiles showed the same £. denial*
+      // fields are still returned for the breakdown panel.
+      const totalMissed = gapTotal;
 
       rows.push({
         account,
