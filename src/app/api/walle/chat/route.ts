@@ -26,21 +26,11 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
-import { buildDashboardTools, buildLiveSnapshot } from "../../../../lib/chat/dashboard-tools";
+import { ANALYTICAL_INTENT, buildDashboardTools, buildLiveSnapshot } from "../../../../lib/chat/dashboard-tools";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// Questions whose answer is NOT in the headline snapshot (per-item earnings,
-// utilization/idle, buy/sell, trends, issues, catalog, funnel…) — these need a
-// real tool call. When the user's turn matches, we force toolChoice:'required'
-// on the first step so DeepSeek-chat can't answer from the snapshot alone and
-// fabricate the numbers (it ignored the "never invent" prompt rule on its own).
-// Deliberately broad: a false positive costs one extra grounded tool call; a
-// false negative risks a confabulated figure.
-const ANALYTICAL_INTENT =
-  /\b(buy|buying|bought|purchas|invest|acqui|sell|selling|sold|worth|earn|earning|income|profit|roi|return on|best|worst|top|how much (did|does|has)|per[- ]?item|utili[sz]|idle|unused|sitting|under[- ]?used|trend|growing|declin|missed|denied|lost|capacity|below[- ]?min|funnel|conver|catalog|inventor|out[- ]?of[- ]?stock|overdue|due (back|return)|tax|kpi|recommend|should i)\b/i;
 
 interface IncomingMessagePart {
   type: string;

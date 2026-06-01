@@ -67,6 +67,19 @@ Drill-down tools:
   query_revenue_trend    — weekly NET revenue trend
   query_status           — UK tax estimate, business-intel KPIs, scanner, vacation, AI-Boost (£0 by design)`;
 
+/**
+ * Matches user questions whose answer is NOT in the headline snapshot (per-item
+ * earnings, utilization/idle, buy/sell, trends, issues, catalog, funnel, tax…).
+ * Both chat routes force `toolChoice:'required'` on the first step when this
+ * matches, so DeepSeek-chat (toolChoice:auto) can't answer from the snapshot
+ * alone and confabulate the numbers — it ignored the prompt's "never invent"
+ * rule on a bad roll. Deliberately broad: a false positive costs one extra
+ * grounded tool call; a false negative risks a fabricated figure. Shared here
+ * so the two surfaces can't drift.
+ */
+export const ANALYTICAL_INTENT =
+  /\b(buy|buying|bought|purchas|invest|acqui|sell|selling|sold|worth|earn|earning|income|profit|roi|return on|best|worst|top|how much (did|does|has)|per[- ]?item|utili[sz]|idle|unused|sitting|under[- ]?used|trend|growing|declin|missed|denied|lost|capacity|below[- ]?min|funnel|conver|catalog|inventor|out[- ]?of[- ]?stock|overdue|due (back|return)|tax|kpi|recommend|should i)\b/i;
+
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
 // Saves re-fetching aggregated data within a single multi-step LLM turn AND
 // across concurrent chat turns landing within 60s of each other. Applied only

@@ -36,6 +36,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import {
+  ANALYTICAL_INTENT,
   buildDashboardTools,
   buildLiveSnapshot,
   DASHBOARD_GROUNDING_RULES,
@@ -153,6 +154,14 @@ export async function POST(req: Request) {
           tools,
           maxOutputTokens: 1500,
           stopWhen: stepCountIs(4),
+          // Force a tool call on the first step for analytical questions (their
+          // data isn't in the snapshot) so the model grounds instead of guessing
+          // per-item earnings / utilization / buy advice. Headline turns stay
+          // auto; later steps revert to auto so the model can summarise.
+          prepareStep: ANALYTICAL_INTENT.test(message)
+            ? ({ stepNumber }) =>
+                stepNumber === 0 ? { toolChoice: "required" } : {}
+            : undefined,
           onFinish: async ({ text }) => {
             finalText = text;
             try {
