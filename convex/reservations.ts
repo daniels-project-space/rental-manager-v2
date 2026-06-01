@@ -173,13 +173,21 @@ export const getConversionFunnel = query({
 
     const responses = inquiries; // conversations == responses (no separate sent-count available)
     const conversionRate = inquiries > 0 ? bookings / inquiries : 0;
-    const denialRate =
-      inquiries > 0 ? recentDenials / inquiries : 0;
+    // denial_records can exceed tracked conversations — an auto-declined Hygglo
+    // request never opens a conversation thread, and a multi-item decline can
+    // write several rows. So recentDenials/inquiries could exceed 1, which
+    // surfaced a nonsensical ">100% denial rate" on the funnel tile AND in chat.
+    // Bound it by the larger of inquiries or total decisions made, so the rate
+    // is always 0–100% and degrades to denials/inquiries when the data is clean.
+    const decisions = bookings + recentDenials;
+    const denialBase = Math.max(inquiries, decisions);
+    const denialRate = denialBase > 0 ? recentDenials / denialBase : 0;
 
     return {
       inquiries,
       responses,
       bookings,
+      denials: recentDenials,
       conversionRate,
       denialRate,
     };
