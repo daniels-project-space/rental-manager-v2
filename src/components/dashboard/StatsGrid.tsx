@@ -501,7 +501,7 @@ export function StatsGrid() {
           value={fmtGbp(data.denied_revenue.total_gbp)}
           valueColor={data.denied_revenue.total_gbp > 0 ? "amber" : "blue"}
           accentColor="amber"
-          subtitle={`${data.denied_revenue.items.length} denials (90d)`}
+          subtitle="all-time declined demand (imported)"
           isExpanded={expandedId === "denied_revenue"}
           onToggle={() => toggle("denied_revenue")}
         >

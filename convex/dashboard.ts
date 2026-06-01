@@ -1428,14 +1428,19 @@ export const getStatsDrawerData = query({
     // Net convention (2026-05-22): estimated_value is gross — multiply by
     // 0.64 (OWNER_SHARE) so this matches the netOf(r) convention used by
     // every other revenue widget (revenue = take-home post platform fees).
-    const ninetyDaysAgo = Date.now() - 90 * 86400000;
+    // ALL-TIME, not windowed: denial_records were bulk-imported on a single date
+    // (created_at all = 2026-05-10, no true per-event date, no rental_id link), so
+    // filtering by created_at is fiction — and the old 90d window would CLIFF the
+    // tile to £0 once the import date ages out. Present denied revenue as the
+    // lifetime total (flagged all_time so the UI/chat label it honestly).
     const DENIED_OWNER_SHARE = OWNER_SHARE_CANONICAL;
-    const recentDenials = denialRows.filter((d) => d.created_at >= ninetyDaysAgo);
-    const deniedRevenueTotalGross = recentDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
+    const allDenials = denialRows;
+    const deniedRevenueTotalGross = allDenials.reduce((s, d) => s + (d.estimated_value ?? 0), 0);
     const deniedRevenueTotal = deniedRevenueTotalGross * DENIED_OWNER_SHARE;
     const denied_revenue = {
       total_gbp: Math.round(deniedRevenueTotal * 100) / 100,
-      items: recentDenials.slice(0, 15).map((d) => ({
+      all_time: true,
+      items: allDenials.slice(0, 15).map((d) => ({
         reservation_id: d._id as string,
         renter_name: null as string | null,
         gross: d.estimated_value ?? null,

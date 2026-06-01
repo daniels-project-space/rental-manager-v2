@@ -85,7 +85,7 @@ export function ConversationFunnel() {
               </div>
             </div>
             <div>
-              <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Denial Rate</div>
+              <div className="text-xs text-[#8b8fa3] uppercase tracking-wider">Denial Rate (all-time)</div>
               <div
                 className="text-lg font-bold"
                 style={{ color: data.denialRate > 0.1 ? "#ef4444" : "#8b8fa3" }}

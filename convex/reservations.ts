@@ -179,9 +179,12 @@ export const getConversionFunnel = query({
         denials = denials.filter((d) => d.account_id === accountRow._id);
       }
     }
-    const recentDenials = denials.filter(
-      (d) => d.created_at >= cutoff.getTime()
-    ).length;
+    // ALL-TIME denial count, NOT windowed: denial_records are a one-shot bulk
+    // import (all created_at = the import date, no true per-event date), so a
+    // created_at window is meaningless AND would cliff the rate to 0 once the
+    // import date ages past the window. conversionRate stays windowed below
+    // (bookings + conversations have real dates); the denial rate is all-time.
+    const recentDenials = denials.length;
 
     const responses = inquiries; // conversations == responses (no separate sent-count available)
     const conversionRate = inquiries > 0 ? bookings / inquiries : 0;
