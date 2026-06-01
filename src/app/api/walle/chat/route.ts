@@ -10,8 +10,8 @@
  *      earnings, utilization, buy/sell advice, trends, issues) must come from a
  *      tool call; analytical questions force `toolChoice:'required'` on step 0
  *      (see prepareStep) so the model can't skip the tool and confabulate.
- *   2. Streams the LLM response via OpenRouter → DEEPSEEK_MODEL, with the
- *      shared read-only Convex query tools available to the model (max 4 hops).
+ *   2. Streams the LLM response via OpenRouter → CHAT_MODEL (Claude Haiku 4.5),
+ *      with the shared read-only Convex query tools available (max 4 hops).
  *   3. On completion, persists the last user turn + the full assistant text
  *      through Convex `dashboard_chat:appendTurn`.
  *
@@ -27,6 +27,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
 import { ANALYTICAL_INTENT, buildDashboardTools, buildLiveSnapshot } from "../../../../lib/chat/dashboard-tools";
+import { CHAT_MODEL } from "../../../../lib/ai-models";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
@@ -127,7 +128,7 @@ export async function POST(req: Request) {
     );
   }
   const openrouter = createOpenRouter({ apiKey });
-  const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
+  const modelId = CHAT_MODEL;
   const model = openrouter(modelId);
 
   // v1-style compute-then-phrase: inject the LIVE dashboard snapshot so the
@@ -175,10 +176,9 @@ export async function POST(req: Request) {
     system,
     messages: modelMessages,
     tools,
-    // DeepSeek reasoning model burns hidden reasoning tokens against this
-    // budget before emitting visible text; 800 left no room after a tool
-    // call so the model silently finished without answering. >=1500 is the
-    // known-good floor (see [[feedback_deepseek_quirks]]).
+    // Ample ceiling for a tool call + a conversational summary. (Kept high
+    // from the DeepSeek era, when hidden reasoning tokens ate this budget and
+    // <1500 caused silent no-answer finishes; harmless headroom for Haiku.)
     maxOutputTokens: 1800,
     // Allow up to 4 hops — one tool call + one summary is the common case,
     // a follow-up tool call needs the extra step.

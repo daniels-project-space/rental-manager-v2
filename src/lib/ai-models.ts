@@ -21,6 +21,20 @@
 export const DEEPSEEK_MODEL: string =
   process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash";
 
+/**
+ * Model for the accuracy-critical CONVERSATIONAL surfaces — the AI-assistant
+ * widget (`/api/chat`) and the WallE chat bot (`/api/walle/chat`). These call
+ * read-only Convex tools and must ground every number; DeepSeek-chat under
+ * toolChoice:auto intermittently skipped the tools and confabulated (FX3
+ * earnings/utilization, 2026-06-01), so these run on Claude Haiku — a far more
+ * reliable tool-caller — while the cheap single-shot text gens (joke / narrate
+ * / compact) stay on DEEPSEEK_MODEL. A distinct env var (NOT DEEPSEEK_MODEL,
+ * which is already pinned on Vercel) so this default actually applies in prod.
+ * Haiku 4.5 on OpenRouter ≈ $1 / $5 per 1M tok (in/out); volume is Daniel-only.
+ */
+export const CHAT_MODEL: string =
+  process.env.CHAT_MODEL ?? "anthropic/claude-haiku-4.5";
+
 /** xAI direct Grok chat model — used when AI_PROVIDER=xai. */
 export const GROK_CHAT_MODEL: string =
   process.env.GROK_CHAT_MODEL ?? "grok-4.3";

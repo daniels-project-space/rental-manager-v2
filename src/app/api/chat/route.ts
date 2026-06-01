@@ -25,9 +25,10 @@
  *   re-hydrates on every render, so history survives reloads.
  *
  * Provider:
- *   OpenRouter → DEEPSEEK_MODEL (default `deepseek/deepseek-chat`), the
- *   same path the WallE route uses. AI_PROVIDER=xai flips to Grok 4.3 as
- *   fallback (see [[architecture_rmv2_ai_provider]] memory).
+ *   OpenRouter → CHAT_MODEL (default Claude Haiku 4.5), the same path the
+ *   WallE chat route uses. Haiku is a reliable tool-caller; DeepSeek-chat was
+ *   swapped off these two surfaces after it intermittently skipped the
+ *   grounding tools and confabulated numbers (2026-06-01).
  */
 import "server-only";
 import { NextResponse } from "next/server";
@@ -41,6 +42,7 @@ import {
   buildLiveSnapshot,
   DASHBOARD_GROUNDING_RULES,
 } from "../../../lib/chat/dashboard-tools";
+import { CHAT_MODEL } from "../../../lib/ai-models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -127,7 +129,7 @@ export async function POST(req: Request) {
     );
   }
   const openrouter = createOpenRouter({ apiKey });
-  const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
+  const modelId = CHAT_MODEL;
   const model = openrouter(modelId);
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
   // v1-style compute-then-phrase: live dashboard snapshot injected as trusted
