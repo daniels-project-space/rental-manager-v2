@@ -344,7 +344,9 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
         "(NET £ of requests explicitly DECLINED) and missed revenue (NET £ theoretical idle-capacity opportunity " +
         "— gear sitting unused), open insurance claims, and capacity-gap / below-minimum / voluntary-deny alerts. " +
         "denied_revenue and missed_revenue are DISTINCT, NOT additive: one is turned-away demand, the other is idle " +
-        "capacity. All counts are the true dashboard figures.",
+        "capacity. NOTE: denied_revenue is a LIFETIME total — the denial history was backfilled on a single import " +
+        "date and the records carry no per-event date, so describe it as all-time declined demand, NEVER as 'this " +
+        "month' or 'last 30 days'. All other counts are the true dashboard figures.",
       inputSchema: z.object({}),
       execute: async () => {
         const [d, capacityGaps, belowMin, voluntaryDeny] = await Promise.all([

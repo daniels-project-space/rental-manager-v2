@@ -72,8 +72,20 @@ export const getDueReturns = query({
       active = active.filter((r) => r.account_slug === accountSlug);
     }
 
+    // A reservation stays status:"confirmed" until someone marks it returned,
+    // but old short rentals were physically returned long ago and just never
+    // reconciled (order_step is unreliable). Surfacing "50 overdue since March"
+    // is noise that buries the real action items, so bound the overdue list to
+    // a recent, actionable window — anything older is treated as stale/unreconciled.
+    const STALE_DAYS = 30;
+    const staleCutoff = new Date(Date.now() - STALE_DAYS * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
     const due = active.filter(
-      (r) => r.end_date !== undefined && r.end_date <= today
+      (r) =>
+        r.end_date !== undefined &&
+        r.end_date <= today &&
+        r.end_date >= staleCutoff,
     );
 
     const results = await Promise.all(
