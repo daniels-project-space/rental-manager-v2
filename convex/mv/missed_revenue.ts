@@ -175,21 +175,25 @@ export function computeMissedRevenue(args: {
         }
       }
 
-      // Iterate the full priced inventory so fully-idle items count too (not
-      // only those that rented in the window). gapTotal is the THEORETICAL
-      // idle-capacity opportunity (assumes 100% utilisation).
+      // Idle gap for gear that ACTUALLY rented in the window (demand-proven
+      // underutilisation). We deliberately do NOT sweep the whole
+      // pricing_catalog: it carries ~470 rows (bundles, kits, duplicate
+      // variants), so a full-inventory theoretical-max balloons to ~£290k of
+      // meaningless "idle" — gear with zero demand isn't missed revenue.
+      // Restricting to rented items keeps this an honest "in-demand kit that
+      // still sat idle" figure.
       const gapLosses: GapLossRow[] = [];
-      for (const p of pricing) {
-        const rentalDays = rentalDaysPerItem.get(p.item_name_canonical) ?? 0;
+      for (const [name, rentalDays] of rentalDaysPerItem.entries()) {
         const idleDays = Math.max(0, days - Math.min(rentalDays, days));
         if (idleDays <= 0) continue;
-        if (!p.daily_price_min) continue;
+        const dailyRate = priceByName.get(name);
+        if (!dailyRate) continue;
         gapLosses.push({
-          itemName: p.item_name_canonical,
+          itemName: name,
           rentalDays,
           idleDays,
           estimatedGapLoss: parseFloat(
-            (idleDays * p.daily_price_min * OWNER_SHARE).toFixed(2),
+            (idleDays * dailyRate * OWNER_SHARE).toFixed(2),
           ),
         });
       }
