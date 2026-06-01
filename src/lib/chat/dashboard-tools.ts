@@ -165,8 +165,15 @@ type DrawerData = {
 type RentalRow = {
   item_names_summary?: string;
   renter_name?: string;
+  account_slug?: string;
   start_date?: string;
   end_date?: string;
+  pickup_date?: string;
+  pickup_time?: string;
+  pickup_method?: string;
+  return_date?: string;
+  return_time?: string;
+  return_method?: string;
   net_gbp?: number;
 };
 
@@ -203,18 +210,44 @@ export async function buildLiveSnapshot(convex: ConvexHttpClient): Promise<strin
   const m = d.monthly ?? {};
   const e = d.earnings ?? {};
   const c = d.confirmed ?? {};
-  const fmt = (x: RentalRow) =>
-    `${x.item_names_summary ?? "item"} — ${x.renter_name ?? "renter"}, ${x.start_date}→${x.end_date}, £${x.net_gbp ?? "?"} net`;
+  const asOf = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const today = asOf.slice(0, 10);
+  // net_gbp is NET-to-owner (after Hygglo fees); the per-rental gross/listing
+  // price is not in this payload. Each line carries pickup AND return date+time+
+  // method so the model never guesses "out today / back today" from start/end.
+  const fmt = (x: RentalRow) => {
+    const pick = `${x.pickup_date ?? x.start_date ?? "?"}${x.pickup_time ? " " + x.pickup_time : ""}${x.pickup_method ? " (" + x.pickup_method + ")" : ""}`;
+    const ret = `${x.return_date ?? x.end_date ?? "?"}${x.return_time ? " " + x.return_time : ""}${x.return_method ? " (" + x.return_method + ")" : ""}`;
+    return `${x.item_names_summary ?? "item"} — ${x.renter_name ?? "renter"}${x.account_slug ? ` [${x.account_slug}]` : ""}: pickup ${pick} → return ${ret}, £${x.net_gbp ?? "?"} net`;
+  };
   // Lists from the SAME live payload as the counts → always consistent.
   const ongoing = (d.ongoing?.rentals ?? []).map(fmt);
   const upcoming = (d.upcoming?.rentals ?? []).map(fmt);
+  // Today's actual pickups/deliveries and returns, keyed off pickup_date /
+  // return_date (NOT order_step — every row reads "DELIVERED" so it's useless).
+  // A rental whose start_date == today is collected/delivered TODAY (it is NOT
+  // "already out" — check pickup_time vs the as-of time above).
+  const allActive = [...(d.ongoing?.rentals ?? []), ...(d.upcoming?.rentals ?? [])];
+  const ev = (x: RentalRow, t?: string, meth?: string) =>
+    `${x.item_names_summary ?? "item"} — ${x.renter_name ?? "renter"}${x.account_slug ? ` [${x.account_slug}]` : ""}, ${t ?? "time TBC"}${meth ? ` via ${meth}` : ""}, £${x.net_gbp ?? "?"} net`;
+  const pickupsToday = allActive
+    .filter((x) => (x.pickup_date ?? x.start_date) === today)
+    .map((x) => ev(x, x.pickup_time, x.pickup_method));
+  const returnsToday = allActive
+    .filter((x) => (x.return_date ?? x.end_date) === today)
+    .map((x) => ev(x, x.return_time, x.return_method));
   const conflicts = Array.isArray(d.conflicts) ? d.conflicts : [];
-  const asOf = new Date().toISOString().slice(0, 16).replace("T", " ");
   return [
     `LIVE DASHBOARD SNAPSHOT (the dashboard's own current figures as of ${asOf} UTC — quote these directly, never recompute or override them):`,
-    `- Active rentals: ${a.total ?? 0} total = ${a.ongoing_count ?? 0} out right now + ${a.upcoming_count ?? 0} upcoming.`,
-    ongoing.length ? `  Out right now: ${ongoing.join(" | ")}.` : `  Out right now: nothing.`,
+    `- Active rentals: ${a.total ?? 0} total = ${a.ongoing_count ?? 0} ongoing + ${a.upcoming_count ?? 0} upcoming.`,
+    ongoing.length ? `  Ongoing (out or going out within their window): ${ongoing.join(" | ")}.` : `  Ongoing: nothing.`,
     upcoming.length ? `  Upcoming: ${upcoming.join(" | ")}.` : `  Upcoming: none.`,
+    pickupsToday.length
+      ? `- PICKUPS / DELIVERIES TODAY (${today}) — items being collected/delivered today (NOT necessarily out yet; compare the pickup time to the as-of time): ${pickupsToday.join(" | ")}.`
+      : `- Pickups/deliveries today: none.`,
+    returnsToday.length
+      ? `- RETURNS TODAY (${today}) — items coming back today: ${returnsToday.join(" | ")}.`
+      : `- Returns today: none.`,
     `- Month-to-date confirmed revenue (NET take-home): £${c.month_revenue ?? m.confirmed_revenue ?? "?"}. Earned so far this month (pickup-gated): £${m.current_earnings ?? "?"}. Target £${m.target_gbp ?? "?"} (${m.pct_of_target ?? "?"}% of target).`,
     `- Earnings: today £${e.today ?? 0} net, this week £${e.week ?? 0} net.`,
     conflicts.length
