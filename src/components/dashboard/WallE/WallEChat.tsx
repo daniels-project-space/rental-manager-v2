@@ -183,8 +183,11 @@ export default function WallEChat({
           body: JSON.stringify({ userId: userIdRef.current }),
         });
         if (!res.ok) return;
-        const data: { line?: string | null } = await res.json();
-        const line = data?.line?.trim();
+        // Server returns { joke: string | null } (see /api/walle/joke). This
+        // previously read `data.line` — always undefined, so every generated
+        // joke was silently dropped and WallE never told one. (2026-06-01)
+        const data: { joke?: string | null } = await res.json();
+        const line = data?.joke?.trim();
         if (!line) return;
         setJokeMessages((prev) => [
           ...prev,
