@@ -14,10 +14,14 @@
  * tick after deploy and for non-standard `days` values.
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, query } from "../_generated/server";
-import { api } from "../_generated/api";
+import { internalAction, internalMutation, internalQuery, query } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
+import {
+  computeMissedAndDeniedByCategory,
+  fetchMissedDeniedData,
+} from "./missed_denied_compute";
 
 export const STANDARD_WINDOWS = [30, 90, 365] as const;
 
@@ -34,38 +38,77 @@ export const refresh = internalAction({
 });
 
 /**
- * Shared compute used by both the standalone refresh action and the master
- * refreshSlow orchestrator. Calls the live getMissedAndDeniedByCategory
- * handler for every (account, days) combo and stores the payload.
+ * The 9 (account, days) cells the dashboard exposes, in a stable order.
+ * accountSlug `null` ("all") = no account filter = dbcinema + leo combined.
+ */
+function standardCells(): Array<{ key: string; arg: string | null; days: number }> {
+  const slugs: Array<{ key: string; arg: string | null }> = [
+    { key: ACCOUNT_ALL, arg: null },
+    ...ACCOUNTS.map((s) => ({ key: s, arg: s })),
+  ];
+  const cells: Array<{ key: string; arg: string | null; days: number }> = [];
+  for (const { key, arg } of slugs) {
+    for (const days of STANDARD_WINDOWS) {
+      cells.push({ key, arg, days });
+    }
+  }
+  return cells;
+}
+
+/**
+ * Single-pass compute (2026-06-02): does the 4 reads ONCE via
+ * fetchMissedDeniedData, shares one `now` clock, then derives all 9
+ * (account, days) cells in memory. Actions can't touch ctx.db, so this
+ * internalQuery does the reads and refreshAll (action) just persists.
  *
- * 3 accounts × 3 windows = 9 calls per daily refresh. Each call still does
- * heavy live compute (~40MB of reservation reads) but it happens ONCE per
- * day instead of on every dashboard load.
+ * Replaces the old 9× ctx.runQuery(getMissedAndDeniedByCategory,{_bypassMv})
+ * which re-read items/pricing/obsolete(×2)/completed on every cell.
+ */
+export const computeAll = internalQuery({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<Array<{ account: string; days: number; payload: any }>> => {
+    const now = Date.now();
+    const data = await fetchMissedDeniedData(ctx, now);
+    return standardCells().map(({ key, arg, days }) => ({
+      account: key,
+      days,
+      payload: computeMissedAndDeniedByCategory(data, {
+        accountSlug: arg,
+        days,
+        now,
+      }),
+    }));
+  },
+});
+
+/**
+ * Shared compute used by both the standalone refresh action and the master
+ * refreshSlow orchestrator. Persists every (account, days) cell.
+ *
+ * 3 accounts × 3 windows = 9 rows per daily refresh. Single-pass refactor:
+ * the heavy reservation reads now happen ONCE inside computeAll (one
+ * internalQuery hop) instead of 9× the live handler.
  */
 export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
 ): Promise<{ ok: true; written: number; durationMs: number }> {
   const startedAt = Date.now();
-  const slugs: Array<{ key: string; arg: string | null }> = [
-    { key: ACCOUNT_ALL, arg: null },
-    ...ACCOUNTS.map((s) => ({ key: s, arg: s })),
-  ];
+  const cells = await ctx.runQuery(
+    internal.mv.missed_denied_by_category.computeAll,
+    {},
+  );
   let written = 0;
-  for (const { key, arg } of slugs) {
-    for (const days of STANDARD_WINDOWS) {
-      const payload = await ctx.runQuery(
-        api.revenue.getMissedAndDeniedByCategory,
-        { accountSlug: arg, days, _bypassMv: true },
-      );
-      await ctx.runMutation(anyApi.mv.missed_denied_by_category.write, {
-        account: key,
-        days,
-        payload,
-        generatedAt: startedAt,
-      });
-      written += 1;
-    }
+  for (const c of cells) {
+    await ctx.runMutation(anyApi.mv.missed_denied_by_category.write, {
+      account: c.account,
+      days: c.days,
+      payload: c.payload,
+      generatedAt: startedAt,
+    });
+    written += 1;
   }
   return { ok: true, written, durationMs: Date.now() - startedAt };
 }
@@ -119,3 +162,4 @@ export const get = query({
     return row;
   },
 });
+

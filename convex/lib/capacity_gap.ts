@@ -139,6 +139,30 @@ function sourceItemRefs(
 }
 
 /**
+ * Pure item lookup prebuilt once from a full `items` snapshot. Replaces the
+ * per-call `ctx.db.query("items").collect()` inside `nameFallbackRefs` and the
+ * per-ref `ctx.db.get(ref.item_id)` inside `diagnoseDenialCapacity`.
+ *
+ *  - `byId`            : item_id (string) → item doc, for O(1) qty/marketing lookups.
+ *  - `canonicalsDescLen`: the same `{ item_id, canonical }[]` that
+ *    `nameFallbackRefs` precomputed, sorted longest-canonical-first to avoid
+ *    prefix collisions (e.g. "Sony A7" before "Sony A7 III").
+ */
+export type ItemLookup = {
+  byId: Map<string, Doc<"items">>;
+  canonicalsDescLen: Array<{ item_id: Id<"items">; canonical: string }>;
+};
+
+export function buildItemLookup(allItems: Array<Doc<"items">>): ItemLookup {
+  const byId = new Map<string, Doc<"items">>();
+  for (const it of allItems) byId.set(String(it._id), it);
+  const canonicalsDescLen = allItems
+    .map((it) => ({ item_id: it._id, canonical: it.name_canonical }))
+    .sort((a, b) => b.canonical.length - a.canonical.length);
+  return { byId, canonicalsDescLen };
+}
+
+/**
  * Phase 7.11b — name-based fallback for reservations whose `expanded_items` /
  * `resolved_items` were never populated (53 of 130 owner_denied rentals in
  * /tmp/gap_diagnostic). Substring matches the raw `items[].item_name` against
@@ -149,20 +173,21 @@ function sourceItemRefs(
  * (e.g. "Sony A7" matching before "Sony A7 III"). Only returns the first
  * canonical hit per raw line — kits aren't reconstructed here, but a single
  * recognizable item is enough to classify the reservation.
+ *
+ * Pure variant: takes the prebuilt longest-first canonicals (from
+ * `buildItemLookup`) instead of doing a fresh `items.collect()`. Logic is
+ * otherwise byte-identical to the original `nameFallbackRefs`.
  */
-async function nameFallbackRefs(
-  ctx: QueryCtx,
+export function nameFallbackRefsPure(
   r: Doc<"reservations">,
-): Promise<Array<{ item_id: Id<"items">; canonical: string }>> {
+  canonicalsDescLen: Array<{ item_id: Id<"items">; canonical: string }>,
+): Array<{ item_id: Id<"items">; canonical: string }> {
   const raws = (r.items ?? [])
     .map((i: any) => (typeof i?.item_name === "string" ? i.item_name : ""))
     .filter((s: string) => s.length > 0);
   if (raws.length === 0) return [];
 
-  const allItems = await ctx.db.query("items").collect();
-  const canonicals = allItems
-    .map((it) => ({ item_id: it._id, canonical: it.name_canonical }))
-    .sort((a, b) => b.canonical.length - a.canonical.length);
+  const canonicals = canonicalsDescLen;
 
   const out: Array<{ item_id: Id<"items">; canonical: string }> = [];
   const seen = new Set<string>();
@@ -265,18 +290,26 @@ function estimateLossGbp(
 export const PARTIAL_CAPACITY_RATIO = 1.0; // committed/total threshold (1.0 = fully booked)
 export const HIGH_UTILISATION_RATIO = 0.5; // committed/total ≥ 50% AND requested > free ⇒ capacity
 
-export async function diagnoseDenialCapacity(
-  ctx: QueryCtx,
+/**
+ * Pure core of `diagnoseDenialCapacity`. Body copied VERBATIM from the original
+ * wrapper, with the only changes being the two DB reads removed:
+ *   - `await ctx.db.get(ref.item_id)` → `itemLookup.byId.get(String(ref.item_id))`
+ *   - `await nameFallbackRefs(ctx, reservation)` → `nameFallbackRefsPure(reservation, itemLookup.canonicalsDescLen)`
+ * No `ctx`, no `await` on DB. Callers prebuild `itemLookup` once via
+ * `buildItemLookup(allItems)` and reuse it across every reservation.
+ */
+export function diagnoseDenialCapacityPure(
   reservation: Doc<"reservations">,
   commitMap: CommitmentMap,
   priceByName: Map<string, number>,
-): Promise<DenialGapDiagnosis> {
+  itemLookup: ItemLookup,
+): DenialGapDiagnosis {
   let refs = sourceItemRefs(reservation);
   const estimated_loss_gbp = estimateLossGbp(reservation, priceByName);
 
   // Phase 7.11b — Cycle 4: name-based fallback when items weren't resolved.
   if (refs.length === 0) {
-    refs = await nameFallbackRefs(ctx, reservation);
+    refs = nameFallbackRefsPure(reservation, itemLookup.canonicalsDescLen);
   }
 
   if (refs.length === 0) {
@@ -311,7 +344,7 @@ export async function diagnoseDenialCapacity(
   const per_item_diagnosis: ItemDiagnosis[] = [];
 
   for (const ref of refs) {
-    const item = (await ctx.db.get(ref.item_id)) as Doc<"items"> | null;
+    const item = (itemLookup.byId.get(String(ref.item_id)) ?? null) as Doc<"items"> | null;
     if (!item) {
       // Unknown item — skip (rare; means item was deleted post-denial).
       continue;
@@ -417,6 +450,29 @@ export async function diagnoseDenialCapacity(
     estimated_loss_gbp,
     per_item_diagnosis,
   };
+}
+
+/**
+ * Thin async wrapper retained for the two callers in revenue.ts (~1650, ~1988)
+ * that still pass a `ctx`. Fetches the full `items` table ONCE per call, builds
+ * the lookup, then delegates to the pure core. Single-call sites are unchanged;
+ * the per-ref `ctx.db.get` and per-call `items.collect()` inside
+ * `nameFallbackRefs` are now collapsed into one `items.collect()`.
+ */
+export async function diagnoseDenialCapacity(
+  ctx: QueryCtx,
+  reservation: Doc<"reservations">,
+  commitMap: CommitmentMap,
+  priceByName: Map<string, number>,
+): Promise<DenialGapDiagnosis> {
+  const allItems = await ctx.db.query("items").collect();
+  const itemLookup = buildItemLookup(allItems);
+  return diagnoseDenialCapacityPure(
+    reservation,
+    commitMap,
+    priceByName,
+    itemLookup,
+  );
 }
 
 /**

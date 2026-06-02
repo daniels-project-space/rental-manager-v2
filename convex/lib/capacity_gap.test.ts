@@ -33,26 +33,40 @@ function res(
 }
 
 function stubCtxWith(items: Record<string, Partial<Doc<"items">>>) {
+  // Materialize the same item docs the `get` stub returns, keyed by id, so the
+  // post-refactor `diagnoseDenialCapacity` wrapper (which now does a single
+  // `ctx.db.query("items").collect()` + buildItemLookup instead of per-ref
+  // `ctx.db.get`) sees identical data. Behavior is unchanged; only the access
+  // pattern moved from N gets to one collect.
+  const materialize = (id: Id<"items">) => {
+    const it = items[String(id)];
+    if (!it) return null;
+    return {
+      _id: id,
+      _creationTime: 0,
+      name_canonical: it.name_canonical ?? "Unknown",
+      name_input: "",
+      slug: "x",
+      kind: "camera",
+      qty: it.qty ?? 1,
+      unit_kind: "unit",
+      is_marketing_only: it.is_marketing_only ?? false,
+      status: "active",
+      created_at: 0,
+      updated_at: 0,
+    };
+  };
+  const allItems = Object.keys(items)
+    .map((k) => materialize(k as unknown as Id<"items">))
+    .filter((x): x is NonNullable<typeof x> => x !== null);
   return {
     db: {
-      get: async (id: Id<"items">) => {
-        const it = items[String(id)];
-        if (!it) return null;
-        return {
-          _id: id,
-          _creationTime: 0,
-          name_canonical: it.name_canonical ?? "Unknown",
-          name_input: "",
-          slug: "x",
-          kind: "camera",
-          qty: it.qty ?? 1,
-          unit_kind: "unit",
-          is_marketing_only: it.is_marketing_only ?? false,
-          status: "active",
-          created_at: 0,
-          updated_at: 0,
-        };
-      },
+      get: async (id: Id<"items">) => materialize(id),
+      query: (_table: string) => ({
+        // Only "items" is queried by diagnoseDenialCapacity; return all.
+        collect: async () => allItems,
+        withIndex: () => ({ collect: async () => allItems }),
+      }),
     },
   } as any;
 }
