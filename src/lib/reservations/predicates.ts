@@ -130,21 +130,25 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
  * effective return has passed disappear from the active widget here even if the
  * owner has not yet marked them RETURNED on Hygglo — that's deliberate.
  *
- * Excludes pending-verification rows (order_step==="VERIFIED" — paid but still
- * in ID/doc verification). Those belong in the "pending" bucket only; this keeps
- * the Active tab and the calendar (which now also exclude them) showing the SAME
- * universe (2026-06-02 consistency fix).
+ * NOTE: this intentionally does NOT exclude order_step==="VERIFIED". A genuine
+ * "pending-verification" item is status!=="confirmed" (it lives at
+ * status="pending_review") and is therefore already excluded by
+ * isConfirmedWithDates. A confirmed booking, however, passes transiently through
+ * order_step VERIFIED / BOOKED_AFTER_VERIFIED between payment and handover —
+ * adding !isPendingVerification here deleted those legitimate upcoming/ongoing
+ * rentals from Active AND the calendar (regression 2026-06-02). order_step is
+ * the NEXT-action step, not a "this row is fake" flag, so status is the correct
+ * gate. See convex/order_step_semantics.ts.
  */
 export function isOngoing(r: ReservationRow, today: string): boolean {
   return isConfirmedWithDates(r)
-    && !isPendingVerification(r)
     && displayPickupDate(r) <= today
     && displayReturnDate(r) >= today;
 }
 
 /** Confirmed AND effective pickup is in the future. */
 export function isUpcoming(r: ReservationRow, today: string): boolean {
-  return isConfirmedWithDates(r) && !isPendingVerification(r) && displayPickupDate(r) > today;
+  return isConfirmedWithDates(r) && displayPickupDate(r) > today;
 }
 
 /**

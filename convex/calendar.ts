@@ -3,7 +3,6 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {
   isConfirmedWithDates,
-  isPendingVerification,
   dedupByLogicalRental,
   type ReservationRow,
 } from "./lib/reservations/predicates";
@@ -222,7 +221,7 @@ export const getCalendarStrip = query({
     // payment), obsolete, cancelled, declined.
     reservations = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter(
-        (r) => isConfirmedWithDates(r) && !isPendingVerification(r),
+        (r) => isConfirmedWithDates(r),
       ),
     ) as typeof reservations;
 
@@ -717,7 +716,7 @@ export const getWeeklyCalendar = query({
     // dates, deduped per logical rental.
     reservations = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter(
-        (r) => isConfirmedWithDates(r) && !isPendingVerification(r),
+        (r) => isConfirmedWithDates(r),
       ),
     ) as typeof reservations;
 
@@ -940,7 +939,7 @@ export const getGanttWeek = query({
     // dates, deduped per logical rental.
     reservations = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter(
-        (r) => isConfirmedWithDates(r) && !isPendingVerification(r),
+        (r) => isConfirmedWithDates(r),
       ),
     ) as typeof reservations;
 

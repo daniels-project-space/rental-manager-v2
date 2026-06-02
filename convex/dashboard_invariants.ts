@@ -99,7 +99,6 @@ export const verifyConsistency = query({
     const monthOngoing = monthBooked.filter(
       (r) =>
         isConfirmedWithDates(r as any) &&
-        !isPendingVerification(r as any) &&
         (r.start_date as string) <= today &&
         (r.end_date as string) >= today,
     );

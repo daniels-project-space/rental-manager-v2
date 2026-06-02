@@ -76,18 +76,28 @@ describe("isOngoing / isUpcoming", () => {
     assert.equal(isUpcoming(row({ start_date: "2026-05-20" }), TODAY), true);
     assert.equal(isUpcoming(row({ start_date: "2026-05-14" }), TODAY), false);
   });
-  it("excludes pending-verification (order_step=VERIFIED) from BOTH ongoing and upcoming", () => {
-    // 2026-06-02 consistency fix: a confirmed+dated row still in ID/doc
-    // verification must not appear in the Active tab (nor the calendar) — it
-    // belongs only in the pending bucket. Same universe on both surfaces.
+  it("does NOT use order_step to gate ongoing/upcoming — confirmed rows show regardless of step", () => {
+    // 2026-06-02 regression fix: the previous build added !isPendingVerification
+    // to isOngoing/isUpcoming, which deleted legitimate CONFIRMED upcoming/ongoing
+    // rentals that transiently sit at order_step VERIFIED / BOOKED_AFTER_VERIFIED
+    // between payment and handover. A genuine pending-verification item is
+    // status="pending_review" (NOT "confirmed"), so it is already excluded by
+    // isConfirmedWithDates — order_step must not be a second gate here.
+    // Real data (hearty-oyster-600, 2026-06-02): every order_step=VERIFIED row is
+    // status="pending_review"; confirmed bookings live at DELIVERED/RETURNED and
+    // pass through VERIFIED only transiently. So a confirmed VERIFIED row IS active.
     const verifiedOngoingShape = row({ start_date: "2026-05-14", end_date: "2026-05-22", order_step: "VERIFIED" });
     const verifiedUpcomingShape = row({ start_date: "2026-05-20", end_date: "2026-05-22", order_step: "VERIFIED" });
-    assert.equal(isOngoing(verifiedOngoingShape, TODAY), false);
-    assert.equal(isUpcoming(verifiedUpcomingShape, TODAY), false);
-    // Sanity: the SAME rows without the VERIFIED step still classify normally.
+    assert.equal(isOngoing(verifiedOngoingShape, TODAY), true);
+    assert.equal(isUpcoming(verifiedUpcomingShape, TODAY), true);
+    // Other steps classify identically (step is irrelevant to active membership).
     assert.equal(isOngoing(row({ start_date: "2026-05-14", end_date: "2026-05-22", order_step: "DELIVERED" }), TODAY), true);
     assert.equal(isUpcoming(row({ start_date: "2026-05-20", end_date: "2026-05-22", order_step: "BOOKED_AFTER_VERIFIED" }), TODAY), true);
-    // And it IS still pending.
+    // A TRUE pending-verification row (status=pending_review) is still hidden from
+    // active by isConfirmedWithDates, and is still flagged pending.
+    const truePending = row({ status: "pending_review", start_date: "2026-05-20", end_date: "2026-05-22", order_step: "VERIFIED" });
+    assert.equal(isUpcoming(truePending, TODAY), false);
+    assert.equal(isOngoing(row({ status: "pending_review", start_date: "2026-05-14", end_date: "2026-05-22", order_step: "VERIFIED" }), TODAY), false);
     assert.equal(isPendingVerification(verifiedOngoingShape), true);
   });
   it("honors negotiated return_date (extension) in the ongoing window", () => {
