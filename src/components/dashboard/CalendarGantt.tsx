@@ -244,9 +244,10 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
   });
 }
 
-// Overlapping item thumbnails for a reservation row (mirrors the small calendar).
+// Overlapping item thumbnails for a reservation row (mirrors the small
+// calendar). Large by default and zoom big on hover via the shared .zoom-img.
 function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
-  const shown = items.slice(0, 4);
+  const shown = items.slice(0, 5);
   const extra = items.length - shown.length;
   return (
     <div className="flex items-center">
@@ -258,21 +259,21 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             src={it.image}
             alt=""
             title={it.name}
-            className="w-6 h-6 rounded object-cover first:ml-0 -ml-1.5"
-            style={{ border: `1.5px solid ${ring}`, background: "#0b0f1c" }}
+            className="zoom-img w-10 h-10 rounded-md object-cover first:ml-0 -ml-2"
+            style={{ border: `2px solid ${ring}`, background: "#0b0f1c" }}
           />
         ) : (
           <div
             key={i}
             title={it.name}
-            className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold first:ml-0 -ml-1.5"
-            style={{ border: `1.5px solid ${ring}`, background: `${ring}33`, color: ring }}
+            className="w-10 h-10 rounded-md flex items-center justify-center text-xs font-bold first:ml-0 -ml-2 transition-transform hover:scale-150 hover:z-50 relative"
+            style={{ border: `2px solid ${ring}`, background: `${ring}33`, color: ring }}
           >
             {it.name.charAt(0).toUpperCase()}
           </div>
         ),
       )}
-      {extra > 0 && <span className="ml-1 text-[10px] text-gray-400 flex-shrink-0">+{extra}</span>}
+      {extra > 0 && <span className="ml-1.5 text-[11px] text-gray-400 flex-shrink-0">+{extra}</span>}
     </div>
   );
 }
@@ -280,13 +281,14 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
 interface BarProps {
   row: ResRow;
   height: number;
+  isNext: boolean;     // the immediate next upcoming rental → always pulses
   onSelect: () => void;
   liveProgress: number | null;
 }
 
 // One time-accurate bar per reservation. Left stripe = account color, fill =
 // status, glow + dot = ongoing. The bar physically ends at the return time.
-function ReservationBar({ row, height, onSelect, liveProgress }: BarProps) {
+function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProps) {
   const { block, acc, ongoing } = row;
   const ss = statusStyle(block.order_step);
   const showProgress = block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
@@ -306,16 +308,16 @@ function ReservationBar({ row, height, onSelect, liveProgress }: BarProps) {
 
   return (
     <div
-      className="absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125"
+      className={`absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : ""}`}
       style={{
         left: row.left,
         width: row.width,
-        top: 4,
+        top: (RES_ROW_HEIGHT - height) / 2,
         height,
         background: ss.bg,
-        border: `1px solid ${ss.border}`,
+        border: `1px solid ${isNext ? "#fbbf24" : ss.border}`,
         borderLeft: `4px solid ${acc}`,
-        boxShadow: ongoing ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
+        boxShadow: ongoing && !isNext ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
       }}
       title={tooltip}
       onClick={onSelect}
@@ -431,7 +433,8 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column (fallback before width is measured)
 const LABEL_WIDTH = 220; // px for left "renter + thumbnails" column
-const RES_ROW_HEIGHT = 50; // one reservation per row (renter + item thumbnails)
+const RES_ROW_HEIGHT = 64; // one reservation per row (renter + large thumbnails)
+const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? mondayOfThisWeek());
@@ -543,6 +546,16 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   // Booking-centric rows: one per reservation, all its items grouped together.
   const resRows = data ? groupByReservation(data.items, weekStart, colWidth, today) : [];
+
+  // The immediate next upcoming rental (soonest pickup still in the future) —
+  // its bar pulses so the next thing to happen always draws the eye.
+  let nextUpcomingId: string | null = null;
+  let bestStartMs = Infinity;
+  for (const row of resRows) {
+    if (!row.block.start_date) continue;
+    const startMs = isoToDate(row.block.start_date).getTime() + timeFrac(row.block.pickup_time, 0) * DAY_MS;
+    if (startMs > nowMs && startMs < bestStartMs) { bestStartMs = startMs; nextUpcomingId = row.reservationId; }
+  }
 
   // Red "now" marker — x within the visible week, only when today is in range.
   const nowDays = (nowMs - isoToDate(weekStart).getTime()) / DAY_MS;
@@ -751,7 +764,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                         {/* The reservation bar — time-accurate */}
                         <ReservationBar
                           row={row}
-                          height={RES_ROW_HEIGHT - 8}
+                          height={BAR_HEIGHT}
+                          isNext={row.reservationId === nextUpcomingId}
                           onSelect={() => setSelectedBlock({ block: row.block, items: row.items, accent: row.acc })}
                           liveProgress={liveProgress[row.reservationId] ?? null}
                         />

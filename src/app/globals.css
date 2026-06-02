@@ -292,3 +292,17 @@
       0 0 32px rgba(59,130,246,0.55);
   }
 }
+
+/* Always-on pulse for the immediate next upcoming rental in the Gantt — an
+ * amber breathing glow so the soonest booking draws the eye. */
+@keyframes gantt-next-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(251,191,36,0.0), 0 0 6px rgba(251,191,36,0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(251,191,36,0.30), 0 0 16px rgba(251,191,36,0.95);
+  }
+}
+.gantt-next-pulse {
+  animation: gantt-next-pulse 1.5s ease-in-out infinite;
+}
