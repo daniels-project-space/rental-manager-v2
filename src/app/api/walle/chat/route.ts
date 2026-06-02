@@ -21,15 +21,18 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
-import { streamText, stepCountIs, type ModelMessage } from "ai";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type ModelMessage,
+} from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
+import { buildWalleChatAgent } from "../../../../mastra/agents/walle_chat_agent";
 import {
-  ANALYTICAL_INTENT,
   COMPAT_INTENT,
-  INVENTORY_INTENT,
   buildDashboardTools,
   buildInventoryIndex,
   buildLiveSnapshot,
@@ -143,14 +146,14 @@ export async function POST(req: Request) {
   // Last user content (drives intent routing + persistence).
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const lastUserContent = lastUser ? extractText(lastUser) : "";
-  // Force a grounded tool call when the question needs data the snapshot/index
-  // don't fully carry: analytical drill-down, item existence/specs, or a
-  // compatibility/optics question (see the *_INTENT regexes).
+  // Compatibility / optics turns route to Sonnet (Haiku inverted the APS-C vs
+  // full-frame fact from memory). Grounding itself is carried by the always-
+  // injected inventory index + the grounding rules, not a forced tool call:
+  // Mastra's agent loop has no per-step prepareStep, so toolChoice:"required"
+  // would force a tool on EVERY step and never emit final text. The model
+  // elects the tools on its own (reliably, on Haiku/Sonnet) for the turns that
+  // need them.
   const isCompat = COMPAT_INTENT.test(lastUserContent);
-  const needsForcedTool =
-    ANALYTICAL_INTENT.test(lastUserContent) ||
-    INVENTORY_INTENT.test(lastUserContent) ||
-    isCompat;
 
   const openrouter = createOpenRouter({ apiKey });
   // Compatibility / optics turns route to Sonnet — Haiku inverted the APS-C vs
@@ -195,30 +198,58 @@ export async function POST(req: Request) {
     input: modelMessages,
   });
 
-  const result = streamText({
-    model,
-    system,
-    messages: modelMessages,
-    tools,
-    // Ample ceiling for a tool call + a conversational summary. (Kept high
-    // from the DeepSeek era, when hidden reasoning tokens ate this budget and
-    // <1500 caused silent no-answer finishes; harmless headroom for Haiku.)
-    maxOutputTokens: 1800,
-    // Allow up to 4 hops — one tool call + one summary is the common case,
-    // a follow-up tool call needs the extra step.
-    stopWhen: stepCountIs(4),
-    // For analytical questions, force a tool call on the FIRST step so the
-    // model grounds its answer instead of confabulating per-item earnings /
-    // utilization / buy advice (none of which live in the snapshot). Later
-    // steps revert to auto so the model can summarise the tool results.
-    prepareStep: needsForcedTool
-      ? ({ stepNumber }) =>
-          stepNumber === 0 ? { toolChoice: "required" } : {}
-      : undefined,
-    onFinish: async ({ text, usage }) => {
+  // Build WallE as a first-class Mastra agent (shared AI SDK tools + the
+  // per-request grounded instructions + the Haiku/Sonnet model), then stream it.
+  const agent = buildWalleChatAgent({ instructions: system, model, tools });
+
+  let result: Awaited<ReturnType<typeof agent.stream>>;
+  try {
+    result = await agent.stream(modelMessages, {
+      // One tool hop + a summary is the common case; a follow-up tool call
+      // needs the extra steps.
+      maxSteps: 4,
+      // Ample ceiling for a tool call + a conversational summary (headroom
+      // carried over from the DeepSeek era; harmless for Haiku/Sonnet).
+      modelSettings: { maxOutputTokens: 1800 },
+      // "auto", not "required": Mastra has no per-step prepareStep, so
+      // "required" forces a tool on every step and the agent never produces a
+      // final text answer. Grounding is carried by the injected inventory index
+      // + grounding rules; the model elects the drill-down tools itself.
+      toolChoice: "auto",
+    });
+  } catch (err) {
+    console.error(
+      "[walle/chat] agent.stream failed:",
+      err instanceof Error ? err.stack : err,
+    );
+    return NextResponse.json(
+      { ok: false, error: "agent_stream_failed" },
+      { status: 500 },
+    );
+  }
+
+  // Bridge Mastra's (v5-internal) textStream into an AI SDK v6 UI-message
+  // stream so the `useChat` widget renders it unchanged. Tool calls run inside
+  // the agent; the widget only shows the assistant text.
+  let assistantText = "";
+  const uiStream = createUIMessageStream({
+    execute: async ({ writer }) => {
+      writer.write({ type: "text-start", id: "0" });
+      for await (const delta of result.textStream) {
+        assistantText += delta;
+        writer.write({ type: "text-delta", id: "0", delta });
+      }
+      writer.write({ type: "text-end", id: "0" });
+    },
+    onError: (err) => {
+      console.error("[walle/chat] stream error:", err);
+      return "WallE hit a snag mid-reply.";
+    },
+    onFinish: async () => {
       try {
+        const usage = await result.usage;
         generation.end({
-          output: text,
+          output: assistantText,
           usage: {
             promptTokens: usage?.inputTokens,
             completionTokens: usage?.outputTokens,
@@ -235,7 +266,7 @@ export async function POST(req: Request) {
           thread_id: "walle",
           session_id: sessionId,
           user_content: lastUserContent,
-          assistant_content: text,
+          assistant_content: assistantText,
         });
       } catch {
         // best-effort persistence
@@ -244,7 +275,7 @@ export async function POST(req: Request) {
   });
 
   // AI SDK v6 streams via Server-Sent Events.
-  return result.toUIMessageStreamResponse();
+  return createUIMessageStreamResponse({ stream: uiStream });
 }
 
 export async function GET() {
