@@ -34,7 +34,11 @@ type ChipData = {
   status: string | undefined;
   orderStep?: string | null;
   startDate?: string | null;
+  /** Effective (negotiated) pickup date; falls back to startDate server-side. */
+  pickupDate?: string | null;
   endDate?: string | null;
+  /** Effective (negotiated) return date; falls back to endDate server-side. */
+  returnDate?: string | null;
   pickupTime: string | null;
   returnTime: string | null;
   pickupMethod: string | null;
@@ -42,6 +46,8 @@ type ChipData = {
   grossPaidGbp?: number | null;
   notes?: string | null;
   imageUrl: string | null;
+  /** Alt text from the SAME item that provided imageUrl (server-side). */
+  imageAlt?: string | null;
 };
 
 type HoldData = {
@@ -340,7 +346,7 @@ function ProgressTimeline({
           <span className="text-[#9ca3af]">{dayShort(chip.startDate)}</span>
         </span>
         <span className="text-violet-300/90 flex items-center gap-1">
-          <span className="text-[#9ca3af]">{dayShort(chip.endDate)}</span>
+          <span className="text-[#9ca3af]">{dayShort(chip.returnDate ?? chip.endDate)}</span>
           <span className="text-[#6b6f80]">·</span>
           <span className="font-mono text-violet-200">{fmt12Short(chip.returnTime)}</span>
           <span className="text-violet-400">◀</span>
@@ -478,10 +484,18 @@ function BookingCard({ chip }: { chip: ChipData }) {
         : { background: "rgba(107,114,128,0.16)", color: "#9ca3af", border: "1px solid rgba(107,114,128,0.3)" };
 
   const items = chip.items ?? [];
+  // Effective (negotiated) pickup date — falls back to startDate. Used for
+  // progress + the pickup label so they match the chip's calendar placement
+  // (Phase 2/3: negotiated pickup_date moves the rental to that day).
+  const effPickupDate = chip.pickupDate ?? chip.startDate ?? null;
+  // Effective (negotiated) return date — falls back to endDate. Anchors the
+  // return label + progress so the AWAY card doesn't ghost the return onto the
+  // Hygglo end_date when a later negotiated return_date exists.
+  const effReturnDate = chip.returnDate ?? chip.endDate ?? null;
   const range = fmtRange(chip.startDate, chip.endDate);
-  const pickupLabel = fmtTimeWithDate(chip.pickupTime, chip.startDate ?? null);
-  const returnLabel = fmtTimeWithDate(chip.returnTime, chip.endDate ?? null);
-  const progress = computeProgress(chip.startDate, chip.endDate, chip.pickupTime, chip.returnTime);
+  const pickupLabel = fmtTimeWithDate(chip.pickupTime, effPickupDate);
+  const returnLabel = fmtTimeWithDate(chip.returnTime, effReturnDate);
+  const progress = computeProgress(effPickupDate, effReturnDate, chip.pickupTime, chip.returnTime);
   const noteLines = splitNotes(chip.notes);
 
   // (Method pills rendered inline as <MethodPill /> per direction below.)
@@ -510,7 +524,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={chip.imageUrl}
-          alt={items[0]?.name ?? ""}
+          alt={chip.imageAlt ?? items[0]?.name ?? ""}
           className="w-14 h-14 rounded-lg object-cover flex-shrink-0"
           loading="lazy"
           style={{ background: "rgba(255,255,255,0.06)" }}
@@ -663,6 +677,27 @@ function DayCard({
   if (away.length > 0) dots.push("#3b82f6");
   if (day.holds.length > 0) dots.push("#f59e0b");
 
+  // Ongoing (away) rentals get a thin live progress bar on the collapsed tile so
+  // active rentals are visible at a glance — not just a static blue dot. Pick the
+  // away chip returning soonest, using its effective (negotiated) dates.
+  const awayProgress = (() => {
+    if (away.length === 0) return null;
+    let best: { pct: number; status: "upcoming" | "active" | "completed" } | null = null;
+    let bestEndMs = Infinity;
+    for (const c of away) {
+      const effPickupDate = c.pickupDate ?? c.startDate ?? null;
+      const effReturnDate = c.returnDate ?? c.endDate ?? null;
+      if (!effReturnDate) continue;
+      const endMs = new Date(effReturnDate + "T23:59:59").getTime();
+      if (endMs < bestEndMs) {
+        bestEndMs = endMs;
+        const p = computeProgress(effPickupDate, effReturnDate, c.pickupTime, c.returnTime);
+        best = { pct: p.pct, status: p.status };
+      }
+    }
+    return best;
+  })();
+
   return (
     <button
       onClick={onClick}
@@ -720,6 +755,40 @@ function DayCard({
               style={{ background: c }}
             />
           ))}
+        </div>
+      )}
+
+      {/* Ongoing-rental progress affordance — thin live bar for away chips so an
+          active rental reads as progress on the strip, not just a blue dot.
+          Reuses the active fill gradient + shimmer from ProgressTimeline. */}
+      {awayProgress && awayProgress.status === "active" && (
+        <div
+          className="relative h-1 w-full rounded-full mt-2 overflow-hidden"
+          style={{
+            background: "rgba(255,255,255,0.06)",
+            boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)",
+          }}
+        >
+          <div
+            className="absolute inset-y-0 left-0 rounded-full"
+            style={{
+              width: `${awayProgress.pct}%`,
+              background: "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)",
+              boxShadow: "0 0 6px rgba(59,130,246,0.5)",
+              transition: "width 800ms cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+          />
+          <div
+            className="absolute inset-y-0 left-0 rounded-full pointer-events-none"
+            style={{
+              width: `${awayProgress.pct}%`,
+              background:
+                "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 50%, transparent 100%)",
+              backgroundSize: "200% 100%",
+              animation: "rental-shimmer 2.2s linear infinite",
+              mixBlendMode: "overlay",
+            }}
+          />
         </div>
       )}
 

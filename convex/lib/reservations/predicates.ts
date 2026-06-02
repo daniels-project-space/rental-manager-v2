@@ -37,6 +37,7 @@ export type ReservationRow = {
   start_date?: string;
   end_date?: string;
   pickup_date?: string;
+  return_date?: string;
   hygglo_order_id?: string;
   v1_rental_id?: string;
   account_slug?: string;
@@ -57,6 +58,26 @@ export type ReservationRow = {
  */
 export function effectiveDate(r: { pickup_date?: string; start_date?: string }): string | undefined {
   return r.pickup_date ?? r.start_date;
+}
+
+/**
+ * Effective pickup date for ACTIVE-state placement: prefer the negotiated
+ * `pickup_date` (either earlier OR later than the Hygglo start_date), else
+ * `start_date`. Mirrors convex/lib/effectiveDates.ts:displayPickupDate — kept
+ * INLINE here (not imported) so this file stays cross-layer-mirrorable to
+ * src/lib/reservations/predicates.ts with zero Convex dependency.
+ */
+export function displayPickupDate(r: { pickup_date?: string; start_date?: string }): string {
+  return (r.pickup_date ?? r.start_date) ?? "";
+}
+
+/**
+ * Effective return date: prefer AI-extracted `return_date` (extension agreed in
+ * chat) over the raw Hygglo `end_date`. Mirrors
+ * convex/lib/effectiveDates.ts:displayReturnDate (inlined — see above).
+ */
+export function displayReturnDate(r: { return_date?: string; end_date?: string }): string {
+  return (r.return_date ?? r.end_date) ?? "";
 }
 
 /** Net amount the owner keeps (after Hygglo's platform fee). */
@@ -103,19 +124,21 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
 }
 
 /**
- * Confirmed AND today falls within [start_date, end_date]. Rentals whose
- * end_date has passed disappear from the active widget here even if the
+ * Confirmed AND today falls within [effective pickup, effective return].
+ * Honors the negotiated pickup_date / return_date (display dates) so an early/
+ * late handover or chat-agreed extension moves the active window. Rentals whose
+ * effective return has passed disappear from the active widget here even if the
  * owner has not yet marked them RETURNED on Hygglo — that's deliberate.
  */
 export function isOngoing(r: ReservationRow, today: string): boolean {
   return isConfirmedWithDates(r)
-    && (r.start_date as string) <= today
-    && (r.end_date as string) >= today;
+    && displayPickupDate(r) <= today
+    && displayReturnDate(r) >= today;
 }
 
-/** Confirmed AND start is in the future. */
+/** Confirmed AND effective pickup is in the future. */
 export function isUpcoming(r: ReservationRow, today: string): boolean {
-  return isConfirmedWithDates(r) && (r.start_date as string) > today;
+  return isConfirmedWithDates(r) && displayPickupDate(r) > today;
 }
 
 /**

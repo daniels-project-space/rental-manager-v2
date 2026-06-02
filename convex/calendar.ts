@@ -11,7 +11,13 @@ import {
   // bank-aware helpers below also rely on this type
   // (no extra imports needed — Phase 13.2)
   buildSharedImageBlacklist,
+  pickRepresentativeItem,
+  normaliseItemName,
 } from "./lib/imageResolution";
+import {
+  displayPickupDate,
+  displayReturnDate,
+} from "./lib/effectiveDates";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,14 +32,14 @@ function parseTime(date: string, time: string): number {
  * Effective return date for a reservation: prefer AI-extracted `return_date`
  * (e.g. extension agreed in chat) over the raw Hygglo `end_date`. end_date
  * remains canonical for invoicing/utilization and is never mutated; this
- * helper is for calendar bucketing/display only. Mirrors the pattern at
- * dashboard.ts:1669 / 899 / 950.
+ * helper is for calendar bucketing/display only.
+ *
+ * Consolidated into convex/lib/effectiveDates.ts (`displayReturnDate`); this is
+ * a thin local alias kept for the existing call sites. Behavior is identical:
+ * displayReturnDate returns "" (falsy) where this used to return undefined, and
+ * every call site treats both the same (`=== date` and `if (!ret)`).
  */
-function effectiveReturnDate(
-  r: { return_date?: string | null; end_date?: string },
-): string | undefined {
-  return (r.return_date ?? r.end_date) ?? undefined;
-}
+const effectiveReturnDate = displayReturnDate;
 
 /**
  * 2-tier item name resolver.
@@ -97,15 +103,27 @@ function productIdForItemInReservation(
   return hi[idx]?.product_id ?? null;
 }
 
-// Exact-string match against the raw Hygglo title for fallback paths
-// (resolved_items hasn't run yet, or item-name-keyed caller).
+// Match against the Hygglo title for fallback paths (resolved_items hasn't run
+// yet, or item-name-keyed caller). Tries exact first, then a normalised match
+// (canonical/alias drift) so the tier-0 product_id bank is actually reached
+// when the caller passes a canonical name that differs from the raw Hygglo
+// title (Phase 5.2). Normalisation mirrors imageResolution.normaliseItemName.
 function productIdForItemNameInReservation(
   r: { hygglo_items?: Array<{ name?: string; product_id?: number }> },
   itemName: string,
 ): number | null {
   const hi = r.hygglo_items ?? [];
-  const hit = hi.find((h) => h?.name === itemName);
-  return hit?.product_id ?? null;
+  // 1. exact (cheapest, preserves prior behavior)
+  let hit = hi.find((h) => h?.name === itemName);
+  if (hit?.product_id != null) return hit.product_id;
+  // 2. normalised — collapses case / separators / leading "Nx " multipliers so
+  //    a canonical name resolves to its raw-title product_id.
+  const target = normaliseItemName(itemName);
+  if (target) {
+    hit = hi.find((h) => normaliseItemName(h?.name ?? "") === target);
+    if (hit?.product_id != null) return hit.product_id;
+  }
+  return null;
 }
 
 /**
@@ -393,7 +411,19 @@ export const getCalendarStrip = query({
           if (distinctImages.length >= 4) break;
         }
       }
-      const firstImage = distinctImages[0] ?? null;
+      // Representative item: NAME + IMAGE from the SAME item so they agree.
+      // buildItems already resolved each tile's image; treat a null tile url as
+      // a placeholder so the first item WITH an image wins (tie-break = order),
+      // falling back to items[0]'s name when every tile is image-less.
+      const rep = pickRepresentativeItem(
+        items.map((it) => ({ name: it.name, imageUrl: it.imageUrl, productId: null })),
+        (it) =>
+          it.imageUrl
+            ? { url: it.imageUrl, source: "hint_exact", confidence: 1 }
+            : { url: null, source: "placeholder", confidence: 0 },
+      );
+      const firstImage = rep.imageUrl ?? distinctImages[0] ?? null;
+      const imageAlt = rep.name || items[0]?.name || "";
       // Pass 11e (2026-05-25) — dropped 3 unused fields:
       //   - progressPercent: frontend re-computes locally (CalendarStrip.tsx:486)
       //   - netToOwnerGbp + multi_item_image_urls: type-declared but never read
@@ -408,6 +438,9 @@ export const getCalendarStrip = query({
         status: r.status,
         orderStep: (r as { order_step?: string | null }).order_step ?? null,
         startDate: r.start_date ?? null,
+        // Effective (negotiated) pickup date for progress + placement alignment;
+        // falls back to start_date. Raw start_date retained above for display.
+        pickupDate: displayPickupDate(r) || (r.start_date ?? null),
         endDate: r.end_date ?? null,
         returnDate: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
         pickupTime: rType.pickup_time ?? null,
@@ -417,13 +450,19 @@ export const getCalendarStrip = query({
         grossPaidGbp: rType.gross_paid_gbp ?? null,
         notes: rType.notes ?? null,
         imageUrl: firstImage,
+        // Alt text from the SAME item that provided imageUrl (Phase 5.1) so the
+        // overlay no longer hardcodes items[0].name against a different image.
+        imageAlt,
       };
     }
 
     return dates.map((date) => {
       // For same-day rentals (start === end === date), place in pickups only to avoid double-count.
+      // Placement honors the negotiated pickup date (EITHER direction) so a
+      // rental whose pickup_date differs from the Hygglo start_date moves to the
+      // negotiated day.
       const pickups = reservations
-        .filter((r) => r.start_date === date)
+        .filter((r) => displayPickupDate(r) === date)
         .map((r) => buildChip(r, "pickup"));
 
       // Exclude same-day rentals from returns (already counted in pickups above).
@@ -433,19 +472,19 @@ export const getCalendarStrip = query({
         .map((r) => buildChip(r, "return"));
 
       // "Away" — rental days strictly between pickup and return (V1 parity).
-      // Uses effective return date so AI-extended rentals stay "away" through
-      // the new return day instead of flipping to "return" on the original
-      // Hygglo end_date.
+      // Uses effective pickup + return dates so AI-negotiated rentals stay
+      // "away" between the negotiated days instead of the raw Hygglo dates.
       const dayIds = new Set([
         ...pickups.map((p) => p.reservationId),
         ...returns.map((r) => r.reservationId),
       ]);
       const away = reservations
         .filter((r) => {
-          if (r.start_date === undefined) return false;
+          const pick = displayPickupDate(r);
+          if (!pick) return false;
           const ret = effectiveReturnDate(r);
           if (!ret) return false;
-          return r.start_date < date && ret > date && !dayIds.has(r._id);
+          return pick < date && ret > date && !dayIds.has(r._id);
         })
         .map((r) => buildChip(r, "away"));
 
@@ -709,10 +748,11 @@ export const getWeeklyCalendar = query({
         date,
         reservations: reservations
           .filter((r) => {
-            if (r.start_date === undefined) return false;
+            const pick = displayPickupDate(r);
+            if (!pick) return false;
             const ret = effectiveReturnDate(r);
             if (!ret) return false;
-            return r.start_date <= date && ret >= date;
+            return pick <= date && ret >= date;
           })
           .map((r) => {
             const rType = r as {
@@ -733,9 +773,10 @@ export const getWeeklyCalendar = query({
               qty: i.qty ?? 1,
             }));
             const effRet = effectiveReturnDate(r);
-            const isPickupDay = r.start_date === date;
-            const isReturnDay = effRet === date && r.start_date !== date;
-            const isAwayDay = r.start_date! < date && (effRet ?? "") > date;
+            const effPick = displayPickupDate(r);
+            const isPickupDay = effPick === date;
+            const isReturnDay = effRet === date && effPick !== date;
+            const isAwayDay = effPick < date && (effRet ?? "") > date;
             return {
               reservationId: r._id,
               itemNames,
@@ -763,7 +804,7 @@ export const getWeeklyCalendar = query({
                 ? ("away" as const)
                 : ("pickup" as const),
               progressPercent: chipProgress(
-                r.start_date,
+                effPick,
                 effRet,
                 rType.pickup_time,
                 rType.return_time,
@@ -916,7 +957,9 @@ export const getGanttWeek = query({
           accountSlug: rAny.account_slug ?? null,
           productId: pidByItemName,
         });
-        if (out.url) {
+        // Treat a placeholder as a MISS so scanning continues to the next
+        // matching reservation (a later row may carry a real hint/bank image).
+        if (out.source !== "placeholder" && out.url) {
           resolvedImageUrl = out.url;
           break;
         }
@@ -931,7 +974,7 @@ export const getGanttWeek = query({
           accountSlug: rAny.account_slug ?? null,
           productId: pidByItemName,
         });
-        if (out2.url) {
+        if (out2.source !== "placeholder" && out2.url) {
           resolvedImageUrl = out2.url;
           break;
         }
@@ -945,9 +988,14 @@ export const getGanttWeek = query({
           return_method?: string | null;
           order_step?: string | null;
         };
+        // Bar placement honors the negotiated pickup date (the frontend Gantt
+        // positions the bar from start_date → end_date), so emit the effective
+        // pickup as start_date. Hygglo raw start_date is retained for invoicing
+        // elsewhere; this surface is display-only.
+        const effPick = displayPickupDate(r);
         return {
           reservation_id: r._id,
-          start_date: r.start_date,
+          start_date: effPick || r.start_date,
           end_date: r.end_date,
           return_date: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
           renter_name: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
@@ -957,7 +1005,7 @@ export const getGanttWeek = query({
           pickup_method: rType.pickup_method ?? null,
           return_method: rType.return_method ?? null,
           progress_percent: chipProgress(
-            r.start_date,
+            effPick || r.start_date,
             effectiveReturnDate(r),
             rType.pickup_time,
             rType.return_time,

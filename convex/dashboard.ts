@@ -17,6 +17,8 @@ import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import {
   resolveImageForReservationItem,
   buildSharedImageBlacklist,
+  pickRepresentativeItem,
+  normaliseItemName,
   type ImageHint,
 } from "./lib/imageResolution";
 import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_booking";
@@ -71,11 +73,25 @@ export function buildItemTilesShared(args: {
     expanded_items?: Array<TileSourceItem> | null;
     resolved_items?: Array<ResolvedItemEntry> | null;
     photos_urls?: string[] | null;
+    account_slug?: string | null;
   };
   itemImageById: Map<string, { name: string; image_url: string | null }>;
   sharedBlacklist: Set<string>;
+  // Phase 5.3: forward the priority-0 listing_images bank so the shared-helper
+  // paths (getStatsDrawerData fallback, getNextRentals) stop bypassing it.
+  bankByProduct?: Map<string, string>;
+  // Resolve a hygglo product_id for one source item (by item_id + canonical
+  // name). Caller owns the mapping (it has the reservation's hygglo_items).
+  productIdForItem?: (item: TileSourceItem) => number | null;
 }): ItemTile[] {
-  const { reservation, itemImageById, sharedBlacklist } = args;
+  const {
+    reservation,
+    itemImageById,
+    sharedBlacklist,
+    bankByProduct,
+    productIdForItem,
+  } = args;
+  const accountSlug = reservation.account_slug ?? null;
   const imageHints: ImageHint[] = reservation.image_hints ?? [];
   const resolved: ResolvedItemEntry[] = reservation.resolved_items ?? [];
 
@@ -140,6 +156,10 @@ export function buildItemTilesShared(args: {
       itemsTableEntry,
       resolvedConfidence,
       sharedBlacklist,
+      // Phase 5.3: priority-0 bank now reached on the shared-helper paths.
+      bankByProduct,
+      accountSlug,
+      productId: productIdForItem ? productIdForItem(x) : null,
     });
 
     // PASS-5 fix: no round-robin fallback. Null URLs render as per-item
@@ -961,12 +981,24 @@ export const getStatsDrawerData = query({
     const sharedBlacklist = buildSharedImageBlacklist(
       allItems.map((it) => ({ image_url: (it as { image_url?: string | null }).image_url ?? null })),
     );
-    const buildItemTiles = (r: ResRow): ItemTile[] =>
-      buildItemTilesShared({
+    const buildItemTiles = (r: ResRow): ItemTile[] => {
+      // Map a source item → hygglo product_id (for the priority-0 bank) using
+      // the row's raw hygglo_items, matched by normalised canonical name.
+      const hyggloItems = ((r as { hygglo_items?: Array<{ name?: string; product_id?: number }> }).hygglo_items) ?? [];
+      const productIdForItem = (item: { item_name_canonical: string }): number | null => {
+        const target = normaliseItemName(item.item_name_canonical);
+        if (!target) return null;
+        const hit = hyggloItems.find((h) => normaliseItemName(h?.name ?? "") === target);
+        return hit?.product_id ?? null;
+      };
+      return buildItemTilesShared({
         reservation: r as Parameters<typeof buildItemTilesShared>[0]["reservation"],
         itemImageById,
         sharedBlacklist,
+        bankByProduct,
+        productIdForItem,
       });
+    };
 
     const mapRental = (r: ResRow, kind: "ongoing" | "upcoming" | "pending") => {
       // PASS-9 (2026-05-15): raw Hygglo per-rental items[] are AUTHORITATIVE.
@@ -1011,6 +1043,9 @@ export const getStatsDrawerData = query({
         const tilesByImage = new Map<string, HygTile>();
         const tileOrderH: string[] = [];
         const noImage: string[] = [];
+        // Per-item resolved images IN ORDER — feeds pickRepresentativeItem so
+        // master_image_url + its name come from the SAME item (Phase 5.3).
+        const repItems: Array<{ name: string; imageUrl: string | null; productId: number | null }> = [];
         for (const h of hItems) {
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
           // Resolution order:
@@ -1032,6 +1067,7 @@ export const getStatsDrawerData = query({
               : undefined;
           const hintUrl = hintByName.get(h.name);
           const url: string | null = bankUrl ?? hyggloUrl ?? hintUrl ?? null;
+          repItems.push({ name: h.name, imageUrl: url, productId: h.product_id ?? null });
           if (url) {
             const ex = tilesByImage.get(url);
             if (ex) {
@@ -1054,7 +1090,15 @@ export const getStatsDrawerData = query({
         const item_image_tiles_h = tileOrderH.map(
           (u) => tilesByImage.get(u) as HygTile,
         );
-        const master_image_url_h = item_image_tiles_h[0]?.image_url ?? null;
+        // Representative item: first item (in order) with a real image; name +
+        // image come from the SAME item so they always agree (Phase 5.3).
+        // Treat a null per-item url as a placeholder; fall back to items[0].
+        const repH = pickRepresentativeItem(repItems, (it) =>
+          it.imageUrl
+            ? { url: it.imageUrl, source: "hint_exact", confidence: 1 }
+            : { url: null, source: "placeholder", confidence: 0 },
+        );
+        const master_image_url_h = repH.imageUrl ?? item_image_tiles_h[0]?.image_url ?? null;
         const item_names_summary_h = hItems
           .map((i) => (i.qty && i.qty > 1 ? `${i.name} \u00d7${i.qty}` : i.name))
           .join(", ");
@@ -1169,10 +1213,13 @@ export const getStatsDrawerData = query({
       };
     };
 
+    // Active widget = ongoing + upcoming ONLY. Pending-verification rentals are
+    // intentionally excluded from the active LIST (and from activeTotal above);
+    // they remain surfaced via active.pending_count / pending_value_gbp, which
+    // still read pendingTracked (computation untouched — used by other tiles).
     const activeRentals = [
       ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
       ...upcomingUniq.map((r) => mapRental(r, "upcoming")),
-      ...pendingTracked.map((r) => mapRental(r, "pending")),
     ]
       .sort((a, b) => {
         const ad = a.start_date ?? "";
@@ -1907,12 +1954,30 @@ export const getNextRentals = query({
       items.map((it) => ({ image_url: (it as { image_url?: string | null }).image_url ?? null })),
     );
 
-    const buildItemTilesLocal = (r: any): ItemTile[] =>
-      buildItemTilesShared({
+    // Phase 5.3: priority-0 listing_images bank for this query too, so the
+    // shared helper no longer bypasses it on the Next Rentals widget.
+    const listingImagesNext = await ctx.db.query("listing_images").collect();
+    const bankByProductNext = new Map<string, string>();
+    for (const li of listingImagesNext) {
+      bankByProductNext.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+    }
+
+    const buildItemTilesLocal = (r: any): ItemTile[] => {
+      const hyggloItems = (r.hygglo_items ?? []) as Array<{ name?: string; product_id?: number }>;
+      const productIdForItem = (item: { item_name_canonical: string }): number | null => {
+        const target = normaliseItemName(item.item_name_canonical);
+        if (!target) return null;
+        const hit = hyggloItems.find((h) => normaliseItemName(h?.name ?? "") === target);
+        return hit?.product_id ?? null;
+      };
+      return buildItemTilesShared({
         reservation: r as Parameters<typeof buildItemTilesShared>[0]["reservation"],
         itemImageById,
         sharedBlacklist,
+        bankByProduct: bankByProductNext,
+        productIdForItem,
       });
+    };
 
     const mapForWire = (r: any, role: "pickup" | "return") => ({
       reservation_id: r.hygglo_order_id ?? r.v1_rental_id ?? (r._id as string),

@@ -164,3 +164,57 @@ export function resolveImageForReservationItem(args: {
   // 4. Give up — UI placeholder.
   return { url: PLACEHOLDER_URL, source: "placeholder", confidence: 0 };
 }
+
+/**
+ * Pick the single representative item for a reservation so its NAME and IMAGE
+ * always agree (the historical bug was master_image_url coming from item[0]
+ * while the displayed name came from a different item, or vice-versa).
+ *
+ * Algorithm:
+ *   - iterate `items` IN ORDER
+ *   - resolve each via the supplied `resolve` callback (the caller owns the
+ *     productId / accountSlug / itemsTableEntry wiring — this module stays
+ *     DB-free and pure)
+ *   - return the FIRST item whose resolved `source !== "placeholder"`
+ *   - tie-break by item order (first wins — guaranteed by the in-order scan)
+ *   - if EVERY item is a placeholder, fall back to items[0] (name still shown,
+ *     imageUrl null so the UI renders its per-item abbreviation tile)
+ *
+ * Returns `{ name, imageUrl, source, productId }` so callers can set both the
+ * master image and the alt/name from a SINGLE source of truth. `productId` is
+ * echoed back from the chosen item descriptor for downstream use.
+ *
+ * IMPORTANT: callers MUST branch on `source`, NOT on a truthy `imageUrl` —
+ * the placeholder tier can return a non-null sentinel url depending on
+ * PLACEHOLDER_URL configuration.
+ */
+export function pickRepresentativeItem<
+  T extends { name: string; productId?: number | null },
+>(
+  items: T[],
+  resolve: (item: T) => ResolvedImage,
+): { name: string; imageUrl: string | null; source: ResolvedImageSource; productId: number | null } {
+  if (!items || items.length === 0) {
+    return { name: "", imageUrl: null, source: "placeholder", productId: null };
+  }
+  for (const it of items) {
+    const res = resolve(it);
+    if (res.source !== "placeholder") {
+      return {
+        name: it.name,
+        imageUrl: res.url,
+        source: res.source,
+        productId: it.productId ?? null,
+      };
+    }
+  }
+  // All placeholders — fall back to the first item (name shown, no image).
+  const first = items[0];
+  const firstRes = resolve(first);
+  return {
+    name: first.name,
+    imageUrl: firstRes.url,
+    source: firstRes.source,
+    productId: first.productId ?? null,
+  };
+}

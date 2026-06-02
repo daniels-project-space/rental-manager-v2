@@ -247,6 +247,21 @@ export const hasReservationMutationsSince = query({
       .order("desc")
       .first();
     if (newestCreated && newestCreated._creationTime > sinceMs) return true;
+    // ── Image-bank staleness (Phase 5.4) ───────────────────────────────────
+    // A listing_images write changes the IMAGE shown on the rentals tiles but
+    // does NOT touch any reservation, so the reservation-only probe above would
+    // let the same-UTC-day skip hold a stale image all day. listing_images
+    // PATCHES bump `captured_at` (not _creationTime), and there's no captured_at
+    // index, so scan this small bounded bank (one row per account×product) for
+    // any write newer than the cutoff. image_hints live ON the reservation and
+    // are written by the poller alongside last_polled_at, so they're already
+    // covered by the polledStamp check above.
+    const banks = await ctx.db.query("listing_images").collect();
+    for (const b of banks) {
+      const cap = (b as { captured_at?: number }).captured_at;
+      if (typeof cap === "number" && cap > sinceMs) return true;
+      if (b._creationTime > sinceMs) return true;
+    }
     return false;
   },
 });
