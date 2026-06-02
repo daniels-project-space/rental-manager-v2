@@ -221,6 +221,12 @@ export default function WallEChat({
   // Autoscroll — pin the latest question near the top so a long reply below it
   // reads from its START. (Scrolling to the absolute bottom hid long replies in
   // the bounded widget: you only saw the tail.) Falls back to bottom pre-first-turn.
+  //
+  // Deps are the message COUNTS, not the arrays: during streaming the assistant
+  // message object grows on every token but the count is stable, so this fires
+  // once per turn instead of once per token. That stops the per-token scroll
+  // re-pin that (with the old layout springs) made long replies jump around —
+  // the reply now just flows downward from the pinned question.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = scrollRef.current;
@@ -234,7 +240,7 @@ export default function WallEChat({
     } else {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, jokeMessages]);
+  }, [messages.length, jokeMessages.length]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -339,7 +345,10 @@ export default function WallEChat({
     return (
       <motion.div
         key={m.id}
-        layout
+        // NO `layout` here: while a long reply streams in token-by-token the
+        // bubble grows on every token, and `layout` would spring-animate each
+        // growth (and shove every bubble below), which read as the chat
+        // "wiggling wildly". Enter/exit still animate via initial/animate/exit.
         initial={{ opacity: 0, y: 8, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -4, scale: 0.96 }}
@@ -371,7 +380,6 @@ export default function WallEChat({
     return (
       <motion.div
         key={m.id}
-        layout
         data-walle-role="user"
         initial={{ opacity: 0, y: 8, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -434,7 +442,6 @@ export default function WallEChat({
           {isThinking && (
             <motion.div
               key="thinking-bubble"
-              layout
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
