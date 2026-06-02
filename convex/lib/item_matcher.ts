@@ -689,7 +689,7 @@ export const MASTER_INVENTORY: Record<string, number> = {
   'Canon EF 24-105mm f4': 1,
   'Canon EF 16-35mm f2.8': 1,
   // Camera bodies
-  'Sony FX3': 3,
+  'Sony FX3': 4,
   'Sony A7 III': 1,
   'Sony A7 V': 1,
   'Sony A7 II': 1,

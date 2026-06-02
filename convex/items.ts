@@ -697,6 +697,76 @@ export const admin_setAliases = mutation({
   },
 });
 
+/**
+ * Adjust an owned item's inventory facts by canonical name. Patches only the
+ * fields supplied — qty (units owned, drives capacity / overbooking / calendar
+ * / utilization) and the cost fields (acquisition_cost_gbp drives the dashboard
+ * "inventory worth" / equipment-value card). Call with just `name_canonical`
+ * and no value fields to read the current row (no-op write skipped). Writes an
+ * `audit_log` row for traceability, matching the seed-script convention.
+ */
+export const admin_setItemInventory = mutation({
+  args: {
+    name_canonical: v.string(),
+    qty: v.optional(v.number()),
+    acquisition_cost_gbp: v.optional(v.number()),
+    replacement_cost_gbp: v.optional(v.number()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const item = await ctx.db
+      .query("items")
+      .withIndex("by_canonical_name", (q) => q.eq("name_canonical", args.name_canonical))
+      .first();
+    if (!item) throw new Error(`item not found: ${args.name_canonical}`);
+
+    const before = {
+      qty: item.qty,
+      acquisition_cost_gbp: item.acquisition_cost_gbp,
+      replacement_cost_gbp: item.replacement_cost_gbp,
+    };
+
+    const patch: Record<string, number> = {};
+    if (args.qty !== undefined && args.qty !== item.qty) patch.qty = args.qty;
+    if (
+      args.acquisition_cost_gbp !== undefined &&
+      args.acquisition_cost_gbp !== item.acquisition_cost_gbp
+    )
+      patch.acquisition_cost_gbp = args.acquisition_cost_gbp;
+    if (
+      args.replacement_cost_gbp !== undefined &&
+      args.replacement_cost_gbp !== item.replacement_cost_gbp
+    )
+      patch.replacement_cost_gbp = args.replacement_cost_gbp;
+
+    const changed = Object.keys(patch).length > 0;
+    if (changed) {
+      await ctx.db.patch(item._id, { ...patch, updated_at: Date.now() });
+      await ctx.db.insert("audit_log", {
+        table_name: "items",
+        actor: "daniel",
+        op: "update",
+        count: 1,
+        source_file: "items.admin_setItemInventory",
+        note:
+          args.note ??
+          `${item.name_canonical}: ${Object.entries(patch)
+            .map(([k, v]) => `${k} ${(before as Record<string, unknown>)[k]}→${v}`)
+            .join(", ")}`,
+        ts: Date.now(),
+      });
+    }
+
+    return {
+      item_id: item._id,
+      name_canonical: item.name_canonical,
+      changed,
+      before,
+      after: { ...before, ...patch },
+    };
+  },
+});
+
 // `backfillImagesFuzzy` removed (Phase 7 / FIX-DESIGN §4.3): substring matching
 // against unrelated reservations was the secondary cross-item-photo
 // contamination path. Replaced by per-reservation `image_hints` written at
