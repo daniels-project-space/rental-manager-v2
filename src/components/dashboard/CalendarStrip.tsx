@@ -80,8 +80,16 @@ function resolveColor(accountColor: string | undefined): string {
   return ACCOUNT_COLORS[accountColor ?? "blue"] ?? "#3b82f6";
 }
 
+/**
+ * "Today" in the business timezone (Europe/London), "YYYY-MM-DD".
+ * Inlined twin of convex/lib/effectiveDates.ts:londonToday (same
+ * inline-mirror convention as the predicates helpers). DST-correct via Intl —
+ * NOT a fixed offset. Used so the strip anchor + status classify on the same
+ * calendar day as the backend Active tab (which also uses London), instead
+ * of UTC which can lag just after London midnight.
+ */
 function TODAY_ISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 }
 
 /** "MON" / 13 split — used by big day-card layout. */
@@ -131,7 +139,17 @@ function fmtFullDate(iso: string): string {
   return d.toLocaleString("en", { weekday: "long", day: "numeric", month: "long" });
 }
 
-/** Live progress label + percent for a booking. */
+/** Live progress label + percent for a booking.
+ *
+ * STATUS (upcoming/active/completed) is decided by a date-STRING compare of the
+ * effective pickup/return dates against the London-business "today", so it
+ * matches the backend Active tab exactly (isOngoing: pick<=today<=ret;
+ * isUpcoming: pick>today). Previously status came from browser-LOCAL instant
+ * math (Date.now() vs start/end ms), which disagreed with the UTC-based Active
+ * tab just after London midnight (a rental read active here but upcoming
+ * there). The PERCENTAGE within an active rental stays time-interpolated for a
+ * smooth live bar.
+ */
 function computeProgress(
   start: string | null | undefined,
   end: string | null | undefined,
@@ -139,6 +157,8 @@ function computeProgress(
   returnTime: string | null,
 ): { pct: number; label: string; status: "upcoming" | "active" | "completed" } {
   if (!start || !end) return { pct: 0, label: "", status: "upcoming" };
+  // Day-string status — mirrors backend isOngoing / isUpcoming against London.
+  const today = TODAY_ISO();
   const startD = new Date(start + "T00:00:00");
   if (pickupTime) {
     const [h, m] = pickupTime.split(":").map(Number);
@@ -154,17 +174,29 @@ function computeProgress(
   const startMs = startD.getTime();
   const endMs = endD.getTime();
   const now = Date.now();
-  if (now < startMs) {
+  if (start > today) {
+    // Upcoming: pickup day is in the future (London). Label keeps the live
+    // countdown for UX; status is now day-based so it agrees with Active.
     const hours = Math.round((startMs - now) / 3_600_000);
-    const label = hours < 24 ? `Starts in ${hours}h` : `Starts in ${Math.ceil(hours / 24)}d`;
+    const label = hours > 0
+      ? (hours < 24 ? `Starts in ${hours}h` : `Starts in ${Math.ceil(hours / 24)}d`)
+      : "Starting";
     return { pct: 0, label, status: "upcoming" };
   }
-  if (now >= endMs) {
+  if (end < today) {
+    // Completed: effective return day has passed (London).
     return { pct: 100, label: "Completed", status: "completed" };
   }
-  const pct = Math.min(99, Math.max(1, Math.round(((now - startMs) / (endMs - startMs)) * 100)));
+  // Active: pickup day <= today <= return day. PCT stays time-interpolated and
+  // is clamped to [1,99] across the start→end instant window.
+  const pct =
+    endMs > startMs
+      ? Math.min(99, Math.max(1, Math.round(((now - startMs) / (endMs - startMs)) * 100)))
+      : 1;
   const hoursLeft = Math.round((endMs - now) / 3_600_000);
-  const label = hoursLeft < 24 ? `${hoursLeft}h remaining` : `${Math.ceil(hoursLeft / 24)}d remaining`;
+  const label = hoursLeft <= 0
+    ? "Due"
+    : hoursLeft < 24 ? `${hoursLeft}h remaining` : `${Math.ceil(hoursLeft / 24)}d remaining`;
   return { pct, label, status: "active" };
 }
 

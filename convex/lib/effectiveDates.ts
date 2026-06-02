@@ -55,3 +55,27 @@ export function displayPickupTime(r: EffectiveDateRow): string | null {
 export function displayReturnTime(r: EffectiveDateRow): string | null {
   return r.return_time ?? null;
 }
+
+/**
+ * "Today" in the business timezone (Europe/London), as a "YYYY-MM-DD" string.
+ *
+ * The business runs on London time, but server "today" was historically
+ * derived from UTC (`new Date().toISOString().slice(0,10)`). Under BST (and
+ * for any tz offset), UTC can still be on the previous calendar day just after
+ * London midnight, so a rental could read ongoing on the (browser-local)
+ * calendar strip but upcoming in the (UTC-based) Active tab. This unifies the
+ * day basis for ACTIVE-membership + CALENDAR placement + strip STATUS.
+ *
+ * DST-correct: uses Intl via toLocaleDateString with timeZone, NOT a fixed
+ * offset. Mirrors the existing `todayLondon()` helper in convex/vacation.ts
+ * (en-CA gives ISO YYYY-MM-DD). A frontend-inlined twin lives in the calendar
+ * components (src/components/dashboard/*), matching the inline-mirror convention
+ * used for displayPickupDate/displayReturnDate.
+ *
+ * NOTE: This is intentionally NOT applied to revenue / earnings / utilization
+ * day-bucketing, which deliberately stay on UTC to avoid silently shifting
+ * money-attribution day boundaries.
+ */
+export function londonToday(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+}

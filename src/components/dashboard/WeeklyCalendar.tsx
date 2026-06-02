@@ -6,11 +6,22 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
 
-function getMonday(date: Date): string {
-  const d = new Date(date);
-  const day = d.getDay();
+/**
+ * "Today" in the business timezone (Europe/London), "YYYY-MM-DD". Inlined
+ * twin of convex/lib/effectiveDates.ts:londonToday so the weekly anchor +
+ * today-highlight classify on the same calendar day as the backend Active tab
+ * (which also uses London), instead of UTC. DST-correct.
+ */
+function londonToday(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+}
+
+/** Monday (YYYY-MM-DD) of the week containing the given YYYY-MM-DD date. */
+function getMondayOf(ymd: string): string {
+  const d = new Date(ymd + "T00:00:00Z");
+  const day = d.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
+  d.setUTCDate(d.getUTCDate() + diff);
   return d.toISOString().slice(0, 10);
 }
 
@@ -38,7 +49,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function WeeklyCalendar() {
   const { activeAccountSlug } = useAccount();
-  const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
+  const [weekStart, setWeekStart] = useState(() => getMondayOf(londonToday()));
 
   const data = useQuery(api.calendar.getWeeklyCalendar, {
     accountSlug: activeAccountSlug,
@@ -46,7 +57,7 @@ export function WeeklyCalendar() {
   });
 
   const weekEnd = addDays(weekStart, 6);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = londonToday();
 
   return (
     <Card className="hidden md:block">

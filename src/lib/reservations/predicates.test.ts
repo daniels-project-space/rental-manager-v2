@@ -76,6 +76,33 @@ describe("isOngoing / isUpcoming", () => {
     assert.equal(isUpcoming(row({ start_date: "2026-05-20" }), TODAY), true);
     assert.equal(isUpcoming(row({ start_date: "2026-05-14" }), TODAY), false);
   });
+  it("excludes pending-verification (order_step=VERIFIED) from BOTH ongoing and upcoming", () => {
+    // 2026-06-02 consistency fix: a confirmed+dated row still in ID/doc
+    // verification must not appear in the Active tab (nor the calendar) — it
+    // belongs only in the pending bucket. Same universe on both surfaces.
+    const verifiedOngoingShape = row({ start_date: "2026-05-14", end_date: "2026-05-22", order_step: "VERIFIED" });
+    const verifiedUpcomingShape = row({ start_date: "2026-05-20", end_date: "2026-05-22", order_step: "VERIFIED" });
+    assert.equal(isOngoing(verifiedOngoingShape, TODAY), false);
+    assert.equal(isUpcoming(verifiedUpcomingShape, TODAY), false);
+    // Sanity: the SAME rows without the VERIFIED step still classify normally.
+    assert.equal(isOngoing(row({ start_date: "2026-05-14", end_date: "2026-05-22", order_step: "DELIVERED" }), TODAY), true);
+    assert.equal(isUpcoming(row({ start_date: "2026-05-20", end_date: "2026-05-22", order_step: "BOOKED_AFTER_VERIFIED" }), TODAY), true);
+    // And it IS still pending.
+    assert.equal(isPendingVerification(verifiedOngoingShape), true);
+  });
+  it("honors negotiated return_date (extension) in the ongoing window", () => {
+    // Raw end_date passed, but a chat-agreed return_date keeps it ongoing —
+    // matches the Gantt bar now reaching displayReturnDate (FIX 2).
+    assert.equal(
+      isOngoing(row({ start_date: "2026-05-10", end_date: "2026-05-13", return_date: "2026-05-20" }), TODAY),
+      true,
+    );
+    // Without the extension the same row is no longer ongoing (end < today).
+    assert.equal(
+      isOngoing(row({ start_date: "2026-05-10", end_date: "2026-05-13" }), TODAY),
+      false,
+    );
+  });
 });
 
 describe("isPendingVerification (paid + verifying)", () => {

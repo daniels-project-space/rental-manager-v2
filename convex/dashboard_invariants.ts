@@ -44,6 +44,7 @@ import {
   isPendingVerification,
   isUpcoming,
 } from "./lib/reservations/predicates";
+import { londonToday } from "./lib/effectiveDates";
 
 interface InvariantResult {
   name: string;
@@ -60,7 +61,12 @@ export const verifyConsistency = query({
     counts: Record<string, number>;
     asOf: number;
   }> => {
-    const today = new Date().toISOString().slice(0, 10);
+    // Active membership (ongoing/upcoming/pending) must use the SAME day basis
+    // as the dashboard's Active tab (London business day) so this consistency
+    // check doesn't false-flag drift just after London midnight when UTC is
+    // still on the previous calendar day. Month aggregates below are
+    // membership subsets, so they share it.
+    const today = londonToday();
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
@@ -93,6 +99,7 @@ export const verifyConsistency = query({
     const monthOngoing = monthBooked.filter(
       (r) =>
         isConfirmedWithDates(r as any) &&
+        !isPendingVerification(r as any) &&
         (r.start_date as string) <= today &&
         (r.end_date as string) >= today,
     );

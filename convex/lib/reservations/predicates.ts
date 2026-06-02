@@ -129,16 +129,22 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
  * late handover or chat-agreed extension moves the active window. Rentals whose
  * effective return has passed disappear from the active widget here even if the
  * owner has not yet marked them RETURNED on Hygglo — that's deliberate.
+ *
+ * Excludes pending-verification rows (order_step==="VERIFIED" — paid but still
+ * in ID/doc verification). Those belong in the "pending" bucket only; this keeps
+ * the Active tab and the calendar (which now also exclude them) showing the SAME
+ * universe (2026-06-02 consistency fix).
  */
 export function isOngoing(r: ReservationRow, today: string): boolean {
   return isConfirmedWithDates(r)
+    && !isPendingVerification(r)
     && displayPickupDate(r) <= today
     && displayReturnDate(r) >= today;
 }
 
 /** Confirmed AND effective pickup is in the future. */
 export function isUpcoming(r: ReservationRow, today: string): boolean {
-  return isConfirmedWithDates(r) && displayPickupDate(r) > today;
+  return isConfirmedWithDates(r) && !isPendingVerification(r) && displayPickupDate(r) > today;
 }
 
 /**

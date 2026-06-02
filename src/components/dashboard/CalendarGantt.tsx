@@ -11,6 +11,13 @@ interface Block {
   reservation_id: string;
   start_date: string | undefined;
   end_date: string | undefined;
+  /**
+   * Effective (negotiated) return date — backend getGanttWeek emits this
+   * (return_date ?? end_date). Bar placement / progress prefer it so a
+   * chat-extended rental's bar reaches the negotiated return, matching the
+   * Active tab's ongoing window. Raw end_date stays for invoicing/length math.
+   */
+  return_date: string | null | undefined;
   renter_name: string | null;
   order_step: string | null;
   pickup_time: string | null;
@@ -39,13 +46,24 @@ interface Props {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+/**
+ * "Today" in the business timezone (Europe/London), "YYYY-MM-DD". Inlined
+ * twin of convex/lib/effectiveDates.ts:londonToday so the Gantt anchors +
+ * today-marker classify on the same calendar day as the backend Active tab,
+ * instead of UTC (which can lag just after London midnight). DST-correct.
+ */
+function londonToday(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+}
+
 function mondayOfThisWeek(): string {
-  const now = new Date();
-  const day = now.getUTCDay(); // 0=Sun
+  // Anchor on the London-business day, then derive the Monday via UTC-parsed
+  // date-only arithmetic (no instant drift).
+  const anchor = new Date(londonToday() + "T00:00:00Z");
+  const day = anchor.getUTCDay(); // 0=Sun
   const diff = day === 0 ? -6 : 1 - day;
-  const mon = new Date(now);
-  mon.setUTCDate(now.getUTCDate() + diff);
-  return mon.toISOString().slice(0, 10);
+  anchor.setUTCDate(anchor.getUTCDate() + diff);
+  return anchor.toISOString().slice(0, 10);
 }
 
 function addDays(iso: string, n: number): string {
@@ -156,7 +174,10 @@ function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgre
   if (!block.start_date || !block.end_date) return null;
 
   const blockStart = isoToDate(block.start_date).getTime();
-  const blockEnd = isoToDate(block.end_date).getTime();
+  // Bar END honors the effective (negotiated) return date so a chat-extended
+  // rental reaches displayReturnDate, matching Active's ongoing window. Falls
+  // back to raw end_date. (Length/period math elsewhere keeps raw end_date.)
+  const blockEnd = isoToDate(block.return_date ?? block.end_date).getTime();
 
   // Clamp to week boundaries (Mon–Sun)
   const clampedStart = Math.max(blockStart, weekStartDay);
@@ -260,7 +281,8 @@ function BlockDetail({ block, onClose }: { block: Block; onClose: () => void }) 
     ["Status", block.order_step],
     ["Renter", block.renter_name],
     ["From", block.start_date],
-    ["To", block.end_date],
+    // Effective (negotiated) return so an extended rental's detail matches its bar.
+    ["To", block.return_date ?? block.end_date],
     ["Pickup", block.pickup_time ?? block.pickup_method],
     ["Return", block.return_time ?? block.return_method],
     ["Progress", block.progress_percent != null ? `${block.progress_percent}%` : null],
@@ -348,7 +370,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
       for (const block of item.blocks) {
         if (block.order_step === "DELIVERED" && block.start_date && block.end_date) {
           const start = isoToDate(block.start_date as string).getTime();
-          const end = isoToDate(block.end_date as string).getTime() + 86400000; // inclusive
+          // Effective return for the progress denominator so an extended rental's
+          // bar fills toward the negotiated return, matching its placement.
+          const end = isoToDate((block.return_date ?? block.end_date) as string).getTime() + 86400000; // inclusive
           const total = end - start;
           if (total > 0) {
             map[block.reservation_id] = Math.min(100, Math.round(((now - start) / total) * 100));
@@ -376,7 +400,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   if (!open) return null;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = londonToday();
   const headers = dayHeaders(weekStart);
   const totalGridWidth = COL_WIDTH * 7;
 

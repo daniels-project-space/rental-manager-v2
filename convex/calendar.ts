@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {
   isConfirmedWithDates,
+  isPendingVerification,
   dedupByLogicalRental,
   type ReservationRow,
 } from "./lib/reservations/predicates";
@@ -17,6 +18,7 @@ import {
 import {
   displayPickupDate,
   displayReturnDate,
+  londonToday,
 } from "./lib/effectiveDates";
 
 // ---------------------------------------------------------------------------
@@ -26,6 +28,37 @@ import {
 /** Parse a YYYY-MM-DD date + HH:MM time string into a UTC ms timestamp. */
 function parseTime(date: string, time: string): number {
   return new Date(`${date}T${time}:00Z`).getTime();
+}
+
+/**
+ * Calendar fetch-window padding (2026-06-02 consistency fix).
+ *
+ * The three calendar queries SCAN reservations by RAW start_date/end_date
+ * overlap, then BUCKET by EFFECTIVE (negotiated) pickup/return dates. A rental
+ * whose pickup_date/return_date was chat-shifted can land its effective dates
+ * just outside the raw window and silently drop off the calendar while the
+ * Active tab keeps it. The booking-time extractor only persists dates within ±3
+ * days of start/end (extract_booking_times.ts:dateWithinTolerance), so a small
+ * pad on each side guarantees the raw scan always covers the effective dates.
+ * 7 days is a comfortable margin over the ±3-day tolerance.
+ */
+const CALENDAR_FETCH_PAD_DAYS = 7;
+
+/**
+ * Unified before-window lookback for prior reservations that started earlier but
+ * overlap the requested window (no end_date index, so we bound the start_date
+ * scan). Previously inconsistent across the 3 queries (strip = unbounded,
+ * weekly/gantt = 90d), which let the calendar disagree with itself. 120 days
+ * comfortably covers the longest realistic Hygglo rentals while keeping the
+ * indexed scan bounded.
+ */
+const CALENDAR_LOOKBACK_DAYS = 120;
+
+/** Add (or subtract) whole days to a YYYY-MM-DD string, returning YYYY-MM-DD. */
+function shiftIsoDate(ymd: string, deltaDays: number): string {
+  return new Date(Date.parse(ymd) + deltaDays * 86400000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 /**
@@ -144,29 +177,38 @@ export const getCalendarStrip = query({
       dates.push(d.toISOString().slice(0, 10));
     }
     const endDate = dates[dates.length - 1];
+    // Pad the RAW-date scan window so a rental whose effective (negotiated)
+    // pickup/return was chat-shifted up to the ±3-day extractor tolerance still
+    // gets fetched, then bucketed by effective dates below (FIX 4).
+    const scanStart = shiftIsoDate(startDate, -CALENDAR_FETCH_PAD_DAYS);
+    const scanEnd = shiftIsoDate(endDate, CALENDAR_FETCH_PAD_DAYS);
 
-    // Reservations overlapping the date range
+    // Reservations overlapping the (padded) date range
     // OPEN_INDEX_NEED: index by (start_date, end_date) range for efficient overlap scan.
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", startDate))
+      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
       .collect();
     reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= endDate
+      (r) => r.start_date !== undefined && r.start_date <= scanEnd
     );
     // Also include reservations that started before the range but end inside / after it.
     // V1 parity: a rental shows on every day between pickup and return ("away" days).
     {
-      // W1a: indexed scan — only reservations whose start_date is BEFORE the
-      // window. Residual end_date>=startDate filter retained (not in index).
+      // W1a: indexed scan — reservations whose start_date is BEFORE the padded
+      // window, bounded by the unified 120-day lookback (was unbounded here,
+      // 90d in weekly/gantt — FIX 4 unifies them). Residual end_date>=scanStart
+      // filter retained (not in index).
+      const lookbackStart = shiftIsoDate(startDate, -CALENDAR_LOOKBACK_DAYS);
       const allRes = await ctx.db
         .query("reservations")
-        .withIndex("by_start_date", (q) => q.lt("start_date", startDate))
+        .withIndex("by_start_date", (q) =>
+          q.gte("start_date", lookbackStart).lt("start_date", scanStart))
         .collect();
       for (const r of allRes) {
         if (
           r.end_date !== undefined &&
-          r.end_date >= startDate
+          r.end_date >= scanStart
         ) {
           if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
         }
@@ -179,7 +221,9 @@ export const getCalendarStrip = query({
     // dates set, deduped per logical rental. Drops pending_review (awaiting
     // payment), obsolete, cancelled, declined.
     reservations = dedupByLogicalRental(
-      (reservations as ReservationRow[]).filter(isConfirmedWithDates),
+      (reservations as ReservationRow[]).filter(
+        (r) => isConfirmedWithDates(r) && !isPendingVerification(r),
+      ),
     ) as typeof reservations;
 
     // Renter lookups
@@ -630,33 +674,35 @@ export const getWeeklyCalendar = query({
       dates.push(d.toISOString().slice(0, 10));
     }
     const weekEnd = dates[6];
+    // Pad the RAW-date scan so chat-shifted effective dates (±3-day extractor
+    // tolerance) are always fetched, then bucketed by effective dates (FIX 4).
+    const scanStart = shiftIsoDate(weekStartDate, -CALENDAR_FETCH_PAD_DAYS);
+    const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
 
-    // Reservations starting within the week
+    // Reservations starting within the (padded) week
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", weekStartDate))
+      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
       .collect();
     reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= weekEnd
+      (r) => r.start_date !== undefined && r.start_date <= scanEnd
     );
 
     // Also include reservations that started before weekStart but end during/after it.
-    // No end_date index, so use a bounded start_date lookback (90 days). Long
-    // rentals exceeding 90 days are vanishingly rare on Hygglo; the bounded
-    // scan drops ~1700 → ~90 reads.
-    const overlapStart = new Date(Date.parse(weekStartDate) - 90 * 86400000)
-      .toISOString()
-      .slice(0, 10);
+    // No end_date index, so use the unified 120-day start_date lookback (FIX 4 —
+    // was 90d here, unbounded in the strip). Long rentals exceeding 120 days are
+    // vanishingly rare on Hygglo; the bounded scan stays cheap.
+    const overlapStart = shiftIsoDate(weekStartDate, -CALENDAR_LOOKBACK_DAYS);
     const priorRes = await ctx.db
       .query("reservations")
       .withIndex("by_start_date", (q) =>
-        q.gte("start_date", overlapStart).lt("start_date", weekStartDate),
+        q.gte("start_date", overlapStart).lt("start_date", scanStart),
       )
       .collect();
     for (const r of priorRes) {
       if (
         r.end_date !== undefined &&
-        r.end_date >= weekStartDate
+        r.end_date >= scanStart
       ) {
         if (!reservations.find((x) => x._id === r._id)) {
           reservations.push(r);
@@ -670,7 +716,9 @@ export const getWeeklyCalendar = query({
     // Calendar mirrors the Active Rentals tab — confirmed bookings with
     // dates, deduped per logical rental.
     reservations = dedupByLogicalRental(
-      (reservations as ReservationRow[]).filter(isConfirmedWithDates),
+      (reservations as ReservationRow[]).filter(
+        (r) => isConfirmedWithDates(r) && !isPendingVerification(r),
+      ),
     ) as typeof reservations;
 
     // Phase 7e (2026-05-24): cross-account path uses by_date indexed range
@@ -835,14 +883,18 @@ export const getGanttWeek = query({
     accountSlug: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, { weekStartIso, accountSlug }) => {
-    // Resolve weekStart — default to current Monday (UTC)
+    // Resolve weekStart — default to the Monday of the current London-business
+    // week so the Gantt anchors on the same calendar day as the Active tab /
+    // strip (which now also use London). Date-string arithmetic off
+    // londonToday() avoids UTC drift near London midnight.
     let weekStart = weekStartIso;
     if (!weekStart) {
-      const now = new Date();
-      const day = now.getUTCDay(); // 0 = Sun
+      const todayLdn = londonToday(); // YYYY-MM-DD in Europe/London
+      const anchor = new Date(`${todayLdn}T00:00:00Z`);
+      const day = anchor.getUTCDay(); // 0 = Sun (UTC-parsed date-only string)
       const diffToMon = (day === 0 ? -6 : 1 - day);
-      now.setUTCDate(now.getUTCDate() + diffToMon);
-      weekStart = now.toISOString().slice(0, 10);
+      anchor.setUTCDate(anchor.getUTCDate() + diffToMon);
+      weekStart = anchor.toISOString().slice(0, 10);
     }
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) {
@@ -851,30 +903,32 @@ export const getGanttWeek = query({
       dates.push(d.toISOString().slice(0, 10));
     }
     const weekEnd = dates[6];
+    // Pad the RAW-date scan so chat-shifted effective dates (±3-day extractor
+    // tolerance) are always fetched, then bucketed by effective dates (FIX 4).
+    const scanStart = shiftIsoDate(weekStart!, -CALENDAR_FETCH_PAD_DAYS);
+    const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
 
-    // --- Reservations overlapping the week ---
+    // --- Reservations overlapping the (padded) week ---
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", weekStart!))
+      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
       .collect();
     reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= weekEnd
+      (r) => r.start_date !== undefined && r.start_date <= scanEnd
     );
     // Reservations starting before weekStart but ending inside / after it.
-    // Bounded 90-day lookback (see comment in getCalendarStrip above).
-    const overlapStart = new Date(Date.parse(weekStart!) - 90 * 86400000)
-      .toISOString()
-      .slice(0, 10);
+    // Unified 120-day lookback (FIX 4 — see getCalendarStrip / getWeeklyCalendar).
+    const overlapStart = shiftIsoDate(weekStart!, -CALENDAR_LOOKBACK_DAYS);
     const priorRes = await ctx.db
       .query("reservations")
       .withIndex("by_start_date", (q) =>
-        q.gte("start_date", overlapStart).lt("start_date", weekStart!),
+        q.gte("start_date", overlapStart).lt("start_date", scanStart),
       )
       .collect();
     for (const r of priorRes) {
       if (
         r.end_date !== undefined &&
-        r.end_date >= weekStart!
+        r.end_date >= scanStart
       ) {
         if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
       }
@@ -885,7 +939,9 @@ export const getGanttWeek = query({
     // Calendar mirrors the Active Rentals tab — confirmed bookings with
     // dates, deduped per logical rental.
     reservations = dedupByLogicalRental(
-      (reservations as ReservationRow[]).filter(isConfirmedWithDates),
+      (reservations as ReservationRow[]).filter(
+        (r) => isConfirmedWithDates(r) && !isPendingVerification(r),
+      ),
     ) as typeof reservations;
 
     // --- Renter name lookup ---

@@ -450,7 +450,15 @@ export default defineSchema({
     // touched row, so an indexed max(last_polled_at) lets the probe catch status
     // changes on PAST/ongoing rentals that the old top-50-by-future-start_date
     // scan missed (which left the MV — and the dashboard tile — stale for hours).
-    .index("by_last_polled_at", ["last_polled_at"]),
+    .index("by_last_polled_at", ["last_polled_at"])
+    // Consistency fix (2026-06-02): the stats_drawer MV dirty-probe must also
+    // detect a Trigger-driven booking-time extraction (setTimes patches
+    // pickup_date/return_date/pickup_time/return_time + bumps times_extracted_at)
+    // WITHOUT touching last_polled_at. Without this, a negotiated date/time
+    // change updated the live calendar instantly but left the Active tab
+    // (MV-cached) stale until the next poller bump. Indexed max(times_extracted_at)
+    // lets the probe catch it in one read.
+    .index("by_times_extracted_at", ["times_extracted_at"]),
 
   // ── Layer B (2026-05-19) — qty-drift safety net ────────────────────────
   // Nightly audit (convex/audit_qty_drift.ts) detects reservations whose

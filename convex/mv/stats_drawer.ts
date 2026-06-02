@@ -247,6 +247,21 @@ export const hasReservationMutationsSince = query({
       .order("desc")
       .first();
     if (newestCreated && newestCreated._creationTime > sinceMs) return true;
+    // ── Booking-time extraction staleness (2026-06-02) ──────────────────────
+    // A Trigger-driven booking-time extraction (extract_booking_times_q.setTimes)
+    // patches pickup_date/return_date/pickup_time/return_time and bumps
+    // `times_extracted_at` WITHOUT touching last_polled_at (poller semantics) or
+    // _creationTime. So a chat-negotiated date/time change moves the live
+    // calendar instantly but, absent this probe, leaves the MV-cached Active tab
+    // stale until the next poller cycle. The newest times_extracted_at is the
+    // "any extraction since?" signal — one indexed read.
+    const newestExtracted = await ctx.db
+      .query("reservations")
+      .withIndex("by_times_extracted_at")
+      .order("desc")
+      .first();
+    const extractedStamp = (newestExtracted as { times_extracted_at?: number } | null)?.times_extracted_at;
+    if (typeof extractedStamp === "number" && extractedStamp > sinceMs) return true;
     // ── Image-bank staleness (Phase 5.4) ───────────────────────────────────
     // A listing_images write changes the IMAGE shown on the rentals tiles but
     // does NOT touch any reservation, so the reservation-only probe above would

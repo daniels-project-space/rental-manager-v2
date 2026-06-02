@@ -13,6 +13,7 @@ import {
   netOf,
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
+import { londonToday } from "./lib/effectiveDates";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import {
   resolveImageForReservationItem,
@@ -285,6 +286,12 @@ export const getStatsDrawerData = query({
       }
     }
     const today = new Date().toISOString().slice(0, 10);
+    // London-business "today" — used ONLY for ACTIVE-rental membership
+    // (ongoing/upcoming), so the Active tab classifies a rental on the same
+    // calendar day the strip/calendar do (which now also use London). The
+    // UTC `today` above stays the day basis for REVENUE/earnings attribution so
+    // money-day boundaries are not silently shifted.
+    const activeToday = londonToday();
     const now = new Date();
 
     // ── Week bounds ──────────────────────────────────────────────
@@ -513,8 +520,8 @@ export const getStatsDrawerData = query({
     type ResRow = typeof allRes[number];
     const dedupRes = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
 
-    const ongoingRentals = allRes.filter((r) => isOngoing(r as ResRow, today));
-    const upcomingRentals = allRes.filter((r) => isUpcoming(r as ResRow, today));
+    const ongoingRentals = allRes.filter((r) => isOngoing(r as ResRow, activeToday));
+    const upcomingRentals = allRes.filter((r) => isUpcoming(r as ResRow, activeToday));
 
     // "Paid" = live (not cancelled/declined/obsolete). Revenue candidate pool.
     const paidRes = allRes.filter(
@@ -787,8 +794,8 @@ export const getStatsDrawerData = query({
     // accounts (not just the scoped one) so an A7 III booked by DB Cinema
     // and an A7 III booked by Leo on the same day surface as ONE conflict
     // on either dashboard page.
-    const ongoingCross = (allResCrossAccount as ResRow[]).filter((r) => isOngoing(r as ResRow, today));
-    const upcomingCross = (allResCrossAccount as ResRow[]).filter((r) => isUpcoming(r as ResRow, today));
+    const ongoingCross = (allResCrossAccount as ResRow[]).filter((r) => isOngoing(r as ResRow, activeToday));
+    const upcomingCross = (allResCrossAccount as ResRow[]).filter((r) => isUpcoming(r as ResRow, activeToday));
     const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => isPendingVerification(r as ResRow));
     const dedupCross = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
     const ongoingCrossUniq = dedupCross(ongoingCross);
