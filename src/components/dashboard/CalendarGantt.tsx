@@ -72,6 +72,19 @@ function addDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Navigation cap: current week .. +4 weeks (~1 month) ahead. No past weeks.
+const WEEK_AHEAD_CAP = 28;
+
+/** Clamp a Monday-ISO into [this week, +4 weeks]. ISO date strings compare
+ *  lexicographically, so string `<`/`>` is a valid date order here. */
+function clampWeek(iso: string): string {
+  const min = mondayOfThisWeek();
+  const max = addDays(min, WEEK_AHEAD_CAP);
+  if (iso < min) return min;
+  if (iso > max) return max;
+  return iso;
+}
+
 function isoToDate(iso: string): Date {
   return new Date(iso + "T00:00:00Z");
 }
@@ -157,116 +170,153 @@ function ItemAvatar({ name, imageUrl }: { name: string; imageUrl: string | null 
   );
 }
 
+// ── Block geometry + lane packing ──────────────────────────────────────────
+// Each item row can hold several bookings. When their date ranges overlap they
+// MUST go on separate lanes (sub-rows) or the labels render on top of each
+// other (the old single-lane layout did exactly that). We greedily pack blocks
+// into the fewest lanes and grow the row height to fit.
+const COL_GAP = 4;
+const DAY_MS = 86400000;
+
+interface BlockGeom {
+  block: Block;
+  left: number;
+  width: number;
+  clampedStart: number;
+  clampedEnd: number;
+}
+
+/** Pixel geometry for a block within the visible week, or null if off-week. */
+function blockGeom(block: Block, weekStart: string, colWidth: number): BlockGeom | null {
+  if (!block.start_date || !block.end_date) return null;
+  const weekStartDay = isoToDate(weekStart).getTime();
+  const weekEndDay = weekStartDay + 6 * DAY_MS;
+  const blockStart = isoToDate(block.start_date).getTime();
+  // Bar END honors the effective (negotiated) return date (return_date ?? end_date).
+  const blockEnd = isoToDate(block.return_date ?? block.end_date).getTime();
+  if (blockEnd < weekStartDay || blockStart > weekEndDay) return null; // not in view
+
+  const clampedStart = Math.max(blockStart, weekStartDay);
+  const clampedEnd = Math.min(blockEnd, weekEndDay);
+  const startIdx = Math.round((clampedStart - weekStartDay) / DAY_MS);
+  const daySpan = Math.round((clampedEnd - clampedStart) / DAY_MS) + 1;
+  const left = startIdx * colWidth + COL_GAP;
+  const width = Math.max(daySpan * colWidth - COL_GAP * 2, colWidth * 0.5);
+  return { block, left, width, clampedStart, clampedEnd };
+}
+
+/** Greedy lane assignment: a block reuses the first lane whose previous block
+ *  has already ended; otherwise it opens a new lane. Returns each block with
+ *  its lane index plus the total lane count for the row. */
+function packLanes(blocks: Block[], weekStart: string, colWidth: number): {
+  placed: Array<BlockGeom & { lane: number }>;
+  laneCount: number;
+} {
+  const geoms = blocks
+    .map((b) => blockGeom(b, weekStart, colWidth))
+    .filter((g): g is BlockGeom => g !== null)
+    .sort((a, b) => a.clampedStart - b.clampedStart || a.clampedEnd - b.clampedEnd);
+
+  const laneEnds: number[] = []; // clampedEnd of the last block on each lane
+  const placed = geoms.map((g) => {
+    let lane = laneEnds.findIndex((end) => end < g.clampedStart);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(g.clampedEnd); }
+    else laneEnds[lane] = g.clampedEnd;
+    return { ...g, lane };
+  });
+  return { placed, laneCount: Math.max(1, laneEnds.length) };
+}
+
 interface BlockProps {
   block: Block;
   itemName: string;
-  weekStart: string;
-  colWidth: number;
+  left: number;
+  width: number;
+  top: number;
+  height: number;
   onSelect: (b: Block) => void;
   liveProgress: number | null;
 }
 
-function GanttBlock({ block, itemName, weekStart, colWidth, onSelect, liveProgress }: BlockProps) {
-  const COL_GAP = 4;
-  const weekStartDay = isoToDate(weekStart).getTime();
-  const DAY_MS = 86400000;
+// order_step = ACTIVE (next-to-do) step — see src/lib/order_step_semantics.ts.
+function orderStepLabel(step: string | null): string {
+  switch (step) {
+    case "REQUEST": return "Request";          // owner must accept
+    case "APPROVED":                            // renter must pay
+    case "FUNDS_RESERVED": return "Awaiting";   // renter must pay
+    case "VERIFIED": return "Verifying";        // paid, doing ID/doc check
+    case "BOOKED_AFTER_VERIFIED": return "Confirmed";
+    case "DELIVERED": return "Out";
+    case "RETURNED": return "Returning";
+    case "REVIEWED": return "Done";
+    case "CANCELED": return "Cancelled";
+    case "VERIFICATION_FAILED": return "Failed";
+    default: return "Booking";
+  }
+}
 
-  if (!block.start_date || !block.end_date) return null;
-
-  const blockStart = isoToDate(block.start_date).getTime();
-  // Bar END honors the effective (negotiated) return date so a chat-extended
-  // rental reaches displayReturnDate, matching Active's ongoing window. Falls
-  // back to raw end_date. (Length/period math elsewhere keeps raw end_date.)
-  const blockEnd = isoToDate(block.return_date ?? block.end_date).getTime();
-
-  // Clamp to week boundaries (Mon–Sun)
-  const clampedStart = Math.max(blockStart, weekStartDay);
-  const weekEndDay = weekStartDay + 6 * DAY_MS;
-  const clampedEnd = Math.min(blockEnd, weekEndDay);
-
-  const startIdx = Math.round((clampedStart - weekStartDay) / DAY_MS);
-  const daySpan = Math.round((clampedEnd - clampedStart) / DAY_MS) + 1;
-
-  const left = startIdx * colWidth + COL_GAP;
-  const width = Math.max(daySpan * colWidth - COL_GAP * 2, colWidth * 0.5);
-
+function GanttBlock({ block, itemName, left, width, top, height, onSelect, liveProgress }: BlockProps) {
   const ss = statusStyle(block.order_step);
   const showProgress =
     block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
 
-  // Renter label: use name if present, else order_step-derived fallback.
-  // order_step = ACTIVE (next-to-do) step — see src/lib/order_step_semantics.ts.
-  function orderStepLabel(step: string | null): string {
-    switch (step) {
-      case "REQUEST": return "Request";       // owner must accept
-      case "APPROVED":                          // renter must pay
-      case "FUNDS_RESERVED": return "Awaiting"; // renter must pay
-      case "VERIFIED": return "Verifying";   // paid, doing ID/doc check
-      case "BOOKED_AFTER_VERIFIED": return "Confirmed";
-      case "DELIVERED": return "Out";
-      case "RETURNED": return "Returning";
-      case "REVIEWED": return "Done";
-      case "CANCELED": return "Cancelled";
-      case "VERIFICATION_FAILED": return "Failed";
-      default: return "Booking";
-    }
-  }
-  const hasRenter = block.renter_name && block.renter_name.trim().length > 0 && block.renter_name.trim() !== "?";
-  const renterFallback = orderStepLabel(block.order_step);
-  const renterShort = hasRenter
-    ? ((block.renter_name!).length > 12 ? (block.renter_name!).slice(0, 12) + "…" : block.renter_name!)
-    : renterFallback;
+  const hasRenter = !!block.renter_name && block.renter_name.trim().length > 0 && block.renter_name.trim() !== "?";
+  const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);
+  const time = block.pickup_time ? block.pickup_time.slice(0, 5) : null; // "18:00:00" → "18:00"
 
-  // Tooltip: "{renter} • {item} • {start}→{end}"
+  // Tooltip carries the full context the compact block omits.
   const tooltipText = [
-    hasRenter ? block.renter_name : renterFallback,
+    renterLabel,
     itemName,
     block.start_date && block.end_date ? `${block.start_date} → ${block.end_date}` : null,
-    block.pickup_time ? `pickup ${block.pickup_time}` : null,
+    time ? `pickup ${time}` : null,
   ].filter(Boolean).join(" • ");
 
+  // Single readable line: renter (left) + time (right). The item name is the
+  // row label, so it's intentionally not repeated inside the block.
   return (
     <div
-      className="absolute top-1 bottom-1 rounded-md cursor-pointer overflow-hidden flex flex-col justify-between px-2 py-1 select-none transition-opacity hover:opacity-90"
+      className="absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 px-2 select-none transition-opacity hover:opacity-90"
       style={{
         left,
         width,
+        top,
+        height,
         background: ss.bg,
+        borderLeft: `3px solid ${ss.border}`,
         border: `1px solid ${ss.border}`,
+        borderLeftWidth: 3,
       }}
       title={tooltipText}
       onClick={() => onSelect(block)}
     >
-      <div
-        className="text-[11px] font-semibold truncate leading-tight"
+      <span
+        className="text-[11px] font-semibold truncate flex-1 leading-none"
         style={{
           color: ss.text,
           textDecoration: ss.strikethrough ? "line-through" : undefined,
           fontStyle: hasRenter ? undefined : "italic",
-          opacity: hasRenter ? undefined : 0.75,
-          fontSize: hasRenter ? undefined : "10px",
+          opacity: hasRenter ? undefined : 0.8,
         }}
       >
-        {renterShort}
-      </div>
-      <div className="text-[9px] truncate leading-tight" style={{ color: ss.text, opacity: 0.6 }}>
-        {itemName.length > 14 ? itemName.slice(0, 14) + "…" : itemName}
-      </div>
-      {block.pickup_time && (
-        <div className="text-[10px] truncate" style={{ color: ss.text, opacity: 0.75 }}>
-          {block.pickup_time}
-        </div>
+        {renterLabel}
+      </span>
+      {time && (
+        <span
+          className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums"
+          style={{ color: ss.text, opacity: 0.7 }}
+        >
+          {time}
+        </span>
       )}
       {showProgress && (
-        <div className="h-1 rounded-full mt-1" style={{ background: "rgba(255,255,255,0.1)" }}>
-          <div
-            className="h-full rounded-full transition-all"
-            style={{
-              width: `${Math.min(100, liveProgress ?? 0)}%`,
-              background: "linear-gradient(90deg, #3b82f6, #10b981)",
-            }}
-          />
-        </div>
+        <div
+          className="absolute left-0 bottom-0 h-0.5 rounded-full"
+          style={{
+            width: `${Math.min(100, liveProgress ?? 0)}%`,
+            background: "linear-gradient(90deg, #3b82f6, #10b981)",
+          }}
+        />
       )}
     </div>
   );
@@ -322,8 +372,15 @@ function BlockDetail({ block, onClose }: { block: Block; onClose: () => void }) 
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column
-const ROW_HEIGHT = 58; // px per item row
 const LABEL_WIDTH = 280; // px for left item label column
+const LANE_HEIGHT = 30; // px per booking lane within a row
+const ROW_PAD = 6; // vertical padding inside each item row
+const MIN_ROW_HEIGHT = 52; // floor so a single-lane row still fits the avatar
+
+/** Row height for an item, sized to its lane count. */
+function rowHeightFor(laneCount: number): number {
+  return Math.max(MIN_ROW_HEIGHT, laneCount * LANE_HEIGHT + ROW_PAD * 2);
+}
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? mondayOfThisWeek());
@@ -336,18 +393,18 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     open ? { weekStartIso: weekStart, accountSlug: accountSlug ?? undefined } : "skip"
   );
 
-  // Sync prop weekStartIso if it changes while open
+  // Sync prop weekStartIso if it changes while open (clamped to the nav window)
   useEffect(() => {
-    if (weekStartIso) setWeekStart(weekStartIso);
+    if (weekStartIso) setWeekStart(clampWeek(weekStartIso));
   }, [weekStartIso]);
 
-  // ESC to close
+  // ESC to close; arrow keys step weeks within the [this week, +4 weeks] cap
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") setWeekStart((w) => addDays(w, -7));
-      if (e.key === "ArrowRight") setWeekStart((w) => addDays(w, 7));
+      if (e.key === "ArrowLeft") setWeekStart((w) => clampWeek(addDays(w, -7)));
+      if (e.key === "ArrowRight") setWeekStart((w) => clampWeek(addDays(w, 7)));
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -404,6 +461,11 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const headers = dayHeaders(weekStart);
   const totalGridWidth = COL_WIDTH * 7;
 
+  // Nav bounds — disable Prev at the current week, Next at +4 weeks.
+  const minWeek = mondayOfThisWeek();
+  const atMinWeek = weekStart <= minWeek;
+  const atMaxWeek = weekStart >= addDays(minWeek, WEEK_AHEAD_CAP);
+
   const hasAnyBlocks = data?.items.some((i) => i.blocks.length > 0) ?? false;
 
   const content = (
@@ -447,8 +509,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
           style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
         >
           <button
-            className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
-            onClick={() => setWeekStart((w) => addDays(w, -7))}
+            className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-300"
+            onClick={() => setWeekStart((w) => clampWeek(addDays(w, -7)))}
+            disabled={atMinWeek}
           >
             ← Prev Week
           </button>
@@ -459,8 +522,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             Today
           </button>
           <button
-            className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
-            onClick={() => setWeekStart((w) => addDays(w, 7))}
+            className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-300"
+            onClick={() => setWeekStart((w) => clampWeek(addDays(w, 7)))}
+            disabled={atMaxWeek}
           >
             Next Week →
           </button>
@@ -528,13 +592,17 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
               {/* Item rows */}
               {data.items
                 .filter((item) => item.blocks.length > 0)
-                .map((item) => (
+                .map((item) => {
+                  // Pack overlapping bookings into lanes so labels never collide.
+                  const { placed, laneCount } = packLanes(item.blocks, weekStart, COL_WIDTH);
+                  const rh = rowHeightFor(laneCount);
+                  return (
                   <div
                     key={item.item_id ?? item.item_name}
                     className="flex"
                     style={{
                       borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      height: ROW_HEIGHT,
+                      height: rh,
                     }}
                   >
                     {/* Left label */}
@@ -580,14 +648,16 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                         />
                       ))}
 
-                      {/* Booking blocks */}
-                      {item.blocks.map((block) => (
+                      {/* Booking blocks — one per lane, positioned by geometry */}
+                      {placed.map(({ block, left, width, lane }) => (
                         <GanttBlock
                           key={block.reservation_id}
                           block={block}
                           itemName={item.item_name}
-                          weekStart={weekStart}
-                          colWidth={COL_WIDTH}
+                          left={left}
+                          width={width}
+                          top={ROW_PAD + lane * LANE_HEIGHT}
+                          height={LANE_HEIGHT - 6}
                           onSelect={setSelectedBlock}
                           liveProgress={liveProgress[block.reservation_id] ?? null}
                         />
@@ -605,7 +675,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                         )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
             </div>
           )}
         </div>

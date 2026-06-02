@@ -92,6 +92,23 @@ function TODAY_ISO(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 }
 
+/** Add n days to a YYYY-MM-DD date (UTC-parsed, no instant drift). */
+function addDaysIso(iso: string, n: number): string {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Monday (YYYY-MM-DD) of the week containing the given date — for the
+ *  Gantt handoff, which is Monday-aligned while this strip anchors on today. */
+function mondayOf(ymd: string): string {
+  const d = new Date(ymd + "T00:00:00Z");
+  const day = d.getUTCDay(); // 0=Sun
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
 /** "MON" / 13 split — used by big day-card layout. */
 function dayLabelSplit(dateStr: string): { wd: string; num: number } {
   const d = new Date(dateStr + "T00:00:00");
@@ -498,16 +515,14 @@ function BookingCard({ chip }: { chip: ChipData }) {
   const isPickupDelivery = chip.pickupMethod === "delivery";
   const isReturnDelivery = chip.returnMethod === "delivery";
 
-  const badgeText =
-    kind === "pickup"
-      ? isPickupDelivery
-        ? "🚚 DELIVERY"
-        : "PICKUP"
-      : kind === "return"
-        ? isReturnDelivery
-          ? "🚚 DELIVERY"
-          : "RETURN"
-        : "AWAY";
+  // Pickup/drop-off tag shows ONLY for delivery legs. Collection/unknown legs
+  // render no pickup/return badge (the booking entry still appears, untagged).
+  // "away" is an ongoing-rental marker, not a pickup/drop-off tag — left as-is.
+  const showBadge =
+    kind === "away" ||
+    (kind === "pickup" && isPickupDelivery) ||
+    (kind === "return" && isReturnDelivery);
+  const badgeText = kind === "away" ? "AWAY" : "🚚 DELIVERY";
   const badgeStyle: React.CSSProperties =
     kind === "pickup"
       ? { background: "rgba(34,197,94,0.16)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
@@ -576,12 +591,14 @@ function BookingCard({ chip }: { chip: ChipData }) {
       <div className="flex-1 min-w-0">
         {/* Top row: badge | account chip | renter | £ */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span
-            className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-            style={badgeStyle}
-          >
-            {badgeText}
-          </span>
+          {showBadge && (
+            <span
+              className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+              style={badgeStyle}
+            >
+              {badgeText}
+            </span>
+          )}
           {accountMeta?.profile_image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -615,27 +632,34 @@ function BookingCard({ chip }: { chip: ChipData }) {
         {/* Meta row: range + pickup/return inline + collection tag */}
         <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-[#8b8fa3]">
           {range && <span>{range}</span>}
-          {(chip.pickupTime || chip.returnTime || chip.startDate || chip.endDate) && (
+          {/* Pickup/drop-off inline labels — delivery legs only, so a collection/
+              unknown booking stays untagged (its times still show in the
+              timeline below). Range + identity always remain visible. */}
+          {isPickupDelivery && (
             <>
               <span className="text-[#3a3d4a]">·</span>
               <span>
                 <span className="text-[#6b6f80] uppercase tracking-wider mr-1">pickup</span>
                 <span className="text-[#c9cdd5] font-medium">{pickupLabel}</span>
               </span>
-              <span className="text-[#3a3d4a]">|</span>
+            </>
+          )}
+          {isReturnDelivery && (
+            <>
+              <span className="text-[#3a3d4a]">·</span>
               <span>
                 <span className="text-[#6b6f80] uppercase tracking-wider mr-1">return</span>
                 <span className="text-[#c9cdd5] font-medium">{returnLabel}</span>
               </span>
             </>
           )}
-          {/* Method pills — pickup vs return, each clearly distinct.
-              Delivery = amber truck pill; Collection = teal handshake pill. */}
-          {chip.pickupMethod && (
-            <MethodPill direction="pickup" method={chip.pickupMethod} />
+          {/* Method pills — delivery only (amber truck). Collection/unknown
+              render no pill, matching the delivery-only tag rule. */}
+          {isPickupDelivery && (
+            <MethodPill direction="pickup" method="delivery" />
           )}
-          {chip.returnMethod && (
-            <MethodPill direction="return" method={chip.returnMethod} />
+          {isReturnDelivery && (
+            <MethodPill direction="return" method="delivery" />
           )}
         </div>
 
@@ -937,13 +961,22 @@ export function CalendarStrip() {
   const { activeAccountSlug } = useAccount();
   const today = TODAY_ISO();
 
+  // Week navigation: 0 = current week (7-day window anchored on today), capped
+  // at +4 weeks (~1 month) ahead. No past-week scrolling — prev disabled at 0.
+  const MAX_WEEK_OFFSET = 4;
+  const [weekOffset, setWeekOffset] = useState(0);
+  const stripStart = addDaysIso(today, weekOffset * 7);
+  const stripEnd = addDaysIso(stripStart, 6);
+  const canPrev = weekOffset > 0;
+  const canNext = weekOffset < MAX_WEEK_OFFSET;
+
   // Auto-expand today on load so the drawer shows up without a click.
   const [expandedDate, setExpandedDate] = useState<string | null>(today);
   const [ganttOpen, setGanttOpen] = useState(false);
 
   const data = useQuery(api.calendar.getCalendarStrip, {
     accountSlug: activeAccountSlug,
-    startDate: today,
+    startDate: stripStart,
     days: 7,
   });
 
@@ -976,6 +1009,28 @@ export function CalendarStrip() {
               <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
               Full
             </span>
+          </div>
+          {/* Week navigation — forward up to +4 weeks, back arrow returns to today. */}
+          <div className="flex items-center gap-1 text-xs text-[#8b8fa3]">
+            <button
+              onClick={() => setWeekOffset((o) => Math.max(0, o - 1))}
+              disabled={!canPrev}
+              aria-label="Previous week"
+              className="px-2 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:text-[#e4e6eb] hover:bg-white/5"
+            >
+              ‹
+            </button>
+            <span className="tabular-nums whitespace-nowrap min-w-[92px] text-center">
+              {dayShort(stripStart)} – {dayShort(stripEnd)}
+            </span>
+            <button
+              onClick={() => setWeekOffset((o) => Math.min(MAX_WEEK_OFFSET, o + 1))}
+              disabled={!canNext}
+              aria-label="Next week"
+              className="px-2 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:text-[#e4e6eb] hover:bg-white/5"
+            >
+              ›
+            </button>
           </div>
           <button
             onClick={() => setGanttOpen(true)}
@@ -1028,7 +1083,7 @@ export function CalendarStrip() {
           <CalendarGantt
             open={ganttOpen}
             onClose={() => setGanttOpen(false)}
-            weekStartIso={today}
+            weekStartIso={mondayOf(stripStart)}
             accountSlug={activeAccountSlug ?? undefined}
           />
         </Suspense>

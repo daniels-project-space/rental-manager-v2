@@ -59,6 +59,12 @@ export function WeeklyCalendar() {
   const weekEnd = addDays(weekStart, 6);
   const today = londonToday();
 
+  // Navigation cap: current week .. +4 weeks (~1 month) ahead. No past weeks.
+  const minWeek = getMondayOf(today);
+  const maxWeek = addDays(minWeek, 28);
+  const canPrev = weekStart > minWeek;
+  const canNext = weekStart < maxWeek;
+
   return (
     <Card className="hidden md:block">
       <CardHeader
@@ -67,7 +73,9 @@ export function WeeklyCalendar() {
           <div className="flex items-center gap-2 text-xs text-[#8b8fa3]">
             <button
               onClick={() => setWeekStart(addDays(weekStart, -7))}
-              className="px-2 py-0.5 rounded hover:text-[#e4e6eb] transition-colors"
+              disabled={!canPrev}
+              aria-label="Previous week"
+              className="px-2 py-0.5 rounded hover:text-[#e4e6eb] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               ‹
             </button>
@@ -76,7 +84,9 @@ export function WeeklyCalendar() {
             </span>
             <button
               onClick={() => setWeekStart(addDays(weekStart, 7))}
-              className="px-2 py-0.5 rounded hover:text-[#e4e6eb] transition-colors"
+              disabled={!canNext}
+              aria-label="Next week"
+              className="px-2 py-0.5 rounded hover:text-[#e4e6eb] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               ›
             </button>
