@@ -863,6 +863,61 @@ export const admin_setItemInventory = mutation({
   },
 });
 
+/**
+ * Retire (or restore) an item from the active MASTER inventory by flipping its
+ * marketing-only flag — without deleting the row or its history. Use to clear
+ * phantom/duplicate listing rows that shadow a real item: e.g. the duplicate
+ * "Pioneer XDJ-RX2" row that sat alongside the real "DJ RX3 Pioneer
+ * controller", making WallE report two DJ decks (2026-06-02). Keeps
+ * is_marketing_only and status in sync so the item drops out of every
+ * `status === "active" && !is_marketing_only` filter (the inventory index,
+ * listActive, earnings/utilization, etc.). Reversible: pass false to restore.
+ */
+export const admin_setMarketingOnly = mutation({
+  args: {
+    name_canonical: v.string(),
+    is_marketing_only: v.boolean(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, { name_canonical, is_marketing_only, note }) => {
+    const item = await ctx.db
+      .query("items")
+      .withIndex("by_canonical_name", (q) => q.eq("name_canonical", name_canonical))
+      .first();
+    if (!item) throw new Error(`item not found: ${name_canonical}`);
+
+    const before = { is_marketing_only: item.is_marketing_only, status: item.status };
+    const status = is_marketing_only ? "marketing_only" : "active";
+    const changed =
+      item.is_marketing_only !== is_marketing_only || item.status !== status;
+    if (changed) {
+      await ctx.db.patch(item._id, {
+        is_marketing_only,
+        status,
+        updated_at: Date.now(),
+      });
+      await ctx.db.insert("audit_log", {
+        table_name: "items",
+        actor: "daniel",
+        op: "update",
+        count: 1,
+        source_file: "items.admin_setMarketingOnly",
+        note:
+          note ??
+          `${item.name_canonical}: marketing_only ${before.is_marketing_only}→${is_marketing_only}, status ${before.status}→${status}`,
+        ts: Date.now(),
+      });
+    }
+    return {
+      item_id: item._id,
+      name_canonical: item.name_canonical,
+      changed,
+      before,
+      after: { is_marketing_only, status },
+    };
+  },
+});
+
 // `backfillImagesFuzzy` removed (Phase 7 / FIX-DESIGN §4.3): substring matching
 // against unrelated reservations was the secondary cross-item-photo
 // contamination path. Replaced by per-reservation `image_hints` written at
