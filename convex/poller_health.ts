@@ -104,6 +104,10 @@ interface StalenessReport {
   alerted: number;
   dedupedSkips: number;
   autoHealInvoked: boolean;
+  // Set true when the check short-circuits during the overnight idle window
+  // (London 23:00–07:00). The poller is intentionally not polling then, so a
+  // "stale" reading is expected, not a stall — we skip the scan + alerting.
+  skippedOffHours?: boolean;
   perAccount: Array<{
     account: string;
     staleMinutes: number;
@@ -112,10 +116,46 @@ interface StalenessReport {
   }>;
 }
 
+// Active polling window in London local time, expressed as minutes-since-
+// midnight. Outside [07:00, 23:00) the poller is intentionally idle.
+const ACTIVE_WINDOW_START_MIN = 7 * 60; // 07:00
+const ACTIVE_WINDOW_END_MIN = 23 * 60; // 23:00
+
+/** Current Europe/London time as minutes-since-midnight (DST-correct via Intl). */
+function londonMinutesSinceMidnight(): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return hh * 60 + mm;
+}
+
 export const runStalenessCheck = internalAction({
   args: {},
   handler: async (ctx): Promise<StalenessReport> => {
     const now = Date.now();
+
+    // Off-hours guard: the poller is intentionally idle overnight, so a stale
+    // lastSuccessfulPollAt during London 23:00–07:00 is expected — not a stall.
+    // Return a type-correct "skipped" report WITHOUT scanning account_state or
+    // inserting alerts. (07:00 = 420 min inclusive, 23:00 = 1380 min exclusive.)
+    const londonMin = londonMinutesSinceMidnight();
+    if (londonMin < ACTIVE_WINDOW_START_MIN || londonMin >= ACTIVE_WINDOW_END_MIN) {
+      return {
+        checkedAt: now,
+        staleFound: 0,
+        alerted: 0,
+        dedupedSkips: 0,
+        autoHealInvoked: false,
+        skippedOffHours: true,
+        perAccount: [],
+      };
+    }
+
     const stale = await ctx.runQuery(internal.poller_health.listStaleAccounts, {});
 
     const report: StalenessReport = {

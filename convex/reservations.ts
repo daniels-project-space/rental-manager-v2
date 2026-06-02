@@ -90,11 +90,9 @@ export const getDueReturns = query({
 
     const results = await Promise.all(
       due.map(async (r) => {
-        let renterName = "Unknown";
-        if (r.renter_id) {
-          const renter = await ctx.db.get(r.renter_id);
-          renterName = renter?.display_name ?? "Unknown";
-        }
+        // Use the denormalized renter_name (poller writes it) instead of an
+        // N+1 point-read of the renter doc — only the display name was used.
+        const renterName = r.renter_name ?? "Unknown";
         return {
           reservationId: r._id,
           renterName,
@@ -134,11 +132,23 @@ export const getConversionFunnel = query({
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    let reservations = await ctx.db.query("reservations").collect();
+    // When account-scoped, the by_account_slug index is the tightest filter.
+    // Otherwise the by_start_date range index returns only rows on/after the
+    // cutoff (rows with undefined start_date are excluded by the index range,
+    // which is fine — the JS filter below dropped them anyway). The identical
+    // `start_date >= cutoffStr` JS filter is applied in BOTH branches so the
+    // final `recent` set matches the previous full-scan behaviour exactly.
+    let reservations;
     if (accountSlug) {
-      reservations = reservations.filter(
-        (r) => r.account_slug === accountSlug
-      );
+      reservations = await ctx.db
+        .query("reservations")
+        .withIndex("by_account_slug", (q) => q.eq("account_slug", accountSlug))
+        .collect();
+    } else {
+      reservations = await ctx.db
+        .query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+        .collect();
     }
     const recent = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date >= cutoffStr
@@ -251,13 +261,9 @@ export const listObsolete = internalQuery({
     );
     const rows = await Promise.all(
       filtered.map(async (r) => {
-        let renterName: string | null = null;
-        if (r.renter_id) {
-          const renter = await ctx.db.get(r.renter_id);
-          if (renter && "display_name" in renter) {
-            renterName = (renter as { display_name?: string }).display_name ?? null;
-          }
-        }
+        // Use the denormalized renter_name instead of an N+1 renter doc
+        // point-read — only the display name was used.
+        const renterName: string | null = r.renter_name ?? null;
         return {
           order_id: r.hygglo_order_id ?? null,
           account: r.account_slug ?? null,
@@ -418,11 +424,9 @@ export const listPending = internalQuery({
     }
     const rentals = await Promise.all(
       rows.map(async (r) => {
-        let renterName = '';
-        if (r.renter_id) {
-          const renter = await ctx.db.get(r.renter_id);
-          renterName = renter?.display_name ?? '';
-        }
+        // Use the denormalized renter_name instead of an N+1 renter doc
+        // point-read — only the display name was used.
+        const renterName = r.renter_name ?? '';
         return {
           id: r._id,
           accountSlug: r.account_slug,
@@ -487,7 +491,10 @@ export const completeStaleConfirmedCron = internalMutation({
   handler: async (ctx) => {
     const dateCutoff = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const freshThreshold = Date.now() - 2 * 60 * 60 * 1000;
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+      .collect();
     let completed = 0;
     for (const r of rows) {
       if (r.status !== "confirmed") continue;
@@ -523,7 +530,10 @@ export const adminCompleteStaleConfirmed = mutation({
     // filter and the poller stopped refreshing it. Two hours is roughly four
     // poll cycles, giving plenty of buffer for a single missed run.
     const freshThreshold = Date.now() - 2 * 60 * 60 * 1000;
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+      .collect();
     let completed = 0;
     for (const r of rows) {
       if (r.status !== "confirmed") continue;

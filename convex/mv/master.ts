@@ -50,6 +50,7 @@ import { internalAction, internalMutation, internalQuery } from "../_generated/s
 import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import { isoDaysAgo, upsertSingleton } from "./_helpers";
+import { londonToday } from "../lib/effectiveDates";
 import { computeDailyBriefing } from "./daily_briefing";
 import { computeTopEarners } from "./top_earners";
 import { computeUtilization } from "./utilization";
@@ -129,6 +130,24 @@ export const collectPricing = internalQuery({
 export const collectAccounts = internalQuery({
   args: {},
   handler: async (ctx) => await ctx.db.query("accounts").collect(),
+});
+
+/**
+ * Last-computed timestamp (ms) of the missed/denied category MV — the marker
+ * used to gate that step to once per London calendar month. Returns the
+ * newest row's own `generatedAt` if present, else its `_creationTime`; null
+ * when the table is empty (forces a recompute). No reservations are read.
+ */
+export const missedDeniedLastComputedAt = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<number | null> => {
+    const row = await ctx.db
+      .query("mv_missed_and_denied_by_category")
+      .order("desc")
+      .first();
+    if (!row) return null;
+    return typeof row.generatedAt === "number" ? row.generatedAt : row._creationTime;
+  },
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -288,7 +307,7 @@ export const writeItemRoiRanking = internalMutation({
 // Master refresh actions.
 // ──────────────────────────────────────────────────────────────
 
-type StepResult = { name: string; ok: boolean; durationMs: number; error?: string };
+type StepResult = { name: string; ok: boolean; durationMs: number; error?: string; skipped?: boolean };
 
 async function safeStep(
   ctx: ActionCtx,
@@ -485,9 +504,41 @@ export const refreshSlow = internalAction({
     // largest single cost source after the post-spending-limit audit. Now
     // refreshed once daily for the 3 standard windows that the dashboard
     // toggle exposes (30 / 90 / 365 days × 3 accounts = 9 rows).
-    results.push(await safeStep(ctx, "missed_denied_by_category", async () => {
-      await refreshMissedDeniedByCategory(ctx);
-    }));
+    //
+    // 2026-06-02 monthly gate: this single step still dominated cost (~57GB/day
+    // even at daily cadence, because refreshAll re-runs the live handler 9×).
+    // The category mix moves slowly (months), so we recompute at most ONCE per
+    // London calendar month. The MV's OWN newest-row timestamp (generatedAt,
+    // else _creationTime) is the marker — NO schema change. If the marker's
+    // London month-key equals the current London month-key, push an OK no-op
+    // StepResult (skipped:true) so the results array shape stays valid;
+    // otherwise recompute as before. The heavy reservation reads live entirely
+    // inside refreshMissedDeniedByCategory(ctx) (it calls the live handler with
+    // _bypassMv), so skipping this step genuinely avoids the ~57GB/day reads —
+    // nothing for this MV is collected in the hoisted Promise.all above.
+    const lastComputedAt = await ctx.runQuery(
+      internal.mv.master.missedDeniedLastComputedAt,
+      {},
+    );
+    const currentMonthKey = londonToday().slice(0, 7); // "YYYY-MM"
+    const lastMonthKey =
+      lastComputedAt == null
+        ? null
+        : new Date(lastComputedAt)
+            .toLocaleDateString("en-CA", { timeZone: "Europe/London" })
+            .slice(0, 7);
+    if (lastMonthKey !== null && lastMonthKey === currentMonthKey) {
+      results.push({
+        name: "missed_denied_by_category",
+        ok: true,
+        durationMs: 0,
+        skipped: true,
+      });
+    } else {
+      results.push(await safeStep(ctx, "missed_denied_by_category", async () => {
+        await refreshMissedDeniedByCategory(ctx);
+      }));
+    }
 
     // Pass 10a (2026-05-25): wrap-and-cache getRentalVolumeKindBreakdown.
     // Second-biggest cost (24.27 GB/day + 62K calls). 8 kinds × 3 windows

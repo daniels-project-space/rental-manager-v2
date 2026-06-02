@@ -240,11 +240,14 @@ export const getClosestAvailableDates = query({
     );
     if (!overlapping) return { inVacation: false };
 
-    // 2. Pre-load reservations once (used for both before/after probes).
-    const allRes = await ctx.db.query("reservations").collect();
-    const confirmedRes = allRes.filter(isConfirmedWithDates) as Array<
-      Doc<"reservations">
-    >;
+    // 2. Pre-load confirmed reservations once (used for both before/after probes).
+    //    by_status index scopes the scan to ~250 confirmed rows vs ~1700 total.
+    const confirmedRes = (
+      await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+        .collect()
+    ).filter(isConfirmedWithDates) as Array<Doc<"reservations">>;
 
     // 3. Helper: is the candidate window free?
     const isWindowFree = async (s: string, e: string): Promise<boolean> => {

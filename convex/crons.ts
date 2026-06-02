@@ -100,17 +100,19 @@ crons.weekly(
 
 // ── Wave 4 — Poller staleness alarm + auto-heal ─────────────────
 //
-// Every 10 min. Scans account_state for `active` rows whose
+// Every 20 min. Scans account_state for `active` rows whose
 // lastSuccessfulPollAt is older than 30 min, sends a Telegram alert
 // to Daniel (deduped per-account to 1/hour), and invokes the backup
 // poller (internal.backup_poll.runBackupPoll) to auto-heal.
+// The handler itself self-skips overnight (London 23:00–07:00) when the
+// poller is intentionally idle, so off-hours ticks are cheap no-ops.
 //
 // Telegram env vars required on Convex prod:
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID_DANIEL
 // If missing, the alert no-ops gracefully (still attempts auto-heal).
 crons.interval(
   "poller staleness check",
-  { minutes: 10 },
+  { minutes: 20 },
   internal.poller_health.runStalenessCheck,
   {},
 );

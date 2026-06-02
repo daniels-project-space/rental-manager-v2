@@ -13,7 +13,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
-import { isWithinUkQuietHours } from "../lib/quiet-hours";
+import { isOutsidePollActiveWindow } from "../lib/quiet-hours";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 // Fallback URL must match v2's active deployment (see .env.local NEXT_PUBLIC_CONVEX_URL).
@@ -567,12 +567,12 @@ async function scrapeAccount(
 
 export const pollHyggloInbox = schedules.task({
   id: "poll-hygglo-inbox",
-  cron: "*/5 * * * *",
+  cron: "*/15 * * * *",
   maxDuration: 120,
   retry: { maxAttempts: 2 },
   run: async () => {
-    if (isWithinUkQuietHours()) {
-      // Heartbeat: keep dashboard "fresh" indicator alive during quiet hours.
+    if (isOutsidePollActiveWindow()) {
+      // Heartbeat: keep dashboard "fresh" indicator alive outside the active window.
       try {
         const hbConvex = new ConvexHttpClient(CONVEX_URL);
         await hbConvex.mutation(api.sync_state.recordSyncRun, {
@@ -583,8 +583,8 @@ export const pollHyggloInbox = schedules.task({
       } catch (err) {
         console.warn("[poll-hygglo] heartbeat write failed:", err);
       }
-      logger.info("[quiet-hours] skipped", { task: "poll-hygglo-inbox" });
-      return { skipped: true, reason: "uk_quiet_hours" };
+      logger.info("[poll-active-window] skipped", { task: "poll-hygglo-inbox" });
+      return { skipped: true, reason: "outside_poll_active_window" };
     }
     const runStart = Date.now();
     let runSucceeded = false;

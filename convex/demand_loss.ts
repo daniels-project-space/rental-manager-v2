@@ -113,15 +113,14 @@ export const classifyObsoleteReservations = internalMutation({
     }
     const batch = limit ?? 200;
 
-    // 1. Fetch obsolete rows missing a classification. There's no is_obsolete
-    //    index, so we filter by is_obsolete === true via Convex's .filter()
-    //    expression (uses table scan with predicate pushdown). We then
-    //    in-memory drop rows that already have a class (idempotency).
-    //    Cap scan at ~4x batch — keeps doc-read budget well under 32k.
+    // 1. Fetch obsolete rows missing a classification. The by_is_obsolete index
+    //    (schema.ts) lets us skip to obsolete rows directly without a full-table
+    //    scan. We then in-memory drop rows that already have a class (idempotency).
+    //    Cap at ~4x batch — keeps doc-read budget well under 32k.
     const candidates: Reservation[] = [];
     const scan = await ctx.db
       .query("reservations")
-      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
       .take(Math.min(batch * 4, 2000));
     for (const r of scan) {
       if (r.demand_loss_class === undefined) {
@@ -236,7 +235,7 @@ export const classifyObsoleteReservations = internalMutation({
     // 5. Cheap remaining-count probe (best-effort; not exact).
     const probe = await ctx.db
       .query("reservations")
-      .filter((q) => q.eq(q.field("is_obsolete"), true))
+      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
       .take(Math.min(batch * 4, 2000));
     let remaining = 0;
     for (const r of probe) {
