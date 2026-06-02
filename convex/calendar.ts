@@ -1054,6 +1054,10 @@ export const getGanttWeek = query({
           end_date: r.end_date,
           return_date: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
           renter_name: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
+          // Account comes from the RESERVATION (the items table doc has no
+          // account_slug, so the item-row account_color is always blue). The
+          // frontend groups by reservation and colours from this.
+          account_slug: (r as { account_slug?: string | null }).account_slug ?? null,
           order_step: rType.order_step ?? null,
           pickup_time: rType.pickup_time ?? null,
           return_time: rType.return_time ?? null,

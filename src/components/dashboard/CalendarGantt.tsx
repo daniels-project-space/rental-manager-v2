@@ -25,6 +25,7 @@ interface Block {
   pickup_method: string | null;
   return_method: string | null;
   progress_percent: number | null;
+  account_slug?: string | null;
 }
 
 interface GanttItem {
@@ -221,10 +222,13 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
       if (!row) {
         const effReturn = block.return_date ?? block.end_date;
         const ongoing = !!block.start_date && !!effReturn && block.start_date <= today && today <= effReturn;
+        // Colour by the reservation's account (item.account_color is always
+        // blue — the items table has no account_slug). Leo → purple, else blue.
+        const accColor: "blue" | "purple" = block.account_slug === "leo" ? "purple" : "blue";
         row = {
           reservationId: block.reservation_id,
           block,
-          acc: accountColor(item.account_color),
+          acc: accountColor(accColor),
           items: [],
           left: geom.left,
           width: geom.width,
