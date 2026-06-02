@@ -44,7 +44,7 @@ export const run = internalMutation({
     { limit = SAFETY_LIMIT, dry_run = false, active_multi_listing = true },
   ) => {
     const today = new Date().toISOString().slice(0, 10);
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off admin backfill (manual internalMutation)
     const candidates: Array<{
       id: typeof rows[number]["_id"];
       hygglo_order_id: string;

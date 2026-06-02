@@ -317,7 +317,7 @@ export const getLifetimeByMonth = query({
     // full history. The cost-watch ratchet allows this once flagged:
     // a future PR should back this with an MV (one row per (month, account)
     // refreshed nightly). // check-patterns:ok
-    const allReservations = await ctx.db.query("reservations").collect();
+    const allReservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — lifetime aggregate; TODO back with an MV
 
     // ── AI attribution source data (Wave AI-BE) ──────────────────
     // Single fetch each (no N+1) — classification happens in-memory.

@@ -114,7 +114,7 @@ export const refresh = internalMutation({
   handler: async (ctx, { account: targetAccount }) => {
     const startedAt = Date.now();
     const renters = await ctx.db.query("renters").collect();
-    const reservations = await ctx.db.query("reservations").collect();
+    const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — MV refresher (cron) — full scan by design
 
     const computed = computeChurnRisk({
       renters,

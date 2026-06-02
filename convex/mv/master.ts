@@ -107,7 +107,7 @@ export const collectConfirmedReservations = internalQuery({
 export const collectAllReservations = internalQuery({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("reservations").collect();
+    return await ctx.db.query("reservations").collect(); // check-patterns:ok — MV builder — full scan by design
   },
 });
 

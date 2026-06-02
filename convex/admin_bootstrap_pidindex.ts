@@ -42,7 +42,7 @@ export const run = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
-    const all = await ctx.db.query("reservations").collect();
+    const all = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off bootstrap (manual run)
 
     type Evidence = {
       titles: string[]; // raw titles from this row's hygglo_items position

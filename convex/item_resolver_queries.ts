@@ -159,7 +159,7 @@ export const admin_setResolutionByV1Id = mutation({
 export const listUnresolved = internalQuery({
   args: { limit: v.number(), include_notes_only: v.optional(v.boolean()) },
   handler: async (ctx, { limit, include_notes_only }) => {
-    const all = await ctx.db.query("reservations").collect();
+    const all = await ctx.db.query("reservations").collect(); // check-patterns:ok — internal/admin resolver batch inputs
     const need: { id: typeof all[number]["_id"]; created: number }[] = [];
     for (const r of all) {
       if (r.is_obsolete) continue;
@@ -250,7 +250,7 @@ export const admin_getResolverBatchInputs = query({
       ? (await Promise.all(ids.map((id) => ctx.db.get(id)))).filter(
           (x): x is NonNullable<typeof x> => x !== null,
         )
-      : await ctx.db.query("reservations").collect();
+      : await ctx.db.query("reservations").collect(); // check-patterns:ok — internal/admin resolver batch inputs
     type Item = { item_name: string; qty?: number };
     type Reservation = (typeof all)[number] & {
       items?: Item[];
@@ -392,7 +392,7 @@ export const admin_getVisionBatchInputs = query({
   handler: async (ctx, { limit }) => {
     // Mirrors listNeedingVision selection logic.
     const KIT_RE = /(kit|set|complete|full|bundle|package|cinematic|production)|\+/i;
-    const all = await ctx.db.query("reservations").collect();
+    const all = await ctx.db.query("reservations").collect(); // check-patterns:ok — internal/admin resolver batch inputs
     type Row = (typeof all)[number] & {
       items?: Array<{ item_name: string }>;
       photos_urls?: string[];

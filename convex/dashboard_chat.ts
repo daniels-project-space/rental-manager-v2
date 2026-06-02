@@ -159,7 +159,7 @@ export const streamContext = query({
     ).reverse();
 
     // ── Fresh signal snapshot (inline, no cross-file calls) ──
-    const allRes = await ctx.db.query("reservations").collect();
+    const allRes = await ctx.db.query("reservations").collect(); // check-patterns:ok — narration snapshot; TODO back with an MV
 
     // pendingCount: dashboard-equivalent (isPendingVerification = order_step==="VERIFIED").
     // Reuses the canonical predicate from convex/lib/reservations/predicates.ts

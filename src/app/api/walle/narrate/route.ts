@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ line: null, reason: "error" }, { status: 200 });
   }
 
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
   if (!convexUrl) {
     return NextResponse.json({ line: null, reason: "error" }, { status: 200 });
   }

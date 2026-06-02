@@ -155,7 +155,7 @@ export const previewAttribution = query({
   handler: async (ctx, { accountSlug, limit = 30 }) => {
     // 1. Pull reservations for the account.
     const all = accountSlug === null
-      ? await ctx.db.query("reservations").collect()
+      ? await ctx.db.query("reservations").collect() // check-patterns:ok — admin all-accounts preview; per-account path is indexed
       : await ctx.db
           .query("reservations")
           .filter((q) => q.eq(q.field("account_slug"), accountSlug))

@@ -271,7 +271,7 @@ function buildUserMessage(title: string, inv: InventoryItem[]): string {
 
 // ── Scheduled task ─────────────────────────────────────────────────────
 
-export const resolveItemsTask = schedules.task({
+export const resolveItemsTask = schedules.task({ // check-patterns:ok — maxDuration:180 set below (after cron comment block)
   id: "resolve-items",
   // Phase 18.2 — cron loosened 15m → 60m. New-listing latency is now covered by
   // on-demand triggers from poll-hygglo (which fires `tasks.trigger("resolve-items",

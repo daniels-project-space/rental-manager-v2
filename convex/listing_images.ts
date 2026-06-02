@@ -126,7 +126,7 @@ export const backfillFromReservations = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
     const cap = limit ?? 1000;
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off backfill (internalMutation)
     const grouped = new Map<
       string,
       {

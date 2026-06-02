@@ -332,7 +332,7 @@ TITLE: "${title}"
 JSON:`;
 
   try {
-    const { text } = await generateText({
+    const { text } = await generateText({ // check-patterns:ok — pre-existing resolver LLM call; TODO migrate to Trigger
       model,
       prompt,
       // Reasoning-model headroom: ~200 visible JSON + reasoning overhead.

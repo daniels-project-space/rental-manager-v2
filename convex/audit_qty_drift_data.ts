@@ -58,7 +58,7 @@ export const listAuditCandidates = internalQuery({
     } else {
       // check-patterns:ok — unreachable in production (cron always passes
       // only_active=true). Admin-only escape hatch for full-table audit.
-      rows = await ctx.db.query("reservations").collect();
+      rows = await ctx.db.query("reservations").collect(); // check-patterns:ok — admin full-table audit escape hatch; cron uses indexed path
     }
 
     const out: AuditCandidate[] = [];

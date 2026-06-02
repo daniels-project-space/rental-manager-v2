@@ -58,7 +58,7 @@ export const listCandidates = internalQuery({
     account_slug: v.optional(v.string()),
   },
   handler: async (ctx, { limit, account_slug }) => {
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off admin backfill helper
     const candidates: Array<{
       _id: Id<"reservations">;
       hygglo_order_id?: string;

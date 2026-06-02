@@ -15,7 +15,7 @@ export const run = internalMutation({
   args: {},
   handler: async (ctx) => {
     const today = new Date().toISOString().slice(0, 10);
-    const all = await ctx.db.query("reservations").collect();
+    const all = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off admin backfill (manual run)
     let updated = 0;
     const samples: any[] = [];
     for (const r of all) {

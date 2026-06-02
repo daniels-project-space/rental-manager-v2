@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
+    const url = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
     if (!url) {
       return NextResponse.json({ status: "config_error" }, { status: 500 });
     }

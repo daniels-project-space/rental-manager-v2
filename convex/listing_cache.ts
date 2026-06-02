@@ -352,7 +352,7 @@ export const incrementHit = internalMutation({
 export const backfillFromReservations = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const all = await ctx.db.query("reservations").collect();
+    const all = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off backfill (internalMutation)
     let wrote = 0;
     const seen = new Set<string>();
     for (const r of all) {

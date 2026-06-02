@@ -10,7 +10,7 @@ import { mutation } from "./_generated/server";
 export const clearAllOrderSteps = mutation({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off migration (manual run)
     let cleared = 0;
     for (const r of rows) {
       if ((r as any).order_step !== undefined) {

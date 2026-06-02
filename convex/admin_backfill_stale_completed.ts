@@ -19,7 +19,7 @@ import { internalMutation } from "./_generated/server";
 export const run = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query("reservations").collect();
+    const rows = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-off admin backfill (manual run)
     let patched = 0;
     const hygglo_order_ids: string[] = [];
     for (const r of rows) {

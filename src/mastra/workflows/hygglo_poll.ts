@@ -31,7 +31,7 @@ import type { Id } from "@/../convex/_generated/dataModel";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const anyApi = api as any;
 
-const CONVEX_URL = process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
+const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
 
 const convex = () => new ConvexHttpClient(CONVEX_URL);
 

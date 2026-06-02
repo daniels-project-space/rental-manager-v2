@@ -50,7 +50,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "no_messages" }, { status: 400 });
   }
 
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
   if (!convexUrl) {
     return NextResponse.json({ ok: false, error: "missing_convex_url" }, { status: 500 });
   }
