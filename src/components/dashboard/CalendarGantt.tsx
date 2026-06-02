@@ -149,96 +149,35 @@ function accountColor(ac: "blue" | "purple"): string {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ItemAvatar({ name, imageUrl, ring }: { name: string; imageUrl: string | null; ring: string }) {
-  if (imageUrl) {
-    return (
-      <img
-        src={imageUrl}
-        alt={name}
-        className="zoom-img w-8 h-8 rounded-md object-cover flex-shrink-0"
-        style={{ border: `1.5px solid ${ring}` }}
-      />
-    );
-  }
-  const initial = name.charAt(0).toUpperCase();
-  return (
-    <div
-      className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 text-xs font-bold"
-      style={{ background: `${ring}33`, color: ring, border: `1.5px solid ${ring}` }}
-    >
-      {initial}
-    </div>
-  );
-}
-
-// ── Block geometry + lane packing ──────────────────────────────────────────
-// Each item row can hold several bookings. When their date ranges overlap they
-// MUST go on separate lanes (sub-rows) or the labels render on top of each
-// other (the old single-lane layout did exactly that). We greedily pack blocks
-// into the fewest lanes and grow the row height to fit.
-const COL_GAP = 4;
+// ── Geometry — time-accurate bars + reservation grouping ───────────────────
 const DAY_MS = 86400000;
 
-interface BlockGeom {
-  block: Block;
-  left: number;
-  width: number;
-  clampedStart: number;
-  clampedEnd: number;
+/** Fraction of a day (0..1) for a "HH:MM[:SS]" time, or `fallback` if absent. */
+function timeFrac(t: string | null, fallback: number): number {
+  if (!t) return fallback;
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return fallback;
+  return Math.min(1, (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) / 1440);
 }
 
-/** Pixel geometry for a block within the visible week, or null if off-week. */
-function blockGeom(block: Block, weekStart: string, colWidth: number): BlockGeom | null {
-  if (!block.start_date || !block.end_date) return null;
-  const weekStartDay = isoToDate(weekStart).getTime();
-  const weekEndDay = weekStartDay + 6 * DAY_MS;
-  const blockStart = isoToDate(block.start_date).getTime();
-  // Bar END honors the effective (negotiated) return date (return_date ?? end_date).
-  const blockEnd = isoToDate(block.return_date ?? block.end_date).getTime();
-  if (blockEnd < weekStartDay || blockStart > weekEndDay) return null; // not in view
+interface BarGeom { left: number; width: number; }
 
-  const clampedStart = Math.max(blockStart, weekStartDay);
-  const clampedEnd = Math.min(blockEnd, weekEndDay);
-  const startIdx = Math.round((clampedStart - weekStartDay) / DAY_MS);
-  const daySpan = Math.round((clampedEnd - clampedStart) / DAY_MS) + 1;
-  const left = startIdx * colWidth + COL_GAP;
-  const width = Math.max(daySpan * colWidth - COL_GAP * 2, colWidth * 0.5);
-  return { block, left, width, clampedStart, clampedEnd };
-}
-
-/** Greedy lane assignment: a block reuses the first lane whose previous block
- *  has already ended; otherwise it opens a new lane. Returns each block with
- *  its lane index plus the total lane count for the row. */
-function packLanes(blocks: Block[], weekStart: string, colWidth: number): {
-  placed: Array<BlockGeom & { lane: number }>;
-  laneCount: number;
-} {
-  const geoms = blocks
-    .map((b) => blockGeom(b, weekStart, colWidth))
-    .filter((g): g is BlockGeom => g !== null)
-    .sort((a, b) => a.clampedStart - b.clampedStart || a.clampedEnd - b.clampedEnd);
-
-  const laneEnds: number[] = []; // clampedEnd of the last block on each lane
-  const placed = geoms.map((g) => {
-    let lane = laneEnds.findIndex((end) => end < g.clampedStart);
-    if (lane === -1) { lane = laneEnds.length; laneEnds.push(g.clampedEnd); }
-    else laneEnds[lane] = g.clampedEnd;
-    return { ...g, lane };
-  });
-  return { placed, laneCount: Math.max(1, laneEnds.length) };
-}
-
-interface BlockProps {
-  block: Block;
-  itemName: string;
-  left: number;
-  width: number;
-  top: number;
-  height: number;
-  accent: string;      // account color — left stripe so the owner reads at a glance
-  ongoing: boolean;    // today falls within this rental → highlight as live
-  onSelect: (b: Block) => void;
-  liveProgress: number | null;
+/** Pixel geometry for a reservation bar, positioned to the actual pickup time
+ *  on the start day and the actual return time on the return day (sub-day
+ *  precision). null if the rental doesn't intersect the visible week. */
+function barGeom(block: Block, weekStart: string, colWidth: number): BarGeom | null {
+  if (!block.start_date) return null;
+  const effReturn = block.return_date ?? block.end_date;
+  if (!effReturn) return null;
+  const weekStartMs = isoToDate(weekStart).getTime();
+  const weekEndMs = weekStartMs + 7 * DAY_MS;
+  const startMs = isoToDate(block.start_date).getTime() + timeFrac(block.pickup_time, 0) * DAY_MS;
+  // No return time → assume end of day so the bar still covers the return day.
+  const endMs = isoToDate(effReturn).getTime() + timeFrac(block.return_time, 1) * DAY_MS;
+  if (endMs <= weekStartMs || startMs >= weekEndMs) return null;
+  const startDays = Math.max(0, (startMs - weekStartMs) / DAY_MS);
+  const endDays = Math.min(7, (endMs - weekStartMs) / DAY_MS);
+  return { left: startDays * colWidth, width: Math.max((endDays - startDays) * colWidth, 8) };
 }
 
 // order_step = ACTIVE (next-to-do) step — see src/lib/order_step_semantics.ts.
@@ -258,51 +197,131 @@ function orderStepLabel(step: string | null): string {
   }
 }
 
-function GanttBlock({ block, itemName, left, width, top, height, accent, ongoing, onSelect, liveProgress }: BlockProps) {
+interface ResItem { name: string; image: string | null; }
+interface ResRow {
+  reservationId: string;
+  block: Block;            // representative block (dates / renter / status)
+  acc: string;             // account color hex
+  items: ResItem[];
+  left: number;
+  width: number;
+  ongoing: boolean;
+}
+
+/** Collapse the item-centric gantt payload into one row per reservation, so a
+ *  renter who booked several items shows once with all their thumbnails — the
+ *  same booking-centric view as the small dashboard calendar. */
+function groupByReservation(items: GanttItem[], weekStart: string, colWidth: number, today: string): ResRow[] {
+  const map = new Map<string, ResRow>();
+  for (const item of items) {
+    for (const block of item.blocks) {
+      const geom = barGeom(block, weekStart, colWidth);
+      if (!geom) continue;
+      let row = map.get(block.reservation_id);
+      if (!row) {
+        const effReturn = block.return_date ?? block.end_date;
+        const ongoing = !!block.start_date && !!effReturn && block.start_date <= today && today <= effReturn;
+        row = {
+          reservationId: block.reservation_id,
+          block,
+          acc: accountColor(item.account_color),
+          items: [],
+          left: geom.left,
+          width: geom.width,
+          ongoing,
+        };
+        map.set(block.reservation_id, row);
+      }
+      if (!row.items.some((it) => it.name === item.item_name)) {
+        row.items.push({ name: item.item_name, image: item.image_url });
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => {
+    const ka = (a.block.start_date ?? "") + (a.block.pickup_time ?? "");
+    const kb = (b.block.start_date ?? "") + (b.block.pickup_time ?? "");
+    return ka.localeCompare(kb) || (a.block.renter_name ?? "").localeCompare(b.block.renter_name ?? "");
+  });
+}
+
+// Overlapping item thumbnails for a reservation row (mirrors the small calendar).
+function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
+  const shown = items.slice(0, 4);
+  const extra = items.length - shown.length;
+  return (
+    <div className="flex items-center">
+      {shown.map((it, i) =>
+        it.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={i}
+            src={it.image}
+            alt=""
+            title={it.name}
+            className="w-6 h-6 rounded object-cover first:ml-0 -ml-1.5"
+            style={{ border: `1.5px solid ${ring}`, background: "#0b0f1c" }}
+          />
+        ) : (
+          <div
+            key={i}
+            title={it.name}
+            className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold first:ml-0 -ml-1.5"
+            style={{ border: `1.5px solid ${ring}`, background: `${ring}33`, color: ring }}
+          >
+            {it.name.charAt(0).toUpperCase()}
+          </div>
+        ),
+      )}
+      {extra > 0 && <span className="ml-1 text-[10px] text-gray-400 flex-shrink-0">+{extra}</span>}
+    </div>
+  );
+}
+
+interface BarProps {
+  row: ResRow;
+  height: number;
+  onSelect: () => void;
+  liveProgress: number | null;
+}
+
+// One time-accurate bar per reservation. Left stripe = account color, fill =
+// status, glow + dot = ongoing. The bar physically ends at the return time.
+function ReservationBar({ row, height, onSelect, liveProgress }: BarProps) {
+  const { block, acc, ongoing } = row;
   const ss = statusStyle(block.order_step);
-  const showProgress =
-    block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
-
-  const hasRenter = !!block.renter_name && block.renter_name.trim().length > 0 && block.renter_name.trim() !== "?";
+  const showProgress = block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
+  const hasRenter = !!block.renter_name && block.renter_name.trim() !== "" && block.renter_name.trim() !== "?";
   const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);
-  const time = block.pickup_time ? block.pickup_time.slice(0, 5) : null; // "18:00:00" → "18:00"
-
-  // Tooltip carries the full context the compact block omits.
-  const tooltipText = [
+  const pickup = block.pickup_time ? block.pickup_time.slice(0, 5) : null;
+  const ret = block.return_time ? block.return_time.slice(0, 5) : null;
+  const wide = row.width > 130;
+  const tooltip = [
     renterLabel,
-    itemName,
-    block.start_date && block.end_date ? `${block.start_date} → ${block.end_date}` : null,
-    time ? `pickup ${time}` : null,
+    row.items.map((i) => i.name).join(", "),
+    block.start_date ? `${block.start_date} → ${block.return_date ?? block.end_date}` : null,
+    pickup ? `pickup ${pickup}` : null,
+    ret ? `return ${ret}` : null,
     ongoing ? "ONGOING" : null,
   ].filter(Boolean).join(" • ");
 
-  // Single readable line: renter (left) + time (right). The item name is the
-  // row label, so it's intentionally not repeated inside the block. The left
-  // stripe is the ACCOUNT color (owner reads which account at a glance); the
-  // fill/border is the STATUS color. Ongoing rentals get a glow ring.
   return (
     <div
-      className="absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2.5 pr-2 select-none transition-all hover:brightness-125"
+      className="absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125"
       style={{
-        left,
-        width,
-        top,
+        left: row.left,
+        width: row.width,
+        top: 4,
         height,
         background: ss.bg,
         border: `1px solid ${ss.border}`,
-        borderLeft: `4px solid ${accent}`,
-        boxShadow: ongoing
-          ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa`
-          : undefined,
+        borderLeft: `4px solid ${acc}`,
+        boxShadow: ongoing ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
       }}
-      title={tooltipText}
-      onClick={() => onSelect(block)}
+      title={tooltip}
+      onClick={onSelect}
     >
       {ongoing && (
-        <span
-          className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
-          style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }}
-        />
+        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }} />
       )}
       <span
         className="text-[11px] font-semibold truncate flex-1 leading-none"
@@ -315,21 +334,15 @@ function GanttBlock({ block, itemName, left, width, top, height, accent, ongoing
       >
         {renterLabel}
       </span>
-      {time && (
-        <span
-          className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums"
-          style={{ color: ss.text, opacity: 0.75 }}
-        >
-          {time}
+      {wide && ret && (
+        <span className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums" style={{ color: ss.text, opacity: 0.8 }}>
+          ↩{ret}
         </span>
       )}
       {showProgress && (
         <div
           className="absolute left-0 bottom-0 h-0.5 rounded-full"
-          style={{
-            width: `${Math.min(100, liveProgress ?? 0)}%`,
-            background: "linear-gradient(90deg, #3b82f6, #10b981)",
-          }}
+          style={{ width: `${Math.min(100, liveProgress ?? 0)}%`, background: "linear-gradient(90deg, #3b82f6, #10b981)" }}
         />
       )}
     </div>
@@ -341,7 +354,7 @@ function GanttBlock({ block, itemName, left, width, top, height, accent, ongoing
 // ---------------------------------------------------------------------------
 // Docked at the modal's bottom-right (fixed within the modal, NOT per-row) so
 // it can never clip off the edge the way the old right-0/top-0 popover did.
-function BlockDetail({ block, itemName, accent, onClose }: { block: Block; itemName: string; accent: string; onClose: () => void }) {
+function BlockDetail({ block, items, accent, onClose }: { block: Block; items: ResItem[]; accent: string; onClose: () => void }) {
   const ss = statusStyle(block.order_step);
   const fmtMethod = (m: string | null) =>
     m === "delivery" ? "🚚 Delivery" : m === "collection" ? "🤝 Collection" : m;
@@ -373,7 +386,9 @@ function BlockDetail({ block, itemName, accent, onClose }: { block: Block; itemN
               {block.renter_name && block.renter_name !== "?" ? block.renter_name : "Booking"}
             </span>
           </div>
-          <div className="text-[11px] text-gray-400 truncate mt-0.5" title={itemName}>{itemName}</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">
+            {items.length} item{items.length === 1 ? "" : "s"}
+          </div>
         </div>
         <button
           className="text-gray-400 hover:text-white text-lg leading-none flex-shrink-0"
@@ -383,6 +398,22 @@ function BlockDetail({ block, itemName, accent, onClose }: { block: Block; itemN
           ×
         </button>
       </div>
+      {/* Item list with thumbnails */}
+      {items.length > 0 && (
+        <div className="flex flex-col gap-1 mb-2 pb-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          {items.map((it, i) => (
+            <div key={i} className="flex items-center gap-1.5 min-w-0">
+              {it.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={it.image} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0" style={{ background: "#0b0f1c" }} />
+              ) : (
+                <span className="w-5 h-5 rounded flex-shrink-0" style={{ background: `${accent}33` }} />
+              )}
+              <span className="text-[11px] text-gray-300 truncate" title={it.name}>{it.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {rows
         .filter(([, v]) => v != null && v !== "")
         .map(([label, val]) => (
@@ -399,21 +430,16 @@ function BlockDetail({ block, itemName, accent, onClose }: { block: Block; itemN
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column (fallback before width is measured)
-const LABEL_WIDTH = 200; // px for left item label column
-const LANE_HEIGHT = 26; // px per booking lane within a row
-const ROW_PAD = 5; // vertical padding inside each item row
-const MIN_ROW_HEIGHT = 44; // floor so a single-lane row still fits the avatar
-
-/** Row height for an item, sized to its lane count. */
-function rowHeightFor(laneCount: number): number {
-  return Math.max(MIN_ROW_HEIGHT, laneCount * LANE_HEIGHT + ROW_PAD * 2);
-}
+const LABEL_WIDTH = 220; // px for left "renter + thumbnails" column
+const RES_ROW_HEIGHT = 50; // one reservation per row (renter + item thumbnails)
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? mondayOfThisWeek());
-  const [selectedBlock, setSelectedBlock] = useState<{ block: Block; itemName: string; accent: string } | null>(null);
+  const [selectedBlock, setSelectedBlock] = useState<{ block: Block; items: ResItem[]; accent: string } | null>(null);
   // live progress map: reservation_id → computed progress
   const [liveProgress, setLiveProgress] = useState<Record<string, number>>({});
+  // Current instant — ticks every minute so the red "now" line sweeps the day.
+  const [nowMs, setNowMs] = useState(() => Date.now());
   // Measured width of the scroll area so 7 day-columns fill it (no horizontal
   // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
   const gridRef = useRef<HTMLDivElement>(null);
@@ -494,6 +520,14 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     return () => ro.disconnect();
   }, [open, data]);
 
+  // Tick the "now" marker every minute while open.
+  useEffect(() => {
+    if (!open) return;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [open]);
+
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).classList.contains("gantt-backdrop")) onClose();
   };
@@ -507,12 +541,21 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const colWidth = gridWidth > 0 ? Math.max(96, Math.floor((gridWidth - LABEL_WIDTH) / 7)) : COL_WIDTH;
   const totalGridWidth = colWidth * 7;
 
+  // Booking-centric rows: one per reservation, all its items grouped together.
+  const resRows = data ? groupByReservation(data.items, weekStart, colWidth, today) : [];
+
+  // Red "now" marker — x within the visible week, only when today is in range.
+  const nowDays = (nowMs - isoToDate(weekStart).getTime()) / DAY_MS;
+  const showNow = nowDays >= 0 && nowDays <= 7;
+  const nowLeft = LABEL_WIDTH + nowDays * colWidth;
+  const nowTime = new Date(nowMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+
   // Nav bounds — disable Prev at the current week, Next at +4 weeks.
   const minWeek = mondayOfThisWeek();
   const atMinWeek = weekStart <= minWeek;
   const atMaxWeek = weekStart >= addDays(minWeek, WEEK_AHEAD_CAP);
 
-  const hasAnyBlocks = data?.items.some((i) => i.blocks.length > 0) ?? false;
+  const hasAnyBlocks = resRows.length > 0;
 
   const content = (
     <div
@@ -622,15 +665,15 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             <div style={{ minWidth: LABEL_WIDTH + totalGridWidth }}>
               {/* Column header row */}
               <div
-                className="flex sticky top-0 z-10"
+                className="flex sticky top-0 z-30"
                 style={{ background: "rgba(10,14,28,0.98)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}
               >
-                {/* Item label header */}
+                {/* Renter/items label header */}
                 <div
                   className="flex-shrink-0 flex items-center px-4 text-xs text-gray-500 uppercase tracking-wider font-medium"
                   style={{ width: LABEL_WIDTH, borderRight: "1px solid rgba(255,255,255,0.05)" }}
                 >
-                  Item
+                  Renter / Items
                 </div>
                 {/* Day headers */}
                 {headers.map(({ label, iso }) => {
@@ -643,110 +686,96 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                         width: colWidth,
                         color: isToday ? "#3b82f6" : "#6b7280",
                         background: isToday ? "rgba(59,130,246,0.12)" : undefined,
-                        borderLeft: isToday ? undefined : undefined,
-                        borderRight: isToday ? undefined : "1px solid rgba(255,255,255,0.04)",
+                        borderRight: iso === today ? undefined : "1px solid rgba(255,255,255,0.04)",
                         boxShadow: isToday ? "inset 1px 0 0 rgba(59,130,246,0.35), inset -1px 0 0 rgba(59,130,246,0.35)" : undefined,
                       }}
                     >
                       {label}
                       {isToday && (
-                        <span
-                          className="ml-1.5 w-1.5 h-1.5 rounded-full inline-block"
-                          style={{ background: "#3b82f6" }}
-                        />
+                        <span className="ml-1.5 w-1.5 h-1.5 rounded-full inline-block" style={{ background: "#3b82f6" }} />
                       )}
                     </div>
                   );
                 })}
               </div>
 
-              {/* Item rows */}
-              {data.items
-                .filter((item) => item.blocks.length > 0)
-                .map((item) => {
-                  // Pack overlapping bookings into lanes so labels never collide.
-                  const { placed, laneCount } = packLanes(item.blocks, weekStart, colWidth);
-                  const rh = rowHeightFor(laneCount);
-                  const acc = accountColor(item.account_color);
+              {/* Reservation rows + the sweeping red "now" line */}
+              <div className="relative">
+                {resRows.map((row) => {
+                  const renter = row.block.renter_name && row.block.renter_name.trim() !== "" && row.block.renter_name.trim() !== "?"
+                    ? row.block.renter_name.trim()
+                    : orderStepLabel(row.block.order_step);
                   return (
-                  <div
-                    key={item.item_id ?? item.item_name}
-                    className="flex"
-                    style={{
-                      borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      height: rh,
-                    }}
-                  >
-                    {/* Left label — account-tinted so DB vs Leo reads at a glance */}
                     <div
-                      className="flex-shrink-0 flex items-center gap-2 px-3"
-                      style={{
-                        width: LABEL_WIDTH,
-                        borderLeft: `3px solid ${acc}`,
-                        background: `${acc}0d`,
-                        borderRight: "1px solid rgba(255,255,255,0.05)",
-                      }}
+                      key={row.reservationId}
+                      className="flex"
+                      style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", height: RES_ROW_HEIGHT }}
                     >
-                      <ItemAvatar name={item.item_name} imageUrl={item.image_url} ring={acc} />
-                      <span
-                        className="text-[11px] text-gray-200 truncate leading-tight font-medium"
-                        title={item.item_name}
+                      {/* Left label — renter + item thumbnails, account-tinted */}
+                      <div
+                        className="flex-shrink-0 flex flex-col justify-center gap-1 px-3"
+                        style={{
+                          width: LABEL_WIDTH,
+                          borderLeft: `3px solid ${row.acc}`,
+                          background: `${row.acc}14`,
+                          borderRight: "1px solid rgba(255,255,255,0.05)",
+                        }}
                       >
-                        {item.item_name}
-                      </span>
-                    </div>
+                        <span className="text-[11px] text-gray-100 truncate leading-none font-semibold" title={renter}>
+                          {renter}
+                        </span>
+                        <ResThumbs items={row.items} ring={row.acc} />
+                      </div>
 
-                    {/* Gantt track */}
-                    <div
-                      className="relative flex-1"
-                      style={{ width: totalGridWidth }}
-                    >
-                      {/* Day column backgrounds */}
-                      {headers.map(({ iso }, i) => (
-                        <div
-                          key={iso}
-                          className="absolute top-0 bottom-0"
-                          style={{
-                            left: i * colWidth,
-                            width: colWidth,
-                            background:
-                              iso === today
-                                ? "rgba(59,130,246,0.11)"
-                                : i % 2 === 0
-                                ? "rgba(255,255,255,0.01)"
-                                : undefined,
-                            borderLeft: undefined,
-                            borderRight: iso === today ? undefined : "1px solid rgba(255,255,255,0.03)",
-                            boxShadow: iso === today ? "inset 1px 0 0 rgba(59,130,246,0.35), inset -1px 0 0 rgba(59,130,246,0.35)" : undefined,
-                          }}
-                        />
-                      ))}
-
-                      {/* Booking blocks — one per lane, positioned by geometry */}
-                      {placed.map(({ block, left, width, lane }) => {
-                        const effEnd = block.return_date ?? block.end_date;
-                        const ongoing = !!block.start_date && !!effEnd &&
-                          block.start_date <= today && today <= effEnd;
-                        return (
-                          <GanttBlock
-                            key={block.reservation_id}
-                            block={block}
-                            itemName={item.item_name}
-                            left={left}
-                            width={width}
-                            top={ROW_PAD + lane * LANE_HEIGHT}
-                            height={LANE_HEIGHT - 6}
-                            accent={acc}
-                            ongoing={ongoing}
-                            onSelect={(b) => setSelectedBlock({ block: b, itemName: item.item_name, accent: acc })}
-                            liveProgress={liveProgress[block.reservation_id] ?? null}
+                      {/* Track */}
+                      <div className="relative flex-1" style={{ width: totalGridWidth }}>
+                        {/* Day column backgrounds */}
+                        {headers.map(({ iso }, i) => (
+                          <div
+                            key={iso}
+                            className="absolute top-0 bottom-0"
+                            style={{
+                              left: i * colWidth,
+                              width: colWidth,
+                              background:
+                                iso === today
+                                  ? "rgba(59,130,246,0.08)"
+                                  : i % 2 === 0
+                                  ? "rgba(255,255,255,0.01)"
+                                  : undefined,
+                              borderRight: "1px solid rgba(255,255,255,0.03)",
+                            }}
                           />
-                        );
-                      })}
+                        ))}
+
+                        {/* The reservation bar — time-accurate */}
+                        <ReservationBar
+                          row={row}
+                          height={RES_ROW_HEIGHT - 8}
+                          onSelect={() => setSelectedBlock({ block: row.block, items: row.items, accent: row.acc })}
+                          liveProgress={liveProgress[row.reservationId] ?? null}
+                        />
+                      </div>
                     </div>
-                  </div>
                   );
                 })}
+
+                {/* Red "now" line — sweeps across as the day passes (this week only) */}
+                {showNow && (
+                  <div
+                    className="absolute top-0 bottom-0 z-40 pointer-events-none"
+                    style={{ left: nowLeft, width: 2, background: "#ef4444", boxShadow: "0 0 8px rgba(239,68,68,0.85)" }}
+                  >
+                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full" style={{ background: "#ef4444" }} />
+                    <div
+                      className="absolute top-1.5 left-1/2 -translate-x-1/2 px-1 rounded text-[9px] font-bold leading-tight whitespace-nowrap"
+                      style={{ background: "#ef4444", color: "#fff" }}
+                    >
+                      {nowTime}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -755,7 +784,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
         {selectedBlock && (
           <BlockDetail
             block={selectedBlock.block}
-            itemName={selectedBlock.itemName}
+            items={selectedBlock.items}
             accent={selectedBlock.accent}
             onClose={() => setSelectedBlock(null)}
           />
