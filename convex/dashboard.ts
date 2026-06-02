@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import {
   dedupByLogicalRental,
+  dedupKey,
   effectiveDate,
   isConfirmedWithDates,
   isLive,
@@ -1220,13 +1221,29 @@ export const getStatsDrawerData = query({
       };
     };
 
-    // Active widget = ongoing + upcoming ONLY. Pending-verification rentals are
-    // intentionally excluded from the active LIST (and from activeTotal above);
-    // they remain surfaced via active.pending_count / pending_value_gbp, which
-    // still read pendingTracked (computation untouched — used by other tiles).
+    // Active widget LIST = ongoing + upcoming + pending-verification (restored
+    // 2026-06-02). Pending rows render as kind="pending" cards in the drawer.
+    // NOTE: activeTotal (headline count) stays ongoing+upcoming ONLY — pending
+    // is shown in the list but is still surfaced separately via
+    // active.pending_count / pending_value_gbp (computation untouched).
+    //
+    // Dedupe guard: a confirmed row can transiently sit at order_step==="VERIFIED",
+    // which satisfies BOTH isUpcoming/isOngoing (status==="confirmed") AND
+    // isPendingVerification (order_step==="VERIFIED"). Genuine pending rows live
+    // at status="pending_review" and are disjoint, but we filter pendingTracked
+    // by dedupKey against the already-listed ongoing/upcoming to prevent a
+    // double-render in that transient overlap window.
+    const listedKeys = new Set<string>([
+      ...ongoingUniq.map((r) => dedupKey(r as ResRow)),
+      ...upcomingUniq.map((r) => dedupKey(r as ResRow)),
+    ]);
+    const pendingForList = pendingTracked.filter(
+      (r) => !listedKeys.has(dedupKey(r as ResRow)),
+    );
     const activeRentals = [
       ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
       ...upcomingUniq.map((r) => mapRental(r, "upcoming")),
+      ...pendingForList.map((r) => mapRental(r, "pending")),
     ]
       .sort((a, b) => {
         const ad = a.start_date ?? "";
