@@ -36,6 +36,16 @@ const getRentalVolumeByCategoryRef = makeFunctionReference<"query">(
 const getRentalVolumeKindBreakdownRef = makeFunctionReference<"query">(
   "dashboard:getRentalVolumeKindBreakdown",
 );
+// Inventory grounding (walle_inventory.ts) + knowledge corpus (knowledge.ts).
+// Referenced by name for the same generated-api-drift reason as above: these
+// modules are deployed but the committed `_generated/api` lags the perf passes.
+const inventoryIndexRef = makeFunctionReference<"query">(
+  "walle_inventory:index",
+);
+const inventoryLookupRef = makeFunctionReference<"query">(
+  "walle_inventory:lookup",
+);
+const knowledgeSearchRef = makeFunctionReference<"query">("knowledge:search");
 
 /**
  * The grounding contract shared by both system prompts. Each widget prepends
@@ -67,7 +77,12 @@ Drill-down tools:
   query_calendar         — weekly calendar (booked/free/partial)
   query_smart_buys       — NEW items to acquire (unmet demand, ROI-sorted)
   query_revenue_trend    — weekly NET revenue trend
-  query_status           — UK tax estimate, business-intel KPIs, scanner, vacation, AI-Boost (£0 by design)`;
+  query_status           — UK tax estimate, business-intel KPIs, scanner, vacation, AI-Boost (£0 by design)
+  query_inventory        — does Daniel OWN an item / its specs / "is the deck an RX2 or RX3" / "do we have a Blackmagic"; resolves a free-text name to the real item rows (kind, qty, lens_mount, compatibility, marketing-vs-master flag). Returns ALL matches, so two bodies or a duplicate row both show.
+  query_compatibility    — gear-fit questions ("will an EF lens fit the BMPCC", "is X compatible with Y", mount/adapter/battery/card questions); returns the OWNED item's mount + compatible lenses/batteries/cards AND any matching gear FAQ from the knowledge base.
+
+INVENTORY & COMPATIBILITY — read before answering "do we have…", "is it an X or a Y", "what cameras/lenses do we own", or any gear-fit / mount / adapter / lens-compatibility question.
+The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inventory — every item Daniel owns, active and non-marketing. NEVER claim he owns something that is not in that index, and NEVER tell him he doesn't own something that IS in it. For exact specs, quantity, the master-vs-marketing distinction, or to resolve a fuzzy name, call query_inventory. For any gear-fit / mount / lens-compatibility question call query_compatibility and answer from the owned item's real mount + compatibility data and the returned FAQ; do not reason about optics from memory. If neither the index nor the tool shows the item, say it's not in the inventory rather than inventing it. Camera/lens optics facts (crop factor, vignetting, mount adapting) are easy to get backwards — if a tool/FAQ doesn't cover it and you are not certain, say so plainly instead of guessing.`;
 
 /**
  * Matches user questions whose answer is NOT in the headline snapshot (per-item
@@ -81,6 +96,25 @@ Drill-down tools:
  */
 export const ANALYTICAL_INTENT =
   /\b(buy|buying|bought|purchas|invest|acqui|sell|selling|sold|worth|earn|earning|income|profit|roi|return on|best|worst|top|how much (did|does|has)|per[- ]?item|utili[sz]|idle|unused|sitting|under[- ]?used|trend|growing|declin|missed|denied|lost|capacity|below[- ]?min|funnel|conver|catalog|inventor|out[- ]?of[- ]?stock|overdue|due (back|return)|tax|kpi|recommend|should i)\b/i;
+
+/**
+ * EXISTENCE / SPEC intent — "do we have X", "is the deck an RX2 or RX3", "what
+ * cameras do we own", "specs of the …". The headline snapshot can't answer
+ * these; the INVENTORY INDEX usually can, and query_inventory always can. Both
+ * routes force a grounded tool call when this matches so the model can't deny
+ * owning gear it actually has (the "no Blackmagic" failure, 2026-06-02).
+ */
+export const INVENTORY_INTENT =
+  /\b(do (we|you|i) have|have we got|do we own|we got|got any|is there|are there|in stock|in our|in the inventory|own a|owned|which (camera|lens|mic|light|deck|gear|item)|what (camera|lens|mic|light|deck|gear|item)|spec|specs|specification|model|version|how many .* (do|have)|rx2|rx3|blackmagic|bmpcc)\b/i;
+
+/**
+ * COMPATIBILITY / OPTICS intent — "will an EF lens fit", "is X compatible with
+ * Y", mount / adapter / battery / card fit, crop-factor / vignetting reasoning.
+ * Forces query_compatibility AND routes the turn to CHAT_MODEL_SMART (Sonnet):
+ * Haiku inverted the APS-C vs full-frame fact answering from memory.
+ */
+export const COMPAT_INTENT =
+  /\b(compatib|compatible|work(s)? with|fit(s)?|fit on|mount|adapter|adapt|metabones|mc[- ]?11|ef[- ]?mount|e[- ]?mount|l[- ]?mount|rf[- ]?mount|pl[- ]?mount|aps[- ]?c|full[- ]?frame|crop factor|vignett|speed booster|lens(es)? (for|on|with))\b/i;
 
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
 // Saves re-fetching aggregated data within a single multi-step LLM turn AND
@@ -275,6 +309,48 @@ export async function buildLiveSnapshot(convex: ConvexHttpClient): Promise<strin
       ? `- Overbooking conflicts (REAL, qty-aware): ${conflicts.length} — ${conflicts.map((x) => `${x.item_canonical} (qty ${x.qty}, ${x.overlap_count} overlapping) on ${x.conflict_start}`).join("; ")}.`
       : `- Overbooking conflicts: 0.`,
     `- New booking requests awaiting your accept/decline: ${pendingInbox}. Out of stock: ${d.out_of_stock?.count ?? 0}. Untracked rentals: ${d.untracked?.count ?? 0}. Open insurance claims: ${d.insurance?.open_count ?? 0}.`,
+  ].join("\n");
+}
+
+/**
+ * Build the MASTER INVENTORY INDEX — one compact line per owned (active,
+ * non-marketing) item — injected into the chat system prompt. This is the
+ * bounded, always-relevant half of the grounding split: at ~80 items it is a
+ * few hundred tokens, cheap enough to carry every turn, and it lets WallE
+ * answer "do we own X / is it an RX2 or RX3" straight from context without a
+ * tool call — closing the "no Blackmagic" confabulation. Deep specs and
+ * compatibility stay lazy (query_inventory / query_compatibility).
+ */
+export async function buildInventoryIndex(
+  convex: ConvexHttpClient,
+): Promise<string> {
+  const rows = (await cached("inventory:index", () =>
+    convex.query(inventoryIndexRef, {}),
+  )) as unknown as Array<{
+    name?: string;
+    kind?: string;
+    sub_kind?: string | null;
+    qty?: number;
+    lens_mount?: string | null;
+  }>;
+  if (!Array.isArray(rows) || rows.length === 0) return "";
+  // Group by kind for a scannable list; carry qty (>1) and mount where useful.
+  const byKind = new Map<string, string[]>();
+  for (const r of rows) {
+    const kind = r.kind ?? "other";
+    const mount =
+      r.lens_mount && r.lens_mount !== "N/A" ? `, ${r.lens_mount}` : "";
+    const qty = r.qty && r.qty > 1 ? ` x${r.qty}` : "";
+    const line = `${r.name ?? "item"}${qty}${mount}`;
+    if (!byKind.has(kind)) byKind.set(kind, []);
+    byKind.get(kind)!.push(line);
+  }
+  const sections = [...byKind.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([kind, items]) => `  ${kind}: ${items.join("; ")}.`);
+  return [
+    `MASTER INVENTORY INDEX (${rows.length} items Daniel owns — the COMPLETE active, non-marketing set. This IS the inventory: never claim he owns anything not listed here, and never tell him he lacks something that is. Quantities shown as xN; "marketing-only" listings are deliberately excluded. For exact specs / compatibility call query_inventory / query_compatibility):`,
+    ...sections,
   ].join("\n");
 }
 
@@ -608,6 +684,54 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
           vacation_active_blocks: d.vacation?.active_blocks?.length ?? 0,
           ai_boost_credit_gbp: Math.round(aiCredit * 100) / 100,
         };
+      },
+    }),
+
+    query_inventory: tool({
+      description:
+        "Resolve a free-text item reference to the REAL item rows Daniel owns, with specs. Use for 'do we have X', " +
+        "'what's the deck — an RX2 or RX3', 'specs of the BMPCC', 'how many X'. Fuzzy-matches the name/aliases against " +
+        "live inventory and returns ALL matches (so two camera bodies, or a duplicate/phantom row, both surface — never " +
+        "collapsed to one guess). Each match: { name, kind, qty, status, is_marketing_only, lens_mount, compatibility, " +
+        "notes }. resolved_canonical is the single best master-inventory match. is_marketing_only=true means it's a " +
+        "marketing listing, NOT owned master stock — say so. match_count=0 means Daniel does NOT own it; say that, don't invent.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("The item the user referred to, e.g. 'blackmagic', 'rx3 deck', 'a7 iv'."),
+        include_marketing: z
+          .boolean()
+          .optional()
+          .describe("Include marketing-only listings (flagged) as well as owned master stock. Default false."),
+      }),
+      execute: async ({ query, include_marketing }: { query: string; include_marketing?: boolean }) =>
+        convex.query(inventoryLookupRef, {
+          query,
+          ...(include_marketing ? { include_marketing: true } : {}),
+        }),
+    }),
+
+    query_compatibility: tool({
+      description:
+        "Answer a gear-FIT question grounded in real data: 'will an EF lens fit the BMPCC', 'is X compatible with Y', " +
+        "mount / adapter / battery / card / lens fit. Returns the OWNED item's resolved rows (with lens_mount and " +
+        "compatibility.{lenses,batteries,cards,accessories,included_with_rental}) AND any matching gear FAQ from the " +
+        "knowledge base (the v1 compatibility corpus — adapters, mounts, anamorphic, cages, etc.). Answer from the " +
+        "item's real mount + the FAQ; do NOT reason about optics (crop factor, vignetting, adapting) from memory. If " +
+        "the data doesn't cover it and you're not certain, say so.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("The full compatibility question, e.g. 'can I use Canon EF lenses on the FX3'."),
+      }),
+      execute: async ({ query }: { query: string }) => {
+        const [inventory, faqs] = await Promise.all([
+          convex.query(inventoryLookupRef, { query }),
+          cached(`knowledge:${query}`, () =>
+            convex.query(knowledgeSearchRef, { query, scope: "faq", limit: 5 }),
+          ).catch(() => null),
+        ]);
+        return { inventory, gear_faqs: faqs };
       },
     }),
   };

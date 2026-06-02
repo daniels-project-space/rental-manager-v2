@@ -26,8 +26,15 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
-import { ANALYTICAL_INTENT, buildDashboardTools, buildLiveSnapshot } from "../../../../lib/chat/dashboard-tools";
-import { CHAT_MODEL } from "../../../../lib/ai-models";
+import {
+  ANALYTICAL_INTENT,
+  COMPAT_INTENT,
+  INVENTORY_INTENT,
+  buildDashboardTools,
+  buildInventoryIndex,
+  buildLiveSnapshot,
+} from "../../../../lib/chat/dashboard-tools";
+import { CHAT_MODEL, CHAT_MODEL_SMART } from "../../../../lib/ai-models";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
@@ -88,7 +95,12 @@ export async function POST(req: Request) {
   }
 
   // ── Convex client (rate-limit + tool execution + persistence) ──
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  // Hardcode the canonical deployment (CLAUDE.md hard rule #3): Vercel pins
+  // NEXT_PUBLIC_CONVEX_URL to the orphan exciting-lion-29, which lacks the
+  // poller-written data AND these chat queries (walle_inventory etc.). CONVEX_URL
+  // stays overridable for local/dev.
+  const convexUrl =
+    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
   const convexClient = convexUrl ? new ConvexHttpClient(convexUrl) : null;
 
   // ── Rate limit (per-session; sessionId is our user proxy until auth lands) ──
@@ -127,31 +139,43 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+
+  // Last user content (drives intent routing + persistence).
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  const lastUserContent = lastUser ? extractText(lastUser) : "";
+  // Force a grounded tool call when the question needs data the snapshot/index
+  // don't fully carry: analytical drill-down, item existence/specs, or a
+  // compatibility/optics question (see the *_INTENT regexes).
+  const isCompat = COMPAT_INTENT.test(lastUserContent);
+  const needsForcedTool =
+    ANALYTICAL_INTENT.test(lastUserContent) ||
+    INVENTORY_INTENT.test(lastUserContent) ||
+    isCompat;
+
   const openrouter = createOpenRouter({ apiKey });
-  const modelId = CHAT_MODEL;
+  // Compatibility / optics turns route to Sonnet — Haiku inverted the APS-C vs
+  // full-frame fact answering from memory. Everything else stays on cheap Haiku.
+  const modelId = isCompat ? CHAT_MODEL_SMART : CHAT_MODEL;
   const model = openrouter(modelId);
 
-  // v1-style compute-then-phrase: inject the LIVE dashboard snapshot so the
-  // model quotes trusted headline numbers instead of choosing tools and
-  // re-deriving them. Tools below are only for drill-down the snapshot lacks.
+  // v1-style compute-then-phrase: inject the LIVE dashboard snapshot (trusted
+  // headline numbers) AND the master inventory index (so existence questions
+  // never get denied). Tools below are for drill-down + specs/compatibility.
   let snapshot = "";
+  let inventoryIndex = "";
   if (convexClient) {
     try {
-      snapshot = await buildLiveSnapshot(convexClient);
+      [snapshot, inventoryIndex] = await Promise.all([
+        buildLiveSnapshot(convexClient),
+        buildInventoryIndex(convexClient).catch(() => ""),
+      ]);
     } catch (err) {
       console.error("[walle/chat] snapshot failed:", err instanceof Error ? err.stack : err);
     }
   }
   const today = new Date().toISOString().slice(0, 10);
-  const system = `${WALLE_CHAT_SYSTEM}\n\nToday's date is ${today} — use it for "this year / this month / last month" reasoning.${snapshot ? `\n\n${snapshot}` : ""}`;
+  const system = `${WALLE_CHAT_SYSTEM}\n\nToday's date is ${today} — use it for "this year / this month / last month" reasoning.${snapshot ? `\n\n${snapshot}` : ""}${inventoryIndex ? `\n\n${inventoryIndex}` : ""}`;
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
-
-  // Last user content (for persistence — assistant text gathered on finish)
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const lastUserContent = lastUser ? extractText(lastUser) : "";
-  // Force a grounded tool call when the question needs drill-down data the
-  // snapshot doesn't carry (see ANALYTICAL_INTENT above).
-  const needsForcedTool = ANALYTICAL_INTENT.test(lastUserContent);
 
   const modelMessages: ModelMessage[] = messages
     .filter((m) => m.role === "user" || m.role === "assistant")

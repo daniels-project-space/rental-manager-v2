@@ -38,11 +38,14 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import {
   ANALYTICAL_INTENT,
+  COMPAT_INTENT,
+  INVENTORY_INTENT,
   buildDashboardTools,
+  buildInventoryIndex,
   buildLiveSnapshot,
   DASHBOARD_GROUNDING_RULES,
 } from "../../../lib/chat/dashboard-tools";
-import { CHAT_MODEL } from "../../../lib/ai-models";
+import { CHAT_MODEL, CHAT_MODEL_SMART } from "../../../lib/ai-models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,7 +74,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "no_message" }, { status: 400 });
   }
 
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  // Hardcode the canonical deployment (CLAUDE.md hard rule #3): Vercel pins
+  // NEXT_PUBLIC_CONVEX_URL to the orphan exciting-lion-29, which lacks the
+  // poller-written data AND these chat queries. CONVEX_URL stays overridable.
+  const convexUrl =
+    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
   const convexClient = convexUrl ? new ConvexHttpClient(convexUrl) : null;
 
   // Light per-thread rate limit (reuses the WallE bucket — sessionId stand-in).
@@ -128,15 +135,29 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+  // Intent routing: compatibility/optics turns go to Sonnet (Haiku inverted
+  // the APS-C vs full-frame fact from memory); existence/analytical turns force
+  // a grounded tool call.
+  const isCompat = COMPAT_INTENT.test(message);
+  const needsForcedTool =
+    ANALYTICAL_INTENT.test(message) ||
+    INVENTORY_INTENT.test(message) ||
+    isCompat;
+
   const openrouter = createOpenRouter({ apiKey });
-  const modelId = CHAT_MODEL;
+  const modelId = isCompat ? CHAT_MODEL_SMART : CHAT_MODEL;
   const model = openrouter(modelId);
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
-  // v1-style compute-then-phrase: live dashboard snapshot injected as trusted
-  // context so headline numbers aren't re-derived by the model.
-  const snapshot = convexClient
-    ? await buildLiveSnapshot(convexClient).catch(() => "")
-    : "";
+  // v1-style compute-then-phrase: live dashboard snapshot (trusted headline
+  // numbers) + master inventory index (so existence questions aren't denied).
+  let snapshot = "";
+  let inventoryIndex = "";
+  if (convexClient) {
+    [snapshot, inventoryIndex] = await Promise.all([
+      buildLiveSnapshot(convexClient).catch(() => ""),
+      buildInventoryIndex(convexClient).catch(() => ""),
+    ]);
+  }
 
   const modelMessages: ModelMessage[] = [
     ...history,
@@ -151,7 +172,7 @@ export async function POST(req: Request) {
       try {
         const result = streamText({
           model,
-          system: `${SYSTEM_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.${snapshot ? `\n\n${snapshot}` : ""}`,
+          system: `${SYSTEM_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} — use it for "this year / this month / last month" reasoning.${snapshot ? `\n\n${snapshot}` : ""}${inventoryIndex ? `\n\n${inventoryIndex}` : ""}`,
           messages: modelMessages,
           tools,
           maxOutputTokens: 1500,
@@ -160,7 +181,7 @@ export async function POST(req: Request) {
           // data isn't in the snapshot) so the model grounds instead of guessing
           // per-item earnings / utilization / buy advice. Headline turns stay
           // auto; later steps revert to auto so the model can summarise.
-          prepareStep: ANALYTICAL_INTENT.test(message)
+          prepareStep: needsForcedTool
             ? ({ stepNumber }) =>
                 stepNumber === 0 ? { toolChoice: "required" } : {}
             : undefined,

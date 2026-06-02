@@ -35,6 +35,17 @@ export const DEEPSEEK_MODEL: string =
 export const CHAT_MODEL: string =
   process.env.CHAT_MODEL ?? "anthropic/claude-haiku-4.5";
 
+/**
+ * Smarter chat model for REASONING-HEAVY chat turns — gear compatibility /
+ * optics questions where Haiku confabulated (e.g. inverting the APS-C vs
+ * full-frame vignetting fact, 2026-06-02). The chat routes pick this over
+ * CHAT_MODEL when a compatibility/optics intent is detected; plain existence
+ * and metric turns stay on cheap Haiku. Sonnet 4.6 on OpenRouter; volume is
+ * Daniel-only so the cost delta is negligible. Env-overridable per deployment.
+ */
+export const CHAT_MODEL_SMART: string =
+  process.env.CHAT_MODEL_SMART ?? "anthropic/claude-sonnet-4.6";
+
 /** xAI direct Grok chat model — used when AI_PROVIDER=xai. */
 export const GROK_CHAT_MODEL: string =
   process.env.GROK_CHAT_MODEL ?? "grok-4.3";
