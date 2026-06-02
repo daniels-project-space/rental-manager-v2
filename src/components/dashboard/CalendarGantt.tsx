@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -149,21 +149,22 @@ function accountColor(ac: "blue" | "purple"): string {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ItemAvatar({ name, imageUrl }: { name: string; imageUrl: string | null }) {
+function ItemAvatar({ name, imageUrl, ring }: { name: string; imageUrl: string | null; ring: string }) {
   if (imageUrl) {
     return (
       <img
         src={imageUrl}
         alt={name}
-        className="zoom-img w-10 h-10 rounded-lg object-cover flex-shrink-0"
+        className="zoom-img w-8 h-8 rounded-md object-cover flex-shrink-0"
+        style={{ border: `1.5px solid ${ring}` }}
       />
     );
   }
   const initial = name.charAt(0).toUpperCase();
   return (
     <div
-      className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
-      style={{ background: "rgba(59,130,246,0.25)", color: "#60a5fa" }}
+      className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 text-xs font-bold"
+      style={{ background: `${ring}33`, color: ring, border: `1.5px solid ${ring}` }}
     >
       {initial}
     </div>
@@ -234,6 +235,8 @@ interface BlockProps {
   width: number;
   top: number;
   height: number;
+  accent: string;      // account color — left stripe so the owner reads at a glance
+  ongoing: boolean;    // today falls within this rental → highlight as live
   onSelect: (b: Block) => void;
   liveProgress: number | null;
 }
@@ -255,7 +258,7 @@ function orderStepLabel(step: string | null): string {
   }
 }
 
-function GanttBlock({ block, itemName, left, width, top, height, onSelect, liveProgress }: BlockProps) {
+function GanttBlock({ block, itemName, left, width, top, height, accent, ongoing, onSelect, liveProgress }: BlockProps) {
   const ss = statusStyle(block.order_step);
   const showProgress =
     block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
@@ -270,26 +273,37 @@ function GanttBlock({ block, itemName, left, width, top, height, onSelect, liveP
     itemName,
     block.start_date && block.end_date ? `${block.start_date} → ${block.end_date}` : null,
     time ? `pickup ${time}` : null,
+    ongoing ? "ONGOING" : null,
   ].filter(Boolean).join(" • ");
 
   // Single readable line: renter (left) + time (right). The item name is the
-  // row label, so it's intentionally not repeated inside the block.
+  // row label, so it's intentionally not repeated inside the block. The left
+  // stripe is the ACCOUNT color (owner reads which account at a glance); the
+  // fill/border is the STATUS color. Ongoing rentals get a glow ring.
   return (
     <div
-      className="absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 px-2 select-none transition-opacity hover:opacity-90"
+      className="absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2.5 pr-2 select-none transition-all hover:brightness-125"
       style={{
         left,
         width,
         top,
         height,
         background: ss.bg,
-        borderLeft: `3px solid ${ss.border}`,
         border: `1px solid ${ss.border}`,
-        borderLeftWidth: 3,
+        borderLeft: `4px solid ${accent}`,
+        boxShadow: ongoing
+          ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa`
+          : undefined,
       }}
       title={tooltipText}
       onClick={() => onSelect(block)}
     >
+      {ongoing && (
+        <span
+          className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
+          style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }}
+        />
+      )}
       <span
         className="text-[11px] font-semibold truncate flex-1 leading-none"
         style={{
@@ -304,7 +318,7 @@ function GanttBlock({ block, itemName, left, width, top, height, onSelect, liveP
       {time && (
         <span
           className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums"
-          style={{ color: ss.text, opacity: 0.7 }}
+          style={{ color: ss.text, opacity: 0.75 }}
         >
           {time}
         </span>
@@ -325,33 +339,46 @@ function GanttBlock({ block, itemName, left, width, top, height, onSelect, liveP
 // ---------------------------------------------------------------------------
 // Expanded chip detail panel
 // ---------------------------------------------------------------------------
-function BlockDetail({ block, onClose }: { block: Block; onClose: () => void }) {
+// Docked at the modal's bottom-right (fixed within the modal, NOT per-row) so
+// it can never clip off the edge the way the old right-0/top-0 popover did.
+function BlockDetail({ block, itemName, accent, onClose }: { block: Block; itemName: string; accent: string; onClose: () => void }) {
   const ss = statusStyle(block.order_step);
+  const fmtMethod = (m: string | null) =>
+    m === "delivery" ? "🚚 Delivery" : m === "collection" ? "🤝 Collection" : m;
   const rows: Array<[string, string | null | undefined]> = [
-    ["Status", block.order_step],
-    ["Renter", block.renter_name],
+    ["Status", orderStepLabel(block.order_step)],
+    ["Renter", block.renter_name && block.renter_name !== "?" ? block.renter_name : "—"],
     ["From", block.start_date],
     // Effective (negotiated) return so an extended rental's detail matches its bar.
     ["To", block.return_date ?? block.end_date],
-    ["Pickup", block.pickup_time ?? block.pickup_method],
-    ["Return", block.return_time ?? block.return_method],
+    ["Pickup", [block.pickup_time?.slice(0, 5), fmtMethod(block.pickup_method)].filter(Boolean).join(" · ") || null],
+    ["Return", [block.return_time?.slice(0, 5), fmtMethod(block.return_method)].filter(Boolean).join(" · ") || null],
     ["Progress", block.progress_percent != null ? `${block.progress_percent}%` : null],
   ];
   return (
     <div
-      className="absolute right-0 top-0 z-10 rounded-xl p-4 shadow-2xl min-w-[220px] max-w-xs"
+      className="absolute bottom-4 right-4 z-30 rounded-xl p-4 shadow-2xl w-[270px] max-h-[60%] overflow-auto"
       style={{
-        background: "rgba(14,17,28,0.98)",
+        background: "rgba(14,17,28,0.99)",
         border: `1px solid ${ss.border}`,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
       }}
+      onClick={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-bold" style={{ color: ss.text }}>
-          Booking Detail
-        </span>
+      <div className="flex items-start justify-between mb-2 gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: accent }} />
+            <span className="text-sm font-bold truncate" style={{ color: ss.text }}>
+              {block.renter_name && block.renter_name !== "?" ? block.renter_name : "Booking"}
+            </span>
+          </div>
+          <div className="text-[11px] text-gray-400 truncate mt-0.5" title={itemName}>{itemName}</div>
+        </div>
         <button
-          className="text-gray-400 hover:text-white text-lg leading-none"
+          className="text-gray-400 hover:text-white text-lg leading-none flex-shrink-0"
           onClick={onClose}
+          aria-label="Close detail"
         >
           ×
         </button>
@@ -360,8 +387,8 @@ function BlockDetail({ block, onClose }: { block: Block; onClose: () => void }) 
         .filter(([, v]) => v != null && v !== "")
         .map(([label, val]) => (
           <div key={label} className="flex gap-2 text-xs mb-1">
-            <span className="text-gray-500 w-16 flex-shrink-0">{label}</span>
-            <span className="text-gray-200 truncate">{val}</span>
+            <span className="text-gray-500 w-14 flex-shrink-0">{label}</span>
+            <span className="text-gray-200 break-words">{val}</span>
           </div>
         ))}
     </div>
@@ -371,11 +398,11 @@ function BlockDetail({ block, onClose }: { block: Block; onClose: () => void }) 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-const COL_WIDTH = 150; // px per day column
-const LABEL_WIDTH = 280; // px for left item label column
-const LANE_HEIGHT = 30; // px per booking lane within a row
-const ROW_PAD = 6; // vertical padding inside each item row
-const MIN_ROW_HEIGHT = 52; // floor so a single-lane row still fits the avatar
+const COL_WIDTH = 150; // px per day column (fallback before width is measured)
+const LABEL_WIDTH = 200; // px for left item label column
+const LANE_HEIGHT = 26; // px per booking lane within a row
+const ROW_PAD = 5; // vertical padding inside each item row
+const MIN_ROW_HEIGHT = 44; // floor so a single-lane row still fits the avatar
 
 /** Row height for an item, sized to its lane count. */
 function rowHeightFor(laneCount: number): number {
@@ -384,9 +411,13 @@ function rowHeightFor(laneCount: number): number {
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? mondayOfThisWeek());
-  const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
+  const [selectedBlock, setSelectedBlock] = useState<{ block: Block; itemName: string; accent: string } | null>(null);
   // live progress map: reservation_id → computed progress
   const [liveProgress, setLiveProgress] = useState<Record<string, number>>({});
+  // Measured width of the scroll area so 7 day-columns fill it (no horizontal
+  // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [gridWidth, setGridWidth] = useState(0);
 
   const data = useQuery(
     api.calendar.getGanttWeek,
@@ -451,6 +482,18 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     setSelectedBlock(null);
   }, [weekStart]);
 
+  // Measure the grid scroll area so columns fill the available width.
+  useEffect(() => {
+    if (!open) return;
+    const el = gridRef.current;
+    if (!el) return;
+    const update = () => setGridWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, data]);
+
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).classList.contains("gantt-backdrop")) onClose();
   };
@@ -459,7 +502,10 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   const today = londonToday();
   const headers = dayHeaders(weekStart);
-  const totalGridWidth = COL_WIDTH * 7;
+  // Fit 7 columns into the measured width (min 96px so they stay legible and
+  // scroll only on very small screens). Falls back to COL_WIDTH pre-measure.
+  const colWidth = gridWidth > 0 ? Math.max(96, Math.floor((gridWidth - LABEL_WIDTH) / 7)) : COL_WIDTH;
+  const totalGridWidth = colWidth * 7;
 
   // Nav bounds — disable Prev at the current week, Next at +4 weeks.
   const minWeek = mondayOfThisWeek();
@@ -477,9 +523,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
       <div
         className="relative flex flex-col rounded-2xl overflow-hidden shadow-2xl"
         style={{
-          width: "90vw",
-          maxWidth: 1200,
-          height: "80vh",
+          width: "95vw",
+          maxWidth: 1480,
+          height: "90vh",
           background: "rgba(10,14,28,0.98)",
           border: "1px solid rgba(255,255,255,0.08)",
         }}
@@ -528,10 +574,35 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
           >
             Next Week →
           </button>
+
+          {/* Legend — accounts (left stripe color) + booking status (fill). */}
+          <div className="ml-auto hidden md:flex items-center gap-3 text-[11px] text-gray-400">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#3b82f6" }} />
+              DB Cinema
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#a855f7" }} />
+              Leo Adams
+            </span>
+            <span className="w-px h-3.5 bg-white/15" />
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full" style={{ background: "#fbbf24" }} />
+              Awaiting
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full" style={{ background: "#60a5fa" }} />
+              Out
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full" style={{ background: "#34d399" }} />
+              Done
+            </span>
+          </div>
         </div>
 
         {/* ---- Grid area ---- */}
-        <div className="flex-1 overflow-auto">
+        <div ref={gridRef} className="flex-1 overflow-auto">
           {data === undefined ? (
             // Loading skeleton
             <div className="flex flex-col gap-2 p-6">
@@ -569,7 +640,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                       key={iso}
                       className="flex-shrink-0 flex items-center justify-center text-xs font-medium py-3"
                       style={{
-                        width: COL_WIDTH,
+                        width: colWidth,
                         color: isToday ? "#3b82f6" : "#6b7280",
                         background: isToday ? "rgba(59,130,246,0.12)" : undefined,
                         borderLeft: isToday ? undefined : undefined,
@@ -594,8 +665,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                 .filter((item) => item.blocks.length > 0)
                 .map((item) => {
                   // Pack overlapping bookings into lanes so labels never collide.
-                  const { placed, laneCount } = packLanes(item.blocks, weekStart, COL_WIDTH);
+                  const { placed, laneCount } = packLanes(item.blocks, weekStart, colWidth);
                   const rh = rowHeightFor(laneCount);
+                  const acc = accountColor(item.account_color);
                   return (
                   <div
                     key={item.item_id ?? item.item_name}
@@ -605,17 +677,19 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                       height: rh,
                     }}
                   >
-                    {/* Left label */}
+                    {/* Left label — account-tinted so DB vs Leo reads at a glance */}
                     <div
-                      className="flex-shrink-0 flex items-center gap-2.5 px-4"
+                      className="flex-shrink-0 flex items-center gap-2 px-3"
                       style={{
                         width: LABEL_WIDTH,
-                        borderRight: `2px solid ${accountColor(item.account_color)}99`,
+                        borderLeft: `3px solid ${acc}`,
+                        background: `${acc}0d`,
+                        borderRight: "1px solid rgba(255,255,255,0.05)",
                       }}
                     >
-                      <ItemAvatar name={item.item_name} imageUrl={item.image_url} />
+                      <ItemAvatar name={item.item_name} imageUrl={item.image_url} ring={acc} />
                       <span
-                        className="text-xs text-gray-200 truncate leading-tight font-medium"
+                        className="text-[11px] text-gray-200 truncate leading-tight font-medium"
                         title={item.item_name}
                       >
                         {item.item_name}
@@ -633,8 +707,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           key={iso}
                           className="absolute top-0 bottom-0"
                           style={{
-                            left: i * COL_WIDTH,
-                            width: COL_WIDTH,
+                            left: i * colWidth,
+                            width: colWidth,
                             background:
                               iso === today
                                 ? "rgba(59,130,246,0.11)"
@@ -649,30 +723,26 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                       ))}
 
                       {/* Booking blocks — one per lane, positioned by geometry */}
-                      {placed.map(({ block, left, width, lane }) => (
-                        <GanttBlock
-                          key={block.reservation_id}
-                          block={block}
-                          itemName={item.item_name}
-                          left={left}
-                          width={width}
-                          top={ROW_PAD + lane * LANE_HEIGHT}
-                          height={LANE_HEIGHT - 6}
-                          onSelect={setSelectedBlock}
-                          liveProgress={liveProgress[block.reservation_id] ?? null}
-                        />
-                      ))}
-
-                      {/* Expanded detail chip */}
-                      {selectedBlock &&
-                        item.blocks.some(
-                          (b) => b.reservation_id === selectedBlock.reservation_id
-                        ) && (
-                          <BlockDetail
-                            block={selectedBlock}
-                            onClose={() => setSelectedBlock(null)}
+                      {placed.map(({ block, left, width, lane }) => {
+                        const effEnd = block.return_date ?? block.end_date;
+                        const ongoing = !!block.start_date && !!effEnd &&
+                          block.start_date <= today && today <= effEnd;
+                        return (
+                          <GanttBlock
+                            key={block.reservation_id}
+                            block={block}
+                            itemName={item.item_name}
+                            left={left}
+                            width={width}
+                            top={ROW_PAD + lane * LANE_HEIGHT}
+                            height={LANE_HEIGHT - 6}
+                            accent={acc}
+                            ongoing={ongoing}
+                            onSelect={(b) => setSelectedBlock({ block: b, itemName: item.item_name, accent: acc })}
+                            liveProgress={liveProgress[block.reservation_id] ?? null}
                           />
-                        )}
+                        );
+                      })}
                     </div>
                   </div>
                   );
@@ -680,6 +750,16 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             </div>
           )}
         </div>
+
+        {/* Booking detail — docked to the modal so it never clips off-screen */}
+        {selectedBlock && (
+          <BlockDetail
+            block={selectedBlock.block}
+            itemName={selectedBlock.itemName}
+            accent={selectedBlock.accent}
+            onClose={() => setSelectedBlock(null)}
+          />
+        )}
       </div>
     </div>
   );

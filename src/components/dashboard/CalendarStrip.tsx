@@ -989,14 +989,13 @@ export function CalendarStrip() {
 
   return (
     <Card>
-      {/* Header row */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-semibold text-[#e4e6eb]">
+      {/* Title row: name + legend (legend hides when the widget is narrow) + Weekly View */}
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-sm font-semibold text-[#e4e6eb] flex-shrink-0">
           Rental Calendar
         </span>
-        <div className="flex items-center gap-2">
-          {/* Color legend */}
-          <div className="flex items-center gap-1.5 text-[10px] text-[#8b8fa3]">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="hidden lg:flex items-center gap-1.5 text-[10px] text-[#8b8fa3]">
             <span className="flex items-center gap-0.5">
               <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
               Free
@@ -1010,31 +1009,9 @@ export function CalendarStrip() {
               Full
             </span>
           </div>
-          {/* Week navigation — forward up to +4 weeks, back arrow returns to today. */}
-          <div className="flex items-center gap-1 text-xs text-[#8b8fa3]">
-            <button
-              onClick={() => setWeekOffset((o) => Math.max(0, o - 1))}
-              disabled={!canPrev}
-              aria-label="Previous week"
-              className="px-2 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:text-[#e4e6eb] hover:bg-white/5"
-            >
-              ‹
-            </button>
-            <span className="tabular-nums whitespace-nowrap min-w-[92px] text-center">
-              {dayShort(stripStart)} – {dayShort(stripEnd)}
-            </span>
-            <button
-              onClick={() => setWeekOffset((o) => Math.min(MAX_WEEK_OFFSET, o + 1))}
-              disabled={!canNext}
-              aria-label="Next week"
-              className="px-2 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:text-[#e4e6eb] hover:bg-white/5"
-            >
-              ›
-            </button>
-          </div>
           <button
             onClick={() => setGanttOpen(true)}
-            className="text-xs px-3 py-1.5 rounded-lg transition-all duration-150 hover:bg-blue-500/10 hover:border-blue-400/60 active:scale-95"
+            className="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg transition-all duration-150 hover:bg-blue-500/10 hover:border-blue-400/60 active:scale-95"
             style={{
               border: "1px solid rgba(59,130,246,0.45)",
               color: "#60a5fa",
@@ -1044,6 +1021,37 @@ export function CalendarStrip() {
             📅 Weekly View
           </button>
         </div>
+      </div>
+
+      {/* Week navigation — its own row so the arrows stay visible at any widget
+          width (the dashboard column is narrow and used to clip them). Forward
+          up to +4 weeks, back arrow returns toward today. */}
+      <div
+        className="flex items-center justify-between gap-2 mb-3 rounded-lg px-1 py-1"
+        style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <button
+          onClick={() => setWeekOffset((o) => Math.max(0, o - 1))}
+          disabled={!canPrev}
+          aria-label="Previous week"
+          className="px-3 py-1 rounded-md text-base leading-none text-[#c9cdd5] transition-colors disabled:opacity-25 disabled:cursor-not-allowed enabled:hover:text-white enabled:hover:bg-white/10"
+        >
+          ‹
+        </button>
+        <span className="text-xs font-medium text-[#c9cdd5] tabular-nums whitespace-nowrap">
+          {dayShort(stripStart)} – {dayShort(stripEnd)}
+          <span className="text-[#6b6f80] ml-1.5">
+            {weekOffset === 0 ? "· this week" : `· +${weekOffset}w`}
+          </span>
+        </span>
+        <button
+          onClick={() => setWeekOffset((o) => Math.min(MAX_WEEK_OFFSET, o + 1))}
+          disabled={!canNext}
+          aria-label="Next week"
+          className="px-3 py-1 rounded-md text-base leading-none text-[#c9cdd5] transition-colors disabled:opacity-25 disabled:cursor-not-allowed enabled:hover:text-white enabled:hover:bg-white/10"
+        >
+          ›
+        </button>
       </div>
 
       {/* Strip */}
