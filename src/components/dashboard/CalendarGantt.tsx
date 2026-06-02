@@ -259,14 +259,14 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             src={it.image}
             alt=""
             title={it.name}
-            className="zoom-img w-10 h-10 rounded-md object-cover first:ml-0 -ml-2"
+            className="zoom-img w-14 h-14 rounded-lg object-cover first:ml-0 -ml-3"
             style={{ border: `2px solid ${ring}`, background: "#0b0f1c" }}
           />
         ) : (
           <div
             key={i}
             title={it.name}
-            className="w-10 h-10 rounded-md flex items-center justify-center text-xs font-bold first:ml-0 -ml-2 transition-transform hover:scale-150 hover:z-50 relative"
+            className="w-14 h-14 rounded-lg flex items-center justify-center text-sm font-bold first:ml-0 -ml-3 transition-transform hover:scale-150 hover:z-50 relative"
             style={{ border: `2px solid ${ring}`, background: `${ring}33`, color: ring }}
           >
             {it.name.charAt(0).toUpperCase()}
@@ -432,8 +432,8 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column (fallback before width is measured)
-const LABEL_WIDTH = 220; // px for left "renter + thumbnails" column
-const RES_ROW_HEIGHT = 64; // one reservation per row (renter + large thumbnails)
+const LABEL_WIDTH = 250; // px for left "renter + thumbnails" column
+const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails)
 const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
