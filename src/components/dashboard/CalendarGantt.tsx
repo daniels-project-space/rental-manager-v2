@@ -765,18 +765,26 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                       className="flex"
                       style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", height: RES_ROW_HEIGHT }}
                     >
-                      {/* Left label — renter + item thumbnails, account-tinted */}
+                      {/* Left label — renter + item thumbnails. A bold account-
+                          colored band (left bar + fading tint + dot) makes the
+                          two accounts read apart clearly in the sidebar. */}
                       <div
-                        className="flex-shrink-0 flex flex-col justify-center gap-1 px-3"
+                        className="flex-shrink-0 flex flex-col justify-center gap-1 pl-3 pr-3"
                         style={{
                           width: LABEL_WIDTH,
-                          borderLeft: `3px solid ${row.acc}`,
-                          background: `${row.acc}14`,
-                          borderRight: "1px solid rgba(255,255,255,0.05)",
+                          borderLeft: `6px solid ${row.acc}`,
+                          background: `linear-gradient(90deg, ${row.acc}3d 0%, ${row.acc}1f 45%, ${row.acc}0a 100%)`,
+                          borderRight: `1px solid ${row.acc}55`,
                         }}
                       >
-                        <span className="text-[11px] text-gray-100 truncate leading-none font-semibold" title={renter}>
-                          {renter}
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ background: row.acc, boxShadow: `0 0 5px ${row.acc}` }}
+                          />
+                          <span className="text-[11px] text-gray-100 truncate leading-none font-semibold" title={renter}>
+                            {renter}
+                          </span>
                         </span>
                         <ResThumbs items={row.items} ring={row.acc} />
                       </div>
