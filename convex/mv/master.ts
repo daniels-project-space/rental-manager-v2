@@ -310,8 +310,12 @@ async function safeStep(
 }
 
 export const refreshFast = internalAction({
-  args: {},
-  handler: async (ctx): Promise<{ batch: "fast"; results: StepResult[] }> => {
+  // `force` bypasses the stats_drawer skip-when-clean gate. The hourly cron
+  // passes nothing (force=false); ops can pass true to rebuild immediately
+  // after an item-only change (e.g. inventory qty) that doesn't mutate any
+  // reservation and so wouldn't otherwise trip the dirty check.
+  args: { force: v.optional(v.boolean()) },
+  handler: async (ctx, { force }): Promise<{ batch: "fast"; results: StepResult[] }> => {
     const startedAt = Date.now();
     // Pass 8a (2026-05-25) — narrowed back to 90d. The 6b widening to 24mo
     // for earnings_by_period was costing ~700MB/day in fast-batch bandwidth
@@ -369,7 +373,7 @@ export const refreshFast = internalAction({
     // inside refreshAll so quiet ticks short-circuit without running the
     // heavy live handler.
     results.push(await safeStep(ctx, "stats_drawer", async () => {
-      await refreshStatsDrawer(ctx);
+      await refreshStatsDrawer(ctx, force ?? false);
     }));
 
     // Pass 12a (2026-05-26): wrap-and-cache getDueReturns. WallESignals

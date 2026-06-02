@@ -1685,12 +1685,17 @@ export const getStatsDrawerData = query({
     const sell_reco = { recommendations: sellReco };
 
     // ── card: inventory_worth ─────────────────────────────────────
+    // Qty-aware: equipment value = per-unit acquisition cost × units owned.
+    // (e.g. owning 4× Sony FX3 @ £2,200 contributes £8,800, not £2,200.)
     const worthByKind = new Map<string, number>();
     for (const i of activeItems) {
-      const cost = i.acquisition_cost_gbp ?? 0;
-      worthByKind.set(i.kind, (worthByKind.get(i.kind) ?? 0) + cost);
+      const lineValue = (i.acquisition_cost_gbp ?? 0) * (i.qty ?? 1);
+      worthByKind.set(i.kind, (worthByKind.get(i.kind) ?? 0) + lineValue);
     }
-    const totalWorth = activeItems.reduce((s, i) => s + (i.acquisition_cost_gbp ?? 0), 0);
+    const totalWorth = activeItems.reduce(
+      (s, i) => s + (i.acquisition_cost_gbp ?? 0) * (i.qty ?? 1),
+      0,
+    );
     const inventory_worth = {
       total_gbp: Math.round(totalWorth),
       by_category: Array.from(worthByKind.entries())
