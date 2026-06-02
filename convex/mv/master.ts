@@ -20,7 +20,10 @@
  * Window strategy (matches the legacy mutations):
  *   • daily_briefing  — 90-day reservations window (by_start_date >= cutoff)
  *   • top_earners     — 30-day reservations window
- *   • utilization     — 30-day reservations window
+ *   • utilization     — 7-day reservations window (fast batch; compute only
+ *                       reads the last 7 days)
+ *   • missed_revenue  — 30/90-day reservations window + denials + pricing +
+ *                       accounts (slow batch, daily — see Pass 13)
  *   • upcoming_returns — confirmed reservations (by_status === "confirmed")
  *   • churn_risk      — full reservations table (needed for renter-account
  *                       membership lookup across the lifetime of the renter)
@@ -33,9 +36,10 @@
  * denials/items/pricing/accounts (purchase_signals).
  *
  * Estimated reservations-row reads/day AFTER refactor:
- *   • refreshFast: 2 collects per cron run (30d slice + confirmed-status).
+ *   • refreshFast: 2 collects per cron run (7d slice + confirmed-status).
  *     30 min cadence → 48 runs/day → 48 * 2 = 96 table scans/day.
- *     Each scan ≈ 200-300 rows after window filter → ~25k row reads/day.
+ *     The 7d slice (Pass 13, was 90d) is far smaller per scan now that
+ *     missed_revenue no longer needs the wide window in the fast batch.
  *   • refreshSlow: 2 collects per cron run (full table + items + denials
  *     + pricing + accounts). 1 run/day → 1 full-table scan/day ≈ 1767 rows.
  *   • TOTAL ≈ ~27k reservations row reads/day (was ~3.5M). > 100x reduction.
@@ -336,13 +340,14 @@ export const refreshFast = internalAction({
   args: { force: v.optional(v.boolean()) },
   handler: async (ctx, { force }): Promise<{ batch: "fast"; results: StepResult[] }> => {
     const startedAt = Date.now();
-    // Pass 8a (2026-05-25) — narrowed back to 90d. The 6b widening to 24mo
-    // for earnings_by_period was costing ~700MB/day in fast-batch bandwidth
-    // because the fat reservations rows (with raw Hygglo `order` JSON
-    // ~30-50KB each) got re-collected 24×/day. earnings_by_period moved to
-    // refreshSlow (daily) where the 24mo collect runs once. utilization +
-    // missed_revenue stay in fast batch with the 90d collect.
-    const cutoffFast = isoDaysAgo(90);
+    // Pass 13 (2026-06-02) — narrowed the fast reservations window 90d → 7d.
+    // It now serves ONLY utilization, whose compute reads reservations strictly
+    // within the last 7 days (isoDaysAgo(7) in utilization.ts), so a 7d collect
+    // yields identical output while slashing the hourly fat-row (Hygglo `order`
+    // JSON ~30-50KB each) re-collect bandwidth. missed_revenue (30/90d windows)
+    // moved to refreshSlow, which already collects a 90d reservations window +
+    // denials + pricing + accounts. Prior Pass 8a kept it at 90d to feed both.
+    const cutoffFast = isoDaysAgo(7);
     const [reservationsWindow, confirmedReservations, items, renters, denials, pricing, accounts] = await Promise.all([
       ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoffFast }),
       ctx.runQuery(internal.mv.master.collectConfirmedReservations, {}),
@@ -371,17 +376,6 @@ export const refreshFast = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeUpcomingReturns, { rows });
-    }));
-
-    results.push(await safeStep(ctx, "missed_revenue", async () => {
-      const rows = computeMissedRevenue({
-        denials,
-        pricing,
-        reservations: reservationsWindow,
-        accounts,
-        generatedAt: startedAt,
-      });
-      await ctx.runMutation(internal.mv.master.writeMissedRevenue, { rows });
     }));
 
     // Phase 7d (2026-05-24): wrap-and-cache the 16-card getStatsDrawerData
@@ -472,6 +466,23 @@ export const refreshSlow = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writePurchaseSignals, { rows });
+    }));
+
+    // Pass 13 (2026-06-02): missed_revenue moved here from refreshFast. Its
+    // compute windows are 30d/90d (WINDOWS_DAYS in missed_revenue.ts), all
+    // covered by the slow batch's existing 90d reservations collect; denials,
+    // pricing and accounts are already collected above. No new collect added —
+    // the inputs change slowly enough that daily cadence is acceptable, and the
+    // hourly fat-row reservations re-collect is eliminated.
+    results.push(await safeStep(ctx, "missed_revenue", async () => {
+      const rows = computeMissedRevenue({
+        denials,
+        pricing,
+        reservations: reservations90,
+        accounts,
+        generatedAt: startedAt,
+      });
+      await ctx.runMutation(internal.mv.master.writeMissedRevenue, { rows });
     }));
 
     results.push(await safeStep(ctx, "item_roi_rankings", async () => {
