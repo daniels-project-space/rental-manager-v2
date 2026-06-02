@@ -245,10 +245,24 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
 }
 
 // Overlapping item thumbnails for a reservation row (mirrors the small
-// calendar). Large by default and zoom big on hover via the shared .zoom-img.
+// calendar). Large by default; hovering shows a big preview rendered in a
+// viewport-clamped portal so it's never clipped by the scroll container.
+const PREVIEW_SIZE = 280;
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
 function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
   const shown = items.slice(0, 5);
   const extra = items.length - shown.length;
+  const [preview, setPreview] = useState<{ src: string; name: string; cx: number; cy: number } | null>(null);
+
+  const onEnter = (src: string, name: string) => (e: React.MouseEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setPreview({ src, name, cx: r.left + r.width / 2, cy: r.top + r.height / 2 });
+  };
+  const onLeave = () => setPreview(null);
+
   return (
     <div className="flex items-center">
       {shown.map((it, i) =>
@@ -259,14 +273,16 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             src={it.image}
             alt=""
             title={it.name}
-            className="zoom-img w-14 h-14 rounded-lg object-cover first:ml-0 -ml-3"
+            className="w-14 h-14 rounded-lg object-cover first:ml-0 -ml-3 cursor-zoom-in transition-transform hover:-translate-y-0.5"
             style={{ border: `2px solid ${ring}`, background: "#0b0f1c" }}
+            onMouseEnter={onEnter(it.image, it.name)}
+            onMouseLeave={onLeave}
           />
         ) : (
           <div
             key={i}
             title={it.name}
-            className="w-14 h-14 rounded-lg flex items-center justify-center text-sm font-bold first:ml-0 -ml-3 transition-transform hover:scale-150 hover:z-50 relative"
+            className="w-14 h-14 rounded-lg flex items-center justify-center text-sm font-bold first:ml-0 -ml-3"
             style={{ border: `2px solid ${ring}`, background: `${ring}33`, color: ring }}
           >
             {it.name.charAt(0).toUpperCase()}
@@ -274,6 +290,31 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
         ),
       )}
       {extra > 0 && <span className="ml-1.5 text-[11px] text-gray-400 flex-shrink-0">+{extra}</span>}
+
+      {/* Hover preview — portal to body, clamped inside the viewport so it
+          never gets cut off by the calendar's scroll container. */}
+      {preview && typeof window !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed z-[200] pointer-events-none rounded-xl overflow-hidden"
+            style={{
+              left: clamp(preview.cx - PREVIEW_SIZE / 2, 8, window.innerWidth - PREVIEW_SIZE - 8),
+              top: clamp(preview.cy - PREVIEW_SIZE / 2, 8, window.innerHeight - PREVIEW_SIZE - 8),
+              width: PREVIEW_SIZE,
+              height: PREVIEW_SIZE,
+              border: `2px solid ${ring}`,
+              boxShadow: "0 24px 70px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.08)",
+              background: "#0b0f1c",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={preview.src} alt={preview.name} className="w-full h-full object-contain" />
+            <div className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] text-gray-200 truncate" style={{ background: "rgba(0,0,0,0.7)" }}>
+              {preview.name}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
