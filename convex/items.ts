@@ -698,6 +698,102 @@ export const admin_setAliases = mutation({
 });
 
 /**
+ * Equipment value & resell tracker (qty-aware, time-depreciated).
+ *
+ * Resell value depreciates 1%/month on a declining-balance basis:
+ *   resell = acquisition_cost × qty × 0.99 ^ monthsElapsed
+ *
+ * monthsElapsed is measured from a FIXED epoch (DEPRECIATION_EPOCH_MS), set to
+ * 24 months before the 2026-06-02 launch so the fleet is treated as "already
+ * 2 years old" today and the curve keeps dropping ~1%/month automatically on
+ * every read — no cron, no stored mutation, no drift. Items are cross-account
+ * (value is identical for every account); accountSlug is accepted only for
+ * widget-call symmetry and is intentionally not used to filter.
+ */
+const DEPRECIATION_MONTHLY_RETENTION = 0.99; // 1% decline / month
+const DEPRECIATION_EPOCH_MS = Date.UTC(2024, 5, 2); // 2024-06-02 = launch − 24mo
+const AVG_MONTH_MS = (365.25 / 12) * 86_400_000;
+
+export const getEquipmentValue = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: async (ctx) => {
+    const now = Date.now();
+    const monthsElapsed = Math.max(0, (now - DEPRECIATION_EPOCH_MS) / AVG_MONTH_MS);
+    const factor = Math.pow(DEPRECIATION_MONTHLY_RETENTION, monthsElapsed);
+
+    const allItems = await ctx.db.query("items").collect();
+    const priced = allItems.filter(
+      (i) =>
+        !i.is_marketing_only &&
+        i.status !== "inactive" &&
+        i.status !== "archived" &&
+        i.acquisition_cost_gbp != null &&
+        i.acquisition_cost_gbp > 0,
+    );
+
+    const byKind = new Map<
+      string,
+      { kind: string; units: number; acquisition_gbp: number; resell_gbp: number }
+    >();
+    const items = priced
+      .map((i) => {
+        const qty = i.qty ?? 1;
+        const acqEach = i.acquisition_cost_gbp ?? 0;
+        const acqTotal = acqEach * qty;
+        const resellTotal = acqTotal * factor;
+        const k = byKind.get(i.kind) ?? {
+          kind: i.kind,
+          units: 0,
+          acquisition_gbp: 0,
+          resell_gbp: 0,
+        };
+        k.units += qty;
+        k.acquisition_gbp += acqTotal;
+        k.resell_gbp += resellTotal;
+        byKind.set(i.kind, k);
+        return {
+          name: i.name_canonical,
+          kind: i.kind,
+          units: qty,
+          acquisition_each: Math.round(acqEach),
+          resell_each: Math.round(acqEach * factor),
+          acquisition_total: Math.round(acqTotal),
+          resell_total: Math.round(resellTotal),
+        };
+      })
+      .sort((a, b) => b.acquisition_total - a.acquisition_total);
+
+    const acquisition_gbp = items.reduce((s, i) => s + i.acquisition_total, 0);
+    const resell_gbp = Math.round(acquisition_gbp * factor);
+    const units = items.reduce((s, i) => s + i.units, 0);
+
+    return {
+      as_of: now,
+      monthly_depreciation_pct: 1,
+      assumed_age_months: 24,
+      months_elapsed: Math.round(monthsElapsed * 10) / 10,
+      retained_pct: Math.round(factor * 1000) / 10,
+      total: {
+        sku_count: items.length,
+        units,
+        acquisition_gbp: Math.round(acquisition_gbp),
+        resell_gbp,
+        depreciation_gbp: Math.round(acquisition_gbp) - resell_gbp,
+      },
+      by_category: Array.from(byKind.values())
+        .map((k) => ({
+          kind: k.kind,
+          units: k.units,
+          acquisition_gbp: Math.round(k.acquisition_gbp),
+          resell_gbp: Math.round(k.resell_gbp),
+        }))
+        .sort((a, b) => b.acquisition_gbp - a.acquisition_gbp),
+      items,
+    };
+  },
+});
+
+/**
  * Adjust an owned item's inventory facts by canonical name. Patches only the
  * fields supplied — qty (units owned, drives capacity / overbooking / calendar
  * / utilization) and the cost fields (acquisition_cost_gbp drives the dashboard

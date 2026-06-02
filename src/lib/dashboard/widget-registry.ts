@@ -23,6 +23,7 @@ import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
 import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
 import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
+import { EquipmentValuePanel } from "@/components/dashboard/EquipmentValuePanel";
 
 export type PanelWidget = {
   id: string;
@@ -62,6 +63,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "item-roi",            label: "Item ROI",              component: ItemROIPanel },
   { id: "lost-revenue-buy",    label: "Lost Revenue · Buy",    component: LostRevenueBuyPanel },
   { id: "verification-funnel", label: "Verification Funnel",   component: VerificationFunnelPanel },
+  { id: "equipment-value",     label: "Equipment Value & Resell", component: EquipmentValuePanel },
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
