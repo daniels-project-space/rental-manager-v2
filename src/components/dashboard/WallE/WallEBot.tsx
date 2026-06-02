@@ -319,7 +319,10 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   <circle cx="74" cy="74" r="8" fill="var(--walle-eye)" />
                   <circle cx="77" cy="71" r="3" fill="#ffffff" opacity="0.8" />
                 </g>
-                {/* Eyelid (blink). Translucent shutter that closes over eye. */}
+                {/* Eyelid (blink). Body-colored shutter, OPEN by default
+                    (collapsed) — the CSS `walle-blink` animation owns the
+                    occasional close. No inline transform here: an inline style
+                    would override (and freeze) the CSS animation. */}
                 <rect
                   className="wb-eye-lid"
                   x="56"
@@ -328,11 +331,6 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   height="36"
                   rx="18"
                   fill="var(--walle-body)"
-                  style={
-                    idle.blink
-                      ? { transform: "scaleY(0.05)", transformOrigin: "50% 50%" }
-                      : undefined
-                  }
                 />
               </g>
 
@@ -365,11 +363,6 @@ const WallEBot = forwardRef<HTMLButtonElement, WallEBotProps>(
                   height="36"
                   rx="18"
                   fill="var(--walle-body)"
-                  style={
-                    idle.blink
-                      ? { transform: "scaleY(0.05)", transformOrigin: "50% 50%" }
-                      : undefined
-                  }
                 />
               </g>
             </g>

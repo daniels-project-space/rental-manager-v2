@@ -80,6 +80,11 @@
 }
 
 .walle-bot .wb-eye-lid {
+  /* Open by default: the lid sits collapsed to a thin line so the eyes show.
+     The blink animation briefly closes it (scaleY 1). This base transform also
+     keeps the eyes OPEN whenever the animation is suppressed — the still state
+     and prefers-reduced-motion — instead of stuck shut. */
+  transform: scaleY(0.05);
   transform-origin: 50% 50%;
   animation: walle-blink 4.4s ease-in-out infinite;
 }
@@ -247,8 +252,10 @@
 }
 
 @keyframes walle-blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  95%, 98%      { transform: scaleY(0.05); }
+  /* Eyes OPEN (lid collapsed) almost the whole cycle; snap CLOSED briefly to
+     blink, then back open. */
+  0%, 92%, 100% { transform: scaleY(0.05); }
+  95%, 98%      { transform: scaleY(1); }
 }
 
 @keyframes walle-tread-hum {
