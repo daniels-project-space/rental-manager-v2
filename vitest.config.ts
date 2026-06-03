@@ -30,6 +30,8 @@ export default defineConfig({
       "convex/dashboard_chat.walle.spec.ts",
       "src/lib/dashboard/edit-mode-context.spec.ts",
       "src/trigger/catalog-sync.map.test.ts",
+      "src/lib/hygglo-write.test.ts",
+      "src/trigger/hygglo-ui-action.gate.test.ts",
     ],
     css: false,
   },

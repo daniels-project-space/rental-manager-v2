@@ -5,7 +5,8 @@
  *   - auth      : ported OAuth2 password-grant + vault credential resolution.
  *   - client    : typed Bearer fetch wrapper (base URL, error handling, public).
  *   - orders    : listOrders/getOrder (live); approve/decline/changeDates/
- *                 changePrice/removeItem (typed, throw until Phase 4). NO chat.
+ *                 changePrice/removeItem (Phase 4 — delegate to hygglo-write.ts,
+ *                 gated by READ_ONLY_MODE, skip+no-fetch by default). NO chat.
  *   - catalog   : listProducts/getProduct/getPublicListing (live); writes typed,
  *                 throw until Phase 4.
  *   - shape     : pure parity mappers order→{reservation,renter,conversation,

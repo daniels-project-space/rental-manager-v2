@@ -144,6 +144,99 @@ export async function declineOrder(args: {
 }
 
 /**
+ * Change a rental's dates. The order-detail `actions` map exposes this
+ * capability under the key **`changeDates`**, but the REST dispatcher's
+ * accepted action verb is **`selectDates`** (verified from the 422 zod-union
+ * probe: `/home/ubuntu/hygglo-probe/out/disp_real_*.json` →
+ * `Expected 'selectDates' | 'createNewRequest'`). There is NO `changeDates`
+ * literal on the wire. Data fields confirmed required:
+ *   { rentalStartDate: string, rentalEndDate: string }   (both ISO date strings)
+ *
+ * Endpoint (action-dispatcher pattern):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "selectDates", data: { rentalStartDate, rentalEndDate } }
+ */
+export async function changeOrderDates(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  rentalStartDate: string;
+  rentalEndDate: string;
+}): Promise<HyggloWriteResult> {
+  if (!writesAllowed()) return skipResult();
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "selectDates",
+      data: {
+        rentalStartDate: args.rentalStartDate,
+        rentalEndDate: args.rentalEndDate,
+      },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Change an order's price. Dispatcher action verb is the literal `changePrice`
+ * (verified: `Invalid literal value, expected "changePrice"`). Data field:
+ *   { price: number }   (number required)
+ *
+ * Endpoint (action-dispatcher pattern):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "changePrice", data: { price } }
+ */
+export async function changeOrderPrice(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  price: number;
+}): Promise<HyggloWriteResult> {
+  if (!writesAllowed()) return skipResult();
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "changePrice",
+      data: { price: args.price },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Remove an item from an order. Dispatcher action verb is the literal
+ * `removeItem` (verified: `Invalid literal value, expected "removeItem"`).
+ * Data field:
+ *   { itemId: number }   (NUMBER required — probe sending a string itemId got
+ *                         `Expected number, received string`. `productId`
+ *                         belongs to the SEPARATE `addProduct` action, NOT to
+ *                         `removeItem`, so it is intentionally omitted here.)
+ *
+ * Endpoint (action-dispatcher pattern):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "removeItem", data: { itemId } }
+ */
+export async function removeOrderItem(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  itemId: number;
+}): Promise<HyggloWriteResult> {
+  if (!writesAllowed()) return skipResult();
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "removeItem",
+      data: { itemId: args.itemId },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
  * Send a chat message to a renter. Maps 1:1 to V1
  * `src/hygglo/hygglo.service.ts:1267 (sendMessage)`.
  *

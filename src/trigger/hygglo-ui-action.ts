@@ -32,6 +32,17 @@ import {
   releaseStagehand,
   isStagehandEnabled,
 } from "../lib/browserbase";
+// Phase 4: gated REST writers (single chokepoint). Used only when the
+// consolidated `restWriteAllowed()` gate passes; otherwise the browser path
+// runs unchanged. hygglo-write.ts re-checks READ_ONLY_MODE on every call.
+import {
+  acceptOrder,
+  declineOrder,
+  changeOrderDates,
+  changeOrderPrice,
+  removeOrderItem,
+  type HyggloWriteResult,
+} from "../lib/hygglo-write";
 
 // ── Legacy Playwright/Python runner (FALLBACK) ──────────────────────────────
 
@@ -118,6 +129,106 @@ const GROK_OUTPUT_USD_PER_TOK = 2.5 / 1_000_000;
 // READ_ONLY_MODE master safety rail (same trip-wire as src/lib/hygglo-write.ts).
 function isReadOnly(): boolean {
   return (process.env.READ_ONLY_MODE ?? "").toLowerCase() === "true";
+}
+
+// ── Phase 4: opt-in REST write route (replaces the browser per-action) ──────
+//
+// CONSOLIDATED GATE PREDICATE. A live PATCH to Hygglo can ONLY happen when
+// ALL of these are simultaneously true. Any single one missing ⇒ no REST
+// route is taken (we fall through to the browser, which has its OWN identical
+// shadow/read-only gates), and in particular `restWriteAllowed` short-circuits
+// BEFORE any fetch is constructed.
+//
+//   1. allowHyggloSend === true          (Convex `settings.ALLOW_HYGGLO_SEND`)
+//   2. READ_ONLY_MODE        !== 'true'  (env master rail)
+//   3. HYGGLO_UI_SHADOW_MODE !== 'true'  (env; default 'true' ⇒ shadow)
+//   4. HYGGLO_UI_LIVE_<ACTION> === 'true'(env; per-action live unlock)
+//   5. USE_REST_WRITES       === 'true'  (env; NEW Phase-4 master route flag)
+//
+// Default posture (every flag UNSET): #2 false-by-absence is fine, but #3 is
+// TRUE by default (shadow on), #4/#5 are UNSET ⇒ predicate is false ⇒ no REST,
+// no fetch. Identical runtime behaviour to pre-Phase-4.
+export function restWriteAllowed(action: string, allowHyggloSend: boolean): boolean {
+  if (process.env.USE_REST_WRITES !== "true") return false; // master route flag
+  if (!allowHyggloSend) return false; // Convex setting
+  if (isReadOnly()) return false; // READ_ONLY_MODE !== 'true'
+  const shadow = (process.env.HYGGLO_UI_SHADOW_MODE ?? "true").toLowerCase() !== "false";
+  if (shadow) return false; // HYGGLO_UI_SHADOW_MODE !== 'true'
+  const live = process.env[`HYGGLO_UI_LIVE_${action.toUpperCase()}`]?.toLowerCase() === "true";
+  if (!live) return false; // per-action live unlock
+  return true;
+}
+
+/**
+ * Map a browser UI-action name + args onto the corresponding gated REST writer
+ * in src/lib/hygglo-write.ts. Returns:
+ *   - a `HyggloWriteResult` if the action is REST-routable AND the consolidated
+ *     gate allows a live write (the only path that constructs a fetch — inside
+ *     hygglo-write.ts, which re-checks READ_ONLY_MODE);
+ *   - `null` if the action is not REST-mappable (⇒ caller falls through to the
+ *     browser). When a REST-mappable action is gated OFF we still return null
+ *     here so the browser path (with its own shadow gate) is taken unchanged.
+ *
+ * Action verbs are intentionally NOT re-derived here — hygglo-write.ts owns the
+ * verified `selectDates`/`changePrice`/`removeItem`/`approve`/`decline` mapping.
+ * `send_message` is deliberately UNMAPPED — renter messaging stays impossible.
+ */
+const REST_ROUTABLE = new Set([
+  "accept",
+  "decline",
+  "change_dates",
+  "apply_discount",
+  "change_owner_earnings",
+  "remove_item",
+]);
+
+async function tryRestWrite(args: {
+  accountSlug: string;
+  action: string;
+  orderId?: string;
+  actionArgs: Record<string, unknown>;
+  allowHyggloSend: boolean;
+}): Promise<HyggloWriteResult | null> {
+  const { accountSlug, action, orderId, actionArgs, allowHyggloSend } = args;
+  // Not a REST-mappable action ⇒ browser handles it.
+  if (!REST_ROUTABLE.has(action)) return null;
+  // Gated OFF ⇒ do NOT take REST; fall through to browser (which shadow-gates).
+  if (!restWriteAllowed(action, allowHyggloSend)) return null;
+  if (!orderId) {
+    return { status: "failed", error: `REST ${action}: missing orderId` };
+  }
+  switch (action) {
+    case "accept":
+      return acceptOrder({ accountSlug, hyggloOrderId: orderId });
+    case "decline":
+      return declineOrder({
+        accountSlug,
+        hyggloOrderId: orderId,
+        reason: typeof actionArgs.reason === "string" ? actionArgs.reason : "",
+      });
+    case "change_dates":
+      return changeOrderDates({
+        accountSlug,
+        hyggloOrderId: orderId,
+        rentalStartDate: String(actionArgs.rentalStartDate ?? actionArgs.startDate ?? ""),
+        rentalEndDate: String(actionArgs.rentalEndDate ?? actionArgs.endDate ?? ""),
+      });
+    case "apply_discount":
+    case "change_owner_earnings":
+      return changeOrderPrice({
+        accountSlug,
+        hyggloOrderId: orderId,
+        price: Number(actionArgs.price ?? actionArgs.amount),
+      });
+    case "remove_item":
+      return removeOrderItem({
+        accountSlug,
+        hyggloOrderId: orderId,
+        itemId: Number(actionArgs.itemId),
+      });
+    default:
+      return null;
+  }
 }
 
 // ── Stagehand action mapping (Phase 3c, USE_STAGEHAND=1) ────────────────────
@@ -310,6 +421,54 @@ export const hyggloUiAction = task({
       args: payload.args ?? {},
       strategyUsed: recordedStrategy === "stagehand" ? "ai_first" : recordedStrategy,
     });
+
+    // 2.5) OPT-IN REST route (Phase 4). Only when USE_REST_WRITES==='true'
+    //      AND the consolidated gate (settings.ALLOW_HYGGLO_SEND, !READ_ONLY,
+    //      !SHADOW, HYGGLO_UI_LIVE_<ACTION>) all pass does this construct a
+    //      live PATCH (inside hygglo-write.ts). When the master flag is UNSET
+    //      (default), `tryRestWrite` returns null immediately — zero behaviour
+    //      change, browser path below runs exactly as before.
+    if (process.env.USE_REST_WRITES === "true") {
+      const settings = await convex.query(api.settings.get, {});
+      const allowHyggloSend = settings?.ALLOW_HYGGLO_SEND === true;
+      const restResult = await tryRestWrite({
+        accountSlug,
+        action,
+        orderId: payload.orderId,
+        actionArgs: payload.args ?? {},
+        allowHyggloSend,
+      });
+      if (restResult) {
+        const ok = restResult.status === "sent";
+        const restErr =
+          restResult.status === "failed"
+            ? (restResult.error ?? "REST write failed")
+            : undefined;
+        const finalStatus: HyggloUiActionResult["status"] = ok
+          ? "live_complete"
+          : "failed";
+        logger.log("rest write route taken", {
+          correlationId,
+          action,
+          restStatus: restResult.status,
+          httpStatus: restResult.httpStatus,
+        });
+        await convex.mutation(api.hygglo_ui.completeAction, {
+          correlationId,
+          status: finalStatus,
+          strategyUsed: "ai_first", // schema enum has no "rest"; recorded in logs
+          errorMessage: restErr,
+        });
+        return {
+          ok,
+          correlationId,
+          status: finalStatus,
+          strategyUsed: "stagehand", // sentinel; "rest" not in the result enum
+          errorMessage: restErr,
+        };
+      }
+      // restResult === null ⇒ action not REST-routable OR gated OFF ⇒ browser.
+    }
 
     // 3) Load cookies.
     const sess = await convex.query(api.hygglo_ui.getSession, { accountSlug });
