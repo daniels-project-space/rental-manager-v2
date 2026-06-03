@@ -43,6 +43,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Deploy Trigger.dev tasks
-        run: pnpm trigger:deploy
+        # The `trigger.dev` package's bin is named `trigger` (not `trigger.dev`),
+        # so the package.json `trigger:deploy` script doesn't resolve. Use the bin directly.
+        run: pnpm exec trigger deploy
         env:
           TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}

@@ -29,7 +29,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Export Convex snapshot (hearty-oyster-600)
-        run: CONVEX_DEPLOY_KEY=${{ secrets.CONVEX_DEPLOY_KEY }} npx convex export --path /tmp/convex.zip
+        # Pass the deploy key via env (it contains a `|` that breaks inline shell assignment).
+        run: npx convex export --path /tmp/convex.zip
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
       - name: Upload snapshot to R2
         run: node scripts/ci-r2-upload.mjs /tmp/convex.zip "backups/rmv2/$(date +%Y%m%d)/convex-hearty-oyster-600.zip"
