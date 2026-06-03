@@ -74,5 +74,16 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^1.6.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@depot/cli",
+      "@google/genai",
+      "bufferutil",
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver"
+    ]
   }
 }
