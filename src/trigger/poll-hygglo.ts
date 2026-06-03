@@ -14,6 +14,12 @@ import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 import { isOutsidePollActiveWindow } from "../lib/quiet-hours";
+// Phase 2 live-flip — the pure hygglo-core poll assembler. Gated behind the
+// `use_core_poll` feature flag (DEFAULT OFF). When OFF the legacy inline
+// `scrapeAccount` path runs unchanged; when ON we produce the SAME payload
+// arrays via corePoll. Downstream (B) — Convex upserts, holds reconcile,
+// sync_state, listing resolution — is identical in both branches.
+import { corePoll } from "../hygglo-core/poll";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 // Fallback URL must match v2's active deployment (see .env.local NEXT_PUBLIC_CONVEX_URL).
@@ -166,6 +172,16 @@ type OrderReservationPayload = {
   latest_activity?: number | string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
+  /** Phase 2 live-flip (core-poll path only). When the corePoll adapter supplies
+   *  a pre-extracted active step, the batch-build loop uses it verbatim instead
+   *  of re-deriving from `order` (which corePoll strips on non-denial rows).
+   *  The legacy inline `scrapeAccount` path never sets this (undefined) ⇒ the
+   *  loop falls through to its existing `extractStep(order)` derivation, keeping
+   *  the OFF path byte-identical. */
+  order_step_extracted?:
+    | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED"
+    | "BOOKED_AFTER_VERIFIED" | "DELIVERED" | "RETURNED" | "REVIEWED"
+    | "CANCELED" | "VERIFICATION_FAILED";
   /** Phase 3d — derived from activity.event.content. */
   hygglo_system_signal?:
     | "owner_denied"
@@ -563,6 +579,88 @@ async function scrapeAccount(
   };
 }
 
+// ── core-poll adapter (Phase 2 live-flip, flag ON path) ───────
+//
+// Produces the EXACT same `{ messages, reservations, renters, conversations }`
+// shape `scrapeAccount` returns, but sources it from the parity-proven
+// `corePoll(slug)` assembler instead of the inline scraper. Downstream (B) runs
+// identically against either output.
+//
+// corePoll returns `reservations` already in `upsertOrdersAsReservationsBatch`
+// arg shape (incl. batch-level `account_slug` + `order_step_extracted`, and the
+// `order` blob retained ONLY on denial rows — the parity work proved this 0-delta
+// vs stored rows). We map those back onto `OrderReservationPayload[]` so the (B)
+// batch-build loop is unchanged. The loop's `extractStep(order)` would yield
+// undefined on the non-denial rows where corePoll stripped `order`; to preserve
+// parity we forward corePoll's pre-extracted step via `order_step_extracted`,
+// which the loop now prefers (see the `??` in run()). credentials/auth/vault are
+// resolved inside corePoll → createHyggloCore, so we pass only the slug.
+//
+// KNOWN ON-PATH DIFFERENCE (flagged): on non-denial NEWLY-INSERTED rows the
+// `newlyInserted[].hygglo_detail_payload` (best-effort listing-resolver context,
+// never a money field) is undefined here because corePoll strips `order` off the
+// hot path. The OFF path still carries the full detail. This only affects
+// brand-new-listing enrichment, not reservation/revenue data.
+async function scrapeAccountViaCore(accountSlug: string): Promise<{
+  messages: Array<{
+    thread_id: string;
+    message_id: string;
+    sender: string;
+    sender_name?: string;
+    body_text: string;
+    hygglo_sent_at?: number;
+    fetched_at: number;
+  }>;
+  reservations: OrderReservationPayload[];
+  renters: Array<{ hygglo_user_id?: string; display_name: string }>;
+  conversations: Array<{
+    thread_id: string;
+    hygglo_user_id?: string;
+    display_name: string;
+    last_msg_at: number;
+    created_at: number;
+  }>;
+}> {
+  const core = await corePoll(accountSlug, { fetchedAt: Date.now() });
+
+  const reservations: OrderReservationPayload[] = core.reservations.map((r) => ({
+    hygglo_order_id: r.hygglo_order_id,
+    status: r.status,
+    start_date: r.start_date,
+    end_date: r.end_date,
+    gross_paid_gbp: r.gross_paid_gbp,
+    net_to_owner_gbp: r.net_to_owner_gbp,
+    currency: r.currency,
+    items: r.items as OrderReservationPayload["items"],
+    duration_days: r.duration_days,
+    sourceFilter: r.sourceFilter ?? "",
+    renter_name: r.renter_name,
+    hygglo_user_id: r.hygglo_user_id,
+    booking_status: r.booking_status,
+    pickup_time: r.pickup_time,
+    return_time: r.return_time,
+    pickup_method: r.pickup_method,
+    return_method: r.return_method,
+    notes: r.notes,
+    photos_urls: r.photos_urls,
+    latest_activity: r.latest_activity,
+    // `order` is retained by corePoll only on denial rows; default to {} so the
+    // (B) loop's `needsRawOrder && { order }` and `hygglo_detail_payload` reads
+    // mirror corePoll's bandwidth design. The step is forwarded explicitly below.
+    order: (r.order ?? {}) as OrderDetail,
+    order_step_extracted: r.order_step_extracted,
+    hygglo_system_signal: r.hygglo_system_signal,
+    hygglo_system_signal_text: r.hygglo_system_signal_text,
+  }));
+
+  return {
+    messages: core.messages,
+    reservations,
+    renters: core.renters,
+    conversations: core.conversations,
+  };
+}
+
 // ── Task ──────────────────────────────────────────────────────
 
 export const pollHyggloInbox = schedules.task({
@@ -613,6 +711,28 @@ export const pollHyggloInbox = schedules.task({
     ];
 
     const convex = new ConvexHttpClient(CONVEX_URL);
+
+    // Phase 2 live-flip — read the `use_core_poll` feature flag ONCE per run
+    // (missing/false ⇒ OFF). When OFF (the deploy default) every account uses
+    // the legacy inline `scrapeAccount`; when ON they use the corePoll adapter.
+    // A read failure defaults to OFF so a vault/Convex hiccup can never silently
+    // flip the money path. Read here (not per-account) so both accounts share a
+    // consistent decision within a cycle and we spend one query, not two.
+    let useCorePoll = false;
+    try {
+      const flag = (await convex.query(api.feature_flags.getFlag, {
+        name: "use_core_poll",
+      })) as { name: string; enabled: boolean };
+      useCorePoll = flag?.enabled === true;
+    } catch (flagErr) {
+      console.warn(
+        "[poll-hygglo] use_core_poll flag read failed — defaulting OFF:",
+        flagErr,
+      );
+    }
+    console.log(
+      `[poll-hygglo] poll engine: ${useCorePoll ? "core-poll (flag ON)" : "inline (flag OFF)"}`,
+    );
 
     const results: Array<{
       slug: string;
@@ -668,9 +788,18 @@ export const pollHyggloInbox = schedules.task({
               return {};
             }
           };
-          const { messages, reservations, renters, conversations } = await scrapeAccount(
-            account.slug, account.email, account.password, clientSecret, lookupStored
-          );
+          // (A) FETCH + SHAPE — the ONLY part the flag swaps. Both branches
+          // yield the identical `{ messages, reservations, renters, conversations }`
+          // shape; everything below (B) runs unchanged.
+          //   OFF → legacy inline scraper (keeps the Phase-18.2 skip-detail
+          //         optimization via `lookupStored`).
+          //   ON  → parity-proven corePoll assembler (no skip-detail; it always
+          //         fetches detail — acceptable for the flagged rollout).
+          const { messages, reservations, renters, conversations } = useCorePoll
+            ? await scrapeAccountViaCore(account.slug)
+            : await scrapeAccount(
+                account.slug, account.email, account.password, clientSecret, lookupStored
+              );
 
           // Upsert chat messages (batched 50)
           let totalInserted = 0;
@@ -739,12 +868,18 @@ export const pollHyggloInbox = schedules.task({
               "CANCELED", "VERIFICATION_FAILED",
             ]);
             const orderArgs = batch.map((payload) => {
+              // Phase 2 live-flip: prefer a pre-extracted step when the core-poll
+              // adapter supplied one (it strips `order` off the hot path so the
+              // re-derivation below would yield undefined). The legacy inline
+              // path leaves `order_step_extracted` undefined ⇒ this falls through
+              // to the original `extractStep(order)` derivation, byte-identical.
               const stepRaw = extractStep(payload.order);
-              const orderStepExtracted = stepRaw && VALID_STEP_KEYS.has(stepRaw)
+              const orderStepExtracted = payload.order_step_extracted ?? (
+                stepRaw && VALID_STEP_KEYS.has(stepRaw)
                 ? (stepRaw as "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED"
                   | "BOOKED_AFTER_VERIFIED" | "DELIVERED" | "RETURNED" | "REVIEWED"
                   | "CANCELED" | "VERIFICATION_FAILED")
-                : undefined;
+                : undefined);
               const needsRawOrder = DENIAL_SIGNALS.has(payload.hygglo_system_signal ?? "");
               return {
                 account_slug: account.slug,

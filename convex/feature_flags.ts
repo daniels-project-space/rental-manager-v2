@@ -38,6 +38,25 @@ export const setFlag = mutation({
   },
 });
 
+/**
+ * Public single-flag read for out-of-Convex callers (e.g. Trigger.dev tasks
+ * using ConvexHttpClient, which cannot use the in-handler `isFlagEnabled`
+ * helper). Returns `false` when the row is missing — default OFF, matching
+ * `isFlagEnabled`. Cheap: one indexed `.first()` lookup.
+ *
+ *   npx convex run feature_flags:getFlag '{"name":"use_core_poll"}'
+ */
+export const getFlag = query({
+  args: { name: v.string() },
+  handler: async (ctx, { name }) => {
+    const row = await ctx.db
+      .query("feature_flags")
+      .withIndex("by_name", (q) => q.eq("name", name))
+      .first();
+    return { name, enabled: row?.enabled ?? false };
+  },
+});
+
 /** Public read for CLI debugging — `convex run feature_flags:listFlags`. */
 export const listFlags = query({
   args: {},
