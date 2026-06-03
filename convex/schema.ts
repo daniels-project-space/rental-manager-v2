@@ -1522,6 +1522,78 @@ export default defineSchema({
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_item_id", ["item_id"]),
 
+  // ── Phase 3: marketing-listings layer (ADDITIVE — data ingest only) ──────
+  // Full Hygglo catalog snapshot per account, synced read-only from the v2
+  // private API (GET /v2/my/products[/{id}]) by the `catalog-sync` Trigger
+  // task. This is a MARKETING layer that mirrors what is *publicly listed* on
+  // Hygglo — distinct from `items` (the LOCKED master inventory) and from
+  // `hygglo_product_index` (the deterministic product_id → item_id override).
+  //
+  // Each row is keyed by (accountSlug, productId) and is idempotently upserted.
+  // `masterItemId` links back to a matched `items` row (fuzzy name/slug match);
+  // when no confident match is found the row is flagged `isMarketingOnly`.
+  // NOT wired into any dashboard widget yet — widget consumption is a later,
+  // review-gated step. Nothing here mutates `items`, `bundles` or the poll path.
+  hygglo_products: defineTable({
+    accountSlug: v.string(),
+    productId: v.number(),
+    name: v.optional(v.string()),
+    isPublished: v.optional(v.boolean()),
+    valuation: v.optional(v.number()),
+    minimumRentalDays: v.optional(v.number()),
+    // Mirror of HyggloProductPrice[] (src/hygglo-core/types.ts). Loosely typed
+    // per-field because Hygglo's catalog schema varies across API versions.
+    prices: v.optional(
+      v.array(
+        v.object({
+          id: v.optional(v.number()),
+          productId: v.optional(v.number()),
+          pricePerDay: v.optional(v.number()),
+          days: v.optional(v.number()),
+          price: v.optional(v.number()),
+        }),
+      ),
+    ),
+    // Mirror of HyggloProductImage[].
+    images: v.optional(
+      v.array(
+        v.object({
+          id: v.optional(v.number()),
+          thumbnailUrl: v.optional(v.string()),
+          fullSizeUrl: v.optional(v.string()),
+          filename: v.optional(v.string()),
+          rotation: v.optional(v.number()),
+          productId: v.optional(v.number()),
+        }),
+      ),
+    ),
+    // Blocked / booked dates from the product detail endpoint. Hygglo's shape
+    // here is inconsistent (strings or {from,to} objects) so kept as v.any().
+    unavailableDates: v.optional(v.array(v.any())),
+    // Mirror of HyggloProductListing[].
+    listings: v.optional(
+      v.array(
+        v.object({
+          id: v.optional(v.number()),
+          slug: v.optional(v.string()),
+          productId: v.optional(v.number()),
+          publicUrl: v.optional(v.string()),
+          location: v.optional(v.any()),
+        }),
+      ),
+    ),
+    publicUrl: v.optional(v.string()),
+    // Resolved master-inventory link (fuzzy match). Absent ⇒ marketing-only.
+    masterItemId: v.optional(v.id("items")),
+    isMarketingOnly: v.boolean(),
+    // Best fuzzy-match score recorded for audit/tuning (coverage ratio).
+    matchScore: v.optional(v.number()),
+    lastSyncedAt: v.number(),
+  })
+    .index("by_account_product", ["accountSlug", "productId"])
+    .index("by_master_item", ["masterItemId"])
+    .index("by_account", ["accountSlug"]),
+
   // ── Phase W3b: reservation_vision side table (dual-write) ────────────────
   // Mirror of reservations.resolved_items so the heavy jsonb blob can move
   // off the hot reservations row. DUAL-WRITE phase: every existing
