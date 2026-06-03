@@ -1,0 +1,46 @@
+# Convex + Vercel deploy via Vercel's git integration (build script runs `convex deploy --cmd 'next build'`).
+# This workflow covers the remaining gap: deploying Trigger.dev tasks to the cloud.
+# Trigger.dev v3 project: proj_cdhxwycwcjdmxnsodsmc
+
+name: Deploy Trigger.dev tasks
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/trigger/**'
+      - 'src/hygglo-core/**'
+      - 'trigger.config.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+
+concurrency:
+  group: trigger-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-trigger:
+    name: Deploy Trigger.dev tasks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy Trigger.dev tasks
+        run: pnpm trigger:deploy
+        env:
+          TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}

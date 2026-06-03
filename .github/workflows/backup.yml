@@ -1,0 +1,38 @@
+name: Backup Convex → R2
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 03:17 UTC (off-peak, avoids :00 thundering-herd)
+    - cron: '17 3 * * *'
+
+jobs:
+  backup-convex:
+    name: Export Convex and upload to R2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Export Convex snapshot (hearty-oyster-600)
+        run: CONVEX_DEPLOY_KEY=${{ secrets.CONVEX_DEPLOY_KEY }} npx convex export --path /tmp/convex.zip
+
+      - name: Upload snapshot to R2
+        run: node scripts/ci-r2-upload.mjs /tmp/convex.zip "backups/rmv2/$(date +%Y%m%d)/convex-hearty-oyster-600.zip"
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
