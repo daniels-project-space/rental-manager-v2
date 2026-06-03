@@ -154,11 +154,22 @@ function accountColor(ac: "blue" | "purple"): string {
 const DAY_MS = 86400000;
 
 /** Fraction of a day (0..1) for a "HH:MM[:SS]" time, or `fallback` if absent. */
+// The expanded calendar compresses each day column to BUSINESS HOURS — 9am to
+// 10pm — so bar positions reflect the working day instead of a mostly-empty 24h.
+const DAY_WINDOW_START_MIN = 9 * 60; // 09:00
+const DAY_WINDOW_END_MIN = 22 * 60; // 22:00
+
+/** Fraction (0..1) of a "HH:MM" time within the 9am–10pm window, clamped to the
+ *  window edges; `fallback` when no time (0 = window start, 1 = window end). */
 function timeFrac(t: string | null, fallback: number): number {
   if (!t) return fallback;
   const m = t.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return fallback;
-  return Math.min(1, (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) / 1440);
+  const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  return Math.max(
+    0,
+    Math.min(1, (mins - DAY_WINDOW_START_MIN) / (DAY_WINDOW_END_MIN - DAY_WINDOW_START_MIN)),
+  );
 }
 
 interface BarGeom { left: number; width: number; }
@@ -341,7 +352,7 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
   const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);
   const pickup = block.pickup_time ? block.pickup_time.slice(0, 5) : null;
   const ret = block.return_time ? block.return_time.slice(0, 5) : null;
-  const wide = row.width > 130;
+  const showTimes = row.width > 70;
   const tooltip = [
     renterLabel,
     row.items.map((i) => i.name).join(", "),
@@ -370,8 +381,14 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
       {ongoing && (
         <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }} />
       )}
+      {/* Pickup time pinned to the START of the bar */}
+      {showTimes && pickup && (
+        <span className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums" style={{ color: ss.text, opacity: 0.85 }}>
+          {pickup}
+        </span>
+      )}
       <span
-        className="text-[11px] font-semibold truncate flex-1 leading-none"
+        className="text-[11px] font-semibold truncate flex-1 leading-none text-center"
         style={{
           color: ss.text,
           textDecoration: ss.strikethrough ? "line-through" : undefined,
@@ -381,9 +398,10 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
       >
         {renterLabel}
       </span>
-      {wide && ret && (
-        <span className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums" style={{ color: ss.text, opacity: 0.8 }}>
-          ↩{ret}
+      {/* Drop-off time pinned to the END of the bar */}
+      {showTimes && ret && (
+        <span className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums" style={{ color: ss.text, opacity: 0.85 }}>
+          {ret}
         </span>
       )}
       {showProgress && (
@@ -631,11 +649,14 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     if (startMs > nowMs && startMs < bestStartMs) { bestStartMs = startMs; nextUpcomingId = row.reservationId; }
   }
 
-  // Red "now" marker — x within the visible week, only when today is in range.
-  const nowDays = (nowMs - isoToDate(weekStart).getTime()) / DAY_MS;
-  const showNow = nowDays >= 0 && nowDays <= 7;
-  const nowLeft = LABEL_WIDTH + nowDays * colWidth;
-  const nowTime = new Date(nowMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+  // Red "now" marker — placed inside today's column using the SAME 9am–10pm
+  // business-hours compression as the bars, so it lines up with them.
+  const nowTime = new Date(nowMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Europe/London" });
+  const todayIdx = Math.round((isoToDate(today).getTime() - isoToDate(weekStart).getTime()) / DAY_MS);
+  const [nowH, nowM] = nowTime.split(":").map((s) => parseInt(s, 10));
+  const nowBizFrac = Math.max(0, Math.min(1, (nowH * 60 + nowM - DAY_WINDOW_START_MIN) / (DAY_WINDOW_END_MIN - DAY_WINDOW_START_MIN)));
+  const showNow = todayIdx >= 0 && todayIdx <= 6;
+  const nowLeft = LABEL_WIDTH + (todayIdx + nowBizFrac) * colWidth;
 
   // Nav bounds — disable Prev at the current week, Next at +4 weeks.
   const minWeek = mondayOfThisWeek();

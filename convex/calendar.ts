@@ -19,7 +19,6 @@ import {
   displayReturnDate,
   londonToday,
 } from "./lib/effectiveDates";
-import { buildCommitmentMap } from "./lib/capacity_gap";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1193,9 +1192,35 @@ export const searchCalendarInventory = query({
       (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
     ) as typeof reservations;
 
-    // Units committed per item per date — sums expanded_items.qty across the
-    // confirmed rentals (multi-unit-correct).
-    const commit = buildCommitmentMap(confirmed);
+    // Units committed per item per date. Built from EFFECTIVE occupancy dates
+    // (pickup → return_date ?? end_date) — the same dates the bars use — NOT the
+    // raw start/end the shared buildCommitmentMap uses: Hygglo rows often carry
+    // raw_end = pickup-day with a later negotiated return_date, so a raw-date
+    // count drops the extension days (a unit out Thu via return_date but
+    // raw_end=Wed went uncounted → "1 free" when fully booked). Prefer
+    // expanded_items.qty (kit-decomposed) > resolved_items.qty; only matched
+    // items are summed.
+    const commit = new Map<string, number>();
+    for (const r of confirmed) {
+      const effPick = displayPickupDate(r) || r.start_date;
+      const effRet = (r.return_date ?? r.end_date) ?? effPick;
+      if (!effPick || !effRet) continue;
+      const exp = (r.expanded_items ?? []).filter(
+        (x) => x.item_id && matchedById.has(String(x.item_id)),
+      );
+      const lines = exp.length
+        ? exp.map((x) => ({ id: String(x.item_id), qty: x.qty ?? 1 }))
+        : (r.resolved_items ?? [])
+            .filter((x) => x.item_id && matchedById.has(String(x.item_id)))
+            .map((x) => ({ id: String(x.item_id), qty: x.qty ?? 1 }));
+      if (lines.length === 0) continue;
+      for (const d of dates) {
+        if (d < effPick || d > effRet) continue;
+        for (const ln of lines) {
+          commit.set(`${ln.id}|${d}`, (commit.get(`${ln.id}|${d}`) ?? 0) + ln.qty);
+        }
+      }
+    }
 
     // Reservations that touch a matched item this week → the bar-filter set.
     const reservationIds = new Set<string>();
