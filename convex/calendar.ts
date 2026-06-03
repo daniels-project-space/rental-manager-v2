@@ -19,7 +19,7 @@ import {
   displayReturnDate,
   londonToday,
 } from "./lib/effectiveDates";
-import { isItemUnitAvailable } from "./lib/availability";
+import { buildCommitmentMap } from "./lib/capacity_gap";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1152,41 +1152,96 @@ export const searchCalendarInventory = query({
       return hay.some((f) => typeof f === "string" && f.toLowerCase().includes(q));
     });
 
+    if (matched.length === 0) return { weekStart, dates, items: [], reservationIds: [] as string[] };
+    const matchedById = new Map(matched.map((it) => [String(it._id), it]));
+
+    // --- Confirmed rentals overlapping the week (IDENTICAL scan to
+    // getGanttWeek, so availability counts EXACTLY the rentals whose bars the
+    // calendar draws). Booked UNITS come from expanded_items.qty via the same
+    // commitment map the dashboard's double-booking detector uses — NOT the
+    // calendar_holds ledger, which collapses to one row per (item, day) and so
+    // can never represent >1 unit out (the bug: 3 FX3 booked showed as 1). ---
+    const scanStart = shiftIsoDate(weekStart!, -CALENDAR_FETCH_PAD_DAYS);
+    const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (qb) => qb.gte("start_date", scanStart))
+      .collect();
+    reservations = reservations.filter(
+      (r) => r.start_date !== undefined && r.start_date <= scanEnd,
+    );
+    const overlapStart = shiftIsoDate(weekStart!, -CALENDAR_LOOKBACK_DAYS);
+    const priorRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (qb) =>
+        qb.gte("start_date", overlapStart).lt("start_date", scanStart),
+      )
+      .collect();
+    for (const r of priorRes) {
+      if (
+        r.end_date !== undefined &&
+        r.end_date >= scanStart &&
+        !reservations.find((x) => x._id === r._id)
+      ) {
+        reservations.push(r);
+      }
+    }
+    if (accountSlug) {
+      reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    }
+    const confirmed = dedupByLogicalRental(
+      (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
+    ) as typeof reservations;
+
+    // Units committed per item per date — sums expanded_items.qty across the
+    // confirmed rentals (multi-unit-correct).
+    const commit = buildCommitmentMap(confirmed);
+
+    // Reservations that touch a matched item this week → the bar-filter set.
     const reservationIds = new Set<string>();
-    const items = await Promise.all(
+    for (const r of confirmed) {
+      if (!r.start_date) continue;
+      const rangeEnd = (r.return_date ?? r.end_date) ?? r.start_date;
+      if (r.start_date > weekEnd || rangeEnd < weekStart!) continue; // no overlap
+      const refs: Array<{ item_id?: Id<"items"> }> =
+        r.expanded_items && r.expanded_items.length
+          ? r.expanded_items
+          : r.resolved_items ?? [];
+      if (refs.some((x) => x.item_id && matchedById.has(String(x.item_id)))) {
+        reservationIds.add(String(r._id));
+      }
+    }
+
+    // Per matched item: per-day free = qty − committed units (owner blackout
+    // ⇒ 0). Only surface items that actually have a rental in the visible week.
+    const itemsRaw = await Promise.all(
       matched.map(async (it) => {
-        const availability = await Promise.all(
-          dates.map(async (date) => {
-            const a = await isItemUnitAvailable(ctx, it._id, date);
-            return { date, free: a.available, total: a.total_units, booked: a.booked_units };
-          }),
-        );
-        // Rentals that touch this item this week (holds = booking ledger).
-        const holds = await ctx.db
-          .query("calendar_holds")
-          .withIndex("by_item_date", (qb) =>
-            qb.eq("item_id", it._id).gte("date", weekStart!).lte("date", weekEnd),
-          )
+        const idStr = String(it._id);
+        const total = it.qty ?? 0;
+        const blackouts = await ctx.db
+          .query("owner_unavailability")
+          .withIndex("by_item_date", (qb) => qb.eq("item_id", it._id))
           .collect();
-        for (const h of holds) {
-          if (
-            h.reservation_id &&
-            (h.status ?? "confirmed") !== "cancelled" &&
-            (!accountSlug || !h.account_slug || h.account_slug === accountSlug)
-          ) {
-            reservationIds.add(h.reservation_id as string);
-          }
-        }
+        let bookedThisWeek = false;
+        const availability = dates.map((date) => {
+          const committed = commit.get(`${idStr}|${date}`) ?? 0;
+          if (committed > 0) bookedThisWeek = true;
+          const black = blackouts.some((b) => b.start_date <= date && b.end_date >= date);
+          const free = black ? 0 : Math.max(0, total - committed);
+          return { date, free, total, booked: black ? total : committed };
+        });
+        if (!bookedThisWeek) return null;
         return {
-          item_id: it._id as string,
+          item_id: idStr,
           name: it.name_canonical,
           kind: it.kind ?? null,
-          qty: it.qty ?? 0,
+          qty: total,
           image_url: it.image_url ?? null,
           availability,
         };
       }),
     );
+    const items = itemsRaw.filter((x): x is NonNullable<typeof x> => x !== null);
 
     items.sort((a, b) => a.name.localeCompare(b.name));
     return { weekStart, dates, items, reservationIds: [...reservationIds] };

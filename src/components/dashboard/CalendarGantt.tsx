@@ -796,7 +796,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
               {searching
                 ? searchLoading
                   ? "Searching…"
-                  : `No items match “${search.trim()}”`
+                  : `No “${search.trim()}” rentals this week`
                 : "No bookings this week"}
             </div>
           ) : (
