@@ -1,8 +1,10 @@
+# pnpm 11 build-script approvals. This pnpm uses the allowBuilds map (boolean values).
+# These deps legitimately need their postinstall build scripts (native binaries, etc.).
 allowBuilds:
-  '@depot/cli': set this to true or false
-  '@google/genai': set this to true or false
-  bufferutil: set this to true or false
-  esbuild: set this to true or false
-  protobufjs: set this to true or false
-  sharp: set this to true or false
-  unrs-resolver: set this to true or false
+  '@depot/cli': true
+  '@google/genai': true
+  bufferutil: true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true
