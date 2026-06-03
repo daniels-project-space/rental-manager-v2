@@ -19,6 +19,7 @@ import {
   displayReturnDate,
   londonToday,
 } from "./lib/effectiveDates";
+import { isItemUnitAvailable } from "./lib/availability";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1087,6 +1088,108 @@ export const getGanttWeek = query({
       weekEnd,
       items: itemRows,
     };
+  },
+});
+
+/**
+ * W08 Gantt search — inventory-driven search + per-day availability.
+ *
+ * Called ONLY while a search is active (debounced). The reservation.items[]
+ * names are raw Hygglo listing titles that don't reliably resolve to inventory
+ * rows, so we search the canonical `items` table instead (name / slug / tag),
+ * compute per-day free units from the single-source-of-truth primitive
+ * isItemUnitAvailable, and map matched items → the rentals that touch them via
+ * the calendar_holds ledger (holds carry item_id + reservation_id). The client
+ * uses `reservationIds` to filter the Gantt bars to "rentals that relate".
+ *
+ * Reads scale with matched items only, so the default unsearched calendar pays
+ * nothing.
+ */
+export const searchCalendarInventory = query({
+  args: {
+    query: v.string(),
+    weekStartIso: v.optional(v.string()),
+    accountSlug: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { query: rawQuery, weekStartIso, accountSlug }) => {
+    const q = rawQuery.trim().toLowerCase();
+    // Mirror getGanttWeek's week resolution EXACTLY so day-columns align.
+    let weekStart = weekStartIso;
+    if (!weekStart) {
+      const todayLdn = londonToday();
+      const anchor = new Date(`${todayLdn}T00:00:00Z`);
+      const day = anchor.getUTCDay();
+      const diffToMon = day === 0 ? -6 : 1 - day;
+      anchor.setUTCDate(anchor.getUTCDate() + diffToMon);
+      weekStart = anchor.toISOString().slice(0, 10);
+    }
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setUTCDate(d.getUTCDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const weekEnd = dates[6];
+    if (!q) return { weekStart, dates, items: [], reservationIds: [] as string[] };
+
+    // Search the canonical inventory by name / slug / tag (kind, sub_kind,
+    // category) and aliases. Substring, case-insensitive.
+    const allItems = await ctx.db.query("items").collect();
+    const matched = allItems.filter((it) => {
+      // Only real, owned inventory — marketing-only / zero-qty listings are
+      // never "available", so excluding them keeps a red 0 meaning "fully
+      // booked", not "we don't own this".
+      if (it.is_marketing_only || (it.qty ?? 0) <= 0) return false;
+      const hay: (string | undefined)[] = [
+        it.name_canonical,
+        it.name_input,
+        it.slug,
+        it.kind,
+        it.sub_kind,
+        it.category_v1,
+        ...(it.aliases ?? []),
+      ];
+      return hay.some((f) => typeof f === "string" && f.toLowerCase().includes(q));
+    });
+
+    const reservationIds = new Set<string>();
+    const items = await Promise.all(
+      matched.map(async (it) => {
+        const availability = await Promise.all(
+          dates.map(async (date) => {
+            const a = await isItemUnitAvailable(ctx, it._id, date);
+            return { date, free: a.available, total: a.total_units, booked: a.booked_units };
+          }),
+        );
+        // Rentals that touch this item this week (holds = booking ledger).
+        const holds = await ctx.db
+          .query("calendar_holds")
+          .withIndex("by_item_date", (qb) =>
+            qb.eq("item_id", it._id).gte("date", weekStart!).lte("date", weekEnd),
+          )
+          .collect();
+        for (const h of holds) {
+          if (
+            h.reservation_id &&
+            (h.status ?? "confirmed") !== "cancelled" &&
+            (!accountSlug || !h.account_slug || h.account_slug === accountSlug)
+          ) {
+            reservationIds.add(h.reservation_id as string);
+          }
+        }
+        return {
+          item_id: it._id as string,
+          name: it.name_canonical,
+          kind: it.kind ?? null,
+          qty: it.qty ?? 0,
+          image_url: it.image_url ?? null,
+          availability,
+        };
+      }),
+    );
+
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    return { weekStart, dates, items, reservationIds: [...reservationIds] };
   },
 });
 

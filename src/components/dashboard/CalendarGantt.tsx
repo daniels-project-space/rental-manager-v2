@@ -492,10 +492,31 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  // W08 search — filter rentals by item name / tag and (lazily) show per-day
+  // availability. The query string is debounced before hitting the backend so
+  // typing doesn't churn Convex subscriptions.
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const searching = q.length > 0;
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q), 250);
+    return () => clearTimeout(id);
+  }, [q]);
 
   const data = useQuery(
     api.calendar.getGanttWeek,
     open ? { weekStartIso: weekStart, accountSlug: accountSlug ?? undefined } : "skip"
+  );
+
+  // Inventory search (name / tag) + per-day availability + the reservations
+  // that touch the matched items. Fetched ONLY while searching ("search-only"),
+  // so the default calendar pays nothing.
+  const searchResult = useQuery(
+    api.calendar.searchCalendarInventory,
+    open && debouncedQ.length > 0
+      ? { query: debouncedQ, weekStartIso: weekStart, accountSlug: accountSlug ?? undefined }
+      : "skip",
   );
 
   // Sync prop weekStartIso if it changes while open (clamped to the nav window)
@@ -591,6 +612,14 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   // Booking-centric rows: one per reservation, all its items grouped together.
   const resRows = data ? groupByReservation(data.items, weekStart, colWidth, today) : [];
+  // While searching, restrict the bars to rentals that touch a matched item
+  // (mapped via the calendar_holds ledger on the backend).
+  const matchedInv = searching ? searchResult?.items ?? [] : [];
+  const relatedResIds = searching ? new Set(searchResult?.reservationIds ?? []) : null;
+  const visibleResRows = relatedResIds
+    ? resRows.filter((r) => relatedResIds.has(r.reservationId))
+    : resRows;
+  const searchLoading = searching && searchResult === undefined;
 
   // The immediate next upcoming rental (soonest pickup still in the future) —
   // its bar pulses so the next thing to happen always draws the eye.
@@ -613,7 +642,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const atMinWeek = weekStart <= minWeek;
   const atMaxWeek = weekStart >= addDays(minWeek, WEEK_AHEAD_CAP);
 
-  const hasAnyBlocks = resRows.length > 0;
+  // When searching, gate on matched inventory; the loading state shows its own
+  // message (see empty branch) rather than a premature "no match".
+  const hasAnyBlocks = searching ? matchedInv.length > 0 : resRows.length > 0;
 
   const content = (
     <div
@@ -676,6 +707,51 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             Next Week →
           </button>
 
+          {/* W08 search — filter rentals by item name or tag; shows availability */}
+          <div className="relative flex items-center ml-3" style={{ width: 240, maxWidth: "38vw" }}>
+            <svg
+              className="absolute left-2.5 pointer-events-none"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="rgba(255,255,255,0.45)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search item or tag…"
+              className="w-full text-sm text-gray-100 rounded-lg outline-none placeholder:text-gray-500"
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.10)",
+                padding: "6px 26px 6px 30px",
+              }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2 text-gray-400 hover:text-white text-base leading-none"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {searching && !searchLoading && (
+            <span className="text-[11px] text-gray-500 whitespace-nowrap hidden sm:inline">
+              {matchedInv.length} item{matchedInv.length === 1 ? "" : "s"} · {visibleResRows.length} rental
+              {visibleResRows.length === 1 ? "" : "s"}
+            </span>
+          )}
+
           {/* Legend — accounts (left stripe color) + booking status (fill). */}
           <div className="ml-auto hidden md:flex items-center gap-3 text-[11px] text-gray-400">
             <span className="flex items-center gap-1.5">
@@ -717,7 +793,11 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             </div>
           ) : !hasAnyBlocks ? (
             <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-              No bookings this week
+              {searching
+                ? searchLoading
+                  ? "Searching…"
+                  : `No items match “${search.trim()}”`
+                : "No bookings this week"}
             </div>
           ) : (
             <div style={{ minWidth: LABEL_WIDTH + totalGridWidth }}>
@@ -757,9 +837,88 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                 })}
               </div>
 
+              {/* W08 — per-day unit availability for the searched item(s) */}
+              {searching && matchedInv.length > 0 && (
+                <div style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
+                  {matchedInv.map((it) => {
+                    const acc = "#3b82f6";
+                    const cells = it.availability;
+                    const total = it.qty;
+                    return (
+                      <div
+                        key={it.item_id}
+                        className="flex"
+                        style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", height: RES_ROW_HEIGHT }}
+                      >
+                        <div
+                          className="flex-shrink-0 flex flex-col justify-center px-3"
+                          style={{
+                            width: LABEL_WIDTH,
+                            borderLeft: `3px solid ${acc}`,
+                            background: `${acc}14`,
+                            borderRight: "1px solid rgba(255,255,255,0.05)",
+                          }}
+                        >
+                          <span
+                            className="text-[11px] text-gray-100 truncate leading-tight font-semibold"
+                            title={it.name}
+                          >
+                            {it.name}
+                          </span>
+                          <span className="text-[10px] leading-tight" style={{ color: "#94a3b8" }}>
+                            {`${total} unit${total === 1 ? "" : "s"} · free/day`}
+                          </span>
+                        </div>
+                        <div className="relative flex" style={{ width: totalGridWidth }}>
+                          {headers.map(({ iso }, i) => {
+                            const cell = cells.find((c) => c.date === iso);
+                            const free = cell?.free;
+                            const tot = cell?.total;
+                            const isToday = iso === today;
+                            let color = "#9ca3af";
+                            let bg: string | undefined = isToday
+                              ? "rgba(59,130,246,0.08)"
+                              : i % 2 === 0
+                              ? "rgba(255,255,255,0.01)"
+                              : undefined;
+                            if (free !== undefined && tot !== undefined) {
+                              if (free <= 0) {
+                                color = "#f87171";
+                                bg = "rgba(248,113,113,0.10)";
+                              } else if (free < tot) {
+                                color = "#fbbf24";
+                              } else {
+                                color = "#34d399";
+                              }
+                            }
+                            return (
+                              <div
+                                key={iso}
+                                className="flex-shrink-0 flex flex-col items-center justify-center"
+                                style={{ width: colWidth, background: bg, borderRight: "1px solid rgba(255,255,255,0.03)" }}
+                                title={cell ? `${free} of ${tot} free · ${iso}` : `no data · ${iso}`}
+                              >
+                                <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
+                                  {free !== undefined ? free : "–"}
+                                </span>
+                                {tot !== undefined && (
+                                  <span className="text-[9px] leading-none mt-0.5" style={{ color: "#64748b" }}>
+                                    /{tot}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Reservation rows + the sweeping red "now" line */}
               <div className="relative">
-                {resRows.map((row) => {
+                {visibleResRows.map((row) => {
                   const renter = row.block.renter_name && row.block.renter_name.trim() !== "" && row.block.renter_name.trim() !== "?"
                     ? row.block.renter_name.trim()
                     : orderStepLabel(row.block.order_step);
