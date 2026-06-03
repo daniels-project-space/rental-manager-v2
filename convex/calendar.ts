@@ -371,10 +371,35 @@ export const getCalendarStrip = query({
             accountSlug: (r as { account_slug?: string }).account_slug ?? null,
             productId: productIdForItemInReservation(r as Parameters<typeof productIdForItemInReservation>[0], entry.item_id),
           });
+          // image_hints are keyed by the RAW Hygglo item_name; the canonical
+          // renderName often doesn't match (and items.image_url can be empty),
+          // leaving the tile image-less even though the listing photo exists
+          // (e.g. Jamie Hannaford / Dan). Mirror getGanttWeek: on a placeholder,
+          // retry with the reservation's raw item_name(s) and take the first hit.
+          let imageUrl = resolved.url;
+          if (!imageUrl || resolved.source === "placeholder") {
+            for (const raw of r.items ?? []) {
+              if (!raw.item_name) continue;
+              const alt = resolveImageForReservationItem({
+                imageHints,
+                itemName: raw.item_name,
+                itemsTableEntry: doc,
+                resolvedConfidence: undefined,
+                sharedBlacklist,
+                bankByProduct: bankByProductStrip,
+                accountSlug: (r as { account_slug?: string }).account_slug ?? null,
+                productId: productIdForItemNameInReservation(r as Parameters<typeof productIdForItemNameInReservation>[0], raw.item_name),
+              });
+              if (alt.source !== "placeholder" && alt.url) {
+                imageUrl = alt.url;
+                break;
+              }
+            }
+          }
           return {
             itemId: entry.item_id,
             name: renderName,
-            imageUrl: resolved.url,
+            imageUrl,
             qty,
             resolved: true,
           };

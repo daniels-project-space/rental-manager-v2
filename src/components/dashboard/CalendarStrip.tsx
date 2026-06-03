@@ -390,14 +390,14 @@ function ProgressTimeline({
       <div className="flex items-baseline justify-between text-[9px] font-medium uppercase tracking-wider mb-1.5">
         <span className="text-emerald-300/90 flex items-center gap-1">
           <span className="text-emerald-400">▶</span>
-          <span className="font-mono text-emerald-200">{fmt12Short(chip.pickupTime)}</span>
+          <span className="font-mono text-emerald-200 text-[13px] font-semibold">{fmt12Short(chip.pickupTime)}</span>
           <span className="text-[#6b6f80]">·</span>
           <span className="text-[#9ca3af]">{dayShort(chip.startDate)}</span>
         </span>
         <span className="text-violet-300/90 flex items-center gap-1">
           <span className="text-[#9ca3af]">{dayShort(chip.returnDate ?? chip.endDate)}</span>
           <span className="text-[#6b6f80]">·</span>
-          <span className="font-mono text-violet-200">{fmt12Short(chip.returnTime)}</span>
+          <span className="font-mono text-violet-200 text-[13px] font-semibold">{fmt12Short(chip.returnTime)}</span>
           <span className="text-violet-400">◀</span>
         </span>
       </div>
