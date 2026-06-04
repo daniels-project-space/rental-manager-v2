@@ -226,6 +226,43 @@ export const getCalendarStrip = query({
       ),
     ) as typeof reservations;
 
+    // Collapse contiguous same-renter/same-item bookings into ONE spanning
+    // reservation so the strip shows a single pickup (span start) + single
+    // return (span end), with interior days as "away" — no interior handover
+    // chips. Other strip computations (renter map, holds) keep raw `reservations`.
+    const stripGroupId = logicalGroupIds(reservations as unknown as ReservationRow[]);
+    const stripByGroup = new Map<string, typeof reservations>();
+    for (const r of reservations) {
+      const gid = stripGroupId.get(r._id) ?? r._id;
+      const arr = stripByGroup.get(gid);
+      if (arr) arr.push(r);
+      else stripByGroup.set(gid, [r]);
+    }
+    const mergedReservations = Array.from(stripByGroup.values()).map((members) => {
+      if (members.length === 1) return members[0];
+      const sorted = members
+        .slice()
+        .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)));
+      const startM = sorted[0];
+      let endM = sorted[0];
+      for (const m of sorted) if (displayReturnDate(m) > displayReturnDate(endM)) endM = m;
+      const grossSum = members.reduce(
+        (s, m) => s + ((m as { gross_paid_gbp?: number | null }).gross_paid_gbp ?? 0),
+        0,
+      );
+      return {
+        ...startM,
+        pickup_date: displayPickupDate(startM),
+        return_date: displayReturnDate(endM),
+        end_date: endM.end_date,
+        pickup_time: startM.pickup_time,
+        return_time: endM.return_time,
+        pickup_method: (startM as { pickup_method?: string | null }).pickup_method,
+        return_method: (endM as { return_method?: string | null }).return_method,
+        gross_paid_gbp: grossSum,
+      };
+    }) as typeof reservations;
+
     // Renter lookups
     const renterIds = [
       ...new Set(
@@ -530,13 +567,13 @@ export const getCalendarStrip = query({
       // Placement honors the negotiated pickup date (EITHER direction) so a
       // rental whose pickup_date differs from the Hygglo start_date moves to the
       // negotiated day.
-      const pickups = reservations
+      const pickups = mergedReservations
         .filter((r) => displayPickupDate(r) === date)
         .map((r) => buildChip(r, "pickup"));
 
       // Exclude same-day rentals from returns (already counted in pickups above).
       const pickupIds = new Set(pickups.map((p) => p.reservationId));
-      const returns = reservations
+      const returns = mergedReservations
         .filter((r) => effectiveReturnDate(r) === date && !pickupIds.has(r._id))
         .map((r) => buildChip(r, "return"));
 
@@ -547,7 +584,7 @@ export const getCalendarStrip = query({
         ...pickups.map((p) => p.reservationId),
         ...returns.map((r) => r.reservationId),
       ]);
-      const away = reservations
+      const away = mergedReservations
         .filter((r) => {
           const pick = displayPickupDate(r);
           if (!pick) return false;

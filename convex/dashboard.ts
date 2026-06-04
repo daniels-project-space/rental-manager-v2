@@ -12,6 +12,10 @@ import {
   isPendingVerification,
   isUpcoming,
   netOf,
+  displayPickupDate,
+  displayReturnDate,
+  logicalGroupIds,
+  type ReservationRow,
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
 import { londonToday } from "./lib/effectiveDates";
@@ -532,6 +536,53 @@ export const getStatsDrawerData = query({
     const ongoingUniq = dedupRes(ongoingRentals);
     const upcomingUniq = dedupRes(upcomingRentals);
 
+    // ── Logical-rental merge (DISPLAY/COUNT only) ───────────────────────────
+    // Contiguous same-renter + same-item bookings collapse into ONE "large
+    // rental": counted once and listed once, spanning the whole period with the
+    // members' £ summed. Earnings/revenue rollups elsewhere stay on RAW rows so
+    // totals never change — only the rental COUNT collapses.
+    const activeGroupId = logicalGroupIds(confirmedWithDates as unknown as ReservationRow[]);
+    const activeGroups = new Map<string, ResRow[]>();
+    for (const r of dedupRes(confirmedWithDates)) {
+      const gid = activeGroupId.get(r._id) ?? r._id;
+      const arr = activeGroups.get(gid);
+      if (arr) arr.push(r);
+      else activeGroups.set(gid, [r]);
+    }
+    // One synthetic representative row per group: earliest member as the base
+    // (items / renter / image), effective return extended to the merged span end
+    // and net = Σ members (so the card shows the full period + total £); status
+    // reflects whichever member is live today.
+    const mergedActiveRows: ResRow[] = Array.from(activeGroups.values()).map((members) => {
+      const sorted = members
+        .slice()
+        .sort((a, b) =>
+          displayPickupDate(a as ReservationRow).localeCompare(displayPickupDate(b as ReservationRow)),
+        );
+      const base = sorted[0];
+      let spanEnd = displayReturnDate(base as ReservationRow);
+      let netSum = 0;
+      for (const m of sorted) {
+        const e = displayReturnDate(m as ReservationRow);
+        if (e > spanEnd) spanEnd = e;
+        netSum += netOf(m as ReservationRow);
+      }
+      const live =
+        sorted.find(
+          (m) =>
+            displayPickupDate(m as ReservationRow) <= activeToday &&
+            displayReturnDate(m as ReservationRow) >= activeToday,
+        ) ?? base;
+      return {
+        ...base,
+        return_date: spanEnd,
+        net_to_owner_gbp: netSum,
+        order_step: (live as { order_step?: string }).order_step,
+      } as ResRow;
+    });
+    const ongoingGroupRows = mergedActiveRows.filter((r) => isOngoing(r as ReservationRow, activeToday));
+    const upcomingGroupRows = mergedActiveRows.filter((r) => isUpcoming(r as ReservationRow, activeToday));
+
     // Monthly confirmed bookings (deduped) — confirmed status only, used for the
     // "still going" segments (done-via-date / active / upcoming).
     const monthConfirmedRentals = dedupRes(
@@ -641,7 +692,7 @@ export const getStatsDrawerData = query({
     const pendingUniq = dedupRes(pendingRes);
     const pendingCount = pendingUniq.length;
     const pendingValueGbp = pendingUniq.reduce((s, r) => s + netOf(r), 0);
-    const activeTotal = ongoingUniq.length + upcomingUniq.length;
+    const activeTotal = ongoingGroupRows.length + upcomingGroupRows.length;
     // ── UNTRACKED ITEM DETECTION (LLM-resolved) ────────────────
     // A reservation is "untracked" when its LLM-resolved items list is empty
     // OR resolution hasn't run yet AND items[] is non-empty. This replaces
@@ -1241,8 +1292,8 @@ export const getStatsDrawerData = query({
       (r) => !listedKeys.has(dedupKey(r as ResRow)),
     );
     const activeRentals = [
-      ...ongoingUniq.map((r) => mapRental(r, "ongoing")),
-      ...upcomingUniq.map((r) => mapRental(r, "upcoming")),
+      ...ongoingGroupRows.map((r) => mapRental(r, "ongoing")),
+      ...upcomingGroupRows.map((r) => mapRental(r, "upcoming")),
       ...pendingForList.map((r) => mapRental(r, "pending")),
     ]
       .sort((a, b) => {
@@ -1421,10 +1472,12 @@ export const getStatsDrawerData = query({
 
     // ── card: ongoing ─────────────────────────────────────────────
     const ongoingCard = {
-      count: ongoingUniq.length,
-      rentals: ongoingUniq.slice(0, 15).map((r) => {
-        const daysLeft = r.end_date
-          ? Math.max(0, Math.round((Date.parse(r.end_date) - Date.now()) / 86400000))
+      count: ongoingGroupRows.length,
+      rentals: ongoingGroupRows.slice(0, 15).map((r) => {
+        // Merged rentals run to the span end (return_date overridden above).
+        const endRef = r.return_date ?? r.end_date;
+        const daysLeft = endRef
+          ? Math.max(0, Math.round((Date.parse(endRef) - Date.now()) / 86400000))
           : null;
         return {
           ...mapRental(r, "ongoing"),
@@ -1435,8 +1488,8 @@ export const getStatsDrawerData = query({
 
     // ── card: upcoming ────────────────────────────────────────────
     const upcomingCard = {
-      count: upcomingUniq.length,
-      rentals: upcomingUniq.slice(0, 15).map((r) => {
+      count: upcomingGroupRows.length,
+      rentals: upcomingGroupRows.slice(0, 15).map((r) => {
         const daysUntil = r.start_date
           ? Math.max(0, Math.round((Date.parse(r.start_date) - Date.now()) / 86400000))
           : null;
@@ -1892,8 +1945,8 @@ export const getStatsDrawerData = query({
     return {
       active: {
         total: activeTotal,
-        ongoing_count: ongoingUniq.length,
-        upcoming_count: upcomingUniq.length,
+        ongoing_count: ongoingGroupRows.length,
+        upcoming_count: upcomingGroupRows.length,
         pending_count: pendingTrackedCount,
         pending_next_month_count: pendingNextMonthCount,
         pending_value_gbp: Math.round(pendingTrackedValue * 100) / 100,
