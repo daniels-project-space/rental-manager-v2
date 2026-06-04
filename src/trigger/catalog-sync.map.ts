@@ -8,6 +8,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import type {
   HyggloProductListItem,
   HyggloProductDetail,
+  HyggloProductImage,
 } from "../hygglo-core/types";
 import { findBestMatchWithScore } from "../../convex/lib/item_matcher";
 
@@ -87,6 +88,31 @@ export function matchProduct(
   return best;
 }
 
+/**
+ * Project raw Hygglo image objects down to EXACTLY the six fields the
+ * `hygglo_products` validator + schema accept (id, thumbnailUrl, fullSizeUrl,
+ * filename, rotation, productId). Live Hygglo image payloads also carry
+ * `createdAt`/`updatedAt` (and potentially other future fields) which the
+ * strict Convex `imageArg` object validator rejects with an
+ * `ArgumentValidationError` — that is what kept `hygglo_products` empty. This
+ * single, drift-proof projection strips any extras at the mapper boundary so
+ * the writer never sees an unexpected field. Returns `undefined` for a
+ * non-array input so the optional field is simply omitted.
+ */
+export function projectImages(
+  images: HyggloProductImage[] | undefined,
+): HyggloProductImage[] | undefined {
+  if (!Array.isArray(images)) return undefined;
+  return images.map((im) => ({
+    id: im.id,
+    thumbnailUrl: im.thumbnailUrl,
+    fullSizeUrl: im.fullSizeUrl,
+    filename: im.filename,
+    rotation: im.rotation,
+    productId: im.productId,
+  }));
+}
+
 /** Map a (possibly detail-enriched) product to an upsert arg. */
 export function toUpsertArg(
   accountSlug: string,
@@ -108,7 +134,7 @@ export function toUpsertArg(
     valuation: src.valuation,
     minimumRentalDays: src.minimumRentalDays,
     prices: src.prices,
-    images: src.images,
+    images: projectImages(src.images),
     unavailableDates,
     listings: src.listings,
     publicUrl: publicUrlOf(src),
