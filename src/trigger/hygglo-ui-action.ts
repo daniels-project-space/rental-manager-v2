@@ -43,6 +43,17 @@ import {
   removeOrderItem,
   type HyggloWriteResult,
 } from "../lib/hygglo-write";
+// Phase 4 (CLI-takeover): GATED, DRY-RUN-FIRST core order-write route. Makes
+// hygglo-core/orders.ts reachable behind `USE_CORE_ORDER_WRITES` (DEFAULT OFF).
+// When the gate is unset (the default) `useCoreOrderWrites()` is false and the
+// legacy REST writers below run unchanged. When ON, the route is dry-run by
+// default (`CORE_ORDER_WRITES_DRY_RUN` defaults to ON) — it returns the intended
+// payload and makes NO network call. See src/hygglo-core/order-writes.ts.
+import {
+  coreOrderWrite,
+  useCoreOrderWrites,
+  isCoreRoutableAction,
+} from "../hygglo-core/order-writes";
 
 // ── Legacy Playwright/Python runner (FALLBACK) ──────────────────────────────
 
@@ -197,6 +208,33 @@ async function tryRestWrite(args: {
   if (!orderId) {
     return { status: "failed", error: `REST ${action}: missing orderId` };
   }
+
+  // ── Optional core-write route (DEFAULT OFF) ──────────────────────────────
+  // When `USE_CORE_ORDER_WRITES` is set the proven legacy writers below are
+  // replaced by the hygglo-core/orders.ts surface — but DRY-RUN-FIRST. With
+  // the gate unset (default) this block is skipped entirely and behaviour is
+  // byte-for-byte the pre-existing legacy path. We only reach here once the
+  // consolidated 5-gate `restWriteAllowed` predicate has ALREADY passed, so
+  // the core route inherits every existing rail; the gate + dry-run are added
+  // constraints, never a loosening. A live core write additionally requires
+  // CORE_ORDER_WRITES_DRY_RUN==='false' (never set).
+  if (useCoreOrderWrites() && isCoreRoutableAction(action)) {
+    const outcome = await coreOrderWrite({ accountSlug, action, orderId, actionArgs });
+    if (!outcome) return null; // unmapped ⇒ fall through to legacy/browser
+    if (outcome.mode === "dry_run") {
+      // No network call was made. Report as skipped so the completion row does
+      // NOT record a live mutation. The intended payload is in the logs.
+      logger.log("core order write DRY-RUN (no network)", {
+        action,
+        wireVerb: outcome.plan.wireVerb,
+        orderId,
+        data: outcome.plan.data,
+      });
+      return { status: "skipped", reason: "READ_ONLY_MODE" };
+    }
+    return outcome.result; // live (never reached unless dry-run explicitly false)
+  }
+
   switch (action) {
     case "accept":
       return acceptOrder({ accountSlug, hyggloOrderId: orderId });
