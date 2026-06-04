@@ -728,6 +728,38 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_listing", ["listing_id"]),
 
+  // ── Competitor Intel (additive, 2026-06-04) ───────────────────────────
+  // PII-SAFE aggregates of a LIMITED sample of competitor vendors' public
+  // rental history (via reviews) + current list prices. One row per distinct
+  // item name, merged across all sampled vendors. NEVER stores reviewer names
+  // or review text — only item/date/rating/price rollups (UK GDPR-safe; these
+  // are non-personal). Written wholesale by `competitor_intel:replaceAll` from
+  // the one-time ingest script; read by the dashboard widget. Not on poll path.
+  competitor_intel: defineTable({
+    itemName: v.string(),
+    vendorIds: v.array(v.string()),        // vendor ids this item appears under
+    rentalCount: v.number(),               // # reviews for the item (1 review ≈ 1 rental)
+    lastRentedAt: v.string(),              // ISO — max review createdAt for the item
+    avgRating: v.optional(v.number()),     // mean rating across sampled reviews (null if none had a rating)
+    dailyPriceGbp: v.optional(v.number()), // matched from listings by item/slug; null if unmatched
+    estRevenueGbp: v.number(),             // rentalCount × dailyPriceGbp × OWNER_SHARE (0 if unmatched)
+    syncedAt: v.number(),                  // Date.now() of the ingest that wrote this row
+  })
+    .index("by_est_revenue", ["estRevenueGbp"])
+    .index("by_rental_count", ["rentalCount"]),
+
+  // Singleton meta for the competitor-intel sample (one logical row, key="latest").
+  competitor_intel_meta: defineTable({
+    key: v.string(),                       // always "latest"
+    reviewsSampled: v.number(),            // total reviews pulled across vendors
+    vendorsCount: v.number(),              // # vendors sampled
+    itemCount: v.number(),                 // # distinct items aggregated
+    totalEstRevenueGbp: v.number(),        // sum of estRevenueGbp
+    totalRentalsSampled: v.number(),       // sum of rentalCount
+    unmatchedPriceCount: v.number(),       // # items with no matched price (estRevenue 0)
+    syncedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   // ── Historical revenue (retired accounts + damage overlay, 2022-2026) ──────
   // Source: v1 historical-revenue.ts static. v2 queries this table; no v1 ref at runtime.
   // Rows with total_revenue_gbp=0 are "damage-only" sentinels (overlay damageCosts only).

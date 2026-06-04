@@ -42,6 +42,7 @@ import type * as backfill_hygglo_images from "../backfill_hygglo_images.js";
 import type * as bundles from "../bundles.js";
 import type * as bundles_seed from "../bundles_seed.js";
 import type * as calendar from "../calendar.js";
+import type * as competitor_intel from "../competitor_intel.js";
 import type * as conflict_dismissals from "../conflict_dismissals.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
@@ -212,6 +213,7 @@ declare const fullApi: ApiFromModules<{
   bundles: typeof bundles;
   bundles_seed: typeof bundles_seed;
   calendar: typeof calendar;
+  competitor_intel: typeof competitor_intel;
   conflict_dismissals: typeof conflict_dismissals;
   crons: typeof crons;
   dashboard: typeof dashboard;

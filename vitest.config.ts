@@ -32,6 +32,7 @@ export default defineConfig({
       "src/trigger/catalog-sync.map.test.ts",
       "src/lib/hygglo-write.test.ts",
       "src/trigger/hygglo-ui-action.gate.test.ts",
+      "src/hygglo-core/__tests__/competitor-aggregate.test.ts",
     ],
     css: false,
   },

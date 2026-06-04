@@ -24,6 +24,7 @@ import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
 import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
 import { EquipmentValuePanel } from "@/components/dashboard/EquipmentValuePanel";
+import { CompetitorIntelPanel } from "@/components/dashboard/CompetitorIntelPanel";
 
 export type PanelWidget = {
   id: string;
@@ -37,6 +38,8 @@ export type StatWidget = {
 };
 
 export const PANEL_WIDGETS: readonly PanelWidget[] = [
+  // Competitor Intel — collapsible, default-collapsed, pinned to the TOP.
+  { id: "competitor-intel",    label: "Competitor Intel",       component: CompetitorIntelPanel },
   { id: "stats-grid",          label: "Stats Grid",             component: StatsGrid },
   { id: "ai-chat",            label: "AI Assistant",           component: AIChat },
   { id: "lifetime",            label: "Lifetime Revenue",       component: LifetimeRevenue },

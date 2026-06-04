@@ -44,6 +44,8 @@ export * as orders from "./orders";
 export * as catalog from "./catalog";
 export * as shape from "./shape";
 export * as domain from "./domain";
+export * as competitors from "./competitors";
+export * from "./competitor-aggregate";
 
 /**
  * The bound Hygglo core for one account. Read + shape methods are live; writes
