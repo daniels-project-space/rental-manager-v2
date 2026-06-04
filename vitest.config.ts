@@ -33,6 +33,7 @@ export default defineConfig({
       "src/lib/hygglo-write.test.ts",
       "src/trigger/hygglo-ui-action.gate.test.ts",
       "src/hygglo-core/__tests__/competitor-aggregate.test.ts",
+      "convex/migrations/backfill_inclusive_duration.test.ts",
     ],
     css: false,
   },

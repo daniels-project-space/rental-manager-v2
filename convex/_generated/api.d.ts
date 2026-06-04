@@ -116,6 +116,7 @@ import type * as market_search_cache from "../market_search_cache.js";
 import type * as memories from "../memories.js";
 import type * as migrations_backfill_hygglo_items from "../migrations/backfill_hygglo_items.js";
 import type * as migrations_backfill_image_hints from "../migrations/backfill_image_hints.js";
+import type * as migrations_backfill_inclusive_duration from "../migrations/backfill_inclusive_duration.js";
 import type * as model_upgrade_scans from "../model_upgrade_scans.js";
 import type * as mv__helpers from "../mv/_helpers.js";
 import type * as mv_churn_risk from "../mv/churn_risk.js";
@@ -285,6 +286,7 @@ declare const fullApi: ApiFromModules<{
   memories: typeof memories;
   "migrations/backfill_hygglo_items": typeof migrations_backfill_hygglo_items;
   "migrations/backfill_image_hints": typeof migrations_backfill_image_hints;
+  "migrations/backfill_inclusive_duration": typeof migrations_backfill_inclusive_duration;
   model_upgrade_scans: typeof model_upgrade_scans;
   "mv/_helpers": typeof mv__helpers;
   "mv/churn_risk": typeof mv_churn_risk;
