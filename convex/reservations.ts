@@ -678,8 +678,7 @@ export const listPendingWithoutDecision = query({
 
 /**
  * Phase 12.4 — patch hygglo_items[] / image_hints[] / photos_urls on an
- * existing reservation row by hygglo_order_id. Used by
- * refresh_hygglo_orders.refreshActiveStuckOrders to repopulate stuck rows
+ * existing reservation row by hygglo_order_id. Repopulates stuck rows
  * without going through upsertOrderAsReservation (which re-writes
  * `items: args.items` and trips the strict schema validator when the items
  * carry the PASS-10 `image` / `type` / `product_id` / `slug` shape).
@@ -745,8 +744,7 @@ export const patchHyggloItemsByOrderId = internalMutation({
 
 /**
  * Phase 12.4 — list ACTIVE reservations whose hygglo_items[] are missing
- * product_id (i.e. rows polled before PASS-10 landed). Used by
- * refresh_hygglo_orders.refreshActiveStuckOrders.
+ * product_id (i.e. rows polled before PASS-10 landed).
  */
 export const listStuckActive = internalQuery({
   args: {},

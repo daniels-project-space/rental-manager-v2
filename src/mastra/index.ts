@@ -12,7 +12,8 @@ import "server-only";
 
 import { Mastra } from "@mastra/core";
 import { PinoLogger } from "@mastra/loggers";
-import { hyggloPollWorkflow } from "./workflows/hygglo_poll";
+// hyggloPollWorkflow (the dead manual double-writer) was removed — Trigger.dev's
+// `poll-hygglo-inbox` task is the sole canonical Hygglo scraper/writer.
 import { renterBotDraftWorkflow } from "./workflows/renter_bot_draft";
 
 // Wire Langfuse as OTel sink.
@@ -26,7 +27,7 @@ export { getLangfuse, traceMastraSpan };
 // the workflow imports it directly via getRenterBotAgent().
 
 export const mastra = new Mastra({
-  workflows: { hyggloPollWorkflow, renterBotDraftWorkflow },
+  workflows: { renterBotDraftWorkflow },
   logger: new PinoLogger({
     name: "rental-manager-v2",
     level: process.env.NODE_ENV === "production" ? "info" : "debug",
