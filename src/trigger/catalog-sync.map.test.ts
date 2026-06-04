@@ -161,6 +161,25 @@ describe("projectImages (validator drift guard)", () => {
     expect(out![0].productId).toBe(22);
   });
 
+  it("drops explicit null fields (v.optional rejects null)", () => {
+    const raw = {
+      id: 7,
+      thumbnailUrl: null,
+      fullSizeUrl: "https://img/f.jpg",
+      filename: null,
+      rotation: 0,
+      productId: 22,
+    } as unknown as Parameters<typeof projectImages>[0] extends (infer T)[]
+      ? T
+      : never;
+    const out = projectImages([raw]);
+    expect(out![0]).not.toHaveProperty("thumbnailUrl");
+    expect(out![0]).not.toHaveProperty("filename");
+    expect(Object.values(out![0])).not.toContain(null);
+    expect(out![0].fullSizeUrl).toBe("https://img/f.jpg");
+    expect(out![0].rotation).toBe(0); // 0 is kept (not null/undefined)
+  });
+
   it("returns undefined for a non-array input", () => {
     expect(projectImages(undefined)).toBeUndefined();
   });
@@ -209,6 +228,28 @@ describe("projectPrices (validator drift guard)", () => {
     expect(out![0]).not.toHaveProperty("updatedAt");
     expect(out![0].pricePerDay).toBe(60);
     expect(out![0].productId).toBe(22);
+  });
+
+  it("drops explicit null fields (v.optional(v.number()) rejects null)", () => {
+    // Live Hygglo prices send `price: null` on some tiers — this was the SECOND
+    // prod failure: "Path: .products[0].prices[3].price / Value: null".
+    const raw = {
+      id: 3,
+      productId: 22,
+      pricePerDay: 40,
+      days: 7,
+      price: null,
+    } as unknown as Parameters<typeof projectPrices>[0] extends (infer T)[]
+      ? T
+      : never;
+
+    const out = projectPrices([raw]);
+    expect(out).toHaveLength(1);
+    // `price` is omitted entirely (not present as null).
+    expect(out![0]).not.toHaveProperty("price");
+    expect(Object.values(out![0])).not.toContain(null);
+    expect(out![0].pricePerDay).toBe(40);
+    expect(out![0].days).toBe(7);
   });
 
   it("returns undefined for a non-array input", () => {
@@ -263,6 +304,24 @@ describe("projectListings (validator drift guard)", () => {
     expect(out![0]).not.toHaveProperty("updatedAt");
     expect(out![0].slug).toBe("sony-fx3");
     expect(out![0].publicUrl).toBe("https://hygglo.com/uk/p/5");
+  });
+
+  it("drops explicit null fields (e.g. publicUrl: null)", () => {
+    const raw = {
+      id: 5,
+      slug: "sony-fx3",
+      productId: null,
+      publicUrl: null,
+      location: null,
+    } as unknown as Parameters<typeof projectListings>[0] extends (infer T)[]
+      ? T
+      : never;
+    const out = projectListings([raw]);
+    expect(out![0]).not.toHaveProperty("productId");
+    expect(out![0]).not.toHaveProperty("publicUrl");
+    expect(out![0]).not.toHaveProperty("location");
+    expect(Object.values(out![0])).not.toContain(null);
+    expect(out![0].slug).toBe("sony-fx3");
   });
 
   it("passes location through verbatim (validator is v.any())", () => {
