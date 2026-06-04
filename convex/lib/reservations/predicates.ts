@@ -50,6 +50,11 @@ export type ReservationRow = {
   // Item arrays — used by groupLogicalRentals to match the exact item set+qty.
   expanded_items?: Array<{ item_id?: string; qty?: number }>;
   resolved_items?: Array<{ item_id?: string; qty?: number }>;
+  // Raw Hygglo listing identity. Fallback merge key when the internal catalog
+  // item set is unresolved (resolution can lag the poller); product_id/slug
+  // still uniquely identify the listing, so two bookings of the same Hygglo
+  // product by the same renter can still be recognised as one logical rental.
+  hygglo_items?: Array<{ product_id?: number | string; slug?: string }>;
 };
 
 // ── core derivations ─────────────────────────────────────────
@@ -217,6 +222,7 @@ export function inDateRange(r: ReservationRow, start: string, end: string): bool
 export function itemSetKey(r: {
   expanded_items?: Array<{ item_id?: string; qty?: number }>;
   resolved_items?: Array<{ item_id?: string; qty?: number }>;
+  hygglo_items?: Array<{ product_id?: number | string; slug?: string }>;
 }): string {
   const src =
     r.expanded_items && r.expanded_items.length
@@ -227,10 +233,28 @@ export function itemSetKey(r: {
     if (!x.item_id) continue;
     byId.set(x.item_id, (byId.get(x.item_id) ?? 0) + (x.qty ?? 1));
   }
-  if (byId.size === 0) return "";
-  return Array.from(byId.entries())
+  if (byId.size > 0) {
+    return Array.from(byId.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([id, q]) => `${id}:${q}`)
+      .join(",");
+  }
+  // FALLBACK: internal catalog ids unresolved (resolution lags the poller, or
+  // the listing was never mapped). Hygglo product_id (or slug) still uniquely
+  // identifies the listing, so back-to-back bookings of the same Hygglo product
+  // by the same renter can still merge. Prefixed "H#" so a Hygglo key can never
+  // collide with an internal item_id key.
+  const hy = r.hygglo_items ?? [];
+  const byHy = new Map<string, number>();
+  for (const x of hy) {
+    const id = x.product_id != null ? String(x.product_id) : x.slug;
+    if (!id) continue;
+    byHy.set(id, (byHy.get(id) ?? 0) + 1);
+  }
+  if (byHy.size === 0) return "";
+  return Array.from(byHy.entries())
     .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-    .map(([id, q]) => `${id}:${q}`)
+    .map(([id, q]) => `H#${id}:${q}`)
     .join(",");
 }
 
@@ -262,6 +286,22 @@ export type LogicalRental = {
  * total (sum of members), so £ rollups are unchanged; only the rental COUNT
  * collapses.
  */
+/**
+ * Max idle gap (in days) still treated as ONE continuous rental. A Hygglo
+ * return on day N followed by a re-pickup on day N+1 is a back-to-back
+ * extension — the gear never goes back on the shelf — but Hygglo records it as
+ * two separate orders. A >=2-day gap is a genuinely separate rental.
+ */
+const MERGE_GAP_DAYS = 1;
+
+/** Add `n` days to an ISO yyyy-mm-dd date, returning ISO yyyy-mm-dd. */
+function addDaysISO(iso: string, n: number): string {
+  if (!iso) return iso;
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export function groupLogicalRentals(rows: ReservationRow[]): LogicalRental[] {
   const deduped = dedupByLogicalRental(rows);
   const buckets = new Map<string, ReservationRow[]>();
@@ -303,8 +343,9 @@ export function groupLogicalRentals(rows: ReservationRow[]): LogicalRental[] {
       if (chain.length === 0) {
         chain = [r];
         chainEnd = e;
-      } else if (p <= chainEnd) {
-        // contiguous: same-day handover or overlap
+      } else if (p <= addDaysISO(chainEnd, MERGE_GAP_DAYS)) {
+        // contiguous, overlapping, OR a <=1-day handover gap (return day N,
+        // re-pickup day N+1) — same physical gear across back-to-back orders.
         chain.push(r);
         if (e > chainEnd) chainEnd = e;
       } else {
