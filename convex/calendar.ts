@@ -4,6 +4,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import {
   isConfirmedWithDates,
   dedupByLogicalRental,
+  logicalGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import {
@@ -968,6 +969,10 @@ export const getGanttWeek = query({
       ),
     ) as typeof reservations;
 
+    // Logical-rental grouping: contiguous same-renter + same-item bookings share
+    // one group_id so the frontend can render them as ONE continuous bar.
+    const ganttGroupIds = logicalGroupIds(reservations as unknown as ReservationRow[]);
+
     // --- Renter name lookup ---
     const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];
     const renterMap = new Map<string, string>();
@@ -1075,6 +1080,7 @@ export const getGanttWeek = query({
         const effPick = displayPickupDate(r);
         return {
           reservation_id: r._id,
+          logical_group_id: ganttGroupIds.get(r._id) ?? r._id,
           start_date: effPick || r.start_date,
           end_date: r.end_date,
           return_date: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,

@@ -26,6 +26,8 @@ interface Block {
   return_method: string | null;
   progress_percent: number | null;
   account_slug?: string | null;
+  // Contiguous same-renter + same-item bookings share this id → one merged bar.
+  logical_group_id?: string;
 }
 
 interface GanttItem {
@@ -218,41 +220,79 @@ interface ResRow {
   left: number;
   width: number;
   ongoing: boolean;
+  memberCount: number;     // # of bookings merged into this one logical rental
 }
 
 /** Collapse the item-centric gantt payload into one row per reservation, so a
  *  renter who booked several items shows once with all their thumbnails — the
  *  same booking-centric view as the small dashboard calendar. */
 function groupByReservation(items: GanttItem[], weekStart: string, colWidth: number, today: string): ResRow[] {
-  const map = new Map<string, ResRow>();
+  // Collect every member block + item per LOGICAL group. Contiguous
+  // same-renter/same-item bookings share a logical_group_id (backend), so they
+  // collapse into ONE row spanning earliest pickup → latest return.
+  const groups = new Map<string, { blocks: Block[]; items: ResItem[]; names: Set<string>; resIds: Set<string> }>();
   for (const item of items) {
     for (const block of item.blocks) {
-      const geom = barGeom(block, weekStart, colWidth);
-      if (!geom) continue;
-      let row = map.get(block.reservation_id);
-      if (!row) {
-        const effReturn = block.return_date ?? block.end_date;
-        const ongoing = !!block.start_date && !!effReturn && block.start_date <= today && today <= effReturn;
-        // Colour by the reservation's account (item.account_color is always
-        // blue — the items table has no account_slug). Leo → purple, else blue.
-        const accColor: "blue" | "purple" = block.account_slug === "leo" ? "purple" : "blue";
-        row = {
-          reservationId: block.reservation_id,
-          block,
-          acc: accountColor(accColor),
-          items: [],
-          left: geom.left,
-          width: geom.width,
-          ongoing,
-        };
-        map.set(block.reservation_id, row);
-      }
-      if (!row.items.some((it) => it.name === item.item_name)) {
-        row.items.push({ name: item.item_name, image: item.image_url });
+      if (!block.start_date) continue;
+      const gid = block.logical_group_id ?? block.reservation_id;
+      let g = groups.get(gid);
+      if (!g) { g = { blocks: [], items: [], names: new Set(), resIds: new Set() }; groups.set(gid, g); }
+      g.blocks.push(block);
+      g.resIds.add(block.reservation_id);
+      if (!g.names.has(item.item_name)) {
+        g.names.add(item.item_name);
+        g.items.push({ name: item.item_name, image: item.image_url });
       }
     }
   }
-  return [...map.values()].sort((a, b) => {
+  const rows: ResRow[] = [];
+  for (const [gid, g] of groups) {
+    // earliest-pickup + latest-return members define the merged span.
+    const startMember = g.blocks.reduce((a, b) => ((a.start_date ?? "") <= (b.start_date ?? "") ? a : b));
+    const endMember = g.blocks.reduce((a, b) => {
+      const ea = a.return_date ?? a.end_date ?? a.start_date ?? "";
+      const eb = b.return_date ?? b.end_date ?? b.start_date ?? "";
+      return ea >= eb ? a : b;
+    });
+    const spanEnd = endMember.return_date ?? endMember.end_date ?? endMember.start_date!;
+    // representative member for renter/status: the one live today, else earliest.
+    const rep = g.blocks.find((b) => {
+      const e = b.return_date ?? b.end_date;
+      return !!b.start_date && !!e && b.start_date <= today && today <= e;
+    }) ?? startMember;
+    // Synthetic block spanning the whole rental, carrying the earliest pickup
+    // time and the latest return time so the bar's end labels read correctly.
+    const merged: Block = {
+      reservation_id: gid,
+      logical_group_id: gid,
+      start_date: startMember.start_date,
+      end_date: endMember.end_date,
+      return_date: spanEnd,
+      renter_name: rep.renter_name,
+      order_step: rep.order_step,
+      pickup_time: startMember.pickup_time,
+      return_time: endMember.return_time,
+      pickup_method: startMember.pickup_method,
+      return_method: endMember.return_method,
+      progress_percent: rep.progress_percent,
+      account_slug: rep.account_slug,
+    };
+    const geom = barGeom(merged, weekStart, colWidth);
+    if (!geom) continue;
+    const ongoing = !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
+    const accColor: "blue" | "purple" = rep.account_slug === "leo" ? "purple" : "blue";
+    rows.push({
+      reservationId: gid,
+      block: merged,
+      acc: accountColor(accColor),
+      items: g.items,
+      left: geom.left,
+      width: geom.width,
+      ongoing,
+      memberCount: g.resIds.size,
+    });
+  }
+  return rows.sort((a, b) => {
     const ka = (a.block.start_date ?? "") + (a.block.pickup_time ?? "");
     const kb = (b.block.start_date ?? "") + (b.block.pickup_time ?? "");
     return ka.localeCompare(kb) || (a.block.renter_name ?? "").localeCompare(b.block.renter_name ?? "");
@@ -360,6 +400,7 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
     pickup ? `pickup ${pickup}` : null,
     ret ? `return ${ret}` : null,
     ongoing ? "ONGOING" : null,
+    row.memberCount > 1 ? `${row.memberCount} bookings merged into one rental` : null,
   ].filter(Boolean).join(" • ");
 
   return (
@@ -380,6 +421,16 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
     >
       {ongoing && (
         <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }} />
+      )}
+      {/* Merged-rental indicator: N bookings chained into one continuous bar */}
+      {row.memberCount > 1 && (
+        <span
+          className="flex-shrink-0 text-[9px] font-bold leading-none px-1 rounded-sm tabular-nums"
+          style={{ background: ss.text, color: ss.bg }}
+          title={`${row.memberCount} bookings merged into one rental`}
+        >
+          ⛓{row.memberCount}
+        </span>
       )}
       {/* Pickup time pinned to the START of the bar */}
       {showTimes && pickup && (

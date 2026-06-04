@@ -47,6 +47,9 @@ export type ReservationRow = {
   order_step?: string;
   net_to_owner_gbp?: number;
   gross_paid_gbp?: number;
+  // Item arrays — used by groupLogicalRentals to match the exact item set+qty.
+  expanded_items?: Array<{ item_id?: string; qty?: number }>;
+  resolved_items?: Array<{ item_id?: string; qty?: number }>;
 };
 
 // ── core derivations ─────────────────────────────────────────
@@ -201,4 +204,155 @@ export function inAccount(slug: string) {
 export function inDateRange(r: ReservationRow, start: string, end: string): boolean {
   const d = effectiveDate(r);
   return d !== undefined && d >= start && d <= end;
+}
+
+// ── logical-rental grouping (extension / back-to-back merge) ─────────────────
+
+/**
+ * Canonical item-set key: sorted `item_id:totalQty`. Two rentals merge only if
+ * this is byte-identical (exact item set AND quantities). Empty when the rental
+ * has no resolved/expanded items — such rows never merge (we can't prove the
+ * items match).
+ */
+export function itemSetKey(r: {
+  expanded_items?: Array<{ item_id?: string; qty?: number }>;
+  resolved_items?: Array<{ item_id?: string; qty?: number }>;
+}): string {
+  const src =
+    r.expanded_items && r.expanded_items.length
+      ? r.expanded_items
+      : r.resolved_items ?? [];
+  const byId = new Map<string, number>();
+  for (const x of src) {
+    if (!x.item_id) continue;
+    byId.set(x.item_id, (byId.get(x.item_id) ?? 0) + (x.qty ?? 1));
+  }
+  if (byId.size === 0) return "";
+  return Array.from(byId.entries())
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([id, q]) => `${id}:${q}`)
+    .join(",");
+}
+
+export type LogicalRental = {
+  /** Deterministic id = earliest member's reservation _id. */
+  group_id: string;
+  member_ids: string[];
+  members: ReservationRow[];
+  renter_id?: string;
+  renter_name?: string;
+  account_slug?: string;
+  item_key: string;
+  /** min effective pickup across members. */
+  span_start: string;
+  /** max effective return across members. */
+  span_end: string;
+  /** Σ net_to_owner across members (revenue is preserved, never dropped). */
+  net_sum: number;
+};
+
+/**
+ * Merge CONTIGUOUS rentals that share the same renter, account, and exact item
+ * set+qty into one "large rental". Contiguity = the next effective pickup <= the
+ * running effective return of the chain (same-day handover or overlap; a ≥1-day
+ * gap starts a new rental). Rows are deduped first via dedupByLogicalRental.
+ *
+ * DISPLAY/COUNT grouping ONLY — callers keep raw rows for revenue-per-booking,
+ * availability qty, and conflict detection. The group's `net_sum` preserves the
+ * total (sum of members), so £ rollups are unchanged; only the rental COUNT
+ * collapses.
+ */
+export function groupLogicalRentals(rows: ReservationRow[]): LogicalRental[] {
+  const deduped = dedupByLogicalRental(rows);
+  const buckets = new Map<string, ReservationRow[]>();
+  for (const r of deduped) {
+    const ik = itemSetKey(r);
+    if (ik === "") {
+      // No resolved items → can't prove a match → never merge (own singleton).
+      buckets.set(`solo:${r._id}`, [r]);
+      continue;
+    }
+    const rk =
+      r.renter_id ??
+      (r.renter_name ? `n:${r.renter_name.trim().toLowerCase()}` : `u:${r._id}`);
+    const key = `${rk}|${r.account_slug ?? "?"}|${ik}`;
+    const arr = buckets.get(key);
+    if (arr) arr.push(r);
+    else buckets.set(key, [r]);
+  }
+  const out: LogicalRental[] = [];
+  for (const arr of buckets.values()) {
+    arr.sort((a, b) => {
+      const pa = displayPickupDate(a);
+      const pb = displayPickupDate(b);
+      if (pa !== pb) return pa < pb ? -1 : 1;
+      const ra = displayReturnDate(a);
+      const rb = displayReturnDate(b);
+      return ra < rb ? -1 : ra > rb ? 1 : 0;
+    });
+    let chain: ReservationRow[] = [];
+    let chainEnd = "";
+    const flush = () => {
+      if (chain.length) out.push(buildLogicalRental(chain));
+      chain = [];
+      chainEnd = "";
+    };
+    for (const r of arr) {
+      const p = displayPickupDate(r);
+      const e = displayReturnDate(r);
+      if (chain.length === 0) {
+        chain = [r];
+        chainEnd = e;
+      } else if (p <= chainEnd) {
+        // contiguous: same-day handover or overlap
+        chain.push(r);
+        if (e > chainEnd) chainEnd = e;
+      } else {
+        flush();
+        chain = [r];
+        chainEnd = e;
+      }
+    }
+    flush();
+  }
+  return out;
+}
+
+function buildLogicalRental(members: ReservationRow[]): LogicalRental {
+  const first = members[0];
+  let span_start = displayPickupDate(first);
+  let span_end = "";
+  let net_sum = 0;
+  for (const m of members) {
+    const p = displayPickupDate(m);
+    const e = displayReturnDate(m);
+    if (p && (span_start === "" || p < span_start)) span_start = p;
+    if (e > span_end) span_end = e;
+    net_sum += netOf(m);
+  }
+  return {
+    group_id: first._id,
+    member_ids: members.map((m) => m._id),
+    members,
+    renter_id: first.renter_id,
+    renter_name: first.renter_name,
+    account_slug: first.account_slug,
+    item_key: itemSetKey(first),
+    span_start,
+    span_end,
+    net_sum,
+  };
+}
+
+/**
+ * reservation _id → logical group_id. Convenience for server queries that tag
+ * each block/chip with the group it belongs to, so the frontend can re-key its
+ * existing per-reservation Maps with zero merge logic in React.
+ */
+export function logicalGroupIds(rows: ReservationRow[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const g of groupLogicalRentals(rows)) {
+    for (const id of g.member_ids) m.set(id, g.group_id);
+  }
+  return m;
 }
