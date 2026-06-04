@@ -10,6 +10,7 @@ import {
   buildCandidates,
   matchProduct,
   toUpsertArg,
+  projectImages,
   publicUrlOf,
   slugOf,
   type InventoryRow,
@@ -114,6 +115,67 @@ describe("toUpsertArg", () => {
   it("leaves unavailableDates undefined when only the list payload is available", () => {
     const arg = toUpsertArg("leo", product({ id: 23, name: "Sony FX3" }), undefined, null);
     expect(arg.unavailableDates).toBeUndefined();
+  });
+});
+
+describe("projectImages (validator drift guard)", () => {
+  // The strict Convex `imageArg`/schema only allow these six keys.
+  const ALLOWED = [
+    "id",
+    "thumbnailUrl",
+    "fullSizeUrl",
+    "filename",
+    "rotation",
+    "productId",
+  ].sort();
+
+  it("strips extra fields (createdAt/updatedAt) that broke upsertProductsBatch", () => {
+    // Raw Hygglo image carries createdAt/updatedAt — the field that caused the
+    // ArgumentValidationError and left hygglo_products empty. Cast through
+    // unknown: those keys are not on the (lean) HyggloProductImage type.
+    const raw = {
+      id: 7,
+      thumbnailUrl: "https://img/t.jpg",
+      fullSizeUrl: "https://img/f.jpg",
+      filename: "x.jpg",
+      rotation: 0,
+      productId: 22,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-02-02T00:00:00Z",
+    } as unknown as Parameters<typeof projectImages>[0] extends (infer T)[]
+      ? T
+      : never;
+
+    const out = projectImages([raw]);
+    expect(out).toHaveLength(1);
+    expect(Object.keys(out![0]).sort()).toEqual(ALLOWED);
+    expect(out![0]).not.toHaveProperty("createdAt");
+    expect(out![0]).not.toHaveProperty("updatedAt");
+    expect(out![0].id).toBe(7);
+    expect(out![0].productId).toBe(22);
+  });
+
+  it("returns undefined for a non-array input", () => {
+    expect(projectImages(undefined)).toBeUndefined();
+  });
+
+  it("toUpsertArg projects images so no extra fields reach the writer", () => {
+    const detail = {
+      id: 30,
+      name: "Sony FX3",
+      images: [
+        {
+          id: 1,
+          fullSizeUrl: "https://img/x.jpg",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-02-02T00:00:00Z",
+        },
+      ],
+    } as unknown as HyggloProductDetail;
+    const arg = toUpsertArg("leo", product({ id: 30 }), detail, null);
+    expect(arg.images).toHaveLength(1);
+    expect(arg.images![0]).not.toHaveProperty("createdAt");
+    expect(arg.images![0]).not.toHaveProperty("updatedAt");
   });
 });
 
