@@ -91,28 +91,55 @@ export function matchProduct(
 }
 
 /**
+ * Build an object containing ONLY the listed `keys` whose value on `src` is
+ * neither `null` nor `undefined`. This is the core of every catalog projection
+ * and guards two distinct validator failures at once:
+ *   1. Extra fields — keys not listed (e.g. `createdAt`/`updatedAt` that live
+ *      Hygglo payloads ship) never make it into the result, so a strict
+ *      `v.object` validator can't reject the row with "extra field …".
+ *   2. Explicit `null` — `v.optional(v.number())` accepts the field being
+ *      ABSENT but rejects an explicit `null` ("Value: null / Validator:
+ *      v.float64()"). Live Hygglo prices send `price: null` on some tiers, so
+ *      we omit any null/undefined key entirely rather than passing it through.
+ * Result is drift-proof: no unexpected field and no null reaches the writer.
+ */
+function pickDefined<T extends object, K extends keyof T>(
+  src: T,
+  keys: readonly K[],
+): Partial<Pick<T, K>> {
+  const out: Partial<Pick<T, K>> = {};
+  for (const k of keys) {
+    const val = src[k];
+    if (val !== null && val !== undefined) out[k] = val;
+  }
+  return out;
+}
+
+/**
  * Project raw Hygglo image objects down to EXACTLY the six fields the
  * `hygglo_products` validator + schema accept (id, thumbnailUrl, fullSizeUrl,
  * filename, rotation, productId). Live Hygglo image payloads also carry
  * `createdAt`/`updatedAt` (and potentially other future fields) which the
  * strict Convex `imageArg` object validator rejects with an
- * `ArgumentValidationError` — that is what kept `hygglo_products` empty. This
- * single, drift-proof projection strips any extras at the mapper boundary so
- * the writer never sees an unexpected field. Returns `undefined` for a
- * non-array input so the optional field is simply omitted.
+ * `ArgumentValidationError` — that is what kept `hygglo_products` empty. Extra
+ * fields AND explicit `null` values are stripped via {@link pickDefined} so the
+ * writer never sees an unexpected field or a null where a number is expected.
+ * Returns `undefined` for a non-array input so the optional field is omitted.
  */
+const IMAGE_KEYS = [
+  "id",
+  "thumbnailUrl",
+  "fullSizeUrl",
+  "filename",
+  "rotation",
+  "productId",
+] as const satisfies readonly (keyof HyggloProductImage)[];
+
 export function projectImages(
   images: HyggloProductImage[] | undefined,
 ): HyggloProductImage[] | undefined {
   if (!Array.isArray(images)) return undefined;
-  return images.map((im) => ({
-    id: im.id,
-    thumbnailUrl: im.thumbnailUrl,
-    fullSizeUrl: im.fullSizeUrl,
-    filename: im.filename,
-    rotation: im.rotation,
-    productId: im.productId,
-  }));
+  return images.map((im) => pickDefined(im, IMAGE_KEYS));
 }
 
 /**
@@ -123,21 +150,25 @@ export function projectImages(
  * `GET /v2/my/products` price payloads also ship `createdAt`/`updatedAt` (and
  * potentially future fields) that the strict object validator rejects with an
  * `ArgumentValidationError`. Stripping extras here keeps the writer drift-proof.
- * Each element is cast through `unknown` because the runtime extras are not on
- * the lean source type. Returns `undefined` for non-array input so the optional
- * field is simply omitted.
+ * It also drops explicit `null`s: live Hygglo prices send `price: null` on some
+ * tiers, and `v.optional(v.number())` rejects null (accepts only absence) —
+ * that was the second prod failure ("Path: .products[0].prices[3].price /
+ * Value: null"). {@link pickDefined} handles both extras and nulls. Returns
+ * `undefined` for non-array input so the optional field is simply omitted.
  */
+const PRICE_KEYS = [
+  "id",
+  "productId",
+  "pricePerDay",
+  "days",
+  "price",
+] as const satisfies readonly (keyof HyggloProductPrice)[];
+
 export function projectPrices(
   prices: HyggloProductPrice[] | undefined,
 ): HyggloProductPrice[] | undefined {
   if (!Array.isArray(prices)) return undefined;
-  return prices.map((pr) => ({
-    id: pr.id,
-    productId: pr.productId,
-    pricePerDay: pr.pricePerDay,
-    days: pr.days,
-    price: pr.price,
-  }));
+  return prices.map((pr) => pickDefined(pr, PRICE_KEYS));
 }
 
 /**
@@ -147,21 +178,24 @@ export function projectPrices(
  * empty AFTER the image fix shipped: live `listings[]` carry `createdAt` (and
  * other timestamps) which the strict object validator rejects with
  * `ArgumentValidationError: extra field createdAt ... .listings[0]`. `location`
- * is intentionally passed through verbatim — its validator is `v.any()`, so it
- * accepts any nested shape and never needs its own projection. Returns
- * `undefined` for non-array input so the optional field is simply omitted.
+ * is intentionally listed but `v.any()` accepts any nested shape, so a present
+ * non-null location is passed through verbatim. Extra fields and explicit nulls
+ * are stripped via {@link pickDefined}. Returns `undefined` for non-array input
+ * so the optional field is simply omitted.
  */
+const LISTING_KEYS = [
+  "id",
+  "slug",
+  "productId",
+  "publicUrl",
+  "location",
+] as const satisfies readonly (keyof HyggloProductListing)[];
+
 export function projectListings(
   listings: HyggloProductListing[] | undefined,
 ): HyggloProductListing[] | undefined {
   if (!Array.isArray(listings)) return undefined;
-  return listings.map((l) => ({
-    id: l.id,
-    slug: l.slug,
-    productId: l.productId,
-    publicUrl: l.publicUrl,
-    location: l.location,
-  }));
+  return listings.map((l) => pickDefined(l, LISTING_KEYS));
 }
 
 /** Map a (possibly detail-enriched) product to an upsert arg. */
