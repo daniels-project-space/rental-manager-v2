@@ -22,11 +22,11 @@
  */
 
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
+import { hyggloInclusiveDays } from "./dates";
+import { deriveHyggloSystemSignal } from "./signals";
 import type {
   ConversationPayload,
-  HyggloActivity,
   HyggloOrderDetail,
-  HyggloSystemSignal,
   ItemRow,
   MessagePayload,
   ReconcileResult,
@@ -41,36 +41,12 @@ import type {
 // ════════════════════════════════════════════════════════════════════════
 
 /**
- * Phase 3d — derive the most-recent decisive Hygglo system signal from a list
- * of order activities. PORTED VERBATIM from poll-hygglo.ts:deriveHyggloSystemSignal.
+ * Phase 3d — derive the most-recent decisive Hygglo system signal.
+ * MOVED to the canonical `hygglo-core/signals` module (was triplicated). Re-
+ * exported here so existing `../shape` importers (incl. the parity tests) keep
+ * working unchanged.
  */
-export function deriveHyggloSystemSignal(acts: HyggloActivity[]): {
-  signal: HyggloSystemSignal;
-  text?: string;
-} {
-  let approvedText: string | undefined;
-  for (const a of [...acts].reverse()) {
-    const c = a.event?.content ?? "";
-    if (!c) continue;
-    if (/You have denied the rental request/i.test(c))
-      return { signal: "owner_denied", text: c };
-    if (/has cancelled the rental request/i.test(c))
-      return { signal: "renter_cancelled", text: c };
-    if (/Automatically cancelled/i.test(c))
-      return { signal: "auto_cancelled", text: c };
-    if (
-      /did not pass our security checks/i.test(c) ||
-      /pre-authorized funds.*cancelled.*rejected/i.test(c)
-    )
-      return { signal: "verification_failed", text: c };
-    if (/Now the borrower should pay/i.test(c) && approvedText === undefined) {
-      approvedText = c;
-    }
-  }
-  if (approvedText !== undefined)
-    return { signal: "approved", text: approvedText };
-  return { signal: "none" };
-}
+export { deriveHyggloSystemSignal } from "./signals";
 
 /**
  * Parse Hygglo's `createdAtLabel` (e.g. "30 May, 14:58", "Yesterday 14:58",
@@ -224,8 +200,9 @@ export function orderToConversation(
  *   - items:    filter out type==="INSURANCE"; image forwards the full image
  *               object (incl. fullSizeUrl); product_id only if number; slug only
  *               if string; qty only if number; type only if string.
- *   - duration: round((end-start)/86400000); only set when > 0 (a same-day
- *               rental → 0 → duration_days undefined).
+ *   - duration: INCLUSIVE day count via hyggloInclusiveDays (hygglo-core/dates):
+ *               max(1, round((end-start)/86400000) + 1). Same-day rental → 1
+ *               (Hygglo counts both pickup+return days). Always defined (>= 1).
  *   - photos:   detail.photos_urls ?? detail.detail.photos_urls; else fall back
  *               to items[].image.fullSizeUrl; undefined when empty.
  */
@@ -271,10 +248,12 @@ export function orderToReservation(
       slug: typeof i.slug === "string" ? i.slug : undefined,
     }));
 
-  const start = new Date(startUTC);
-  const end = new Date(endUTC);
-  const durationDays = Math.round(
-    (end.getTime() - start.getTime()) / 86400000,
+  // Hygglo periods are INCLUSIVE of both pickup + return day (same-day = 1 day,
+  // Fri→Sun = 3). hyggloInclusiveDays (hygglo-core/dates) is the single source
+  // of truth for the corrected formula; NaN/invalid → 1-day minimum.
+  const durationDays = hyggloInclusiveDays(
+    new Date(startUTC).getTime(),
+    new Date(endUTC).getTime(),
   );
 
   const status =
@@ -318,7 +297,8 @@ export function orderToReservation(
     net_to_owner_gbp: netToOwner,
     currency,
     items: orderItems,
-    duration_days: durationDays > 0 ? durationDays : undefined,
+    // Always defined now (inclusive formula floors at 1); same-day = 1 day.
+    duration_days: durationDays,
     sourceFilter,
     renter_name: otherPartName || undefined,
     hygglo_user_id: otherPartUserId,

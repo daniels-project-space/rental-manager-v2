@@ -115,6 +115,12 @@ export interface CorePollResult {
     orders_with_detail: number;
     reservation_rows: number;
     fetched_at: number;
+    /** B4 — count of `listOrders(filter)` calls that threw (non-fatal, skipped).
+     *  >0 means this cycle saw fewer orders than Hygglo actually has. */
+    list_filter_errors: number;
+    /** B4 — count of per-order `getOrder(id)` detail GETs that threw (non-fatal,
+     *  skipped). >0 means some listed orders were not refreshed this cycle. */
+    detail_fetch_errors: number;
   };
 }
 
@@ -153,6 +159,13 @@ export async function corePoll(
   const account_slug = core.account.slug;
   const fetchedAt = opts.fetchedAt ?? Date.now();
 
+  // B4 — per-order/per-filter failures are non-fatal (a flaky filter or a
+  // single bad detail GET must not abort the whole account), but they must NOT
+  // be silently swallowed: we log each with context AND tally them so the count
+  // surfaces in `meta` (and from there into the poller's logs / sync_state).
+  let listFilterErrors = 0;
+  let detailFetchErrors = 0;
+
   // 1. List + dedup across all four filters (first-seen filter wins).
   const seen = new Set<number>();
   const uniqueOrders: Array<{
@@ -164,8 +177,15 @@ export async function corePoll(
     let listed;
     try {
       listed = await core.listOrders(filter);
-    } catch {
-      // Mirror poll-hygglo: a failed filter is skipped, not fatal.
+    } catch (err) {
+      // Mirror poll-hygglo: a failed filter is skipped, not fatal — but logged
+      // + counted (B4), never swallowed.
+      listFilterErrors++;
+      console.error(
+        `[corePoll] listOrders failed account=${account_slug} filter=${filter}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       continue;
     }
     for (const o of listed) {
@@ -190,8 +210,15 @@ export async function corePoll(
     let detail: HyggloOrderDetail;
     try {
       detail = await core.getOrder(order.id);
-    } catch {
-      // Mirror poll-hygglo: a failed detail GET (`!detailRes.ok`) is skipped.
+    } catch (err) {
+      // Mirror poll-hygglo: a failed detail GET (`!detailRes.ok`) is skipped —
+      // but logged + counted (B4), never swallowed.
+      detailFetchErrors++;
+      console.error(
+        `[corePoll] getOrder failed account=${account_slug} order_id=${order.id} filter=${order.sourceFilter}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       continue;
     }
     ordersWithDetail++;
@@ -216,6 +243,15 @@ export async function corePoll(
     if (!payload) continue;
 
     // ── batch-level fields (poll-hygglo.ts run() L741-776) ──
+    // B3 — `order_step_extracted` MUST be defined on every active-step row.
+    // corePoll strips `order` to {} on the non-denial hot path, so the
+    // consumer's `?? extractStep(order)` fallback would resolve undefined; we
+    // are the sole place the step can be derived. `extractStep` returns the
+    // active step key whenever the order carries one (any of the three
+    // step-array shapes). We forward it for every RECOGNISED key, which is the
+    // server's accepted union (convex/hygglo.ts:VALID_ORDER_STEPS) — an
+    // unrecognised active step is the one case the server itself maps to
+    // undefined (with a warning), so we mirror that rather than invent a key.
     const stepRaw = extractStep(payload.order);
     const order_step_extracted: HyggloOrderStepKey | undefined =
       stepRaw && VALID_STEP_KEYS.has(stepRaw)
@@ -235,6 +271,10 @@ export async function corePoll(
       items: payload.items,
       duration_days: payload.duration_days,
       ...(needsRawOrder && { order: payload.order }),
+      // B2 — always carry the full detail blob for the listing resolver's
+      // `hygglo_detail_payload`. Distinct from `order` (stripped on non-denial
+      // rows for upload bandwidth); never sent to the upsert mutation.
+      detail_payload: payload.order,
       ...(order_step_extracted && { order_step_extracted }),
       sourceFilter: payload.sourceFilter,
       renter_name: payload.renter_name,
@@ -263,6 +303,8 @@ export async function corePoll(
       orders_with_detail: ordersWithDetail,
       reservation_rows: reservations.length,
       fetched_at: fetchedAt,
+      list_filter_errors: listFilterErrors,
+      detail_fetch_errors: detailFetchErrors,
     },
   };
 }

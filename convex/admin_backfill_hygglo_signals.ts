@@ -29,19 +29,15 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+// B5 — single canonical copy of the signal derivation (was triplicated). This
+// pure module has no `server-only` / framework deps, so the "use node" action
+// can import it the same way other convex modules import from ../src/lib/*.
+import { deriveHyggloSystemSignal } from "../src/hygglo-core/signals";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const API_BASE = "https://api.hygglo.com/api";
 const CLIENT_ID = "ngHyggloApp";
 const COUNTRY = "GB";
-
-type SystemSignal =
-  | "owner_denied"
-  | "renter_cancelled"
-  | "auto_cancelled"
-  | "verification_failed"
-  | "approved"
-  | "none";
 
 type Activity = {
   key?: string;
@@ -51,35 +47,6 @@ type Activity = {
 };
 
 type OrderDetail = { id?: number; activities?: Activity[] };
-
-// ── deriveHyggloSystemSignal — duplicated from poll-hygglo.ts ─────────────
-// (Convex actions can't import from src/trigger; this is a 30-line pure fn.)
-function deriveHyggloSystemSignal(acts: Activity[]): {
-  signal: SystemSignal;
-  text?: string;
-} {
-  let approvedText: string | undefined;
-  for (const a of [...acts].reverse()) {
-    const c = a.event?.content ?? "";
-    if (!c) continue;
-    if (/You have denied the rental request/i.test(c))
-      return { signal: "owner_denied", text: c };
-    if (/has cancelled the rental request/i.test(c))
-      return { signal: "renter_cancelled", text: c };
-    if (/Automatically cancelled/i.test(c))
-      return { signal: "auto_cancelled", text: c };
-    if (
-      /did not pass our security checks/i.test(c) ||
-      /pre-authorized funds.*cancelled.*rejected/i.test(c)
-    )
-      return { signal: "verification_failed", text: c };
-    if (/Now the borrower should pay/i.test(c) && approvedText === undefined) {
-      approvedText = c;
-    }
-  }
-  if (approvedText !== undefined) return { signal: "approved", text: approvedText };
-  return { signal: "none" };
-}
 
 // ── Vault helper ──────────────────────────────────────────────────────────
 

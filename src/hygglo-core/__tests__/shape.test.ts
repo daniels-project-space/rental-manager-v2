@@ -56,9 +56,12 @@ describe("orderToReservation — parity with poll-hygglo shaping", () => {
     expect(r.order).toBe(orderDetail); // raw order forwarded verbatim
   });
 
-  it("drops same-day duration to undefined (round(0) is not > 0)", () => {
+  it("counts a same-day rental as 1 inclusive day (B1: Hygglo dates are inclusive)", () => {
+    // Order 3980371 has start_date === end_date === "2026-05-30". Under the
+    // corrected inclusive formula max(1, round(0)+1) this is a 1-day rental,
+    // NOT 0/undefined (the old off-by-one money bug).
     const r = orderToReservation(orderDetail, "current");
-    expect(r?.duration_days).toBeUndefined();
+    expect(r?.duration_days).toBe(1);
   });
 
   it("forwards exactly one PRODUCT item with fullSizeUrl image (INSURANCE filtered)", () => {

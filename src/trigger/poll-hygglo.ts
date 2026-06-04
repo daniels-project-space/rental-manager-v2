@@ -63,47 +63,10 @@ type Activity = {
   createdAtLabel?: string;
 };
 
-/** Phase 3d — derive the most-recent decisive Hygglo system signal from a list
- *  of order activities. Iterates in reverse (most recent first) and returns
- *  the first matching decisive signal. `approved` is non-decisive (returned
- *  only if no obsolete-style event came after it) — useful for downstream
- *  renter_ghosted detection. Returns `none` when nothing matches. */
-export function deriveHyggloSystemSignal(acts: Activity[]): {
-  signal:
-    | "owner_denied"
-    | "renter_cancelled"
-    | "auto_cancelled"
-    | "verification_failed"
-    | "approved"
-    | "none";
-  text?: string;
-} {
-  let approvedText: string | undefined;
-  for (const a of [...acts].reverse()) {
-    const c = a.event?.content ?? "";
-    if (!c) continue;
-    if (/You have denied the rental request/i.test(c))
-      return { signal: "owner_denied", text: c };
-    if (/has cancelled the rental request/i.test(c))
-      return { signal: "renter_cancelled", text: c };
-    if (/Automatically cancelled/i.test(c))
-      return { signal: "auto_cancelled", text: c };
-    if (
-      /did not pass our security checks/i.test(c) ||
-      /pre-authorized funds.*cancelled.*rejected/i.test(c)
-    )
-      return { signal: "verification_failed", text: c };
-    if (/Now the borrower should pay/i.test(c) && approvedText === undefined) {
-      approvedText = c;
-      // Don't return yet — keep looking for a later decisive obsolete event.
-      // Since we iterate reverse (newest first), `approved` would have been
-      // hit first if it were truly latest; but we still scan the rest in case
-      // an obsolete event followed it.
-    }
-  }
-  if (approvedText !== undefined) return { signal: "approved", text: approvedText };
-  return { signal: "none" };
-}
+/** Phase 3d — derive the most-recent decisive Hygglo system signal.
+ *  B5: MOVED to the canonical `hygglo-core/signals` module (was triplicated).
+ *  Re-exported here so any external `./poll-hygglo` consumer keeps working. */
+export { deriveHyggloSystemSignal } from "../hygglo-core/signals";
 
 type OrderDetail = {
   id: number;
@@ -168,6 +131,11 @@ type OrderReservationPayload = {
   latest_activity?: number | string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
+  /** B2 — full per-order detail blob, ALWAYS populated by corePoll (unlike
+   *  `order`, which is `{}` on non-denial rows). Feeds the listing resolver's
+   *  `hygglo_detail_payload` for newly-inserted listings. Never sent to the
+   *  upsert mutation. */
+  detail_payload?: OrderDetail;
   /** corePoll forwards a pre-extracted active step here; the batch-build loop
    *  uses it verbatim instead of re-deriving from `order` (which corePoll strips
    *  on non-denial rows). When undefined the loop falls through to its existing
@@ -230,6 +198,17 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
 }> {
   const core = await corePoll(accountSlug, { fetchedAt: Date.now() });
 
+  // B4 — surface non-fatal per-filter / per-order fetch failures that corePoll
+  // counted (instead of swallowing them silently). A non-zero count means this
+  // cycle saw / refreshed fewer orders than Hygglo actually has.
+  if (core.meta.list_filter_errors > 0 || core.meta.detail_fetch_errors > 0) {
+    logger.warn("[poll-hygglo] corePoll had non-fatal fetch failures", {
+      account: accountSlug,
+      list_filter_errors: core.meta.list_filter_errors,
+      detail_fetch_errors: core.meta.detail_fetch_errors,
+    });
+  }
+
   const reservations: OrderReservationPayload[] = core.reservations.map((r) => ({
     hygglo_order_id: r.hygglo_order_id,
     status: r.status,
@@ -252,9 +231,13 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     photos_urls: r.photos_urls,
     latest_activity: r.latest_activity,
     // `order` is retained by corePoll only on denial rows; default to {} so the
-    // (B) loop's `needsRawOrder && { order }` and `hygglo_detail_payload` reads
-    // mirror corePoll's bandwidth design. The step is forwarded explicitly below.
+    // (B) loop's `needsRawOrder && { order }` upsert read mirrors corePoll's
+    // bandwidth design. The step is forwarded explicitly below.
     order: (r.order ?? {}) as OrderDetail,
+    // B2 — full detail blob corePoll always carries; consumed by the listing
+    // resolver via `hygglo_detail_payload` (fixes the empty-{} regression on the
+    // common non-denial newly-inserted path). Falls back to `order` then {}.
+    detail_payload: (r.detail_payload ?? r.order ?? {}) as OrderDetail,
     order_step_extracted: r.order_step_extracted,
     hygglo_system_signal: r.hygglo_system_signal,
     hygglo_system_signal_text: r.hygglo_system_signal_text,
@@ -491,7 +474,10 @@ export const pollHyggloInbox = schedules.task({
                     hygglo_order_id: payload.hygglo_order_id,
                     hygglo_title: firstItem?.item_name ?? payload.hygglo_order_id,
                     hygglo_description: payload.notes,
-                    hygglo_detail_payload: payload.order,
+                    // B2 — use the always-populated detail blob (corePoll strips
+                    // `order` to {} on non-denial rows). Fall back to `order` for
+                    // safety. Fixes empty `hygglo_detail_payload` on new listings.
+                    hygglo_detail_payload: payload.detail_payload ?? payload.order,
                     image_url: firstItem?.image?.fullSizeUrl ?? firstItem?.image?.largeUrl ?? firstItem?.image?.url,
                   });
                   // Harvest per-item info-pool targets. One pool row per

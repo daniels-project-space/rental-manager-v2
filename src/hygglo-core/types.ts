@@ -281,6 +281,13 @@ export interface ReservationUpsertArgs {
   items: ReservationItemPayload[];
   duration_days?: number;
   order?: HyggloOrderDetail;
+  /** B2 — full per-order detail blob, ALWAYS carried (unlike `order`, which the
+   *  hot path strips on non-denial rows). Consumer-side ONLY: feeds the
+   *  listing-resolver's `hygglo_detail_payload` for newly-inserted listings; it
+   *  is NEVER forwarded to `upsertOrdersAsReservationsBatch` (the task whitelists
+   *  the mutation args explicitly), so it adds zero upload bandwidth + touches no
+   *  money field. */
+  detail_payload?: HyggloOrderDetail;
   order_step_extracted?: HyggloOrderStepKey;
   sourceFilter?: string;
   renter_name?: string;
