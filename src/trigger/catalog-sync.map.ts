@@ -9,6 +9,8 @@ import type {
   HyggloProductListItem,
   HyggloProductDetail,
   HyggloProductImage,
+  HyggloProductPrice,
+  HyggloProductListing,
 } from "../hygglo-core/types";
 import { findBestMatchWithScore } from "../../convex/lib/item_matcher";
 
@@ -113,6 +115,55 @@ export function projectImages(
   }));
 }
 
+/**
+ * Project raw Hygglo price objects down to EXACTLY the five fields the strict
+ * Convex `priceArg`/schema `prices` object validator accepts (id, productId,
+ * pricePerDay, days, price). Same drift hazard as {@link projectImages}: the
+ * lean `HyggloProductPrice` type only declares the allowed keys, but live
+ * `GET /v2/my/products` price payloads also ship `createdAt`/`updatedAt` (and
+ * potentially future fields) that the strict object validator rejects with an
+ * `ArgumentValidationError`. Stripping extras here keeps the writer drift-proof.
+ * Each element is cast through `unknown` because the runtime extras are not on
+ * the lean source type. Returns `undefined` for non-array input so the optional
+ * field is simply omitted.
+ */
+export function projectPrices(
+  prices: HyggloProductPrice[] | undefined,
+): HyggloProductPrice[] | undefined {
+  if (!Array.isArray(prices)) return undefined;
+  return prices.map((pr) => ({
+    id: pr.id,
+    productId: pr.productId,
+    pricePerDay: pr.pricePerDay,
+    days: pr.days,
+    price: pr.price,
+  }));
+}
+
+/**
+ * Project raw Hygglo listing objects down to EXACTLY the five fields the strict
+ * Convex `listingArg`/schema `listings` object validator accepts (id, slug,
+ * productId, publicUrl, location). This is the field that kept `hygglo_products`
+ * empty AFTER the image fix shipped: live `listings[]` carry `createdAt` (and
+ * other timestamps) which the strict object validator rejects with
+ * `ArgumentValidationError: extra field createdAt ... .listings[0]`. `location`
+ * is intentionally passed through verbatim — its validator is `v.any()`, so it
+ * accepts any nested shape and never needs its own projection. Returns
+ * `undefined` for non-array input so the optional field is simply omitted.
+ */
+export function projectListings(
+  listings: HyggloProductListing[] | undefined,
+): HyggloProductListing[] | undefined {
+  if (!Array.isArray(listings)) return undefined;
+  return listings.map((l) => ({
+    id: l.id,
+    slug: l.slug,
+    productId: l.productId,
+    publicUrl: l.publicUrl,
+    location: l.location,
+  }));
+}
+
 /** Map a (possibly detail-enriched) product to an upsert arg. */
 export function toUpsertArg(
   accountSlug: string,
@@ -133,10 +184,10 @@ export function toUpsertArg(
     isPublished: src.isPublished,
     valuation: src.valuation,
     minimumRentalDays: src.minimumRentalDays,
-    prices: src.prices,
+    prices: projectPrices(src.prices),
     images: projectImages(src.images),
     unavailableDates,
-    listings: src.listings,
+    listings: projectListings(src.listings),
     publicUrl: publicUrlOf(src),
     masterItemId: match?.itemId,
     isMarketingOnly: match === null,

@@ -4,13 +4,19 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { HyggloProductListItem, HyggloProductDetail } from "../hygglo-core/types";
+import type {
+  HyggloProductListItem,
+  HyggloProductDetail,
+  HyggloProductListing,
+} from "../hygglo-core/types";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   buildCandidates,
   matchProduct,
   toUpsertArg,
   projectImages,
+  projectPrices,
+  projectListings,
   publicUrlOf,
   slugOf,
   type InventoryRow,
@@ -176,6 +182,120 @@ describe("projectImages (validator drift guard)", () => {
     expect(arg.images).toHaveLength(1);
     expect(arg.images![0]).not.toHaveProperty("createdAt");
     expect(arg.images![0]).not.toHaveProperty("updatedAt");
+  });
+});
+
+describe("projectPrices (validator drift guard)", () => {
+  // The strict Convex `priceArg`/schema only allow these five keys.
+  const ALLOWED = ["id", "productId", "pricePerDay", "days", "price"].sort();
+
+  it("strips extra fields (createdAt/updatedAt) from raw Hygglo prices", () => {
+    const raw = {
+      id: 9,
+      productId: 22,
+      pricePerDay: 60,
+      days: 1,
+      price: 60,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-02-02T00:00:00Z",
+    } as unknown as Parameters<typeof projectPrices>[0] extends (infer T)[]
+      ? T
+      : never;
+
+    const out = projectPrices([raw]);
+    expect(out).toHaveLength(1);
+    expect(Object.keys(out![0]).sort()).toEqual(ALLOWED);
+    expect(out![0]).not.toHaveProperty("createdAt");
+    expect(out![0]).not.toHaveProperty("updatedAt");
+    expect(out![0].pricePerDay).toBe(60);
+    expect(out![0].productId).toBe(22);
+  });
+
+  it("returns undefined for a non-array input", () => {
+    expect(projectPrices(undefined)).toBeUndefined();
+  });
+
+  it("toUpsertArg projects prices so no extra fields reach the writer", () => {
+    const detail = {
+      id: 40,
+      name: "Sony FX3",
+      prices: [
+        {
+          id: 1,
+          pricePerDay: 50,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-02-02T00:00:00Z",
+        },
+      ],
+    } as unknown as HyggloProductDetail;
+    const arg = toUpsertArg("leo", product({ id: 40 }), detail, null);
+    expect(arg.prices).toHaveLength(1);
+    expect(arg.prices![0]).not.toHaveProperty("createdAt");
+    expect(arg.prices![0]).not.toHaveProperty("updatedAt");
+    expect(arg.prices![0].pricePerDay).toBe(50);
+  });
+});
+
+describe("projectListings (validator drift guard)", () => {
+  // The strict Convex `listingArg`/schema only allow these five keys.
+  const ALLOWED = ["id", "slug", "productId", "publicUrl", "location"].sort();
+
+  it("strips extra fields (createdAt) that left hygglo_products empty post image-fix", () => {
+    // This is the SECOND leak: live listings[] carry createdAt → the strict
+    // listingArg object validator rejected the whole batch. Cast through
+    // unknown: createdAt is not on the lean HyggloProductListing type.
+    const raw = {
+      id: 5,
+      slug: "sony-fx3",
+      productId: 22,
+      publicUrl: "https://hygglo.com/uk/p/5",
+      location: { city: "London", lat: 51.5, lng: -0.1 },
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-02-02T00:00:00Z",
+    } as unknown as Parameters<typeof projectListings>[0] extends (infer T)[]
+      ? T
+      : never;
+
+    const out = projectListings([raw]);
+    expect(out).toHaveLength(1);
+    expect(Object.keys(out![0]).sort()).toEqual(ALLOWED);
+    expect(out![0]).not.toHaveProperty("createdAt");
+    expect(out![0]).not.toHaveProperty("updatedAt");
+    expect(out![0].slug).toBe("sony-fx3");
+    expect(out![0].publicUrl).toBe("https://hygglo.com/uk/p/5");
+  });
+
+  it("passes location through verbatim (validator is v.any())", () => {
+    const loc = { city: "London", nested: { deep: [1, 2, 3] } };
+    const out = projectListings([
+      { id: 1, slug: "x", location: loc } as HyggloProductListing,
+    ]);
+    expect(out![0].location).toEqual(loc);
+  });
+
+  it("returns undefined for a non-array input", () => {
+    expect(projectListings(undefined)).toBeUndefined();
+  });
+
+  it("toUpsertArg projects listings so no extra fields reach the writer", () => {
+    const detail = {
+      id: 50,
+      name: "Sony FX3",
+      listings: [
+        {
+          id: 1,
+          slug: "sony-fx3",
+          publicUrl: "https://hygglo.com/detail",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-02-02T00:00:00Z",
+        },
+      ],
+    } as unknown as HyggloProductDetail;
+    const arg = toUpsertArg("leo", product({ id: 50 }), detail, null);
+    expect(arg.listings).toHaveLength(1);
+    expect(arg.listings![0]).not.toHaveProperty("createdAt");
+    expect(arg.listings![0]).not.toHaveProperty("updatedAt");
+    expect(arg.listings![0].slug).toBe("sony-fx3");
   });
 });
 
