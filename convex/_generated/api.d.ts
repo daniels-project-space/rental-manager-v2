@@ -10,13 +10,6 @@
 
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
-import type * as admin_backfill_hygglo_signals from "../admin_backfill_hygglo_signals.js";
-import type * as admin_backfill_hygglo_signals_data from "../admin_backfill_hygglo_signals_data.js";
-import type * as admin_backfill_net from "../admin_backfill_net.js";
-import type * as admin_backfill_qty_resolution from "../admin_backfill_qty_resolution.js";
-import type * as admin_backfill_renter_links from "../admin_backfill_renter_links.js";
-import type * as admin_backfill_stale_completed from "../admin_backfill_stale_completed.js";
-import type * as admin_backfill_status_from_step from "../admin_backfill_status_from_step.js";
 import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_metrics.js";
 import type * as admin_backfill_weekly_metrics_5b from "../admin_backfill_weekly_metrics_5b.js";
 import type * as admin_bootstrap_pidindex from "../admin_bootstrap_pidindex.js";
@@ -38,7 +31,6 @@ import type * as audit_qty_drift_data from "../audit_qty_drift_data.js";
 import type * as audit_reclassification from "../audit_reclassification.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
 import type * as audit_thread_join from "../audit_thread_join.js";
-import type * as backfill_hygglo_images from "../backfill_hygglo_images.js";
 import type * as bundles from "../bundles.js";
 import type * as bundles_seed from "../bundles_seed.js";
 import type * as calendar from "../calendar.js";
@@ -114,9 +106,6 @@ import type * as lost_revenue from "../lost_revenue.js";
 import type * as market_search from "../market_search.js";
 import type * as market_search_cache from "../market_search_cache.js";
 import type * as memories from "../memories.js";
-import type * as migrations_backfill_hygglo_items from "../migrations/backfill_hygglo_items.js";
-import type * as migrations_backfill_image_hints from "../migrations/backfill_image_hints.js";
-import type * as migrations_backfill_inclusive_duration from "../migrations/backfill_inclusive_duration.js";
 import type * as model_upgrade_scans from "../model_upgrade_scans.js";
 import type * as mv__helpers from "../mv/_helpers.js";
 import type * as mv_churn_risk from "../mv/churn_risk.js";
@@ -180,13 +169,6 @@ import type {
 declare const fullApi: ApiFromModules<{
   account_state: typeof account_state;
   accounts: typeof accounts;
-  admin_backfill_hygglo_signals: typeof admin_backfill_hygglo_signals;
-  admin_backfill_hygglo_signals_data: typeof admin_backfill_hygglo_signals_data;
-  admin_backfill_net: typeof admin_backfill_net;
-  admin_backfill_qty_resolution: typeof admin_backfill_qty_resolution;
-  admin_backfill_renter_links: typeof admin_backfill_renter_links;
-  admin_backfill_stale_completed: typeof admin_backfill_stale_completed;
-  admin_backfill_status_from_step: typeof admin_backfill_status_from_step;
   admin_backfill_weekly_metrics: typeof admin_backfill_weekly_metrics;
   admin_backfill_weekly_metrics_5b: typeof admin_backfill_weekly_metrics_5b;
   admin_bootstrap_pidindex: typeof admin_bootstrap_pidindex;
@@ -208,7 +190,6 @@ declare const fullApi: ApiFromModules<{
   audit_reclassification: typeof audit_reclassification;
   audit_snapshot: typeof audit_snapshot;
   audit_thread_join: typeof audit_thread_join;
-  backfill_hygglo_images: typeof backfill_hygglo_images;
   bundles: typeof bundles;
   bundles_seed: typeof bundles_seed;
   calendar: typeof calendar;
@@ -284,9 +265,6 @@ declare const fullApi: ApiFromModules<{
   market_search: typeof market_search;
   market_search_cache: typeof market_search_cache;
   memories: typeof memories;
-  "migrations/backfill_hygglo_items": typeof migrations_backfill_hygglo_items;
-  "migrations/backfill_image_hints": typeof migrations_backfill_image_hints;
-  "migrations/backfill_inclusive_duration": typeof migrations_backfill_inclusive_duration;
   model_upgrade_scans: typeof model_upgrade_scans;
   "mv/_helpers": typeof mv__helpers;
   "mv/churn_risk": typeof mv_churn_risk;
