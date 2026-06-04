@@ -90,7 +90,7 @@ export function CompetitorIntelPanel() {
             </div>
           ) : items.length === 0 ? (
             <div className="text-xs text-[#8b8fa3] py-2">
-              No competitor sample yet — run scripts/ingest-competitor-intel.mjs.
+              No competitor sample yet — the weekly competitor-intel-sync job will populate this.
             </div>
           ) : (
             <div className="space-y-2">
