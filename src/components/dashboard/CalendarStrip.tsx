@@ -515,19 +515,23 @@ function BookingCard({ chip }: { chip: ChipData }) {
   const isPickupDelivery = chip.pickupMethod === "delivery";
   const isReturnDelivery = chip.returnMethod === "delivery";
 
-  // Pickup/drop-off tag shows ONLY for delivery legs. Collection/unknown legs
-  // render no pickup/return badge (the booking entry still appears, untagged).
-  // "away" is an ongoing-rental marker, not a pickup/drop-off tag — left as-is.
-  const showBadge =
-    kind === "away" ||
-    (kind === "pickup" && isPickupDelivery) ||
-    (kind === "return" && isReturnDelivery);
-  const badgeText = kind === "away" ? "AWAY" : "🚚 DELIVERY";
+  // Every booking entry is tagged with its leg type (pickup / return / away).
+  // Previously only delivery legs + "away" got a badge, which silently left ALL
+  // collection pickups/returns untagged. The delivery truck is appended when the
+  // leg is a delivery so that signal is preserved. Colours: pickup green, return
+  // red, away grey.
+  const showBadge = true;
+  const badgeText =
+    kind === "away"
+      ? "AWAY"
+      : kind === "pickup"
+        ? (isPickupDelivery ? "PICKUP 🚚" : "PICKUP")
+        : (isReturnDelivery ? "RETURN 🚚" : "RETURN");
   const badgeStyle: React.CSSProperties =
     kind === "pickup"
       ? { background: "rgba(34,197,94,0.16)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
       : kind === "return"
-        ? { background: "rgba(168,85,247,0.16)", color: "#c084fc", border: "1px solid rgba(168,85,247,0.3)" }
+        ? { background: "rgba(239,68,68,0.16)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)" }
         : { background: "rgba(107,114,128,0.16)", color: "#9ca3af", border: "1px solid rgba(107,114,128,0.3)" };
 
   const items = chip.items ?? [];
