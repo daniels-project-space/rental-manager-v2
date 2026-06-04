@@ -332,9 +332,15 @@ export const getOutOfStockItems = query({
     endDate.setDate(endDate.getDate() + lookAheadDays);
     const endStr = endDate.toISOString().slice(0, 10);
 
-    // Include ongoing (start<=today, end>=today) + upcoming (start<=endStr) confirmed reservations
+    // Include ongoing (start<=today, end>=today) + upcoming (start<=endStr) confirmed reservations.
+    // PERF: push the `start_date <= endStr` bound into the by_start_date index so we read only
+    // the relevant prefix instead of the whole table. Result-equivalent: the full predicate
+    // already requires start_date <= endStr, and rows with undefined start_date (excluded from
+    // a lte index range) are also dropped by isConfirmedWithDates. The remaining JS filters
+    // (isConfirmedWithDates, end_date >= today, account_slug) are applied verbatim afterwards.
     let reservations = await ctx.db
       .query("reservations")
+      .withIndex("by_start_date", (q) => q.lte("start_date", endStr))
       .collect();
     reservations = reservations.filter(
       (r) =>
