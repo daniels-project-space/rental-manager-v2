@@ -14,11 +14,12 @@ import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 import { isOutsidePollActiveWindow } from "../lib/quiet-hours";
-// Phase 2 live-flip — the pure hygglo-core poll assembler. Gated behind the
-// `use_core_poll` feature flag (DEFAULT OFF). When OFF the legacy inline
-// `scrapeAccount` path runs unchanged; when ON we produce the SAME payload
-// arrays via corePoll. Downstream (B) — Convex upserts, holds reconcile,
-// sync_state, listing resolution — is identical in both branches.
+// Phase 2 (corePoll cutover complete) — the pure hygglo-core poll assembler is
+// now the SOLE fetch+shape path. It produces the `{ messages, reservations,
+// renters, conversations }` payload arrays consumed by downstream (B) — Convex
+// upserts, holds reconcile, sync_state, listing resolution. The legacy inline
+// `scrapeAccount` scraper and its `use_core_poll` feature flag were removed
+// after corePoll was validated in production (Phase 2 cleanup).
 import { corePoll } from "../hygglo-core/poll";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
@@ -26,11 +27,6 @@ const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 // Wrong fallback caused poll writes to hit exciting-lion-29 while the dashboard
 // read from hearty-oyster-600 — renter_name/order_step/photos_urls never landed.
 const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-const API_BASE = "https://api.hygglo.com/api";
-const CLIENT_ID = "ngHyggloApp";
-// CLIENT_SECRET is read from vault at runtime (key: HYGGLO_CLIENT_SECRET)
-const COUNTRY = "GB";
 
 // ── Vault helper ──────────────────────────────────────────────
 
@@ -172,12 +168,10 @@ type OrderReservationPayload = {
   latest_activity?: number | string;
   /** Raw detail object from /v4/my/orders/:id — carries `steps[]` for order_step extraction. */
   order: OrderDetail;
-  /** Phase 2 live-flip (core-poll path only). When the corePoll adapter supplies
-   *  a pre-extracted active step, the batch-build loop uses it verbatim instead
-   *  of re-deriving from `order` (which corePoll strips on non-denial rows).
-   *  The legacy inline `scrapeAccount` path never sets this (undefined) ⇒ the
-   *  loop falls through to its existing `extractStep(order)` derivation, keeping
-   *  the OFF path byte-identical. */
+  /** corePoll forwards a pre-extracted active step here; the batch-build loop
+   *  uses it verbatim instead of re-deriving from `order` (which corePoll strips
+   *  on non-denial rows). When undefined the loop falls through to its existing
+   *  `extractStep(order)` derivation. */
   order_step_extracted?:
     | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED"
     | "BOOKED_AFTER_VERIFIED" | "DELIVERED" | "RETURNED" | "REVIEWED"
@@ -193,398 +187,11 @@ type OrderReservationPayload = {
   hygglo_system_signal_text?: string;
 };
 
-// ── Timestamp parser ──────────────────────────────────────────
-
-function parseCreatedAtLabel(label: string): Date | null {
-  if (!label) return null;
-  const months: Record<string, number> = {
-    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
-    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
-  };
-  const match = label.match(
-    /^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:,?\s+(\d{1,2}):(\d{2}))?/
-  );
-  if (match) {
-    const day = parseInt(match[1], 10);
-    const month = months[match[2]];
-    const now = new Date();
-    const year = now.getFullYear();
-    const hours = match[3] ? parseInt(match[3], 10) : 0;
-    const minutes = match[4] ? parseInt(match[4], 10) : 0;
-    const date = new Date(year, month, day, hours, minutes);
-    if (date.getTime() > now.getTime() + 86400000) date.setFullYear(year - 1);
-    return date;
-  }
-  if (label.toLowerCase().startsWith("yesterday")) {
-    const t = label.match(/(\d{1,2}):(\d{2})/);
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    if (t) d.setHours(parseInt(t[1], 10), parseInt(t[2], 10), 0, 0);
-    return d;
-  }
-  if (label.toLowerCase().startsWith("today")) {
-    const t = label.match(/(\d{1,2}):(\d{2})/);
-    const d = new Date();
-    if (t) d.setHours(parseInt(t[1], 10), parseInt(t[2], 10), 0, 0);
-    return d;
-  }
-  return null;
-}
-
-// ── Scraper ───────────────────────────────────────────────────
-
-async function scrapeAccount(
-  accountSlug: string,
-  email: string,
-  password: string,
-  clientSecret: string,
-  // Phase 18.2 — pre-fetched map of hygglo_order_id → { latest_activity, has_order_step }.
-  // Phase 2 fix: include has_order_step so the skip-detail optimization can be
-  // bypassed for legacy rows that lack order_step (needs detail to backfill).
-  lookupStoredLatestActivity?: (ids: string[]) => Promise<
-    Record<string, { latest_activity: number | string; has_order_step: boolean }>
-  >,
-): Promise<{
-  messages: Array<{
-    thread_id: string;
-    message_id: string;
-    sender: string;
-    sender_name?: string;
-    body_text: string;
-    hygglo_sent_at?: number;
-    fetched_at: number;
-  }>;
-  reservations: OrderReservationPayload[];
-  renters: Array<{ hygglo_user_id?: string; display_name: string }>;
-  conversations: Array<{
-    thread_id: string;
-    hygglo_user_id?: string;
-    display_name: string;
-    last_msg_at: number;
-    created_at: number;
-  }>;
-}> {
-  // 1. Authenticate
-  const tokenParams = new URLSearchParams({
-    grant_type: "password",
-    username: email,
-    password,
-    client_id: CLIENT_ID,
-    client_secret: clientSecret,
-  });
-
-  const tokenRes = await fetch(`${API_BASE}/token?country=${COUNTRY}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-      "User-Client": "Hygglo-web",
-      Origin: "https://www.hygglo.com",
-    },
-    body: tokenParams.toString(),
-  });
-
-  if (!tokenRes.ok) {
-    const body = await tokenRes.text();
-    throw new Error(`Auth failed for ${accountSlug}: ${tokenRes.status} ${body}`);
-  }
-
-  const { access_token } = (await tokenRes.json()) as { access_token: string };
-  console.log(`[poll-hygglo] Authenticated as ${accountSlug}`);
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${access_token}`,
-    Accept: "application/json",
-    Country: COUNTRY,
-    "User-Client": "Hygglo-web",
-  };
-
-  // 2. Fetch orders (read-only GETs)
-  const filters = ["pending", "current", "future", "obsolete"] as const;
-  // Phase 18.2 — also carry the per-order latest_activity from the list
-  // response so we can skip the detail fetch when nothing changed since
-  // the last poll. Field name is unknown across Hygglo's API versions —
-  // probe multiple candidates and pick whatever is present.
-  const allOrders: Array<{ id: number; sourceFilter: string; latest_activity?: number | string }> = [];
-
-  // One-shot sample log (first run only) to help us confirm the canonical
-  // field name in Hygglo's response. After we see what it actually is we
-  // can simplify this probe in a follow-up.
-  let sampleLogged = false;
-
-  for (const filter of filters) {
-    const res = await fetch(
-      `${API_BASE}/v4/my/orders?role=owner&filter=${filter}&sort=latest-activity&offset=0&limit=50`,
-      { headers }
-    );
-    if (!res.ok) continue;
-    const data = (await res.json()) as unknown;
-    const arr: Array<Record<string, unknown> & { id: number }> = Array.isArray(data)
-      ? (data as Array<Record<string, unknown> & { id: number }>)
-      : (((data as { items?: Array<Record<string, unknown> & { id: number }> }).items) ?? []);
-    if (!sampleLogged && arr.length > 0) {
-      console.log(
-        `[poll-hygglo] ${accountSlug} list-sample keys: ${Object.keys(arr[0]).join(",")}`
-      );
-      sampleLogged = true;
-    }
-    for (const o of arr) {
-      // Probe a handful of likely names. First non-undefined wins.
-      const la =
-        (o.latest_activity as number | string | undefined) ??
-        (o.latestActivity as number | string | undefined) ??
-        (o.last_activity_at as number | string | undefined) ??
-        (o.lastActivityAt as number | string | undefined) ??
-        (o.updated_at as number | string | undefined) ??
-        (o.updatedAt as number | string | undefined);
-      allOrders.push({ id: o.id, sourceFilter: filter, latest_activity: la });
-    }
-  }
-
-  // Deduplicate by order id — first-seen filter wins (active/current beats obsolete)
-  const seen = new Set<number>();
-  const uniqueOrders = allOrders.filter((o) => {
-    if (seen.has(o.id)) return false;
-    seen.add(o.id);
-    return true;
-  });
-
-  console.log(`[poll-hygglo] ${accountSlug}: ${uniqueOrders.length} orders`);
-
-  // Phase 18.2 — pre-fetch stored latest_activity for every order so we can
-  // skip per-order detail fetches that haven't changed. Only runs when the
-  // list response actually populated the field (else we proceed normally).
-  const storedActivity: Record<
-    string,
-    { latest_activity: number | string; has_order_step: boolean }
-  > = lookupStoredLatestActivity
-    ? await lookupStoredLatestActivity(uniqueOrders.map((o) => String(o.id)))
-    : {};
-  let skippedFetch = 0;
-
-  // 3. Fetch each order detail and extract chat messages
-  const messages: Array<{
-    thread_id: string;
-    message_id: string;
-    sender: string;
-    sender_name?: string;
-    body_text: string;
-    hygglo_sent_at?: number;
-    fetched_at: number;
-  }> = [];
-  const reservationPayloads: OrderReservationPayload[] = [];
-
-  // Phase 6.1: renter + conversation accumulators
-  const renterMap = new Map<string, { hygglo_user_id?: string; display_name: string }>();
-  const conversationSpecs: Array<{
-    thread_id: string;
-    hygglo_user_id?: string;
-    display_name: string;
-    last_msg_at: number;
-    created_at: number;
-  }> = [];
-
-  const fetchedAt = Date.now();
-
-  for (const order of uniqueOrders) {
-    // Phase 18.2 — skip detail fetch if Hygglo's list response shows the
-    // order hasn't changed since our last poll. Only kicks in when the list
-    // response actually carries a latest_activity value AND it matches what
-    // we previously stored.
-    if (order.latest_activity !== undefined) {
-      const stored = storedActivity[String(order.id)];
-      // Phase 2 fix: only skip when the row is unchanged AND already has
-      // order_step. Legacy rows (v1 import / pre-step-extraction polls) have
-      // matching latest_activity but no order_step — they must be re-fetched
-      // so upsertOrderAsReservation can backfill the step from steps[].
-      if (
-        stored !== undefined &&
-        typeof stored === "object" &&
-        stored.latest_activity === order.latest_activity &&
-        stored.has_order_step === true
-      ) {
-        skippedFetch++;
-        continue;
-      }
-    }
-    const detailRes = await fetch(
-      `${API_BASE}/v4/my/orders/${order.id}?timezone=Europe/London`,
-      { headers }
-    );
-    if (!detailRes.ok) continue;
-    const detail = (await detailRes.json()) as OrderDetail;
-
-    const otherPartName =
-      detail.users?.otherPart?.name ?? detail.labels?.otherPart ?? "Renter";
-    const otherPartUserId = detail.users?.otherPart?.id
-      ? String(detail.users.otherPart.id)
-      : undefined;
-
-    // Accumulate renter (dedup by user ID if available, else by name)
-    const renterKey = otherPartUserId ?? otherPartName.trim().toLowerCase();
-    if (!renterMap.has(renterKey)) {
-      renterMap.set(renterKey, {
-        hygglo_user_id: otherPartUserId,
-        display_name: otherPartName,
-      });
-    }
-
-    // Extract chat messages and compute conversation timestamps
-    const orderMessages: typeof messages = [];
-    for (const activity of detail.activities ?? []) {
-      if (!activity.chatMessage) continue;
-      const text = activity.chatMessage.text?.content ?? "";
-      if (!text.trim()) continue;
-
-      const ts = parseCreatedAtLabel(activity.createdAtLabel ?? "")?.getTime();
-      orderMessages.push({
-        thread_id: String(order.id),
-        message_id: activity.key,
-        sender: activity.chatMessage.byMe ? "owner" : "renter",
-        sender_name: activity.chatMessage.byMe ? "Owner" : otherPartName,
-        body_text: text,
-        hygglo_sent_at: ts,
-        fetched_at: fetchedAt,
-      });
-    }
-
-    messages.push(...orderMessages);
-
-    // Build conversation spec for orders that have messages
-    if (orderMessages.length > 0) {
-      const timestamps = orderMessages
-        .map((m) => m.hygglo_sent_at ?? fetchedAt)
-        .filter((t) => t > 0);
-      const lastMsgAt = timestamps.length > 0 ? Math.max(...timestamps) : fetchedAt;
-      const firstMsgAt = timestamps.length > 0 ? Math.min(...timestamps) : fetchedAt;
-      conversationSpecs.push({
-        thread_id: String(order.id),
-        hygglo_user_id: otherPartUserId,
-        display_name: otherPartName,
-        last_msg_at: lastMsgAt,
-        created_at: firstMsgAt,
-      });
-    }
-
-    // Extract reservation metadata from the order detail
-    const startUTC = detail.rentalPeriod?.startDateUTC;
-    const endUTC = detail.rentalPeriod?.endDateUTC;
-    if (startUTC && endUTC) {
-      const startDate = startUTC.slice(0, 10);
-      const endDate = endUTC.slice(0, 10);
-      const grossPaid =
-        detail.price?.breakdown?.totalPrice?.amount ??
-        detail.price?.total;
-      const netToOwner =
-        detail.price?.breakdown?.lenderEarnings?.amount ??
-        detail.price?.ownerEarnings;
-      const currency = detail.price?.currency ?? "GBP";
-      const orderItems = (detail.items ?? [])
-        .filter((i) => i.type !== "INSURANCE")
-        .map((i: any) => ({
-          item_name: i.name ?? "Unknown item",
-          qty: typeof i.qty === "number" ? i.qty : undefined,
-          image: i?.image
-            ? {
-                url: i.image.url,
-                originalUrl: i.image.originalUrl,
-                largeUrl: i.image.largeUrl,
-                mediumUrl: i.image.mediumUrl,
-                thumbnailUrl: i.image.thumbnailUrl,
-                // PASS-10: Hygglo's /v4/my/orders/{id}.items[].image actually returns
-                // `fullSizeUrl` + `thumbnailUrl` only. Forward fullSizeUrl so the
-                // poller can populate hygglo_items[].image_url.
-                fullSizeUrl: i.image.fullSizeUrl,
-              }
-            : undefined,
-          type: typeof i.type === "string" ? i.type : undefined,
-          product_id: typeof i.productId === "number" ? i.productId : undefined,
-          slug: typeof i.slug === "string" ? i.slug : undefined,
-        }));
-      const start = new Date(startUTC);
-      const end = new Date(endUTC);
-      const durationDays = Math.round((end.getTime() - start.getTime()) / 86400000);
-      // Map sourceFilter to booking status:
-      //   "obsolete"  → "cancelled"
-      //   "pending"   → "pending_review" (owner hasn't accepted yet)
-      //   everything else (current/future) → "confirmed"
-      const status =
-        order.sourceFilter === "obsolete"
-          ? "cancelled"
-          : order.sourceFilter === "pending"
-            ? "pending_review"
-            : "confirmed";
-      // Also capture the raw Hygglo booking status from the detail object if present.
-      const bookingStatus: string | undefined =
-        (detail as any)?.booking?.status ?? undefined;
-      // Calendar UI fields — extracted from detail.booking.* and detail.*
-      const pickup_time: string | undefined = (detail as any)?.booking?.pickup_time ?? undefined;
-      const return_time: string | undefined = (detail as any)?.booking?.return_time ?? undefined;
-      const pickup_method: string | undefined = (detail as any)?.booking?.pickup_method ?? undefined;
-      const return_method: string | undefined = (detail as any)?.booking?.return_method ?? undefined;
-      const notes: string | undefined = (detail as any)?.notes ?? (detail as any)?.detail?.notes ?? undefined;
-      const photos_urls: string[] | undefined = (() => {
-        const urls: string[] = [];
-        if (Array.isArray((detail as any)?.photos_urls)) return (detail as any).photos_urls as string[];
-        if (Array.isArray((detail as any)?.detail?.photos_urls)) return (detail as any).detail.photos_urls as string[];
-        // Fallback: extract from items[].image.fullSizeUrl (same as v1)
-        for (const item of detail.items ?? []) {
-          if ((item as any)?.image?.fullSizeUrl) urls.push((item as any).image.fullSizeUrl);
-        }
-        return urls.length > 0 ? urls : undefined;
-      })();
-      // Phase 3d — derive Hygglo system signal from activity.event.content
-      const systemSignal = deriveHyggloSystemSignal(detail.activities ?? []);
-      reservationPayloads.push({
-        hygglo_order_id: String(order.id),
-        status,
-        start_date: startDate,
-        end_date: endDate,
-        gross_paid_gbp: grossPaid,
-        net_to_owner_gbp: netToOwner,
-        currency,
-        items: orderItems,
-        duration_days: durationDays > 0 ? durationDays : undefined,
-        sourceFilter: order.sourceFilter,
-        renter_name: otherPartName || undefined,
-        hygglo_user_id: otherPartUserId,
-        booking_status: bookingStatus,
-        pickup_time,
-        return_time,
-        pickup_method,
-        return_method,
-        notes,
-        photos_urls,
-        latest_activity: order.latest_activity,
-        order: detail,
-        hygglo_system_signal: systemSignal.signal,
-        hygglo_system_signal_text: systemSignal.text,
-      });
-    }
-  }
-
-  console.log(
-    "[poll-hygglo] " + accountSlug + ": " + String(messages.length) + " messages, " +
-    String(reservationPayloads.length) + " reservation payloads, " +
-    String(renterMap.size) + " renters, " +
-    String(conversationSpecs.length) + " conversations extracted, " +
-    String(skippedFetch) + " details skipped (unchanged latest_activity)"
-  );
-
-  return {
-    messages,
-    reservations: reservationPayloads,
-    renters: Array.from(renterMap.values()),
-    conversations: conversationSpecs,
-  };
-}
-
-// ── core-poll adapter (Phase 2 live-flip, flag ON path) ───────
+// ── core-poll adapter (Phase 2 — sole fetch+shape path) ───────
 //
-// Produces the EXACT same `{ messages, reservations, renters, conversations }`
-// shape `scrapeAccount` returns, but sources it from the parity-proven
-// `corePoll(slug)` assembler instead of the inline scraper. Downstream (B) runs
-// identically against either output.
+// Produces the `{ messages, reservations, renters, conversations }` shape that
+// downstream (B) consumes, sourcing it from the parity-proven `corePoll(slug)`
+// assembler.
 //
 // corePoll returns `reservations` already in `upsertOrdersAsReservationsBatch`
 // arg shape (incl. batch-level `account_slug` + `order_step_extracted`, and the
@@ -593,14 +200,14 @@ async function scrapeAccount(
 // batch-build loop is unchanged. The loop's `extractStep(order)` would yield
 // undefined on the non-denial rows where corePoll stripped `order`; to preserve
 // parity we forward corePoll's pre-extracted step via `order_step_extracted`,
-// which the loop now prefers (see the `??` in run()). credentials/auth/vault are
+// which the loop prefers (see the `??` in run()). credentials/auth/vault are
 // resolved inside corePoll → createHyggloCore, so we pass only the slug.
 //
-// KNOWN ON-PATH DIFFERENCE (flagged): on non-denial NEWLY-INSERTED rows the
+// KNOWN BEHAVIOUR: on non-denial NEWLY-INSERTED rows the
 // `newlyInserted[].hygglo_detail_payload` (best-effort listing-resolver context,
-// never a money field) is undefined here because corePoll strips `order` off the
-// hot path. The OFF path still carries the full detail. This only affects
-// brand-new-listing enrichment, not reservation/revenue data.
+// never a money field) is undefined because corePoll strips `order` off the
+// hot path. This only affects brand-new-listing enrichment, not
+// reservation/revenue data.
 async function scrapeAccountViaCore(accountSlug: string): Promise<{
   messages: Array<{
     thread_id: string;
@@ -695,7 +302,6 @@ export const pollHyggloInbox = schedules.task({
     let totalConversationsUpserted = 0;
 
     const hyggloSecrets = await getVaultSecrets("hygglo");
-    const clientSecret = hyggloSecrets["HYGGLO_CLIENT_SECRET"] ?? "lQVS05DGy9SQdAEInEPqTMK3aktEfSc7iupC7BYM4JY=";
 
     const accounts = [
       {
@@ -712,27 +318,10 @@ export const pollHyggloInbox = schedules.task({
 
     const convex = new ConvexHttpClient(CONVEX_URL);
 
-    // Phase 2 live-flip — read the `use_core_poll` feature flag ONCE per run
-    // (missing/false ⇒ OFF). When OFF (the deploy default) every account uses
-    // the legacy inline `scrapeAccount`; when ON they use the corePoll adapter.
-    // A read failure defaults to OFF so a vault/Convex hiccup can never silently
-    // flip the money path. Read here (not per-account) so both accounts share a
-    // consistent decision within a cycle and we spend one query, not two.
-    let useCorePoll = false;
-    try {
-      const flag = (await convex.query(api.feature_flags.getFlag, {
-        name: "use_core_poll",
-      })) as { name: string; enabled: boolean };
-      useCorePoll = flag?.enabled === true;
-    } catch (flagErr) {
-      console.warn(
-        "[poll-hygglo] use_core_poll flag read failed — defaulting OFF:",
-        flagErr,
-      );
-    }
-    console.log(
-      `[poll-hygglo] poll engine: ${useCorePoll ? "core-poll (flag ON)" : "inline (flag OFF)"}`,
-    );
+    // Phase 2 cleanup — corePoll is now the sole fetch+shape engine. The
+    // `use_core_poll` feature flag and the legacy inline scraper were removed
+    // after corePoll was validated in production.
+    console.log("[poll-hygglo] poll engine: core-poll");
 
     const results: Array<{
       slug: string;
@@ -768,38 +357,13 @@ export const pollHyggloInbox = schedules.task({
         }
 
         try {
-          // Phase 18.2 — callback the scraper uses to ask Convex for the
-          // stored latest_activity per order before deciding whether to
-          // skip the detail fetch.
-          const lookupStored = async (ids: string[]) => {
-            if (ids.length === 0) return {};
-            try {
-              return (await convex.query(api.hygglo.getLatestActivityBatch, {
-                hygglo_order_ids: ids,
-              })) as Record<
-                string,
-                { latest_activity: number | string; has_order_step: boolean }
-              >;
-            } catch (qErr) {
-              console.warn(
-                `[poll-hygglo] getLatestActivityBatch failed for ${account.slug} (non-fatal):`,
-                qErr,
-              );
-              return {};
-            }
-          };
-          // (A) FETCH + SHAPE — the ONLY part the flag swaps. Both branches
-          // yield the identical `{ messages, reservations, renters, conversations }`
-          // shape; everything below (B) runs unchanged.
-          //   OFF → legacy inline scraper (keeps the Phase-18.2 skip-detail
-          //         optimization via `lookupStored`).
-          //   ON  → parity-proven corePoll assembler (no skip-detail; it always
-          //         fetches detail — acceptable for the flagged rollout).
-          const { messages, reservations, renters, conversations } = useCorePoll
-            ? await scrapeAccountViaCore(account.slug)
-            : await scrapeAccount(
-                account.slug, account.email, account.password, clientSecret, lookupStored
-              );
+          // (A) FETCH + SHAPE — corePoll is the sole engine. It yields the
+          // `{ messages, reservations, renters, conversations }` shape that
+          // everything below (B) consumes unchanged. corePoll always fetches
+          // detail (no skip-detail optimization), which the production soak
+          // proved acceptable.
+          const { messages, reservations, renters, conversations } =
+            await scrapeAccountViaCore(account.slug);
 
           // Upsert chat messages (batched 50)
           let totalInserted = 0;
