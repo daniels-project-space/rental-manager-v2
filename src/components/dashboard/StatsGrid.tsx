@@ -642,6 +642,7 @@ export function StatsGrid() {
     <>
       <CriticalAlerts
         conflicts={(rawData as any)?.conflicts ?? []}
+        blacklist_alerts={(rawData as any)?.blacklist_alerts ?? []}
         qty_drift_count={(rawData as any)?.qty_drift_count ?? 0}
         qty_drift_sample={(rawData as any)?.qty_drift_sample ?? []}
       />

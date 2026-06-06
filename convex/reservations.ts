@@ -47,6 +47,8 @@ export const getRecentActivity = query({
  * WallESignals so every reservation mutation re-evaluates. Refresher runs
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
+import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
+
 export const getDueReturns = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -81,25 +83,43 @@ export const getDueReturns = query({
     const staleCutoff = new Date(Date.now() - STALE_DAYS * 86_400_000)
       .toISOString()
       .slice(0, 10);
+    // "Still out" = confirmed, end passed, in the actionable window, and NOT yet
+    // REVIEWED (Hygglo's "returned" signal — those auto-close, see
+    // returns_reconcile). order_step RETURNED means gear is still WITH the renter.
     const due = active.filter(
       (r) =>
+        r.order_step !== "REVIEWED" &&
+        !r.is_obsolete &&
         r.end_date !== undefined &&
         r.end_date <= today &&
         r.end_date >= staleCutoff,
     );
 
+    const maps = await renterMaps(ctx);
     const results = await Promise.all(
       due.map(async (r) => {
-        // Use the denormalized renter_name (poller writes it) instead of an
-        // N+1 point-read of the renter doc — only the display name was used.
-        const renterName = r.renter_name ?? "Unknown";
+        const renterDoc = await renterForReservation(ctx, r, maps);
+        const t = trustOf(renterDoc);
+        const hy = (r.hygglo_items ?? []) as Array<{ image_url?: string }>;
+        const imageUrl = hy.find((h) => h.image_url)?.image_url ?? (r.photos_urls?.[0] ?? null);
         return {
           reservationId: r._id,
-          renterName,
+          renterName: r.renter_name ?? "Unknown",
           itemNames: (r.items ?? []).map((i) => i.item_name),
           endDate: r.end_date,
           isOverdue: r.end_date !== undefined && r.end_date < today,
           accountSlug: r.account_slug,
+          orderStep: r.order_step ?? null,
+          imageUrl,
+          renter: {
+            blacklisted: t.blacklisted,
+            whitelisted: t.whitelisted,
+            blacklist_reason: t.blacklist_reason,
+            total_rentals: t.total_rentals,
+            rating: t.rating,
+            note_count: t.note_count,
+            notes: t.notes,
+          },
         };
       })
     );
@@ -225,8 +245,10 @@ export const markReturned = mutation({
     reservationId: v.id("reservations"),
     condition: v.string(),
     notes: v.optional(v.string()),
+    blacklistRenter: v.optional(v.boolean()),
+    blacklistReason: v.optional(v.string()),
   },
-  handler: async (ctx, { reservationId, condition, notes }) => {
+  handler: async (ctx, { reservationId, condition, notes, blacklistRenter, blacklistReason }) => {
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
     if (res.status === "completed") throw new Error("Already returned");
@@ -236,7 +258,26 @@ export const markReturned = mutation({
       status: "completed",
       notes: base ? base + " | " + cn : cn,
     });
-    return { ok: true };
+    // Mirror the condition onto the renter's CRM log; optionally blacklist them
+    // (e.g. on major damage). Renter resolved from the reservation row.
+    const maps = await renterMaps(ctx);
+    const renterDoc = await renterForReservation(ctx, res, maps);
+    if (renterDoc) {
+      const log = [
+        ...(renterDoc.note_log ?? []),
+        { text: `Return (${condition})${notes ? ": " + notes : ""}`, at: Date.now(), source: "return-hub" },
+      ];
+      const patch: Record<string, unknown> = { note_log: log };
+      if (blacklistRenter) {
+        patch.blacklisted = true;
+        patch.blacklist = true;
+        patch.blacklist_reason = blacklistReason ?? `Damage on return (${condition})`;
+        patch.blacklisted_at = Date.now();
+        log.push({ text: `BLACKLISTED: ${blacklistReason ?? "damage on return"}`, at: Date.now(), source: "return-hub" });
+      }
+      await ctx.db.patch(renterDoc._id, patch);
+    }
+    return { ok: true, blacklisted: !!blacklistRenter };
   },
 });
 

@@ -201,6 +201,16 @@ export default defineSchema({
       signals_observed: v.optional(v.number()),
       updated_at: v.optional(v.number()),
     })),
+    // ── Trust / CRM (CLI-managed via convex/renters_admin.ts) ──
+    whitelisted: v.optional(v.boolean()),
+    whitelist_reason: v.optional(v.string()),
+    blacklisted_at: v.optional(v.number()),
+    whitelisted_at: v.optional(v.number()),
+    note_log: v.optional(
+      v.array(
+        v.object({ text: v.string(), at: v.number(), source: v.optional(v.string()) }),
+      ),
+    ),
     created_at: v.number(),
   })
     .index("by_hygglo_user_id", ["hygglo_user_id"])

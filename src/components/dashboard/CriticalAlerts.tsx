@@ -39,10 +39,22 @@ interface QtyDriftSample {
   expanded_n: number;
 }
 
+interface BlacklistAlert {
+  reservation_id: string;
+  renter_name: string | null;
+  order_step: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  items: string[];
+  account_slug: string | null;
+  reason: string | null;
+}
+
 interface Props {
   conflicts: Conflict[];
   qty_drift_count?: number;
   qty_drift_sample?: QtyDriftSample[];
+  blacklist_alerts?: BlacklistAlert[];
 }
 
 const fmtDate = (d: string | null) => {
@@ -86,13 +98,19 @@ const KIND_COLOR: Record<ConflictReservation["kind"], string> = {
   pending: "#ec4899",
 };
 
-export function CriticalAlerts({ conflicts, qty_drift_count = 0, qty_drift_sample = [] }: Props) {
+export function CriticalAlerts({
+  conflicts,
+  qty_drift_count = 0,
+  qty_drift_sample = [],
+  blacklist_alerts = [],
+}: Props) {
   // Treat a missing severity (older backend during a deploy) as confirmed so
   // nothing is silently downgraded.
   const confirmed = conflicts.filter((c) => c.severity !== "pending");
   const pending = conflicts.filter((c) => c.severity === "pending");
   const hasDrift = qty_drift_count > 0;
-  if (!confirmed.length && !pending.length && !hasDrift) return null;
+  const hasBlacklist = blacklist_alerts.length > 0;
+  if (!confirmed.length && !pending.length && !hasDrift && !hasBlacklist) return null;
 
   return (
     <>
@@ -106,6 +124,7 @@ export function CriticalAlerts({ conflicts, qty_drift_count = 0, qty_drift_sampl
       `}</style>
 
       <div className="space-y-2 mb-3">
+        {hasBlacklist && <BlacklistBanner alerts={blacklist_alerts} />}
         {confirmed.length > 0 && <OverbookBanner conflicts={confirmed} variant="confirmed" />}
         {pending.length > 0 && <OverbookBanner conflicts={pending} variant="pending" />}
         {hasDrift && <QtyDriftBadge count={qty_drift_count} sample={qty_drift_sample} />}
@@ -375,6 +394,60 @@ function ClashTimeline({
         <span>{fmtDate(new Date(min).toISOString().slice(0, 10))}</span>
         <span>{fmtDate(new Date(max).toISOString().slice(0, 10))}</span>
       </div>
+    </div>
+  );
+}
+
+// Blacklisted-renter alert — a flagged renter has a LIVE booking (request → out).
+function BlacklistBanner({ alerts }: { alerts: BlacklistAlert[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const renterCount = new Set(alerts.map((a) => a.renter_name ?? "?")).size;
+  return (
+    <div
+      className={!expanded ? "ob-pulse rounded-xl" : "rounded-xl"}
+      style={
+        {
+          background: "linear-gradient(135deg, rgba(239,68,68,0.18), rgba(127,29,29,0.12))",
+          border: "1px solid rgba(239,68,68,0.5)",
+          "--ring": "rgba(239,68,68,0.55)",
+        } as React.CSSProperties
+      }
+    >
+      <button onClick={() => setExpanded((x) => !x)} className="w-full flex items-center gap-3 text-left p-3">
+        <span
+          className="flex-shrink-0 flex items-center justify-center rounded-lg text-base"
+          style={{ width: 34, height: 34, background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.45)" }}
+        >
+          ⛔
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-bold" style={{ color: "#ef4444" }}>
+            Blacklisted renter active · {renterCount} renter{renterCount === 1 ? "" : "s"}
+          </div>
+          <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.62)" }}>
+            {alerts.length} live booking{alerts.length === 1 ? "" : "s"} from a flagged renter — review
+          </div>
+        </div>
+        <span className="text-sm" style={{ color: "#ef4444", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 space-y-1.5">
+          {alerts.map((a) => (
+            <div key={a.reservation_id} className="rounded-lg p-2" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(239,68,68,0.3)" }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[12px] font-semibold text-rose-50">{a.renter_name ?? "Unknown"}</span>
+                {a.order_step && (
+                  <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.18)", color: "#f87171" }}>{a.order_step}</span>
+                )}
+                <span className="text-[10px] text-white/45">{fmtDate(a.start_date)} → {fmtDate(a.end_date)}</span>
+                {a.account_slug && <span className="text-[10px] text-white/35">[{a.account_slug}]</span>}
+              </div>
+              {a.reason && <div className="text-[10px] mt-0.5" style={{ color: "#f87171" }}>reason: {a.reason}</div>}
+              {a.items.length > 0 && <div className="text-[10px] text-white/45 truncate mt-0.5">{a.items.join(", ")}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
