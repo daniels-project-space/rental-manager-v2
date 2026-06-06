@@ -765,7 +765,13 @@ export const getStatsDrawerData = query({
           // (2) LLM resolved_items[i] with structural sanity check.
           const ri = resolved[i];
           if (ri) {
-            if (passesNameSanityCheck(ri.item_name_canonical, hItems)) {
+            // Check the name against THIS listing position only. Passing all
+            // hItems let a resolved_items[i] that is misaligned with the
+            // hygglo_items[] positions (longer resolved[] on bundle rows) match
+            // because its name appeared in SOME other listing — double-counting
+            // that item (e.g. an FX3 counted once via its own listing and again
+            // via a gimbal listing position). Position-scoped check fixes it.
+            if (passesNameSanityCheck(ri.item_name_canonical, [hItems[i]])) {
               const qty = ri.qty ?? q;
               out.set(String(ri.item_id), (out.get(String(ri.item_id)) ?? 0) + qty);
               continue;
@@ -936,23 +942,44 @@ export const getStatsDrawerData = query({
           start_date: r.start_date as string,
           pickup_date: r.pickup_date as string | null | undefined,
         });
+      // Time-aware occupancy: a same-day handover (one rental returns, the next
+      // is picked up LATER the same day) is not a real overlap. Build datetime
+      // strings "YYYY-MM-DDThh:mm" from the effective dates + chat-extracted
+      // pickup_time / return_time. Missing times default to all-day (00:00
+      // pickup, 23:59 return) so behaviour is unchanged where we lack the data —
+      // only KNOWN times can shrink an overlap, never invent one.
+      const startDT = (r: ResRow): string =>
+        effStart(r) + "T" + (((r as any).pickup_time as string | undefined) || "00:00");
+      const endDT = (r: ResRow): string => {
+        const ed = effEnd(r);
+        const rawEnd = (((r as any).return_date as string | undefined) ?? (r.end_date as string));
+        // When overdue-grace pushed the end past the booked return we have no
+        // time for the extra day(s) → treat as out all day.
+        const tm = ed > rawEnd ? "23:59" : (((r as any).return_time as string | undefined) || "23:59");
+        return ed + "T" + tm;
+      };
       let worstStart = "";
+      let worstInstant = "";
       let worstCount = 0;
-      let worstEnd = "";
       // Worst CONFIRMED-only concurrency (ongoing + upcoming; excludes pending).
       // Lets us tell a live oversell apart from one that only appears if a
       // pending request is accepted — pending bookings don't block the calendar.
       let worstConfirmedCount = 0;
-      const scanFrom = todayIso;
-      const scanTo = horizonEnd;
-      const startDates = matchingRes.map((m) => effStart(m.r as ResRow));
-      const endDates = matchingRes.map((m) => effEnd(m.r as ResRow));
-      const candidates = Array.from(
-        new Set<string>([scanFrom, ...startDates, ...endDates].filter((d) => d >= scanFrom && d <= scanTo)),
+      const scanFromDT = todayIso + "T00:00";
+      const scanToDT = horizonEnd + "T23:59";
+      // Concurrency only rises at a pickup instant, so it suffices to evaluate at
+      // each member's start datetime (and the scan start). A unit is out over the
+      // half-open window [startDT, endDT): a return at exactly t frees it.
+      const instants = Array.from(
+        new Set<string>(
+          [scanFromDT, ...matchingRes.map((m) => startDT(m.r as ResRow))].filter(
+            (x) => x >= scanFromDT && x <= scanToDT,
+          ),
+        ),
       ).sort();
-      for (const d of candidates) {
+      for (const t of instants) {
         const overlapping = matchingRes.filter(
-          (m) => effStart(m.r as ResRow) <= d && effEnd(m.r as ResRow) >= d,
+          (m) => startDT(m.r as ResRow) <= t && endDT(m.r as ResRow) > t,
         );
         const qtySum = overlapping.reduce(
           (s, m) => s + (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0),
@@ -964,15 +991,15 @@ export const getStatsDrawerData = query({
         );
         if (qtySum > worstCount) {
           worstCount = qtySum;
-          worstStart = d;
-          worstEnd = d;
+          worstInstant = t;
+          worstStart = t.slice(0, 10);
         }
         if (confirmedSum > worstConfirmedCount) worstConfirmedCount = confirmedSum;
       }
-      if (worstCount > item.qty && worstStart) {
-        // Compute the inclusive range these reservations all share
+      if (worstCount > item.qty && worstInstant) {
+        // The exact set of reservations concurrent at the peak instant.
         const overlappingSet = matchingRes.filter(
-          (m) => effStart(m.r as ResRow) <= worstStart && effEnd(m.r as ResRow) >= worstStart,
+          (m) => startDT(m.r as ResRow) <= worstInstant && endDT(m.r as ResRow) > worstInstant,
         );
         const earliestEnd = overlappingSet
           .map((m) => effEnd(m.r as ResRow))
