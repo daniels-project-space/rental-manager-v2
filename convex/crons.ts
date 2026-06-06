@@ -197,4 +197,13 @@ crons.weekly(
   {},
 );
 
+// Auto-close returns Hygglo has confirmed (order_step REVIEWED) so the Return
+// Hub only shows gear genuinely still out. Conservative (recent + REVIEWED only).
+crons.daily(
+  "auto_close_reviewed_returns",
+  { hourUTC: 5, minuteUTC: 0 },
+  internal.returns_reconcile.reconcile,
+  {},
+);
+
 export default crons;

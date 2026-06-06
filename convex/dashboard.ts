@@ -2039,6 +2039,58 @@ export const getStatsDrawerData = query({
       expanded_n: r.expanded_n,
     }));
 
+    // ── Blacklisted-renter alerts ──────────────────────────────────────────
+    // Every LIVE booking (request → out; not cancelled/declined/completed/
+    // obsolete) from a blacklisted renter, surfaced top-of-dashboard so a repeat
+    // bad actor is caught at request time and all the way through the rental.
+    const blacklistAlerts: Array<{
+      reservation_id: string;
+      renter_name: string | null;
+      order_step: string | null;
+      start_date: string | null;
+      end_date: string | null;
+      items: string[];
+      account_slug: string | null;
+      reason: string | null;
+    }> = [];
+    {
+      const allRenters = await ctx.db.query("renters").collect();
+      const blByHuid = new Map<string, string | null>();
+      const blByName = new Map<string, string | null>();
+      const blById = new Map<string, string | null>();
+      for (const rt of allRenters) {
+        if (!(rt.blacklisted || rt.blacklist)) continue;
+        const reason = rt.blacklist_reason ?? null;
+        if (rt.hygglo_user_id) blByHuid.set(rt.hygglo_user_id, reason);
+        blById.set(rt._id as string, reason);
+        const nm = (rt.display_name ?? "").trim().toLowerCase();
+        if (nm) blByName.set(nm, reason);
+      }
+      if (blById.size > 0) {
+        for (const r of allRes) {
+          if (r.status === "cancelled" || r.status === "declined" || r.status === "completed" || r.is_obsolete) continue;
+          const rid = r.renter_id as string | undefined;
+          const huid = (r as { hygglo_user_id?: string }).hygglo_user_id;
+          const nm = (r.renter_name ?? "").trim().toLowerCase();
+          const reason =
+            (rid && blById.has(rid) ? blById.get(rid) : undefined) ??
+            (huid && blByHuid.has(huid) ? blByHuid.get(huid) : undefined) ??
+            (blByName.has(nm) ? blByName.get(nm) : undefined);
+          if (reason === undefined) continue;
+          blacklistAlerts.push({
+            reservation_id: (r.hygglo_order_id ?? r._id) as string,
+            renter_name: r.renter_name ?? null,
+            order_step: r.order_step ?? null,
+            start_date: r.start_date ?? null,
+            end_date: r.end_date ?? null,
+            items: (r.items ?? []).map((i) => i.item_name).slice(0, 3),
+            account_slug: r.account_slug ?? null,
+            reason: reason ?? null,
+          });
+        }
+      }
+    }
+
     return {
       active: {
         total: activeTotal,
@@ -2054,6 +2106,7 @@ export const getStatsDrawerData = query({
       // untracked: paid+verifying rows whose items aren't in master inventory.
       // qty_drift_count: open rows in qty_drift_alerts (Layer B audit).
       conflicts,
+      blacklist_alerts: blacklistAlerts,
       qty_drift_count,
       qty_drift_sample,
       untracked: untrackedPayload,

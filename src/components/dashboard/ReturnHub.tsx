@@ -8,6 +8,16 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
 
+type RenterTrust = {
+  blacklisted: boolean;
+  whitelisted: boolean;
+  blacklist_reason: string | null;
+  total_rentals: number | null;
+  rating: number | null;
+  note_count: number;
+  notes: string | null;
+};
+
 type DueReturn = {
   reservationId: Id<"reservations">;
   renterName: string;
@@ -15,7 +25,60 @@ type DueReturn = {
   endDate?: string;
   isOverdue: boolean;
   accountSlug?: string;
+  orderStep?: string | null;
+  imageUrl?: string | null;
+  renter?: RenterTrust;
 };
+
+function Thumb({ url, name, size = 36 }: { url?: string | null; name: string; size?: number }) {
+  const [broken, setBroken] = useState(false);
+  if (url && !broken) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return (
+      <img
+        src={url}
+        alt=""
+        onError={() => setBroken(true)}
+        className="flex-shrink-0 rounded-lg object-cover"
+        style={{ width: size, height: size, background: "rgba(255,255,255,0.05)" }}
+        loading="lazy"
+      />
+    );
+  }
+  return (
+    <div
+      className="flex-shrink-0 flex items-center justify-center rounded-lg text-xs font-bold"
+      style={{ width: size, height: size, background: "rgba(255,255,255,0.06)", color: "#8b8fa3" }}
+    >
+      {name.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function TrustBadge({ t }: { t?: RenterTrust }) {
+  if (!t) return null;
+  if (t.blacklisted)
+    return (
+      <span
+        className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+        style={{ background: "rgba(239,68,68,0.18)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)" }}
+        title={t.blacklist_reason ?? "blacklisted"}
+      >
+        ⛔ blacklisted
+      </span>
+    );
+  if (t.whitelisted)
+    return (
+      <span
+        className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+        style={{ background: "rgba(34,197,94,0.16)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.35)" }}
+        title={t.notes ?? "trusted"}
+      >
+        ✓ trusted
+      </span>
+    );
+  return null;
+}
 
 function ReturnModal({
   item,
@@ -24,17 +87,19 @@ function ReturnModal({
 }: {
   item: DueReturn;
   onClose: () => void;
-  onConfirm: (condition: string, notes: string) => Promise<void>;
+  onConfirm: (condition: string, notes: string, blacklist: boolean, reason: string) => Promise<void>;
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [condition, setCondition] = useState<"good" | "minor" | "major">("good");
   const [notes, setNotes] = useState("");
+  const [blacklist, setBlacklist] = useState(false);
+  const [reason, setReason] = useState("");
 
   function handleConfirm() {
     if (step === 1) setStep(2);
     else if (step === 2) {
       setStep(3);
-      onConfirm(condition, notes).finally(() => setTimeout(onClose, 2000));
+      onConfirm(condition, notes, blacklist, reason).finally(() => setTimeout(onClose, 1600));
     }
   }
 
@@ -47,19 +112,27 @@ function ReturnModal({
       <div className="glass-card p-6 w-full max-w-sm">
         <div className="flex gap-2 mb-5">
           {[1, 2, 3].map((s) => (
-            <div
-              key={s}
-              className="flex-1 h-1 rounded-full"
-              style={{ background: step >= s ? "#22c55e" : "rgba(255,255,255,0.1)" }}
-            />
+            <div key={s} className="flex-1 h-1 rounded-full" style={{ background: step >= s ? "#22c55e" : "rgba(255,255,255,0.1)" }} />
           ))}
         </div>
 
         {step === 1 && (
           <>
             <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">Confirm Return</h3>
-            <p className="text-sm text-[#8b8fa3] mb-1">Renter: <span className="text-[#e4e6eb]">{item.renterName}</span></p>
-            <p className="text-sm text-[#8b8fa3] mb-4">Items: <span className="text-[#e4e6eb]">{item.itemNames.join(", ")}</span></p>
+            <div className="flex items-center gap-3 mb-3">
+              <Thumb url={item.imageUrl} name={item.renterName} size={44} />
+              <div className="min-w-0">
+                <div className="text-sm text-[#e4e6eb] flex items-center gap-2">
+                  {item.renterName} <TrustBadge t={item.renter} />
+                </div>
+                <div className="text-xs text-[#8b8fa3] truncate">{item.itemNames.join(", ")}</div>
+              </div>
+            </div>
+            {item.renter?.blacklisted && (
+              <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}>
+                ⛔ This renter is blacklisted{item.renter.blacklist_reason ? `: ${item.renter.blacklist_reason}` : ""}.
+              </div>
+            )}
             <div className="flex gap-2 justify-end">
               <button onClick={onClose} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Cancel</button>
               <button onClick={handleConfirm} className="text-sm px-4 py-1.5 rounded transition-colors" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }}>Confirm</button>
@@ -70,7 +143,7 @@ function ReturnModal({
         {step === 2 && (
           <>
             <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">Condition Check</h3>
-            <div className="space-y-2 mb-4">
+            <div className="space-y-2 mb-3">
               {(["good", "minor", "major"] as const).map((c) => (
                 <label key={c} className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="condition" value={c} checked={condition === c} onChange={() => setCondition(c)} className="accent-[#22c55e]" />
@@ -81,12 +154,31 @@ function ReturnModal({
               ))}
             </div>
             <textarea
-              placeholder="Optional notes"
+              placeholder="Optional notes (saved to renter history)"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full text-sm rounded-lg p-2 mb-4 resize-none h-16"
+              className="w-full text-sm rounded-lg p-2 mb-3 resize-none h-14"
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb" }}
             />
+            {condition !== "good" && !item.renter?.blacklisted && (
+              <label className="flex items-start gap-2 mb-3 cursor-pointer">
+                <input type="checkbox" checked={blacklist} onChange={(e) => setBlacklist(e.target.checked)} className="accent-[#ef4444] mt-0.5" />
+                <span className="text-xs text-[#f87171]">
+                  Blacklist {item.renterName}
+                  {blacklist && (
+                    <input
+                      type="text"
+                      placeholder="reason"
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      onClick={(e) => e.preventDefault()}
+                      className="block mt-1 w-full text-xs rounded p-1"
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(239,68,68,0.3)", color: "#e4e6eb" }}
+                    />
+                  )}
+                </span>
+              </label>
+            )}
             <div className="flex gap-2 justify-end">
               <button onClick={() => setStep(1)} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
               <button onClick={handleConfirm} className="text-sm px-4 py-1.5 rounded transition-colors" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }}>Mark Returned</button>
@@ -98,7 +190,7 @@ function ReturnModal({
           <div className="flex flex-col items-center py-4 gap-3">
             <div className="text-5xl animate-bounce" style={{ color: "#22c55e" }}>✓</div>
             <p className="text-base font-semibold" style={{ color: "#22c55e" }}>Returned!</p>
-            <p className="text-xs text-[#8b8fa3]">Closing automatically…</p>
+            {blacklist && <p className="text-xs" style={{ color: "#f87171" }}>Renter blacklisted</p>}
           </div>
         )}
       </div>
@@ -108,19 +200,18 @@ function ReturnModal({
 
 export function ReturnHub() {
   const { activeAccountSlug } = useAccount();
-  // MV-backed (pass 12a) — v.any() payload, recast to the local DueReturn shape.
-  const rows = useQuery(api.reservations.getDueReturns, {
-    accountSlug: activeAccountSlug,
-  }) as DueReturn[] | undefined;
+  const rows = useQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
   const [active, setActive] = useState<DueReturn | null>(null);
   const markReturned = useMutation(api.reservations.markReturned);
 
-  async function handleReturn(condition: string, notes: string) {
+  async function handleReturn(condition: string, notes: string, blacklist: boolean, reason: string) {
     if (!active) return;
     await markReturned({
       reservationId: active.reservationId,
       condition,
       notes: notes || undefined,
+      blacklistRenter: blacklist || undefined,
+      blacklistReason: blacklist ? reason || undefined : undefined,
     });
   }
 
@@ -134,43 +225,48 @@ export function ReturnHub() {
           title="Return Hub"
           badge={
             rows !== undefined && rows.length > 0 ? (
-              <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}>
-                {rows.length}
-              </span>
+              <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}>{rows.length}</span>
             ) : undefined
           }
         />
         {rows === undefined ? (
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => <SkeletonBlock key={i} className="h-12 w-full" />)}
-          </div>
+          <div className="space-y-2">{[1, 2, 3].map((i) => <SkeletonBlock key={i} className="h-14 w-full" />)}</div>
         ) : rows.length === 0 ? (
-          <EmptyState message="No returns due today" icon="checkmark" />
+          <EmptyState message="No returns due — all gear is back" icon="checkmark" />
         ) : (
           <>
-            <div className="space-y-1 mb-3">
+            <div className="space-y-1.5 mb-3">
               {rows.map((r) => {
-                const dotColor = r.accountSlug === "dbcinema" ? "#6ea8fe" : "#22c55e";
+                const accColor = r.accountSlug === "dbcinema" ? "#6ea8fe" : "#22c55e";
                 return (
                   <div
                     key={String(r.reservationId)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg"
+                    className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg"
                     style={{
-                      borderLeft: r.isOverdue ? "2px solid #ef4444" : "2px solid rgba(255,255,255,0.1)",
-                      background: r.isOverdue ? "rgba(239,68,68,0.05)" : "transparent",
+                      borderLeft: r.renter?.blacklisted ? "3px solid #ef4444" : r.isOverdue ? "3px solid #f59e0b" : "3px solid rgba(255,255,255,0.1)",
+                      background: r.renter?.blacklisted ? "rgba(239,68,68,0.06)" : r.isOverdue ? "rgba(245,158,11,0.05)" : "transparent",
                     }}
                   >
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} />
+                    <Thumb url={r.imageUrl} name={r.renterName} />
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-[#e4e6eb] truncate">{r.renterName}</div>
+                      <div className="text-sm text-[#e4e6eb] truncate flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accColor }} />
+                        <span className="truncate">{r.renterName}</span>
+                        <TrustBadge t={r.renter} />
+                        {!!r.renter?.note_count && (
+                          <span className="text-[9px] text-[#8b8fa3] flex-shrink-0" title={r.renter?.notes ?? ""}>📝{r.renter.note_count}</span>
+                        )}
+                      </div>
                       <div className="text-xs text-[#8b8fa3] truncate">{r.itemNames.join(", ")}</div>
                     </div>
-                    <span className="text-xs flex-shrink-0" style={{ color: r.isOverdue ? "#ef4444" : "#f59e0b" }}>
-                      {r.isOverdue ? "OVERDUE" : r.endDate}
+                    <span className="text-xs flex-shrink-0 text-right" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
+                      {r.isOverdue ? "OVERDUE" : "due"}
+                      <br />
+                      <span className="text-[10px]">{r.endDate}</span>
                     </span>
                     <button
-                      onClick={() => setActive(r as DueReturn)}
-                      className="text-xs px-2 py-1 rounded flex-shrink-0 transition-colors"
+                      onClick={() => setActive(r)}
+                      className="text-xs px-2.5 py-1.5 rounded flex-shrink-0 transition-colors"
                       style={{ border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e" }}
                     >
                       Return
@@ -179,9 +275,7 @@ export function ReturnHub() {
                 );
               })}
             </div>
-            <p className="text-xs text-[#8b8fa3]">
-              {todayCount} due today · {overdueCount} overdue
-            </p>
+            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · auto-closes when Hygglo confirms</p>
           </>
         )}
       </Card>
