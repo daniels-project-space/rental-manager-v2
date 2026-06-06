@@ -366,6 +366,10 @@ export default defineSchema({
     last_polled_at: v.optional(v.number()),
     /** Last Hygglo filter the row was seen in: "pending" | "current" | "future" | "obsolete". */
     source_filter: v.optional(v.string()),
+    /** Open damage/loss case — pulls the rental OUT of the Return Hub (tracked
+     *  as a case, not a pending return). Set by insurance_claims:openCaseFromReservation. */
+    case_open: v.optional(v.boolean()),
+    case_id: v.optional(v.id("insurance_claims")),
     /** Phase 18.2 — monotonic activity timestamp from Hygglo's order-list
      *  response (sort=latest-activity). Used by poll-hygglo to skip the
      *  per-order detail fetch when the list value matches the stored value
@@ -713,6 +717,12 @@ export default defineSchema({
     credited_to_month: v.optional(v.string()), // YYYY-MM bucket for revenue chart
     payout_amount_gbp: v.optional(v.number()), // recovered amount (may differ from amount_gbp)
     credited_at: v.optional(v.number()),       // Date.now() when creditToRevenue ran
+    // ── Case pipeline (build-out) ──
+    stage: v.optional(v.string()),             // case_opened|in_for_repair|quote_received|payout_confirmation|added_to_revenue|denied
+    reservation_id: v.optional(v.id("reservations")),
+    renter_id: v.optional(v.id("renters")),
+    renter_name: v.optional(v.string()),
+    opened_from: v.optional(v.string()),       // "return_hub" | "manual"
   }).index("by_account", ["account_slug"])
     .index("by_claim_date", ["claim_date"]),
 

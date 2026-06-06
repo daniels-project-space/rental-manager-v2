@@ -80,6 +80,7 @@ export const getDueReturns = query({
     // order_step fall back to "end_date has passed". Obsolete excluded.
     const isOut = (r: CandRow) =>
       !r.is_obsolete &&
+      !(r as { case_open?: boolean }).case_open &&
       r.order_step !== "REVIEWED" &&
       (r.order_step === "DELIVERED" ||
         r.order_step === "RETURNED" ||
@@ -105,6 +106,12 @@ export const getDueReturns = query({
     // earlier date.
     const groups = groupLogicalRentals(candidates as unknown as ReservationRow[]);
 
+    // Item-name shortening — SAME source the Active Rentals tile uses
+    // (listing_short_names keyed by account#product_id). No extra processing.
+    const shortRows = await ctx.db.query("listing_short_names").collect();
+    const shortByProduct = new Map<string, string>();
+    for (const sn of shortRows) shortByProduct.set(`${sn.account_slug}#${sn.product_id}`, sn.short_name);
+
     const maps = await renterMaps(ctx);
     const results: Array<Record<string, unknown>> = [];
     for (const g of groups) {
@@ -127,13 +134,20 @@ export const getDueReturns = query({
       const imageUrl =
         hy.find((h) => h.image_url)?.image_url ??
         ((base as { photos_urls?: string[] }).photos_urls?.[0] ?? null);
-      const itemNames = Array.from(
-        new Set(
-          members.flatMap((m) =>
-            ((m.items ?? []) as Array<{ item_name: string }>).map((i) => i.item_name),
-          ),
-        ),
-      );
+      const itemNames = (() => {
+        const names = new Set<string>();
+        for (const m of members) {
+          const hy = ((m as { hygglo_items?: Array<{ name?: string; product_id?: number }> }).hygglo_items) ?? [];
+          let added = false;
+          for (const h of hy) {
+            const sn = h.product_id != null ? shortByProduct.get(`${m.account_slug}#${h.product_id}`) : undefined;
+            if (sn) { names.add(sn); added = true; }
+          }
+          if (!added)
+            for (const i of (m.items ?? []) as Array<{ item_name: string }>) names.add(i.item_name);
+        }
+        return Array.from(names);
+      })();
       results.push({
         reservationId: base._id,
         memberIds: g.member_ids,
