@@ -95,9 +95,22 @@ export const getDueReturns = query({
         r.end_date >= staleCutoff,
     );
 
+    // v1 parity (completed-scan): a rental is only "still to return" while Hygglo
+    // STILL returns it in the active poll. Once Hygglo marks it returned/completed
+    // it drops from the poll and last_polled_at goes stale — even though
+    // order_step stays frozen at RETURNED. So keep only rows refreshed in the most
+    // recent poll wave. Using maxPolled (relative) instead of an absolute age makes
+    // this robust to poller cadence and to a paused poller (everything shifts
+    // together; only genuinely-dropped rows fall outside the wave).
+    const polledAt = (r: { last_polled_at?: number; _creationTime?: number }) =>
+      r.last_polled_at ?? r._creationTime ?? 0;
+    const maxPolled = due.reduce((m, r) => Math.max(m, polledAt(r)), 0);
+    const POLL_WAVE_MS = 6 * 60 * 60 * 1000;
+    const stillOut = maxPolled > 0 ? due.filter((r) => polledAt(r) >= maxPolled - POLL_WAVE_MS) : due;
+
     const maps = await renterMaps(ctx);
     const results = await Promise.all(
-      due.map(async (r) => {
+      stillOut.map(async (r) => {
         const renterDoc = await renterForReservation(ctx, r, maps);
         const t = trustOf(renterDoc);
         const hy = (r.hygglo_items ?? []) as Array<{ image_url?: string }>;
