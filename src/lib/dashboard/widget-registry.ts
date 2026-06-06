@@ -101,10 +101,10 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
 
 // Widgets requiring multi-cell spans on the StatsGrid. Any id NOT listed here
 // renders at the default 1x1 size. Existing hero behaviour (1-row, col-span-2)
-// can be expressed as `{ col: 2, row: 1 }`. The 2x2 entry (e.g. `walle`)
-// unlocks the WallE hero card without touching StatsGrid for future spans.
+// can be expressed as `{ col: 2, row: 1 }`, and a 2x2 hero as
+// `{ col: 2, row: 2 }`. `walle` defaults to a small `{ col: 1, row: 2 }` card.
 export const HERO_SPANS: Record<string, { col: number; row: number }> = {
-  walle: { col: 2, row: 2 },
+  walle: { col: 1, row: 2 },
 };
 
 // Backwards-compat: legacy 1-row hero ids (col-span-2 only). Keep this list as
