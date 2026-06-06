@@ -723,6 +723,9 @@ export default defineSchema({
     renter_id: v.optional(v.id("renters")),
     renter_name: v.optional(v.string()),
     opened_from: v.optional(v.string()),       // "return_hub" | "manual"
+    // Items physically OUT ON REPAIR for this case — reduce effective stock
+    // until the case is closed (terminal stage).
+    repair_item_ids: v.optional(v.array(v.id("items"))),
   }).index("by_account", ["account_slug"])
     .index("by_claim_date", ["claim_date"]),
 

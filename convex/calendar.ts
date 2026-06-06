@@ -1202,6 +1202,15 @@ export const searchCalendarInventory = query({
     // Search the canonical inventory by name / slug / tag (kind, sub_kind,
     // category) and aliases. Substring, case-insensitive.
     const allItems = await ctx.db.query("items").collect();
+    // Units out on repair (open cases) reduce effective stock here too.
+    const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
+    const repairByItem = new Map<string, number>();
+    for (const c of await ctx.db.query("insurance_claims").collect()) {
+      const cc = c as { stage?: string; status?: string; repair_item_ids?: string[] };
+      const st = cc.stage ?? (cc.status === "denied" ? "denied" : cc.status === "settled" ? "added_to_revenue" : "case_opened");
+      if (REPAIR_TERMINAL.has(st)) continue;
+      for (const iid of (cc.repair_item_ids ?? [])) repairByItem.set(iid as string, (repairByItem.get(iid as string) ?? 0) + 1);
+    }
     const matched = allItems.filter((it) => {
       // Only real, owned inventory — marketing-only / zero-qty listings are
       // never "available", so excluding them keeps a red 0 meaning "fully
@@ -1356,7 +1365,7 @@ export const searchCalendarInventory = query({
     const itemsRaw = await Promise.all(
       matched.map(async (it) => {
         const idStr = String(it._id);
-        const total = it.qty ?? 0;
+        const total = Math.max(0, (it.qty ?? 0) - (repairByItem.get(String(it._id)) ?? 0));
         const blackouts = await ctx.db
           .query("owner_unavailability")
           .withIndex("by_item_date", (qb) => qb.eq("item_id", it._id))

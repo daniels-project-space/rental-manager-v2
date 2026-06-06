@@ -94,8 +94,9 @@ export const openCaseFromReservation = mutation({
     memberIds: v.optional(v.array(v.id("reservations"))),
     projected_value_gbp: v.number(),
     description: v.optional(v.string()),
+    repair_item_ids: v.optional(v.array(v.id("items"))),
   },
-  handler: async (ctx, { reservationId, memberIds, projected_value_gbp, description }) => {
+  handler: async (ctx, { reservationId, memberIds, projected_value_gbp, description, repair_item_ids }) => {
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
     const itemName = (res.items ?? [])[0]?.item_name ?? null;
@@ -121,6 +122,7 @@ export const openCaseFromReservation = mutation({
       status: "open",
       stage: "case_opened",
       opened_from: "return_hub",
+      repair_item_ids,
       created_at: Date.now(),
     });
 
