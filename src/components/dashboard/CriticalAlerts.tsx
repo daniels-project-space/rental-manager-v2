@@ -12,6 +12,7 @@ interface ConflictReservation {
   account_slug: string;
   start_date: string;
   end_date: string;
+  image_url?: string | null;
 }
 
 interface Conflict {
@@ -260,27 +261,119 @@ function ConflictCard({ conflict, variant }: { conflict: Conflict; variant: Vari
         Clashes from <span style={{ color: t.base, fontWeight: 600 }}>{fmtDate(conflict.conflict_start)}</span>
       </div>
 
-      {/* overlapping bookings — one compact line each */}
-      <div className="mt-1.5 space-y-1">
+      {/* visual crossover timeline — bars per booking, red line at the clash */}
+      <ClashTimeline reservations={conflict.reservations} conflictStart={conflict.conflict_start} />
+
+      {/* the clashing bookings — each with its own listing photo */}
+      <div className="mt-2 space-y-1.5">
         {conflict.reservations.map((r) => (
-          <div key={r.reservation_id} className="flex items-center gap-2 text-[11px]">
-            <span
-              className="inline-block flex-shrink-0 rounded-full"
-              style={{ width: 7, height: 7, background: KIND_COLOR[r.kind] }}
-              title={r.kind}
-            />
-            <span className="text-white/90 font-medium truncate">{r.renter_name ?? "Unknown renter"}</span>
-            <span className="text-white/45 whitespace-nowrap">
-              {fmtDate(r.start_date)} → {fmtDate(r.end_date)}
-            </span>
-            <span
-              className="ml-auto flex-shrink-0 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded"
-              style={{ background: `${KIND_COLOR[r.kind]}22`, color: KIND_COLOR[r.kind] }}
-            >
-              {r.kind}
-            </span>
-          </div>
+          <ResvRow key={r.reservation_id} r={r} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+// One clashing booking: its listing photo + renter + dates + kind tag.
+function ResvRow({ r }: { r: ConflictReservation }) {
+  const [broken, setBroken] = useState(false);
+  const color = KIND_COLOR[r.kind];
+  const showImg = !!r.image_url && !broken;
+  return (
+    <div
+      className="flex items-center gap-2 rounded-md p-1"
+      style={{ background: "rgba(255,255,255,0.03)", borderLeft: `3px solid ${color}` }}
+    >
+      {showImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={r.image_url as string}
+          alt=""
+          onError={() => setBroken(true)}
+          className="flex-shrink-0 rounded object-cover"
+          style={{ width: 32, height: 32, background: "rgba(255,255,255,0.05)" }}
+          loading="lazy"
+        />
+      ) : (
+        <div
+          className="flex-shrink-0 flex items-center justify-center rounded text-[12px] font-bold"
+          style={{ width: 32, height: 32, background: `${color}22`, color }}
+        >
+          {(r.renter_name ?? "?").charAt(0).toUpperCase()}
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] font-medium text-white/90 truncate">{r.renter_name ?? "Unknown renter"}</div>
+        <div className="text-[10px] text-white/45 tabular-nums">
+          {fmtDate(r.start_date)} → {fmtDate(r.end_date)}
+        </div>
+      </div>
+      <span
+        className="flex-shrink-0 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+        style={{ background: `${color}22`, color }}
+      >
+        {r.kind}
+      </span>
+    </div>
+  );
+}
+
+// Horizontal timeline: each booking is a bar over the shared window so the
+// crossover is obvious; a red line marks where the clash begins.
+function ClashTimeline({
+  reservations,
+  conflictStart,
+}: {
+  reservations: ConflictReservation[];
+  conflictStart: string;
+}) {
+  const parse = (d: string) => new Date(d + "T00:00:00Z").getTime();
+  const starts = reservations.map((r) => parse(r.start_date));
+  const ends = reservations.map((r) => parse(r.end_date));
+  const min = Math.min(...starts);
+  const max = Math.max(...ends);
+  const span = Math.max(max - min, 1);
+  const pct = (t: number) => ((t - min) / span) * 100;
+  const clashX = Math.min(Math.max(pct(parse(conflictStart)), 0), 100);
+  return (
+    <div className="mt-2">
+      <div className="relative">
+        <div
+          className="absolute top-0 bottom-0"
+          style={{ left: `${clashX}%`, width: 2, background: "rgba(239,68,68,0.75)", zIndex: 1, borderRadius: 2 }}
+          title={`clash from ${fmtDate(conflictStart)}`}
+        />
+        <div className="space-y-1">
+          {reservations.map((r) => {
+            const a = pct(parse(r.start_date));
+            const b = pct(parse(r.end_date));
+            const color = KIND_COLOR[r.kind];
+            return (
+              <div
+                key={r.reservation_id}
+                className="relative rounded-full"
+                style={{ height: 9, background: "rgba(255,255,255,0.05)" }}
+              >
+                <div
+                  className="absolute rounded-full"
+                  style={{
+                    left: `${a}%`,
+                    width: `${Math.max(b - a, 3)}%`,
+                    height: 9,
+                    background: color,
+                    opacity: 0.85,
+                    boxShadow: `0 0 6px ${color}66`,
+                  }}
+                  title={`${r.renter_name ?? "?"}: ${fmtDate(r.start_date)}–${fmtDate(r.end_date)}`}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="flex justify-between text-[9px] mt-0.5" style={{ color: "rgba(255,255,255,0.4)" }}>
+        <span>{fmtDate(new Date(min).toISOString().slice(0, 10))}</span>
+        <span>{fmtDate(new Date(max).toISOString().slice(0, 10))}</span>
       </div>
     </div>
   );
@@ -301,9 +394,11 @@ function QtyDriftBadge({ count, sample }: { count: number; sample: QtyDriftSampl
         <span className="text-amber-300 text-sm">⚙</span>
         <div className="flex-1 min-w-0">
           <div className="text-[11px] uppercase tracking-wider font-bold text-amber-200">
-            {count} qty drift{count === 1 ? "" : "s"} — resolver under-count
+            {count} booking{count === 1 ? "" : "s"} with an unmatched listing
           </div>
-          <div className="text-[11px] text-amber-100/70 mt-0.5">run admin_backfill_qty_resolution</div>
+          <div className="text-[11px] text-amber-100/70 mt-0.5">
+            a listing on these isn&apos;t in your master inventory (often an accessory) — info only
+          </div>
         </div>
         <span
           className="text-amber-300 text-sm"

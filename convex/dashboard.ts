@@ -249,6 +249,21 @@ export const getStatsDrawerData = query({
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
       if (cached) {
+        // Re-apply conflict dismissals at READ time so clicking "Resolve" clears
+        // the card instantly. The cached MV payload is rebuilt only on
+        // reservation mutations (not on a dismissal), so without this a resolved
+        // conflict would linger until the next MV refresh.
+        const dismissedNow = new Set(
+          (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
+        );
+        const applyDismissals = (p: unknown): unknown => {
+          const pp = p as { conflicts?: Array<{ conflict_key: string }> } | null;
+          if (!pp || !Array.isArray(pp.conflicts) || dismissedNow.size === 0) return p;
+          return {
+            ...(pp as Record<string, unknown>),
+            conflicts: pp.conflicts.filter((c) => !dismissedNow.has(c.conflict_key)),
+          };
+        };
         // Pass 13c (2026-05-26): skip the 3-row sync_state overlay when the
         // cached scanner snapshot is < 5 min old. Was costing ~6KB × 17000
         // reads/day = ~100MB/day in unnecessary indexed lookups. The
@@ -259,7 +274,7 @@ export const getStatsDrawerData = query({
         const cachedScanAt = cachedPayloadPeek?.scanner?.last_scan_at ?? null;
         const SCANNER_OVERLAY_SKIP_MS = 5 * 60 * 1000;
         if (cachedScanAt && Date.now() - cachedScanAt < SCANNER_OVERLAY_SKIP_MS) {
-          return cached.payload;
+          return applyDismissals(cached.payload);
         }
         // Scanner card needs real-time freshness (drives the "stale poller"
         // warning). Overlay the cached payload with fresh sync_state reads
@@ -287,7 +302,7 @@ export const getStatsDrawerData = query({
           last_run_succeeded: pRow?.lastRunSucceeded ?? cachedScanner.last_run_succeeded ?? null,
           rows_upserted_last: pRow?.rowsUpserted?.reservations ?? 0,
         };
-        return { ...cachedPayload, scanner: freshScanner };
+        return applyDismissals({ ...cachedPayload, scanner: freshScanner });
       }
     }
     const today = new Date().toISOString().slice(0, 10);
@@ -1053,6 +1068,15 @@ export const getStatsDrawerData = query({
             account_slug: r.account_slug ?? "",
             start_date: r.start_date as string,
             end_date: r.end_date as string,
+            // Each clashing booking's own listing photo (Hygglo product image)
+            // so the owner can eyeball which two rentals collide.
+            image_url: (() => {
+              const hy = (r as { hygglo_items?: Array<{ image_url?: string }> }).hygglo_items;
+              const hit = hy?.find((h) => h.image_url)?.image_url;
+              if (hit) return hit;
+              const pu = (r as { photos_urls?: string[] | null }).photos_urls;
+              return pu && pu.length ? pu[0] : null;
+            })(),
           })),
         });
       }
@@ -1992,8 +2016,21 @@ export const getStatsDrawerData = query({
           .query("qty_drift_alerts")
           .withIndex("by_status", (q) => q.eq("status", "open"))
           .collect();
-    const qty_drift_count = qtyDriftRows.length;
-    const qty_drift_sample = qtyDriftRows.slice(0, 10).map((r) => ({
+    // Drop drift on PAST bookings (returned/reviewed/completed): an unmatched
+    // listing on a finished rental is not actionable, so it should not nag.
+    const PAST_DRIFT_STEPS = new Set(["RETURNED", "REVIEWED"]);
+    const driftRes = await Promise.all(
+      qtyDriftRows.map((r) => ctx.db.get(r.reservation_id)),
+    );
+    const liveDriftRows = qtyDriftRows.filter((_, i) => {
+      const res = driftRes[i] as { status?: string; order_step?: string } | null;
+      if (!res) return false;
+      if (res.status === "completed") return false;
+      if (typeof res.order_step === "string" && PAST_DRIFT_STEPS.has(res.order_step)) return false;
+      return true;
+    });
+    const qty_drift_count = liveDriftRows.length;
+    const qty_drift_sample = liveDriftRows.slice(0, 10).map((r) => ({
       reservation_id: r.reservation_id as string,
       hygglo_order_id: r.hygglo_order_id,
       renter_name: r.renter_name ?? null,
