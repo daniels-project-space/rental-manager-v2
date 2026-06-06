@@ -87,11 +87,24 @@ export async function isItemUnitAvailable(
     (h) => (h.status ?? "confirmed") !== "cancelled",
   ).length;
 
-  const available = Math.max(0, totalUnits - bookedUnits);
+  // Units out on repair (open, non-terminal insurance/damage cases) reduce
+  // availability too — same effective-stock rule the overbooking detector,
+  // out-of-stock tile and calendar availability bar use. Date-independent: an
+  // item stays held until the case closes (terminal stage).
+  const claims = await ctx.db.query("insurance_claims").collect();
+  const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
+  const repairHeld = claims.filter((c) => {
+    const cc = c as { stage?: string; status?: string; repair_item_ids?: Id<"items">[] };
+    const st = cc.stage ?? (cc.status === "denied" ? "denied" : cc.status === "settled" ? "added_to_revenue" : "case_opened");
+    if (REPAIR_TERMINAL.has(st)) return false;
+    return (cc.repair_item_ids ?? []).some((id) => id === itemId);
+  }).length;
+
+  const available = Math.max(0, totalUnits - bookedUnits - repairHeld);
   return {
     available,
     total_units: totalUnits,
-    booked_units: bookedUnits,
+    booked_units: bookedUnits + repairHeld,
     is_fully_booked: totalUnits === 0 || available <= 0,
   };
 }
