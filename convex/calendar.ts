@@ -1269,10 +1269,16 @@ export const searchCalendarInventory = query({
     // expanded_items.qty (kit-decomposed) > resolved_items.qty; only matched
     // items are summed.
     const commit = new Map<string, number>();
+    // Time-aware occupancy per (item, date): the clamped [a,b) "HH:MM" window the
+    // unit is actually out on that date. Lets us tell the owner an item that
+    // reads "0 free" by date is in fact free FROM a mid-day return time.
+    const intervals = new Map<string, Array<{ a: string; b: string; qty: number }>>();
     for (const r of confirmed) {
       const effPick = displayPickupDate(r) || r.start_date;
       const effRet = (r.return_date ?? r.end_date) ?? effPick;
       if (!effPick || !effRet) continue;
+      const pickT = ((r as { pickup_time?: string }).pickup_time) || "00:00";
+      const retT = ((r as { return_time?: string }).return_time) || "23:59";
       const exp = (r.expanded_items ?? []).filter(
         (x) => x.item_id && matchedById.has(String(x.item_id)),
       );
@@ -1284,11 +1290,51 @@ export const searchCalendarInventory = query({
       if (lines.length === 0) continue;
       for (const d of dates) {
         if (d < effPick || d > effRet) continue;
+        const a = d === effPick ? pickT : "00:00";
+        const b = d === effRet ? retT : "23:59";
         for (const ln of lines) {
           commit.set(`${ln.id}|${d}`, (commit.get(`${ln.id}|${d}`) ?? 0) + ln.qty);
+          const key = `${ln.id}|${d}`;
+          const arr = intervals.get(key);
+          if (arr) arr.push({ a, b, qty: ln.qty });
+          else intervals.set(key, [{ a, b, qty: ln.qty }]);
         }
       }
     }
+
+    // Time-aware day availability. `free` = units free for the WHOLE day (total −
+    // PEAK concurrent occupancy), so a same-day handover (one returns at 10:15,
+    // the next is picked up at 12:40) no longer double-books the date — the naive
+    // date-sum would report 0 free when a unit is genuinely free all day.
+    // `free_from` = when free === 0 but a unit opens up for the REST of the day
+    // (a late return), the "HH:MM" from which >=1 is available. Occupancy only
+    // rises at pickups, so peak is found by sampling each start instant.
+    const dayAvail = (
+      ivs: Array<{ a: string; b: string; qty: number }> | undefined,
+      total: number,
+    ): { peak: number; free: number; free_from: string | null } => {
+      if (!ivs || ivs.length === 0) return { peak: 0, free: total, free_from: null };
+      const occAt = (t: string) =>
+        ivs.reduce((s, iv) => s + (iv.a <= t && t < iv.b ? iv.qty : 0), 0);
+      const starts = Array.from(new Set(["00:00", ...ivs.map((iv) => iv.a)]));
+      let peak = 0;
+      for (const t of starts) {
+        const o = occAt(t);
+        if (o > peak) peak = o;
+      }
+      const free = Math.max(0, total - peak);
+      if (free >= 1) return { peak, free, free_from: null };
+      // Fully booked at the peak — find the earliest boundary time from which it
+      // stays free for the remainder of the day.
+      const bounds = Array.from(new Set([...ivs.map((iv) => iv.a), ...ivs.map((iv) => iv.b)])).sort();
+      for (const T of bounds) {
+        const stillFree =
+          total - occAt(T) >= 1 &&
+          starts.filter((u) => u >= T).every((u) => total - occAt(u) >= 1);
+        if (stillFree) return { peak, free, free_from: T };
+      }
+      return { peak, free, free_from: null };
+    };
 
     // Reservations that touch a matched item this week → the bar-filter set.
     const reservationIds = new Set<string>();
@@ -1320,8 +1366,16 @@ export const searchCalendarInventory = query({
           const committed = commit.get(`${idStr}|${date}`) ?? 0;
           if (committed > 0) bookedThisWeek = true;
           const black = blackouts.some((b) => b.start_date <= date && b.end_date >= date);
-          const free = black ? 0 : Math.max(0, total - committed);
-          return { date, free, total, booked: black ? total : committed };
+          const da = dayAvail(intervals.get(`${idStr}|${date}`), total);
+          const free = black ? 0 : da.free;
+          // Owner blackout always wins → no partial-time availability.
+          // Suppress the 23:59 end-of-day artefact (a missing return_time
+          // defaults there) — that is not a meaningful "free from" moment.
+          const free_from =
+            !black && da.free <= 0 && da.free_from && da.free_from < "23:59"
+              ? da.free_from
+              : null;
+          return { date, free, total, booked: black ? total : da.peak, free_from };
         });
         if (!bookedThisWeek) return null;
         return {
