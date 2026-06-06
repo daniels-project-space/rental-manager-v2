@@ -49,8 +49,9 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
   { id: "next-rentals",        label: "Next Rentals",           component: NextRentals },
   { id: "return-hub",          label: "Return Hub",             component: ReturnHub },
-  // weekly-calendar is intentionally NOT a dashboard widget — it lives only as
-  // an overlay (CalendarGantt) launched from CalendarStrip's 'Weekly View' button.
+  // weekly-calendar lives only as an overlay (CalendarGantt). It is launched
+  // from CalendarStrip's 'Weekly View' button AND from the compact
+  // `weekly_calendar` stat card (see STAT_WIDGETS) — neither is a full panel.
   { id: "conversation-funnel", label: "Conversation Funnel",    component: ConversationFunnel },
   { id: "item-revenue",        label: "Item Revenue",           component: ItemRevenuePanel },
   { id: "top-bundles",         label: "Top Bundles",            component: TopBundles },
@@ -72,6 +73,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
 export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "walle",           label: "WallE" },
   { id: "active",          label: "Active" },
+  { id: "weekly_calendar", label: "Weekly Calendar" },
   { id: "earnings",        label: "Earnings Today" },
   { id: "monthly",         label: "Monthly" },
   { id: "confirmed",       label: "Confirmed" },
@@ -110,6 +112,7 @@ export const HERO_SPANS: Record<string, { col: number; row: number }> = {
 // can fall back to it when an id is not in HERO_SPANS.
 export const HERO_IDS: ReadonlySet<string> = new Set([
   "active",
+  "weekly_calendar",
   "ongoing",
   "upcoming",
   "business_intel",

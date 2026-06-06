@@ -22,6 +22,7 @@ import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { STAT_WIDGETS, HERO_IDS, HERO_SPANS } from "@/lib/dashboard/widget-registry";
 import { EditableWidget } from "./EditableWidget";
 import ExpandableStatCard from "./ExpandableStatCard";
+import WeeklyCalendarCard from "./stat-cards/WeeklyCalendarCard";
 import ActiveDrawer from "./stat-cards/ActiveDrawer";
 import EarningsDrawer from "./stat-cards/EarningsDrawer";
 import MonthlyDrawer from "./stat-cards/MonthlyDrawer";
@@ -609,6 +610,8 @@ export function StatsGrid() {
           />
         </div>
       ),
+      // ── Compact weekly-calendar launcher → opens the CalendarGantt overlay ──
+      weekly_calendar: <WeeklyCalendarCard />,
       // ── Phase 7: weekly_metrics insight widgets ──
       voluntary_deny:    <VoluntaryDenyHotList    accountSlug={activeAccountSlug} />,
       capacity_gap:      <CapacityGapAlert        accountSlug={activeAccountSlug} />,
