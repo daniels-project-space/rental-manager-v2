@@ -1064,7 +1064,7 @@ export const getStatsDrawerData = query({
           return null;
         })();
         const severity: "confirmed" | "pending" =
-          worstConfirmedCount > item.qty ? "confirmed" : "pending";
+          worstConfirmedCount > effQty ? "confirmed" : "pending";
 
         conflicts.push({
           conflict_key: conflictKey,
