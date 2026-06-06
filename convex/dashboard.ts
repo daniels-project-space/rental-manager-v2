@@ -469,6 +469,19 @@ export const getStatsDrawerData = query({
       : await ctx.db.query("insurance_claims").collect();
     claimRows = claimRows.slice().sort((a, b) => (a.claim_date < b.claim_date ? 1 : a.claim_date > b.claim_date ? -1 : 0));
 
+    // Units currently OUT ON REPAIR per item. Every open (non-terminal) case
+    // holds its repair_item_ids, reducing effective availability until closed.
+    // Cross-account (inventory is shared) so collect all claims.
+    const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
+    const repairByItem = new Map<string, number>();
+    for (const c of await ctx.db.query("insurance_claims").collect()) {
+      const st = c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
+      if (REPAIR_TERMINAL.has(st)) continue;
+      for (const iid of ((c as { repair_item_ids?: string[] }).repair_item_ids ?? [])) {
+        repairByItem.set(iid as string, (repairByItem.get(iid as string) ?? 0) + 1);
+      }
+    }
+
     // ── COLLECT 7: conflict_dismissals (owner-resolved alerts) ────
     const dismissedKeys = new Set<string>(
       (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
@@ -917,6 +930,8 @@ export const getStatsDrawerData = query({
         : ongoingCrossUniq.includes(r) ? "ongoing"
         : "pending";
       const itemIdStr = item._id as string;
+      // Effective capacity = owned qty minus units out on repair (open cases).
+      const effQty = item.qty - (repairByItem.get(itemIdStr) ?? 0);
       for (const r of activeForConflicts) {
         if (!r.start_date || !r.end_date) continue;
         if ((r.start_date as string) > horizonEnd) continue;
@@ -935,7 +950,7 @@ export const getStatsDrawerData = query({
         for (const { r } of rows) total += expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0;
         return total;
       };
-      if (sumQty(matchingRes) <= item.qty) continue;
+      if (sumQty(matchingRes) <= effQty) continue;
 
       // Sweep dates within horizon, count concurrency per day.
       // `effStart` honours an evening-before pickup_date (gear out earlier);
@@ -1011,7 +1026,7 @@ export const getStatsDrawerData = query({
         }
         if (confirmedSum > worstConfirmedCount) worstConfirmedCount = confirmedSum;
       }
-      if (worstCount > item.qty && worstInstant) {
+      if (worstCount > effQty && worstInstant) {
         // The exact set of reservations concurrent at the peak instant.
         const overlappingSet = matchingRes.filter(
           (m) => startDT(m.r as ResRow) <= worstInstant && endDT(m.r as ResRow) > worstInstant,
@@ -1057,7 +1072,7 @@ export const getStatsDrawerData = query({
           item_canonical: item.name_canonical,
           item_image_url: ((item as any).image_url as string | null) ?? resImage,
           severity,
-          qty: item.qty,
+          qty: effQty,
           conflict_start: worstStart,
           conflict_end: earliestEnd,
           overlap_count: worstCount,
@@ -1834,13 +1849,14 @@ export const getStatsDrawerData = query({
       }
     }
     const oosItems = activeItems
-      .filter((i) => (heldNowByItemId.get(i._id as string) ?? 0) >= i.qty)
+      .filter((i) => ((heldNowByItemId.get(i._id as string) ?? 0) + (repairByItem.get(i._id as string) ?? 0)) >= i.qty)
       .slice(0, 15)
       .map((i) => ({
         item_id: i._id as string,
         name: i.name_canonical,
         qty: i.qty,
         heldNow: heldNowByItemId.get(i._id as string) ?? 0,
+        inRepair: repairByItem.get(i._id as string) ?? 0,
       }));
     const out_of_stock = {
       count: oosItems.length,

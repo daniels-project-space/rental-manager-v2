@@ -31,6 +31,7 @@ type DueReturn = {
   returnTime?: string | null;
   memberIds?: Id<"reservations">[];
   memberCount?: number;
+  items?: { item_id: string; name: string }[];
 };
 
 function Thumb({ url, name, size = 36 }: { url?: string | null; name: string; size?: number }) {
@@ -208,16 +209,26 @@ function OpenCaseModal({
 }: {
   item: DueReturn;
   onClose: () => void;
-  onConfirm: (projected: number, description: string) => Promise<void>;
+  onConfirm: (projected: number, description: string, repairItemIds: string[]) => Promise<void>;
 }) {
   const [value, setValue] = useState("");
   const [desc, setDesc] = useState("");
   const [done, setDone] = useState(false);
+  const allItems = item.items ?? [];
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(allItems.map((i) => i.item_id)));
   const projected = Math.max(0, Math.round(Number(value) || 0));
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   function submit() {
     if (projected <= 0 || done) return;
     setDone(true);
-    onConfirm(projected, desc).finally(() => setTimeout(onClose, 1400));
+    onConfirm(projected, desc, Array.from(selected)).finally(() => setTimeout(onClose, 1400));
   }
   return (
     <div
@@ -245,6 +256,19 @@ function OpenCaseModal({
             <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(245,158,11,0.1)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.3)" }}>
               Flags (blacklists) {item.renterName} and moves this rental to the Cases pipeline at stage 1. It leaves the Return Hub.
             </div>
+            {allItems.length > 0 && (
+              <div className="mb-3">
+                <label className="block text-xs text-[#8b8fa3] mb-1">Items out on repair (drop stock until closed)</label>
+                <div className="space-y-1 max-h-28 overflow-y-auto rounded-lg p-1.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  {allItems.map((it) => (
+                    <label key={it.item_id} className="flex items-center gap-2 text-xs text-[#e4e6eb] cursor-pointer">
+                      <input type="checkbox" checked={selected.has(it.item_id)} onChange={() => toggle(it.item_id)} className="accent-[#f59e0b]" />
+                      <span className="truncate">{it.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <label className="block text-xs text-[#8b8fa3] mb-1">Projected case value (£)</label>
             <input
               type="number"
@@ -302,13 +326,14 @@ export function ReturnHub() {
     });
   }
 
-  async function handleOpenCase(projected: number, description: string) {
+  async function handleOpenCase(projected: number, description: string, repairItemIds: string[]) {
     if (!caseFor) return;
     await openCase({
       reservationId: caseFor.reservationId,
       memberIds: caseFor.memberIds && caseFor.memberIds.length > 1 ? caseFor.memberIds : undefined,
       projected_value_gbp: projected,
       description: description || undefined,
+      repair_item_ids: repairItemIds.length ? (repairItemIds as Id<"items">[]) : undefined,
     });
   }
 

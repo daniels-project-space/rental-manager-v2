@@ -148,8 +148,20 @@ export const getDueReturns = query({
         }
         return Array.from(names);
       })();
+      const assocItems = (() => {
+        const m2 = new Map<string, string>();
+        for (const m of members) {
+          const src =
+            ((m as { resolved_items?: Array<{ item_id?: string; item_name_canonical?: string }> }).resolved_items) ??
+            ((m as { expanded_items?: Array<{ item_id?: string; item_name_canonical?: string }> }).expanded_items) ??
+            [];
+          for (const x of src) if (x.item_id) m2.set(String(x.item_id), x.item_name_canonical ?? "item");
+        }
+        return Array.from(m2, ([item_id, name]) => ({ item_id, name }));
+      })();
       results.push({
         reservationId: base._id,
+        items: assocItems,
         memberIds: g.member_ids,
         memberCount: members.length,
         renterName: base.renter_name ?? "Unknown",
