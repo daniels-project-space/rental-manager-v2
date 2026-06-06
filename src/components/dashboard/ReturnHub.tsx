@@ -239,47 +239,59 @@ export function ReturnHub() {
           <EmptyState message="No returns due — all gear is back" icon="checkmark" />
         ) : (
           <>
-            <div className="space-y-1.5 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2 mb-3">
               {rows.map((r) => {
                 const accColor = r.accountSlug === "dbcinema" ? "#6ea8fe" : "#22c55e";
+                const accent = r.renter?.blacklisted ? "#ef4444" : r.isOverdue ? "#f59e0b" : accColor;
                 return (
                   <div
                     key={String(r.reservationId)}
-                    className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg"
+                    className="flex flex-col gap-1.5 p-2.5 rounded-lg"
                     style={{
-                      borderLeft: r.renter?.blacklisted ? "3px solid #ef4444" : r.isOverdue ? "3px solid #f59e0b" : "3px solid rgba(255,255,255,0.1)",
-                      background: r.renter?.blacklisted ? "rgba(239,68,68,0.06)" : r.isOverdue ? "rgba(245,158,11,0.05)" : "transparent",
+                      border: "1px solid rgba(255,255,255,0.07)",
+                      borderLeft: `3px solid ${accent}`,
+                      background: r.renter?.blacklisted
+                        ? "rgba(239,68,68,0.07)"
+                        : r.isOverdue
+                          ? "rgba(245,158,11,0.06)"
+                          : "rgba(255,255,255,0.02)",
                     }}
                   >
-                    <Thumb url={r.imageUrl} name={r.renterName} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-[#e4e6eb] truncate flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accColor }} />
-                        <span className="truncate">{r.renterName}</span>
-                        <TrustBadge t={r.renter} />
-                        {(r.memberCount ?? 1) > 1 && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded flex-shrink-0" style={{ background: "rgba(110,168,254,0.15)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>
-                            ⛓ ×{r.memberCount}
-                          </span>
-                        )}
-                        {!!r.renter?.note_count && (
-                          <span className="text-[9px] text-[#8b8fa3] flex-shrink-0" title={r.renter?.notes ?? ""}>📝{r.renter.note_count}</span>
-                        )}
+                    <div className="flex items-start gap-2">
+                      <Thumb url={r.imageUrl} name={r.renterName} size={34} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] text-[#e4e6eb] truncate flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accColor }} />
+                          <span className="truncate font-medium">{r.renterName}</span>
+                        </div>
+                        <div className="flex items-center gap-1 flex-wrap mt-1">
+                          <TrustBadge t={r.renter} />
+                          {(r.memberCount ?? 1) > 1 && (
+                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded" style={{ background: "rgba(110,168,254,0.15)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>
+                              ⛓ ×{r.memberCount}
+                            </span>
+                          )}
+                          {!!r.renter?.note_count && (
+                            <span className="text-[9px] text-[#8b8fa3]" title={r.renter?.notes ?? ""}>📝{r.renter.note_count}</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-xs text-[#8b8fa3] truncate">{r.itemNames.join(", ")}</div>
                     </div>
-                    <span className="text-xs flex-shrink-0 text-right" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
-                      {r.isOverdue ? "OVERDUE" : "due"}
-                      <br />
-                      <span className="text-[10px]">{r.endDate}{r.returnTime ? ` ${r.returnTime}` : ""}</span>
-                    </span>
-                    <button
-                      onClick={() => setActive(r)}
-                      className="text-xs px-2.5 py-1.5 rounded flex-shrink-0 transition-colors"
-                      style={{ border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e" }}
-                    >
-                      Return
-                    </button>
+                    <div className="text-[11px] text-[#8b8fa3] line-clamp-2 leading-tight">{r.itemNames.join(", ")}</div>
+                    <div className="flex items-center justify-between gap-2 mt-auto pt-0.5">
+                      <span className="text-[11px] leading-tight" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
+                        <span className="font-semibold">{r.isOverdue ? "OVERDUE" : "due"}</span>{" "}
+                        {r.endDate}
+                        {r.returnTime ? ` ${r.returnTime}` : ""}
+                      </span>
+                      <button
+                        onClick={() => setActive(r)}
+                        className="text-[11px] px-2.5 py-1 rounded flex-shrink-0 transition-colors"
+                        style={{ border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e" }}
+                      >
+                        Return
+                      </button>
+                    </div>
                   </div>
                 );
               })}
