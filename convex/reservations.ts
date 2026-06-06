@@ -48,6 +48,7 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
+import { groupLogicalRentals, displayReturnDate, type ReservationRow } from "./lib/reservations/predicates";
 
 export const getDueReturns = query({
   args: {
@@ -64,79 +65,99 @@ export const getDueReturns = query({
       if (cached) return cached.payload;
     }
     const today = TODAY();
-    // OPEN_INDEX_NEED: composite index (status, end_date) for efficient due/overdue scan.
+    const now = Date.now();
     let active = await ctx.db
       .query("reservations")
       .withIndex("by_status", (q) => q.eq("status", "confirmed"))
       .collect();
-
     if (accountSlug) {
       active = active.filter((r) => r.account_slug === accountSlug);
     }
+    type CandRow = (typeof active)[number];
 
-    // A reservation stays status:"confirmed" until someone marks it returned,
-    // but old short rentals were physically returned long ago and just never
-    // reconciled (order_step is unreliable). Surfacing "50 overdue since March"
-    // is noise that buries the real action items, so bound the overdue list to
-    // a recent, actionable window — anything older is treated as stale/unreconciled.
-    const STALE_DAYS = 30;
-    const staleCutoff = new Date(Date.now() - STALE_DAYS * 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    // "Still out" = confirmed, end passed, in the actionable window, and NOT yet
-    // REVIEWED (Hygglo's "returned" signal — those auto-close, see
-    // returns_reconcile). order_step RETURNED means gear is still WITH the renter.
-    const due = active.filter(
-      (r) =>
-        r.order_step !== "REVIEWED" &&
-        !r.is_obsolete &&
-        r.end_date !== undefined &&
-        r.end_date <= today &&
-        r.end_date >= staleCutoff,
-    );
+    // Gear that is OUT per Hygglo: DELIVERED (picked up) or RETURNED (with the
+    // renter, awaiting return). REVIEWED = already back. Legacy rows without an
+    // order_step fall back to "end_date has passed". Obsolete excluded.
+    const isOut = (r: CandRow) =>
+      !r.is_obsolete &&
+      r.order_step !== "REVIEWED" &&
+      (r.order_step === "DELIVERED" ||
+        r.order_step === "RETURNED" ||
+        (!r.order_step && r.end_date !== undefined && r.end_date <= today));
+    let candidates = active.filter(isOut);
 
-    // v1 parity (completed-scan): a rental is only "still to return" while Hygglo
-    // STILL returns it in the active poll. Once Hygglo marks it returned/completed
-    // it drops from the poll and last_polled_at goes stale — even though
-    // order_step stays frozen at RETURNED. So keep only rows refreshed in the most
-    // recent poll wave. Using maxPolled (relative) instead of an absolute age makes
-    // this robust to poller cadence and to a paused poller (everything shifts
-    // together; only genuinely-dropped rows fall outside the wave).
+    // v1 completed-scan parity: only gear Hygglo STILL returns in the active poll.
+    // A silently-completed rental keeps order_step frozen at RETURNED but stops
+    // being polled (last_polled_at goes stale). Keep only the most-recent poll
+    // wave — relative to maxPolled, so it survives poller cadence/pauses AND keeps
+    // genuinely long-overdue rentals Hygglo still lists (e.g. open since March)
+    // that an absolute date cutoff would wrongly hide.
     const polledAt = (r: { last_polled_at?: number; _creationTime?: number }) =>
       r.last_polled_at ?? r._creationTime ?? 0;
-    const maxPolled = due.reduce((m, r) => Math.max(m, polledAt(r)), 0);
+    const maxPolled = candidates.reduce((m, r) => Math.max(m, polledAt(r)), 0);
     const POLL_WAVE_MS = 6 * 60 * 60 * 1000;
-    const stillOut = maxPolled > 0 ? due.filter((r) => polledAt(r) >= maxPolled - POLL_WAVE_MS) : due;
+    if (maxPolled > 0) candidates = candidates.filter((r) => polledAt(r) >= maxPolled - POLL_WAVE_MS);
+
+    // Merge contiguous same-renter / same-item bookings into ONE logical rental,
+    // exactly like the calendar + active-rentals widget. An extension (e.g. Dan
+    // Thorpe re-booking the same JBL kit to a later day) becomes a single rental
+    // whose return is the LAST member's — so it isn't flagged overdue on the
+    // earlier date.
+    const groups = groupLogicalRentals(candidates as unknown as ReservationRow[]);
 
     const maps = await renterMaps(ctx);
-    const results = await Promise.all(
-      stillOut.map(async (r) => {
-        const renterDoc = await renterForReservation(ctx, r, maps);
-        const t = trustOf(renterDoc);
-        const hy = (r.hygglo_items ?? []) as Array<{ image_url?: string }>;
-        const imageUrl = hy.find((h) => h.image_url)?.image_url ?? (r.photos_urls?.[0] ?? null);
-        return {
-          reservationId: r._id,
-          renterName: r.renter_name ?? "Unknown",
-          itemNames: (r.items ?? []).map((i) => i.item_name),
-          endDate: r.end_date,
-          isOverdue: r.end_date !== undefined && r.end_date < today,
-          accountSlug: r.account_slug,
-          orderStep: r.order_step ?? null,
-          imageUrl,
-          renter: {
-            blacklisted: t.blacklisted,
-            whitelisted: t.whitelisted,
-            blacklist_reason: t.blacklist_reason,
-            total_rentals: t.total_rentals,
-            rating: t.rating,
-            note_count: t.note_count,
-            notes: t.notes,
-          },
-        };
-      })
-    );
+    const results: Array<Record<string, unknown>> = [];
+    for (const g of groups) {
+      const members = (g.members as unknown as CandRow[])
+        .slice()
+        .sort((a, b) => displayReturnDate(a).localeCompare(displayReturnDate(b)));
+      const last = members[members.length - 1];
+      const base = members[0]; // earliest pickup — representative row
+      const retDate = displayReturnDate(last); // return_date ?? end_date
+      const retTime = (last as { return_time?: string }).return_time;
+      // Time-aware: only surface once the effective return MOMENT has passed. No
+      // time → start-of-day, so a same-day no-time return still shows that day.
+      const t0 = retTime && /^\d\d:\d\d/.test(retTime) ? retTime : "00:00";
+      const retMomentMs = new Date(`${retDate}T${t0}:00`).getTime();
+      if (Number.isFinite(retMomentMs) && retMomentMs > now) continue; // not due yet
 
+      const renterDoc = await renterForReservation(ctx, base, maps);
+      const t = trustOf(renterDoc);
+      const hy = ((base as { hygglo_items?: Array<{ image_url?: string }> }).hygglo_items) ?? [];
+      const imageUrl =
+        hy.find((h) => h.image_url)?.image_url ??
+        ((base as { photos_urls?: string[] }).photos_urls?.[0] ?? null);
+      const itemNames = Array.from(
+        new Set(
+          members.flatMap((m) =>
+            ((m.items ?? []) as Array<{ item_name: string }>).map((i) => i.item_name),
+          ),
+        ),
+      );
+      results.push({
+        reservationId: base._id,
+        memberIds: g.member_ids,
+        memberCount: members.length,
+        renterName: base.renter_name ?? "Unknown",
+        itemNames,
+        endDate: retDate,
+        returnTime: retTime ?? null,
+        isOverdue: retDate < today,
+        accountSlug: base.account_slug,
+        orderStep: (last as { order_step?: string }).order_step ?? null,
+        imageUrl,
+        renter: {
+          blacklisted: t.blacklisted,
+          whitelisted: t.whitelisted,
+          blacklist_reason: t.blacklist_reason,
+          total_rentals: t.total_rentals,
+          rating: t.rating,
+          note_count: t.note_count,
+          notes: t.notes,
+        },
+      });
+    }
+    results.sort((a, b) => String(a.endDate).localeCompare(String(b.endDate)));
     return results;
   },
 });
@@ -260,8 +281,9 @@ export const markReturned = mutation({
     notes: v.optional(v.string()),
     blacklistRenter: v.optional(v.boolean()),
     blacklistReason: v.optional(v.string()),
+    memberIds: v.optional(v.array(v.id("reservations"))),
   },
-  handler: async (ctx, { reservationId, condition, notes, blacklistRenter, blacklistReason }) => {
+  handler: async (ctx, { reservationId, condition, notes, blacklistRenter, blacklistReason, memberIds }) => {
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
     if (res.status === "completed") throw new Error("Already returned");
@@ -271,6 +293,15 @@ export const markReturned = mutation({
       status: "completed",
       notes: base ? base + " | " + cn : cn,
     });
+    // Merged logical rental: complete every member booking too.
+    for (const mid of memberIds ?? []) {
+      if (mid === reservationId) continue;
+      const m = await ctx.db.get(mid);
+      if (m && m.status !== "completed") {
+        const mb = m.notes ?? "";
+        await ctx.db.patch(mid, { status: "completed", notes: mb ? mb + " | " + cn : cn });
+      }
+    }
     // Mirror the condition onto the renter's CRM log; optionally blacklist them
     // (e.g. on major damage). Renter resolved from the reservation row.
     const maps = await renterMaps(ctx);

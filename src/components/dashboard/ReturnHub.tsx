@@ -28,6 +28,9 @@ type DueReturn = {
   orderStep?: string | null;
   imageUrl?: string | null;
   renter?: RenterTrust;
+  returnTime?: string | null;
+  memberIds?: Id<"reservations">[];
+  memberCount?: number;
 };
 
 function Thumb({ url, name, size = 36 }: { url?: string | null; name: string; size?: number }) {
@@ -212,6 +215,7 @@ export function ReturnHub() {
       notes: notes || undefined,
       blacklistRenter: blacklist || undefined,
       blacklistReason: blacklist ? reason || undefined : undefined,
+      memberIds: active.memberIds && active.memberIds.length > 1 ? active.memberIds : undefined,
     });
   }
 
@@ -253,6 +257,11 @@ export function ReturnHub() {
                         <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accColor }} />
                         <span className="truncate">{r.renterName}</span>
                         <TrustBadge t={r.renter} />
+                        {(r.memberCount ?? 1) > 1 && (
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded flex-shrink-0" style={{ background: "rgba(110,168,254,0.15)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>
+                            ⛓ ×{r.memberCount}
+                          </span>
+                        )}
                         {!!r.renter?.note_count && (
                           <span className="text-[9px] text-[#8b8fa3] flex-shrink-0" title={r.renter?.notes ?? ""}>📝{r.renter.note_count}</span>
                         )}
@@ -262,7 +271,7 @@ export function ReturnHub() {
                     <span className="text-xs flex-shrink-0 text-right" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
                       {r.isOverdue ? "OVERDUE" : "due"}
                       <br />
-                      <span className="text-[10px]">{r.endDate}</span>
+                      <span className="text-[10px]">{r.endDate}{r.returnTime ? ` ${r.returnTime}` : ""}</span>
                     </span>
                     <button
                       onClick={() => setActive(r)}
@@ -275,7 +284,7 @@ export function ReturnHub() {
                 );
               })}
             </div>
-            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · auto-closes when Hygglo confirms</p>
+            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · shows only after return time · auto-closes when Hygglo confirms</p>
           </>
         )}
       </Card>
