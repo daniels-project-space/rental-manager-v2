@@ -946,6 +946,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                             const cell = cells.find((c) => c.date === iso);
                             const free = cell?.free;
                             const tot = cell?.total;
+                            const freeFrom =
+                              (cell as { free_from?: string | null } | undefined)?.free_from ?? null;
+                            const showFrom = !!freeFrom && (free ?? 0) <= 0;
                             const isToday = iso === today;
                             let color = "#9ca3af";
                             let bg: string | undefined = isToday
@@ -955,8 +958,14 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                               : undefined;
                             if (free !== undefined && tot !== undefined) {
                               if (free <= 0) {
-                                color = "#f87171";
-                                bg = "rgba(248,113,113,0.10)";
+                                if (showFrom) {
+                                  // Booked by date, but a unit returns mid-day.
+                                  color = "#fbbf24";
+                                  bg = "rgba(251,191,36,0.10)";
+                                } else {
+                                  color = "#f87171";
+                                  bg = "rgba(248,113,113,0.10)";
+                                }
                               } else if (free < tot) {
                                 color = "#fbbf24";
                               } else {
@@ -968,16 +977,20 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                                 key={iso}
                                 className="flex-shrink-0 flex flex-col items-center justify-center"
                                 style={{ width: colWidth, background: bg, borderRight: "1px solid rgba(255,255,255,0.03)" }}
-                                title={cell ? `${free} of ${tot} free · ${iso}` : `no data · ${iso}`}
+                                title={cell ? `${free} of ${tot} free · ${iso}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${iso}`}
                               >
                                 <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
-                                  {free !== undefined ? free : "–"}
+                                  {showFrom ? "1" : free !== undefined ? free : "–"}
                                 </span>
-                                {tot !== undefined && (
+                                {showFrom ? (
+                                  <span className="text-[8px] leading-none mt-0.5" style={{ color: "#fbbf24" }}>
+                                    {`fr ${freeFrom}`}
+                                  </span>
+                                ) : tot !== undefined ? (
                                   <span className="text-[9px] leading-none mt-0.5" style={{ color: "#64748b" }}>
                                     /{tot}
                                   </span>
-                                )}
+                                ) : null}
                               </div>
                             );
                           })}
