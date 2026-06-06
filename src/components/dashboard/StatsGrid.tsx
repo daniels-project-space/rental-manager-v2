@@ -642,7 +642,8 @@ export function StatsGrid() {
     <>
       <CriticalAlerts
         conflicts={(rawData as any)?.conflicts ?? []}
-        untracked={(rawData as any)?.untracked ?? { count: 0, total_value_gbp: 0, reservations: [] }}
+        qty_drift_count={(rawData as any)?.qty_drift_count ?? 0}
+        qty_drift_sample={(rawData as any)?.qty_drift_sample ?? []}
       />
       <DndContext
         sensors={sensors}

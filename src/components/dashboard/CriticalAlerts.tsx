@@ -19,21 +19,14 @@ interface Conflict {
   item_id: string;
   item_canonical: string;
   item_image_url: string | null;
+  /** "confirmed" = confirmed bookings alone exceed stock (live oversell).
+   *  "pending" = only overbooks if a pending request gets accepted. */
+  severity?: "confirmed" | "pending";
   qty: number;
   conflict_start: string;
   conflict_end: string;
   overlap_count: number;
   reservations: ConflictReservation[];
-}
-
-interface UntrackedReservation {
-  reservation_id: string;
-  renter_name: string | null;
-  account_slug: string;
-  start_date: string | null;
-  end_date: string | null;
-  items: string[];
-  net_gbp: number | null;
 }
 
 interface QtyDriftSample {
@@ -47,13 +40,6 @@ interface QtyDriftSample {
 
 interface Props {
   conflicts: Conflict[];
-  untracked: {
-    count: number;
-    total_value_gbp: number;
-    reservations: UntrackedReservation[];
-  };
-  // Layer B (2026-05-19) — optional qty-drift summary from getStatsDrawerData.
-  // Older callers that don't pass it render exactly as before (no-op badge).
   qty_drift_count?: number;
   qty_drift_sample?: QtyDriftSample[];
 }
@@ -63,154 +49,144 @@ const fmtDate = (d: string | null) => {
   return new Intl.DateTimeFormat("en-GB", { month: "short", day: "numeric" }).format(new Date(d));
 };
 
-const fmtGbp = (n: number) => "£" + Math.round(n).toLocaleString("en-GB");
+// ── per-severity theme ───────────────────────────────────────────────────────
+type Variant = "confirmed" | "pending";
+const THEME: Record<
+  Variant,
+  { base: string; ring: string; tintA: string; tintB: string; border: string; chipBg: string; title: string; sub: string; icon: string }
+> = {
+  confirmed: {
+    base: "#ef4444",
+    ring: "rgba(239,68,68,0.55)",
+    tintA: "rgba(239,68,68,0.16)",
+    tintB: "rgba(190,18,60,0.10)",
+    border: "rgba(239,68,68,0.45)",
+    chipBg: "rgba(239,68,68,0.18)",
+    title: "Double-booked",
+    sub: "confirmed bookings exceed stock — fix now",
+    icon: "⛔",
+  },
+  pending: {
+    base: "#f59e0b",
+    ring: "rgba(245,158,11,0.45)",
+    tintA: "rgba(245,158,11,0.13)",
+    tintB: "rgba(217,119,6,0.08)",
+    border: "rgba(245,158,11,0.38)",
+    chipBg: "rgba(245,158,11,0.18)",
+    title: "Pending may double-book",
+    sub: "accepting a pending request would oversell",
+    icon: "⚠",
+  },
+};
 
-export function CriticalAlerts({
-  conflicts,
-  untracked,
-  qty_drift_count = 0,
-  qty_drift_sample = [],
-}: Props) {
-  const hasConflicts = conflicts.length > 0;
-  const hasUntracked = untracked.count > 0;
+const KIND_COLOR: Record<ConflictReservation["kind"], string> = {
+  ongoing: "#f59e0b",
+  upcoming: "#a78bfa",
+  pending: "#ec4899",
+};
+
+export function CriticalAlerts({ conflicts, qty_drift_count = 0, qty_drift_sample = [] }: Props) {
+  // Treat a missing severity (older backend during a deploy) as confirmed so
+  // nothing is silently downgraded.
+  const confirmed = conflicts.filter((c) => c.severity !== "pending");
+  const pending = conflicts.filter((c) => c.severity === "pending");
   const hasDrift = qty_drift_count > 0;
-  if (!hasConflicts && !hasUntracked && !hasDrift) return null;
+  if (!confirmed.length && !pending.length && !hasDrift) return null;
 
   return (
     <>
-      {/* Local keyframes for the pulsating ring */}
       <style jsx>{`
-        @keyframes pulseRing {
-          0%   { box-shadow: 0 0 0 0   rgba(239,68,68,0.55), inset 0 0 0 1px rgba(239,68,68,0.4); }
-          70%  { box-shadow: 0 0 0 14px rgba(239,68,68,0),   inset 0 0 0 1px rgba(239,68,68,0.4); }
-          100% { box-shadow: 0 0 0 0   rgba(239,68,68,0),   inset 0 0 0 1px rgba(239,68,68,0.4); }
+        @keyframes obPulse {
+          0% { box-shadow: 0 0 0 0 var(--ring); }
+          70% { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
         }
-        /* Stronger pulse when collapsed — bigger ring spread, faster, layered. */
-        @keyframes pulseRingStrong {
-          0%   { box-shadow: 0 0 0 0   rgba(239,68,68,0.85),
-                              0 0 0 0   rgba(239,68,68,0.55),
-                              inset 0 0 0 2px rgba(239,68,68,0.7); }
-          60%  { box-shadow: 0 0 0 12px rgba(239,68,68,0.0),
-                              0 0 0 22px rgba(239,68,68,0.0),
-                              inset 0 0 0 2px rgba(239,68,68,0.7); }
-          100% { box-shadow: 0 0 0 0    rgba(239,68,68,0.0),
-                              0 0 0 0    rgba(239,68,68,0.0),
-                              inset 0 0 0 2px rgba(239,68,68,0.7); }
-        }
-        @keyframes pulseDot {
-          0%, 100% { transform: scale(1);   opacity: 1; }
-          50%      { transform: scale(1.4); opacity: 0.6; }
-        }
-        @keyframes pulseDotStrong {
-          0%, 100% { transform: scale(1);   opacity: 1;   box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
-          50%      { transform: scale(1.85); opacity: 0.55; box-shadow: 0 0 0 8px rgba(239,68,68,0); }
-        }
-        @keyframes alertGlow {
-          0%, 100% { filter: brightness(1); }
-          50%      { filter: brightness(1.18); }
-        }
-        .pulse-ring        { animation: pulseRing 2s ease-out infinite; }
-        .pulse-ring-strong { animation: pulseRingStrong 1.1s ease-out infinite, alertGlow 1.1s ease-in-out infinite; }
-        .pulse-dot         { animation: pulseDot 1.2s ease-in-out infinite; }
-        .pulse-dot-strong  { animation: pulseDotStrong 0.9s ease-in-out infinite; }
+        .ob-pulse { animation: obPulse 2.2s ease-out infinite; }
       `}</style>
 
       <div className="space-y-2 mb-3">
-        {hasConflicts && (
-          <ConflictsBanner conflicts={conflicts} />
-        )}
-        {hasUntracked && (
-          <UntrackedBanner data={untracked} />
-        )}
-        {hasDrift && (
-          <QtyDriftBadge count={qty_drift_count} sample={qty_drift_sample} />
-        )}
+        {confirmed.length > 0 && <OverbookBanner conflicts={confirmed} variant="confirmed" />}
+        {pending.length > 0 && <OverbookBanner conflicts={pending} variant="pending" />}
+        {hasDrift && <QtyDriftBadge count={qty_drift_count} sample={qty_drift_sample} />}
       </div>
     </>
   );
 }
 
-// Layer B (2026-05-19) — qty-drift mini-banner. Non-blocking warning surfaced
-// when nightly audit (audit_qty_drift:auditItemQuantities) finds reservations
-// whose expanded_items under-count the raw Hygglo items[] (resolver miss).
-function QtyDriftBadge({ count, sample }: { count: number; sample: QtyDriftSample[] }) {
+// ── capacity meter: stock slots filled + overage slots in the alert colour ───
+function CapacityMeter({ qty, booked, color }: { qty: number; booked: number; color: string }) {
+  const total = Math.min(Math.max(booked, qty), 16);
+  const over = Math.max(booked - qty, 0);
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex gap-[3px]">
+        {Array.from({ length: total }).map((_, i) => (
+          <span
+            key={i}
+            style={{
+              width: 13,
+              height: 7,
+              borderRadius: 2,
+              background: i < qty ? "rgba(255,255,255,0.22)" : color,
+              boxShadow: i < qty ? "none" : `0 0 6px ${color}88`,
+            }}
+          />
+        ))}
+      </div>
+      <span className="text-[11px] font-bold tabular-nums" style={{ color }}>
+        {booked}/{qty}
+      </span>
+      {over > 0 && (
+        <span className="text-[10px] font-semibold" style={{ color }}>
+          +{over} over
+        </span>
+      )}
+    </div>
+  );
+}
+
+function OverbookBanner({ conflicts, variant }: { conflicts: Conflict[]; variant: Variant }) {
+  const t = THEME[variant];
   const [expanded, setExpanded] = useState(false);
+  const earliest = conflicts.map((c) => c.conflict_start).sort()[0];
   return (
     <div
-      className="rounded-xl p-3"
-      style={{
-        background: "linear-gradient(135deg, rgba(234,179,8,0.14), rgba(202,138,4,0.10))",
-        border: "1px solid rgba(234,179,8,0.40)",
-      }}
+      className={variant === "confirmed" && !expanded ? "ob-pulse rounded-xl" : "rounded-xl"}
+      style={
+        {
+          background: `linear-gradient(135deg, ${t.tintA}, ${t.tintB})`,
+          border: `1px solid ${t.border}`,
+          "--ring": t.ring,
+        } as React.CSSProperties
+      }
     >
-      <button
-        onClick={() => setExpanded((x) => !x)}
-        className="w-full flex items-center gap-2 text-left"
-      >
-        <span className="text-amber-300 text-sm">⚠</span>
+      <button onClick={() => setExpanded((x) => !x)} className="w-full flex items-center gap-3 text-left p-3">
+        <span
+          className="flex-shrink-0 flex items-center justify-center rounded-lg text-base"
+          style={{ width: 34, height: 34, background: t.chipBg, border: `1px solid ${t.border}` }}
+        >
+          {t.icon}
+        </span>
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] uppercase tracking-wider font-bold text-amber-200">
-            {count} qty drift{count === 1 ? "" : "s"} detected — view
+          <div className="text-[13px] font-bold" style={{ color: t.base }}>
+            {t.title} · {conflicts.length} item{conflicts.length === 1 ? "" : "s"}
           </div>
-          <div className="text-xs text-amber-100 mt-0.5">
-            Resolver under-counted vs Hygglo listing[]; run admin_backfill_qty_resolution.
+          <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.62)" }}>
+            {t.sub} · earliest {fmtDate(earliest)}
           </div>
         </div>
         <span
-          className="text-amber-300 text-sm"
-          style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+          className="text-sm"
+          style={{ color: t.base, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
         >
           ▾
         </span>
       </button>
-      {expanded && sample.length > 0 && (
-        <ul className="mt-2 text-xs text-amber-100 space-y-1">
-          {sample.map((s) => (
-            <li key={s.reservation_id}>
-              <span className="font-mono">{s.hygglo_order_id}</span>{" "}
-              {s.renter_name ?? "—"} · expanded {s.expanded_n} / raw {s.raw_n}{" "}
-              <span className="text-amber-300/70">({s.drift_kind})</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function ConflictsBanner({ conflicts }: { conflicts: Conflict[] }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div
-      className={(expanded ? "pulse-ring" : "pulse-ring-strong") + " rounded-xl p-3"}
-      style={{
-        background: "linear-gradient(135deg, rgba(239,68,68,0.16), rgba(190,18,60,0.12))",
-        border: "1px solid rgba(239,68,68,0.45)",
-      }}
-    >
-      <button
-        onClick={() => setExpanded((x) => !x)}
-        className="w-full flex items-center gap-2 text-left"
-      >
-        <span
-          className={(expanded ? "pulse-dot" : "pulse-dot-strong") + " inline-block flex-shrink-0"}
-          style={{ width: expanded ? 10 : 12, height: expanded ? 10 : 12, borderRadius: 9999, background: "#ef4444" }}
-        />
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] uppercase tracking-wider font-bold text-rose-200">
-            Double-booking alert · {conflicts.length} item{conflicts.length === 1 ? "" : "s"} oversold
-          </div>
-          <div className="text-xs text-rose-100 mt-0.5">
-            Resolve before earliest conflict on {fmtDate(conflicts[0].conflict_start)} · click to {expanded ? "collapse" : "expand"}
-          </div>
-        </div>
-        <span className="text-rose-300 text-sm" style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
-      </button>
 
       {expanded && (
-        <div className="mt-3 space-y-2">
+        <div className="px-3 pb-3 space-y-2">
           {conflicts.map((c) => (
-            <ConflictRow key={`${c.item_canonical}-${c.conflict_start}`} conflict={c} />
+            <ConflictCard key={c.conflict_key} conflict={c} variant={variant} />
           ))}
         </div>
       )}
@@ -218,9 +194,12 @@ function ConflictsBanner({ conflicts }: { conflicts: Conflict[] }) {
   );
 }
 
-function ConflictRow({ conflict }: { conflict: Conflict }) {
+function ConflictCard({ conflict, variant }: { conflict: Conflict; variant: Variant }) {
+  const t = THEME[variant];
   const dismiss = useMutation(api.conflict_dismissals.dismissConflict);
   const [resolving, setResolving] = useState(false);
+  const [imgBroken, setImgBroken] = useState(false);
+
   async function onResolve() {
     if (resolving) return;
     setResolving(true);
@@ -231,136 +210,117 @@ function ConflictRow({ conflict }: { conflict: Conflict }) {
         reservation_ids: conflict.reservations.map((r) => r.reservation_id),
         note: undefined,
       });
-      // The dashboard query is reactive — once the mutation lands, this card
-      // disappears from props on the next render. No local hide state needed.
     } finally {
       setResolving(false);
     }
   }
+
+  const showImg = conflict.item_image_url && !imgBroken;
   return (
-    <div
-      className="rounded-lg p-2.5"
-      style={{ background: "rgba(0,0,0,0.32)", border: "1px solid rgba(239,68,68,0.3)" }}
-    >
-      <div className="flex items-start gap-2.5 mb-2">
-        {conflict.item_image_url ? (
+    <div className="rounded-lg p-2.5" style={{ background: "rgba(0,0,0,0.30)", border: `1px solid ${t.border}` }}>
+      {/* header: image · name + meter · resolve */}
+      <div className="flex items-center gap-2.5">
+        {showImg ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={conflict.item_image_url}
+            src={conflict.item_image_url as string}
             alt={conflict.item_canonical}
-            className="zoom-img flex-shrink-0 rounded-md object-cover"
-            style={{ width: 44, height: 44, border: "1px solid rgba(239,68,68,0.35)" }}
+            onError={() => setImgBroken(true)}
+            className="flex-shrink-0 rounded-md object-cover"
+            style={{ width: 42, height: 42, background: "rgba(255,255,255,0.05)", border: `1px solid ${t.border}` }}
             loading="lazy"
           />
         ) : (
           <div
-            className="flex-shrink-0 flex items-center justify-center rounded-md text-[9px] text-rose-300"
-            style={{ width: 44, height: 44, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}
+            className="flex-shrink-0 flex items-center justify-center rounded-md text-sm font-bold"
+            style={{ width: 42, height: 42, background: t.chipBg, color: t.base, border: `1px solid ${t.border}` }}
           >
-            no img
+            {conflict.item_canonical.charAt(0).toUpperCase()}
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-sm font-semibold text-rose-50">{conflict.item_canonical}</span>
-            <span className="text-[10px] uppercase tracking-wider text-rose-300 px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.3)" }}>
-              qty {conflict.qty} · {conflict.overlap_count} booked
-            </span>
-          </div>
-          <div className="text-[11px] text-rose-200 mt-0.5">
-            conflict starts {fmtDate(conflict.conflict_start)}
+          <div className="text-[13px] font-semibold text-white truncate">{conflict.item_canonical}</div>
+          <div className="mt-1">
+            <CapacityMeter qty={conflict.qty} booked={conflict.overlap_count} color={t.base} />
           </div>
         </div>
         <button
           onClick={onResolve}
           disabled={resolving}
           className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors disabled:opacity-40"
-          style={{
-            background: "rgba(34,197,94,0.15)",
-            color: "#4ade80",
-            border: "1px solid rgba(34,197,94,0.4)",
-          }}
-          title="Mark resolved — banner removes this conflict. Reappears if the reservation set changes."
+          style={{ background: "rgba(34,197,94,0.14)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.4)" }}
+          title="Dismiss this conflict. Reappears if the booking set changes."
         >
-          {resolving ? "…" : "Mark resolved ✓"}
+          {resolving ? "…" : "Resolve ✓"}
         </button>
       </div>
-      <div className="space-y-1">
-        {conflict.reservations.map((r) => {
-          const kindColor = r.kind === "ongoing" ? "#f59e0b" : r.kind === "upcoming" ? "#a78bfa" : "#ec4899";
-          return (
-            <div
-              key={r.reservation_id}
-              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-2 py-1 rounded text-[11px]"
-              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+
+      {/* clash date */}
+      <div className="mt-2 text-[11px]" style={{ color: "rgba(255,255,255,0.55)" }}>
+        Clashes from <span style={{ color: t.base, fontWeight: 600 }}>{fmtDate(conflict.conflict_start)}</span>
+      </div>
+
+      {/* overlapping bookings — one compact line each */}
+      <div className="mt-1.5 space-y-1">
+        {conflict.reservations.map((r) => (
+          <div key={r.reservation_id} className="flex items-center gap-2 text-[11px]">
+            <span
+              className="inline-block flex-shrink-0 rounded-full"
+              style={{ width: 7, height: 7, background: KIND_COLOR[r.kind] }}
+              title={r.kind}
+            />
+            <span className="text-white/90 font-medium truncate">{r.renter_name ?? "Unknown renter"}</span>
+            <span className="text-white/45 whitespace-nowrap">
+              {fmtDate(r.start_date)} → {fmtDate(r.end_date)}
+            </span>
+            <span
+              className="ml-auto flex-shrink-0 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+              style={{ background: `${KIND_COLOR[r.kind]}22`, color: KIND_COLOR[r.kind] }}
             >
-              <span
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold"
-                style={{ background: `${kindColor}22`, color: kindColor, border: `1px solid ${kindColor}55` }}
-              >
-                {r.kind}
-              </span>
-              <span className="text-rose-50 font-medium">{r.renter_name ?? "Unknown renter"}</span>
-              <span className="text-rose-200">{fmtDate(r.start_date)} → {fmtDate(r.end_date)}</span>
-              <span className="text-slate-400">[{r.account_slug}]</span>
-            </div>
-          );
-        })}
+              {r.kind}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function UntrackedBanner({ data }: { data: Props["untracked"] }) {
+// qty-drift mini-banner — non-blocking resolver-miss warning (unchanged behaviour).
+function QtyDriftBadge({ count, sample }: { count: number; sample: QtyDriftSample[] }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div
       className="rounded-xl p-3"
       style={{
-        background: "linear-gradient(135deg, rgba(245,158,11,0.13), rgba(217,119,6,0.08))",
-        border: "1px solid rgba(245,158,11,0.35)",
+        background: "linear-gradient(135deg, rgba(234,179,8,0.12), rgba(202,138,4,0.08))",
+        border: "1px solid rgba(234,179,8,0.32)",
       }}
     >
-      <button
-        onClick={() => setExpanded((x) => !x)}
-        className="w-full flex items-center gap-2 text-left"
-      >
-        <span
-          className="inline-block flex-shrink-0"
-          style={{ width: 8, height: 8, borderRadius: 9999, background: "#f59e0b" }}
-        />
+      <button onClick={() => setExpanded((x) => !x)} className="w-full flex items-center gap-2 text-left">
+        <span className="text-amber-300 text-sm">⚙</span>
         <div className="flex-1 min-w-0">
           <div className="text-[11px] uppercase tracking-wider font-bold text-amber-200">
-            {data.count} pending claim{data.count === 1 ? "" : "s"} with items not in master inventory
+            {count} qty drift{count === 1 ? "" : "s"} — resolver under-count
           </div>
-          <div className="text-xs text-amber-100/80 mt-0.5">
-            {fmtGbp(data.total_value_gbp)} potential revenue · review whether to add these to inventory · click to {expanded ? "collapse" : "expand"}
-          </div>
+          <div className="text-[11px] text-amber-100/70 mt-0.5">run admin_backfill_qty_resolution</div>
         </div>
-        <span className="text-amber-300 text-sm" style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
+        <span
+          className="text-amber-300 text-sm"
+          style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+        >
+          ▾
+        </span>
       </button>
-
-      {expanded && (
-        <div className="mt-3 space-y-1.5">
-          {data.reservations.map((r) => (
-            <div
-              key={r.reservation_id}
-              className="rounded-md px-2 py-1.5 text-[11px]"
-              style={{ background: "rgba(0,0,0,0.32)", border: "1px solid rgba(245,158,11,0.25)" }}
-            >
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span className="font-semibold text-amber-100">{r.renter_name ?? "Unknown"}</span>
-                <span className="text-amber-200">{fmtDate(r.start_date)} → {fmtDate(r.end_date)}</span>
-                <span className="text-slate-400">[{r.account_slug}]</span>
-                {r.net_gbp != null && <span className="text-amber-300 font-semibold">{fmtGbp(r.net_gbp)}</span>}
-              </div>
-              {r.items.length > 0 && (
-                <div className="mt-0.5 text-slate-300 truncate">
-                  {r.items.slice(0, 3).join(" + ")}{r.items.length > 3 ? ` +${r.items.length - 3}` : ""}
-                </div>
-              )}
-            </div>
+      {expanded && sample.length > 0 && (
+        <ul className="mt-2 text-[11px] text-amber-100 space-y-1">
+          {sample.map((s) => (
+            <li key={s.reservation_id}>
+              <span className="font-mono">{s.hygglo_order_id}</span> {s.renter_name ?? "—"} · expanded {s.expanded_n} /
+              raw {s.raw_n}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );

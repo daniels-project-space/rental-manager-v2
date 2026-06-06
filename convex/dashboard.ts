@@ -870,6 +870,9 @@ export const getStatsDrawerData = query({
       item_id: string;
       item_canonical: string;
       item_image_url: string | null;
+      /** "confirmed" = confirmed bookings alone oversell; "pending" = only
+       *  oversells if a pending request is accepted. */
+      severity: "confirmed" | "pending";
       qty: number;
       conflict_start: string;
       conflict_end: string;
@@ -936,6 +939,10 @@ export const getStatsDrawerData = query({
       let worstStart = "";
       let worstCount = 0;
       let worstEnd = "";
+      // Worst CONFIRMED-only concurrency (ongoing + upcoming; excludes pending).
+      // Lets us tell a live oversell apart from one that only appears if a
+      // pending request is accepted — pending bookings don't block the calendar.
+      let worstConfirmedCount = 0;
       const scanFrom = todayIso;
       const scanTo = horizonEnd;
       const startDates = matchingRes.map((m) => effStart(m.r as ResRow));
@@ -951,11 +958,16 @@ export const getStatsDrawerData = query({
           (s, m) => s + (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0),
           0,
         );
+        const confirmedSum = overlapping.reduce(
+          (s, m) => s + (m.kind === "pending" ? 0 : (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0)),
+          0,
+        );
         if (qtySum > worstCount) {
           worstCount = qtySum;
           worstStart = d;
           worstEnd = d;
         }
+        if (confirmedSum > worstConfirmedCount) worstConfirmedCount = confirmedSum;
       }
       if (worstCount > item.qty && worstStart) {
         // Compute the inclusive range these reservations all share
@@ -981,11 +993,28 @@ export const getStatsDrawerData = query({
           if (!involves) continue;
         }
 
+        // Image: prefer the master-inventory item photo, else fall back to a
+        // Hygglo product image from one of the overlapping reservations
+        // (~40% of items have no image_url of their own).
+        const resImage = (() => {
+          for (const { r } of overlappingSet) {
+            const hy = (r as any).hygglo_items as Array<{ image_url?: string }> | undefined;
+            const hit = hy?.find((h) => h.image_url)?.image_url;
+            if (hit) return hit;
+            const pu = (r as any).photos_urls as string[] | null | undefined;
+            if (pu && pu.length) return pu[0];
+          }
+          return null;
+        })();
+        const severity: "confirmed" | "pending" =
+          worstConfirmedCount > item.qty ? "confirmed" : "pending";
+
         conflicts.push({
           conflict_key: conflictKey,
           item_id: item._id as string,
           item_canonical: item.name_canonical,
-          item_image_url: (item as any).image_url ?? null,
+          item_image_url: ((item as any).image_url as string | null) ?? resImage,
+          severity,
           qty: item.qty,
           conflict_start: worstStart,
           conflict_end: earliestEnd,
@@ -1002,7 +1031,11 @@ export const getStatsDrawerData = query({
       }
     }
     // Sort conflicts: earliest start first (most urgent at top)
-    conflicts.sort((a, b) => a.conflict_start.localeCompare(b.conflict_start));
+    conflicts.sort((a, b) =>
+      a.severity !== b.severity
+        ? a.severity === "confirmed" ? -1 : 1
+        : a.conflict_start.localeCompare(b.conflict_start),
+    );
 
     // Update pending count to exclude untracked rows so the headline number
     // reflects actionable pending verifications only.
