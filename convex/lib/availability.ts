@@ -27,9 +27,41 @@ import { Id, Doc } from "../_generated/dataModel";
 export type AvailabilityResult = {
   available: number; // units available at date
   total_units: number; // items.qty
-  booked_units: number; // sum of conflicting active reservations + holds
+  booked_units: number; // sum of conflicting active reservations + repair holds
   is_fully_booked: boolean;
 };
+
+// ── Source-of-truth occupancy (matches the Active Rentals tile / overbooking /
+//    calendar availability) — booked units come from CONFIRMED reservations'
+//    expanded_items (fallback resolved_items), occupancy by effective dates,
+//    NOT the calendar_holds ledger (1 row/day, can't represent >1 unit out). ──
+type ResRow = Doc<"reservations">;
+type ClaimRow = Doc<"insurance_claims">;
+const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
+
+export function bookedUnitsOnDate(rows: ResRow[], itemId: Id<"items">, date: string): number {
+  let n = 0;
+  for (const r of rows) {
+    if (r.is_obsolete) continue;
+    const effPick = r.pickup_date ?? r.start_date;
+    const effRet = r.return_date ?? r.end_date;
+    if (!effPick || !effRet || date < effPick || date > effRet) continue;
+    const src = (r.expanded_items && r.expanded_items.length ? r.expanded_items : r.resolved_items) ?? [];
+    for (const x of src) if (x.item_id === itemId) n += (x.qty ?? 1);
+  }
+  return n;
+}
+
+/** Units of an item held by OPEN (non-terminal) cases. Date-independent. */
+export function repairHeldUnits(claims: ClaimRow[], itemId: Id<"items">): number {
+  let n = 0;
+  for (const c of claims) {
+    const st = c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
+    if (REPAIR_TERMINAL.has(st)) continue;
+    if ((c.repair_item_ids ?? []).some((id) => id === itemId)) n += 1;
+  }
+  return n;
+}
 
 /**
  * For a given itemId and date (YYYY-MM-DD), return availability vs total qty.
@@ -75,30 +107,17 @@ export async function isItemUnitAvailable(
     };
   }
 
-  // 2. Calendar holds — one row per item per day. Each row = 1 unit busy.
-  //    Holds with status `confirmed` or `completed` count as booked.
-  const holds = await ctx.db
-    .query("calendar_holds")
-    .withIndex("by_item_date", (q) =>
-      q.eq("item_id", itemId).eq("date", date),
-    )
+  // 2. Booked units — from CONFIRMED reservations' expanded_items (the Active
+  //    Rentals / overbooking / calendar-availability source of truth).
+  const confirmed = await ctx.db
+    .query("reservations")
+    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
     .collect();
-  const bookedUnits = holds.filter(
-    (h) => (h.status ?? "confirmed") !== "cancelled",
-  ).length;
+  const bookedUnits = bookedUnitsOnDate(confirmed, itemId, date);
 
-  // Units out on repair (open, non-terminal insurance/damage cases) reduce
-  // availability too — same effective-stock rule the overbooking detector,
-  // out-of-stock tile and calendar availability bar use. Date-independent: an
-  // item stays held until the case closes (terminal stage).
+  // Plus units out on repair (open cases) — same rule everywhere else.
   const claims = await ctx.db.query("insurance_claims").collect();
-  const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
-  const repairHeld = claims.filter((c) => {
-    const cc = c as { stage?: string; status?: string; repair_item_ids?: Id<"items">[] };
-    const st = cc.stage ?? (cc.status === "denied" ? "denied" : cc.status === "settled" ? "added_to_revenue" : "case_opened");
-    if (REPAIR_TERMINAL.has(st)) return false;
-    return (cc.repair_item_ids ?? []).some((id) => id === itemId);
-  }).length;
+  const repairHeld = repairHeldUnits(claims, itemId);
 
   const available = Math.max(0, totalUnits - bookedUnits - repairHeld);
   return {
@@ -186,6 +205,13 @@ export async function diagnoseDenialAvailability(
   const dates = expandDateRange(start, end, 30);
   if (dates.length === 0) return { fully_booked_items, marketing_only_items, available_anyway };
 
+  // Collect the occupancy sources ONCE (this runs per-item × per-date below).
+  const confirmedRes = await ctx.db
+    .query("reservations")
+    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+    .collect();
+  const claimRows = await ctx.db.query("insurance_claims").collect();
+
   for (const ref of sourceItems) {
     const item = await ctx.db.get(ref.item_id);
     if (!item) continue;
@@ -197,11 +223,19 @@ export async function diagnoseDenialAvailability(
       });
       continue;
     }
-    // Check each date — if ANY is fully booked, classify as fully_booked
+    // Check each date — if ANY is fully booked, classify as fully_booked.
+    // Same expanded_items occupancy + repair rule as the rest of the app.
+    const blackouts = await ctx.db
+      .query("owner_unavailability")
+      .withIndex("by_item_date", (q) => q.eq("item_id", ref.item_id))
+      .collect();
+    const repairHeld = repairHeldUnits(claimRows, ref.item_id);
+    const total = itemDoc.qty ?? 0;
     const blockedDates: string[] = [];
     for (const d of dates) {
-      const av = await isItemUnitAvailable(ctx, ref.item_id, d);
-      if (av.is_fully_booked) blockedDates.push(d);
+      const blackout = blackouts.some((b) => b.start_date <= d && b.end_date >= d);
+      const booked = bookedUnitsOnDate(confirmedRes, ref.item_id, d);
+      if (blackout || total === 0 || booked + repairHeld >= total) blockedDates.push(d);
     }
     if (blockedDates.length > 0) {
       fully_booked_items.push({
