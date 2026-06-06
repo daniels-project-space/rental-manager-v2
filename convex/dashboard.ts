@@ -1589,16 +1589,23 @@ export const getStatsDrawerData = query({
     // Sums by status surface both pending workload (open count + amount) and
     // outcomes (settled total YTD).
     const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+    const claimStage = (c: { stage?: string; status?: string }): string => {
+      if (c.stage) return c.stage;
+      if (c.status === "denied") return "denied";
+      if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
+      return "case_opened";
+    };
     let openCount = 0;
     let openAmount = 0;
     let settledCountYTD = 0;
     let settledAmountYTD = 0;
     let deniedCountYTD = 0;
     for (const c of claimRows) {
-      if (c.status === "open") { openCount++; openAmount += c.amount_gbp; continue; }
+      const st = claimStage(c);
+      if (st !== "added_to_revenue" && st !== "denied") { openCount++; openAmount += c.amount_gbp; continue; }
       if (c.claim_date >= yearStart) {
-        if (c.status === "settled") { settledCountYTD++; settledAmountYTD += c.amount_gbp; }
-        else if (c.status === "denied") { deniedCountYTD++; }
+        if (st === "added_to_revenue") { settledCountYTD++; settledAmountYTD += ((c as { payout_amount_gbp?: number }).payout_amount_gbp ?? c.amount_gbp); }
+        else if (st === "denied") { deniedCountYTD++; }
       }
     }
     const insurance = {
@@ -1612,10 +1619,15 @@ export const getStatsDrawerData = query({
         id: c._id as string,
         accountSlug: c.account_slug ?? null,
         itemNameCanonical: c.item_name_canonical ?? null,
+        renterName: (c as { renter_name?: string }).renter_name ?? null,
         amountGbp: c.amount_gbp,
         claimDate: c.claim_date,
         description: c.description ?? null,
         status: c.status,
+        stage: claimStage(c),
+        payoutAmountGbp: (c as { payout_amount_gbp?: number }).payout_amount_gbp ?? null,
+        creditedToMonth: (c as { credited_to_month?: string }).credited_to_month ?? null,
+        creditedAt: (c as { credited_at?: number }).credited_at ?? null,
         createdAt: c.created_at,
       })),
     };

@@ -201,11 +201,94 @@ function ReturnModal({
   );
 }
 
+function OpenCaseModal({
+  item,
+  onClose,
+  onConfirm,
+}: {
+  item: DueReturn;
+  onClose: () => void;
+  onConfirm: (projected: number, description: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const [desc, setDesc] = useState("");
+  const [done, setDone] = useState(false);
+  const projected = Math.max(0, Math.round(Number(value) || 0));
+  function submit() {
+    if (projected <= 0 || done) return;
+    setDone(true);
+    onConfirm(projected, desc).finally(() => setTimeout(onClose, 1400));
+  }
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="glass-card p-6 w-full max-w-sm">
+        {done ? (
+          <div className="flex flex-col items-center py-4 gap-2">
+            <div className="text-5xl" style={{ color: "#f59e0b" }}>📂</div>
+            <p className="text-base font-semibold" style={{ color: "#f59e0b" }}>Case opened</p>
+            <p className="text-xs" style={{ color: "#f87171" }}>{item.renterName} flagged · moved to Cases</p>
+          </div>
+        ) : (
+          <>
+            <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">Open case</h3>
+            <div className="flex items-center gap-2 mb-3">
+              <Thumb url={item.imageUrl} name={item.renterName} size={44} />
+              <div className="min-w-0">
+                <div className="text-sm text-[#e4e6eb] truncate">{item.renterName}</div>
+                <div className="text-xs text-[#8b8fa3] truncate">{item.itemNames.join(", ")}</div>
+              </div>
+            </div>
+            <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(245,158,11,0.1)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.3)" }}>
+              Flags (blacklists) {item.renterName} and moves this rental to the Cases pipeline at stage 1. It leaves the Return Hub.
+            </div>
+            <label className="block text-xs text-[#8b8fa3] mb-1">Projected case value (£)</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoFocus
+              className="w-full text-sm rounded-lg p-2 mb-3"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e4e6eb" }}
+              placeholder="e.g. 450"
+            />
+            <textarea
+              placeholder="What happened? (damage / loss details)"
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              className="w-full text-sm rounded-lg p-2 mb-4 resize-none h-16"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb" }}
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={onClose} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Cancel</button>
+              <button
+                onClick={submit}
+                disabled={projected <= 0}
+                className="text-sm px-4 py-1.5 rounded transition-colors disabled:opacity-40"
+                style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.4)" }}
+              >
+                Open case
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ReturnHub() {
   const { activeAccountSlug } = useAccount();
   const rows = useQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
   const [active, setActive] = useState<DueReturn | null>(null);
+  const [caseFor, setCaseFor] = useState<DueReturn | null>(null);
   const markReturned = useMutation(api.reservations.markReturned);
+  const openCase = useMutation(api.insurance_claims.openCaseFromReservation);
 
   async function handleReturn(condition: string, notes: string, blacklist: boolean, reason: string) {
     if (!active) return;
@@ -216,6 +299,16 @@ export function ReturnHub() {
       blacklistRenter: blacklist || undefined,
       blacklistReason: blacklist ? reason || undefined : undefined,
       memberIds: active.memberIds && active.memberIds.length > 1 ? active.memberIds : undefined,
+    });
+  }
+
+  async function handleOpenCase(projected: number, description: string) {
+    if (!caseFor) return;
+    await openCase({
+      reservationId: caseFor.reservationId,
+      memberIds: caseFor.memberIds && caseFor.memberIds.length > 1 ? caseFor.memberIds : undefined,
+      projected_value_gbp: projected,
+      description: description || undefined,
     });
   }
 
@@ -257,39 +350,43 @@ export function ReturnHub() {
                           : "rgba(255,255,255,0.02)",
                     }}
                   >
-                    <div className="flex items-start gap-2">
-                      <Thumb url={r.imageUrl} name={r.renterName} size={34} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] text-[#e4e6eb] truncate flex items-center gap-1">
+                    <div className="flex gap-2">
+                      <Thumb url={r.imageUrl} name={r.renterName} size={52} />
+                      <div className="flex-1 min-w-0 flex flex-col">
+                        <div className="text-[12px] text-[#e4e6eb] truncate flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accColor }} />
                           <span className="truncate font-medium">{r.renterName}</span>
                         </div>
-                        <div className="flex items-center gap-1 flex-wrap mt-1">
+                        <div className="text-[10.5px] text-[#8b8fa3] line-clamp-2 leading-tight mt-0.5">{r.itemNames.join(", ")}</div>
+                        <div className="flex items-center gap-1 flex-wrap mt-auto pt-1">
                           <TrustBadge t={r.renter} />
                           {(r.memberCount ?? 1) > 1 && (
-                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded" style={{ background: "rgba(110,168,254,0.15)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>
-                              ⛓ ×{r.memberCount}
-                            </span>
+                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded" style={{ background: "rgba(110,168,254,0.15)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>⛓ ×{r.memberCount}</span>
                           )}
                           {!!r.renter?.note_count && (
                             <span className="text-[9px] text-[#8b8fa3]" title={r.renter?.notes ?? ""}>📝{r.renter.note_count}</span>
                           )}
+                          <span className="text-[10px] ml-auto leading-tight whitespace-nowrap" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
+                            {r.isOverdue ? "OVERDUE " : ""}{r.endDate}{r.returnTime ? ` ${r.returnTime}` : ""}
+                          </span>
                         </div>
                       </div>
                     </div>
-                    <div className="text-[11px] text-[#8b8fa3] line-clamp-2 leading-tight">{r.itemNames.join(", ")}</div>
-                    <div className="flex items-center justify-between gap-2 mt-auto pt-0.5">
-                      <span className="text-[11px] leading-tight" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
-                        <span className="font-semibold">{r.isOverdue ? "OVERDUE" : "due"}</span>{" "}
-                        {r.endDate}
-                        {r.returnTime ? ` ${r.returnTime}` : ""}
-                      </span>
+                    <div className="flex gap-1.5">
                       <button
                         onClick={() => setActive(r)}
-                        className="text-[11px] px-2.5 py-1 rounded flex-shrink-0 transition-colors"
+                        className="flex-1 text-[11px] px-2 py-1 rounded transition-colors hover:bg-white/[0.04]"
                         style={{ border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e" }}
                       >
                         Return
+                      </button>
+                      <button
+                        onClick={() => setCaseFor(r)}
+                        className="flex-1 text-[11px] px-2 py-1 rounded transition-colors hover:bg-white/[0.04]"
+                        style={{ border: "1px solid rgba(245,158,11,0.4)", color: "#f59e0b" }}
+                        title="Open a damage/loss case — flags the renter and moves this to the Cases pipeline (stage 1)"
+                      >
+                        Open case
                       </button>
                     </div>
                   </div>
@@ -301,6 +398,7 @@ export function ReturnHub() {
         )}
       </Card>
       {active && <ReturnModal item={active} onClose={() => setActive(null)} onConfirm={handleReturn} />}
+      {caseFor && <OpenCaseModal item={caseFor} onClose={() => setCaseFor(null)} onConfirm={handleOpenCase} />}
     </>
   );
 }
