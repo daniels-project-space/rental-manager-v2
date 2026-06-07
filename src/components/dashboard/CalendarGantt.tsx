@@ -185,12 +185,13 @@ function barGeom(block: Block, weekStart: string, colWidth: number): BarGeom | n
   if (!effReturn) return null;
   const weekStartMs = isoToDate(weekStart).getTime();
   const weekEndMs = weekStartMs + 7 * DAY_MS;
-  // Full-day bars: the bar covers every day the gear is out, edge-to-edge, so it
-  // reads as one continuous span through the away days. The exact pickup/return
-  // times are shown as labels at the ENDS (pickup day / return day) rather than
-  // by shrinking the bar within the start/end day.
-  const startMs = isoToDate(block.start_date).getTime();
-  const endMs = isoToDate(effReturn).getTime() + DAY_MS;
+  // Time-accurate bars: positioned to the actual pickup time on the start day and
+  // the return time on the return day (sub-day precision via the 9am–10pm
+  // business-hours window) so the bar's placement MATCHES the booked times.
+  // Interior away-days are spanned fully — the bar is one continuous rect.
+  const startMs = isoToDate(block.start_date).getTime() + timeFrac(block.pickup_time, 0) * DAY_MS;
+  // No return time → end of day so the bar still covers the return day.
+  const endMs = isoToDate(effReturn).getTime() + timeFrac(block.return_time, 1) * DAY_MS;
   if (endMs <= weekStartMs || startMs >= weekEndMs) return null;
   const startDays = Math.max(0, (startMs - weekStartMs) / DAY_MS);
   const endDays = Math.min(7, (endMs - weekStartMs) / DAY_MS);
@@ -384,11 +385,12 @@ interface BarProps {
   onSelect: () => void;
   liveProgress: number | null;
   today: string;       // YYYY-MM-DD (London) — for the pickup/return-today glow
+  weekStart: string;   // visible week start — gate time labels to the real day
 }
 
 // One time-accurate bar per reservation. Left stripe = account color, fill =
 // status, glow + dot = ongoing. The bar physically ends at the return time.
-function ReservationBar({ row, height, isNext, onSelect, liveProgress, today }: BarProps) {
+function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, weekStart }: BarProps) {
   const { block, acc, ongoing } = row;
   const ss = statusStyle(block.order_step);
   const showProgress = block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
@@ -404,6 +406,12 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today }: 
   const pickupToday = !!pickupDay && pickupDay === today;
   const returnToday = !!returnDay && returnDay === today;
   const todayEvent = pickupToday || returnToday;
+  // A time label belongs ONLY on its real pickup/return day. If that day is
+  // outside the visible week, the bar is clamped to the week edge — don't paint
+  // the time there (it would read as a pickup/return on the wrong day).
+  const weekEnd = addDays(weekStart, 6);
+  const pickupInWeek = !!pickupDay && pickupDay >= weekStart && pickupDay <= weekEnd;
+  const returnInWeek = !!returnDay && returnDay >= weekStart && returnDay <= weekEnd;
   const tooltip = [
     renterLabel,
     row.items.map((i) => i.name).join(", "),
@@ -443,8 +451,8 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today }: 
           ⛓{row.memberCount}
         </span>
       )}
-      {/* Pickup time pinned to the START of the bar — the pickup DAY only */}
-      {showTimes && pickup && (
+      {/* Pickup time pinned to the START of the bar — only on the pickup day */}
+      {showTimes && pickup && pickupInWeek && (
         <span
           className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
           style={{
@@ -469,8 +477,8 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today }: 
       >
         {renterLabel}
       </span>
-      {/* Drop-off time pinned to the END of the bar — the return DAY only */}
-      {showTimes && ret && (
+      {/* Drop-off time pinned to the END of the bar — only on the return day */}
+      {showTimes && ret && returnInWeek && (
         <span
           className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
           style={{
@@ -1095,6 +1103,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           onSelect={() => setSelectedBlock({ block: row.block, items: row.items, accent: row.acc })}
                           liveProgress={liveProgress[row.reservationId] ?? null}
                           today={today}
+                          weekStart={weekStart}
                         />
                       </div>
                     </div>
