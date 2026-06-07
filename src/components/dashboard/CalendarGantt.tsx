@@ -185,9 +185,12 @@ function barGeom(block: Block, weekStart: string, colWidth: number): BarGeom | n
   if (!effReturn) return null;
   const weekStartMs = isoToDate(weekStart).getTime();
   const weekEndMs = weekStartMs + 7 * DAY_MS;
-  const startMs = isoToDate(block.start_date).getTime() + timeFrac(block.pickup_time, 0) * DAY_MS;
-  // No return time → assume end of day so the bar still covers the return day.
-  const endMs = isoToDate(effReturn).getTime() + timeFrac(block.return_time, 1) * DAY_MS;
+  // Full-day bars: the bar covers every day the gear is out, edge-to-edge, so it
+  // reads as one continuous span through the away days. The exact pickup/return
+  // times are shown as labels at the ENDS (pickup day / return day) rather than
+  // by shrinking the bar within the start/end day.
+  const startMs = isoToDate(block.start_date).getTime();
+  const endMs = isoToDate(effReturn).getTime() + DAY_MS;
   if (endMs <= weekStartMs || startMs >= weekEndMs) return null;
   const startDays = Math.max(0, (startMs - weekStartMs) / DAY_MS);
   const endDays = Math.min(7, (endMs - weekStartMs) / DAY_MS);
@@ -380,11 +383,12 @@ interface BarProps {
   isNext: boolean;     // the immediate next upcoming rental → always pulses
   onSelect: () => void;
   liveProgress: number | null;
+  today: string;       // YYYY-MM-DD (London) — for the pickup/return-today glow
 }
 
 // One time-accurate bar per reservation. Left stripe = account color, fill =
 // status, glow + dot = ongoing. The bar physically ends at the return time.
-function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProps) {
+function ReservationBar({ row, height, isNext, onSelect, liveProgress, today }: BarProps) {
   const { block, acc, ongoing } = row;
   const ss = statusStyle(block.order_step);
   const showProgress = block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
@@ -393,6 +397,13 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
   const pickup = block.pickup_time ? block.pickup_time.slice(0, 5) : null;
   const ret = block.return_time ? block.return_time.slice(0, 5) : null;
   const showTimes = row.width > 70;
+  // Pickup or return happening TODAY → cyan glow, distinct from the amber
+  // next-upcoming pulse and the status "ongoing" glow.
+  const pickupDay = block.start_date;
+  const returnDay = block.return_date ?? block.end_date;
+  const pickupToday = !!pickupDay && pickupDay === today;
+  const returnToday = !!returnDay && returnDay === today;
+  const todayEvent = pickupToday || returnToday;
   const tooltip = [
     renterLabel,
     row.items.map((i) => i.name).join(", "),
@@ -405,7 +416,7 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
 
   return (
     <div
-      className={`absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : ""}`}
+      className={`absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : todayEvent ? " gantt-today-glow" : ""}`}
       style={{
         left: row.left,
         width: row.width,
@@ -414,7 +425,7 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
         background: ss.bg,
         border: `1px solid ${isNext ? "#fbbf24" : ss.border}`,
         borderLeft: `4px solid ${acc}`,
-        boxShadow: ongoing && !isNext ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
+        boxShadow: ongoing && !isNext && !todayEvent ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
       }}
       title={tooltip}
       onClick={onSelect}
@@ -432,10 +443,19 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
           ⛓{row.memberCount}
         </span>
       )}
-      {/* Pickup time pinned to the START of the bar */}
+      {/* Pickup time pinned to the START of the bar — the pickup DAY only */}
       {showTimes && pickup && (
-        <span className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums" style={{ color: ss.text, opacity: 0.85 }}>
-          {pickup}
+        <span
+          className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
+          style={{
+            color: pickupToday ? "#67e8f9" : ss.text,
+            opacity: pickupToday ? 1 : 0.8,
+            fontWeight: pickupToday ? 700 : 600,
+            textShadow: pickupToday ? "0 0 6px rgba(34,211,238,0.9)" : undefined,
+          }}
+          title={`Out ${pickup}${pickupToday ? " — today" : ""}`}
+        >
+          ↑{pickup}
         </span>
       )}
       <span
@@ -449,10 +469,19 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress }: BarProp
       >
         {renterLabel}
       </span>
-      {/* Drop-off time pinned to the END of the bar */}
+      {/* Drop-off time pinned to the END of the bar — the return DAY only */}
       {showTimes && ret && (
-        <span className="text-[10px] font-mono flex-shrink-0 leading-none tabular-nums" style={{ color: ss.text, opacity: 0.85 }}>
-          {ret}
+        <span
+          className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
+          style={{
+            color: returnToday ? "#67e8f9" : ss.text,
+            opacity: returnToday ? 1 : 0.8,
+            fontWeight: returnToday ? 700 : 600,
+            textShadow: returnToday ? "0 0 6px rgba(34,211,238,0.9)" : undefined,
+          }}
+          title={`Back ${ret}${returnToday ? " — today" : ""}`}
+        >
+          {ret}↓
         </span>
       )}
       {showProgress && (
@@ -474,14 +503,14 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
   const ss = statusStyle(block.order_step);
   const fmtMethod = (m: string | null) =>
     m === "delivery" ? "🚚 Delivery" : m === "collection" ? "🤝 Collection" : m;
+  const fmtDay = (d: string | null | undefined) =>
+    d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : null;
   const rows: Array<[string, string | null | undefined]> = [
     ["Status", orderStepLabel(block.order_step)],
     ["Renter", block.renter_name && block.renter_name !== "?" ? block.renter_name : "—"],
-    ["From", block.start_date],
     // Effective (negotiated) return so an extended rental's detail matches its bar.
-    ["To", block.return_date ?? block.end_date],
-    ["Pickup", [block.pickup_time?.slice(0, 5), fmtMethod(block.pickup_method)].filter(Boolean).join(" · ") || null],
-    ["Return", [block.return_time?.slice(0, 5), fmtMethod(block.return_method)].filter(Boolean).join(" · ") || null],
+    ["↑ Out", [fmtDay(block.start_date), block.pickup_time?.slice(0, 5), fmtMethod(block.pickup_method)].filter(Boolean).join(" · ") || null],
+    ["↓ Back", [fmtDay(block.return_date ?? block.end_date), block.return_time?.slice(0, 5), fmtMethod(block.return_method)].filter(Boolean).join(" · ") || null],
     ["Progress", block.progress_percent != null ? `${block.progress_percent}%` : null],
   ];
   return (
@@ -1065,6 +1094,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           isNext={row.reservationId === nextUpcomingId}
                           onSelect={() => setSelectedBlock({ block: row.block, items: row.items, accent: row.acc })}
                           liveProgress={liveProgress[row.reservationId] ?? null}
+                          today={today}
                         />
                       </div>
                     </div>
