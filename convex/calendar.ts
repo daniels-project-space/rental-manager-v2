@@ -1211,22 +1211,30 @@ export const searchCalendarInventory = query({
       if (REPAIR_TERMINAL.has(st)) continue;
       for (const iid of (cc.repair_item_ids ?? [])) repairByItem.set(iid as string, (repairByItem.get(iid as string) ?? 0) + 1);
     }
-    const matched = allItems.filter((it) => {
-      // Only real, owned inventory — marketing-only / zero-qty listings are
-      // never "available", so excluding them keeps a red 0 meaning "fully
-      // booked", not "we don't own this".
-      if (it.is_marketing_only || (it.qty ?? 0) <= 0) return false;
-      const hay: (string | undefined)[] = [
-        it.name_canonical,
-        it.name_input,
-        it.slug,
-        it.kind,
-        it.sub_kind,
-        it.category_v1,
-        ...(it.aliases ?? []),
-      ];
-      return hay.some((f) => typeof f === "string" && f.toLowerCase().includes(q));
-    });
+    // Normalised, token-AND search: every query word must appear somewhere in
+    // the item's searchable text, ignoring spaces/punctuation and treating
+    // standalone roman numerals as arabic. So "blazar 45", "fx 3", "fx3",
+    // "fx iii" and "fx III" all match "Blazar Remus 45mm" / "Sony FX3".
+    const ROMAN: Record<string, string> = { i: "1", ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8", ix: "9", x: "10" };
+    const norm = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/\b(viii|vii|iii|ix|iv|vi|ii|v|x|i)\b/g, (m) => ROMAN[m] ?? m)
+        .replace(/[^a-z0-9]+/g, "");
+    const qTokens = q.split(/\s+/).map((t) => norm(t)).filter((t) => t.length > 0);
+    const matched = qTokens.length === 0
+      ? []
+      : allItems.filter((it) => {
+          // Only real, owned inventory — marketing-only / zero-qty listings are
+          // never "available".
+          if (it.is_marketing_only || (it.qty ?? 0) <= 0) return false;
+          const hay = norm(
+            [it.name_canonical, it.name_input, it.slug, it.kind, it.sub_kind, it.category_v1, ...(it.aliases ?? [])]
+              .filter((f): f is string => typeof f === "string")
+              .join(" "),
+          );
+          return qTokens.every((tok) => hay.includes(tok));
+        });
 
     if (matched.length === 0) return { weekStart, dates, items: [], reservationIds: [] as string[] };
     const matchedById = new Map(matched.map((it) => [String(it._id), it]));
@@ -1370,10 +1378,7 @@ export const searchCalendarInventory = query({
           .query("owner_unavailability")
           .withIndex("by_item_date", (qb) => qb.eq("item_id", it._id))
           .collect();
-        let bookedThisWeek = false;
         const availability = dates.map((date) => {
-          const committed = commit.get(`${idStr}|${date}`) ?? 0;
-          if (committed > 0) bookedThisWeek = true;
           const black = blackouts.some((b) => b.start_date <= date && b.end_date >= date);
           const da = dayAvail(intervals.get(`${idStr}|${date}`), total);
           const free = black ? 0 : da.free;
@@ -1386,7 +1391,6 @@ export const searchCalendarInventory = query({
               : null;
           return { date, free, total, booked: black ? total : da.peak, free_from };
         });
-        if (!bookedThisWeek) return null;
         return {
           item_id: idStr,
           name: it.name_canonical,

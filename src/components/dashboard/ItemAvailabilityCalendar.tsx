@@ -187,7 +187,7 @@ export function ItemAvailabilityCalendar() {
                       title={cell ? `${free} of ${tot} free · ${d}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${d}`}
                     >
                       <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
-                        {showFrom ? "1" : free !== undefined ? free : "–"}
+                        {free !== undefined ? free : "–"}
                       </span>
                       {showFrom ? (
                         <span className="text-[8px] leading-none mt-0.5" style={{ color: "#fbbf24" }}>{`fr ${freeFrom}`}</span>

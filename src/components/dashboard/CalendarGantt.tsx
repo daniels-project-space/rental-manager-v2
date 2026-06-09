@@ -1017,7 +1017,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                                 title={cell ? `${free} of ${tot} free · ${iso}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${iso}`}
                               >
                                 <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
-                                  {showFrom ? "1" : free !== undefined ? free : "–"}
+                                  {free !== undefined ? free : "–"}
                                 </span>
                                 {showFrom ? (
                                   <span className="text-[8px] leading-none mt-0.5" style={{ color: "#fbbf24" }}>

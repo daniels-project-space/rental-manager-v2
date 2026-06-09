@@ -153,7 +153,7 @@ export default function WeeklyCalendarCard() {
               let color = "#8b8fa3";
               if (searching && matched && cell) {
                 const free = cell.free;
-                value = showFrom ? "1" : String(free);
+                value = String(free);
                 color = free <= 0 ? (showFrom ? "#fbbf24" : "#f87171") : free < cell.total ? "#fbbf24" : "#34d399";
               } else if (!searching) {
                 const n = bookingByDate[date] ?? 0;
