@@ -30,7 +30,7 @@ function fmtShort(ymd: string): string {
 }
 
 type AvailCell = { date: string; free: number; total: number; booked: number; free_from?: string | null };
-type AvailItem = { item_id: string; name: string; qty: number; image_url?: string | null; availability: AvailCell[] };
+type AvailItem = { item_id: string; name: string; qty: number; image_url?: string | null; availability: AvailCell[]; owned?: boolean };
 
 /**
  * Item Availability — a dedicated weekly calendar that does ONE thing: search an
@@ -145,7 +145,7 @@ export function ItemAvailabilityCalendar() {
           Type an item above to check how many units are free each day.
         </p>
       ) : items.length === 0 ? (
-        <p className="text-xs text-[#8b8fa3] text-center py-6">No owned item matches “{query}”.</p>
+        <p className="text-xs text-[#8b8fa3] text-center py-6">No item matches “{query}”.</p>
       ) : (
         <div className="space-y-1">
           {items.map((it) => {
@@ -161,7 +161,7 @@ export function ItemAvailabilityCalendar() {
                   )}
                   <div className="min-w-0">
                     <div className="text-[12px] text-[#e4e6eb] truncate font-medium">{it.name}</div>
-                    <div className="text-[9px] text-[#8b8fa3]">{it.qty} owned</div>
+                    <div className="text-[9px]" style={{ color: it.owned === false ? "#a78bfa" : "#8b8fa3" }}>{it.owned === false ? "listed · not owned" : `${it.qty} owned`}</div>
                   </div>
                 </div>
                 {dates.map((d) => {
