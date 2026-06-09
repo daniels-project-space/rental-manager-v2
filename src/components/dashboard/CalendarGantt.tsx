@@ -975,7 +975,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                             {it.name}
                           </span>
                           <span className="text-[10px] leading-tight" style={{ color: "#94a3b8" }}>
-                            {`${total} unit${total === 1 ? "" : "s"} · free/day`}
+                            {(it as { owned?: boolean }).owned === false
+                              ? "listed · not owned"
+                              : `${total} unit${total === 1 ? "" : "s"} · free/day`}
                           </span>
                         </div>
                         <div className="relative flex" style={{ width: totalGridWidth }}>

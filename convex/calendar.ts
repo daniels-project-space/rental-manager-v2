@@ -1222,19 +1222,30 @@ export const searchCalendarInventory = query({
         .replace(/\b(viii|vii|iii|ix|iv|vi|ii|v|x|i)\b/g, (m) => ROMAN[m] ?? m)
         .replace(/[^a-z0-9]+/g, "");
     const qTokens = q.split(/\s+/).map((t) => norm(t)).filter((t) => t.length > 0);
-    const matched = qTokens.length === 0
+    // Forgiving relevance search: an item matches if ENOUGH of the query words
+    // appear in its searchable text — not necessarily ALL — so "remus set" and
+    // "remus lenses" still find the Remus lenses, and "dji rs3 pro" still finds
+    // the gimbal. Longer (more distinctive) word matches rank higher. EVERY
+    // catalogue item is searchable; ones not actually owned (marketing-only /
+    // zero qty) are flagged below and carry no availability.
+    const matchedScored = qTokens.length === 0
       ? []
-      : allItems.filter((it) => {
-          // Only real, owned inventory — marketing-only / zero-qty listings are
-          // never "available".
-          if (it.is_marketing_only || (it.qty ?? 0) <= 0) return false;
-          const hay = norm(
-            [it.name_canonical, it.name_input, it.slug, it.kind, it.sub_kind, it.category_v1, ...(it.aliases ?? [])]
-              .filter((f): f is string => typeof f === "string")
-              .join(" "),
-          );
-          return qTokens.every((tok) => hay.includes(tok));
-        });
+      : allItems
+          .map((it) => {
+            const hay = norm(
+              [it.name_canonical, it.name_input, it.slug, it.kind, it.sub_kind, it.category_v1, ...(it.aliases ?? [])]
+                .filter((f): f is string => typeof f === "string")
+                .join(" "),
+            );
+            let score = 0;
+            for (const tok of qTokens) if (hay.includes(tok)) score += tok.length;
+            return { it, score };
+          })
+          .filter((x) => x.score >= 2);
+    // Keep only the most-relevant tier (best score) so extra/common words like
+    // "set", "pro" or "lenses" do not drag in unrelated items.
+    const maxScore = matchedScored.reduce((m, x) => Math.max(m, x.score), 0);
+    const matched = matchedScored.filter((x) => x.score === maxScore).map((x) => x.it);
 
     if (matched.length === 0) return { weekStart, dates, items: [], reservationIds: [] as string[] };
     const matchedById = new Map(matched.map((it) => [String(it._id), it]));
@@ -1373,6 +1384,21 @@ export const searchCalendarInventory = query({
     const itemsRaw = await Promise.all(
       matched.map(async (it) => {
         const idStr = String(it._id);
+        const owned = !it.is_marketing_only && (it.qty ?? 0) > 0;
+        if (!owned) {
+          // Listed in the catalogue but not actually owned (marketing-only /
+          // zero qty). Surfaced so search finds everything, but it has no real
+          // availability — the UI shows it as "not owned".
+          return {
+            item_id: idStr,
+            name: it.name_canonical,
+            kind: it.kind ?? null,
+            qty: it.qty ?? 0,
+            image_url: it.image_url ?? null,
+            availability: [] as { date: string; free: number; total: number; booked: number; free_from: string | null }[],
+            owned: false,
+          };
+        }
         const total = Math.max(0, (it.qty ?? 0) - (repairByItem.get(String(it._id)) ?? 0));
         const blackouts = await ctx.db
           .query("owner_unavailability")
@@ -1398,10 +1424,13 @@ export const searchCalendarInventory = query({
           qty: total,
           image_url: it.image_url ?? null,
           availability,
+          owned: true,
         };
       }),
     );
     const items = itemsRaw.filter((x): x is NonNullable<typeof x> => x !== null);
+    // Owned items first (real availability), preserving relevance order within.
+    items.sort((a, b) => (a.owned === b.owned ? a.name.localeCompare(b.name) : a.owned ? -1 : 1));
 
     items.sort((a, b) => a.name.localeCompare(b.name));
     return { weekStart, dates, items, reservationIds: [...reservationIds] };

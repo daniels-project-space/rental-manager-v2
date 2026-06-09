@@ -32,7 +32,7 @@ function addDays(ymd: string, n: number): string {
 const WD = ["M", "T", "W", "T", "F", "S", "S"];
 
 type AvailCell = { date: string; free: number; total: number; booked: number; free_from?: string | null };
-type AvailItem = { item_id: string; name: string; qty: number; availability: AvailCell[] };
+type AvailItem = { item_id: string; name: string; qty: number; availability: AvailCell[]; owned?: boolean };
 
 /**
  * Weekly Calendar widget: keyword-search an item to see, on each weekday, how
@@ -129,7 +129,8 @@ export default function WeeklyCalendarCard() {
         {/* Matched-item label (what the numbers below refer to) */}
         {searching && matched && (
           <div className="text-[10px] text-[#8b8fa3] mb-1 truncate">
-            <span className="text-[#e4e6eb] font-medium">{matched.name}</span> · {matched.qty} owned · free / day
+            <span className="text-[#e4e6eb] font-medium">{matched.name}</span>
+            {matched.owned === false ? " · listed · not owned" : ` · ${matched.qty} owned · free / day`}
             {moreCount > 0 && <span className="text-[#6ea8fe]"> · +{moreCount} more</span>}
           </div>
         )}
@@ -138,7 +139,7 @@ export default function WeeklyCalendarCard() {
           <SkeletonBlock className="h-16 w-full" />
         ) : searching && !matched ? (
           <div className="flex-1 flex items-center justify-center text-[11px] text-[#8b8fa3]">
-            No owned item matches “{query}”.
+            No item matches “{query}”.
           </div>
         ) : (
           <div className="grid grid-cols-7 gap-1 flex-1 items-stretch">
