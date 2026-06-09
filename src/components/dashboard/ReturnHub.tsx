@@ -357,58 +357,64 @@ export function ReturnHub() {
           <EmptyState message="No returns due — all gear is back" icon="checkmark" />
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3 mb-3">
               {rows.map((r) => {
                 const accColor = r.accountSlug === "dbcinema" ? "#6ea8fe" : "#22c55e";
                 const accent = r.renter?.blacklisted ? "#ef4444" : r.isOverdue ? "#f59e0b" : accColor;
                 return (
                   <div
                     key={String(r.reservationId)}
-                    className="flex flex-col gap-1.5 p-2.5 rounded-lg"
+                    className="group flex flex-col rounded-2xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30"
                     style={{
-                      border: "1px solid rgba(255,255,255,0.07)",
-                      borderLeft: `3px solid ${accent}`,
-                      background: r.renter?.blacklisted
-                        ? "rgba(239,68,68,0.07)"
-                        : r.isOverdue
-                          ? "rgba(245,158,11,0.06)"
-                          : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${r.renter?.blacklisted ? "rgba(239,68,68,0.28)" : "rgba(255,255,255,0.08)"}`,
+                      background: "rgba(255,255,255,0.018)",
                     }}
                   >
-                    <div className="flex gap-2">
-                      <Thumb url={r.imageUrl} name={r.renterName} size={52} />
-                      <div className="flex-1 min-w-0 flex flex-col">
-                        <div className="text-[12px] text-[#e4e6eb] truncate flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accColor }} />
-                          <span className="truncate font-medium">{r.renterName}</span>
+                    <div className="flex gap-3 p-3">
+                      <div className="relative flex-shrink-0">
+                        <Thumb url={r.imageUrl} name={r.renterName} size={56} />
+                        <span
+                          className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full"
+                          style={{ background: accent, border: "2px solid #0e111c" }}
+                          title={r.renter?.blacklisted ? "blacklisted" : r.isOverdue ? "overdue" : "due"}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-[13px] font-semibold text-[#f0f1f5] truncate leading-tight">{r.renterName}</span>
+                          <span
+                            className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-md whitespace-nowrap flex-shrink-0 tabular-nums"
+                            style={{
+                              background: r.isOverdue ? "rgba(245,158,11,0.14)" : "rgba(255,255,255,0.05)",
+                              color: r.isOverdue ? "#fbbf24" : "#9296a6",
+                            }}
+                          >
+                            {r.isOverdue ? "⚠ " : ""}{r.endDate}{r.returnTime ? ` · ${r.returnTime}` : ""}
+                          </span>
                         </div>
-                        <div className="text-[10.5px] text-[#8b8fa3] line-clamp-2 leading-tight mt-0.5">{r.itemNames.join(", ")}</div>
-                        <div className="flex items-center gap-1 flex-wrap mt-auto pt-1">
+                        <div className="text-[11px] text-[#9296a6] line-clamp-2 leading-snug mt-1">{r.itemNames.join(", ")}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-2">
                           <TrustBadge t={r.renter} />
                           {(r.memberCount ?? 1) > 1 && (
-                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded" style={{ background: "rgba(110,168,254,0.15)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>⛓ ×{r.memberCount}</span>
+                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md" style={{ background: "rgba(110,168,254,0.14)", color: "#6ea8fe" }} title={`${r.memberCount} back-to-back bookings merged (extended)`}>⛓ ×{r.memberCount}</span>
                           )}
                           {!!r.renter?.note_count && (
-                            <span className="text-[9px] text-[#8b8fa3]" title={r.renter?.notes ?? ""}>📝{r.renter.note_count}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ background: "rgba(255,255,255,0.05)", color: "#9296a6" }} title={r.renter?.notes ?? ""}>📝 {r.renter.note_count}</span>
                           )}
-                          <span className="text-[10px] ml-auto leading-tight whitespace-nowrap" style={{ color: r.isOverdue ? "#f59e0b" : "#8b8fa3" }}>
-                            {r.isOverdue ? "OVERDUE " : ""}{r.endDate}{r.returnTime ? ` ${r.returnTime}` : ""}
-                          </span>
                         </div>
                       </div>
                     </div>
-                    <div className="flex gap-1.5">
+                    <div className="grid grid-cols-2 mt-auto" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
                       <button
                         onClick={() => setActive(r)}
-                        className="flex-1 text-[11px] px-2 py-1 rounded transition-colors hover:bg-white/[0.04]"
-                        style={{ border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e" }}
+                        className="text-[11px] font-semibold py-2.5 transition-colors text-[#34d399] hover:bg-[rgba(34,197,94,0.1)]"
                       >
-                        Return
+                        ✓ Return
                       </button>
                       <button
                         onClick={() => setCaseFor(r)}
-                        className="flex-1 text-[11px] px-2 py-1 rounded transition-colors hover:bg-white/[0.04]"
-                        style={{ border: "1px solid rgba(245,158,11,0.4)", color: "#f59e0b" }}
+                        className="text-[11px] font-medium py-2.5 transition-colors text-[#8b8fa3] hover:bg-[rgba(245,158,11,0.1)] hover:text-[#fbbf24]"
+                        style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}
                         title="Open a damage/loss case — flags the renter and moves this to the Cases pipeline (stage 1)"
                       >
                         Open case
