@@ -48,6 +48,7 @@ const EAGER_PANELS = new Set([
 // content). Anything not listed falls back to the DeferredMount default.
 const PANEL_SKELETON: Record<string, { height: string; rows: number }> = {
   "competitor-intel": { height: "120px", rows: 1 },   // default-collapsed
+  "item-availability": { height: "320px", rows: 4 },
   "ai-chat":          { height: "440px", rows: 4 },
   lifetime:           { height: "470px", rows: 4 },
   "earnings-chart":   { height: "340px", rows: 3 },

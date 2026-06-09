@@ -3,27 +3,19 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
-import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
-// Lazy-load the full-week Gantt overlay so it doesn't bloat the initial bundle.
-// Mirrors CalendarStrip's launcher — this card is just a second entry point to
-// the same "calendar overlay".
+// Lazy-load the full weekly Gantt overlay so it doesn't bloat the initial bundle.
 const CalendarGantt = lazy(() =>
   import("../CalendarGantt").catch(() => ({
     default: () => (
-      <div className="p-6 text-center text-[#8b8fa3] text-sm">
-        Weekly Calendar overlay unavailable.
-      </div>
+      <div className="p-6 text-center text-[#8b8fa3] text-sm">Weekly Calendar overlay unavailable.</div>
     ),
   })),
 );
 
-/** "Today" in the business timezone (Europe/London), "YYYY-MM-DD". */
 function londonToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 }
-
-/** Monday (YYYY-MM-DD) of the week containing the given YYYY-MM-DD date. */
 function getMondayOf(ymd: string): string {
   const d = new Date(ymd + "T00:00:00Z");
   const day = d.getUTCDay();
@@ -32,28 +24,7 @@ function getMondayOf(ymd: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function addDays(ymd: string, n: number): string {
-  const d = new Date(ymd + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-function fmtShort(ymd: string): string {
-  return new Date(ymd + "T00:00:00Z").toLocaleString("en", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-const WD = ["M", "T", "W", "T", "F", "S", "S"];
-
-/**
- * Compact weekly-calendar stat card. Shows a 7-day preview of the current week
- * (per-day booking counts, today highlighted) and, on click, opens the existing
- * CalendarGantt "calendar overlay" — the same overlay CalendarStrip launches
- * from its "Weekly View" button.
- */
+/** Tiny 1×1 launcher → opens the full weekly Gantt timeline overlay. */
 export default function WeeklyCalendarCard() {
   const { activeAccountSlug } = useAccount();
   const today = londonToday();
@@ -64,16 +35,10 @@ export default function WeeklyCalendarCard() {
     accountSlug: activeAccountSlug,
     weekStartDate: weekStart,
   });
-
-  const counts = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const day of data?.days ?? []) {
-      map[day.date] = day.reservations?.length ?? 0;
-    }
-    return map;
-  }, [data]);
-
-  const weekEnd = addDays(weekStart, 6);
+  const todayCount = useMemo(() => {
+    const d = data?.days?.find((x) => x.date === today);
+    return d ? d.reservations?.length ?? 0 : null;
+  }, [data, today]);
 
   return (
     <>
@@ -87,72 +52,24 @@ export default function WeeklyCalendarCard() {
             setOpen(true);
           }
         }}
-        className="stat-card w-full text-left transition-colors hover:bg-white/[0.03] cursor-pointer"
+        className="stat-card w-full h-full text-center transition-colors hover:bg-white/[0.04] cursor-pointer flex flex-col items-center justify-center gap-0.5"
         style={{
           background: "rgba(14,17,28,0.35)",
           backdropFilter: "blur(24px) saturate(1.5)",
           borderRadius: 16,
-          padding: 16,
+          padding: 12,
           borderLeft: "3px solid #6ea8fe",
           minHeight: 140,
-          display: "flex",
-          flexDirection: "column",
         }}
-        aria-label="Open weekly calendar overlay"
+        aria-label="Open weekly calendar timeline"
+        title="Open the weekly timeline"
       >
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8b8fa3]">
-            📅 Weekly Calendar
-          </span>
-          <span className="text-[10px] text-[#6ea8fe]">Open ›</span>
+        <div className="text-2xl leading-none">📅</div>
+        <div className="text-[12px] font-semibold text-[#e4e6eb] leading-none mt-1">Calendar</div>
+        <div className="text-[10px] text-[#8b8fa3] leading-none mt-0.5">
+          {todayCount === null ? "this week" : `${todayCount} today`}
         </div>
-
-        {data === undefined ? (
-          <SkeletonBlock className="h-16 w-full" />
-        ) : (
-          <div className="grid grid-cols-7 gap-1 flex-1 items-stretch">
-            {Array.from({ length: 7 }).map((_, i) => {
-              const date = addDays(weekStart, i);
-              const n = counts[date] ?? 0;
-              const isToday = date === today;
-              const dayNum = Number(date.slice(8, 10));
-              return (
-                <div
-                  key={date}
-                  className="rounded-md flex flex-col items-center justify-start py-1 gap-0.5"
-                  style={{
-                    border: isToday
-                      ? "1px solid rgba(110,168,254,0.5)"
-                      : "1px solid rgba(255,255,255,0.06)",
-                    background: isToday ? "rgba(110,168,254,0.08)" : "transparent",
-                  }}
-                >
-                  <span className="text-[9px] text-[#8b8fa3]">{WD[i]}</span>
-                  <span
-                    className="text-[12px] font-semibold leading-none"
-                    style={{ color: isToday ? "#6ea8fe" : "#e4e6eb" }}
-                  >
-                    {dayNum}
-                  </span>
-                  {n > 0 ? (
-                    <span
-                      className="text-[9px] font-bold px-1 rounded-full leading-tight"
-                      style={{ background: "rgba(34,197,94,0.18)", color: "#22c55e" }}
-                    >
-                      {n}
-                    </span>
-                  ) : (
-                    <span className="text-[9px] text-[#8b8fa3]/40">–</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="mt-2 text-[10px] text-[#8b8fa3]">
-          {fmtShort(weekStart)} – {fmtShort(weekEnd)}
-        </div>
+        <div className="text-[10px] text-[#6ea8fe] mt-1.5">open timeline ›</div>
       </div>
 
       {open && (
