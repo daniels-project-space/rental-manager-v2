@@ -7,6 +7,7 @@ import {
   logicalGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
+import { reservationItemUnits, buildProductIndexMap } from "./lib/reservations/itemUnits";
 import {
   resolveImageForReservationItem,
   // bank-aware helpers below also rely on this type
@@ -1296,6 +1297,7 @@ export const searchCalendarInventory = query({
     // raw_end=Wed went uncounted → "1 free" when fully booked). Prefer
     // expanded_items.qty (kit-decomposed) > resolved_items.qty; only matched
     // items are summed.
+    const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
     const commit = new Map<string, number>();
     // Time-aware occupancy per (item, date): the clamped [a,b) "HH:MM" window the
     // unit is actually out on that date. Lets us tell the owner an item that
@@ -1307,14 +1309,9 @@ export const searchCalendarInventory = query({
       if (!effPick || !effRet) continue;
       const pickT = ((r as { pickup_time?: string }).pickup_time) || "00:00";
       const retT = ((r as { return_time?: string }).return_time) || "23:59";
-      const exp = (r.expanded_items ?? []).filter(
-        (x) => x.item_id && matchedById.has(String(x.item_id)),
-      );
-      const lines = exp.length
-        ? exp.map((x) => ({ id: String(x.item_id), qty: x.qty ?? 1 }))
-        : (r.resolved_items ?? [])
-            .filter((x) => x.item_id && matchedById.has(String(x.item_id)))
-            .map((x) => ({ id: String(x.item_id), qty: x.qty ?? 1 }));
+      const lines = Array.from(reservationItemUnits(r, productIndex))
+        .filter(([id]) => matchedById.has(id))
+        .map(([id, qty]) => ({ id, qty }));
       if (lines.length === 0) continue;
       for (const d of dates) {
         if (d < effPick || d > effRet) continue;
@@ -1370,11 +1367,8 @@ export const searchCalendarInventory = query({
       if (!r.start_date) continue;
       const rangeEnd = (r.return_date ?? r.end_date) ?? r.start_date;
       if (r.start_date > weekEnd || rangeEnd < weekStart!) continue; // no overlap
-      const refs: Array<{ item_id?: Id<"items"> }> =
-        r.expanded_items && r.expanded_items.length
-          ? r.expanded_items
-          : r.resolved_items ?? [];
-      if (refs.some((x) => x.item_id && matchedById.has(String(x.item_id)))) {
+      const heldIds = reservationItemUnits(r, productIndex);
+      if (Array.from(heldIds.keys()).some((id) => matchedById.has(id))) {
         reservationIds.add(String(r._id));
       }
     }
