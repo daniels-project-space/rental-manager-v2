@@ -364,7 +364,7 @@ export function ReturnHub() {
                 return (
                   <div
                     key={String(r.reservationId)}
-                    className="group flex flex-col rounded-2xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30"
+                    className="group flex flex-col rounded-2xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30"
                     style={{
                       border: `1px solid ${r.renter?.blacklisted ? "rgba(239,68,68,0.28)" : "rgba(255,255,255,0.08)"}`,
                       background: "rgba(255,255,255,0.018)",
@@ -404,7 +404,7 @@ export function ReturnHub() {
                         </div>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 mt-auto" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div className="grid grid-cols-2 mt-auto rounded-b-2xl overflow-hidden" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
                       <button
                         onClick={() => setActive(r)}
                         className="text-[11px] font-semibold py-2.5 transition-colors text-[#34d399] hover:bg-[rgba(34,197,94,0.1)]"
