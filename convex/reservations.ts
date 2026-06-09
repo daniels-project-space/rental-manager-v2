@@ -48,6 +48,7 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
+import { reservationItemUnits, buildProductIndexMap, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, type ReservationRow } from "./lib/reservations/predicates";
 
 export const getDueReturns = query({
@@ -112,6 +113,12 @@ export const getDueReturns = query({
     const shortByProduct = new Map<string, string>();
     for (const sn of shortRows) shortByProduct.set(`${sn.account_slug}#${sn.product_id}`, sn.short_name);
 
+    // Reliable per-listing resolution (covers items the LLM bundle-resolver
+    // dropped from expanded/resolved) + inventory names for the case checklist.
+    const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const itemNameById = new Map<string, string>();
+    for (const it of await ctx.db.query("items").collect()) itemNameById.set(String(it._id), it.name_canonical);
+
     const maps = await renterMaps(ctx);
     const results: Array<Record<string, unknown>> = [];
     for (const g of groups) {
@@ -151,11 +158,9 @@ export const getDueReturns = query({
       const assocItems = (() => {
         const m2 = new Map<string, string>();
         for (const m of members) {
-          const src =
-            ((m as { resolved_items?: Array<{ item_id?: string; item_name_canonical?: string }> }).resolved_items) ??
-            ((m as { expanded_items?: Array<{ item_id?: string; item_name_canonical?: string }> }).expanded_items) ??
-            [];
-          for (const x of src) if (x.item_id) m2.set(String(x.item_id), x.item_name_canonical ?? "item");
+          for (const id of reservationItemUnits(m as ResolvableRes, productIndex).keys()) {
+            if (!m2.has(id)) m2.set(id, itemNameById.get(id) ?? "item");
+          }
         }
         return Array.from(m2, ([item_id, name]) => ({ item_id, name }));
       })();
