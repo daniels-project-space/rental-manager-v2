@@ -5,6 +5,7 @@ import { EarningsChart } from "@/components/dashboard/EarningsChart";
 import { TaxSummary } from "@/components/dashboard/TaxSummary";
 import { LiveActivity } from "@/components/dashboard/LiveActivity";
 import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
+import { ItemAvailabilityCalendar } from "@/components/dashboard/ItemAvailabilityCalendar";
 import { NextRentals } from "@/components/dashboard/NextRentals";
 import { ReturnHub } from "@/components/dashboard/ReturnHub";
 import { ConversationFunnel } from "@/components/dashboard/ConversationFunnel";
@@ -47,6 +48,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "tax-summary",         label: "Tax Summary",            component: TaxSummary },
   { id: "live-activity",       label: "Live Activity",          component: LiveActivity },
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
+  { id: "item-availability",   label: "Item Availability",      component: ItemAvailabilityCalendar },
   { id: "next-rentals",        label: "Next Rentals",           component: NextRentals },
   { id: "return-hub",          label: "Return Hub",             component: ReturnHub },
   // weekly-calendar lives only as an overlay (CalendarGantt). It is launched
@@ -112,7 +114,6 @@ export const HERO_SPANS: Record<string, { col: number; row: number }> = {
 // can fall back to it when an id is not in HERO_SPANS.
 export const HERO_IDS: ReadonlySet<string> = new Set([
   "active",
-  "weekly_calendar",
   "ongoing",
   "upcoming",
   "business_intel",
