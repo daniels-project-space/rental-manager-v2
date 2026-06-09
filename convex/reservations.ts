@@ -48,7 +48,7 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
-import { reservationItemUnits, buildProductIndexMap, type ResolvableRes } from "./lib/reservations/itemUnits";
+import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, type ReservationRow } from "./lib/reservations/predicates";
 
 export const getDueReturns = query({
@@ -116,6 +116,7 @@ export const getDueReturns = query({
     // Reliable per-listing resolution (covers items the LLM bundle-resolver
     // dropped from expanded/resolved) + inventory names for the case checklist.
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
     const itemNameById = new Map<string, string>();
     for (const it of await ctx.db.query("items").collect()) itemNameById.set(String(it._id), it.name_canonical);
 
@@ -158,7 +159,7 @@ export const getDueReturns = query({
       const assocItems = (() => {
         const m2 = new Map<string, string>();
         for (const m of members) {
-          for (const id of reservationItemUnits(m as ResolvableRes, productIndex).keys()) {
+          for (const id of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap).keys()) {
             if (!m2.has(id)) m2.set(id, itemNameById.get(id) ?? "item");
           }
         }

@@ -7,7 +7,7 @@ import {
   logicalGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { reservationItemUnits, buildProductIndexMap } from "./lib/reservations/itemUnits";
+import { reservationItemUnits, buildProductIndexMap, buildOverrideMap } from "./lib/reservations/itemUnits";
 import {
   resolveImageForReservationItem,
   // bank-aware helpers below also rely on this type
@@ -1298,6 +1298,7 @@ export const searchCalendarInventory = query({
     // expanded_items.qty (kit-decomposed) > resolved_items.qty; only matched
     // items are summed.
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
     const commit = new Map<string, number>();
     // Time-aware occupancy per (item, date): the clamped [a,b) "HH:MM" window the
     // unit is actually out on that date. Lets us tell the owner an item that
@@ -1309,7 +1310,7 @@ export const searchCalendarInventory = query({
       if (!effPick || !effRet) continue;
       const pickT = ((r as { pickup_time?: string }).pickup_time) || "00:00";
       const retT = ((r as { return_time?: string }).return_time) || "23:59";
-      const lines = Array.from(reservationItemUnits(r, productIndex))
+      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap))
         .filter(([id]) => matchedById.has(id))
         .map(([id, qty]) => ({ id, qty }));
       if (lines.length === 0) continue;
@@ -1367,7 +1368,7 @@ export const searchCalendarInventory = query({
       if (!r.start_date) continue;
       const rangeEnd = (r.return_date ?? r.end_date) ?? r.start_date;
       if (r.start_date > weekEnd || rangeEnd < weekStart!) continue; // no overlap
-      const heldIds = reservationItemUnits(r, productIndex);
+      const heldIds = reservationItemUnits(r, productIndex, overrideMap);
       if (Array.from(heldIds.keys()).some((id) => matchedById.has(id))) {
         reservationIds.add(String(r._id));
       }
