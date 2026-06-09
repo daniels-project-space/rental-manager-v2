@@ -1495,6 +1495,19 @@ export default defineSchema({
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_item_id", ["item_id"]),
 
+  // Manual, audit-authoritative listing → inventory resolution. Wins over the
+  // LLM's expanded/resolved cascade and the product index, so a mis-resolved or
+  // unresolved Hygglo listing can be pinned to its true item composition.
+  // Consumed by lib/reservations/itemUnits.ts (reservationItemUnits).
+  listing_resolution_override: defineTable({
+    account_slug: v.string(),
+    product_id: v.number(),
+    components: v.array(v.object({ item_id: v.id("items"), qty: v.number() })),
+    note: v.optional(v.string()),
+    source: v.optional(v.string()),
+    updated_at: v.number(),
+  }).index("by_account_product", ["account_slug", "product_id"]),
+
   // ── Phase 3: marketing-listings layer (ADDITIVE — data ingest only) ──────
   // Full Hygglo catalog snapshot per account, synced read-only from the v2
   // private API (GET /v2/my/products[/{id}]) by the `catalog-sync` Trigger
