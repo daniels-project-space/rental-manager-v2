@@ -114,6 +114,7 @@ export const HERO_SPANS: Record<string, { col: number; row: number }> = {
 // can fall back to it when an id is not in HERO_SPANS.
 export const HERO_IDS: ReadonlySet<string> = new Set([
   "active",
+  "weekly_calendar",
   "ongoing",
   "upcoming",
   "business_intel",
