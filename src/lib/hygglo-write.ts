@@ -266,3 +266,45 @@ export async function sendMessage(args: {
     return { status: "failed", error: (err as Error).message };
   }
 }
+
+/**
+ * Mark a rental returned / complete on the platform. v1 did this via Playwright
+ * UI automation (no REST endpoint was ever confirmed); the action verb here is a
+ * best guess and is NEVER exercised while READ_ONLY_MODE is on (the default), so
+ * this is safe to ship. Before enabling writes, verify the verb via the 422
+ * union-probe (see module header) or fall back to the Playwright flow.
+ */
+export async function returnOrder(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+}): Promise<HyggloWriteResult> {
+  if (!writesAllowed()) return skipResult();
+  try {
+    return await patchOrderAction({ ...args, action: "return", data: {} });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Send a chat message to the renter (e.g. the post-rental thank-you + review
+ * request). v1's sendMessage used the dispatcher verb `chat`. Gated like every
+ * other write — skipped while READ_ONLY_MODE is on.
+ */
+export async function sendOrderMessage(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  text: string;
+}): Promise<HyggloWriteResult> {
+  if (!writesAllowed()) return skipResult();
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "chat",
+      data: { message: args.text },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}

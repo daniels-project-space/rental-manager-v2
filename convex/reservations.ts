@@ -311,37 +311,66 @@ export const markReturned = mutation({
     reservationId: v.id("reservations"),
     condition: v.string(),
     notes: v.optional(v.string()),
+    issueDetails: v.optional(v.string()),
     blacklistRenter: v.optional(v.boolean()),
     blacklistReason: v.optional(v.string()),
+    flagOnRequest: v.optional(v.boolean()),
+    whitelist: v.optional(v.boolean()),
+    whitelistReason: v.optional(v.string()),
+    outcome: v.optional(v.string()),
+    sendReview: v.optional(v.boolean()),
     memberIds: v.optional(v.array(v.id("reservations"))),
   },
-  handler: async (ctx, { reservationId, condition, notes, blacklistRenter, blacklistReason, memberIds }) => {
+  handler: async (ctx, args) => {
+    const { reservationId, condition, notes, issueDetails, blacklistRenter, blacklistReason, flagOnRequest, whitelist, whitelistReason, outcome, sendReview, memberIds } = args;
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
     if (res.status === "completed") throw new Error("Already returned");
+    const detail = issueDetails ?? notes;
+    const cn = detail ? `Condition: ${condition}. ${detail}` : `Condition: ${condition}`;
     const base = res.notes ?? "";
-    const cn = notes ? "Condition: " + condition + ". " + notes : "Condition: " + condition;
-    await ctx.db.patch(reservationId, {
+
+    // Compose the renter thank-you + review request (smooth / fantastic). PREPARED
+    // ONLY — the actual send + platform close run through the gated hygglo-write
+    // chokepoint (READ_ONLY by default) via the return-finalize CLI, so nothing
+    // reaches a real renter / the platform yet.
+    const first = res.renter_name && res.renter_name !== "?" ? res.renter_name.split(" ")[0] : "there";
+    const gearNames = (((res as { hygglo_items?: Array<{ name?: string }> }).hygglo_items) ?? [])
+      .map((h) => h.name)
+      .filter((n): n is string => !!n)
+      .slice(0, 2);
+    const gear = gearNames.length ? gearNames.join(" + ") : "the gear";
+    const reviewMessage = sendReview
+      ? `Hi ${first}! Thanks so much for renting ${gear} 🎬 Hope it served you well! If you have a sec, a quick ⭐⭐⭐⭐⭐ review would mean a lot and helps others book with confidence. Hope to work together again! 🙌`
+      : undefined;
+
+    const resPatch: Record<string, unknown> = {
       status: "completed",
-      notes: base ? base + " | " + cn : cn,
-    });
+      notes: base ? `${base} | ${cn}` : cn,
+      return_outcome: outcome ?? (condition === "good" ? "smooth" : "issues"),
+      platform_close_pending: true,
+    };
+    if (reviewMessage) resPatch.review_message = reviewMessage;
+    await ctx.db.patch(reservationId, resPatch);
+
     // Merged logical rental: complete every member booking too.
     for (const mid of memberIds ?? []) {
       if (mid === reservationId) continue;
       const m = await ctx.db.get(mid);
       if (m && m.status !== "completed") {
         const mb = m.notes ?? "";
-        await ctx.db.patch(mid, { status: "completed", notes: mb ? mb + " | " + cn : cn });
+        await ctx.db.patch(mid, { status: "completed", notes: mb ? `${mb} | ${cn}` : cn, platform_close_pending: true });
       }
     }
-    // Mirror the condition onto the renter's CRM log; optionally blacklist them
-    // (e.g. on major damage). Renter resolved from the reservation row.
+
+    // Renter CRM — all REAL saves (blacklist / whitelist / flag / note log).
     const maps = await renterMaps(ctx);
     const renterDoc = await renterForReservation(ctx, res, maps);
+    const did = { blacklisted: false, whitelisted: false, flagged: false };
     if (renterDoc) {
       const log = [
         ...(renterDoc.note_log ?? []),
-        { text: `Return (${condition})${notes ? ": " + notes : ""}`, at: Date.now(), source: "return-hub" },
+        { text: `Return (${condition})${detail ? ": " + detail : ""}`, at: Date.now(), source: "return-hub" },
       ];
       const patch: Record<string, unknown> = { note_log: log };
       if (blacklistRenter) {
@@ -350,10 +379,51 @@ export const markReturned = mutation({
         patch.blacklist_reason = blacklistReason ?? `Damage on return (${condition})`;
         patch.blacklisted_at = Date.now();
         log.push({ text: `BLACKLISTED: ${blacklistReason ?? "damage on return"}`, at: Date.now(), source: "return-hub" });
+        did.blacklisted = true;
+      }
+      if (flagOnRequest) {
+        patch.flag_on_request = true;
+        patch.flag_on_request_reason = detail ?? `Issue on return (${condition})`;
+        patch.flag_on_request_at = Date.now();
+        log.push({ text: `FLAGGED on next request: ${detail ?? "issue on return"}`, at: Date.now(), source: "return-hub" });
+        did.flagged = true;
+      }
+      if (whitelist) {
+        patch.whitelisted = true;
+        patch.whitelist_reason = whitelistReason ?? "Fantastic rental";
+        patch.whitelisted_at = Date.now();
+        log.push({ text: `WHITELISTED${whitelistReason ? ": " + whitelistReason : ""}`, at: Date.now(), source: "return-hub" });
+        did.whitelisted = true;
       }
       await ctx.db.patch(renterDoc._id, patch);
     }
-    return { ok: true, blacklisted: !!blacklistRenter };
+    return { ok: true, ...did, reviewQueued: !!reviewMessage, platformClosePending: true };
+  },
+});
+
+/**
+ * Reservations marked returned in our system but not yet closed on the Hygglo
+ * platform. Read-only feed for the return-finalize CLI (which is gated by
+ * READ_ONLY_MODE — see src/lib/hygglo-write.ts).
+ */
+export const pendingPlatformClose = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .collect();
+    return rows
+      .filter((r) => {
+        const rr = r as { platform_close_pending?: boolean; platform_closed_at?: number };
+        return rr.platform_close_pending && !rr.platform_closed_at && !!r.hygglo_order_id;
+      })
+      .map((r) => ({
+        reservationId: r._id,
+        account_slug: r.account_slug,
+        hygglo_order_id: r.hygglo_order_id,
+        review_message: (r as { review_message?: string }).review_message ?? null,
+      }));
   },
 });
 
