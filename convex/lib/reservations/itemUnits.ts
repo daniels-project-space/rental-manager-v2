@@ -73,7 +73,9 @@ export function reservationItemUnits(
       if (!comps) { allOverridden = false; break; }
       for (const c of comps) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty);
     }
-    if (allOverridden && ov.size > 0) return ov;
+    // allOverridden with an EMPTY ov = every listing is a marketing/own-nothing
+    // override → the reservation has no owned items (drops mis-attributions).
+    if (allOverridden) return ov;
   }
 
   // 1–3. Legacy union.
