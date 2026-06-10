@@ -84,6 +84,19 @@ function TrustBadge({ t }: { t?: RenterTrust }) {
   return null;
 }
 
+type ReturnPayload = {
+  outcome: "smooth" | "issues" | "fantastic";
+  condition: string;
+  notes?: string;
+  issueDetails?: string;
+  flagOnRequest?: boolean;
+  blacklist?: boolean;
+  blacklistReason?: string;
+  whitelist?: boolean;
+  whitelistReason?: string;
+  sendReview?: boolean;
+};
+
 function ReturnModal({
   item,
   onClose,
@@ -91,20 +104,21 @@ function ReturnModal({
 }: {
   item: DueReturn;
   onClose: () => void;
-  onConfirm: (condition: string, notes: string, blacklist: boolean, reason: string) => Promise<void>;
+  onConfirm: (p: ReturnPayload) => Promise<void>;
 }) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [condition, setCondition] = useState<"good" | "minor" | "major">("good");
-  const [notes, setNotes] = useState("");
-  const [blacklist, setBlacklist] = useState(false);
+  const [view, setView] = useState<"choose" | "issues" | "fantastic" | "done">("choose");
+  const [condition, setCondition] = useState<"minor" | "major">("minor");
+  const [issueDetails, setIssueDetails] = useState("");
+  const [issueAction, setIssueAction] = useState<"none" | "flag" | "blacklist">("none");
   const [reason, setReason] = useState("");
+  const [wlReason, setWlReason] = useState("");
+  const [summary, setSummary] = useState("");
 
-  function handleConfirm() {
-    if (step === 1) setStep(2);
-    else if (step === 2) {
-      setStep(3);
-      onConfirm(condition, notes, blacklist, reason).finally(() => setTimeout(onClose, 1600));
-    }
+  async function finish(p: ReturnPayload, msg: string) {
+    setSummary(msg);
+    setView("done");
+    await onConfirm(p).catch(() => {});
+    setTimeout(onClose, 2200);
   }
 
   return (
@@ -114,87 +128,143 @@ function ReturnModal({
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="glass-card p-6 w-full max-w-sm">
-        <div className="flex gap-2 mb-5">
-          {[1, 2, 3].map((s) => (
-            <div key={s} className="flex-1 h-1 rounded-full" style={{ background: step >= s ? "#22c55e" : "rgba(255,255,255,0.1)" }} />
-          ))}
-        </div>
-
-        {step === 1 && (
-          <>
-            <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">Confirm Return</h3>
-            <div className="flex items-center gap-3 mb-3">
-              <Thumb url={item.imageUrl} name={item.renterName} size={44} />
-              <div className="min-w-0">
-                <div className="text-sm text-[#e4e6eb] flex items-center gap-2">
-                  {item.renterName} <TrustBadge t={item.renter} />
-                </div>
-                <div className="text-xs text-[#8b8fa3] truncate">{item.itemNames.join(", ")}</div>
-              </div>
+        <div className="flex items-center gap-3 mb-4">
+          <Thumb url={item.imageUrl} name={item.renterName} size={44} />
+          <div className="min-w-0">
+            <div className="text-sm text-[#e4e6eb] flex items-center gap-2">
+              <span className="truncate font-medium">{item.renterName}</span>
+              <TrustBadge t={item.renter} />
             </div>
-            {item.renter?.blacklisted && (
-              <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}>
-                ⛔ This renter is blacklisted{item.renter.blacklist_reason ? `: ${item.renter.blacklist_reason}` : ""}.
-              </div>
-            )}
-            <div className="flex gap-2 justify-end">
+            <div className="text-xs text-[#8b8fa3] truncate">{item.itemNames.join(", ")}</div>
+          </div>
+        </div>
+        {item.renter?.blacklisted && view !== "done" && (
+          <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}>
+            ⛔ Already blacklisted{item.renter.blacklist_reason ? `: ${item.renter.blacklist_reason}` : ""}.
+          </div>
+        )}
+
+        {view === "choose" && (
+          <>
+            <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">How was this rental?</h3>
+            <div className="space-y-2">
+              <button
+                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true }, "✓ Returned · thank-you + ⭐ review queued · platform close queued")}
+                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
+                style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
+              >
+                <div className="text-sm font-semibold" style={{ color: "#34d399" }}>🟢 Smooth — all good</div>
+                <div className="text-[11px] text-[#8b8fa3]">Close it · send a thank-you + review request</div>
+              </button>
+              <button
+                onClick={() => setView("fantastic")}
+                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
+                style={{ border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.08)" }}
+              >
+                <div className="text-sm font-semibold" style={{ color: "#fbbf24" }}>🏆 Fantastic renter</div>
+                <div className="text-[11px] text-[#8b8fa3]">Whitelist them (trusted) · thank-you + review</div>
+              </button>
+              <button
+                onClick={() => setView("issues")}
+                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
+                style={{ border: "1px solid rgba(239,68,68,0.5)", background: "rgba(239,68,68,0.08)" }}
+              >
+                <div className="text-sm font-semibold" style={{ color: "#f87171" }}>🔴 There were issues</div>
+                <div className="text-[11px] text-[#8b8fa3]">Log damage/problems · flag or blacklist</div>
+              </button>
+            </div>
+            <div className="flex justify-end mt-3">
               <button onClick={onClose} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Cancel</button>
-              <button onClick={handleConfirm} className="text-sm px-4 py-1.5 rounded transition-colors" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }}>Confirm</button>
             </div>
           </>
         )}
 
-        {step === 2 && (
+        {view === "issues" && (
           <>
-            <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">Condition Check</h3>
-            <div className="space-y-2 mb-3">
-              {(["good", "minor", "major"] as const).map((c) => (
-                <label key={c} className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="condition" value={c} checked={condition === c} onChange={() => setCondition(c)} className="accent-[#22c55e]" />
-                  <span className="text-sm capitalize text-[#e4e6eb]">
-                    {c === "good" ? "Good condition" : c === "minor" ? "Minor damage" : "Major damage"}
-                  </span>
+            <h3 className="text-base font-semibold mb-3" style={{ color: "#f87171" }}>🔴 What went wrong?</h3>
+            <div className="flex gap-4 mb-3">
+              {(["minor", "major"] as const).map((c) => (
+                <label key={c} className="flex items-center gap-1.5 cursor-pointer text-sm text-[#e4e6eb]">
+                  <input type="radio" name="cond" checked={condition === c} onChange={() => setCondition(c)} className="accent-[#f87171]" />
+                  {c === "minor" ? "Minor damage" : "Major damage"}
                 </label>
               ))}
             </div>
             <textarea
-              placeholder="Optional notes (saved to renter history)"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full text-sm rounded-lg p-2 mb-3 resize-none h-14"
+              placeholder="What was wrong? (saved to the renter's history)"
+              value={issueDetails}
+              onChange={(e) => setIssueDetails(e.target.value)}
+              className="w-full text-sm rounded-lg p-2 mb-3 resize-none h-16"
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb" }}
             />
-            {condition !== "good" && !item.renter?.blacklisted && (
-              <label className="flex items-start gap-2 mb-3 cursor-pointer">
-                <input type="checkbox" checked={blacklist} onChange={(e) => setBlacklist(e.target.checked)} className="accent-[#ef4444] mt-0.5" />
-                <span className="text-xs text-[#f87171]">
-                  Blacklist {item.renterName}
-                  {blacklist && (
-                    <input
-                      type="text"
-                      placeholder="reason"
-                      value={reason}
-                      onChange={(e) => setReason(e.target.value)}
-                      onClick={(e) => e.preventDefault()}
-                      className="block mt-1 w-full text-xs rounded p-1"
-                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(239,68,68,0.3)", color: "#e4e6eb" }}
-                    />
-                  )}
-                </span>
-              </label>
-            )}
+            <div className="space-y-1.5 mb-3">
+              {([["none", "Just log it"], ["flag", "⚑ Flag — alert me if they request again"], ["blacklist", "⛔ Blacklist — block future bookings"]] as const).map(([v, l]) => (
+                <label key={v} className="flex items-center gap-2 cursor-pointer text-xs text-[#e4e6eb]">
+                  <input type="radio" name="ia" checked={issueAction === v} onChange={() => setIssueAction(v)} className="accent-[#f87171]" />
+                  {l}
+                </label>
+              ))}
+              {issueAction === "blacklist" && (
+                <input
+                  type="text"
+                  placeholder="blacklist reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  className="w-full text-xs rounded p-1.5 mt-1"
+                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(239,68,68,0.3)", color: "#e4e6eb" }}
+                />
+              )}
+            </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setStep(1)} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
-              <button onClick={handleConfirm} className="text-sm px-4 py-1.5 rounded transition-colors" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }}>Mark Returned</button>
+              <button onClick={() => setView("choose")} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
+              <button
+                onClick={() => finish(
+                  { outcome: "issues", condition, notes: issueDetails || undefined, issueDetails: issueDetails || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || issueDetails || undefined) : undefined, sendReview: false },
+                  issueAction === "blacklist" ? "⛔ Logged · renter blacklisted" : issueAction === "flag" ? "⚑ Logged · flagged on next request" : "Issue logged to renter history",
+                )}
+                className="text-sm px-4 py-1.5 rounded transition-colors"
+                style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)" }}
+              >
+                Save &amp; close
+              </button>
             </div>
           </>
         )}
 
-        {step === 3 && (
-          <div className="flex flex-col items-center py-4 gap-3">
-            <div className="text-5xl animate-bounce" style={{ color: "#22c55e" }}>✓</div>
-            <p className="text-base font-semibold" style={{ color: "#22c55e" }}>Returned!</p>
-            {blacklist && <p className="text-xs" style={{ color: "#f87171" }}>Renter blacklisted</p>}
+        {view === "fantastic" && (
+          <>
+            <h3 className="text-base font-semibold mb-3" style={{ color: "#fbbf24" }}>🏆 Fantastic renter</h3>
+            <p className="text-xs text-[#8b8fa3] mb-3">
+              Whitelists {item.renterName} (trusted badge) and queues a thank-you + ⭐ review request.
+            </p>
+            <input
+              type="text"
+              placeholder="Why? (optional — spotless return, great comms…)"
+              value={wlReason}
+              onChange={(e) => setWlReason(e.target.value)}
+              className="w-full text-sm rounded-lg p-2 mb-3"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(251,191,36,0.3)", color: "#e4e6eb" }}
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setView("choose")} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
+              <button
+                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true }, "🏆 Whitelisted · thank-you + ⭐ review queued")}
+                className="text-sm px-4 py-1.5 rounded font-semibold transition-colors"
+                style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
+              >
+                Whitelist &amp; close
+              </button>
+            </div>
+          </>
+        )}
+
+        {view === "done" && (
+          <div className="flex flex-col items-center py-3 gap-2 text-center">
+            <div className="text-4xl">✓</div>
+            <p className="text-sm font-semibold text-[#e4e6eb]">{summary}</p>
+            <p className="text-[10px] text-[#8b8fa3] mt-1 px-2 leading-snug">
+              Platform close &amp; the renter message are <b>preview-only (read-only)</b> for now — prepared, not sent. Renter flag / whitelist / blacklist are saved.
+            </p>
           </div>
         )}
       </div>
@@ -346,14 +416,20 @@ export function ReturnHub() {
   const markReturned = useMutation(api.reservations.markReturned);
   const openCase = useMutation(api.insurance_claims.openCaseFromReservation);
 
-  async function handleReturn(condition: string, notes: string, blacklist: boolean, reason: string) {
+  async function handleReturn(p: ReturnPayload) {
     if (!active) return;
     await markReturned({
       reservationId: active.reservationId,
-      condition,
-      notes: notes || undefined,
-      blacklistRenter: blacklist || undefined,
-      blacklistReason: blacklist ? reason || undefined : undefined,
+      condition: p.condition,
+      notes: p.notes,
+      issueDetails: p.issueDetails,
+      blacklistRenter: p.blacklist || undefined,
+      blacklistReason: p.blacklistReason,
+      flagOnRequest: p.flagOnRequest || undefined,
+      whitelist: p.whitelist || undefined,
+      whitelistReason: p.whitelistReason,
+      outcome: p.outcome,
+      sendReview: p.sendReview || undefined,
       memberIds: active.memberIds && active.memberIds.length > 1 ? active.memberIds : undefined,
     });
   }

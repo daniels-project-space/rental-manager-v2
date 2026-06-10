@@ -206,6 +206,9 @@ export default defineSchema({
     whitelist_reason: v.optional(v.string()),
     blacklisted_at: v.optional(v.number()),
     whitelisted_at: v.optional(v.number()),
+    flag_on_request: v.optional(v.boolean()),
+    flag_on_request_reason: v.optional(v.string()),
+    flag_on_request_at: v.optional(v.number()),
     note_log: v.optional(
       v.array(
         v.object({ text: v.string(), at: v.number(), source: v.optional(v.string()) }),
@@ -370,6 +373,10 @@ export default defineSchema({
      *  as a case, not a pending return). Set by insurance_claims:openCaseFromReservation. */
     case_open: v.optional(v.boolean()),
     case_id: v.optional(v.id("insurance_claims")),
+    return_outcome: v.optional(v.string()),          // smooth | issues | fantastic
+    review_message: v.optional(v.string()),          // composed thank-you/review (prepared)
+    platform_close_pending: v.optional(v.boolean()),
+    platform_closed_at: v.optional(v.number()),
     /** Phase 18.2 — monotonic activity timestamp from Hygglo's order-list
      *  response (sort=latest-activity). Used by poll-hygglo to skip the
      *  per-order detail fetch when the list value matches the stored value
