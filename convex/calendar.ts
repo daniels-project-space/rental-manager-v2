@@ -7,7 +7,7 @@ import {
   logicalGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { reservationItemUnits, buildProductIndexMap, buildOverrideMap } from "./lib/reservations/itemUnits";
+import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
 import {
   resolveImageForReservationItem,
   // bank-aware helpers below also rely on this type
@@ -827,7 +827,8 @@ export const getWeeklyCalendar = query({
       const names: string[] = [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const [id, qty] of reservationItemUnits(r as any, productIndexW, overrideMapW)) {
-        const nm = itemByIdW.get(id)?.name_canonical; if (nm) names.push(qty > 1 ? nm + " ×" + qty : nm);
+        const it = itemByIdW.get(id); if (!it || isStandardAccessory(it.kind, it.name_canonical)) continue;
+        const nm = it.name_canonical; if (nm) names.push(qty > 1 ? nm + " ×" + qty : nm);
       }
       if (names.length === 0) for (const i of r.items ?? []) { if (i.item_name) names.push(i.item_name); }
       resolvedNamesByResW.set(String(r._id), names);
@@ -1036,7 +1037,7 @@ export const getGanttWeek = query({
     );
 
     // --- Items table: load all for fuzzy resolver + shared-blacklist guard ---
-    type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string };
+    type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string; kind?: string };
     const allItems = (await ctx.db.query("items").collect()) as GanttItemDoc[];
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
     // Override-resolved item names per reservation (memoized) — Gantt rows key
@@ -1049,7 +1050,8 @@ export const getGanttWeek = query({
       const names = new Set<string>();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const id of reservationItemUnits(r as any, productIndexG, overrideMapG).keys()) {
-        const nm = itemByIdG.get(id)?.name_canonical; if (nm) names.add(nm);
+        const it = itemByIdG.get(id); if (!it || isStandardAccessory(it.kind, it.name_canonical)) continue;
+        if (it.name_canonical) names.add(it.name_canonical);
       }
       if (names.size === 0) for (const i of r.items ?? []) { if (i.item_name) names.add(i.item_name); }
       resolvedNamesByRes.set(String(r._id), names);
@@ -1357,7 +1359,7 @@ export const searchCalendarInventory = query({
 
     // PENDING (status pending_review) occupancy — same time-aware build, kept
     // separate so the UI can show "(-N)" alongside the real free count.
-    const pendingResv = reservations.filter((r) => (r as { status?: string }).status === "pending_review" && !(r as { is_obsolete?: boolean }).is_obsolete);
+    const pendingResv = reservations.filter((r) => (r as { status?: string }).status === "pending_review" && (r as { order_step?: string }).order_step === "VERIFIED" && !(r as { is_obsolete?: boolean }).is_obsolete);
     const pendingIntervals = new Map<string, Array<{ a: string; b: string; qty: number }>>();
     for (const r of pendingResv) {
       const effPick = displayPickupDate(r) || r.start_date;

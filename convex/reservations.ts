@@ -48,7 +48,7 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
-import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, type ResolvableRes } from "./lib/reservations/itemUnits";
+import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, type ReservationRow } from "./lib/reservations/predicates";
 
 export const getDueReturns = query({
@@ -118,7 +118,8 @@ export const getDueReturns = query({
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
     const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
     const itemNameById = new Map<string, string>();
-    for (const it of await ctx.db.query("items").collect()) itemNameById.set(String(it._id), it.name_canonical);
+    const stdAccIds = new Set<string>();
+    for (const it of await ctx.db.query("items").collect()) { itemNameById.set(String(it._id), it.name_canonical); if (isStandardAccessory((it as { kind?: string }).kind, it.name_canonical)) stdAccIds.add(String(it._id)); }
 
     const maps = await renterMaps(ctx);
     const results: Array<Record<string, unknown>> = [];
@@ -146,8 +147,10 @@ export const getDueReturns = query({
         // Override-resolved component list (actual kit contents), not listing titles.
         const agg = new Map<string, number>();
         for (const m of members)
-          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap))
+          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap)) {
+            if (stdAccIds.has(id)) continue;
             agg.set(id, (agg.get(id) ?? 0) + qty);
+          }
         const out: string[] = [];
         for (const [id, qty] of agg) { const nm = itemNameById.get(id); if (nm) out.push(qty > 1 ? nm + " ×" + qty : nm); }
         if (out.length > 0) return out;
