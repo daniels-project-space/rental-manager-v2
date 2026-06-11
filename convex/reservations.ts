@@ -143,6 +143,15 @@ export const getDueReturns = query({
         hy.find((h) => h.image_url)?.image_url ??
         ((base as { photos_urls?: string[] }).photos_urls?.[0] ?? null);
       const itemNames = (() => {
+        // Override-resolved component list (actual kit contents), not listing titles.
+        const agg = new Map<string, number>();
+        for (const m of members)
+          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap))
+            agg.set(id, (agg.get(id) ?? 0) + qty);
+        const out: string[] = [];
+        for (const [id, qty] of agg) { const nm = itemNameById.get(id); if (nm) out.push(qty > 1 ? nm + " ×" + qty : nm); }
+        if (out.length > 0) return out;
+        // Fallback (marketing-only / unresolved): listing short-names then raw items.
         const names = new Set<string>();
         for (const m of members) {
           const hy = ((m as { hygglo_items?: Array<{ name?: string; product_id?: number }> }).hygglo_items) ?? [];
