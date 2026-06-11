@@ -984,6 +984,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           {headers.map(({ iso }, i) => {
                             const cell = cells.find((c) => c.date === iso);
                             const free = cell?.free;
+                            const pending = (cell as { pending?: number } | undefined)?.pending ?? 0;
                             const tot = cell?.total;
                             const freeFrom =
                               (cell as { free_from?: string | null } | undefined)?.free_from ?? null;
@@ -1020,6 +1021,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                               >
                                 <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
                                   {free !== undefined ? free : "–"}
+                                  {pending > 0 && <span className="text-[9px] font-semibold" style={{ color: "#a78bfa" }}>{` (-${pending})`}</span>}
                                 </span>
                                 {showFrom ? (
                                   <span className="text-[8px] leading-none mt-0.5" style={{ color: "#fbbf24" }}>
