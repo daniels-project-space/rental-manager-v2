@@ -31,7 +31,7 @@ type DueReturn = {
   returnTime?: string | null;
   memberIds?: Id<"reservations">[];
   memberCount?: number;
-  items?: { item_id: string; name: string }[];
+  items?: { item_id: string; name: string; qty?: number }[];
 };
 
 function Thumb({ url, name, size = 36 }: { url?: string | null; name: string; size?: number }) {
@@ -286,6 +286,8 @@ function OpenCaseModal({
   const [done, setDone] = useState(false);
   const allItems = item.items ?? [];
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allItems.map((i) => i.item_id)));
+  const [holdQty, setHoldQty] = useState<Map<string, number>>(() => new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)])));
+  const qtyMaxById = new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)]));
   const [manual, setManual] = useState<{ item_id: string; name: string }[]>([]);
   const inventory = (useQuery(api.items.listActive) ?? []) as { id: string; name: string }[];
   const shownItems = (() => {
@@ -311,7 +313,9 @@ function OpenCaseModal({
   function submit() {
     if (projected <= 0 || done) return;
     setDone(true);
-    onConfirm(projected, desc, Array.from(selected)).finally(() => setTimeout(onClose, 1400));
+    const ids: string[] = [];
+    for (const id of selected) { const q = holdQty.get(id) ?? 1; for (let k = 0; k < q; k++) ids.push(id); }
+    onConfirm(projected, desc, ids).finally(() => setTimeout(onClose, 1400));
   }
   return (
     <div
@@ -345,12 +349,26 @@ function OpenCaseModal({
                 {shownItems.length === 0 && (
                   <p className="text-[11px] text-[#8b8fa3] px-1 py-0.5">No items auto-detected — add from inventory below.</p>
                 )}
-                {shownItems.map((it) => (
-                  <label key={it.item_id} className="flex items-center gap-2 text-xs text-[#e4e6eb] cursor-pointer">
-                    <input type="checkbox" checked={selected.has(it.item_id)} onChange={() => toggle(it.item_id)} className="accent-[#f59e0b]" />
-                    <span className="truncate">{it.name}</span>
-                  </label>
-                ))}
+                {shownItems.map((it) => {
+                  const maxq = Math.max(1, qtyMaxById.get(it.item_id) ?? 1);
+                  const isSel = selected.has(it.item_id);
+                  return (
+                    <div key={it.item_id} className="flex items-center gap-2 text-xs text-[#e4e6eb]">
+                      <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                        <input type="checkbox" checked={isSel} onChange={() => toggle(it.item_id)} className="accent-[#f59e0b]" />
+                        <span className="truncate">{it.name}</span>
+                      </label>
+                      {isSel && maxq > 1 && (
+                        <>
+                          <input type="number" min={1} max={maxq} value={holdQty.get(it.item_id) ?? maxq}
+                            onChange={(e) => { const v = Math.min(maxq, Math.max(1, Number(e.target.value) || 1)); setHoldQty((prev) => new Map(prev).set(it.item_id, v)); }}
+                            className="w-11 text-xs rounded p-1 text-center" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "#e4e6eb" }} title="Units to mark out on repair" />
+                          <span className="text-[10px] text-[#8b8fa3]">/ {maxq}</span>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <select
                 value=""

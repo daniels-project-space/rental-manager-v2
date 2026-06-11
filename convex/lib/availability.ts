@@ -58,7 +58,7 @@ export function repairHeldUnits(claims: ClaimRow[], itemId: Id<"items">): number
   for (const c of claims) {
     const st = c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
     if (REPAIR_TERMINAL.has(st)) continue;
-    if ((c.repair_item_ids ?? []).some((id) => id === itemId)) n += 1;
+    for (const id of (c.repair_item_ids ?? [])) if (id === itemId) n += 1;
   }
   return n;
 }
