@@ -1025,6 +1025,21 @@ export const getGanttWeek = query({
     type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string };
     const allItems = (await ctx.db.query("items").collect()) as GanttItemDoc[];
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
+    // Override-resolved item names per reservation (memoized) — Gantt rows key
+    // off the corrected inventory items, not raw listing/item-name strings.
+    const productIndexG = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const overrideMapG = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const itemByIdG = new Map<string, GanttItemDoc>(allItems.filter((it) => it._id).map((it) => [String(it._id), it]));
+    const resolvedNamesByRes = new Map<string, Set<string>>();
+    for (const r of reservations) {
+      const names = new Set<string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const id of reservationItemUnits(r as any, productIndexG, overrideMapG).keys()) {
+        const nm = itemByIdG.get(id)?.name_canonical; if (nm) names.add(nm);
+      }
+      if (names.size === 0) for (const i of r.items ?? []) { if (i.item_name) names.add(i.item_name); }
+      resolvedNamesByRes.set(String(r._id), names);
+    }
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
     const listingImagesAllGantt = await ctx.db.query("listing_images").collect();
@@ -1045,9 +1060,7 @@ export const getGanttWeek = query({
     // Key: item_name string (from reservation.items[])
     const itemNameSet = new Set<string>();
     for (const r of reservations) {
-      for (const i of r.items ?? []) {
-        if (i.item_name) itemNameSet.add(i.item_name);
-      }
+      for (const nm of resolvedNamesByRes.get(String(r._id)) ?? new Set<string>()) itemNameSet.add(nm);
     }
 
     // Build per-item rows
@@ -1056,7 +1069,7 @@ export const getGanttWeek = query({
 
       // Find reservations that include this item
       const matchingRes = reservations.filter((r) =>
-        (r.items ?? []).some((i) => i.item_name === itemName)
+        resolvedNamesByRes.get(String(r._id))?.has(itemName) ?? false
       );
 
       // Image source: walk matching reservations and pick the first hit from
