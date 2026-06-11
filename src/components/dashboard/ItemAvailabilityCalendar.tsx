@@ -29,7 +29,7 @@ function fmtShort(ymd: string): string {
   return new Date(ymd + "T00:00:00Z").toLocaleString("en", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-type AvailCell = { date: string; free: number; total: number; booked: number; free_from?: string | null };
+type AvailCell = { date: string; free: number; total: number; booked: number; free_from?: string | null; pending?: number };
 type AvailItem = { item_id: string; name: string; qty: number; image_url?: string | null; availability: AvailCell[]; owned?: boolean };
 
 /**
@@ -167,6 +167,7 @@ export function ItemAvailabilityCalendar() {
                 {dates.map((d) => {
                   const cell = byDate.get(d);
                   const free = cell?.free;
+                  const pending = cell?.pending ?? 0;
                   const tot = cell?.total;
                   const freeFrom = cell?.free_from ?? null;
                   const showFrom = !!freeFrom && (free ?? 0) <= 0;
@@ -184,10 +185,11 @@ export function ItemAvailabilityCalendar() {
                       key={d}
                       className="flex flex-col items-center justify-center rounded-md py-1.5"
                       style={{ background: bg, border: "1px solid rgba(255,255,255,0.04)" }}
-                      title={cell ? `${free} of ${tot} free · ${d}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${d}`}
+                      title={cell ? `${free} of ${tot} free · ${d}${pending > 0 ? ` · ${pending} pending` : ""}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${d}`}
                     >
                       <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
                         {free !== undefined ? free : "–"}
+                        {pending > 0 && <span className="text-[9px] font-semibold" style={{ color: "#a78bfa" }}>{` (-${pending})`}</span>}
                       </span>
                       {showFrom ? (
                         <span className="text-[8px] leading-none mt-0.5" style={{ color: "#fbbf24" }}>{`fr ${freeFrom}`}</span>

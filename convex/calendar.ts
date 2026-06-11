@@ -818,6 +818,20 @@ export const getWeeklyCalendar = query({
     // Items table for per-item image lookups (fuzzy by name).
     const allItemsWeekly = await ctx.db.query("items").collect();
     const sharedBlacklistWeekly = buildSharedImageBlacklist(allItemsWeekly);
+    const productIndexW = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const overrideMapW = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const itemByIdW = new Map<string, any>(allItemsWeekly.map((it) => [String(it._id), it]));
+    const resolvedNamesByResW = new Map<string, string[]>();
+    for (const r of reservations) {
+      const names: string[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const [id, qty] of reservationItemUnits(r as any, productIndexW, overrideMapW)) {
+        const nm = itemByIdW.get(id)?.name_canonical; if (nm) names.push(qty > 1 ? nm + " ×" + qty : nm);
+      }
+      if (names.length === 0) for (const i of r.items ?? []) { if (i.item_name) names.push(i.item_name); }
+      resolvedNamesByResW.set(String(r._id), names);
+    }
 
     type WeeklyImageHint = {
       item_name: string;
@@ -876,7 +890,7 @@ export const getWeeklyCalendar = query({
               net_to_owner_gbp?: number | null;
               renter_name?: string | null;
             };
-            const itemNames = (r.items ?? []).map((i) => i.item_name);
+            const itemNames = resolvedNamesByResW.get(String(r._id)) ?? (r.items ?? []).map((i) => i.item_name);
             const hintsForR = ((r as { image_hints?: WeeklyImageHint[] }).image_hints) ?? [];
             const items = (r.items ?? []).map((i) => ({
               name: i.item_name,
@@ -1341,6 +1355,33 @@ export const searchCalendarInventory = query({
       }
     }
 
+    // PENDING (status pending_review) occupancy — same time-aware build, kept
+    // separate so the UI can show "(-N)" alongside the real free count.
+    const pendingResv = reservations.filter((r) => (r as { status?: string }).status === "pending_review" && !(r as { is_obsolete?: boolean }).is_obsolete);
+    const pendingIntervals = new Map<string, Array<{ a: string; b: string; qty: number }>>();
+    for (const r of pendingResv) {
+      const effPick = displayPickupDate(r) || r.start_date;
+      const effRet = (r.return_date ?? r.end_date) ?? effPick;
+      if (!effPick || !effRet) continue;
+      const pickT = ((r as { pickup_time?: string }).pickup_time) || "00:00";
+      const retT = ((r as { return_time?: string }).return_time) || "23:59";
+      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap))
+        .filter(([id]) => matchedById.has(id))
+        .map(([id, qty]) => ({ id, qty }));
+      if (lines.length === 0) continue;
+      for (const d of dates) {
+        if (d < effPick || d > effRet) continue;
+        const a = d === effPick ? pickT : "00:00";
+        const b = d === effRet ? retT : "23:59";
+        for (const ln of lines) {
+          const key = `${ln.id}|${d}`;
+          const arr = pendingIntervals.get(key);
+          if (arr) arr.push({ a, b, qty: ln.qty });
+          else pendingIntervals.set(key, [{ a, b, qty: ln.qty }]);
+        }
+      }
+    }
+
     // Time-aware day availability. `free` = units free for the WHOLE day (total −
     // PEAK concurrent occupancy), so a same-day handover (one returns at 10:15,
     // the next is picked up at 12:40) no longer double-books the date — the naive
@@ -1403,7 +1444,7 @@ export const searchCalendarInventory = query({
             kind: it.kind ?? null,
             qty: it.qty ?? 0,
             image_url: it.image_url ?? null,
-            availability: [] as { date: string; free: number; total: number; booked: number; free_from: string | null }[],
+            availability: [] as { date: string; free: number; total: number; booked: number; free_from: string | null; pending: number }[],
             owned: false,
           };
         }
@@ -1423,7 +1464,7 @@ export const searchCalendarInventory = query({
             !black && da.free <= 0 && da.free_from && da.free_from < "23:59"
               ? da.free_from
               : null;
-          return { date, free, total, booked: black ? total : da.peak, free_from };
+          return { date, free, total, booked: black ? total : da.peak, free_from, pending: black ? 0 : dayAvail(pendingIntervals.get(`${idStr}|${date}`), total).peak };
         });
         return {
           item_id: idStr,

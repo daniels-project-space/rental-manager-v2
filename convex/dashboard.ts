@@ -903,7 +903,7 @@ export const getStatsDrawerData = query({
     // on either dashboard page.
     const ongoingCross = (allResCrossAccount as ResRow[]).filter((r) => isOngoing(r as ResRow, activeToday));
     const upcomingCross = (allResCrossAccount as ResRow[]).filter((r) => isUpcoming(r as ResRow, activeToday));
-    const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => isPendingVerification(r as ResRow));
+    const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => (r as { status?: string }).status === "pending_review" && !(r as { is_obsolete?: boolean }).is_obsolete && !!r.start_date);
     const dedupCross = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
     const ongoingCrossUniq = dedupCross(ongoingCross);
     const upcomingCrossUniq = dedupCross(upcomingCross);
