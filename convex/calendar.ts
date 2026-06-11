@@ -1249,7 +1249,7 @@ export const searchCalendarInventory = query({
     const norm = (s: string): string =>
       s
         .toLowerCase()
-        .replace(/\b(viii|vii|iii|ix|iv|vi|ii|v|x|i)\b/g, (m) => ROMAN[m] ?? m)
+        .replace(/([^a-z]|^)(viii|vii|iii|ix|iv|vi|ii|v|x|i)(?![a-z])/g, (_m, pre, rom) => pre + (ROMAN[rom] ?? rom))
         .replace(/[^a-z0-9]+/g, "");
     const qTokens = q.split(/\s+/).map((t) => norm(t)).filter((t) => t.length > 0);
     // Forgiving relevance search: an item matches if ENOUGH of the query words

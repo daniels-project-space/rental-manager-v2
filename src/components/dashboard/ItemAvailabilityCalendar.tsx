@@ -104,7 +104,13 @@ export function ItemAvailabilityCalendar() {
         <input
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
-          placeholder="Search an item to see how many are free each day…"
+          onKeyDown={(e) => {
+            const back = e.key === "ArrowUp" || (e.key === "ArrowLeft" && raw === "");
+            const fwd = e.key === "ArrowDown" || (e.key === "ArrowRight" && raw === "");
+            if (back) { e.preventDefault(); setWeekStart((w) => (w > minWeek ? addDays(w, -7) : w)); }
+            else if (fwd) { e.preventDefault(); setWeekStart((w) => (w < maxWeek ? addDays(w, 7) : w)); }
+          }}
+          placeholder="Search an item — ↑/↓ change week…"
           className="w-full text-sm rounded-lg pl-8 pr-3 py-2"
           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb" }}
         />
