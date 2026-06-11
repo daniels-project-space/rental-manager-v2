@@ -338,7 +338,7 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             src={it.image}
             alt=""
             title={it.name}
-            className="w-12 h-12 rounded-lg object-cover first:ml-0 -ml-3 cursor-zoom-in transition-transform hover:-translate-y-0.5"
+            className="w-14 h-14 rounded-lg object-cover first:ml-0 -ml-3 cursor-zoom-in transition-transform hover:-translate-y-0.5"
             style={{ border: `2px solid ${ring}`, background: "#0b0f1c" }}
             onMouseEnter={onEnter(it.image, it.name)}
             onMouseLeave={onLeave}
