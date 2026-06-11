@@ -100,3 +100,18 @@ export function reservationItemUnits(
   }
   return m;
 }
+
+
+/**
+ * "Standard bundled accessory" — SD/CF cards + camera/gimbal batteries that ship
+ * WITH the camera as standard kit. We have as many as we have cameras, so they
+ * are not an independent availability constraint and shouldn't clutter item
+ * lists or trigger overbooking. (Power STATIONS like Anker/EcoFlow are real gear
+ * — only kind "power" items whose name mentions a battery are excluded.)
+ */
+export function isStandardAccessory(kind: string | undefined, name: string | undefined): boolean {
+  const k = kind ?? "";
+  if (k === "storage_card" || k === "media") return true;
+  if (k === "power" && /batter/i.test(name ?? "")) return true;
+  return false;
+}

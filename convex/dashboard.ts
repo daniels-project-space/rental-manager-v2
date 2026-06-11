@@ -359,6 +359,9 @@ export const getStatsDrawerData = query({
     let allItems = await ctx.db.query("items").collect();
     const nameByIdStr = new Map<string, string>();
     for (const _it of allItems) { const _nmc = (_it as { name_canonical?: string }).name_canonical; if (_nmc) nameByIdStr.set(String(_it._id), _nmc); }
+    // Standard bundled accessories (SD/CF cards + camera/gimbal batteries) — hidden
+    // from item lists + skipped in overbooking; we have as many as we have cameras.
+    const stdAccIds = new Set(allItems.filter((x) => { const k = (x as { kind?: string }).kind ?? ""; return k === "storage_card" || k === "media" || (k === "power" && /batter/i.test((x as { name_canonical?: string }).name_canonical ?? "")); }).map((x) => String(x._id)));
     if (accountSlug) {
       // items are cross-account; no slug filter needed for inventory_worth
       // but keep full list for out-of-stock which is also cross-account
@@ -903,7 +906,7 @@ export const getStatsDrawerData = query({
     // on either dashboard page.
     const ongoingCross = (allResCrossAccount as ResRow[]).filter((r) => isOngoing(r as ResRow, activeToday));
     const upcomingCross = (allResCrossAccount as ResRow[]).filter((r) => isUpcoming(r as ResRow, activeToday));
-    const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => (r as { status?: string }).status === "pending_review" && !(r as { is_obsolete?: boolean }).is_obsolete && !!r.start_date);
+    const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => (r as { status?: string }).status === "pending_review" && (r as { order_step?: string }).order_step === "VERIFIED" && !(r as { is_obsolete?: boolean }).is_obsolete && !!r.start_date);
     const dedupCross = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
     const ongoingCrossUniq = dedupCross(ongoingCross);
     const upcomingCrossUniq = dedupCross(upcomingCross);
@@ -944,6 +947,7 @@ export const getStatsDrawerData = query({
     const conflicts: Conflict[] = [];
     for (const item of activeItems) {
       if (item.qty < 1) continue;
+      if (stdAccIds.has(String(item._id))) continue; // SD cards / batteries: bundled, not a constraint
       const matchingRes: Array<{ r: ResWithItems; kind: "ongoing" | "upcoming" | "pending" }> = [];
       const seenIds = new Set<string>();
       const tag = (r: ResWithItems): "ongoing" | "upcoming" | "pending" =>
@@ -1286,7 +1290,7 @@ export const getStatsDrawerData = query({
         // tripods / mic etc. live in the override), not just the listing titles.
         const _ru = expandedIdsOf(r as ResRow);
         const _rn: string[] = [];
-        for (const [idStr, qty] of _ru) { const nm = nameByIdStr.get(idStr); if (nm) _rn.push(qty > 1 ? nm + " ×" + qty : nm); }
+        for (const [idStr, qty] of _ru) { if (stdAccIds.has(idStr)) continue; const nm = nameByIdStr.get(idStr); if (nm) _rn.push(qty > 1 ? nm + " ×" + qty : nm); }
         const item_names_resolved = _rn.length > 0 ? _rn.join(", ") : item_names_summary_h;
 
         return {
