@@ -265,7 +265,7 @@ function ItemRow({ item }: { item: ChipItem }) {
       className="flex items-center gap-2 px-2 py-1.5 rounded"
       style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
     >
-      <ItemThumb item={item} size={28} />
+      <ItemThumb item={item} size={34} />
       <span className="text-[11px] text-[#e4e6eb] truncate flex-1">{item.name}</span>
       {item.qty > 1 && (
         <span className="text-[10px] text-[#8b8fa3] flex-shrink-0">× {item.qty}</span>

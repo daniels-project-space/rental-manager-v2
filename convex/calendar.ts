@@ -359,6 +359,22 @@ export const getCalendarStrip = query({
     for (const li of listingImagesAllStrip) {
       bankByProductStrip.set(`${li.account_slug}#${li.product_id}`, li.image_url);
     }
+    // Override-resolved items + the account's OWN listing photo (so leo/dbcinema
+    // photos never mix) — mirrors getGanttWeek.
+    const productIndexStrip = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const overrideMapStrip = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const imageByResItemStrip = new Map<string, string>();
+    for (const rr of reservations) {
+      const acct = (rr as { account_slug?: string }).account_slug ?? "";
+      for (const h of (((rr as { hygglo_items?: Array<{ product_id?: number; image_url?: string }> }).hygglo_items) ?? [])) {
+        if (typeof h.product_id !== "number") continue;
+        const img = bankByProductStrip.get(`${acct}#${h.product_id}`) ?? (h.image_url && !h.image_url.includes("example.com") ? h.image_url : null);
+        if (!img) continue;
+        const comps = overrideMapStrip.get(`${acct}#${h.product_id}`);
+        if (comps && comps.length) { for (const c of comps) { const k = `${String(rr._id)}#${c.item_id}`; if (!imageByResItemStrip.has(k)) imageByResItemStrip.set(k, img); } }
+        else { const idx = productIndexStrip.get(`${acct}#${h.product_id}`); if (idx) { const k = `${String(rr._id)}#${idx}`; if (!imageByResItemStrip.has(k)) imageByResItemStrip.set(k, img); } }
+      }
+    }
 
     type ChipItem = {
       itemId: string | null;
@@ -383,66 +399,23 @@ export const getCalendarStrip = query({
         captured_at: number;
       }> }).image_hints) ?? [];
 
-      const resolved = (r as { resolved_items?: Array<{
-        item_id: string;
-        item_name_canonical: string;
-        confidence: number;
-      }> }).resolved_items;
-
-      if (resolved && resolved.length > 0) {
-        // Aggregate duplicates from the resolver (same item appearing twice)
-        const counts = new Map<string, { entry: { item_id: string; item_name_canonical: string; confidence: number }; qty: number }>();
-        for (const ri of resolved) {
-          const existing = counts.get(ri.item_id);
-          if (existing) existing.qty += 1;
-          else counts.set(ri.item_id, { entry: ri, qty: 1 });
+      // Override-resolved items, account-correct listing photo, deduped by IMAGE
+      // (a multi-item set listing shows ONE tile, not one per resolved item).
+      const ovUnits = Array.from(reservationItemUnits(r as unknown as Parameters<typeof reservationItemUnits>[0], productIndexStrip, overrideMapStrip));
+      if (ovUnits.length > 0) {
+        const acct = (r as { account_slug?: string }).account_slug ?? "";
+        const seen = new Set<string>();
+        const out: ChipItem[] = [];
+        for (const [id, qty] of ovUnits) {
+          const inv = itemById.get(id) as { name_canonical?: string; kind?: string } | undefined;
+          if (inv && isStandardAccessory(inv.kind, inv.name_canonical)) continue;
+          const img = imageByResItemStrip.get(`${String(r._id)}#${id}`) ?? null;
+          const key = img ?? `n:${id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ itemId: id, name: inv?.name_canonical ?? "item", imageUrl: img, qty, resolved: true });
         }
-        return Array.from(counts.values()).map(({ entry, qty }) => {
-          const doc = itemById.get(entry.item_id);
-          const renderName = doc?.name_canonical ?? entry.item_name_canonical;
-          const resolved = resolveImageForReservationItem({
-            imageHints,
-            itemName: renderName,
-            itemsTableEntry: doc,
-            resolvedConfidence: entry.confidence,
-            sharedBlacklist,
-            bankByProduct: bankByProductStrip,
-            accountSlug: (r as { account_slug?: string }).account_slug ?? null,
-            productId: productIdForItemInReservation(r as Parameters<typeof productIdForItemInReservation>[0], entry.item_id),
-          });
-          // image_hints are keyed by the RAW Hygglo item_name; the canonical
-          // renderName often doesn't match (and items.image_url can be empty),
-          // leaving the tile image-less even though the listing photo exists
-          // (e.g. Jamie Hannaford / Dan). Mirror getGanttWeek: on a placeholder,
-          // retry with the reservation's raw item_name(s) and take the first hit.
-          let imageUrl = resolved.url;
-          if (!imageUrl || resolved.source === "placeholder") {
-            for (const raw of r.items ?? []) {
-              if (!raw.item_name) continue;
-              const alt = resolveImageForReservationItem({
-                imageHints,
-                itemName: raw.item_name,
-                itemsTableEntry: doc,
-                resolvedConfidence: undefined,
-                sharedBlacklist,
-                bankByProduct: bankByProductStrip,
-                accountSlug: (r as { account_slug?: string }).account_slug ?? null,
-                productId: productIdForItemNameInReservation(r as Parameters<typeof productIdForItemNameInReservation>[0], raw.item_name),
-              });
-              if (alt.source !== "placeholder" && alt.url) {
-                imageUrl = alt.url;
-                break;
-              }
-            }
-          }
-          return {
-            itemId: entry.item_id,
-            name: renderName,
-            imageUrl,
-            qty,
-            resolved: true,
-          };
-        });
+        if (out.length > 0) return out;
       }
 
       // Fallback: raw Hygglo strings + fuzzy image lookup. These titles can be
@@ -1067,14 +1040,14 @@ export const getGanttWeek = query({
     // (items have no stock photo). Keyed by item_id so the canonical Gantt rows
     // AND the reservation-bar thumbnails get a correct, non-blank image.
     const imageByItemId = new Map<string, string>();
-    const imageByAcctItem = new Map<string, string>();
+    const imageByResItem = new Map<string, string>();
     for (const r of reservations) {
       const acct = (r as { account_slug?: string }).account_slug ?? "";
       for (const h of (((r as { hygglo_items?: Array<{ product_id?: number; image_url?: string }> }).hygglo_items) ?? [])) {
         if (typeof h.product_id !== "number") continue;
         const img = bankByProductGantt.get(`${acct}#${h.product_id}`) ?? (h.image_url && !h.image_url.includes("example.com") ? h.image_url : null);
         if (!img) continue;
-        const setImg = (id: string) => { if (!imageByItemId.has(id)) imageByItemId.set(id, img); const k = `${acct}#${id}`; if (!imageByAcctItem.has(k)) imageByAcctItem.set(k, img); };
+        const setImg = (id: string) => { if (!imageByItemId.has(id)) imageByItemId.set(id, img); const k = `${String(r._id)}#${id}`; if (!imageByResItem.has(k)) imageByResItem.set(k, img); };
         const comps = overrideMapG.get(`${acct}#${h.product_id}`);
         if (comps && comps.length) { for (const c of comps) setImg(c.item_id); }
         else { const idx = productIndexG.get(`${acct}#${h.product_id}`); if (idx) setImg(String(idx)); }
@@ -1165,7 +1138,7 @@ export const getGanttWeek = query({
         const effPick = displayPickupDate(r);
         return {
           reservation_id: r._id,
-          image_url: ((iDoc && iDoc._id) ? imageByAcctItem.get(`${(r as { account_slug?: string }).account_slug ?? ""}#${String(iDoc._id)}`) : null) ?? rowImage,
+          image_url: ((iDoc && iDoc._id) ? imageByResItem.get(`${String(r._id)}#${String(iDoc._id)}`) : null) ?? rowImage,
           logical_group_id: ganttGroupIds.get(r._id) ?? r._id,
           start_date: effPick || r.start_date,
           end_date: r.end_date,
