@@ -472,7 +472,7 @@ export function RentalRow({ r }: { r: Rental }) {
             alt={masterAlt}
             fill
             sizes="56px"
-            className="object-cover rounded-md"
+            className="object-contain rounded-md"
             unoptimized
           />
         ) : (
@@ -516,7 +516,7 @@ export function RentalRow({ r }: { r: Rental }) {
                   alt={t.name}
                   fill
                   sizes="40px"
-                  className="object-cover rounded-md"
+                  className="object-contain rounded-md"
                   unoptimized
                 />
               </div>
