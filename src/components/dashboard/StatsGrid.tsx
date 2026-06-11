@@ -23,6 +23,7 @@ import { STAT_WIDGETS, HERO_IDS, HERO_SPANS } from "@/lib/dashboard/widget-regis
 import { EditableWidget } from "./EditableWidget";
 import ExpandableStatCard from "./ExpandableStatCard";
 import WeeklyCalendarCard from "./stat-cards/WeeklyCalendarCard";
+import TodoWidget from "./TodoWidget";
 import ActiveDrawer from "./stat-cards/ActiveDrawer";
 import EarningsDrawer from "./stat-cards/EarningsDrawer";
 import MonthlyDrawer from "./stat-cards/MonthlyDrawer";
@@ -620,6 +621,7 @@ export function StatsGrid() {
       revenue_sparkline: <WeeklyRevenueSparkline  accountSlug={activeAccountSlug} />,
       // ── Phase 8 — WallE 2x2 hero card (HERO_SPANS.walle) ──
       walle: <WallE accountSlug={activeAccountSlug} />,
+      todos: <TodoWidget />,
     };
   }, [rawData, rentalsRow, expandedId, activeAccountSlug, catVolExpanded]);
 

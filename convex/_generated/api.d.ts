@@ -157,6 +157,7 @@ import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
 import type * as telegram_inbound from "../telegram_inbound.js";
+import type * as todos from "../todos.js";
 import type * as vacation from "../vacation.js";
 import type * as walle_inventory from "../walle_inventory.js";
 import type * as walle_ratelimits from "../walle_ratelimits.js";
@@ -317,6 +318,7 @@ declare const fullApi: ApiFromModules<{
   sync_state: typeof sync_state;
   tax: typeof tax;
   telegram_inbound: typeof telegram_inbound;
+  todos: typeof todos;
   vacation: typeof vacation;
   walle_inventory: typeof walle_inventory;
   walle_ratelimits: typeof walle_ratelimits;

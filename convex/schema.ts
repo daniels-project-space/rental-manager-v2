@@ -5,6 +5,12 @@ import { v } from "convex/values";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 export default defineSchema({
+  // ── To-Do lists (owner personal checklists) ──────────────────
+  todo_lists: defineTable({
+    name: v.string(),
+    items: v.array(v.object({ id: v.string(), text: v.string(), done: v.boolean() })),
+    created_at: v.number(),
+  }),
   // ── Accounts ─────────────────────────────────────────────────
   accounts: defineTable({
     slug: v.string(),                  // "leo" | "dbcinema"

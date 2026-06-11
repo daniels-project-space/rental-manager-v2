@@ -73,6 +73,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
+  { id: "todos",           label: "To-Do" },
   { id: "walle",           label: "WallE" },
   { id: "active",          label: "Active" },
   { id: "weekly_calendar", label: "Weekly Calendar" },
