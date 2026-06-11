@@ -38,123 +38,144 @@ export default function TodoWidget() {
     setDraft("");
   }
 
-  const body = (
+  return (
     <>
-      <div className="flex flex-wrap items-center gap-1 mb-2">
-        {lists.map((l) => (
+      {expanded && (
+        <div
+          className="fixed inset-0 z-[55] bg-black/55 backdrop-blur-sm"
+          onClick={() => setExpanded(false)}
+        />
+      )}
+      <div
+        className={
+          expanded
+            ? "fixed z-[60] left-1/2 top-1/2 flex h-[560px] max-h-[88vh] w-[420px] max-w-[94vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0e111c] shadow-2xl"
+            : "stat-card flex h-[150px] w-full flex-col overflow-hidden p-0"
+        }
+      >
+        {/* Header */}
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-white/5 px-3 py-2">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-[#e4e6eb]">
+            <span className="text-[15px] leading-none">📋</span> To Do List
+          </h2>
+          <div className="flex items-center gap-2">
+            {openCount > 0 && (
+              <span className="rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-300">
+                {openCount}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setExpanded((x) => !x)}
+              title={expanded ? "Collapse" : "Expand"}
+              aria-label={expanded ? "Collapse to-do list" : "Expand to-do list"}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/5 text-[12px] leading-none text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              {expanded ? "✕" : "⤢"}
+            </button>
+          </div>
+        </div>
+
+        {/* List tabs */}
+        <div className="flex flex-shrink-0 items-center gap-1 overflow-x-auto px-3 py-1.5">
+          {lists.map((l) => (
+            <button
+              key={l._id}
+              type="button"
+              onClick={() => setActiveId(l._id)}
+              className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                active?._id === l._id
+                  ? "bg-blue-500/20 text-blue-200 ring-1 ring-blue-500/40"
+                  : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+              }`}
+            >
+              {l.name}
+            </button>
+          ))}
           <button
-            key={l._id}
-            onClick={() => setActiveId(l._id)}
-            className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
-              active?._id === l._id
-                ? "bg-blue-500/20 border-blue-500/40 text-blue-200"
-                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
-            }`}
+            type="button"
+            onClick={handleNewList}
+            title="New list"
+            aria-label="New list"
+            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-white/5 text-[13px] font-bold leading-none text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
           >
-            {l.name}
+            +
           </button>
-        ))}
-        <button
-          onClick={handleNewList}
-          title="New list"
-          className="px-1.5 py-0.5 rounded text-[12px] font-bold bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
-        >
-          +
-        </button>
+        </div>
+
+        {/* Items — scrollable */}
+        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-0.5">
+          {active && active.items.length > 0 ? (
+            active.items.map((it) => (
+              <label
+                key={it.id}
+                className="group flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[12px] hover:bg-white/5"
+              >
+                <input
+                  type="checkbox"
+                  checked={it.done}
+                  onChange={() => toggleItem({ listId: active._id, itemId: it.id })}
+                  className="h-3.5 w-3.5 flex-shrink-0 accent-blue-500"
+                />
+                <span className={`flex-1 truncate ${it.done ? "text-slate-600 line-through" : "text-slate-200"}`}>
+                  {it.text}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void removeItem({ listId: active._id, itemId: it.id });
+                  }}
+                  className="flex-shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </label>
+            ))
+          ) : (
+            <p className="px-1.5 py-2 text-[11px] text-slate-500">
+              {lists.length === 0 ? "No lists yet — tap + to create one." : "Nothing here yet."}
+            </p>
+          )}
+        </div>
+
+        {/* Add item */}
+        {active && (
+          <form
+            onSubmit={handleSubmit}
+            className="flex flex-shrink-0 items-center gap-1.5 border-t border-white/5 px-2 py-2"
+          >
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Add an item…"
+              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[12px] text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/40"
+            />
+            <button
+              type="submit"
+              disabled={!draft.trim()}
+              className="flex-shrink-0 rounded-lg bg-blue-500/20 px-2.5 py-1 text-[12px] font-medium text-blue-200 ring-1 ring-blue-500/40 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
+            >
+              Add
+            </button>
+          </form>
+        )}
+
         {expanded && active && lists.length > 0 && (
           <button
+            type="button"
             onClick={() => {
               if (window.confirm(`Delete list "${active.name}"?`)) {
                 void deleteList({ id: active._id });
                 setActiveId(null);
               }
             }}
-            title="Delete this list"
-            className="ml-auto px-1.5 py-0.5 rounded text-[11px] text-slate-500 hover:text-red-400"
+            className="flex-shrink-0 px-3 py-1.5 text-left text-[10px] text-slate-600 transition-colors hover:text-red-400"
           >
-            Delete
+            Delete this list
           </button>
         )}
-      </div>
-
-      <div className={expanded ? "flex-1 min-h-0 overflow-y-auto space-y-1 pr-1" : "space-y-1 max-h-[84px] overflow-y-auto pr-1"}>
-        {active && active.items.length > 0 ? (
-          active.items.map((it) => (
-            <div key={it.id} className="group flex items-center gap-2 text-[12px]">
-              <input
-                type="checkbox"
-                checked={it.done}
-                onChange={() => toggleItem({ listId: active._id, itemId: it.id })}
-                className="accent-blue-500 flex-shrink-0"
-              />
-              <span className={`flex-1 truncate ${it.done ? "line-through text-slate-500" : "text-slate-200"}`}>
-                {it.text}
-              </span>
-              <button
-                onClick={() => removeItem({ listId: active._id, itemId: it.id })}
-                className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 text-xs flex-shrink-0"
-                title="Remove"
-              >
-                &times;
-              </button>
-            </div>
-          ))
-        ) : (
-          <p className="text-[11px] text-slate-500 py-1">
-            {lists.length === 0 ? "No lists yet — click + to create one." : "No items yet."}
-          </p>
-        )}
-      </div>
-
-      {active && (
-        <form onSubmit={handleSubmit} className="mt-2 flex items-center gap-1">
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Add an item…"
-            className="flex-1 text-[12px] rounded-lg px-2 py-1 bg-white/5 border border-white/10 text-slate-100 placeholder:text-slate-500 outline-none focus:border-blue-500/40"
-          />
-          <button
-            type="submit"
-            disabled={!draft.trim()}
-            className="px-2 py-1 rounded-lg text-[12px] bg-blue-500/20 border border-blue-500/40 text-blue-200 disabled:opacity-40"
-          >
-            Add
-          </button>
-        </form>
-      )}
-    </>
-  );
-
-  return (
-    <>
-      {expanded && (
-        <div className="fixed inset-0 z-[55] bg-black/55 backdrop-blur-sm" onClick={() => setExpanded(false)} />
-      )}
-      <div
-        className={
-          expanded
-            ? "fixed z-[60] bottom-4 right-4 flex h-[520px] max-h-[85vh] w-[380px] max-w-[92vw] flex-col rounded-xl bg-[#0e111c] border border-white/10 p-3 shadow-2xl"
-            : "stat-card w-full flex flex-col p-3"
-        }
-      >
-        <div className="flex items-center justify-between mb-2">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-[#e4e6eb] truncate">{active?.name ?? "To-Do"}</h2>
-            <span className="text-[10px] text-slate-500">
-              {openCount} open · {lists.length} list{lists.length === 1 ? "" : "s"}
-            </span>
-          </div>
-          <button
-            onClick={() => setExpanded((x) => !x)}
-            title={expanded ? "Collapse" : "Expand"}
-            aria-label={expanded ? "Collapse to-do" : "Expand to-do"}
-            className="flex-shrink-0 flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/10 text-[13px] leading-none text-slate-200 hover:bg-white/20 hover:text-white"
-          >
-            {expanded ? "✕" : "⤢"}
-          </button>
-        </div>
-        {body}
       </div>
     </>
   );
