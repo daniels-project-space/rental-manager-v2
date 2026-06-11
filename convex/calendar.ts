@@ -1063,6 +1063,21 @@ export const getGanttWeek = query({
     for (const li of listingImagesAllGantt) {
       bankByProductGantt.set(`${li.account_slug}#${li.product_id}`, li.image_url);
     }
+    // Per override-resolved item -> the photo of the LISTING it was rented in
+    // (items have no stock photo). Keyed by item_id so the canonical Gantt rows
+    // AND the reservation-bar thumbnails get a correct, non-blank image.
+    const imageByItemId = new Map<string, string>();
+    for (const r of reservations) {
+      const acct = (r as { account_slug?: string }).account_slug ?? "";
+      for (const h of (((r as { hygglo_items?: Array<{ product_id?: number; image_url?: string }> }).hygglo_items) ?? [])) {
+        if (typeof h.product_id !== "number") continue;
+        const img = bankByProductGantt.get(`${acct}#${h.product_id}`) ?? (h.image_url && !h.image_url.includes("example.com") ? h.image_url : null);
+        if (!img) continue;
+        const comps = overrideMapG.get(`${acct}#${h.product_id}`);
+        if (comps && comps.length) { for (const c of comps) if (!imageByItemId.has(c.item_id)) imageByItemId.set(c.item_id, img); }
+        else { const idx = productIndexG.get(`${acct}#${h.product_id}`); if (idx && !imageByItemId.has(String(idx))) imageByItemId.set(String(idx), img); }
+      }
+    }
 
     type GanttImageHint = {
       item_name: string;
@@ -1173,7 +1188,7 @@ export const getGanttWeek = query({
       return {
         item_id: (iDoc?._id ?? null) as string | null,
         item_name: itemName,
-        image_url: resolvedImageUrl,
+        image_url: ((iDoc && iDoc._id) ? imageByItemId.get(String(iDoc._id)) : null) ?? resolvedImageUrl,
         account_slug: iDoc?.account_slug ?? null,
         account_color: (iDoc?.account_slug === "leo" ? "purple" : "blue") as "purple" | "blue",
         blocks,
