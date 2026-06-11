@@ -166,13 +166,15 @@ export const getDueReturns = query({
         return Array.from(names);
       })();
       const assocItems = (() => {
-        const m2 = new Map<string, string>();
+        const m2 = new Map<string, { name: string; qty: number }>();
         for (const m of members) {
-          for (const id of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap).keys()) {
-            if (!m2.has(id)) m2.set(id, itemNameById.get(id) ?? "item");
+          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap)) {
+            const ex = m2.get(id);
+            if (ex) ex.qty += qty;
+            else m2.set(id, { name: itemNameById.get(id) ?? "item", qty });
           }
         }
-        return Array.from(m2, ([item_id, name]) => ({ item_id, name }));
+        return Array.from(m2, ([item_id, v]) => ({ item_id, name: v.name, qty: v.qty }));
       })();
       results.push({
         reservationId: base._id,
