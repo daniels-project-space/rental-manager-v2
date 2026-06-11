@@ -357,6 +357,8 @@ export const getStatsDrawerData = query({
 
     // ── COLLECT 2: items ─────────────────────────────────────────
     let allItems = await ctx.db.query("items").collect();
+    const nameByIdStr = new Map<string, string>();
+    for (const _it of allItems) { const _nmc = (_it as { name_canonical?: string }).name_canonical; if (_nmc) nameByIdStr.set(String(_it._id), _nmc); }
     if (accountSlug) {
       // items are cross-account; no slug filter needed for inventory_worth
       // but keep full list for out-of-stock which is also cross-account
@@ -1280,6 +1282,13 @@ export const getStatsDrawerData = query({
           .map((i) => (i.qty && i.qty > 1 ? `${i.name} \u00d7${i.qty}` : i.name))
           .join(", ");
 
+        // Override-resolved component list — actual kit contents (the 70-200 /
+        // tripods / mic etc. live in the override), not just the listing titles.
+        const _ru = expandedIdsOf(r as ResRow);
+        const _rn: string[] = [];
+        for (const [idStr, qty] of _ru) { const nm = nameByIdStr.get(idStr); if (nm) _rn.push(qty > 1 ? nm + " ×" + qty : nm); }
+        const item_names_resolved = _rn.length > 0 ? _rn.join(", ") : item_names_summary_h;
+
         return {
           reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
           renter_name: r.renter_name ?? null,
@@ -1295,7 +1304,7 @@ export const getStatsDrawerData = query({
           items: hItems.map((i) => i.name),
           photo_url: master_image_url_h,
           master_image_url: master_image_url_h,
-          item_names_summary: item_names_summary_h.length > 0 ? item_names_summary_h : "(no item)",
+          item_names_summary: item_names_resolved.length > 0 ? item_names_resolved : "(no item)",
           item_image_tiles: item_image_tiles_h,
           extra_text_items: noImage,
           duration_days:
