@@ -151,7 +151,7 @@ export function ItemAvailabilityCalendar() {
       ) : items.length === 0 ? (
         <p className="text-xs text-[#8b8fa3] text-center py-6">No item matches “{query}”.</p>
       ) : (
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {items.map((it) => {
             const byDate = new Map(it.availability.map((c) => [c.date, c]));
             return (
@@ -159,9 +159,9 @@ export function ItemAvailabilityCalendar() {
                 <div className="flex items-center gap-2 min-w-0 pr-1">
                   {it.image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={it.image_url} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" loading="lazy" />
+                    <img src={it.image_url} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0" loading="lazy" />
                   ) : (
-                    <div className="w-7 h-7 rounded flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)" }} />
+                    <div className="w-5 h-5 rounded flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)" }} />
                   )}
                   <div className="min-w-0">
                     <div className="text-[12px] text-[#e4e6eb] truncate font-medium">{it.name}</div>
@@ -187,11 +187,11 @@ export function ItemAvailabilityCalendar() {
                   return (
                     <div
                       key={d}
-                      className="flex flex-col items-center justify-center rounded-md py-1.5"
+                      className="flex flex-col items-center justify-center rounded-md py-1"
                       style={{ background: bg, border: "1px solid rgba(255,255,255,0.04)" }}
                       title={cell ? `${free} of ${tot} free · ${d}${pending > 0 ? ` · ${pending} pending` : ""}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${d}`}
                     >
-                      <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
+                      <span className="text-[13px] font-bold tabular-nums leading-none" style={{ color }}>
                         {free !== undefined ? free : "–"}
                         {pending > 0 && <span className="text-[9px] font-semibold" style={{ color: "#a78bfa" }}>{` (-${pending})`}</span>}
                       </span>
