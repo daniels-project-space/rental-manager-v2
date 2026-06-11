@@ -556,11 +556,22 @@ export function RentalRow({ r }: { r: Rental }) {
             listing-info-pool badge + edit-in-place affordance when the per-
             account flag is ON (info_pool_badge non-null). When OFF, the
             chip renders identically to the pre-pool design. */}
-        {r.item_tiles && r.item_tiles.length > 0 ? (
-          <div
-            className="mt-0.5 flex flex-wrap items-center gap-1"
-            title={summary}
-          >
+        {summary && summary !== "(no item)" ? (
+          // Show the engine's resolved individual items as chips directly, so the
+          // breakdown is visible without opening the rental. item_names_summary is
+          // the override-resolved item list (accessories already hidden upstream).
+          <div className="mt-0.5 flex flex-wrap items-center gap-1" title={summary}>
+            {summary.split(", ").map((nm, i) => (
+              <span
+                key={`${nm}-${i}`}
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700 text-slate-300"
+              >
+                {nm}
+              </span>
+            ))}
+          </div>
+        ) : r.item_tiles && r.item_tiles.length > 0 ? (
+          <div className="mt-0.5 flex flex-wrap items-center gap-1" title={summary}>
             {r.item_tiles.map((t, i) => (
               <ItemTileChip
                 key={`${t.name}-${i}`}
