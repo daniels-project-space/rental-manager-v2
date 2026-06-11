@@ -144,6 +144,20 @@ export const getItemRevenueRanking = query({
       }
     }
 
+    // Phase C (2026-06-11): listing_resolution_override is audit-authoritative —
+    // it WINS over the legacy pool + expanded/resolved cascade for income too, and
+    // applies regardless of the listing-info-pool flag. Empty components =
+    // marketing/not-owned → skipped (left to legacy; such listings are not rented).
+    for (const o of await ctx.db.query("listing_resolution_override").collect()) {
+      if (o.components.length === 0) continue;
+      const out: Array<{ item_id: typeof itemsAll[number]["_id"]; item_name_canonical: string; qty: number }> = [];
+      for (const c of o.components) {
+        const inv = itemById.get(c.item_id);
+        if (inv) out.push({ item_id: c.item_id, item_name_canonical: inv.name_canonical, qty: c.qty });
+      }
+      if (out.length > 0) poolOverrideByProduct.set(`${o.account_slug}#${o.product_id}`, out);
+    }
+
     // LLM-resolved items: revenue attributed strictly to inventory items
     // returned by item_resolver, never substring matched. Multi-item bundles
     // split gross by pricing_catalog weights (equal split if no prices).
@@ -188,7 +202,7 @@ export const getItemRevenueRanking = query({
       // hygglo_items[] with different product_ids; we union the components
       // (sum qty by item_id) and pass to attributeRevenue.
       let poolOverride: RentalForAttribution["pool_override"] = undefined;
-      if (poolEnabledAccountsAttrib.has(r.account_slug ?? "")) {
+      {
         const hItemsR = (r as { hygglo_items?: Array<{ product_id?: number; qty?: number }> }).hygglo_items ?? [];
         if (hItemsR.length > 0) {
           const agg = new Map<string, { item_id: typeof itemsAll[number]["_id"]; item_name_canonical: string; qty: number }>();
