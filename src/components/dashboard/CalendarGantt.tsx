@@ -145,7 +145,7 @@ function statusStyle(orderStep: string | null): StatusStyle {
 }
 
 function accountColor(ac: "blue" | "purple"): string {
-  return ac === "purple" ? "#a855f7" : "#3b82f6";
+  return ac === "purple" ? "#f59e0b" : "#3b82f6";
 }
 
 // ---------------------------------------------------------------------------
