@@ -14,6 +14,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import WallEBotLazy from './WallEBotLazy';
 import { useWallESignals } from './WallESignals';
 import WallEChat from './WallEChat';
@@ -69,8 +70,15 @@ export default function WallE({ accountSlug = null }: WallEProps) {
   }, []);
 
   // Collapsed: just the robot + an expand button. Expanded: a larger panel
-  // centered on screen so the chat box is comfortable to type in.
+  // centered on the SCREEN. It is portalled to document.body because the
+  // dashboard grid item carries a CSS transform (dnd-kit), which would
+  // otherwise make a position:fixed child anchor to the small cell — pushing
+  // the panel off-centre and out of bounds.
   const [expanded, setExpanded] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const orb = (
     <div className="walle-stage">
@@ -79,54 +87,69 @@ export default function WallE({ accountSlug = null }: WallEProps) {
       </div>
     </div>
   );
-  const toggleBtn = (
-    <button
-      type="button"
-      onClick={() => setExpanded((x) => !x)}
-      title={expanded ? 'Collapse WallE' : 'Expand WallE to chat'}
-      aria-label={expanded ? 'Collapse WallE' : 'Expand WallE'}
-      className="absolute top-1.5 right-1.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/10 text-[13px] leading-none text-zinc-200 transition-colors hover:bg-white/20 hover:text-white"
-    >
-      {expanded ? '✕' : '⤢'}
-    </button>
-  );
-
-  if (expanded) {
-    return (
-      <>
-        <div
-          className="fixed inset-0 z-[55] bg-black/55 backdrop-blur-sm"
-          onClick={() => setExpanded(false)}
-        />
-        <div
-          className="walle-cell fixed z-[60] left-1/2 top-1/2 flex h-[640px] max-h-[88vh] w-[500px] max-w-[94vw] -translate-x-1/2 -translate-y-1/2 flex-col rounded-[1rem] bg-card/95 border border-white/10 p-2 shadow-2xl overflow-hidden"
-          data-walle-mood={mood}
-          data-wave={waving ? 'true' : 'false'}
-        >
-          {toggleBtn}
-          <WallEChat
-            onChatStateChange={setChatState}
-            onSpeakingChange={setSpeaking}
-            lastSignalChangeAt={lastChangeAt}
-            emptyHint="Hi! I'm WallE — ask me anything about your rentals."
-            compact={false}
-            bubbleTone={moodToTone(mood)}
-            className="h-full"
-            characterSlot={orb}
-          />
-        </div>
-      </>
-    );
-  }
 
   return (
-    <div
-      className="walle-cell relative flex h-[120px] w-full items-center justify-center rounded-[1rem] bg-card/85 border border-white/5 overflow-hidden"
-      data-walle-mood={mood}
-      data-wave={waving ? 'true' : 'false'}
-    >
-      {toggleBtn}
-      {orb}
-    </div>
+    <>
+      <div
+        className="walle-cell relative flex h-[120px] w-full items-center justify-center rounded-[1rem] bg-card/85 border border-white/5 overflow-hidden"
+        data-walle-mood={mood}
+        data-wave={waving ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          title="Expand WallE to chat"
+          aria-label="Expand WallE"
+          className="absolute top-1.5 right-1.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/10 text-[13px] leading-none text-zinc-200 transition-colors hover:bg-white/20 hover:text-white"
+        >
+          {'\u2922'}
+        </button>
+        {orb}
+      </div>
+
+      {expanded &&
+        mounted &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+            onClick={() => setExpanded(false)}
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div
+              className="walle-cell relative z-10 flex h-[min(620px,86vh)] w-[min(460px,94vw)] flex-col overflow-hidden rounded-[1rem] border border-white/10 bg-card/95 p-2 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              data-walle-mood={mood}
+              data-wave={waving ? 'true' : 'false'}
+            >
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                title="Collapse WallE"
+                aria-label="Collapse WallE"
+                className="absolute top-1.5 right-1.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/10 text-[13px] leading-none text-zinc-200 transition-colors hover:bg-white/20 hover:text-white"
+              >
+                {'\u2715'}
+              </button>
+              <WallEChat
+                onChatStateChange={setChatState}
+                onSpeakingChange={setSpeaking}
+                lastSignalChangeAt={lastChangeAt}
+                emptyHint="Hi! I'm WallE — ask me anything about your rentals."
+                compact={false}
+                bubbleTone={moodToTone(mood)}
+                className="h-full"
+                characterSlot={
+                  <div className="walle-stage">
+                    <div className="walle-stage-inner">
+                      <WallEBotLazy mood={mood} onClick={handleCharacterClick} speaking={speaking} />
+                    </div>
+                  </div>
+                }
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
