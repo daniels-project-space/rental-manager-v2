@@ -166,7 +166,7 @@ export default function WeeklyCalendarCard() {
               return (
                 <div
                   key={date}
-                  className="rounded-md flex flex-col items-center justify-center py-1 gap-0.5"
+                  className="rounded-md flex flex-col items-center justify-center py-0.5 gap-0"
                   style={{
                     border: isToday ? "1px solid rgba(110,168,254,0.5)" : "1px solid rgba(255,255,255,0.06)",
                     background: isToday ? "rgba(110,168,254,0.08)" : "transparent",
