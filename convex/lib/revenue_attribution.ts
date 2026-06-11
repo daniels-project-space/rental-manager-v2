@@ -342,3 +342,35 @@ export function attributeRevenue(
 
   return draft;
 }
+
+
+/**
+ * Build a RentalForAttribution.pool_override from the audit-authoritative
+ * listing_resolution_override (keyed account#product_id). Unions the
+ * reservation's listings' override components (×listing qty). Returns undefined
+ * when no listing is overridden with owned items (caller then uses the legacy
+ * expanded/resolved cascade). Shared by every per-item revenue surface.
+ */
+export function overridePoolForReservation(
+  r: { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> | null },
+  ovMap: Map<string, Array<{ item_id: string; qty: number }>>,
+  nameOf: (itemId: string) => string | undefined,
+): Array<{ item_id: Id<"items">; item_name_canonical: string; qty: number }> | undefined {
+  const h = r.hygglo_items ?? [];
+  if (!h.length) return undefined;
+  const agg = new Map<string, { item_id: Id<"items">; item_name_canonical: string; qty: number }>();
+  for (const hi of h) {
+    if (typeof hi.product_id !== "number") continue;
+    const comps = ovMap.get(`${r.account_slug ?? ""}#${hi.product_id}`);
+    if (!comps) continue;
+    const lq = typeof hi.qty === "number" && hi.qty > 0 ? hi.qty : 1;
+    for (const c of comps) {
+      const name = nameOf(c.item_id);
+      if (name === undefined) continue;
+      const cur = agg.get(c.item_id);
+      if (cur) cur.qty += c.qty * lq;
+      else agg.set(c.item_id, { item_id: c.item_id as Id<"items">, item_name_canonical: name, qty: c.qty * lq });
+    }
+  }
+  return agg.size > 0 ? Array.from(agg.values()) : undefined;
+}
