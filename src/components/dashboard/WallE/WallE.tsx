@@ -68,32 +68,57 @@ export default function WallE({ accountSlug = null }: WallEProps) {
     setTimeout(() => setWaving(false), 720);
   }, []);
 
+  // Small by default; click the arrow to pop WallE into a large floating panel
+  // so the chat box is comfortable to type in.
+  const [expanded, setExpanded] = useState(false);
+
   return (
-    <div
-      className="walle-cell relative h-[290px] w-full rounded-[1rem] bg-card/85 border border-white/5 p-2 overflow-hidden"
-      data-walle-mood={mood}
-      data-wave={waving ? 'true' : 'false'}
-    >
-      <WallEChat
-        onChatStateChange={setChatState}
-        onSpeakingChange={setSpeaking}
-        lastSignalChangeAt={lastChangeAt}
-        emptyHint="Hi! I'm WallE — ask me anything about your rentals."
-        compact
-        bubbleTone={moodToTone(mood)}
-        className="h-full"
-        characterSlot={
-          <div className="walle-stage">
-            <div className="walle-stage-inner">
-              <WallEBotLazy
-                mood={mood}
-                onClick={handleCharacterClick}
-                speaking={speaking}
-              />
-            </div>
-          </div>
+    <>
+      {expanded && (
+        <div
+          className="fixed inset-0 z-[55] bg-black/55 backdrop-blur-sm"
+          onClick={() => setExpanded(false)}
+        />
+      )}
+      <div
+        className={
+          expanded
+            ? "walle-cell fixed z-[60] bottom-4 right-4 flex h-[560px] max-h-[85vh] w-[400px] max-w-[92vw] flex-col rounded-[1rem] bg-card/95 border border-white/10 p-2 shadow-2xl overflow-hidden"
+            : "walle-cell relative h-[160px] w-full rounded-[1rem] bg-card/85 border border-white/5 p-2 overflow-hidden"
         }
-      />
-    </div>
+        data-walle-mood={mood}
+        data-wave={waving ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((x) => !x)}
+          title={expanded ? 'Collapse WallE' : 'Expand WallE to chat'}
+          aria-label={expanded ? 'Collapse WallE' : 'Expand WallE'}
+          className="absolute top-1.5 right-1.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/10 text-[13px] leading-none text-zinc-200 transition-colors hover:bg-white/20 hover:text-white"
+        >
+          {expanded ? '✕' : '⤢'}
+        </button>
+        <WallEChat
+          onChatStateChange={setChatState}
+          onSpeakingChange={setSpeaking}
+          lastSignalChangeAt={lastChangeAt}
+          emptyHint="Hi! I'm WallE — ask me anything about your rentals."
+          compact={!expanded}
+          bubbleTone={moodToTone(mood)}
+          className="h-full"
+          characterSlot={
+            <div className="walle-stage">
+              <div className="walle-stage-inner">
+                <WallEBotLazy
+                  mood={mood}
+                  onClick={handleCharacterClick}
+                  speaking={speaking}
+                />
+              </div>
+            </div>
+          }
+        />
+      </div>
+    </>
   );
 }
