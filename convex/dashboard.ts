@@ -31,6 +31,7 @@ import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_boo
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
+  overridePoolForReservation,
   OWNER_SHARE as OWNER_SHARE_CANONICAL,
   type RentalForAttribution,
 } from "./lib/revenue_attribution";
@@ -498,6 +499,15 @@ export const getStatsDrawerData = query({
       productIndex.set(`${row.account_slug}:${row.product_id}`, String(row.item_id));
     }
 
+    // ── COLLECT 9: listing_resolution_override — audit-authoritative per-listing
+    // composition. Wins over the LLM resolver / pool / index in expandedIdsOf so
+    // Active Rentals, out-of-stock + overbooking use the corrected items.
+    const overrideRows = await ctx.db.query("listing_resolution_override").collect();
+    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+    for (const o of overrideRows) {
+      overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
+    }
+
     /**
      * Structural sanity check for LLM-resolved item names. Strips parentheticals
      * containing comparison keywords ("same sensor as ...", "like ...") then
@@ -759,6 +769,15 @@ export const getStatsDrawerData = query({
         for (let i = 0; i < hItems.length; i++) {
           const h = hItems[i];
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+          // (A.0) Audit override — authoritative per-listing. Empty = marketing
+          // (contributes nothing, but the position counts as resolved).
+          if (typeof h.product_id === "number") {
+            const ov = overrideByProduct.get(`${accountSlug}#${h.product_id}`);
+            if (ov !== undefined) {
+              for (const c of ov) out.set(c.item_id, (out.get(c.item_id) ?? 0) + c.qty * q);
+              continue;
+            }
+          }
           // (A.5) Listing info pool components, gated by per-account flag.
           // When the pool has multiple resolved components for this
           // product_id, ALL contribute to capacity tally (×listing-qty).
@@ -2407,6 +2426,10 @@ export const getRentalVolumeByCategory = query({
       const nm = (it as { name_canonical?: string }).name_canonical;
       if (nm) itemByCanonical.set(nm, it);
     }
+    const nameByIdStr = new Map<string, string>();
+    for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
+    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+    for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
 
     const countByKind = new Map<string, number>();
     const revenueByKind = new Map<string, number>();
@@ -2424,6 +2447,7 @@ export const getRentalVolumeByCategory = query({
         duration_days: r.duration_days,
         expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
         resolved_items: resolved as RentalForAttribution["resolved_items"],
+        pool_override: overridePoolForReservation(r as { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> }, overrideByProduct, (id) => nameByIdStr.get(id)),
       };
       const lines = attributeRevenue(rental, {
         itemById,
@@ -2608,6 +2632,10 @@ export const getRentalVolumeKindBreakdown = query({
       const nm = (it as { name_canonical?: string }).name_canonical;
       if (nm) itemByCanonical.set(nm, it);
     }
+    const nameByIdStr = new Map<string, string>();
+    for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
+    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+    for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
 
     // Second pass: split each row's gross across ALL resolved items (to keep
     // attribution math identical to the main query), then keep only the
@@ -2627,6 +2655,7 @@ export const getRentalVolumeKindBreakdown = query({
         duration_days: r.duration_days,
         expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
         resolved_items: resolved as RentalForAttribution["resolved_items"],
+        pool_override: overridePoolForReservation(r as { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> }, overrideByProduct, (id) => nameByIdStr.get(id)),
       };
       const lines = attributeRevenue(rental, {
         itemById,
@@ -2727,6 +2756,10 @@ export const getRentalVolumeOtherSubKinds = query({
       const nm = (it as { name_canonical?: string }).name_canonical;
       if (nm) itemByCanonical.set(nm, it);
     }
+    const nameByIdStr = new Map<string, string>();
+    for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
+    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+    for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
 
     const countByKind = new Map<string, number>();
     const revenueByKind = new Map<string, number>();
@@ -2744,6 +2777,7 @@ export const getRentalVolumeOtherSubKinds = query({
         duration_days: r.duration_days,
         expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
         resolved_items: resolved as RentalForAttribution["resolved_items"],
+        pool_override: overridePoolForReservation(r as { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> }, overrideByProduct, (id) => nameByIdStr.get(id)),
       };
       const lines = attributeRevenue(rental, {
         itemById,
