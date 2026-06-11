@@ -28,6 +28,8 @@ interface Block {
   account_slug?: string | null;
   // Contiguous same-renter + same-item bookings share this id → one merged bar.
   logical_group_id?: string;
+  // Account-correct listing photo for this reservation's resolved item.
+  image_url?: string | null;
 }
 
 interface GanttItem {
@@ -145,7 +147,7 @@ function statusStyle(orderStep: string | null): StatusStyle {
 }
 
 function accountColor(ac: "blue" | "purple"): string {
-  return ac === "purple" ? "#f59e0b" : "#3b82f6";
+  return ac === "purple" ? "#a855f7" : "#3b82f6";
 }
 
 // ---------------------------------------------------------------------------
@@ -234,18 +236,22 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
   // Collect every member block + item per LOGICAL group. Contiguous
   // same-renter/same-item bookings share a logical_group_id (backend), so they
   // collapse into ONE row spanning earliest pickup → latest return.
-  const groups = new Map<string, { blocks: Block[]; items: ResItem[]; names: Set<string>; resIds: Set<string> }>();
+  const groups = new Map<string, { blocks: Block[]; items: ResItem[]; shown: Set<string>; resIds: Set<string> }>();
   for (const item of items) {
     for (const block of item.blocks) {
       if (!block.start_date) continue;
       const gid = block.logical_group_id ?? block.reservation_id;
       let g = groups.get(gid);
-      if (!g) { g = { blocks: [], items: [], names: new Set(), resIds: new Set() }; groups.set(gid, g); }
+      if (!g) { g = { blocks: [], items: [], shown: new Set(), resIds: new Set() }; groups.set(gid, g); }
       g.blocks.push(block);
       g.resIds.add(block.reservation_id);
-      if (!g.names.has(item.item_name)) {
-        g.names.add(item.item_name);
-        g.items.push({ name: item.item_name, image: item.image_url });
+      // Per-reservation (account-correct) listing photo; dedupe by IMAGE so a
+      // multi-item set shows ONE thumbnail, not one per resolved item.
+      const img = block.image_url ?? item.image_url;
+      const key = img ?? `n:${item.item_name}`;
+      if (!g.shown.has(key)) {
+        g.shown.add(key);
+        g.items.push({ name: item.item_name, image: img ?? null });
       }
     }
   }
@@ -312,7 +318,7 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
-  const shown = items.slice(0, 5);
+  const shown = items.slice(0, 6);
   const extra = items.length - shown.length;
   const [preview, setPreview] = useState<{ src: string; name: string; cx: number; cy: number } | null>(null);
 
@@ -332,7 +338,7 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             src={it.image}
             alt=""
             title={it.name}
-            className="w-14 h-14 rounded-lg object-cover first:ml-0 -ml-3 cursor-zoom-in transition-transform hover:-translate-y-0.5"
+            className="w-12 h-12 rounded-lg object-cover first:ml-0 -ml-3 cursor-zoom-in transition-transform hover:-translate-y-0.5"
             style={{ border: `2px solid ${ring}`, background: "#0b0f1c" }}
             onMouseEnter={onEnter(it.image, it.name)}
             onMouseLeave={onLeave}
@@ -583,7 +589,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column (fallback before width is measured)
-const LABEL_WIDTH = 250; // px for left "renter + thumbnails" column
+const LABEL_WIDTH = 300; // px for left "renter + thumbnails" column
 const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails)
 const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 

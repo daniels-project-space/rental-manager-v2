@@ -1067,15 +1067,17 @@ export const getGanttWeek = query({
     // (items have no stock photo). Keyed by item_id so the canonical Gantt rows
     // AND the reservation-bar thumbnails get a correct, non-blank image.
     const imageByItemId = new Map<string, string>();
+    const imageByAcctItem = new Map<string, string>();
     for (const r of reservations) {
       const acct = (r as { account_slug?: string }).account_slug ?? "";
       for (const h of (((r as { hygglo_items?: Array<{ product_id?: number; image_url?: string }> }).hygglo_items) ?? [])) {
         if (typeof h.product_id !== "number") continue;
         const img = bankByProductGantt.get(`${acct}#${h.product_id}`) ?? (h.image_url && !h.image_url.includes("example.com") ? h.image_url : null);
         if (!img) continue;
+        const setImg = (id: string) => { if (!imageByItemId.has(id)) imageByItemId.set(id, img); const k = `${acct}#${id}`; if (!imageByAcctItem.has(k)) imageByAcctItem.set(k, img); };
         const comps = overrideMapG.get(`${acct}#${h.product_id}`);
-        if (comps && comps.length) { for (const c of comps) if (!imageByItemId.has(c.item_id)) imageByItemId.set(c.item_id, img); }
-        else { const idx = productIndexG.get(`${acct}#${h.product_id}`); if (idx && !imageByItemId.has(String(idx))) imageByItemId.set(String(idx), img); }
+        if (comps && comps.length) { for (const c of comps) setImg(c.item_id); }
+        else { const idx = productIndexG.get(`${acct}#${h.product_id}`); if (idx) setImg(String(idx)); }
       }
     }
 
@@ -1147,6 +1149,7 @@ export const getGanttWeek = query({
         }
       }
 
+      const rowImage = ((iDoc && iDoc._id) ? imageByItemId.get(String(iDoc._id)) : null) ?? resolvedImageUrl;
       const blocks = matchingRes.map((r) => {
         const rType = r as {
           pickup_time?: string | null;
@@ -1162,6 +1165,7 @@ export const getGanttWeek = query({
         const effPick = displayPickupDate(r);
         return {
           reservation_id: r._id,
+          image_url: ((iDoc && iDoc._id) ? imageByAcctItem.get(`${(r as { account_slug?: string }).account_slug ?? ""}#${String(iDoc._id)}`) : null) ?? rowImage,
           logical_group_id: ganttGroupIds.get(r._id) ?? r._id,
           start_date: effPick || r.start_date,
           end_date: r.end_date,
