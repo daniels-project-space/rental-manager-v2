@@ -106,7 +106,7 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
 // can be expressed as `{ col: 2, row: 1 }`, and a 2x2 hero as
 // `{ col: 2, row: 2 }`. `walle` defaults to a small `{ col: 1, row: 2 }` card.
 export const HERO_SPANS: Record<string, { col: number; row: number }> = {
-  walle: { col: 1, row: 2 },
+  walle: { col: 1, row: 1 },
 };
 
 // Backwards-compat: legacy 1-row hero ids (col-span-2 only). Keep this list as
