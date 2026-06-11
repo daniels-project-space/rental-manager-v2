@@ -15,7 +15,7 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, query } from "../_generated/server";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
-import { attributeRevenue } from "../lib/revenue_attribution";
+import { attributeRevenue, overridePoolForReservation } from "../lib/revenue_attribution";
 import { dedupByLogicalRental, effectiveDate, isLive } from "../lib/reservations/predicates";
 
 export const STANDARD_WINDOWS = [30, 90, 365] as const;
@@ -38,14 +38,15 @@ export const collectInputs = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cutoffStr = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
-    const [reservations, items, pricing] = await Promise.all([
+    const [reservations, items, pricing, overrideRows] = await Promise.all([
       ctx.db.query("reservations")
         .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
         .collect(),
       ctx.db.query("items").collect(),
       ctx.db.query("pricing_catalog").collect(),
+      ctx.db.query("listing_resolution_override").collect(),
     ]);
-    return { reservations, items, pricing };
+    return { reservations, items, pricing, overrideRows };
   },
 });
 
@@ -61,7 +62,7 @@ export async function refreshAll(
   ctx: any,
 ): Promise<{ ok: true; written: number; durationMs: number }> {
   const startedAt = Date.now();
-  const { reservations, items, pricing } = await ctx.runQuery(
+  const { reservations, items, pricing, overrideRows } = await ctx.runQuery(
     anyApi.mv.rental_volume_kind_breakdown.collectInputs,
     {},
   );
@@ -85,6 +86,9 @@ export async function refreshAll(
     kindById.set(it._id as string, { kind: it.kind, name: nm ?? it.kind });
     if (it.kind) distinctKinds.add(it.kind);
   }
+  const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const o of (overrideRows as any[])) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c: { item_id: string; qty: number }) => ({ item_id: String(c.item_id), qty: c.qty })));
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const slugs: Array<{ key: string; arg: string | null }> = [
@@ -152,6 +156,8 @@ export async function refreshAll(
             duration_days: r.duration_days,
             expanded_items: r.expanded_items,
             resolved_items: resolved,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            pool_override: overridePoolForReservation(r as any, overrideByProduct, (id) => (itemById.get(id) as { name_canonical?: string } | undefined)?.name_canonical),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
