@@ -490,6 +490,7 @@ export function RentalRow({ r }: { r: Rental }) {
             fill
             sizes="56px"
             className="object-contain rounded-md"
+            style={{ opacity: preview?.src === masterImg ? 0 : 1 }}
             unoptimized
           />
         ) : (
@@ -536,6 +537,7 @@ export function RentalRow({ r }: { r: Rental }) {
                   fill
                   sizes="40px"
                   className="object-contain rounded-md"
+                  style={{ opacity: preview?.src === t.image_url ? 0 : 1 }}
                   unoptimized
                 />
               </div>
