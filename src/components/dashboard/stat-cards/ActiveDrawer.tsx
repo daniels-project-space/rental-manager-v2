@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { useState, useCallback, type MouseEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -429,6 +430,11 @@ function TileEditor({
   );
 }
 
+const ROW_PREVIEW_SIZE = 300;
+function clampPx(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
 export function RentalRow({ r }: { r: Rental }) {
   const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
   const s = SECTION[kind];
@@ -459,13 +465,24 @@ export function RentalRow({ r }: { r: Rental }) {
   const visiblePills = extraText.slice(0, MAX_PILLS);
   const hiddenPillCount = Math.max(0, extraText.length - MAX_PILLS);
 
+  const [preview, setPreview] = useState<{ src: string; name: string; cx: number; cy: number } | null>(null);
+  const showPreview = (src: string, name: string) => (e: MouseEvent<HTMLElement>) => {
+    const b = e.currentTarget.getBoundingClientRect();
+    setPreview({ src, name, cx: b.left + b.width / 2, cy: b.top + b.height / 2 });
+  };
+  const hidePreview = () => setPreview(null);
+
   return (
     <div
       className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
     >
       {/* Master Thumbnail — v1 pattern (one 56x56 photo per rental).
           Rounding lives on the <img> so hover-zoom is not clipped. */}
-      <div className="relative h-14 w-14 flex-shrink-0 rounded-md bg-slate-900/60 ring-1 ring-slate-800">
+      <div
+        className={`relative h-14 w-14 flex-shrink-0 rounded-md bg-slate-900/60 ring-1 ring-slate-800${masterImg ? " cursor-zoom-in" : ""}`}
+        onMouseEnter={masterImg ? showPreview(masterImg, masterAlt) : undefined}
+        onMouseLeave={hidePreview}
+      >
         {masterImg ? (
           <Image
             src={masterImg}
@@ -508,8 +525,10 @@ export function RentalRow({ r }: { r: Rental }) {
             {visibleAddl.map((t) => (
               <div
                 key={t.image_url}
-                className="relative h-10 w-10 flex-shrink-0 rounded-md bg-slate-900/60 ring-1 ring-slate-800"
+                className="relative h-10 w-10 flex-shrink-0 cursor-zoom-in rounded-md bg-slate-900/60 ring-1 ring-slate-800"
                 title={t.names_in_group.join(", ")}
+                onMouseEnter={showPreview(t.image_url, t.name)}
+                onMouseLeave={hidePreview}
               >
                 <Image
                   src={t.image_url}
@@ -659,6 +678,30 @@ export function RentalRow({ r }: { r: Rental }) {
           {r.net_gbp != null ? "£" + Math.round(r.net_gbp) : "—"}
         </div>
       </div>
+      {preview && typeof window !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed z-[200] pointer-events-none rounded-xl overflow-hidden"
+            style={{
+              left: clampPx(preview.cx - ROW_PREVIEW_SIZE / 2, 8, window.innerWidth - ROW_PREVIEW_SIZE - 8),
+              top: clampPx(preview.cy - ROW_PREVIEW_SIZE - 14, 8, window.innerHeight - ROW_PREVIEW_SIZE - 8),
+              width: ROW_PREVIEW_SIZE,
+              height: ROW_PREVIEW_SIZE,
+              border: "2px solid #334155",
+              boxShadow: "0 24px 70px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.08)",
+              background: "#0b0f1c",
+            }}
+          >
+            <img src={preview.src} alt={preview.name} className="h-full w-full object-contain" />
+            <div
+              className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] text-gray-200 truncate"
+              style={{ background: "rgba(0,0,0,0.7)" }}
+            >
+              {preview.name}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
