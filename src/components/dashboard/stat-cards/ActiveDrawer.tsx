@@ -430,7 +430,7 @@ function TileEditor({
   );
 }
 
-const ROW_PREVIEW_SIZE = 300;
+const ROW_PREVIEW_SIZE = 150;
 function clampPx(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -684,7 +684,7 @@ export function RentalRow({ r }: { r: Rental }) {
             className="fixed z-[200] pointer-events-none rounded-xl overflow-hidden"
             style={{
               left: clampPx(preview.cx - ROW_PREVIEW_SIZE / 2, 8, window.innerWidth - ROW_PREVIEW_SIZE - 8),
-              top: clampPx(preview.cy - ROW_PREVIEW_SIZE - 14, 8, window.innerHeight - ROW_PREVIEW_SIZE - 8),
+              top: clampPx(preview.cy - ROW_PREVIEW_SIZE / 2, 8, window.innerHeight - ROW_PREVIEW_SIZE - 8),
               width: ROW_PREVIEW_SIZE,
               height: ROW_PREVIEW_SIZE,
               border: "2px solid #334155",
@@ -693,12 +693,6 @@ export function RentalRow({ r }: { r: Rental }) {
             }}
           >
             <img src={preview.src} alt={preview.name} className="h-full w-full object-contain" />
-            <div
-              className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] text-gray-200 truncate"
-              style={{ background: "rgba(0,0,0,0.7)" }}
-            >
-              {preview.name}
-            </div>
           </div>,
           document.body,
         )}
