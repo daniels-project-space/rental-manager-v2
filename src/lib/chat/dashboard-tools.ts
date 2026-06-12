@@ -80,6 +80,7 @@ Drill-down tools:
   query_status           — UK tax estimate, business-intel KPIs, scanner, vacation, AI-Boost (£0 by design)
   query_inventory        — does Daniel OWN an item / its specs / "is the deck an RX2 or RX3" / "do we have a Blackmagic"; resolves a free-text name to the real item rows (kind, qty, lens_mount, compatibility, marketing-vs-master flag). Returns ALL matches, so two bodies or a duplicate row both show.
   query_compatibility    — gear-fit questions ("will an EF lens fit the BMPCC", "is X compatible with Y", mount/adapter/battery/card questions); returns the OWNED item's mount + compatible lenses/batteries/cards AND any matching gear FAQ from the knowledge base.
+  query_rental_history   — historical / past completed rentals aggregated per item (net earnings, rent days, utilization) plus a recent rentals list and totals; call for any question about rental history, past/previous rentals, earnings over time, all-time per-item earnings, or "what did I rent in <period>".
 
 INVENTORY & COMPATIBILITY — read before answering "do we have…", "is it an X or a Y", "what cameras/lenses do we own", or any gear-fit / mount / adapter / lens-compatibility question.
 The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inventory — every item Daniel owns, active and non-marketing. NEVER claim he owns something that is not in that index, and NEVER tell him he doesn't own something that IS in it. For exact specs, quantity, the master-vs-marketing distinction, or to resolve a fuzzy name, call query_inventory. For any gear-fit / mount / lens-compatibility question call query_compatibility and answer from the owned item's real mount + compatibility data and the returned FAQ; do not reason about optics from memory. If neither the index nor the tool shows the item, say it's not in the inventory rather than inventing it. Camera/lens optics facts (crop factor, vignetting, mount adapting) are easy to get backwards — if a tool/FAQ doesn't cover it and you are not certain, say so plainly instead of guessing.`;
@@ -95,7 +96,7 @@ The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inv
  * so the two surfaces can't drift.
  */
 export const ANALYTICAL_INTENT =
-  /\b(buy|buying|bought|purchas|invest|acqui|sell|selling|sold|worth|earn|earning|income|profit|roi|return on|best|worst|top|how much (did|does|has)|per[- ]?item|utili[sz]|idle|unused|sitting|under[- ]?used|trend|growing|declin|missed|denied|lost|capacity|below[- ]?min|funnel|conver|catalog|inventor|out[- ]?of[- ]?stock|overdue|due (back|return)|tax|kpi|recommend|should i)\b/i;
+  /\b(buy|buying|bought|purchas|invest|acqui|sell|selling|sold|worth|earn|earning|income|profit|roi|return on|best|worst|top|how much (did|does|has)|per[- ]?item|utili[sz]|idle|unused|sitting|under[- ]?used|trend|growing|declin|missed|denied|lost|capacity|below[- ]?min|funnel|conver|catalog|inventor|out[- ]?of[- ]?stock|overdue|due (back|return)|tax|kpi|recommend|should i|history|previous rental|past rental|over time|all[- ]?time|earned the most)\b/i;
 
 /**
  * EXISTENCE / SPEC intent — "do we have X", "is the deck an RX2 or RX3", "what
@@ -733,6 +734,34 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
         ]);
         return { inventory, gear_faqs: faqs };
       },
+    }),
+
+    query_rental_history: tool({
+      description:
+        "Historical / past COMPLETED rentals aggregated per item and as a recent-rentals list. Returns { per_item, " +
+        "rentals, totals } where per_item is sorted by net_gbp DESC: each { name, net_gbp, rent_days, rental_count, " +
+        "utilization }; rentals is a recent-rentals list each { start, end, items:[string], net_gbp, days }; totals " +
+        "is { rentals, net_gbp, span:{ first, last } }. net_gbp is canonical NET take-home (after Hygglo fees). " +
+        "Call this for ANY question about rental history, past or previous rentals, earnings over time, all-time " +
+        "per-item earnings, or 'what did I rent in <period>'. Optional since/until dates (YYYY-MM-DD) narrow the window.",
+      inputSchema: z.object({
+        since: z
+          .string()
+          .optional()
+          .describe("ISO YYYY-MM-DD start of window (inclusive). Omit for all-time."),
+        until: z
+          .string()
+          .optional()
+          .describe("ISO YYYY-MM-DD end of window (inclusive). Omit for all-time."),
+      }),
+      execute: async ({ since, until }: { since?: string; until?: string }) =>
+        cached(`history:${since ?? ""}:${until ?? ""}`, () =>
+          convex.query(api.dashboard_insights.getRentalHistory, {
+            accountSlug: null,
+            ...(since ? { sinceIso: since } : {}),
+            ...(until ? { untilIso: until } : {}),
+          }),
+        ),
     }),
   };
 }

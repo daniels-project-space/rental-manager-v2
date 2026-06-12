@@ -77,14 +77,16 @@ function addDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Navigation cap: current week .. +4 weeks (~1 month) ahead. No past weeks.
+// Navigation cap: ~1 year back .. +4 weeks (~1 month) ahead.
 const WEEK_AHEAD_CAP = 28;
+const WEEK_BEHIND_CAP = 364;
 
-/** Clamp a Monday-ISO into [this week, +4 weeks]. ISO date strings compare
- *  lexicographically, so string `<`/`>` is a valid date order here. */
+/** Clamp a Monday-ISO into [this week - ~1 year, +4 weeks]. ISO date strings
+ *  compare lexicographically, so string `<`/`>` is a valid date order here. */
 function clampWeek(iso: string): string {
-  const min = mondayOfThisWeek();
-  const max = addDays(min, WEEK_AHEAD_CAP);
+  const thisMonday = mondayOfThisWeek();
+  const min = addDays(thisMonday, -WEEK_BEHIND_CAP);
+  const max = addDays(thisMonday, WEEK_AHEAD_CAP);
   if (iso < min) return min;
   if (iso > max) return max;
   return iso;
@@ -752,8 +754,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const showNow = todayIdx >= 0 && todayIdx <= 6;
   const nowLeft = LABEL_WIDTH + (todayIdx + nowBizFrac) * colWidth;
 
-  // Nav bounds — disable Prev at the current week, Next at +4 weeks.
-  const minWeek = mondayOfThisWeek();
+  // Nav bounds — disable Prev at ~1 year back, Next at +4 weeks.
+  const minWeek = addDays(mondayOfThisWeek(), -WEEK_BEHIND_CAP);
   const atMinWeek = weekStart <= minWeek;
   const atMaxWeek = weekStart >= addDays(minWeek, WEEK_AHEAD_CAP);
 

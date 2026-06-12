@@ -966,12 +966,13 @@ export function CalendarStrip() {
   const today = TODAY_ISO();
 
   // Week navigation: 0 = current week (7-day window anchored on today), capped
-  // at +4 weeks (~1 month) ahead. No past-week scrolling — prev disabled at 0.
+  // at +4 weeks (~1 month) ahead. Past navigation allowed up to ~1 year back.
   const MAX_WEEK_OFFSET = 4;
+  const MIN_WEEK_OFFSET = -52;
   const [weekOffset, setWeekOffset] = useState(0);
   const stripStart = addDaysIso(today, weekOffset * 7);
   const stripEnd = addDaysIso(stripStart, 6);
-  const canPrev = weekOffset > 0;
+  const canPrev = weekOffset > MIN_WEEK_OFFSET;
   const canNext = weekOffset < MAX_WEEK_OFFSET;
 
   // Auto-expand today on load so the drawer shows up without a click.
@@ -1035,7 +1036,7 @@ export function CalendarStrip() {
         style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
       >
         <button
-          onClick={() => setWeekOffset((o) => Math.max(0, o - 1))}
+          onClick={() => setWeekOffset((o) => Math.max(MIN_WEEK_OFFSET, o - 1))}
           disabled={!canPrev}
           aria-label="Previous week"
           className="px-3 py-1 rounded-md text-base leading-none text-[#c9cdd5] transition-colors disabled:opacity-25 disabled:cursor-not-allowed enabled:hover:text-white enabled:hover:bg-white/10"

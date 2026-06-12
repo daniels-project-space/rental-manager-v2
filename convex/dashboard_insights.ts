@@ -5,6 +5,15 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isPaid } from "./order_step_semantics";
+import {
+  netOf,
+  isPaidWithV1Legacy,
+  groupLogicalRentals,
+  displayPickupDate,
+  displayReturnDate,
+  type ReservationRow,
+} from "./lib/reservations/predicates";
+import { OWNER_SHARE } from "./mv/constants";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -221,6 +230,236 @@ export const getWeeklyRevenueSparkline = query({
       }))
       .sort((a, b) => a.week_start.localeCompare(b.week_start))
       .slice(-weeks);
+  },
+});
+
+// ── 6b. Rental History (WallE chat — token-light aggregated past rentals) ────
+//
+// Returns all COMPLETED/past rentals in two forms:
+//   per_item  – all-time (or windowed) rollup sorted net_gbp desc
+//   rentals   – capped list of logical rentals, most-recent first
+//   totals    – aggregate counts + net + date span
+//
+// History query: status="completed" (indexed) PLUS a second pass for
+// order_step-completed rows that still carry status="confirmed".
+// Deduplication + logical-rental grouping via groupLogicalRentals().
+// Net revenue via netOf() (canonical, matches dashboard tiles).
+export const getRentalHistory = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    sinceIso: v.optional(v.string()),
+    untilIso: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { accountSlug, sinceIso, untilIso, limit = 100 }) => {
+    // ── 1. Fetch completed rows via index ─────────────────────────────
+    // Primary pass: status="completed" (the bulk of history).
+    const completedRows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .collect();
+
+    // Secondary pass: status="confirmed" rows whose order_step indicates
+    // completion (RETURNED / REVIEWED). These exist when the poller hasn't
+    // yet flipped status (or in edge-import scenarios). Bounded by
+    // by_start_date to avoid a full confirmed-table scan — any rental that
+    // ended is either recently confirmed or old history captured by the
+    // completed pass above. We use a generous 5-year lookback.
+    const fiveYearsAgo = new Date(Date.now() - 5 * 365 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    const confirmedRows = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", fiveYearsAgo))
+      .collect();
+
+    // Keep confirmed rows only when order_step says they are done.
+    const DONE_STEPS = new Set(["RETURNED", "REVIEWED"]);
+    const confirmedDone = confirmedRows.filter(
+      (r) =>
+        r.status === "confirmed" &&
+        r.order_step !== undefined &&
+        DONE_STEPS.has(r.order_step) &&
+        !r.is_obsolete,
+    );
+
+    // Merge, casting to ReservationRow (structural match).
+    const allRows = [...completedRows, ...confirmedDone] as unknown as ReservationRow[];
+
+    // ── 2. Account + date-window filter ──────────────────────────────
+    const filtered = allRows.filter((r) => {
+      if (!isPaidWithV1Legacy(r)) return false;
+      if (accountSlug !== null && r.account_slug !== accountSlug) return false;
+      // Window by effective start (pickup_date ?? start_date).
+      const d = r.pickup_date ?? r.start_date;
+      if (sinceIso && (!d || d < sinceIso)) return false;
+      if (untilIso && (!d || d > untilIso)) return false;
+      return true;
+    });
+
+    // ── 3. Logical-rental grouping (dedup + merge contiguous) ────────
+    const groups = groupLogicalRentals(filtered);
+
+    // ── 4. Item name lookup — resolve item_id → name_canonical ───────
+    // Build a unique set of item IDs from expanded/resolved item arrays.
+    const itemIdSet = new Set<string>();
+    for (const r of filtered) {
+      const src = (r as any).expanded_items ?? (r as any).resolved_items ?? [];
+      for (const x of src) {
+        if (x.item_id) itemIdSet.add(x.item_id);
+      }
+    }
+    const itemNameById = new Map<string, string>();
+    for (const id of itemIdSet) {
+      const item = await ctx.db.get(id as Id<"items">);
+      if (item) itemNameById.set(id, item.name_canonical ?? id);
+    }
+
+    // Helper: get item names for a reservation row (prefer resolved catalog
+    // names; fall back to raw r.items[].item_name).
+    function itemNamesFor(r: ReservationRow): string[] {
+      const src =
+        (r as any).expanded_items?.length
+          ? (r as any).expanded_items
+          : (r as any).resolved_items ?? [];
+      if (src.length > 0) {
+        const names: string[] = [];
+        for (const x of src) {
+          const name = x.item_id
+            ? (itemNameById.get(x.item_id) ?? x.item_id)
+            : x.item_name_canonical ?? "?";
+          names.push(name);
+        }
+        return names;
+      }
+      // Raw items fallback.
+      const raw: Array<{ item_name?: string }> = (r as any).items ?? [];
+      return raw.map((x) => x.item_name ?? "?");
+    }
+
+    // Helper: inclusive day count (Hygglo rule: Math.max(1, round(diff/86400000)+1)).
+    function inclusiveDays(startIso: string, endIso: string): number {
+      const s = Date.parse(startIso + "T00:00:00Z");
+      const e = Date.parse(endIso + "T00:00:00Z");
+      if (isNaN(s) || isNaN(e)) return 1;
+      return Math.max(1, Math.round((e - s) / 86400000) + 1);
+    }
+
+    // ── 5. Build per_item rollup ──────────────────────────────────────
+    // Accumulate across raw (pre-group) filtered rows so revenue is preserved
+    // (groupLogicalRentals sums net_sum across members; we mirror that here).
+    type ItemAgg = {
+      net_gbp: number;
+      rent_days: number;
+      rental_count: number;
+    };
+    const perItemAgg = new Map<string, ItemAgg>();
+
+    for (const r of filtered) {
+      const net = netOf(r);
+      const start = displayPickupDate(r);
+      const end = displayReturnDate(r);
+      const days = start && end ? inclusiveDays(start, end) : 1;
+
+      const src =
+        (r as any).expanded_items?.length
+          ? (r as any).expanded_items
+          : (r as any).resolved_items ?? [];
+
+      if (src.length > 0) {
+        const itemCount = src.length || 1;
+        const perItemNet = net / itemCount;
+        for (const x of src) {
+          const name = x.item_id
+            ? (itemNameById.get(x.item_id) ?? x.item_id)
+            : x.item_name_canonical ?? "?";
+          const cur = perItemAgg.get(name) ?? { net_gbp: 0, rent_days: 0, rental_count: 0 };
+          cur.net_gbp += perItemNet;
+          cur.rent_days += days;
+          cur.rental_count += 1;
+          perItemAgg.set(name, cur);
+        }
+      } else {
+        // Raw items fallback.
+        const raw: Array<{ item_name?: string }> = (r as any).items ?? [];
+        const itemCount = raw.length || 1;
+        const perItemNet = net / itemCount;
+        for (const x of raw) {
+          const name = x.item_name ?? "?";
+          const cur = perItemAgg.get(name) ?? { net_gbp: 0, rent_days: 0, rental_count: 0 };
+          cur.net_gbp += perItemNet;
+          cur.rent_days += days;
+          cur.rental_count += 1;
+          perItemAgg.set(name, cur);
+        }
+      }
+    }
+
+    // Compute window length for utilization denominator (matches top_earners.ts approach).
+    const windowDays = sinceIso && untilIso
+      ? inclusiveDays(sinceIso, untilIso)
+      : (() => {
+          // Trailing period: from earliest start to today.
+          let earliest = "";
+          for (const r of filtered) {
+            const d = r.pickup_date ?? r.start_date ?? "";
+            if (d && (!earliest || d < earliest)) earliest = d;
+          }
+          const today = new Date().toISOString().slice(0, 10);
+          return earliest ? inclusiveDays(earliest, today) : 365;
+        })();
+
+    const perItemOut = Array.from(perItemAgg.entries())
+      .map(([name, a]) => ({
+        name,
+        net_gbp: Math.round(a.net_gbp * 100) / 100,
+        rent_days: a.rent_days,
+        rental_count: a.rental_count,
+        utilization: Math.min(1, a.rent_days / Math.max(windowDays, 1)),
+      }))
+      .sort((a, b) => b.net_gbp - a.net_gbp);
+
+    // ── 6. Build rentals list (logical groups, capped, most-recent first) ──
+    const sortedGroups = groups
+      .slice()
+      .sort((a, b) => (b.span_start > a.span_start ? 1 : b.span_start < a.span_start ? -1 : 0));
+
+    const cappedGroups = sortedGroups.slice(0, limit);
+
+    const rentalsOut = cappedGroups.map((g) => {
+      // Collect item names from all members.
+      const nameSet = new Set<string>();
+      for (const m of g.members) {
+        for (const n of itemNamesFor(m)) nameSet.add(n);
+      }
+      const days = g.span_start && g.span_end ? inclusiveDays(g.span_start, g.span_end) : 1;
+      return {
+        start: g.span_start,
+        end: g.span_end,
+        items: Array.from(nameSet),
+        net_gbp: Math.round(g.net_sum * 100) / 100,
+        days,
+      };
+    });
+
+    // ── 7. Totals ─────────────────────────────────────────────────────
+    const totalNet = groups.reduce((s, g) => s + g.net_sum, 0);
+    let firstDate: string | null = null;
+    let lastDate: string | null = null;
+    for (const g of groups) {
+      if (!firstDate || g.span_start < firstDate) firstDate = g.span_start;
+      if (!lastDate || g.span_end > lastDate) lastDate = g.span_end;
+    }
+
+    return {
+      per_item: perItemOut,
+      rentals: rentalsOut,
+      totals: {
+        rentals: groups.length,
+        net_gbp: Math.round(totalNet * 100) / 100,
+        span: { first: firstDate, last: lastDate },
+      },
+    };
   },
 });
 
