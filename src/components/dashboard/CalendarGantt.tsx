@@ -757,7 +757,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // Nav bounds — disable Prev at ~1 year back, Next at +4 weeks.
   const minWeek = addDays(mondayOfThisWeek(), -WEEK_BEHIND_CAP);
   const atMinWeek = weekStart <= minWeek;
-  const atMaxWeek = weekStart >= addDays(minWeek, WEEK_AHEAD_CAP);
+  const atMaxWeek = weekStart >= addDays(mondayOfThisWeek(), WEEK_AHEAD_CAP);
 
   // When searching, gate on matched inventory; the loading state shows its own
   // message (see empty branch) rather than a premature "no match".
