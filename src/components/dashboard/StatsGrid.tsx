@@ -31,7 +31,7 @@ import ConfirmedDrawer from "./stat-cards/ConfirmedDrawer";
 import OngoingDrawer from "./stat-cards/OngoingDrawer";
 import UpcomingDrawer from "./stat-cards/UpcomingDrawer";
 import ScannerDrawer from "./stat-cards/ScannerDrawer";
-import InsuranceClaimsDrawer from "./stat-cards/InsuranceClaimsDrawer";
+import InsuranceClaimsModal from "./stat-cards/InsuranceClaimsModal";
 import DeniedRevenueDrawer from "./stat-cards/DeniedRevenueDrawer";
 import MissedRevenueDrawer from "./stat-cards/MissedRevenueDrawer";
 import AiBoostDrawer from "./stat-cards/AiBoostDrawer";
@@ -154,6 +154,10 @@ export function StatsGrid() {
   const { layout, isStatHidden, reorderStats } = useEditMode();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [catVolExpanded, setCatVolExpanded] = useState(false);
+  // Insurance Claims is no longer an inline drawer — clicking the card opens a
+  // full-screen modal board (2-col card grid). Scoped to insurance only; all
+  // other stat cards keep the inline ExpandableStatCard expand behaviour.
+  const [insuranceModalOpen, setInsuranceModalOpen] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -387,11 +391,9 @@ export function StatsGrid() {
                 ? `All clear · ${data.insurance.settled_count_ytd} settled YTD`
                 : "No claims yet"
           }
-          isExpanded={expandedId === "insurance"}
-          onToggle={() => toggle("insurance")}
-        >
-          <InsuranceClaimsDrawer data={data.insurance} />
-        </ExpandableStatCard>
+          isExpanded={false}
+          onToggle={() => setInsuranceModalOpen(true)}
+        />
       ),
       ongoing: (
         <ExpandableStatCard
@@ -685,6 +687,16 @@ export function StatsGrid() {
           </div>
         </SortableContext>
       </DndContext>
+
+      {/* Insurance Claims full-screen modal board — opened from the insurance
+          stat card. Rendered at grid level so it overlays the whole dashboard.
+          Uses rawData.insurance directly (insurance needs no rentals merge). */}
+      {insuranceModalOpen && (rawData as any)?.insurance && (
+        <InsuranceClaimsModal
+          data={(rawData as any).insurance}
+          onClose={() => setInsuranceModalOpen(false)}
+        />
+      )}
     </>
   );
 }
