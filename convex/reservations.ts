@@ -1,4 +1,5 @@
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 
@@ -48,6 +49,7 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
+import { discountMessageFor } from "./lib/return_messages";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, type ReservationRow } from "./lib/reservations/predicates";
 
@@ -63,7 +65,28 @@ export const getDueReturns = query({
         .query("mv_due_returns")
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
-      if (cached) return cached.payload;
+      if (cached) {
+        // Read-time overlay. mv_due_returns rebuilds only HOURLY, so a rental that
+        // was just marked returned (status->completed) or had a case opened lingers
+        // in the cached payload until the next rebuild — that was the "Return Hub
+        // not updating" bug. Point-read each listed reservation (cheap — only the
+        // handful currently in the Hub) and drop any that is no longer an open
+        // return. Reading the live docs ALSO makes this query reactive to
+        // markReturned / openCase, so Convex re-runs it instantly on close instead
+        // of waiting for the hourly refresh.
+        const payload = (cached.payload ?? []) as Array<
+          Record<string, unknown> & { reservationId: Id<"reservations"> }
+        >;
+        const fresh: typeof payload = [];
+        for (const row of payload) {
+          const live = await ctx.db.get(row.reservationId);
+          if (!live) continue; // reservation gone
+          const r = live as { status?: string; case_open?: boolean; is_obsolete?: boolean; order_step?: string };
+          if (r.status === "completed" || r.case_open || r.is_obsolete || r.order_step === "REVIEWED") continue;
+          fresh.push(row);
+        }
+        return fresh;
+      }
     }
     const today = TODAY();
     const now = Date.now();
@@ -344,18 +367,26 @@ export const markReturned = mutation({
     const cn = detail ? `Condition: ${condition}. ${detail}` : `Condition: ${condition}`;
     const base = res.notes ?? "";
 
-    // Compose the renter thank-you + review request (smooth / fantastic). PREPARED
-    // ONLY — the actual send + platform close run through the gated hygglo-write
-    // chokepoint (READ_ONLY by default) via the return-finalize CLI, so nothing
-    // reaches a real renter / the platform yet.
-    const first = res.renter_name && res.renter_name !== "?" ? res.renter_name.split(" ")[0] : "there";
-    const gearNames = (((res as { hygglo_items?: Array<{ name?: string }> }).hygglo_items) ?? [])
-      .map((h) => h.name)
-      .filter((n): n is string => !!n)
-      .slice(0, 2);
-    const gear = gearNames.length ? gearNames.join(" + ") : "the gear";
-    const reviewMessage = sendReview
-      ? `Hi ${first}! Thanks so much for renting ${gear} 🎬 Hope it served you well! If you have a sec, a quick ⭐⭐⭐⭐⭐ review would mean a lot and helps others book with confidence. Hope to work together again! 🙌`
+    // Renter CRM doc — fetched up-front because the discount/review message is
+    // SUPPRESSED for anyone currently flagged or blacklisted (operator rule
+    // 2026-06-15: flagged/blacklisted renters are only marked returned on the
+    // platform, never rewarded with a discount or review ask).
+    const maps = await renterMaps(ctx);
+    const renterDoc = await renterForReservation(ctx, res, maps);
+    const alreadyBadActor = !!(
+      renterDoc && (renterDoc.blacklisted || renterDoc.blacklist || renterDoc.flag_on_request)
+    );
+
+    // Post-rental message = the per-account discount + review-request copy
+    // (LEO10OFF / DB15OFF). PREPARED ONLY — the actual send + platform close run
+    // through the gated hygglo-write chokepoint (READ_ONLY by default) via the
+    // return-finalize CLI, so nothing reaches a real renter / the platform yet.
+    // Gated: good outcome only (sendReview), renter is NOT a current bad actor
+    // and is NOT being flagged/blacklisted on THIS return, and the account has
+    // defined copy (unknown account -> no message sent).
+    const eligibleForMessage = !!sendReview && !alreadyBadActor && !blacklistRenter && !flagOnRequest;
+    const reviewMessage = eligibleForMessage
+      ? (discountMessageFor(res.account_slug) ?? undefined)
       : undefined;
 
     const resPatch: Record<string, unknown> = {
@@ -378,8 +409,6 @@ export const markReturned = mutation({
     }
 
     // Renter CRM — all REAL saves (blacklist / whitelist / flag / note log).
-    const maps = await renterMaps(ctx);
-    const renterDoc = await renterForReservation(ctx, res, maps);
     const did = { blacklisted: false, whitelisted: false, flagged: false };
     if (renterDoc) {
       const log = [
@@ -443,6 +472,23 @@ export const pendingPlatformClose = query({
 
 
 
+
+/**
+ * Stamp a reservation as closed on the Hygglo platform (idempotency guard for
+ * the return-finalize CLI). Called ONLY after `returnOrder` actually succeeds on
+ * the platform, so the row drops out of `pendingPlatformClose` and is never
+ * re-marked / re-messaged on a subsequent run. Until writes go live the CLI runs
+ * READ-ONLY (returnOrder -> skipped) and never calls this, so rows stay pending.
+ */
+export const markPlatformClosed = mutation({
+  args: { reservationId: v.id("reservations") },
+  handler: async (ctx, { reservationId }) => {
+    const r = await ctx.db.get(reservationId);
+    if (!r) return { ok: false as const };
+    await ctx.db.patch(reservationId, { platform_closed_at: Date.now() });
+    return { ok: true as const };
+  },
+});
 
 /**
  * T4: listObsolete — cancelled/rejected orders (lost revenue / dead deals)

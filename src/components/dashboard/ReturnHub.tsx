@@ -97,6 +97,15 @@ type ReturnPayload = {
   sendReview?: boolean;
 };
 
+/** Preset issue tags shown as one-tap chips in the "what went wrong" view. */
+const ISSUE_PRESETS = [
+  "Damage to gear",
+  "Rude behavior",
+  "Late timings",
+  "Late return",
+  "Bad communication",
+] as const;
+
 function ReturnModal({
   item,
   onClose,
@@ -113,6 +122,17 @@ function ReturnModal({
   const [reason, setReason] = useState("");
   const [wlReason, setWlReason] = useState("");
   const [summary, setSummary] = useState("");
+  const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
+  const discountCode = item.accountSlug === "dbcinema" ? "DB15OFF" : "LEO10OFF";
+  const toggleTag = (t: string) =>
+    setIssueTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+  // Selected chips + free text, combined into one renter-history string.
+  const composedIssues = [Array.from(issueTags).join(", "), issueDetails.trim()].filter(Boolean).join(" — ");
 
   async function finish(p: ReturnPayload, msg: string) {
     setSummary(msg);
@@ -149,12 +169,12 @@ function ReturnModal({
             <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">How was this rental?</h3>
             <div className="space-y-2">
               <button
-                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true }, "✓ Returned · thank-you + ⭐ review queued · platform close queued")}
+                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true }, `✓ Returned · ${discountCode} + ⭐ review ask queued · platform close queued`)}
                 className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
                 style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#34d399" }}>🟢 Smooth — all good</div>
-                <div className="text-[11px] text-[#8b8fa3]">Close it · send a thank-you + review request</div>
+                <div className="text-[11px] text-[#8b8fa3]">Close it · send the discount code + review ask</div>
               </button>
               <button
                 onClick={() => setView("fantastic")}
@@ -162,7 +182,7 @@ function ReturnModal({
                 style={{ border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#fbbf24" }}>🏆 Fantastic renter</div>
-                <div className="text-[11px] text-[#8b8fa3]">Whitelist them (trusted) · thank-you + review</div>
+                <div className="text-[11px] text-[#8b8fa3]">Whitelist them (trusted) · discount code + review ask</div>
               </button>
               <button
                 onClick={() => setView("issues")}
@@ -182,6 +202,26 @@ function ReturnModal({
         {view === "issues" && (
           <>
             <h3 className="text-base font-semibold mb-3" style={{ color: "#f87171" }}>🔴 What went wrong?</h3>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {ISSUE_PRESETS.map((t) => {
+                const on = issueTags.has(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleTag(t)}
+                    className="text-[11px] font-medium px-2 py-1 rounded-full transition-colors"
+                    style={{
+                      background: on ? "rgba(239,68,68,0.18)" : "rgba(255,255,255,0.05)",
+                      color: on ? "#f87171" : "#9296a6",
+                      border: `1px solid ${on ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.1)"}`,
+                    }}
+                  >
+                    {on ? "✓ " : ""}{t}
+                  </button>
+                );
+              })}
+            </div>
             <div className="flex gap-4 mb-3">
               {(["minor", "major"] as const).map((c) => (
                 <label key={c} className="flex items-center gap-1.5 cursor-pointer text-sm text-[#e4e6eb]">
@@ -191,7 +231,7 @@ function ReturnModal({
               ))}
             </div>
             <textarea
-              placeholder="What was wrong? (saved to the renter's history)"
+              placeholder="More detail? (optional — added to the renter's history)"
               value={issueDetails}
               onChange={(e) => setIssueDetails(e.target.value)}
               className="w-full text-sm rounded-lg p-2 mb-3 resize-none h-16"
@@ -219,7 +259,7 @@ function ReturnModal({
               <button onClick={() => setView("choose")} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
               <button
                 onClick={() => finish(
-                  { outcome: "issues", condition, notes: issueDetails || undefined, issueDetails: issueDetails || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || issueDetails || undefined) : undefined, sendReview: false },
+                  { outcome: "issues", condition, notes: composedIssues || undefined, issueDetails: composedIssues || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || composedIssues || undefined) : undefined, sendReview: false },
                   issueAction === "blacklist" ? "⛔ Logged · renter blacklisted" : issueAction === "flag" ? "⚑ Logged · flagged on next request" : "Issue logged to renter history",
                 )}
                 className="text-sm px-4 py-1.5 rounded transition-colors"
@@ -248,7 +288,7 @@ function ReturnModal({
             <div className="flex gap-2 justify-end">
               <button onClick={() => setView("choose")} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
               <button
-                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true }, "🏆 Whitelisted · thank-you + ⭐ review queued")}
+                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true }, `🏆 Whitelisted · ${discountCode} + ⭐ review ask queued`)}
                 className="text-sm px-4 py-1.5 rounded font-semibold transition-colors"
                 style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
               >
@@ -263,7 +303,7 @@ function ReturnModal({
             <div className="text-4xl">✓</div>
             <p className="text-sm font-semibold text-[#e4e6eb]">{summary}</p>
             <p className="text-[10px] text-[#8b8fa3] mt-1 px-2 leading-snug">
-              Platform close &amp; the renter message are <b>preview-only (read-only)</b> for now — prepared, not sent. Renter flag / whitelist / blacklist are saved.
+              Platform close &amp; the renter message are <b>preview-only (read-only)</b> for now — prepared, not sent. Good renters get the discount code; flagged / blacklisted renters are only marked returned. Flag / whitelist / blacklist are saved now.
             </p>
           </div>
         )}
