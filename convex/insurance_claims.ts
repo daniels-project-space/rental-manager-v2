@@ -94,11 +94,31 @@ export const openCaseFromReservation = mutation({
     memberIds: v.optional(v.array(v.id("reservations"))),
     projected_value_gbp: v.number(),
     description: v.optional(v.string()),
-    repair_item_ids: v.optional(v.array(v.id("items"))),
+    // Accept raw strings: auto-detected return-hub item ids are resolved from
+    // reservations and don't always exist in the `items` table. We resolve/skip
+    // non-inventory ids below instead of letting a v.id("items") validator
+    // silently reject the whole mutation.
+    repair_item_ids: v.optional(v.array(v.string())),
   },
   handler: async (ctx, { reservationId, memberIds, projected_value_gbp, description, repair_item_ids }) => {
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
+    // Keep only ids that actually resolve to an `items` doc; drop the rest so a
+    // stray reservation-derived id can't poison the claim write.
+    let repairItemIds: Id<"items">[] | undefined;
+    if (repair_item_ids && repair_item_ids.length) {
+      const normalizedId = ctx.db.normalizeId.bind(ctx.db);
+      const resolved: Id<"items">[] = [];
+      for (const raw of repair_item_ids) {
+        // normalizeId returns null for strings that aren't a valid id for the
+        // `items` table (wrong format or wrong table) — no throw.
+        const id = normalizedId("items", raw);
+        if (!id) continue;
+        const doc = await ctx.db.get(id);
+        if (doc) resolved.push(id);
+      }
+      repairItemIds = resolved.length ? resolved : undefined;
+    }
     const itemName = (res.items ?? [])[0]?.item_name ?? null;
     const itemId = ((res.resolved_items ?? [])[0]?.item_id ?? (res.expanded_items ?? [])[0]?.item_id) as
       | Id<"items">
@@ -122,7 +142,7 @@ export const openCaseFromReservation = mutation({
       status: "open",
       stage: "case_opened",
       opened_from: "return_hub",
-      repair_item_ids,
+      repair_item_ids: repairItemIds,
       created_at: Date.now(),
     });
 

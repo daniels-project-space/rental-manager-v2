@@ -284,6 +284,8 @@ function OpenCaseModal({
   const [value, setValue] = useState("");
   const [desc, setDesc] = useState("");
   const [done, setDone] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const allItems = item.items ?? [];
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allItems.map((i) => i.item_id)));
   const [holdQty, setHoldQty] = useState<Map<string, number>>(() => new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)])));
@@ -310,12 +312,22 @@ function OpenCaseModal({
       return next;
     });
   }
-  function submit() {
-    if (projected <= 0 || done) return;
-    setDone(true);
+  async function submit() {
+    if (projected <= 0 || done || submitting) return;
     const ids: string[] = [];
     for (const id of selected) { const q = holdQty.get(id) ?? 1; for (let k = 0; k < q; k++) ids.push(id); }
-    onConfirm(projected, desc, ids).finally(() => setTimeout(onClose, 1400));
+    setError(null);
+    setSubmitting(true);
+    try {
+      await onConfirm(projected, desc, ids);
+      setDone(true);
+      setTimeout(onClose, 1400);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Failed to open case — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
   return (
     <div
@@ -408,15 +420,20 @@ function OpenCaseModal({
               className="w-full text-sm rounded-lg p-2 mb-4 resize-none h-16"
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#e4e6eb" }}
             />
+            {error && (
+              <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}>
+                ⚠ {error}
+              </div>
+            )}
             <div className="flex gap-2 justify-end">
-              <button onClick={onClose} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Cancel</button>
+              <button onClick={onClose} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Cancel</button>
               <button
                 onClick={submit}
-                disabled={projected <= 0}
+                disabled={projected <= 0 || submitting}
                 className="text-sm px-4 py-1.5 rounded transition-colors disabled:opacity-40"
                 style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.4)" }}
               >
-                Open case
+                {submitting ? "Opening…" : "Open case"}
               </button>
             </div>
           </>
@@ -459,7 +476,9 @@ export function ReturnHub() {
       memberIds: caseFor.memberIds && caseFor.memberIds.length > 1 ? caseFor.memberIds : undefined,
       projected_value_gbp: projected,
       description: description || undefined,
-      repair_item_ids: repairItemIds.length ? (repairItemIds as Id<"items">[]) : undefined,
+      // Server resolves/skips non-inventory ids (auto-detected return-hub item
+      // ids don't always exist in the items table), so send raw strings.
+      repair_item_ids: repairItemIds.length ? repairItemIds : undefined,
     });
   }
 
