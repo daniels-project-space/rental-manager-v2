@@ -102,6 +102,15 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
   const [editing, setEditing] = useState<ClaimRow | null>(null);
   const [creditingId, setCreditingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Per-claim action error — surfaces silent mutation failures in the card
+  // (mirrors the red banner added to OpenCaseModal in a542c57). Without this,
+  // a thrown/rejected advance/revert/deny/credit just vanished and the button
+  // appeared to "do nothing".
+  const [errorId, setErrorId] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const errMsg = (e: unknown) =>
+    e instanceof Error ? e.message : typeof e === "string" ? e : "Action failed — please try again.";
 
   const advance = useMutation(api.insurance_claims.advanceStage);
   const revert = useMutation(api.insurance_claims.revertStage);
@@ -115,25 +124,41 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
     return c.stage !== "added_to_revenue" && c.stage !== "denied"; // active
   });
 
+  function clearError(id: string) {
+    if (errorId === id) { setErrorId(null); setErrorMsg(null); }
+  }
+  function showError(id: string, e: unknown) {
+    setErrorId(id);
+    setErrorMsg(errMsg(e));
+  }
+
   async function onAdvance(id: string) {
+    clearError(id);
     setBusyId(id);
     try { await advance({ id: id as Id<"insurance_claims"> }); }
+    catch (e) { showError(id, e); }
     finally { setBusyId(null); }
   }
   async function onRevert(id: string) {
+    clearError(id);
     setBusyId(id);
     try { await revert({ id: id as Id<"insurance_claims"> }); }
+    catch (e) { showError(id, e); }
     finally { setBusyId(null); }
   }
   async function onDeny(id: string) {
     if (!window.confirm("Mark this claim as denied (terminal)?")) return;
+    clearError(id);
     setBusyId(id);
     try { await markDenied({ id: id as Id<"insurance_claims"> }); }
+    catch (e) { showError(id, e); }
     finally { setBusyId(null); }
   }
   async function onDelete(id: string) {
     if (!window.confirm("Delete this claim? This cannot be undone.")) return;
-    await removeClaim({ id: id as Id<"insurance_claims"> });
+    clearError(id);
+    try { await removeClaim({ id: id as Id<"insurance_claims"> }); }
+    catch (e) { showError(id, e); }
   }
 
   return (
@@ -187,6 +212,7 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
                 claim={c}
                 isBusy={busyId === c.id}
                 isCrediting={creditingId === c.id}
+                error={errorId === c.id ? errorMsg : null}
                 onAdvance={() => onAdvance(c.id)}
                 onRevert={() => onRevert(c.id)}
                 onDeny={() => onDeny(c.id)}
@@ -203,6 +229,7 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
                 onCreditStart={() => setCreditingId(c.id)}
                 onCreditCancel={() => setCreditingId(null)}
                 onCreditConfirm={async (month, payout) => {
+                  clearError(c.id);
                   setBusyId(c.id);
                   try {
                     await creditToRevenue({
@@ -211,7 +238,8 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
                       payout_amount_gbp: payout,
                     });
                     setCreditingId(null);
-                  } finally { setBusyId(null); }
+                  } catch (e) { showError(c.id, e); }
+                  finally { setBusyId(null); }
                 }}
               />
             ))}
@@ -243,6 +271,7 @@ function ClaimCard({
   claim,
   isBusy,
   isCrediting,
+  error,
   onAdvance,
   onRevert,
   onDeny,
@@ -255,6 +284,7 @@ function ClaimCard({
   claim: Claim;
   isBusy: boolean;
   isCrediting: boolean;
+  error: string | null;
   onAdvance: () => void;
   onRevert: () => void;
   onDeny: () => void;
@@ -305,6 +335,16 @@ function ClaimCard({
 
       {/* Pipeline */}
       <PipelineBar stage={stage} />
+
+      {/* Action error — mirrors the OpenCaseModal red banner (a542c57) */}
+      {error && (
+        <div
+          className="text-[11px] mt-2 px-2 py-1.5 rounded"
+          style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}
+        >
+          ⚠ {error}
+        </div>
+      )}
 
       {/* Credited info */}
       {claim.creditedToMonth && (

@@ -1,4 +1,4 @@
-import { query } from "./_generated/server";
+import { query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import {
@@ -229,6 +229,95 @@ const ACTIVE_ORDER_STEPS = new Set([
   "REVIEWED",
 ]);
 
+// ── Insurance/Case card builder — SINGLE SOURCE OF TRUTH ───────────────────
+// Used by BOTH the live compute path (below) AND the cached read-time overlay
+// in the MV branch. The MV payload's insurance.claims[].stage is frozen at the
+// hourly refresh, so advancing a claim (insurance_claims.advanceStage) would
+// otherwise not surface until the next refresh — the drawer reads getStatsDrawerData,
+// not insurance_claims.list. We rebuild this card live on every read so stage
+// transitions (Advance / Back / Deny / Credit) are instant, mirroring the
+// conflict-dismissal and scanner read-time overlays already in the cached branch.
+type ClaimRowLite = {
+  _id: unknown;
+  stage?: string;
+  status?: string;
+  account_slug?: string | null;
+  item_name_canonical?: string | null;
+  renter_name?: string;
+  amount_gbp: number;
+  claim_date: string;
+  description?: string | null;
+  payout_amount_gbp?: number;
+  credited_to_month?: string;
+  credited_at?: number;
+  created_at: number;
+};
+function buildInsuranceCard(claimRows: ClaimRowLite[]) {
+  const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+  const claimStage = (c: { stage?: string; status?: string }): string => {
+    if (c.stage) return c.stage;
+    if (c.status === "denied") return "denied";
+    if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
+    return "case_opened";
+  };
+  let openCount = 0;
+  let openAmount = 0;
+  let settledCountYTD = 0;
+  let settledAmountYTD = 0;
+  let deniedCountYTD = 0;
+  for (const c of claimRows) {
+    const st = claimStage(c);
+    if (st !== "added_to_revenue" && st !== "denied") { openCount++; openAmount += c.amount_gbp; continue; }
+    if (c.claim_date >= yearStart) {
+      if (st === "added_to_revenue") { settledCountYTD++; settledAmountYTD += (c.payout_amount_gbp ?? c.amount_gbp); }
+      else if (st === "denied") { deniedCountYTD++; }
+    }
+  }
+  return {
+    open_count: openCount,
+    open_amount_gbp: Math.round(openAmount * 100) / 100,
+    settled_count_ytd: settledCountYTD,
+    settled_amount_ytd_gbp: Math.round(settledAmountYTD * 100) / 100,
+    denied_count_ytd: deniedCountYTD,
+    total_count: claimRows.length,
+    claims: claimRows.slice(0, 50).map((c) => ({
+      id: c._id as string,
+      accountSlug: c.account_slug ?? null,
+      itemNameCanonical: c.item_name_canonical ?? null,
+      renterName: c.renter_name ?? null,
+      amountGbp: c.amount_gbp,
+      claimDate: c.claim_date,
+      description: c.description ?? null,
+      status: c.status,
+      stage: claimStage(c),
+      payoutAmountGbp: c.payout_amount_gbp ?? null,
+      creditedToMonth: c.credited_to_month ?? null,
+      creditedAt: c.credited_at ?? null,
+      createdAt: c.created_at,
+    })),
+  };
+}
+
+// Read live, account-scoped claim rows in the same order the live compute uses
+// (claim_date desc), so the overlay's claims list matches the legacy shape.
+async function liveInsuranceCard(
+  ctx: QueryCtx,
+  accountSlug: string | null,
+) {
+  let claimRows = accountSlug
+    ? await ctx.db
+        .query("insurance_claims")
+        .withIndex("by_account", (q) => q.eq("account_slug", accountSlug))
+        .collect()
+    : await ctx.db.query("insurance_claims").collect();
+  claimRows = claimRows
+    .slice()
+    .sort((a: ClaimRowLite, b: ClaimRowLite) =>
+      a.claim_date < b.claim_date ? 1 : a.claim_date > b.claim_date ? -1 : 0,
+    );
+  return buildInsuranceCard(claimRows as ClaimRowLite[]);
+}
+
 export const getStatsDrawerData = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -257,11 +346,23 @@ export const getStatsDrawerData = query({
         const dismissedNow = new Set(
           (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
         );
+        // Rebuild the insurance/case card live so claim stage transitions
+        // (advanceStage / revertStage / markDenied / creditToRevenue) surface
+        // immediately. The cached payload freezes insurance.claims[].stage at the
+        // hourly MV refresh, which made the drawer's "Advance" button appear to
+        // do nothing. Mirrors the conflict-dismissal/scanner read-time overlays.
+        const freshInsurance = await liveInsuranceCard(ctx, accountSlug);
         const applyDismissals = (p: unknown): unknown => {
-          const pp = p as { conflicts?: Array<{ conflict_key: string }> } | null;
-          if (!pp || !Array.isArray(pp.conflicts) || dismissedNow.size === 0) return p;
+          const pp = p as
+            | { conflicts?: Array<{ conflict_key: string }>; insurance?: unknown }
+            | null;
+          if (!pp) return p;
+          const base = pp as Record<string, unknown>;
+          // Always overlay the freshly-computed insurance card.
+          const withInsurance: Record<string, unknown> = { ...base, insurance: freshInsurance };
+          if (!Array.isArray(pp.conflicts) || dismissedNow.size === 0) return withInsurance;
           return {
-            ...(pp as Record<string, unknown>),
+            ...withInsurance,
             conflicts: pp.conflicts.filter((c) => !dismissedNow.has(c.conflict_key)),
           };
         };
@@ -1633,51 +1734,9 @@ export const getStatsDrawerData = query({
 
     // ── card: insurance_claims (W22 — pinned to-do list of cases) ─
     // "Open" cases need owner action; "settled" or "denied" are terminal.
-    // Sums by status surface both pending workload (open count + amount) and
-    // outcomes (settled total YTD).
-    const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
-    const claimStage = (c: { stage?: string; status?: string }): string => {
-      if (c.stage) return c.stage;
-      if (c.status === "denied") return "denied";
-      if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
-      return "case_opened";
-    };
-    let openCount = 0;
-    let openAmount = 0;
-    let settledCountYTD = 0;
-    let settledAmountYTD = 0;
-    let deniedCountYTD = 0;
-    for (const c of claimRows) {
-      const st = claimStage(c);
-      if (st !== "added_to_revenue" && st !== "denied") { openCount++; openAmount += c.amount_gbp; continue; }
-      if (c.claim_date >= yearStart) {
-        if (st === "added_to_revenue") { settledCountYTD++; settledAmountYTD += ((c as { payout_amount_gbp?: number }).payout_amount_gbp ?? c.amount_gbp); }
-        else if (st === "denied") { deniedCountYTD++; }
-      }
-    }
-    const insurance = {
-      open_count: openCount,
-      open_amount_gbp: Math.round(openAmount * 100) / 100,
-      settled_count_ytd: settledCountYTD,
-      settled_amount_ytd_gbp: Math.round(settledAmountYTD * 100) / 100,
-      denied_count_ytd: deniedCountYTD,
-      total_count: claimRows.length,
-      claims: claimRows.slice(0, 50).map((c) => ({
-        id: c._id as string,
-        accountSlug: c.account_slug ?? null,
-        itemNameCanonical: c.item_name_canonical ?? null,
-        renterName: (c as { renter_name?: string }).renter_name ?? null,
-        amountGbp: c.amount_gbp,
-        claimDate: c.claim_date,
-        description: c.description ?? null,
-        status: c.status,
-        stage: claimStage(c),
-        payoutAmountGbp: (c as { payout_amount_gbp?: number }).payout_amount_gbp ?? null,
-        creditedToMonth: (c as { credited_to_month?: string }).credited_to_month ?? null,
-        creditedAt: (c as { credited_at?: number }).credited_at ?? null,
-        createdAt: c.created_at,
-      })),
-    };
+    // Built via the shared buildInsuranceCard helper (same shape) so the live
+    // compute and the cached read-time overlay stay in lock-step.
+    const insurance = buildInsuranceCard(claimRows as unknown as ClaimRowLite[]);
 
     // ── card: scanner ─────────────────────────────────────────────
     // last_scan_at = max across primary/backup/cron sources (see COLLECT 5).
