@@ -709,6 +709,21 @@ async function upsertOrderImpl(
     const storedStep = (existing as { order_step?: string }).order_step ?? null;
     const isObsoleteUpsert = args.sourceFilter === "obsolete";
 
+    // Completion-durability guard (2026-06-15). Never let a re-poll of a still-
+    // active Hygglo order revert an operator's LOCAL completion back to
+    // "confirmed". markReturned (Return Hub ✓) sets status="completed" locally;
+    // while READ_ONLY_MODE keeps the Hygglo platform un-updated, Hygglo keeps
+    // listing the order at step RETURNED, so deriveStatusFromStep re-derives
+    // "confirmed" and the unconditional patch below would clobber the close —
+    // the rental then reappears in the Return Hub and drops out of
+    // pendingPlatformClose (James Burton, dbcinema, 2026-06-15). Preserve
+    // "completed" whenever the fresh derivation is the active "confirmed" state.
+    // Terminal transitions still apply normally: a genuine cancel arrives via the
+    // obsolete bucket ("cancelled"), and a real Hygglo-side close arrives as
+    // REVIEWED ("completed") — neither is "confirmed", so neither is blocked.
+    const preserveLocalCompletion =
+      existing.status === "completed" && incomingStatus === "confirmed";
+
     if (
       !isObsoleteUpsert &&
       incomingStep !== undefined &&
@@ -719,7 +734,7 @@ async function upsertOrderImpl(
         `[hygglo] Step regression skipped for order ${args.hygglo_order_id}: ` +
           `stored="${storedStep}" incoming="${incomingStep}"`
       );
-      await ctx.db.patch(existing._id, { ...baseFields, ...obsoleteFields });
+      await ctx.db.patch(existing._id, { ...baseFields, ...(preserveLocalCompletion ? { status: "completed" as const } : {}), ...obsoleteFields });
       const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
       const hyggloItemsRegression = buildHyggloItems(args.items);
       await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
@@ -729,8 +744,9 @@ async function upsertOrderImpl(
     }
 
     // sourceFilter is authoritative — the poller fetches all four buckets each
-    // cycle, so the row is in exactly one. Trust the freshly-derived status.
-    const finalStatus = incomingStatus;
+    // cycle, so the row is in exactly one. Trust the freshly-derived status,
+    // EXCEPT never revert an operator's local completion (see guard above).
+    const finalStatus = preserveLocalCompletion ? "completed" : incomingStatus;
     const stepPatch =
       incomingStep !== undefined ? { order_step: incomingStep } : {};
     // EQ-C: capture pre-patch obsolete state so a transition into the
