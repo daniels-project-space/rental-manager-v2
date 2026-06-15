@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { renterMaps, renterForReservation } from "./lib/renters";
 
 // Canonical case pipeline — MUST match InsuranceClaimsDrawer.PIPELINE.
@@ -171,6 +172,13 @@ export const openCaseFromReservation = mutation({
     for (const id of ids) {
       await ctx.db.patch(id, { case_open: true, case_id: claimId });
     }
+
+    // The Return Hub reads the mv_due_returns cache (refreshed hourly by the
+    // cron). Without an immediate refresh the cased rental keeps showing in the
+    // hub for up to an hour, so opening a case LOOKS like it did nothing. Refresh
+    // now so the rental leaves the hub the moment the case is opened.
+    await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
+
     return { ok: true, claimId, flaggedRenter: renterDoc?.display_name ?? null };
   },
 });
@@ -253,6 +261,9 @@ export const remove = mutation({
     );
     for (const r of linked) await ctx.db.patch(r._id, { case_open: undefined, case_id: undefined });
     await ctx.db.delete(id);
+    // Same reason as openCaseFromReservation: refresh the Return Hub cache now so
+    // the released rental reappears immediately instead of after the hourly cron.
+    await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
     return { ok: true };
   },
 });
