@@ -362,7 +362,13 @@ export const markReturned = mutation({
     const { reservationId, condition, notes, issueDetails, blacklistRenter, blacklistReason, flagOnRequest, whitelist, whitelistReason, outcome, sendReview, memberIds } = args;
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
-    if (res.status === "completed") throw new Error("Already returned");
+    // Double-click / re-submit: the reservation is already completed. This is a
+    // benign no-op, NOT an error — return early so the UI doesn't surface a
+    // scary "Already returned" banner. Genuine bad-input/not-found throws below
+    // stay intact so they DO surface.
+    if (res.status === "completed") {
+      return { ok: true, alreadyCompleted: true, blacklisted: false, whitelisted: false, flagged: false, reviewQueued: false, platformClosePending: !!res.platform_close_pending };
+    }
     const detail = issueDetails ?? notes;
     const cn = detail ? `Condition: ${condition}. ${detail}` : `Condition: ${condition}`;
     const base = res.notes ?? "";

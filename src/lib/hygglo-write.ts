@@ -308,3 +308,61 @@ export async function sendOrderMessage(args: {
     return { status: "failed", error: (err as Error).message };
   }
 }
+
+/**
+ * Leave the OWNER's review/rating OF the renter (the post-return star rating
+ * that unlocks only AFTER `return` advances the order — `actions.review` flips
+ * `false -> true` once the order moves RETURNED -> REVIEWED).
+ *
+ * Dispatcher verb is the literal **`review`** (Phase-1 discovery: PATCH against
+ * a fake id with `{action:"review"}` returns 404 NOT_FOUND, not the 422
+ * invalid_union that bogus verbs get — so `review` IS a member of the action
+ * union; `/tmp/hygglo_verb_discovery.md` §c).
+ *
+ * The `data` SHAPE is **CONFIRMED** (live probe 2026-06-16, order 3952944 after
+ * close): the leaf of the deeply-nested dispatcher union requires
+ * `data.rating: number` (1-5); `data.comment: string` is accepted (empty string
+ * is allowed). `{ rating: 5, comment: "" }` returned HTTP 200 and submitted the
+ * review; `{ rating: "x" }` (wrong type) stayed 422 with no mutation.
+ *
+ * The orchestrator (scripts/return-finalize.ts) STILL runs a SAFE empty-body
+ * 422-probe first and parses the `["data","<field>"]` path out of the (pretty-
+ * printed, multi-level invalid_union) error before submitting, so a future
+ * field-shape change is caught rather than silently mis-sent. A 422 does NOT
+ * mutate, so probing the real order is safe.
+ *
+ * Endpoint (action-dispatcher pattern):
+ *   PATCH /v4/my/orders/:id?timezone=Europe/London
+ *   body: { action: "review", data: <discovered shape, default {rating, comment}> }
+ *
+ * @param rating  star rating 1-5 (default 5 — owner is rating the renter).
+ * @param comment optional free-text review left on the renter.
+ * @param dataOverride when set, sent verbatim as the `data` payload instead of
+ *        the default `{rating[, comment]}` — used by the orchestrator's
+ *        discover-then-submit flow once the real field names are known, and to
+ *        send the deliberate empty-body 422 probe (`{}`).
+ */
+export async function reviewRenter(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  rating?: number;
+  comment?: string;
+  dataOverride?: Record<string, unknown>;
+}): Promise<HyggloWriteResult> {
+  if (!writesAllowed()) return skipResult();
+  const data: Record<string, unknown> =
+    args.dataOverride ??
+    (args.comment !== undefined
+      ? { rating: args.rating ?? 5, comment: args.comment }
+      : { rating: args.rating ?? 5 });
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "review",
+      data,
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}

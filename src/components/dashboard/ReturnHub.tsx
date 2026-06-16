@@ -122,6 +122,8 @@ function ReturnModal({
   const [reason, setReason] = useState("");
   const [wlReason, setWlReason] = useState("");
   const [summary, setSummary] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
   const discountCode = item.accountSlug === "dbcinema" ? "DB15OFF" : "LEO10OFF";
   const toggleTag = (t: string) =>
@@ -135,11 +137,26 @@ function ReturnModal({
   const composedIssues = [Array.from(issueTags).join(", "), issueDetails.trim()].filter(Boolean).join(" — ");
 
   async function finish(p: ReturnPayload, msg: string) {
+    if (submitting) return;
+    setError(null);
     setSummary(msg);
-    setView("done");
-    await onConfirm(p).catch(() => {});
-    setTimeout(onClose, 2200);
+    setSubmitting(true);
+    try {
+      await onConfirm(p);
+      setView("done");
+      setTimeout(onClose, 2200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
   }
+
+  const errorBanner = error ? (
+    <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}>
+      ⚠ {error}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -167,26 +184,30 @@ function ReturnModal({
         {view === "choose" && (
           <>
             <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">How was this rental?</h3>
+            {errorBanner}
             <div className="space-y-2">
               <button
-                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true }, `✓ Returned · ${discountCode} + ⭐ review ask queued · platform close queued`)}
-                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
+                disabled={submitting}
+                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true }, `✓ Returned — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
+                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#34d399" }}>🟢 Smooth — all good</div>
-                <div className="text-[11px] text-[#8b8fa3]">Close it · send the discount code + review ask</div>
+                <div className="text-[11px] text-[#8b8fa3]">Mark returned · prepare the discount code + review ask</div>
               </button>
               <button
+                disabled={submitting}
                 onClick={() => setView("fantastic")}
-                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
+                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#fbbf24" }}>🏆 Fantastic renter</div>
                 <div className="text-[11px] text-[#8b8fa3]">Whitelist them (trusted) · discount code + review ask</div>
               </button>
               <button
+                disabled={submitting}
                 onClick={() => setView("issues")}
-                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125"
+                className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(239,68,68,0.5)", background: "rgba(239,68,68,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#f87171" }}>🔴 There were issues</div>
@@ -194,7 +215,7 @@ function ReturnModal({
               </button>
             </div>
             <div className="flex justify-end mt-3">
-              <button onClick={onClose} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Cancel</button>
+              <button onClick={onClose} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Cancel</button>
             </div>
           </>
         )}
@@ -202,6 +223,7 @@ function ReturnModal({
         {view === "issues" && (
           <>
             <h3 className="text-base font-semibold mb-3" style={{ color: "#f87171" }}>🔴 What went wrong?</h3>
+            {errorBanner}
             <div className="flex flex-wrap gap-1.5 mb-3">
               {ISSUE_PRESETS.map((t) => {
                 const on = issueTags.has(t);
@@ -256,16 +278,17 @@ function ReturnModal({
               )}
             </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setView("choose")} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
+              <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
+                disabled={submitting}
                 onClick={() => finish(
                   { outcome: "issues", condition, notes: composedIssues || undefined, issueDetails: composedIssues || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || composedIssues || undefined) : undefined, sendReview: false },
-                  issueAction === "blacklist" ? "⛔ Logged · renter blacklisted" : issueAction === "flag" ? "⚑ Logged · flagged on next request" : "Issue logged to renter history",
+                  issueAction === "blacklist" ? "⛔ Logged · renter blacklisted · pending platform close" : issueAction === "flag" ? "⚑ Logged · flagged on next request · pending platform close" : "Issue logged to renter history · pending platform close",
                 )}
-                className="text-sm px-4 py-1.5 rounded transition-colors"
+                className="text-sm px-4 py-1.5 rounded transition-colors disabled:opacity-40"
                 style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)" }}
               >
-                Save &amp; close
+                {submitting ? "Saving…" : "Save & close"}
               </button>
             </div>
           </>
@@ -274,6 +297,7 @@ function ReturnModal({
         {view === "fantastic" && (
           <>
             <h3 className="text-base font-semibold mb-3" style={{ color: "#fbbf24" }}>🏆 Fantastic renter</h3>
+            {errorBanner}
             <p className="text-xs text-[#8b8fa3] mb-3">
               Whitelists {item.renterName} (trusted badge) and queues a thank-you + ⭐ review request.
             </p>
@@ -286,13 +310,14 @@ function ReturnModal({
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(251,191,36,0.3)", color: "#e4e6eb" }}
             />
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setView("choose")} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors">Back</button>
+              <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
-                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true }, `🏆 Whitelisted · ${discountCode} + ⭐ review ask queued`)}
-                className="text-sm px-4 py-1.5 rounded font-semibold transition-colors"
+                disabled={submitting}
+                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true }, `🏆 Whitelisted — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
+                className="text-sm px-4 py-1.5 rounded font-semibold transition-colors disabled:opacity-40"
                 style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
               >
-                Whitelist &amp; close
+                {submitting ? "Saving…" : "Whitelist & close"}
               </button>
             </div>
           </>
