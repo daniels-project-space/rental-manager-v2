@@ -380,6 +380,8 @@ export default defineSchema({
     case_open: v.optional(v.boolean()),
     case_id: v.optional(v.id("insurance_claims")),
     return_outcome: v.optional(v.string()),          // smooth | issues | fantastic
+    return_good_tags: v.optional(v.array(v.string())), // operator-tapped "what was good" chips
+    return_bad_tags: v.optional(v.array(v.string())),  // operator-tapped "what was bad" chips
     review_message: v.optional(v.string()),          // composed thank-you/review (prepared)
     platform_close_pending: v.optional(v.boolean()),
     platform_closed_at: v.optional(v.number()),

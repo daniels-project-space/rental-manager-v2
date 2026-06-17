@@ -6,7 +6,7 @@ import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 
 type RenterTrust = {
   blacklisted: boolean;
@@ -95,15 +95,27 @@ type ReturnPayload = {
   whitelist?: boolean;
   whitelistReason?: string;
   sendReview?: boolean;
+  goodTags?: string[];
+  badTags?: string[];
 };
 
-/** Preset issue tags shown as one-tap chips in the "what went wrong" view. */
-const ISSUE_PRESETS = [
-  "Damage to gear",
-  "Rude behavior",
-  "Late timings",
+/** Tap-able chips for annotating what was BAD (the "what went wrong" view). */
+const BAD_TAGS = [
   "Late return",
-  "Bad communication",
+  "Returned dirty",
+  "Damage",
+  "Missing item/cable",
+  "Hard to reach",
+  "Haggled price",
+] as const;
+
+/** Tap-able chips for annotating what was GOOD (smooth + fantastic paths). */
+const GOOD_TAGS = [
+  "On time",
+  "Gear clean",
+  "Looked after kit",
+  "Easy comms",
+  "Would rent again",
 ] as const;
 
 function ReturnModal({
@@ -125,16 +137,21 @@ function ReturnModal({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
+  const [goodTags, setGoodTags] = useState<Set<string>>(() => new Set());
   const discountCode = item.accountSlug === "dbcinema" ? "DB15OFF" : "LEO10OFF";
-  const toggleTag = (t: string) =>
-    setIssueTags((prev) => {
+  const makeToggle = (setter: Dispatch<SetStateAction<Set<string>>>) => (t: string) =>
+    setter((prev) => {
       const next = new Set(prev);
       if (next.has(t)) next.delete(t);
       else next.add(t);
       return next;
     });
+  const toggleTag = makeToggle(setIssueTags);
+  const toggleGood = makeToggle(setGoodTags);
   // Selected chips + free text, combined into one renter-history string.
   const composedIssues = [Array.from(issueTags).join(", "), issueDetails.trim()].filter(Boolean).join(" — ");
+  const badList = Array.from(issueTags);
+  const goodList = Array.from(goodTags);
 
   async function finish(p: ReturnPayload, msg: string) {
     if (submitting) return;
@@ -157,6 +174,30 @@ function ReturnModal({
       ⚠ {error}
     </div>
   ) : null;
+
+  // Tap-able "what was good" chips — green accent mirrors the red bad-chip style.
+  const goodChips = (
+    <div className="flex flex-wrap gap-1.5 mb-3">
+      {GOOD_TAGS.map((t) => {
+        const on = goodTags.has(t);
+        return (
+          <button
+            key={t}
+            type="button"
+            onClick={() => toggleGood(t)}
+            className="text-[11px] font-medium px-2 py-1 rounded-full transition-colors"
+            style={{
+              background: on ? "rgba(34,197,94,0.18)" : "rgba(255,255,255,0.05)",
+              color: on ? "#34d399" : "#9296a6",
+              border: `1px solid ${on ? "rgba(34,197,94,0.5)" : "rgba(255,255,255,0.1)"}`,
+            }}
+          >
+            {on ? "✓ " : ""}{t}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div
@@ -185,10 +226,12 @@ function ReturnModal({
           <>
             <h3 className="text-base font-semibold text-[#e4e6eb] mb-3">How was this rental?</h3>
             {errorBanner}
+            <p className="text-[11px] text-[#8b8fa3] mb-1.5">Tag what was good (optional)</p>
+            {goodChips}
             <div className="space-y-2">
               <button
                 disabled={submitting}
-                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true }, `✓ Returned — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
+                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true, goodTags: goodList.length ? goodList : undefined }, `✓ Returned — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
                 className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
               >
@@ -224,8 +267,9 @@ function ReturnModal({
           <>
             <h3 className="text-base font-semibold mb-3" style={{ color: "#f87171" }}>🔴 What went wrong?</h3>
             {errorBanner}
+            <p className="text-[11px] text-[#8b8fa3] mb-1.5">Tag what was bad</p>
             <div className="flex flex-wrap gap-1.5 mb-3">
-              {ISSUE_PRESETS.map((t) => {
+              {BAD_TAGS.map((t) => {
                 const on = issueTags.has(t);
                 return (
                   <button
@@ -282,7 +326,7 @@ function ReturnModal({
               <button
                 disabled={submitting}
                 onClick={() => finish(
-                  { outcome: "issues", condition, notes: composedIssues || undefined, issueDetails: composedIssues || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || composedIssues || undefined) : undefined, sendReview: false },
+                  { outcome: "issues", condition, notes: composedIssues || undefined, issueDetails: composedIssues || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || composedIssues || undefined) : undefined, sendReview: false, badTags: badList.length ? badList : undefined, goodTags: goodList.length ? goodList : undefined },
                   issueAction === "blacklist" ? "⛔ Logged · renter blacklisted · pending platform close" : issueAction === "flag" ? "⚑ Logged · flagged on next request · pending platform close" : "Issue logged to renter history · pending platform close",
                 )}
                 className="text-sm px-4 py-1.5 rounded transition-colors disabled:opacity-40"
@@ -301,6 +345,8 @@ function ReturnModal({
             <p className="text-xs text-[#8b8fa3] mb-3">
               Whitelists {item.renterName} (trusted badge) and queues a thank-you + ⭐ review request.
             </p>
+            <p className="text-[11px] text-[#8b8fa3] mb-1.5">Tag what was good (optional)</p>
+            {goodChips}
             <input
               type="text"
               placeholder="Why? (optional — spotless return, great comms…)"
@@ -313,7 +359,7 @@ function ReturnModal({
               <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
                 disabled={submitting}
-                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true }, `🏆 Whitelisted — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
+                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
                 className="text-sm px-4 py-1.5 rounded font-semibold transition-colors disabled:opacity-40"
                 style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
               >
@@ -530,6 +576,8 @@ export function ReturnHub() {
       whitelistReason: p.whitelistReason,
       outcome: p.outcome,
       sendReview: p.sendReview || undefined,
+      goodTags: p.goodTags,
+      badTags: p.badTags,
       memberIds: active.memberIds && active.memberIds.length > 1 ? active.memberIds : undefined,
     });
   }

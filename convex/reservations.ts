@@ -356,10 +356,17 @@ export const markReturned = mutation({
     whitelistReason: v.optional(v.string()),
     outcome: v.optional(v.string()),
     sendReview: v.optional(v.boolean()),
+    goodTags: v.optional(v.array(v.string())),
+    badTags: v.optional(v.array(v.string())),
     memberIds: v.optional(v.array(v.id("reservations"))),
   },
   handler: async (ctx, args) => {
-    const { reservationId, condition, notes, issueDetails, blacklistRenter, blacklistReason, flagOnRequest, whitelist, whitelistReason, outcome, sendReview, memberIds } = args;
+    const { reservationId, condition, notes, issueDetails, blacklistRenter, blacklistReason, flagOnRequest, whitelist, whitelistReason, outcome, sendReview, goodTags, badTags, memberIds } = args;
+    const cleanGood = (goodTags ?? []).map((t) => t.trim()).filter(Boolean);
+    const cleanBad = (badTags ?? []).map((t) => t.trim()).filter(Boolean);
+    const tagsNote = cleanGood.length || cleanBad.length
+      ? `Return tags: good[${cleanGood.join(", ")}] bad[${cleanBad.join(", ")}]`
+      : null;
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
     // Double-click / re-submit: the reservation is already completed. This is a
@@ -401,6 +408,8 @@ export const markReturned = mutation({
       return_outcome: outcome ?? (condition === "good" ? "smooth" : "issues"),
       platform_close_pending: true,
     };
+    if (cleanGood.length) resPatch.return_good_tags = cleanGood;
+    if (cleanBad.length) resPatch.return_bad_tags = cleanBad;
     if (reviewMessage) resPatch.review_message = reviewMessage;
     await ctx.db.patch(reservationId, resPatch);
 
@@ -410,7 +419,10 @@ export const markReturned = mutation({
       const m = await ctx.db.get(mid);
       if (m && m.status !== "completed") {
         const mb = m.notes ?? "";
-        await ctx.db.patch(mid, { status: "completed", notes: mb ? `${mb} | ${cn}` : cn, platform_close_pending: true });
+        const mPatch: Record<string, unknown> = { status: "completed", notes: mb ? `${mb} | ${cn}` : cn, platform_close_pending: true };
+        if (cleanGood.length) mPatch.return_good_tags = cleanGood;
+        if (cleanBad.length) mPatch.return_bad_tags = cleanBad;
+        await ctx.db.patch(mid, mPatch);
       }
     }
 
@@ -421,6 +433,7 @@ export const markReturned = mutation({
         ...(renterDoc.note_log ?? []),
         { text: `Return (${condition})${detail ? ": " + detail : ""}`, at: Date.now(), source: "return-hub" },
       ];
+      if (tagsNote) log.push({ text: tagsNote, at: Date.now(), source: "return-hub" });
       const patch: Record<string, unknown> = { note_log: log };
       if (blacklistRenter) {
         patch.blacklisted = true;
