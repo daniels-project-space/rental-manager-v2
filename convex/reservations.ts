@@ -464,6 +464,73 @@ export const markReturned = mutation({
 });
 
 /**
+ * Admin restore / undo of a return. Reverses `markReturned`: flips the
+ * reservation (and any merged logical-group members) back from "completed" to
+ * "confirmed" and CLEARS every return-side field so the rental re-appears in the
+ * Return Hub (`getDueReturns`) and drops out of `pendingPlatformClose`.
+ *
+ * Use when a rental was marked returned but its Hygglo order was never actually
+ * closed (platform_close_pending=true, platform_closed_at unset) and it now
+ * needs to go back through the Return flow. This only mutates OUR Convex state —
+ * it does NOT touch the Hygglo platform. Convex field-delete semantics: setting
+ * an optional field to `undefined` removes it; `platform_close_pending` is set
+ * to `false` so `pendingPlatformClose`'s truthiness filter excludes the row.
+ */
+export const adminMarkUnreturned = mutation({
+  args: {
+    reservationId: v.id("reservations"),
+    memberIds: v.optional(v.array(v.id("reservations"))),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, { reservationId, memberIds, reason }) => {
+    const why = (reason ?? "manual restore").trim() || "manual restore";
+    const restoreNote = `restored to return hub: ${why}`;
+
+    const restoreOne = async (id: Id<"reservations">) => {
+      const r = await ctx.db.get(id);
+      if (!r) return false;
+      // Only un-complete a completed row; leave anything else untouched so this
+      // is a safe no-op on already-restored / never-completed members.
+      if (r.status !== "completed") return false;
+      const prev = r.notes ?? "";
+      await ctx.db.patch(id, {
+        status: "confirmed",
+        platform_close_pending: false,
+        platform_closed_at: undefined,
+        return_outcome: undefined,
+        review_message: undefined,
+        notes: prev ? `${prev} | ${restoreNote}` : restoreNote,
+      });
+      return true;
+    };
+
+    const restored: string[] = [];
+    if (await restoreOne(reservationId)) restored.push(String(reservationId));
+    for (const mid of memberIds ?? []) {
+      if (mid === reservationId) continue;
+      if (await restoreOne(mid)) restored.push(String(mid));
+    }
+
+    // Mirror the restore into the renter's note_log (the real audit trail), so
+    // the CRM shows why this rental went back into the Hub.
+    const res = await ctx.db.get(reservationId);
+    if (res) {
+      const maps = await renterMaps(ctx);
+      const renterDoc = await renterForReservation(ctx, res, maps);
+      if (renterDoc) {
+        const log = [
+          ...(renterDoc.note_log ?? []),
+          { text: restoreNote, at: Date.now(), source: "return-hub" },
+        ];
+        await ctx.db.patch(renterDoc._id, { note_log: log });
+      }
+    }
+
+    return { ok: true as const, restored, count: restored.length };
+  },
+});
+
+/**
  * Reservations marked returned in our system but not yet closed on the Hygglo
  * platform. Read-only feed for the return-finalize CLI (which is gated by
  * READ_ONLY_MODE — see src/lib/hygglo-write.ts).
