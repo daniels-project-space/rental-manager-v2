@@ -38,7 +38,7 @@ export interface HyggloWriteResult {
   httpStatus?: number;
   error?: string;
   /** Set when status === 'skipped'. */
-  reason?: "READ_ONLY_MODE";
+  reason?: "READ_ONLY_MODE" | "RETURN_WRITES_DISABLED";
 }
 
 // ── Safety rail ──────────────────────────────────────────────────
@@ -53,6 +53,21 @@ function writesAllowed(): boolean {
 
 function skipResult(): HyggloWriteResult {
   return { status: "skipped", reason: "READ_ONLY_MODE" };
+}
+
+/**
+ * SECOND, INDEPENDENT gate that ONLY governs the irreversible Hygglo close
+ * (`returnOrder`, action:"return"). Policy (Daniel, 2026-06-17): the system must
+ * NEVER auto-close a rental — Daniel closes each one MANUALLY on Hygglo. The
+ * close verb is therefore HARD-BLOCKED by default and is decoupled from
+ * READ_ONLY_MODE: even with READ_ONLY_MODE=false (writes on for rating + chat),
+ * `returnOrder` still refuses unless someone explicitly sets
+ * ALLOW_RETURN_WRITES="true". No code path sets that, so the close can never fire
+ * from automation. reviewRenter / sendOrderMessage remain gated by READ_ONLY_MODE
+ * only.
+ */
+function returnWritesAllowed(): boolean {
+  return process.env.ALLOW_RETURN_WRITES === "true";
 }
 
 // ── Methods ──────────────────────────────────────────────────────
@@ -268,16 +283,25 @@ export async function sendMessage(args: {
 }
 
 /**
- * Mark a rental returned / complete on the platform. v1 did this via Playwright
- * UI automation (no REST endpoint was ever confirmed); the action verb here is a
- * best guess and is NEVER exercised while READ_ONLY_MODE is on (the default), so
- * this is safe to ship. Before enabling writes, verify the verb via the 422
- * union-probe (see module header) or fall back to the Playwright flow.
+ * Mark a rental returned / complete on the platform (the IRREVERSIBLE Hygglo
+ * close, action:"return").
+ *
+ * POLICY (Daniel, 2026-06-17): the system must NEVER auto-close a rental. Daniel
+ * closes each rental MANUALLY on Hygglo himself; our automation only fires the
+ * 5★ rating + the discount text AFTER he has done so. This verb is therefore
+ * HARD-BLOCKED behind its OWN gate (`ALLOW_RETURN_WRITES === "true"`), which is
+ * INDEPENDENT of READ_ONLY_MODE: even with READ_ONLY_MODE=false it stays off
+ * unless someone explicitly sets ALLOW_RETURN_WRITES. No code path sets it, and
+ * the auto drain never calls this function — so the close can never fire from
+ * automation. Kept only so a future supervised, opt-in tool could use it.
  */
 export async function returnOrder(args: {
   accountSlug: string;
   hyggloOrderId: string;
 }): Promise<HyggloWriteResult> {
+  // Structural "never auto-close": dedicated gate, decoupled from READ_ONLY_MODE.
+  if (!returnWritesAllowed())
+    return { status: "skipped", reason: "RETURN_WRITES_DISABLED" };
   if (!writesAllowed()) return skipResult();
   try {
     return await patchOrderAction({ ...args, action: "return", data: {} });

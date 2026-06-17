@@ -137,7 +137,7 @@ export interface HyggloWriteResult {
   status: "sent" | "skipped" | "failed";
   httpStatus?: number;
   error?: string;
-  reason?: "READ_ONLY_MODE";
+  reason?: "READ_ONLY_MODE" | "RETURN_WRITES_DISABLED";
 }
 
 /** A list item enriched with the filter it was fetched under + the resolved

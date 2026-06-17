@@ -231,7 +231,7 @@ function ReturnModal({
             <div className="space-y-2">
               <button
                 disabled={submitting}
-                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true, goodTags: goodList.length ? goodList : undefined }, `✓ Returned — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
+                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true, goodTags: goodList.length ? goodList : undefined }, `✓ Returned · queued — after you close on Hygglo: auto 5★ + ${discountCode}`)}
                 className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
               >
@@ -327,7 +327,7 @@ function ReturnModal({
                 disabled={submitting}
                 onClick={() => finish(
                   { outcome: "issues", condition, notes: composedIssues || undefined, issueDetails: composedIssues || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || composedIssues || undefined) : undefined, sendReview: false, badTags: badList.length ? badList : undefined, goodTags: goodList.length ? goodList : undefined },
-                  issueAction === "blacklist" ? "⛔ Logged · renter blacklisted · pending platform close" : issueAction === "flag" ? "⚑ Logged · flagged on next request · pending platform close" : "Issue logged to renter history · pending platform close",
+                  issueAction === "blacklist" ? "⛔ Logged · renter blacklisted · close on Hygglo yourself (no auto rating/text)" : issueAction === "flag" ? "⚑ Logged · flagged on next request · close on Hygglo yourself (no auto rating/text)" : "Issue logged to renter history · close on Hygglo yourself (no auto rating/text)",
                 )}
                 className="text-sm px-4 py-1.5 rounded transition-colors disabled:opacity-40"
                 style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)" }}
@@ -359,7 +359,7 @@ function ReturnModal({
               <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
                 disabled={submitting}
-                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted — pending platform close · ${discountCode} + ⭐ review ask prepared`)}
+                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted · queued — after you close on Hygglo: auto 5★ + ${discountCode}`)}
                 className="text-sm px-4 py-1.5 rounded font-semibold transition-colors disabled:opacity-40"
                 style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
               >
@@ -374,7 +374,7 @@ function ReturnModal({
             <div className="text-4xl">✓</div>
             <p className="text-sm font-semibold text-[#e4e6eb]">{summary}</p>
             <p className="text-[10px] text-[#8b8fa3] mt-1 px-2 leading-snug">
-              Platform close &amp; the renter message are <b>preview-only (read-only)</b> for now — prepared, not sent. Good renters get the discount code; flagged / blacklisted renters are only marked returned. Flag / whitelist / blacklist are saved now.
+              <b>You close the rental on Hygglo yourself</b> — the system never closes it. Once you have, a good renter is auto-sent a <b>5★ rating + discount code</b>; flagged / blacklisted renters get neither. Flag / whitelist / blacklist are saved now.
             </p>
           </div>
         )}
@@ -682,7 +682,7 @@ export function ReturnHub() {
                 );
               })}
             </div>
-            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · shows only after return time · auto-closes when Hygglo confirms</p>
+            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · shows only after return time · you close on Hygglo, then auto 5★ + code</p>
           </>
         )}
       </Card>

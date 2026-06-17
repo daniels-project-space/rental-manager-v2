@@ -206,16 +206,18 @@ crons.daily(
   {},
 );
 
-// ── Phase 8 — Auto-close drain (GATED, no-op until enabled) ───────────────
-// Drains pendingPlatformClose via the verified Hygglo close→review→message flow
-// through the gated write chokepoint. SAFE TO SHIP LIVE: the drain performs NO
-// Hygglo write unless BOTH gates are open —
-//   READ_ONLY_MODE !== "true"  AND  AUTO_CLOSE_ENABLED === "true"
-// — and both default OFF on hearty-oyster-600 (READ_ONLY_MODE explicitly "true",
-// AUTO_CLOSE_ENABLED unset). Until a human flips both, every fire is a plan-only
-// no-op. See convex/returns_autoclose.ts header for the full safety model.
+// ── Phase 9 — Auto rate+text after MANUAL close (GATED) ───────────────────
+// POLICY (Daniel, 2026-06-17): the system NEVER closes a rental — Daniel closes
+// each one MANUALLY on Hygglo. This drain only fires the 5★ rating + discount
+// text, and ONLY for orders Daniel has already manually closed (detected live:
+// the order's `review` action has unlocked). It never imports/calls returnOrder.
+// SAFE TO SHIP LIVE: no Hygglo write unless BOTH gates are open —
+//   READ_ONLY_MODE !== "true"  AND  AUTO_RATE_TEXT_ENABLED === "true"
+// — and the close verb is additionally HARD-BLOCKED at the chokepoint
+// (ALLOW_RETURN_WRITES, default off). Rows for un-closed rentals are skipped
+// ("awaiting manual close") and left pending. See convex/returns_autoclose.ts.
 crons.interval(
-  "auto-close pending returns",
+  "auto rate+text after manual close",
   { minutes: 5 },
   internal.returns_autoclose.drain,
   { dryRun: false },
