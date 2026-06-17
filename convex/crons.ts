@@ -206,4 +206,19 @@ crons.daily(
   {},
 );
 
+// ── Phase 8 — Auto-close drain (GATED, no-op until enabled) ───────────────
+// Drains pendingPlatformClose via the verified Hygglo close→review→message flow
+// through the gated write chokepoint. SAFE TO SHIP LIVE: the drain performs NO
+// Hygglo write unless BOTH gates are open —
+//   READ_ONLY_MODE !== "true"  AND  AUTO_CLOSE_ENABLED === "true"
+// — and both default OFF on hearty-oyster-600 (READ_ONLY_MODE explicitly "true",
+// AUTO_CLOSE_ENABLED unset). Until a human flips both, every fire is a plan-only
+// no-op. See convex/returns_autoclose.ts header for the full safety model.
+crons.interval(
+  "auto-close pending returns",
+  { minutes: 5 },
+  internal.returns_autoclose.drain,
+  { dryRun: false },
+);
+
 export default crons;

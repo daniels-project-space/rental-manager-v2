@@ -385,6 +385,16 @@ export default defineSchema({
     review_message: v.optional(v.string()),          // composed thank-you/review (prepared)
     platform_close_pending: v.optional(v.boolean()),
     platform_closed_at: v.optional(v.number()),
+    // ── Auto-close (returns_autoclose.ts) per-step idempotency stamps ──
+    // Each set once the corresponding Hygglo write returns `sent`, so a
+    // partial-failure re-run of the drain never re-closes / re-rates / re-spams.
+    // platform_closed_at (above) remains the FINAL stamp that drops the row from
+    // pendingPlatformClose.
+    platform_returned_at: v.optional(v.number()), // close (action:"return") confirmed sent
+    review_done_at: v.optional(v.number()),        // 5★ review (action:"review") confirmed sent (or skipped-as-done)
+    msg_done_at: v.optional(v.number()),           // discount chat (action:"chat") confirmed sent (or skipped-as-done)
+    auto_close_attempts: v.optional(v.number()),   // incremented on each failed drain pass
+    auto_close_last_error: v.optional(v.string()), // last failure detail for the operator log
     /** Phase 18.2 — monotonic activity timestamp from Hygglo's order-list
      *  response (sort=latest-activity). Used by poll-hygglo to skip the
      *  per-order detail fetch when the list value matches the stored value

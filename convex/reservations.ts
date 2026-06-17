@@ -577,6 +577,114 @@ export const markPlatformClosed = mutation({
 });
 
 /**
+ * Internal feed for the auto-close drain (convex/returns_autoclose.ts). Same
+ * filter as `pendingPlatformClose` but returns the richer fields the drain needs
+ * for eligibility (return_outcome, case_open, blacklist/flag trust) and partial-
+ * failure idempotency (per-step stamps). Kept separate from the public
+ * `pendingPlatformClose` so the existing CLI consumer's shape is untouched.
+ */
+export const pendingPlatformCloseInternal = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .collect();
+    const pending = rows.filter((r) => {
+      const rr = r as { platform_close_pending?: boolean; platform_closed_at?: number };
+      return rr.platform_close_pending && !rr.platform_closed_at && !!r.hygglo_order_id;
+    });
+    const maps = await renterMaps(ctx);
+    const out: Array<{
+      reservationId: Id<"reservations">;
+      account_slug: string | undefined;
+      hygglo_order_id: string | undefined;
+      review_message: string | null;
+      return_outcome: string | null;
+      case_open: boolean;
+      blacklisted: boolean;
+      flagged: boolean;
+      platform_returned_at: number | null;
+      review_done_at: number | null;
+      msg_done_at: number | null;
+      auto_close_attempts: number;
+    }> = [];
+    for (const r of pending) {
+      const rr = r as {
+        return_outcome?: string;
+        case_open?: boolean;
+        review_message?: string;
+        platform_returned_at?: number;
+        review_done_at?: number;
+        msg_done_at?: number;
+        auto_close_attempts?: number;
+      };
+      const renterDoc = await renterForReservation(ctx, r, maps);
+      const blacklisted = !!(
+        renterDoc && (renterDoc.blacklisted || renterDoc.blacklist)
+      );
+      const flagged = !!(renterDoc && renterDoc.flag_on_request);
+      out.push({
+        reservationId: r._id,
+        account_slug: r.account_slug,
+        hygglo_order_id: r.hygglo_order_id,
+        review_message: rr.review_message ?? null,
+        return_outcome: rr.return_outcome ?? null,
+        case_open: !!rr.case_open,
+        blacklisted,
+        flagged,
+        platform_returned_at: rr.platform_returned_at ?? null,
+        review_done_at: rr.review_done_at ?? null,
+        msg_done_at: rr.msg_done_at ?? null,
+        auto_close_attempts: rr.auto_close_attempts ?? 0,
+      });
+    }
+    return out;
+  },
+});
+
+/**
+ * Per-step idempotency stamp for the auto-close drain. Patches only the supplied
+ * stamp fields (each marks one Hygglo write as confirmed-sent) so a re-run never
+ * repeats a completed step. `platform_closed_at` is set via `markPlatformClosed`
+ * (the FINAL stamp that drops the row from the pending feed).
+ */
+export const stampAutoCloseStep = internalMutation({
+  args: {
+    reservationId: v.id("reservations"),
+    platform_returned_at: v.optional(v.number()),
+    review_done_at: v.optional(v.number()),
+    msg_done_at: v.optional(v.number()),
+  },
+  handler: async (ctx, { reservationId, ...stamps }) => {
+    const patch: Record<string, number> = {};
+    if (stamps.platform_returned_at !== undefined) patch.platform_returned_at = stamps.platform_returned_at;
+    if (stamps.review_done_at !== undefined) patch.review_done_at = stamps.review_done_at;
+    if (stamps.msg_done_at !== undefined) patch.msg_done_at = stamps.msg_done_at;
+    if (Object.keys(patch).length) await ctx.db.patch(reservationId, patch);
+    return { ok: true as const };
+  },
+});
+
+/**
+ * Record a failed auto-close pass: increment the attempt counter and store the
+ * last error. Leaves the row pending so the drain retries it next cron tick.
+ */
+export const recordAutoCloseFailure = internalMutation({
+  args: { reservationId: v.id("reservations"), error: v.string() },
+  handler: async (ctx, { reservationId, error }) => {
+    const r = await ctx.db.get(reservationId);
+    if (!r) return { ok: false as const };
+    const prev = (r as { auto_close_attempts?: number }).auto_close_attempts ?? 0;
+    await ctx.db.patch(reservationId, {
+      auto_close_attempts: prev + 1,
+      auto_close_last_error: error.slice(0, 500),
+    });
+    return { ok: true as const };
+  },
+});
+
+/**
  * T4: listObsolete — cancelled/rejected orders (lost revenue / dead deals)
  */
 export const listObsolete = internalQuery({

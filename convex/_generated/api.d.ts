@@ -145,6 +145,7 @@ import type * as renters from "../renters.js";
 import type * as renters_admin from "../renters_admin.js";
 import type * as reservation_vision from "../reservation_vision.js";
 import type * as reservations from "../reservations.js";
+import type * as returns_autoclose from "../returns_autoclose.js";
 import type * as returns_reconcile from "../returns_reconcile.js";
 import type * as revenue from "../revenue.js";
 import type * as rules from "../rules.js";
@@ -307,6 +308,7 @@ declare const fullApi: ApiFromModules<{
   renters_admin: typeof renters_admin;
   reservation_vision: typeof reservation_vision;
   reservations: typeof reservations;
+  returns_autoclose: typeof returns_autoclose;
   returns_reconcile: typeof returns_reconcile;
   revenue: typeof revenue;
   rules: typeof rules;
