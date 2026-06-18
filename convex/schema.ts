@@ -1605,6 +1605,42 @@ export default defineSchema({
     .index("by_master_item", ["masterItemId"])
     .index("by_account", ["accountSlug"]),
 
+  // ===========================================================================
+  // Ported Listings (Phase 2, Wave 0 — ADDITIVE).
+  // Tracks dbcinema catalog products that are MISSING on the leo account and
+  // the state of porting their listing image into R2. Purely additive: does
+  // NOT touch hygglo_products, items, bundles, or the poll path.
+  // ===========================================================================
+  ported_listings: defineTable({
+    productId: v.string(),
+    accountSlug: v.string(),
+    name: v.string(),
+    dbImageUrl: v.string(),
+    masterItemId: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("ported"),
+      v.literal("error"),
+    ),
+    portedR2Key: v.optional(v.string()),
+    portedUrl: v.optional(v.string()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_product", ["productId"])
+    .index("by_status", ["status"]),
+
+  // Single-doc gradient/style profile for the leo account (key "leo").
+  ported_listings_config: defineTable({
+    key: v.string(),
+    gradientProfile: v.any(),
+    swatches: v.array(v.string()),
+    orientation: v.optional(v.string()),
+    leoSampleCount: v.optional(v.number()),
+    detectedAt: v.optional(v.number()),
+  }).index("by_key", ["key"]),
+
   // ── Phase W3b: reservation_vision side table (dual-write) ────────────────
   // Mirror of reservations.resolved_items so the heavy jsonb blob can move
   // off the hot reservations row. DUAL-WRITE phase: every existing

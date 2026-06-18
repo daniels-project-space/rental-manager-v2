@@ -26,6 +26,7 @@ import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel"
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
 import { EquipmentValuePanel } from "@/components/dashboard/EquipmentValuePanel";
 import { CompetitorIntelPanel } from "@/components/dashboard/CompetitorIntelPanel";
+import { PortedListingsPanel } from "@/components/dashboard/PortedListingsPanel";
 
 export type PanelWidget = {
   id: string;
@@ -70,6 +71,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "lost-revenue-buy",    label: "Lost Revenue · Buy",    component: LostRevenueBuyPanel },
   { id: "verification-funnel", label: "Verification Funnel",   component: VerificationFunnelPanel },
   { id: "equipment-value",     label: "Equipment Value & Resell", component: EquipmentValuePanel },
+  { id: "ported-listings",     label: "Ported Listings",        component: PortedListingsPanel },
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [

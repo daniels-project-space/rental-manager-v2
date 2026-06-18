@@ -16,9 +16,91 @@
 
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { internal, api } from "./_generated/api";
 
 const http = httpRouter();
+
+/**
+ * Ported Listings — VPS callback sink (Phase 4, Wave 2, ADDITIVE).
+ *
+ * POST /port-listings/record
+ *
+ * The VPS "hygglo" port service runs the full-resolution 262-image batch
+ * itself (Vercel would time out) and POSTs one of these per image as it
+ * finishes, so each row's status lands in `ported_listings` incrementally.
+ *
+ * Auth: header `X-Port-Token` must equal env HYGGLO_PORT_RECORD_TOKEN.
+ *   - missing env  → 503 (fail closed)
+ *   - bad/absent header → 401
+ * Body: { productId, status, portedR2Key?, portedUrl?, error? } → ported_listings:upsert
+ */
+http.route({
+  path: "/port-listings/record",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const expected = process.env.HYGGLO_PORT_RECORD_TOKEN ?? "";
+    if (!expected) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "server_missing_HYGGLO_PORT_RECORD_TOKEN" }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const provided = request.headers.get("x-port-token") ?? "";
+    if (!provided || provided !== expected) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ ok: false, error: "bad json" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const productId = body?.productId;
+    const status = body?.status;
+    if (typeof productId !== "string" && typeof productId !== "number") {
+      return new Response(
+        JSON.stringify({ ok: false, error: "productId required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const allowed = ["pending", "ported", "error"] as const;
+    if (typeof status !== "string" || !allowed.includes(status as any)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "status must be pending|ported|error" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      await ctx.runMutation(api.ported_listings.upsert, {
+        productId: String(productId),
+        status: status as (typeof allowed)[number],
+        ...(typeof body.portedR2Key === "string" ? { portedR2Key: body.portedR2Key } : {}),
+        ...(typeof body.portedUrl === "string" ? { portedUrl: body.portedUrl } : {}),
+        ...(typeof body.error === "string" ? { error: body.error } : {}),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return new Response(
+        JSON.stringify({ ok: false, error: msg }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
 
 http.route({
   path: "/telegram/webhook",

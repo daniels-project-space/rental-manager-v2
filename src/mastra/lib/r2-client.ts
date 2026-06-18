@@ -14,7 +14,7 @@
  * Credentials and S3Client are memoized at module scope (one fetch per
  * Vercel / Node process cold start).
  */
-import { S3Client } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -136,6 +136,36 @@ export async function getR2(): Promise<{
     publicBase: creds.publicBase,
     endpoint: creds.endpoint,
   };
+}
+
+/**
+ * Public URL for an R2 object key: `<publicBase>/<key>`.
+ * (Exposed for the Ported Listings run route; the VPS uploads directly, but
+ * the run route may need to construct/return canonical URLs.)
+ */
+export async function publicUrl(key: string): Promise<string> {
+  const base = (await getR2PublicBase()).replace(/\/+$/, "");
+  return `${base}/${key.replace(/^\/+/, "")}`;
+}
+
+/**
+ * Upload a PNG byte buffer to R2 at `key` (ContentType image/png) and return
+ * its public URL. Ported Listings helper.
+ */
+export async function putPng(
+  key: string,
+  bytes: Uint8Array | Buffer,
+): Promise<string> {
+  const [s3, bucket] = await Promise.all([getS3Client(), getR2Bucket()]);
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key.replace(/^\/+/, ""),
+      Body: bytes,
+      ContentType: "image/png",
+    }),
+  );
+  return publicUrl(key);
 }
 
 // Test-only: reset module-level memoization between tests.

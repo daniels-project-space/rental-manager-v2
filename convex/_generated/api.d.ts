@@ -135,6 +135,7 @@ import type * as mv_walle_signals from "../mv/walle_signals.js";
 import type * as mv_refresh_locks from "../mv_refresh_locks.js";
 import type * as order_step_semantics from "../order_step_semantics.js";
 import type * as poller_health from "../poller_health.js";
+import type * as ported_listings from "../ported_listings.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as rate_limit_config from "../rate_limit_config.js";
 import type * as renter_bot_batch from "../renter_bot_batch.js";
@@ -298,6 +299,7 @@ declare const fullApi: ApiFromModules<{
   mv_refresh_locks: typeof mv_refresh_locks;
   order_step_semantics: typeof order_step_semantics;
   poller_health: typeof poller_health;
+  ported_listings: typeof ported_listings;
   pricing_catalog: typeof pricing_catalog;
   rate_limit_config: typeof rate_limit_config;
   renter_bot_batch: typeof renter_bot_batch;
