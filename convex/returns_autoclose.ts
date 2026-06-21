@@ -1,72 +1,80 @@
 "use node";
 /**
- * Rating+text drain (Phase 9, 2026-06-17 — POLICY REWORK).
+ * Operator-triggered per-reservation Hygglo close (Phase 6 / T1 backend rework,
+ * 2026-06-21).
  *
- * POLICY (Daniel, 2026-06-17): "ONLY THE RATING + TEXTS ARE ALLOWED, AND ONLY IF
- * I CLOSE THE RENTAL MANUALLY." The system must NEVER call the Hygglo close
- * (action:"return"). Daniel closes each rental MANUALLY on Hygglo himself. The
- * ONLY automated outbound is the 5★ rating (action:"review") + the follow-up
- * discount text (action:"chat"), and they fire ONLY AFTER Daniel has manually
- * closed the rental — detected from live Hygglo state, never by us closing it.
+ * ── POLICY (Daniel, 2026-06-21) ───────────────────────────────────────────
+ * NO cron, NO background auto-anything. The Return Hub rating tap is the SINGLE
+ * trigger: tapping 🟢 Smooth / 🏆 Fantastic / 🔴 Issues marks the rental returned
+ * AND closes it on Hygglo in ONE operator action.
  *
- * This drain therefore NEVER imports or calls `returnOrder`. For every
- * `pendingPlatformClose` row it GETs the live Hygglo order and:
+ *   • 🟢 Smooth / 🏆 Fantastic (green) ⇒ close + 5★ review + discount text.
+ *   • 🔴 Issues (not green)            ⇒ close ONLY (no 5★, no discount text).
  *
- *   • NOT yet closed by Daniel (order's `actions.review` not available / still
- *     RETURNED:pending) ⇒ SKIP ("awaiting manual close"), leave the row pending,
- *     touch NOTHING. The forward step is still `return` (Daniel's job), so we wait.
- *   • Daniel HAS closed it (`actions.review === true` / step REVIEWED) ⇒ run the
- *     courtesy flow:
- *       1. 5★ REVIEW of the renter — reviewRenter(): action:"review"  (eligible only)
- *       2. discount-code chat text — sendOrderMessage(): action:"chat" (eligible only)
- *       3. STAMP review_done_at / msg_done_at / platform_closed_at — drops the row.
+ * The dashboard calls the single public action `finalizeReturn` (args identical
+ * to `reservations.markReturned`). It runs `markReturned`, reads the resulting
+ * `return_outcome` + `review_message` back off the reservation, computes
+ * `green`, then runs the shared `finalizeReservationClose` helper.
  *
- * ── DOUBLE GATE (read twice) ──────────────────────────────────────────────
- * The drain performs NO Hygglo write unless BOTH gates are open:
- *   • writesAllowed()  — `READ_ONLY_MODE !== "true"` (the chokepoint's own gate).
- *     PERMISSIVE-BY-DEFAULT: unset => writes ALLOWED.
- *   • AUTO_RATE_TEXT_ENABLED === "true" — a SECOND explicit gate owned by this
- *     drain. Default OFF, so even a mis-set READ_ONLY_MODE cannot fire the cron.
- * If either gate is closed (or dryRun is requested) the drain computes + returns
- * the planned actions and calls NO Hygglo verb and writes NO stamp ("GATED").
+ * ── GATES (unchanged, enforced at the chokepoint in src/lib/hygglo-write.ts) ──
+ * The irreversible close verb `returnOrder` stays HARD-GATED behind
+ *   READ_ONLY_MODE !== "true"  AND  ALLOW_RETURN_WRITES === "true".
+ * With ALLOW_RETURN_WRITES unset (the safe deploy state) `returnOrder` returns
+ * {status:"skipped"}, so `finalizeReturn` marks the rental returned then no-ops
+ * the platform close — INERT until go-live flips the flag. reviewRenter /
+ * sendOrderMessage stay behind READ_ONLY_MODE (permissive-by-default).
  *
- * The close verb is additionally HARD-BLOCKED at the chokepoint
- * (`ALLOW_RETURN_WRITES`, see src/lib/hygglo-write.ts), so even a future code
- * change here could not auto-close.
+ * ── IDEMPOTENCY ───────────────────────────────────────────────────────────
+ * `finalizeReservationClose` is safe to re-run:
+ *   • Already-closed detection: if the live order's `actions.return` is already
+ *     consumed (review action unlocked) OR platform_returned_at / platform_closed_at
+ *     is already stamped, the close is SKIPPED (no double close).
+ *   • Per-step stamps (platform_returned_at, review_done_at, msg_done_at) plus the
+ *     final platform_closed_at mean a partial-failure re-run never repeats a
+ *     completed step (never re-close / re-rate / re-spam).
  *
- * Idempotency: per-step stamps (review_done_at / msg_done_at) plus the final
- * platform_closed_at make a partial-failure re-run safe — a completed step is
- * never repeated (never re-rate / re-spam).
+ * ── OPEN-CASE / BAD-ACTOR ─────────────────────────────────────────────────
+ * A disputed/damage return (`case_open`) is never rated/texted. Review fires only
+ * for green + eligible (not blacklisted/flagged). The discount text fires only
+ * when `review_message` was staged by markReturned (its presence IS eligibility —
+ * markReturned nulls it for bad actors / non-good outcomes) AND green.
  *
- * Open-Case exception: a reservation with `case_open` true (a disputed / damage
- * return) is NEVER touched — it is skipped and left pending.
+ * `adminBackfillClose` is a MANUAL (non-scheduled, token-guarded) batch that runs
+ * the same shared helper over every currently-pending row — a one-time backfill
+ * for rentals already marked returned before this rework (e.g. James 3991399). It
+ * is referenced by NO cron.
  */
-import { internalAction, action } from "./_generated/server";
+import { action } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
-// NB: `returnOrder` is intentionally NOT imported — this drain must NEVER close.
-import { reviewRenter, sendOrderMessage } from "../src/lib/hygglo-write";
+// `returnOrder` is the irreversible Hygglo close (action:"return"). It is
+// HARD-GATED at the chokepoint behind ALLOW_RETURN_WRITES (decoupled from
+// READ_ONLY_MODE). With the flag OFF it returns {status:"skipped"} — finalizeReturn
+// marks the rental returned then no-ops the close, fully inert until go-live.
+import { reviewRenter, sendOrderMessage, returnOrder } from "../src/lib/hygglo-write";
 import {
   getAccountCredentials,
   getHyggloAccessToken,
   hyggloAuthHeaders,
   HYGGLO_API_BASE,
 } from "../src/lib/hygglo-auth";
-import { isWithinUkQuietHours } from "./lib/quiet_hours";
 
 const TZ = "Europe/London";
 const REVIEW_COMMENT =
   "5/5 — great renter, looked after the gear and easy to deal with. Welcome back any time!";
 
-/** Mirror of hygglo-write's gate so the drain can pre-check without a write. */
+/** Mirror of hygglo-write's READ_ONLY_MODE gate so the helper can pre-check
+ *  without a write. PERMISSIVE-BY-DEFAULT: unset => writes ALLOWED. */
 function writesAllowed(): boolean {
   return process.env.READ_ONLY_MODE !== "true";
 }
-/** Second explicit gate owned by this drain. Default OFF. Renamed from
- *  AUTO_CLOSE_ENABLED (Phase 9): the drain no longer closes — it only fires the
- *  rating + text after Daniel's manual close. */
-function autoRateTextEnabled(): boolean {
-  return process.env.AUTO_RATE_TEXT_ENABLED === "true";
+/** Mirror of hygglo-write's PRIVATE returnWritesAllowed(). Dedicated,
+ *  decoupled-from-READ_ONLY_MODE gate for the irreversible close (action:"return").
+ *  Default OFF (unset => false). returnOrder() enforces the same gate at the
+ *  chokepoint, so this mirror is a legibility/short-circuit pre-check only — it can
+ *  never RELAX the real gate, only avoid a no-op call when off. */
+function returnWritesAllowed(): boolean {
+  return process.env.ALLOW_RETURN_WRITES === "true";
 }
 
 /** Read-only GET of a single Hygglo order (to confirm the review unlock). */
@@ -84,305 +92,382 @@ async function getOrder(accountSlug: string, hyggloOrderId: string): Promise<any
   return res.json();
 }
 
-type PlannedOrder = {
-  reservationId: string;
-  account_slug: string | null;
-  hygglo_order_id: string | null;
-  renter_outcome: string | null;
-  // whether Daniel has manually closed the order on Hygglo (review unlocked):
-  manuallyClosed: boolean | null; // null = not yet probed (plan-only)
-  // planned actions for this order (only after manual close):
-  willReview: boolean;
-  willMessage: boolean;
-  // already-done (idempotency) flags:
-  alreadyReviewed: boolean;
-  alreadyMessaged: boolean;
-  // eligibility reasoning:
-  reason: string;
-  // execution result (non-dry, gates open only):
-  result?: string;
+/** Per-step outcome of finalizeReservationClose. */
+type CloseStepResult = {
+  closed: "sent" | "skipped" | "failed";
+  reviewed: "sent" | "skipped" | "n/a";
+  messaged: "sent" | "skipped" | "n/a";
+  error?: string;
 };
 
-/** Explicit return type — breaks the self/cross-reference type-inference cycle
- *  (drain -> ctx.runQuery(internal...) and adminDrainPendingClose -> drain). */
-type DrainResult = {
-  mode: string;
-  gatesOpen: boolean;
-  writesAllowed: boolean;
-  autoRateTextEnabled: boolean;
-  pendingCount: number;
-  planned: PlannedOrder[];
+/** A pending-close row as resolved by pendingPlatformCloseInternal. */
+type PendingRow = {
+  reservationId: string;
+  account_slug?: string | null;
+  hygglo_order_id?: string | null;
+  review_message?: string | null;
+  return_outcome?: string | null;
+  case_open?: boolean;
+  blacklisted?: boolean;
+  flagged?: boolean;
+  platform_returned_at?: number | null;
+  review_done_at?: number | null;
+  msg_done_at?: number | null;
 };
 
 /**
- * Core drain. internalAction so it can be a cron target and call internal
- * queries/mutations + the gated Hygglo chokepoint.
+ * SHARED HELPER — the single source of truth for closing ONE reservation on
+ * Hygglo and (when green) running the courtesy flow. IDEMPOTENT.
  *
- * @param dryRun       when true (or either gate closed) ⇒ plan only, no writes.
- * @param onlyOrders   restrict to these Hygglo order ids (supervised runs).
- * @param limit        cap the number of rows processed this pass.
+ * Looks the row up via pendingPlatformCloseInternal (same resolution as the old
+ * drain) so account_slug / hygglo_order_id / review_message / outcome / bad-actor
+ * flags / per-step stamps all come from one place. If the row is no longer pending
+ * (already fully closed) it is a no-op (closed:"skipped").
+ *
+ *   green=true  ⇒ close + (eligible) 5★ review + (eligible) discount text.
+ *   green=false ⇒ close ONLY (no review, no message).
+ *
+ * Returns per-step status. Stamps via the existing internal mutations.
  */
-export const drain = internalAction({
+async function finalizeReservationClose(
+  ctx: any,
+  { reservationId, green }: { reservationId: string; green: boolean },
+): Promise<CloseStepResult> {
+  const rows: PendingRow[] = await ctx.runQuery(
+    internal.reservations.pendingPlatformCloseInternal,
+    {},
+  );
+  const r = rows.find((x) => String(x.reservationId) === String(reservationId));
+
+  // Not in the pending feed ⇒ already fully closed (platform_closed_at set) or
+  // never eligible. Idempotent no-op.
+  if (!r) {
+    return { closed: "skipped", reviewed: "n/a", messaged: "n/a" };
+  }
+
+  // Open-case: disputed/damage return — never close/rate/text here.
+  if (r.case_open) {
+    return {
+      closed: "skipped",
+      reviewed: "n/a",
+      messaged: "n/a",
+      error: "case_open (disputed/damage return — left pending)",
+    };
+  }
+
+  const accountSlug = r.account_slug ?? null;
+  const hyggloOrderId = r.hygglo_order_id ?? null;
+  if (!accountSlug || !hyggloOrderId) {
+    await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
+      reservationId,
+      error: "missing account_slug or hygglo_order_id",
+    });
+    return {
+      closed: "skipped",
+      reviewed: "n/a",
+      messaged: "n/a",
+      error: "missing account_slug or hygglo_order_id",
+    };
+  }
+  const base = { accountSlug, hyggloOrderId };
+
+  // ── 1. CLOSE (idempotent) ───────────────────────────────────────────────
+  // Already-closed detection avoids a double close:
+  //   • platform_returned_at already stamped (a prior run sent the close), OR
+  //   • the live order's `review` action is already unlocked (return consumed —
+  //     manual or prior auto close).
+  let reviewUnlocked = false;
+  let closeStatus: CloseStepResult["closed"];
+
+  let alreadyClosed = r.platform_returned_at != null;
+  if (!alreadyClosed) {
+    try {
+      const order = await getOrder(accountSlug, hyggloOrderId);
+      reviewUnlocked = !!(order && order.actions && order.actions.review === true);
+      alreadyClosed = reviewUnlocked;
+    } catch (e) {
+      // probe failed and not previously stamped — attempt the close below.
+      reviewUnlocked = false;
+    }
+  }
+
+  if (alreadyClosed) {
+    closeStatus = "skipped"; // no double close
+  } else {
+    const cl = await returnOrder({ ...base });
+    if (cl.status === "sent") {
+      // CLOSE-FIRST → STAMP: stamp platform_returned_at immediately so a crash
+      // before the courtesy flow can never re-fire the irreversible close.
+      await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+        reservationId,
+        platform_returned_at: Date.now(),
+      });
+      closeStatus = "sent";
+    } else {
+      // skipped (gate off) or failed ⇒ do NOT stamp closed, do NOT proceed to
+      // review/text. With ALLOW_RETURN_WRITES unset this is the safe inert path.
+      if (cl.status === "failed") {
+        await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
+          reservationId,
+          error: `close failed ${cl.httpStatus ?? ""} ${cl.error ?? ""}`.trim(),
+        });
+      }
+      return {
+        closed: cl.status === "failed" ? "failed" : "skipped",
+        reviewed: "n/a",
+        messaged: "n/a",
+        error:
+          cl.status === "skipped"
+            ? (cl.reason ?? "RETURN_WRITES_DISABLED")
+            : (cl.error ?? "close failed"),
+      };
+    }
+  }
+
+  // ── Re-probe so actions.review is unlocked for the courtesy flow ──────────
+  // Only needed when we just sent the close (already-closed path saw it unlocked,
+  // or we'll best-effort confirm). On re-probe failure we still proceed for green
+  // since the close is confirmed; review may simply fail and be retried.
+  if (closeStatus === "sent" || (alreadyClosed && !reviewUnlocked)) {
+    try {
+      const order2 = await getOrder(accountSlug, hyggloOrderId);
+      reviewUnlocked = !!(order2 && order2.actions && order2.actions.review === true);
+    } catch {
+      // leave reviewUnlocked as-is; review step will report its own status.
+    }
+  }
+
+  // ── NOT green (🔴 Issues): close ONLY. No review, no message. ─────────────
+  if (!green) {
+    // Mark the courtesy steps done so a later backfill never rates/texts an
+    // issues return, then drop the row.
+    await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+      reservationId,
+      review_done_at: r.review_done_at ?? Date.now(),
+      msg_done_at: r.msg_done_at ?? Date.now(),
+    });
+    await ctx.runMutation(api.reservations.markPlatformClosed, { reservationId });
+    return { closed: closeStatus, reviewed: "n/a", messaged: "n/a" };
+  }
+
+  // ── 2. COURTESY FLOW (green only) ─────────────────────────────────────────
+  // Eligibility mirrors the old drain: review for not-blacklisted/flagged +
+  // outcome !== "issues"; message when a review_message was staged by markReturned.
+  const reviewEligible =
+    !r.blacklisted && !r.flagged && r.return_outcome !== "issues";
+  const messageEligible = !!r.review_message;
+  const alreadyReviewed = r.review_done_at != null;
+  const alreadyMessaged = r.msg_done_at != null;
+
+  let reviewed: CloseStepResult["reviewed"] = "n/a";
+  let messaged: CloseStepResult["messaged"] = "n/a";
+  let stepError: string | undefined;
+
+  // 2a. 5★ review.
+  if (reviewEligible && !alreadyReviewed) {
+    if (reviewUnlocked) {
+      const rev = await reviewRenter({ ...base, rating: 5, comment: REVIEW_COMMENT });
+      if (rev.status === "sent") {
+        await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+          reservationId,
+          review_done_at: Date.now(),
+        });
+        reviewed = "sent";
+      } else {
+        reviewed = "skipped";
+        stepError = `review ${rev.status} ${rev.httpStatus ?? ""} ${rev.error ?? ""}`.trim();
+        if (rev.status === "failed") {
+          await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
+            reservationId,
+            error: stepError,
+          });
+        }
+      }
+    } else {
+      // close confirmed but review action not yet unlocked (re-probe lag) —
+      // leave review_done_at unset so a backfill retries; do NOT drop the row.
+      reviewed = "skipped";
+      stepError = "review action not yet unlocked";
+    }
+  } else if (!reviewEligible) {
+    // terminal-ineligible: stamp done so it isn't retried.
+    if (!alreadyReviewed) {
+      await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+        reservationId,
+        review_done_at: Date.now(),
+      });
+    }
+    reviewed = "skipped";
+  } else {
+    reviewed = "skipped"; // alreadyReviewed
+  }
+
+  // 2b. discount text.
+  if (messageEligible && !alreadyMessaged) {
+    const m = await sendOrderMessage({ ...base, text: r.review_message! });
+    if (m.status === "sent") {
+      await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+        reservationId,
+        msg_done_at: Date.now(),
+      });
+      messaged = "sent";
+    } else {
+      messaged = "skipped";
+      const me = `msg ${m.status} ${m.httpStatus ?? ""} ${m.error ?? ""}`.trim();
+      stepError = stepError ? `${stepError}; ${me}` : me;
+      if (m.status === "failed") {
+        await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
+          reservationId,
+          error: me,
+        });
+      }
+    }
+  } else if (!messageEligible) {
+    if (!alreadyMessaged) {
+      await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+        reservationId,
+        msg_done_at: Date.now(),
+      });
+    }
+    messaged = "skipped";
+  } else {
+    messaged = "skipped"; // alreadyMessaged
+  }
+
+  // ── 3. FINAL STAMP — drop the row from pendingPlatformClose ────────────────
+  // Only drop when no live step FAILED (a failed send leaves the row pending so a
+  // backfill can retry that one step). A "skipped" (ineligible / already / unlock-
+  // lag) is terminal-or-retriable-without-row-drop-needed; but to be conservative
+  // we drop only when neither review nor message is in an actionable-failed state.
+  const reviewFailedRetriable =
+    reviewEligible && !alreadyReviewed && reviewed !== "sent";
+  const msgFailedRetriable =
+    messageEligible && !alreadyMessaged && messaged !== "sent";
+  if (!reviewFailedRetriable && !msgFailedRetriable) {
+    await ctx.runMutation(api.reservations.markPlatformClosed, { reservationId });
+  }
+
+  return {
+    closed: closeStatus,
+    reviewed,
+    messaged,
+    ...(stepError ? { error: stepError } : {}),
+  };
+}
+
+/**
+ * PUBLIC ACTION `finalizeReturn` — the SINGLE entry the Return Hub dashboard
+ * calls when an operator taps a rating chip. Args are IDENTICAL to
+ * `reservations.markReturned` (mirrored below).
+ *
+ * Flow: markReturned(args) → read back return_outcome + review_message →
+ * green = outcome ∈ {smooth, fantastic} → finalizeReservationClose({reservationId, green}).
+ *
+ * ── FRONTEND CONTRACT ─────────────────────────────────────────────────────
+ *   path:    api.returns_autoclose.finalizeReturn
+ *   args:    EXACTLY reservations.markReturned's args (reservationId required;
+ *            condition required; the rest optional — see validator below).
+ *   returns: { ok: boolean, closed: "sent"|"skipped"|"failed",
+ *              reviewed: "sent"|"skipped"|"n/a", messaged: "sent"|"skipped"|"n/a",
+ *              error?: string }
+ *
+ * Inert while ALLOW_RETURN_WRITES is unset: markReturned runs, then the close is
+ * skipped (returnOrder → {status:"skipped"}) so closed:"skipped" and no courtesy
+ * write fires. Go-live flips the flag (separate supervised step).
+ */
+export const finalizeReturn = action({
+  // Mirror of reservations.markReturned's validator.
   args: {
-    dryRun: v.optional(v.boolean()),
+    reservationId: v.id("reservations"),
+    condition: v.string(),
+    notes: v.optional(v.string()),
+    issueDetails: v.optional(v.string()),
+    blacklistRenter: v.optional(v.boolean()),
+    blacklistReason: v.optional(v.string()),
+    flagOnRequest: v.optional(v.boolean()),
+    whitelist: v.optional(v.boolean()),
+    whitelistReason: v.optional(v.string()),
+    outcome: v.optional(v.string()),
+    sendReview: v.optional(v.boolean()),
+    goodTags: v.optional(v.array(v.string())),
+    badTags: v.optional(v.array(v.string())),
+    memberIds: v.optional(v.array(v.id("reservations"))),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ ok: boolean } & CloseStepResult> => {
+    const reservationId = args.reservationId;
+
+    // 1. Mark returned (CRM saves, status=completed, stage review_message, etc.).
+    await ctx.runMutation(api.reservations.markReturned, args);
+
+    // 2. Read back the resulting outcome + staged message off the pending feed
+    //    (the same resolution the close helper uses, so green is consistent).
+    const rows: PendingRow[] = await ctx.runQuery(
+      internal.reservations.pendingPlatformCloseInternal,
+      {},
+    );
+    const row = rows.find((x) => String(x.reservationId) === String(reservationId));
+    const outcome = row?.return_outcome ?? args.outcome ?? null;
+    const green = outcome === "smooth" || outcome === "fantastic";
+
+    // 3. Close (+ courtesy flow if green) through the shared helper.
+    const result = await finalizeReservationClose(ctx, { reservationId, green });
+
+    return { ok: result.closed !== "failed", ...result };
+  },
+});
+
+/**
+ * MANUAL backfill batch (NOT scheduled — referenced by no cron). One-time close
+ * of rentals already marked returned before the 2026-06-21 rework (e.g. James
+ * 3991399). Iterates the pending feed and runs the shared helper per row, with
+ * green computed from each row's return_outcome.
+ *
+ * Auth: requires AUTO_CLOSE_ADMIN_TOKEN to match (skipped if the env var is unset,
+ * so a dry inspection is runnable from the Convex dashboard). Never relaxes the
+ * write gates — the shared helper enforces them via the chokepoint.
+ *
+ *   onlyOrders — optional Hygglo-order-id allowlist to scope a supervised run.
+ *   limit      — optional cap on rows processed this pass.
+ */
+export const adminBackfillClose = action({
+  args: {
     onlyOrders: v.optional(v.array(v.string())),
     limit: v.optional(v.number()),
+    token: v.optional(v.string()),
   },
-  handler: async (ctx, { dryRun, onlyOrders, limit }): Promise<DrainResult> => {
-    const gatesOpen = writesAllowed() && autoRateTextEnabled();
-    // GATED ⇒ behave exactly like dryRun (compute plan, touch nothing).
-    const planOnly = dryRun === true || !gatesOpen;
+  handler: async (
+    ctx,
+    { onlyOrders, limit, token },
+  ): Promise<{
+    processed: number;
+    results: Array<{ reservationId: string; green: boolean } & CloseStepResult>;
+  }> => {
+    const expected = process.env.AUTO_CLOSE_ADMIN_TOKEN;
+    if (expected && token !== expected) {
+      throw new Error("unauthorized: AUTO_CLOSE_ADMIN_TOKEN mismatch");
+    }
 
-    let rows = await ctx.runQuery(internal.reservations.pendingPlatformCloseInternal, {});
+    let rows: PendingRow[] = await ctx.runQuery(
+      internal.reservations.pendingPlatformCloseInternal,
+      {},
+    );
     if (onlyOrders && onlyOrders.length) {
       const want = new Set(onlyOrders.map(String));
       rows = rows.filter((r) => r.hygglo_order_id && want.has(String(r.hygglo_order_id)));
     }
     if (typeof limit === "number") rows = rows.slice(0, Math.max(0, limit));
 
-    const mode = planOnly
-      ? dryRun === true
-        ? "DRY_RUN"
-        : `GATED (READ_ONLY_MODE!=="true": ${writesAllowed()}, AUTO_RATE_TEXT_ENABLED: ${autoRateTextEnabled()})`
-      : "LIVE";
-
-    const planned: PlannedOrder[] = [];
-
+    const results: Array<{ reservationId: string; green: boolean } & CloseStepResult> = [];
     for (const r of rows) {
       const reservationId = String(r.reservationId);
-      const accountSlug = r.account_slug ?? null;
-      const hyggloOrderId = r.hygglo_order_id ?? null;
-
-      // ── Open-Case exception: never touch a disputed rental ──
-      if (r.case_open) {
-        planned.push({
-          reservationId,
-          account_slug: accountSlug,
-          hygglo_order_id: hyggloOrderId,
-          renter_outcome: r.return_outcome,
-          manuallyClosed: null,
-          willReview: false,
-          willMessage: false,
-          alreadyReviewed: r.review_done_at != null,
-          alreadyMessaged: r.msg_done_at != null,
-          reason: "SKIP: case_open (disputed/damage return — never auto-rated)",
-        });
-        continue;
-      }
-
-      // ── Eligibility (mirrors markReturned's suppression rules) ──
-      // 5★ review: NOT blacklisted/flagged AND outcome !== "issues".
-      const reviewEligible =
-        !r.blacklisted && !r.flagged && r.return_outcome !== "issues";
-      // discount message: a prepared review_message exists (markReturned nulls it
-      // for bad actors / non-good outcomes, so its presence IS the eligibility).
-      const messageEligible = !!r.review_message;
-
-      const alreadyReviewed = r.review_done_at != null;
-      const alreadyMessaged = r.msg_done_at != null;
-
-      const willReview = reviewEligible && !alreadyReviewed;
-      const willMessage = messageEligible && !alreadyMessaged;
-
-      const reasonBits = [
-        `outcome=${r.return_outcome ?? "?"}`,
-        `blacklisted=${r.blacklisted}`,
-        `flagged=${r.flagged}`,
-        `reviewEligible=${reviewEligible}${alreadyReviewed ? " (already)" : ""}`,
-        `messageEligible=${messageEligible}${alreadyMessaged ? " (already)" : ""}`,
-      ];
-
-      const plan: PlannedOrder = {
-        reservationId,
-        account_slug: accountSlug,
-        hygglo_order_id: hyggloOrderId,
-        renter_outcome: r.return_outcome,
-        manuallyClosed: null,
-        willReview,
-        willMessage,
-        alreadyReviewed,
-        alreadyMessaged,
-        reason: reasonBits.join(", "),
-      };
-
-      // ── Probe live Hygglo state: has Daniel manually closed this order? ──
-      // The trigger for the courtesy flow is "review action available" — that
-      // only unlocks once the owner advances RETURNED -> (REVIEWED) by closing.
-      // We do this even in plan-only / dry-run mode (it's a read-only GET) so the
-      // plan honestly reports awaiting-manual-close vs would-fire. We NEVER close.
-      if (!accountSlug || !hyggloOrderId) {
-        plan.reason = "SKIP: missing account_slug or hygglo_order_id";
-        plan.result = planOnly ? `${mode} (no writes)` : "SKIP: missing ids";
-        if (!planOnly) {
-          await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
-            reservationId: r.reservationId,
-            error: "missing account_slug or hygglo_order_id",
-          });
-        }
-        planned.push(plan);
-        continue;
-      }
-      const base = { accountSlug, hyggloOrderId };
-
-      let reviewUnlocked = false;
-      let probeError: string | null = null;
-      try {
-        const order = await getOrder(accountSlug, hyggloOrderId);
-        reviewUnlocked = !!(order && order.actions && order.actions.review === true);
-      } catch (e) {
-        probeError = (e as Error).message.slice(0, 120);
-      }
-      plan.manuallyClosed = probeError ? null : reviewUnlocked;
-
-      // NOT yet manually closed by Daniel ⇒ SKIP, leave row pending, touch nothing.
-      if (probeError) {
-        plan.reason = `SKIP: probe failed (${probeError}) — leave pending`;
-        plan.result = "awaiting manual close (probe failed)";
-        planned.push(plan);
-        continue;
-      }
-      if (!reviewUnlocked) {
-        plan.reason =
-          "SKIP: awaiting manual close (Daniel has not closed on Hygglo — review action not yet available)";
-        plan.result = "awaiting manual close — SKIP";
-        planned.push(plan);
-        continue;
-      }
-
-      // Daniel HAS closed it (review unlocked). In plan-only mode, report the
-      // would-fire plan but write nothing.
-      if (planOnly) {
-        plan.result =
-          (mode === "DRY_RUN" ? "dry-run" : "GATED") +
-          ` (manual close detected; would: review=${willReview} msg=${willMessage}) — no writes`;
-        planned.push(plan);
-        continue;
-      }
-
-      // ── LIVE courtesy flow (both gates open, dryRun !== true, manual close confirmed) ──
-      const steps: string[] = ["manual_close=confirmed"];
-
-      // 1. 5★ REVIEW (eligible + not already) — confirmed shape {rating,comment} ──
-      if (willReview) {
-        const rev = await reviewRenter({ ...base, rating: 5, comment: REVIEW_COMMENT });
-        steps.push(`review=${rev.status}${rev.httpStatus ? "/" + rev.httpStatus : ""}`);
-        if (rev.status === "sent") {
-          await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
-            reservationId: r.reservationId,
-            review_done_at: Date.now(),
-          });
-        } else {
-          // Review failed; defer rating + message + final stamp to a later pass.
-          // (We never closed — Daniel did; nothing to roll back.)
-          plan.result = steps.join(" ") + " -> STOP (review failed), deferred";
-          await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
-            reservationId: r.reservationId,
-            error: `review ${rev.status} ${rev.httpStatus ?? ""} ${rev.error ?? ""}`.trim(),
-          });
-          planned.push(plan);
-          continue;
-        }
-      } else if (!reviewEligible) {
-        steps.push("review=skip(ineligible)");
-        // mark review step "done" so it isn't retried — ineligible is terminal.
-        if (!alreadyReviewed) {
-          await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
-            reservationId: r.reservationId,
-            review_done_at: Date.now(),
-          });
-        }
-      } else {
-        // alreadyReviewed (the only remaining case — manual close is confirmed,
-        // so the review action is unlocked; "locked" is unreachable here).
-        steps.push("review=skip(already)");
-      }
-
-      // 4. discount chat message (eligible + not already) — defer ONLY the message during quiet hours ──
-      if (willMessage) {
-        if (isWithinUkQuietHours()) {
-          steps.push("msg=defer(quiet_hours)");
-          // leave msg_done_at unset so a later (non-quiet) pass sends it; the
-          // rating already fired, so the row stays pending until the message +
-          // final stamp land. (We never closed — Daniel did that manually.)
-          plan.result = steps.join(" ") + " -> message deferred to next non-quiet pass";
-          planned.push(plan);
-          continue;
-        }
-        const m = await sendOrderMessage({ ...base, text: r.review_message! });
-        steps.push(`msg=${m.status}${m.httpStatus ? "/" + m.httpStatus : ""}`);
-        if (m.status === "sent") {
-          await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
-            reservationId: r.reservationId,
-            msg_done_at: Date.now(),
-          });
-        } else {
-          plan.result = steps.join(" ") + " -> STOP (message failed), deferred";
-          await ctx.runMutation(internal.reservations.recordAutoCloseFailure, {
-            reservationId: r.reservationId,
-            error: `msg ${m.status} ${m.httpStatus ?? ""} ${m.error ?? ""}`.trim(),
-          });
-          planned.push(plan);
-          continue;
-        }
-      } else if (!messageEligible) {
-        steps.push("msg=skip(ineligible)");
-        if (!alreadyMessaged) {
-          await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
-            reservationId: r.reservationId,
-            msg_done_at: Date.now(),
-          });
-        }
-      } else {
-        steps.push("msg=skip(already)");
-      }
-
-      // 5. FINAL STAMP — drops the row from pendingPlatformClose ──
-      // markPlatformClosed is a PUBLIC mutation (the return-finalize CLI calls it
-      // by name via the HTTP client), so it lives under `api`, not `internal`.
-      await ctx.runMutation(api.reservations.markPlatformClosed, {
-        reservationId: r.reservationId,
-      });
-      steps.push("closed_stamp=set");
-      plan.result = steps.join(" ");
-      planned.push(plan);
+      const green =
+        r.return_outcome === "smooth" || r.return_outcome === "fantastic";
+      const res = await finalizeReservationClose(ctx, { reservationId, green });
+      results.push({ reservationId, green, ...res });
     }
-
-    return {
-      mode,
-      gatesOpen,
-      writesAllowed: writesAllowed(),
-      autoRateTextEnabled: autoRateTextEnabled(),
-      pendingCount: rows.length,
-      planned,
-    };
-  },
-});
-
-/**
- * Public admin trigger for the rating+text drain — used for manual dry-runs and
- * supervised manual runs. It fires the 5★ rating + discount text ONLY for orders
- * Daniel has already manually closed on Hygglo; it NEVER closes. Auth: requires
- * AUTO_CLOSE_ADMIN_TOKEN to match (skip the check entirely if the env var is
- * unset, so a dry-run is runnable from the Convex dashboard). This wrapper NEVER
- * relaxes the two write gates (READ_ONLY_MODE + AUTO_RATE_TEXT_ENABLED) — it only
- * forwards to `drain`, which enforces them.
- */
-export const adminDrainPendingClose = action({
-  args: {
-    dryRun: v.optional(v.boolean()),
-    onlyOrders: v.optional(v.array(v.string())),
-    limit: v.optional(v.number()),
-    token: v.optional(v.string()),
-  },
-  handler: async (ctx, { dryRun, onlyOrders, limit, token }): Promise<DrainResult> => {
-    const expected = process.env.AUTO_CLOSE_ADMIN_TOKEN;
-    if (expected && token !== expected) {
-      throw new Error("unauthorized: AUTO_CLOSE_ADMIN_TOKEN mismatch");
-    }
-    return await ctx.runAction(internal.returns_autoclose.drain, {
-      dryRun,
-      onlyOrders,
-      limit,
-    });
+    return { processed: rows.length, results };
   },
 });

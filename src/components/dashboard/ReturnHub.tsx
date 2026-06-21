@@ -1,5 +1,5 @@
 "use client";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
@@ -99,6 +99,15 @@ type ReturnPayload = {
   badTags?: string[];
 };
 
+/** Shape returned by api.returns_autoclose.finalizeReturn (the live Hygglo close). */
+type FinalizeResult = {
+  ok: boolean;
+  closed: "sent" | "skipped" | "failed";
+  reviewed: "sent" | "skipped" | "n/a";
+  messaged: "sent" | "skipped" | "n/a";
+  error?: string;
+};
+
 /** Tap-able chips for annotating what was BAD (the "what went wrong" view). */
 const BAD_TAGS = [
   "Late return",
@@ -125,9 +134,9 @@ function ReturnModal({
 }: {
   item: DueReturn;
   onClose: () => void;
-  onConfirm: (p: ReturnPayload) => Promise<void>;
+  onConfirm: (p: ReturnPayload) => Promise<FinalizeResult>;
 }) {
-  const [view, setView] = useState<"choose" | "issues" | "fantastic" | "done">("choose");
+  const [view, setView] = useState<"choose" | "issues" | "fantastic" | "confirm" | "done">("choose");
   const [condition, setCondition] = useState<"minor" | "major">("minor");
   const [issueDetails, setIssueDetails] = useState("");
   const [issueAction, setIssueAction] = useState<"none" | "flag" | "blacklist">("none");
@@ -136,6 +145,10 @@ function ReturnModal({
   const [summary, setSummary] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Payload staged by an outcome tap, fired by the inline "close on Hygglo" confirm.
+  const [pending, setPending] = useState<ReturnPayload | null>(null);
+  // Status object returned by finalizeReturn — drives the done-screen copy.
+  const [result, setResult] = useState<FinalizeResult | null>(null);
   const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
   const [goodTags, setGoodTags] = useState<Set<string>>(() => new Set());
   const discountCode = item.accountSlug === "dbcinema" ? "DB15OFF" : "LEO10OFF";
@@ -153,15 +166,32 @@ function ReturnModal({
   const badList = Array.from(issueTags);
   const goodList = Array.from(goodTags);
 
-  async function finish(p: ReturnPayload, msg: string) {
+  // Tap on an outcome stages the payload + summary, then routes to the inline
+  // confirm step (the close on Hygglo is irreversible, so we ask once more).
+  function stage(p: ReturnPayload, msg: string) {
     if (submitting) return;
     setError(null);
     setSummary(msg);
+    setPending(p);
+    setView("confirm");
+  }
+
+  // Inline confirm fires the live finalizeReturn action (close → re-GET → 5★ →
+  // text). On a failed close we keep the modal open + re-actionable; the action
+  // is idempotent, so re-tapping only retries the missing steps.
+  async function fire() {
+    if (submitting || !pending) return;
+    setError(null);
     setSubmitting(true);
     try {
-      await onConfirm(p);
-      setView("done");
-      setTimeout(onClose, 2200);
+      const res = await onConfirm(pending);
+      setResult(res);
+      if (res.ok) {
+        setView("done");
+        setTimeout(onClose, 3200);
+      } else {
+        setError(res.error || "Hygglo close failed — tap again to retry.");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -231,7 +261,7 @@ function ReturnModal({
             <div className="space-y-2">
               <button
                 disabled={submitting}
-                onClick={() => finish({ outcome: "smooth", condition: "good", sendReview: true, goodTags: goodList.length ? goodList : undefined }, `✓ Returned · queued — after you close on Hygglo: auto 5★ + ${discountCode}`)}
+                onClick={() => stage({ outcome: "smooth", condition: "good", sendReview: true, goodTags: goodList.length ? goodList : undefined }, `✓ Closed on Hygglo · 5★ left · ${discountCode} sent`)}
                 className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
               >
@@ -325,9 +355,9 @@ function ReturnModal({
               <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
                 disabled={submitting}
-                onClick={() => finish(
+                onClick={() => stage(
                   { outcome: "issues", condition, notes: composedIssues || undefined, issueDetails: composedIssues || undefined, flagOnRequest: issueAction === "flag", blacklist: issueAction === "blacklist", blacklistReason: issueAction === "blacklist" ? (reason || composedIssues || undefined) : undefined, sendReview: false, badTags: badList.length ? badList : undefined, goodTags: goodList.length ? goodList : undefined },
-                  issueAction === "blacklist" ? "⛔ Logged · renter blacklisted · close on Hygglo yourself (no auto rating/text)" : issueAction === "flag" ? "⚑ Logged · flagged on next request · close on Hygglo yourself (no auto rating/text)" : "Issue logged to renter history · close on Hygglo yourself (no auto rating/text)",
+                  issueAction === "blacklist" ? "⛔ Closed on Hygglo · renter blacklisted · no rating/discount (issues)" : issueAction === "flag" ? "⚑ Closed on Hygglo · flagged on next request · no rating/discount (issues)" : "✓ Closed on Hygglo · no rating/discount (issues)",
                 )}
                 className="text-sm px-4 py-1.5 rounded transition-colors disabled:opacity-40"
                 style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)" }}
@@ -359,7 +389,7 @@ function ReturnModal({
               <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
                 disabled={submitting}
-                onClick={() => finish({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted · queued — after you close on Hygglo: auto 5★ + ${discountCode}`)}
+                onClick={() => stage({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted · Closed on Hygglo · 5★ left · ${discountCode} sent`)}
                 className="text-sm px-4 py-1.5 rounded font-semibold transition-colors disabled:opacity-40"
                 style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
               >
@@ -369,15 +399,69 @@ function ReturnModal({
           </>
         )}
 
-        {view === "done" && (
-          <div className="flex flex-col items-center py-3 gap-2 text-center">
-            <div className="text-4xl">✓</div>
-            <p className="text-sm font-semibold text-[#e4e6eb]">{summary}</p>
-            <p className="text-[10px] text-[#8b8fa3] mt-1 px-2 leading-snug">
-              <b>You close the rental on Hygglo yourself</b> — the system never closes it. Once you have, a good renter is auto-sent a <b>5★ rating + discount code</b>; flagged / blacklisted renters get neither. Flag / whitelist / blacklist are saved now.
-            </p>
-          </div>
-        )}
+        {view === "confirm" && (() => {
+          const green = pending?.outcome === "smooth" || pending?.outcome === "fantastic";
+          return (
+            <>
+              <h3 className="text-base font-semibold text-[#e4e6eb] mb-2">Close on Hygglo now?</h3>
+              {errorBanner}
+              <div className="text-xs mb-3 px-2.5 py-2 rounded-lg leading-snug" style={{ background: "rgba(245,158,11,0.1)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.3)" }}>
+                Closes <b>{item.renterName}</b> on Hygglo now — <b>this can&apos;t be undone</b>.
+                {green
+                  ? <> Then auto-leaves a <b>5★ rating</b> + sends <b>{discountCode}</b>.</>
+                  : <> No rating or discount is sent (issues).</>}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
+                <button
+                  onClick={fire}
+                  disabled={submitting}
+                  className="text-sm px-4 py-1.5 rounded font-semibold transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                  style={{ background: "rgba(34,197,94,0.16)", color: "#34d399", border: "1px solid rgba(34,197,94,0.45)" }}
+                >
+                  {submitting && (
+                    <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden />
+                  )}
+                  {submitting ? "Closing on Hygglo…" : "Close on Hygglo"}
+                </button>
+              </div>
+            </>
+          );
+        })()}
+
+        {view === "done" && (() => {
+          // Render the done copy off the action's returned statuses. `summary`
+          // (the per-outcome headline) is the primary line; sub-notes flag any
+          // step that didn't fire (review/text skipped) or the inert state.
+          const r = result;
+          const green = pending?.outcome === "smooth" || pending?.outcome === "fantastic";
+          const inert = r?.closed === "skipped";
+          let headline = summary;
+          if (inert) headline = "Marked returned — Hygglo close is currently disabled";
+          const subNotes: string[] = [];
+          if (r?.closed === "sent" && green) {
+            if (r.reviewed === "skipped") subNotes.push("5★ rating wasn’t left");
+            if (r.messaged === "skipped") subNotes.push(`${discountCode} wasn’t sent`);
+          }
+          return (
+            <div className="flex flex-col items-center py-3 gap-2 text-center">
+              <div className="text-4xl">{inert ? "•" : "✓"}</div>
+              <p className="text-sm font-semibold text-[#e4e6eb]">{headline}</p>
+              {subNotes.length > 0 && (
+                <p className="text-[11px] leading-snug" style={{ color: "#fbbf24" }}>
+                  Closed, but {subNotes.join(" · ")} — retry from the Return Hub if needed.
+                </p>
+              )}
+              <p className="text-[10px] text-[#8b8fa3] mt-1 px-2 leading-snug">
+                {inert
+                  ? <>The rental is marked returned. Hygglo close is gated off pre-go-live — nothing was closed or sent.</>
+                  : green
+                    ? <>Closed on Hygglo for you. A good renter is auto-sent a <b>5★ rating + {discountCode}</b>; flag / whitelist / blacklist are saved.</>
+                    : <>Closed on Hygglo for you. No rating or discount is sent on an issues return; flag / blacklist are saved.</>}
+              </p>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -559,12 +643,14 @@ export function ReturnHub() {
   const rows = useQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
   const [active, setActive] = useState<DueReturn | null>(null);
   const [caseFor, setCaseFor] = useState<DueReturn | null>(null);
-  const markReturned = useMutation(api.reservations.markReturned);
+  // finalizeReturn = markReturned (CRM save, status, reactive-query refresh that
+  // drops the card) PLUS the live Hygglo close + courtesy flow. Same args object.
+  const finalizeReturn = useAction(api.returns_autoclose.finalizeReturn);
   const openCase = useMutation(api.insurance_claims.openCaseFromReservation);
 
-  async function handleReturn(p: ReturnPayload) {
-    if (!active) return;
-    await markReturned({
+  async function handleReturn(p: ReturnPayload): Promise<FinalizeResult> {
+    if (!active) throw new Error("No active return selected");
+    return await finalizeReturn({
       reservationId: active.reservationId,
       condition: p.condition,
       notes: p.notes,
@@ -682,7 +768,7 @@ export function ReturnHub() {
                 );
               })}
             </div>
-            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · shows only after return time · you close on Hygglo, then auto 5★ + code</p>
+            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · shows only after return time · one tap closes on Hygglo + auto 5★ + code</p>
           </>
         )}
       </Card>

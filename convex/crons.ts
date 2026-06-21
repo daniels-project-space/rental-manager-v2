@@ -206,21 +206,12 @@ crons.daily(
   {},
 );
 
-// ── Phase 9 — Auto rate+text after MANUAL close (GATED) ───────────────────
-// POLICY (Daniel, 2026-06-17): the system NEVER closes a rental — Daniel closes
-// each one MANUALLY on Hygglo. This drain only fires the 5★ rating + discount
-// text, and ONLY for orders Daniel has already manually closed (detected live:
-// the order's `review` action has unlocked). It never imports/calls returnOrder.
-// SAFE TO SHIP LIVE: no Hygglo write unless BOTH gates are open —
-//   READ_ONLY_MODE !== "true"  AND  AUTO_RATE_TEXT_ENABLED === "true"
-// — and the close verb is additionally HARD-BLOCKED at the chokepoint
-// (ALLOW_RETURN_WRITES, default off). Rows for un-closed rentals are skipped
-// ("awaiting manual close") and left pending. See convex/returns_autoclose.ts.
-crons.interval(
-  "auto rate+text after manual close",
-  { minutes: 5 },
-  internal.returns_autoclose.drain,
-  { dryRun: false },
-);
+// ── Phase 6 (2026-06-21) — Return close is now OPERATOR-TRIGGERED, NO CRON ──
+// The old 5-min "auto rate+text after manual close" interval that called
+// internal.returns_autoclose.drain was REMOVED. The Return Hub rating tap now
+// closes on Hygglo + (green) rates + texts in one operator action via the public
+// action api.returns_autoclose.finalizeReturn. There is no background close path.
+// One-time backfill of pre-rework pending rows: api.returns_autoclose.adminBackfillClose
+// (manual, token-guarded — never a cron). See convex/returns_autoclose.ts.
 
 export default crons;
