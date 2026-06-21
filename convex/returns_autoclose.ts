@@ -25,10 +25,17 @@
  * sendOrderMessage stay behind READ_ONLY_MODE (permissive-by-default).
  *
  * ── IDEMPOTENCY ───────────────────────────────────────────────────────────
- * `finalizeReservationClose` is safe to re-run:
- *   • Already-closed detection: if the live order's `actions.return` is already
- *     consumed (review action unlocked) OR platform_returned_at / platform_closed_at
- *     is already stamped, the close is SKIPPED (no double close).
+ * `finalizeReservationClose` is safe to re-run. Already-closed detection is
+ * robust to EVERY terminal state of the Hygglo action-machine
+ * (RENTED → RETURNED → REVIEWED), guarding against the `actions` map being null:
+ *   • local platform_returned_at / platform_closed_at already stamped, OR
+ *   • live order's `return` action no longer available, which splits into:
+ *       – `actions.review === true` (MIDDLE state: closed but not yet reviewed)
+ *         ⇒ close SKIPPED, but a green order still fires the 5★ + discount, OR
+ *       – neither return nor review available (TERMINAL: already REVIEWED, e.g.
+ *         `actions` is null) ⇒ skip the close AND the courtesy flow; stamp it
+ *         closed LOCALLY only — NO Hygglo write (a `returnOrder` here would 500
+ *         with ACTION_NOT_ALLOWED).
  *   • Per-step stamps (platform_returned_at, review_done_at, msg_done_at) plus the
  *     final platform_closed_at mean a partial-failure re-run never repeats a
  *     completed step (never re-close / re-rate / re-spam).
@@ -172,27 +179,73 @@ async function finalizeReservationClose(
   const base = { accountSlug, hyggloOrderId };
 
   // ── 1. CLOSE (idempotent) ───────────────────────────────────────────────
-  // Already-closed detection avoids a double close:
-  //   • platform_returned_at already stamped (a prior run sent the close), OR
-  //   • the live order's `review` action is already unlocked (return consumed —
-  //     manual or prior auto close).
-  let reviewUnlocked = false;
+  // Already-closed detection avoids a double close — robust to ALL terminal
+  // states of the Hygglo order action-machine (RENTED → RETURNED → REVIEWED).
+  //
+  // The live order exposes an `actions` map that walks the machine forward
+  // (hygglo-write.ts: "actions.review flips false→true once the order moves
+  // RETURNED→REVIEWED"). `actions` can be NULL (no action available — happens in
+  // the fully-resolved REVIEWED state), so EVERY access must be null-guarded:
+  //   • actions.return === true  ⇒ NOT closed yet (return action available).
+  //   • actions.review === true  ⇒ closed-but-NOT-reviewed (return consumed,
+  //                                 review unlocked) — the MIDDLE state: a green
+  //                                 order should still fire the 5★ + discount.
+  //   • neither available (actions null / both falsy) AFTER a successful probe
+  //     ⇒ FULLY RESOLVED (already returned AND already reviewed) — skip the
+  //       close, the review AND the message; just stamp it closed locally so it
+  //       drops from the pending feed. (James 3991399: already closed+reviewed
+  //       on Hygglo ⇒ a `returnOrder` here 500s with ACTION_NOT_ALLOWED.)
+  //
+  // Detection sources, in order of trust:
+  //   • local platform_returned_at already stamped (a prior run sent the close), OR
+  //   • the live order says return is no longer available (reviewUnlocked OR
+  //     fullyResolved) ⇒ the close already happened on Hygglo.
+  let reviewUnlocked = false; // closed but review still pending (MIDDLE state)
+  let fullyResolved = false; // closed AND reviewed already (TERMINAL state)
   let closeStatus: CloseStepResult["closed"];
 
   let alreadyClosed = r.platform_returned_at != null;
   if (!alreadyClosed) {
     try {
       const order = await getOrder(accountSlug, hyggloOrderId);
-      reviewUnlocked = !!(order && order.actions && order.actions.review === true);
-      alreadyClosed = reviewUnlocked;
+      const actions = order?.actions ?? null; // NB: may be null when REVIEWED
+      const returnAvailable = actions?.return === true; // close not yet done
+      reviewUnlocked = actions?.review === true; // closed, review pending
+      // Fully resolved = a successful probe showed NEITHER return NOR review
+      // available ⇒ the order has already advanced past REVIEWED. (Only trust
+      // this from a probe that actually returned an order object.)
+      fullyResolved = !!order && !returnAvailable && !reviewUnlocked;
+      // Any non-`returnAvailable` terminal state means the close already
+      // happened — never re-issue `returnOrder`.
+      alreadyClosed = reviewUnlocked || fullyResolved;
     } catch (e) {
       // probe failed and not previously stamped — attempt the close below.
       reviewUnlocked = false;
+      fullyResolved = false;
     }
   }
 
+  // FULLY RESOLVED (already closed AND reviewed on Hygglo): no Hygglo write of
+  // any kind. Stamp every step + the final close LOCALLY so the row drops from
+  // pendingPlatformClose, and report it skipped-because-already-reviewed.
+  if (fullyResolved) {
+    await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
+      reservationId,
+      platform_returned_at: r.platform_returned_at ?? Date.now(),
+      review_done_at: r.review_done_at ?? Date.now(),
+      msg_done_at: r.msg_done_at ?? Date.now(),
+    });
+    await ctx.runMutation(api.reservations.markPlatformClosed, { reservationId });
+    return {
+      closed: "skipped",
+      reviewed: "skipped",
+      messaged: "skipped",
+      error: "already-closed-reviewed",
+    };
+  }
+
   if (alreadyClosed) {
-    closeStatus = "skipped"; // no double close
+    closeStatus = "skipped"; // no double close (closed, review still pending)
   } else {
     const cl = await returnOrder({ ...base });
     if (cl.status === "sent") {
@@ -231,7 +284,7 @@ async function finalizeReservationClose(
   if (closeStatus === "sent" || (alreadyClosed && !reviewUnlocked)) {
     try {
       const order2 = await getOrder(accountSlug, hyggloOrderId);
-      reviewUnlocked = !!(order2 && order2.actions && order2.actions.review === true);
+      reviewUnlocked = order2?.actions?.review === true;
     } catch {
       // leave reviewUnlocked as-is; review step will report its own status.
     }
