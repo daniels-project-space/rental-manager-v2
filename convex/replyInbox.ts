@@ -32,9 +32,23 @@ export const getReplyQueue = query({
     // urgent) — those would dominate the top. Default keeps it actionable;
     // raise it to dig into the older backlog.
     withinDays: v.optional(v.number()),
+    // When false (default) hide threads whose rental is already finished
+    // (completed / cancelled / declined / returned / reviewed) so the inbox is
+    // live + inquiry conversations only (Daniel, 2026-06-22).
+    includeFinished: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, limit = 50, withinDays = 30 }) => {
+  handler: async (
+    ctx,
+    { accountSlug, limit = 50, withinDays = 5, includeFinished = false },
+  ) => {
     const cutoff = Date.now() - withinDays * 86_400_000;
+    const FINISHED_STATUS = new Set(["completed", "cancelled", "declined"]);
+    const FINISHED_STEP = new Set([
+      "RETURNED",
+      "REVIEWED",
+      "CANCELED",
+      "VERIFICATION_FAILED",
+    ]);
     const convos = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
@@ -52,6 +66,18 @@ export const getReplyQueue = query({
           q.eq("hygglo_order_id", conv.thread_id),
         )
         .first();
+
+      // Hide finished rentals — keep inquiries (no reservation) + active /
+      // confirmed / pending only.
+      if (!includeFinished && reservation) {
+        const st = reservation.status;
+        const step = reservation.order_step;
+        if (
+          (st && FINISHED_STATUS.has(st)) ||
+          (step && FINISHED_STEP.has(step))
+        )
+          continue;
+      }
 
       // Account slug: reservation → conversation → resolve via account_id.
       let slug = reservation?.account_slug ?? conv.account_slug ?? undefined;
