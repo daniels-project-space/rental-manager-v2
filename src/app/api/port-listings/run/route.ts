@@ -19,7 +19,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
-import { getVaultSecrets } from "../../../../lib/hygglo-auth";
+import { renderListingsBatch } from "@/trigger/render-listing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,20 +51,7 @@ export async function POST(req: Request) {
   const convex = new ConvexHttpClient(convexUrl);
 
   try {
-    // 1) Require a detected gradient profile.
-    const config = await convex.query(api.ported_listings.getConfig, {
-      key: "leo",
-    });
-    const gradientProfile = (config as { gradientProfile?: unknown } | null)
-      ?.gradientProfile;
-    if (!config || !gradientProfile) {
-      return NextResponse.json(
-        { ok: false, error: "no_gradient_profile_detected" },
-        { status: 400 },
-      );
-    }
-
-    // 2) Compute the missing set.
+    // 1) Compute the missing set.
     const { missing } = (await convex.query(api.ported_listings.diff, {})) as {
       missing: Array<{
         productId: string;
@@ -74,15 +61,15 @@ export async function POST(req: Request) {
       }>;
     };
 
-    const items = missing
+    const renderItems = missing
       .filter((m) => m.dbImageUrl)
-      .map((m) => ({ productId: m.productId, imageUrl: m.dbImageUrl }));
+      .map((m) => ({ sourceImageUrl: m.dbImageUrl, title: m.name, productId: m.productId }));
 
-    if (items.length === 0) {
+    if (renderItems.length === 0) {
       return NextResponse.json({ ok: true, started: false, count: 0 });
     }
 
-    // 3) Mark every target pending (idempotent upsert by productId).
+    // 2) Mark every target pending (idempotent upsert by productId).
     for (const m of missing) {
       await convex.mutation(api.ported_listings.upsert, {
         productId: m.productId,
@@ -94,42 +81,16 @@ export async function POST(req: Request) {
       });
     }
 
-    // 4) Hand the batch to the VPS port service (async — it calls back).
-    const secrets = await getVaultSecrets("hygglo");
-    const serviceUrl = secrets.HYGGLO_PORT_SERVICE_URL;
-    const serviceToken = secrets.HYGGLO_PORT_SERVICE_TOKEN;
-    if (!serviceUrl || !serviceToken) {
-      return NextResponse.json(
-        { ok: false, error: "vault_missing_port_service_creds" },
-        { status: 503 },
-      );
-    }
-
-    const res = await fetch(`${serviceUrl.replace(/\/+$/, "")}/port-batch`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${serviceToken}`,
-      },
-      body: JSON.stringify({
-        items,
-        gradientProfile,
-        mode: "products_only",
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      return NextResponse.json(
-        { ok: false, error: `vps_port_batch_failed: ${res.status} ${text.slice(0, 200)}` },
-        { status: 502 },
-      );
-    }
-    const out = (await res.json()) as { started?: boolean; count?: number };
+    // 3) Render the batch on Trigger.dev (cloud) — each item is cut out
+    // (Replicate BiRefNet), composited onto the brand plate + header, and stored
+    // in R2. No VPS. (Items keep their dbImageUrl as the render source.)
+    const handle = await renderListingsBatch.trigger({ account: "leo", items: renderItems });
 
     return NextResponse.json({
       ok: true,
-      started: out.started ?? true,
-      count: out.count ?? items.length,
+      started: true,
+      count: renderItems.length,
+      runId: handle.id,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

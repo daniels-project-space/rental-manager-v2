@@ -1,14 +1,21 @@
 /**
  * render-listing — cloud listing-image renderer (replaces the VPS render batch).
  *
- * Per item: fal.ai cutout → sharp brand composite (plate + shadow + house
- * header) → store the PNG in R2 under `rendered/<account>/<slug>.png`. No VPS.
+ * The heavy image work (Replicate cutout + sharp/opentype compose → R2) runs on
+ * Vercel at POST /api/render, because sharp's native libvips binary doesn't load
+ * in Trigger's deploy image. This task simply ORCHESTRATES: it calls that Vercel
+ * endpoint per item. No VPS, and no native deps in the Trigger bundle.
  *
- * Trigger from the dashboard (create flow) or in bulk via `renderListingsBatch`.
+ * Set RENDER_API_BASE (the deployed RM base URL, e.g. https://<app>.vercel.app)
+ * in the Trigger environment for these tasks to reach the render endpoint.
  */
 import { task } from "@trigger.dev/sdk/v3";
-import { renderFromSource } from "@/lib/render/compose";
-import { putPng } from "@/mastra/lib/r2-client";
+
+function renderBase(): string {
+  const base = process.env.RENDER_API_BASE;
+  if (!base) throw new Error("RENDER_API_BASE is not set (deployed RM base URL)");
+  return base.replace(/\/+$/, "");
+}
 
 export interface RenderListingPayload {
   /** Render brand/account: "leo" | "diogo". */
@@ -21,26 +28,20 @@ export interface RenderListingPayload {
   productId?: string;
 }
 
-function slug(s: string): string {
-  return (s || "item")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 50) || "item";
-}
-
 export const renderListing = task({
   id: "render-listing",
   maxDuration: 180,
   run: async (payload: RenderListingPayload) => {
-    const png = await renderFromSource({
-      account: payload.account,
-      sourceImageUrl: payload.sourceImageUrl,
-      title: payload.title,
+    const res = await fetch(`${renderBase()}/api/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
-    const key = `rendered/${payload.account}/${payload.productId ?? slug(payload.title)}.png`;
-    await putPng(key, png);
-    return { ok: true, key, bytes: png.length };
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; key?: string; error?: string };
+    if (!res.ok || !data.ok) {
+      throw new Error(`render failed (${res.status}): ${data.error ?? "unknown"}`);
+    }
+    return { ok: true, key: data.key };
   },
 });
 
@@ -54,9 +55,7 @@ export const renderListingsBatch = task({
   maxDuration: 300,
   run: async (payload: RenderListingsBatchPayload) => {
     const runs = await renderListing.batchTrigger(
-      payload.items.map((it) => ({
-        payload: { account: payload.account, ...it },
-      })),
+      payload.items.map((it) => ({ payload: { account: payload.account, ...it } })),
     );
     return { ok: true, triggered: payload.items.length, batchId: runs.batchId };
   },

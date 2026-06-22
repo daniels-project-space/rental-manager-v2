@@ -1,39 +1,36 @@
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
+import { getR2 } from "@/mastra/lib/r2-client";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 
-// Server-side proxy to the Hygglo porting service'\''s Command Center feed.
-// The dashboard is served over HTTPS (Vercel) while the porting service is
-// plain HTTP on the VPS, so the browser cannot fetch it directly (mixed
-// content + CORS). This route fetches it server-side and re-serves it, and
-// also proxies the HTTP listing thumbnails (?image=<url>) for the same reason.
-const FEED =
-  process.env.PORTING_FEED_URL ??
-  "http://87.106.233.113/ported-proof-v4/command_center.json";
-const ALLOWED_IMAGE_HOST = "87.106.233.113";
+// Brand Control feed — served entirely from R2 (no VPS). The porting gallery
+// (command_center.json + rendered PNGs) was migrated to `gallery/...` in the
+// shared bucket; this route serves the feed and proxies the images by key
+// (R2 has no public base, so reads go through GetObject server-side).
+const FEED_KEY = "gallery/command_center.json";
 
 export const revalidate = 0;
 export const dynamic = "force-dynamic";
 
+async function r2Object(key: string) {
+  const { s3, bucket } = await getR2();
+  return s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+}
+
 export async function GET(req: NextRequest) {
   const img = req.nextUrl.searchParams.get("image");
 
-  // --- image proxy (only for the porting host) ---
+  // --- image proxy (R2 keys under gallery/) ---
   if (img) {
-    let url: URL;
-    try {
-      url = new URL(img);
-    } catch {
-      return NextResponse.json({ error: "bad image url" }, { status: 400 });
-    }
-    if (url.hostname !== ALLOWED_IMAGE_HOST) {
-      return NextResponse.json({ error: "host not allowed" }, { status: 403 });
+    if (!img.startsWith("gallery/")) {
+      return NextResponse.json({ error: "key not allowed" }, { status: 403 });
     }
     try {
-      const r = await fetch(url.toString(), { cache: "no-store" });
-      if (!r.ok) return NextResponse.json({ error: `img ${r.status}` }, { status: 502 });
-      const buf = await r.arrayBuffer();
-      return new NextResponse(buf, {
+      const resp = await r2Object(img);
+      const bytes = await resp.Body!.transformToByteArray();
+      return new NextResponse(Buffer.from(bytes), {
         headers: {
-          "content-type": r.headers.get("content-type") ?? "image/png",
+          "content-type": resp.ContentType ?? "image/png",
           "cache-control": "public, max-age=300",
         },
       });
@@ -42,13 +39,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // --- feed proxy ---
+  // --- feed ---
   try {
-    const r = await fetch(FEED, { cache: "no-store" });
-    if (!r.ok) return NextResponse.json({ error: `feed ${r.status}` }, { status: 502 });
-    const data = await r.json();
-    return NextResponse.json(data, {
-      headers: { "cache-control": "no-store" },
+    const resp = await r2Object(FEED_KEY);
+    const text = await resp.Body!.transformToString();
+    return new NextResponse(text, {
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
