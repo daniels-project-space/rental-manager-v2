@@ -27,11 +27,11 @@ import type { TooltipContentProps } from "recharts";
 // V1 colour palette (matches /home/ubuntu/rental-manager/src/public/js/dashboard-core.js).
 // Order is bottom → top of the stack. Only segments that can crown the stack get radius.
 const SERIES = [
-  { key: "danielOrganic",       label: "Daniel (retired)",        color: "#f97316", fill: "url(#grad-daniel)",      roundTop: false },
+  { key: "danielOrganic",       label: "Daniel (retired)",        color: "#ec4899", fill: "url(#grad-daniel)",      roundTop: false },
   { key: "vertusOrganic",       label: "Vertus (retired)",        color: "#8b5a2b", fill: "url(#grad-vertus)",      roundTop: false },
   { key: "dbcinemaOrganic",     label: "DB Cinema",               color: "#6366f1", fill: "url(#grad-dbcinema)",    roundTop: false },
   { key: "leoOrganic",          label: "Leo Adams",               color: "#a855f7", fill: "url(#grad-leo)",         roundTop: false },
-  { key: "diogoOrganic",        label: "Diogo Valdivieso",        color: "#ec4899", fill: "url(#grad-diogo)",       roundTop: false },
+  { key: "diogoOrganic",        label: "Diogo Valdivieso",        color: "#f97316", fill: "url(#grad-diogo)",       roundTop: false },
   { key: "aiBoost",             label: "AI Boost",                color: "#22c55e", fill: "url(#grad-ai)",          roundTop: true  },
   { key: "damageClaims",        label: "Claims",                  color: "#ffffff", fill: "url(#grad-damage)",      roundTop: true  },
   { key: "bookedNext",          label: "Booked (next mo)",        color: "#94a3b8", fill: "url(#grad-booked)",      roundTop: true  },
@@ -443,8 +443,8 @@ export function LifetimeRevenue() {
                 {/* Per-series vertical gradients — lighter at top of bar, darker at base.
                     Gives bars a depth/sheen instead of flat rgba. */}
                 <linearGradient id="grad-daniel" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
-                  <stop offset="100%" stopColor="#c2410c" stopOpacity={0.85} />
+                  <stop offset="0%" stopColor="#f472b6" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#be185d" stopOpacity={0.85} />
                 </linearGradient>
                 <linearGradient id="grad-vertus" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#b07a4a" stopOpacity={0.95} />
@@ -459,8 +459,8 @@ export function LifetimeRevenue() {
                   <stop offset="100%" stopColor="#7e22ce" stopOpacity={0.85} />
                 </linearGradient>
                 <linearGradient id="grad-diogo" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#f472b6" stopOpacity={0.95} />
-                  <stop offset="100%" stopColor="#be185d" stopOpacity={0.85} />
+                  <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#c2410c" stopOpacity={0.85} />
                 </linearGradient>
                 <linearGradient id="grad-ai" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#4ade80" stopOpacity={0.9} />

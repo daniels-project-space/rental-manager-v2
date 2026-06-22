@@ -12,9 +12,64 @@ const ACCOUNTS = [
   { slug: "diogo", label: "Diogo", color: "#ec4899" },
 ];
 
+type AccountMeta = { slug: string; display_name: string; profile_image_url: string | null };
+
+function imgForSlug(metas: AccountMeta[] | undefined, slug: string): string | null {
+  return metas?.find((m) => m.slug === slug)?.profile_image_url ?? null;
+}
+
+/** Circular profile-picture cutout (or initials fallback) with a coloured ring. */
+function AccountAvatar({
+  src,
+  label,
+  size,
+  ringColor,
+}: {
+  src: string | null;
+  label: string;
+  size: number;
+  ringColor: string;
+}) {
+  return (
+    <span
+      className="relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full"
+      style={{ width: size, height: size, boxShadow: `0 0 0 1.5px ${ringColor}`, background: "#11141d" }}
+    >
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt={label} className="h-full w-full object-cover" />
+      ) : (
+        <span style={{ fontSize: size * 0.42, fontWeight: 700, color: "#cbd2e0" }}>
+          {label.replace(/[^A-Za-z]/g, "").slice(0, 2).toUpperCase()}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Overlapping avatar stack for the "All" pill — reads as "every account". */
+function AllAvatars({ metas }: { metas: AccountMeta[] | undefined }) {
+  const slugs = ["dbcinema", "leo", "diogo"];
+  return (
+    <span className="inline-flex items-center">
+      {slugs.map((s, i) => (
+        <span
+          key={s}
+          className="inline-flex"
+          style={{ marginLeft: i === 0 ? 0 : -7, zIndex: slugs.length - i }}
+        >
+          <AccountAvatar src={imgForSlug(metas, s)} label={s} size={18} ringColor="#070910" />
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function HeaderBar() {
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const settings = useQuery(api.settings.get);
+  // Per-account profile pictures (Hygglo avatars seeded into the accounts table).
+  const accountsMeta = useQuery(api.accounts.list) as AccountMeta[] | undefined;
   // Global freshness signal — sourced from sync_state via dashboard.getStatsDrawerData.
   // (the Scanner card already reads the same field; this surfaces it in the header
   // so every widget gets an at-a-glance "how live is this dashboard" cue.)
@@ -55,23 +110,35 @@ export function HeaderBar() {
           </span>
         </div>
 
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1.5">
           {ACCOUNTS.map((a) => {
             const active = activeAccountSlug === a.slug;
+            const accent = a.color ?? "#e4e6eb";
             return (
               <button
                 key={String(a.slug)}
                 onClick={() => setActiveAccountSlug(a.slug)}
-                className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+                title={a.label}
+                aria-pressed={active}
+                className="flex items-center gap-2 rounded-full py-1 pl-1 pr-1.5 sm:pr-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-px"
                 style={{
-                  background: active ? `${a.color ?? "#e4e6eb"}22` : "transparent",
-                  color: active ? (a.color ?? "#e4e6eb") : "#8b8fa3",
-                  border: active
-                    ? `1px solid ${a.color ?? "#e4e6eb"}55`
-                    : "1px solid transparent",
+                  background: active ? `${accent}1f` : "rgba(255,255,255,0.035)",
+                  color: active ? accent : "#9aa0ad",
+                  border: `1px solid ${active ? `${accent}66` : "rgba(255,255,255,0.07)"}`,
+                  boxShadow: active ? `0 2px 12px ${accent}33` : "none",
                 }}
               >
-                {a.label}
+                {a.slug === null ? (
+                  <AllAvatars metas={accountsMeta} />
+                ) : (
+                  <AccountAvatar
+                    src={imgForSlug(accountsMeta, a.slug)}
+                    label={a.label}
+                    size={22}
+                    ringColor={active ? accent : "rgba(255,255,255,0.18)"}
+                  />
+                )}
+                <span className="hidden sm:inline">{a.label}</span>
               </button>
             );
           })}
