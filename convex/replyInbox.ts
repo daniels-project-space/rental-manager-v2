@@ -84,7 +84,10 @@ async function assembleTile(
     null;
 
   const step = reservation?.order_step ?? null;
-  const isRequest = step === "REQUEST"; // awaiting my approve/decline
+  // Authoritative: Hygglo's `actions` map (awaiting_owner_action) — the literal
+  // accept/deny trigger. Fall back to the active order step for rows not yet
+  // re-polled with the actions signal.
+  const isRequest = reservation?.awaiting_owner_action ?? step === "REQUEST";
   const lastRenterAt =
     conv?.last_renter_msg_at ??
     conv?.last_msg_at ??
@@ -185,10 +188,26 @@ export const getReplyQueue = query({
     // Pass 2 — ALWAYS surface rental REQUESTs awaiting my approve/decline, even
     // if I spoke last or it's outside the recency window. This is what makes the
     // Approve / Decline buttons reliably reachable.
-    const requests = await ctx.db
-      .query("reservations")
-      .withIndex("by_order_step", (q) => q.eq("order_step", "REQUEST"))
-      .collect();
+    const [byStep, byAction] = await Promise.all([
+      ctx.db
+        .query("reservations")
+        .withIndex("by_order_step", (q) => q.eq("order_step", "REQUEST"))
+        .collect(),
+      ctx.db
+        .query("reservations")
+        .withIndex("by_awaiting_owner_action", (q) =>
+          q.eq("awaiting_owner_action", true),
+        )
+        .collect(),
+    ]);
+    const seenReq = new Set<string>();
+    const requests: typeof byStep = [];
+    for (const r of [...byStep, ...byAction]) {
+      const k = r._id as unknown as string;
+      if (seenReq.has(k)) continue;
+      seenReq.add(k);
+      requests.push(r);
+    }
     for (const r of requests) {
       const threadId = r.hygglo_order_id;
       if (!threadId || byThread.has(threadId)) continue;

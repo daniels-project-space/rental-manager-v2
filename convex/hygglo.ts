@@ -612,6 +612,8 @@ const upsertOrderArgsFields = {
     v.literal("none"),
   )),
   hygglo_system_signal_text: v.optional(v.string()),
+  /** Reply Inbox: Hygglo `actions` map offers accept/deny (awaiting my approval). */
+  awaiting_owner_action: v.optional(v.boolean()),
 } as const;
 
 const upsertOrderArgsValidator = v.object(upsertOrderArgsFields);
@@ -759,6 +761,8 @@ async function upsertOrderImpl(
     // classifier can rely on field existence to know we've checked events.
     ...(args.hygglo_system_signal !== undefined && { hygglo_system_signal: args.hygglo_system_signal }),
     ...(args.hygglo_system_signal_text !== undefined && { hygglo_system_signal_text: args.hygglo_system_signal_text }),
+    // Reply Inbox: drives the Approve/Decline buttons (insert + every baseFields patch).
+    ...(args.awaiting_owner_action !== undefined && { awaiting_owner_action: args.awaiting_owner_action }),
   };
 
   if (existing) {

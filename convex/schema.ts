@@ -340,6 +340,11 @@ export default defineSchema({
      *  hint so future runs can re-link without refetching the order. */
     hygglo_user_id: v.optional(v.string()),
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
+    /** Reply Inbox (2026-06-22): true when Hygglo's order `actions` map currently
+     *  offers accept/deny — i.e. the request is awaiting MY approval (the trigger
+     *  shown atop the messages board). Authoritative source for the Approve/Decline
+     *  buttons; the queue falls back to order_step==="REQUEST" when unset. */
+    awaiting_owner_action: v.optional(v.boolean()),
 
     /** LLM-resolved master-inventory items for this reservation.
      *  Cleared on poll if items[] changes; re-populated by item_resolver action. */
@@ -477,6 +482,7 @@ export default defineSchema({
     // Reply Inbox (2026-06-22): cheap lookup of pending REQUESTs awaiting the
     // owner's approve/decline, so the queue can always surface them.
     .index("by_order_step", ["order_step"])
+    .index("by_awaiting_owner_action", ["awaiting_owner_action"])
     // Pass 13e (2026-05-26): obsolete rows are a small fraction of the table
     // (~50 of ~1700) and the dashboard / refresher / audit paths frequently
     // filter to them. Unindexed `.filter(is_obsolete=true)` was scanning the

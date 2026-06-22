@@ -293,6 +293,8 @@ export interface ReservationUpsertArgs {
    *  money field. */
   detail_payload?: HyggloOrderDetail;
   order_step_extracted?: HyggloOrderStepKey;
+  /** Reply Inbox: Hygglo `actions` map offers accept/deny (awaiting my approval). */
+  awaiting_owner_action?: boolean;
   sourceFilter?: string;
   renter_name?: string;
   hygglo_user_id?: string;

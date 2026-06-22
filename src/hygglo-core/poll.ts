@@ -97,6 +97,24 @@ function extractStep(order: unknown): string | undefined {
   return active?.key;
 }
 
+/**
+ * True when Hygglo's order `actions` map currently offers accept/deny — i.e. the
+ * request is awaiting the OWNER's approval (the trigger shown at the top of the
+ * messages board). Returns undefined when no actions map is present (so the
+ * consumer keeps its order_step==="REQUEST" fallback rather than forcing false).
+ */
+function extractAwaitingOwnerAction(order: unknown): boolean | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const o = order as any;
+  const actions = o?.actions ?? o?.detail?.actions ?? o?._detail?.actions;
+  if (!actions || typeof actions !== "object") return undefined;
+  return (
+    actions.accept === true ||
+    actions.deny === true ||
+    actions.provideVehicleInfoAndAccept === true
+  );
+}
+
 // ── Result shape ─────────────────────────────────────────────────────────
 
 export interface CorePollResult {
@@ -258,6 +276,7 @@ export async function corePoll(
         ? (stepRaw as HyggloOrderStepKey)
         : undefined;
     const needsRawOrder = DENIAL_SIGNALS.has(payload.hygglo_system_signal ?? "");
+    const awaitingOwnerAction = extractAwaitingOwnerAction(payload.order);
 
     reservations.push({
       account_slug,
@@ -276,6 +295,9 @@ export async function corePoll(
       // rows for upload bandwidth); never sent to the upsert mutation.
       detail_payload: payload.order,
       ...(order_step_extracted && { order_step_extracted }),
+      ...(awaitingOwnerAction !== undefined && {
+        awaiting_owner_action: awaitingOwnerAction,
+      }),
       sourceFilter: payload.sourceFilter,
       renter_name: payload.renter_name,
       hygglo_user_id: payload.hygglo_user_id,
