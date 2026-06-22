@@ -3,6 +3,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
+import { accountAccent } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -151,7 +152,15 @@ function ReturnModal({
   const [result, setResult] = useState<FinalizeResult | null>(null);
   const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
   const [goodTags, setGoodTags] = useState<Set<string>>(() => new Set());
-  const discountCode = item.accountSlug === "dbcinema" ? "DB15OFF" : "LEO10OFF";
+  // Per-account post-rental discount code sent with the 5★ review ask.
+  // NOTE: diogo's "DIOGO10OFF" must be created on Hygglo before it works —
+  // until then diogo no longer silently inherits leo's "LEO10OFF".
+  const DISCOUNT_CODES: Record<string, string> = {
+    dbcinema: "DB15OFF",
+    leo: "LEO10OFF",
+    diogo: "DIOGO10OFF",
+  };
+  const discountCode = DISCOUNT_CODES[item.accountSlug ?? ""] ?? "DB15OFF";
   const makeToggle = (setter: Dispatch<SetStateAction<Set<string>>>) => (t: string) =>
     setter((prev) => {
       const next = new Set(prev);
@@ -703,7 +712,7 @@ export function ReturnHub() {
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3 mb-3">
               {rows.map((r) => {
-                const accColor = r.accountSlug === "dbcinema" ? "#6ea8fe" : "#22c55e";
+                const accColor = accountAccent(r.accountSlug);
                 const accent = r.renter?.blacklisted ? "#ef4444" : r.isOverdue ? "#f59e0b" : accColor;
                 return (
                   <div

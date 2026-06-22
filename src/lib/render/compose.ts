@@ -12,7 +12,12 @@
  * agnostic via the font's own cap-height ratio.
  */
 import sharp from "sharp";
-import opentype from "opentype.js";
+// Namespace import (not default): opentype.js v2 ships an ESM build with only
+// named exports. A default import typechecks under esModuleInterop but breaks
+// the Turbopack production build ("Export default doesn't exist") — which was
+// silently failing every Vercel deploy. `* as` resolves the same members
+// (parse / Path / Font) under both tsc and the bundler.
+import * as opentype from "opentype.js";
 import { getAsset } from "./assets";
 import { getBrand, deriveTitle, type BrandConfig } from "./brand";
 import { stripBakedTopTitle } from "./strip";

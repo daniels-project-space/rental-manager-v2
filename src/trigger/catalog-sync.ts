@@ -43,6 +43,7 @@ const CONVEX_URL =
 const ACCOUNTS: ReadonlyArray<{ slug: string; country: string }> = [
   { slug: "leo", country: "GB" },
   { slug: "dbcinema", country: "GB" },
+  { slug: "diogo", country: "GB" },
 ];
 
 // Upsert chunk size — one mutation per chunk, not per product.

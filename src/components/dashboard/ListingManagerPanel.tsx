@@ -8,7 +8,7 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const MUTED = "#8b8fa3";
 const TEXT = "#e4e6eb";
-const ACCOUNTS = ["leo", "dbcinema"];
+const ACCOUNTS = ["leo", "dbcinema", "diogo"];
 
 type Price = { days: number; price: number; pricePerDay: number };
 type Item = {

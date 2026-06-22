@@ -74,6 +74,7 @@ export const syncAccountProfiles = internalAction({
     const accounts = [
       { slug: "dbcinema", email: sec.HYGGLO_DBCINEMA_EMAIL, password: sec.HYGGLO_DBCINEMA_PASSWORD },
       { slug: "leo", email: sec.HYGGLO_LEO_EMAIL, password: sec.HYGGLO_LEO_PASSWORD },
+      { slug: "diogo", email: sec.HYGGLO_DIOGO_EMAIL, password: sec.HYGGLO_DIOGO_PASSWORD },
     ];
     const updated: string[] = [];
     const errors: string[] = [];

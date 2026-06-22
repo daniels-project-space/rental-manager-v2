@@ -19,6 +19,7 @@ const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 const accountColor: Record<string, string> = {
   dbcinema: "bg-blue-900/60 text-blue-300",
   leo: "bg-purple-900/60 text-purple-300",
+  diogo: "bg-pink-900/60 text-pink-300",
 };
 
 export default function EarningsDrawer({ data }: Props) {

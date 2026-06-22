@@ -2,6 +2,7 @@
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
+import { accountAccent } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -30,7 +31,7 @@ function relTime(ts: number) {
 }
 
 function AccountDot({ slug }: { slug?: string }) {
-  const color = slug === "dbcinema" ? "#6ea8fe" : slug === "leo" ? "#22c55e" : "#8b8fa3";
+  const color = accountAccent(slug);
   return (
     <span
       className="inline-block w-2 h-2 rounded-full flex-shrink-0 mt-0.5"

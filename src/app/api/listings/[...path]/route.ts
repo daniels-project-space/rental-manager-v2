@@ -65,7 +65,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: stri
   const [account, sub, lid] = path;
 
   if (account === "health") {
-    return NextResponse.json({ ok: true, accounts: ["leo", "dbcinema"] });
+    return NextResponse.json({ ok: true, accounts: ["leo", "dbcinema", "diogo"] });
   }
   if (!isAllowedAccount(account)) return notFound(`unknown account '${account}'`);
 

@@ -2,6 +2,7 @@
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
+import { accountAccent } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
@@ -125,7 +126,7 @@ export function WeeklyCalendar() {
                 ) : (
                   <>
                     {day.reservations.slice(0, 3).map((r) => {
-                      const color = r.accountSlug === "dbcinema" ? "#6ea8fe" : "#22c55e";
+                      const color = accountAccent(r.accountSlug);
                       const statusColor = STATUS_COLORS[r.status] ?? "#8b8fa3";
                       return (
                         <div

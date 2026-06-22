@@ -74,6 +74,7 @@ type DayData = {
 const ACCOUNT_COLORS: Record<string, string> = {
   blue: "#3b82f6",
   purple: "#a855f7",
+  pink: "#ec4899",
 };
 
 function resolveColor(accountColor: string | undefined): string {

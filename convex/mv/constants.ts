@@ -21,7 +21,7 @@ export const PLATFORM_FEE_RATE = 0.36;
 export { OWNER_SHARE } from "../lib/revenue_attribution";
 
 /** MIRROR OF src/mastra/data/constants.ts:ACCOUNTS */
-export const ACCOUNTS = ["dbcinema", "leo"] as const;
+export const ACCOUNTS = ["dbcinema", "leo", "diogo"] as const;
 export type AccountSlug = (typeof ACCOUNTS)[number];
 
 /**

@@ -9,6 +9,7 @@ const ACCOUNTS = [
   { slug: null, label: "All" },
   { slug: "dbcinema", label: "DB Cinema", color: "#6ea8fe" },
   { slug: "leo", label: "Leo Adams", color: "#22c55e" },
+  { slug: "diogo", label: "Diogo", color: "#ec4899" },
 ];
 
 export function HeaderBar() {

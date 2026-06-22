@@ -102,7 +102,7 @@ export interface ListingChanges {
 
 // ── Client ──────────────────────────────────────────────────────────────────
 
-const ALLOWED_ACCOUNTS = new Set(["leo", "dbcinema"]);
+const ALLOWED_ACCOUNTS = new Set(["leo", "dbcinema", "diogo"]);
 
 export function isAllowedAccount(account: string): boolean {
   return ALLOWED_ACCOUNTS.has(account);

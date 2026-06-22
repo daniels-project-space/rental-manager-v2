@@ -135,6 +135,10 @@ export const auditItemQuantities = internalAction({
         email: sec.HYGGLO_LEO_EMAIL,
         password: sec.HYGGLO_LEO_PASSWORD,
       },
+      diogo: {
+        email: sec.HYGGLO_DIOGO_EMAIL,
+        password: sec.HYGGLO_DIOGO_PASSWORD,
+      },
     };
     const tokens: Record<string, string | null> = {};
     async function getToken(slug: string): Promise<string | null> {

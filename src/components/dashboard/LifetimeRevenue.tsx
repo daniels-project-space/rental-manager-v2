@@ -31,6 +31,7 @@ const SERIES = [
   { key: "vertusOrganic",       label: "Vertus (retired)",        color: "#8b5a2b", fill: "url(#grad-vertus)",      roundTop: false },
   { key: "dbcinemaOrganic",     label: "DB Cinema",               color: "#6366f1", fill: "url(#grad-dbcinema)",    roundTop: false },
   { key: "leoOrganic",          label: "Leo Adams",               color: "#a855f7", fill: "url(#grad-leo)",         roundTop: false },
+  { key: "diogoOrganic",        label: "Diogo Valdivieso",        color: "#ec4899", fill: "url(#grad-diogo)",       roundTop: false },
   { key: "aiBoost",             label: "AI Boost",                color: "#22c55e", fill: "url(#grad-ai)",          roundTop: true  },
   { key: "damageClaims",        label: "Claims",                  color: "#ffffff", fill: "url(#grad-damage)",      roundTop: true  },
   { key: "bookedNext",          label: "Booked (next mo)",        color: "#94a3b8", fill: "url(#grad-booked)",      roundTop: true  },
@@ -80,6 +81,7 @@ const ACTUAL_KEYS = [
   "vertusOrganic",
   "dbcinemaOrganic",
   "leoOrganic",
+  "diogoOrganic",
   "aiBoost",
   "damageClaims",
   "bookedNext",
@@ -455,6 +457,10 @@ export function LifetimeRevenue() {
                 <linearGradient id="grad-leo" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#c084fc" stopOpacity={0.95} />
                   <stop offset="100%" stopColor="#7e22ce" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="grad-diogo" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f472b6" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#be185d" stopOpacity={0.85} />
                 </linearGradient>
                 <linearGradient id="grad-ai" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#4ade80" stopOpacity={0.9} />

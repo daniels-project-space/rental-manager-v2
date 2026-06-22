@@ -297,6 +297,11 @@ export const pollHyggloInbox = schedules.task({
         email: hyggloSecrets["HYGGLO_LEO_EMAIL"] ?? "",
         password: hyggloSecrets["HYGGLO_LEO_PASSWORD"] ?? "",
       },
+      {
+        slug: "diogo",
+        email: hyggloSecrets["HYGGLO_DIOGO_EMAIL"] ?? "",
+        password: hyggloSecrets["HYGGLO_DIOGO_PASSWORD"] ?? "",
+      },
     ];
 
     const convex = new ConvexHttpClient(CONVEX_URL);
