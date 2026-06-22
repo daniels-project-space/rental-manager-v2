@@ -474,6 +474,9 @@ export default defineSchema({
     .index("by_start_date", ["start_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])
     .index("by_hygglo_order_id", ["hygglo_order_id"])
+    // Reply Inbox (2026-06-22): cheap lookup of pending REQUESTs awaiting the
+    // owner's approve/decline, so the queue can always surface them.
+    .index("by_order_step", ["order_step"])
     // Pass 13e (2026-05-26): obsolete rows are a small fraction of the table
     // (~50 of ~1700) and the dashboard / refresher / audit paths frequently
     // filter to them. Unindexed `.filter(is_obsolete=true)` was scanning the

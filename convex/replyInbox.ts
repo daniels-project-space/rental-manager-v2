@@ -13,6 +13,7 @@
  * `replyInbox_actions.ts`.
  */
 import { query, internalQuery, internalMutation } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 
@@ -51,24 +52,95 @@ function buildRichItems(reservation: Doc<"reservations"> | null): RichItem[] {
  * reply), joined with renter profile + reservation context + the latest message
  * preview, sorted most-urgent-first (oldest unanswered renter message on top).
  */
+/**
+ * Build one reply-queue tile from a conversation and/or reservation. Shared by
+ * the renter-last pass and the always-include REQUEST pass so both emit an
+ * identical shape (item thumbnails, booking/request context, urgency driver).
+ */
+async function assembleTile(
+  ctx: QueryCtx,
+  conv: Doc<"conversations"> | null,
+  reservation: Doc<"reservations"> | null,
+  threadId: string,
+) {
+  let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
+  if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
+  if (!slug && reservation?.account_id)
+    slug = (await ctx.db.get(reservation.account_id))?.slug;
+
+  const renterId = reservation?.renter_id ?? conv?.renter_id ?? undefined;
+  const renter = renterId ? await ctx.db.get(renterId) : null;
+
+  const latestMsg = await ctx.db
+    .query("hygglo_messages")
+    .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
+    .order("desc")
+    .first();
+
+  const richItems = buildRichItems(reservation);
+  const primaryImage =
+    richItems.find((i) => i.image_url)?.image_url ??
+    reservation?.photos_urls?.[0] ??
+    null;
+
+  const step = reservation?.order_step ?? null;
+  const isRequest = step === "REQUEST"; // awaiting my approve/decline
+  const lastRenterAt =
+    conv?.last_renter_msg_at ??
+    conv?.last_msg_at ??
+    latestMsg?.hygglo_sent_at ??
+    latestMsg?.fetched_at ??
+    0;
+
+  return {
+    thread_id: threadId,
+    account_slug: slug ?? null,
+    renter_name:
+      renter?.display_name ??
+      reservation?.renter_name ??
+      latestMsg?.sender_name ??
+      "Renter",
+    renter_rating: renter?.hygglo_rating ?? null,
+    renter_review_count: renter?.hygglo_review_count ?? null,
+    renter_blacklisted: renter?.blacklisted ?? false,
+    renter_flagged: renter?.flag_on_request ?? false,
+    has_reservation: !!reservation,
+    start_date: reservation?.start_date ?? null,
+    end_date: reservation?.end_date ?? null,
+    return_date: reservation?.return_date ?? null,
+    pickup_method: reservation?.pickup_method ?? null,
+    status: reservation?.status ?? null,
+    booking_status: reservation?.booking_status ?? null,
+    order_step: step,
+    is_request: isRequest,
+    can_decide: isRequest,
+    gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
+    net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
+    delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
+    currency: reservation?.currency ?? "GBP",
+    items: richItems.slice(0, 6),
+    item_count: richItems.length,
+    image_url: primaryImage,
+    last_renter_msg_at: lastRenterAt,
+    last_msg_at: conv?.last_msg_at ?? lastRenterAt,
+    preview: latestMsg?.body_text ?? "",
+    has_draft: !!conv?.ai_draft_text,
+    ai_draft_text: conv?.ai_draft_text ?? null,
+  };
+}
+
 export const getReplyQueue = query({
   args: {
     accountSlug: v.optional(v.string()),
     limit: v.optional(v.number()),
-    // Recency floor: ignore threads whose last renter message is older than
-    // this many days. Without it the queue floods with hundreds of ancient,
-    // effectively-dead inquiries and — because we sort oldest-first (most
-    // urgent) — those would dominate the top. Default keeps it actionable;
-    // raise it to dig into the older backlog.
+    // Recency floor for the renter-last pass (REQUESTs ignore this — see below).
     withinDays: v.optional(v.number()),
-    // When false (default) hide threads whose rental is already finished
-    // (completed / cancelled / declined / returned / reviewed) so the inbox is
-    // live + inquiry conversations only (Daniel, 2026-06-22).
+    // When false (default) hide threads whose rental is already finished.
     includeFinished: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { accountSlug, limit = 50, withinDays = 5, includeFinished = false },
+    { accountSlug, limit = 60, withinDays = 5, includeFinished = false },
   ) => {
     const cutoff = Date.now() - withinDays * 86_400_000;
     const FINISHED_STATUS = new Set(["completed", "cancelled", "declined"]);
@@ -78,113 +150,61 @@ export const getReplyQueue = query({
       "CANCELED",
       "VERIFICATION_FAILED",
     ]);
+    const accountOk = (slug: string | null) =>
+      !accountSlug || slug === accountSlug;
+
+    const byThread = new Map<
+      string,
+      NonNullable<Awaited<ReturnType<typeof assembleTile>>>
+    >();
+
+    // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
     const convos = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
       .collect();
-
-    const tiles = [];
     for (const conv of convos) {
       const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
-      if (recencyTs < cutoff) continue; // skip dead/ancient threads early
-      // Reservation context (period / location / account / revenue). Inquiry
-      // threads without an order yet simply have no reservation.
+      if (recencyTs < cutoff) continue;
       const reservation = await ctx.db
         .query("reservations")
         .withIndex("by_hygglo_order_id", (q) =>
           q.eq("hygglo_order_id", conv.thread_id),
         )
         .first();
-
-      // Hide finished rentals — keep inquiries (no reservation) + active /
-      // confirmed / pending only.
       if (!includeFinished && reservation) {
         const st = reservation.status;
         const step = reservation.order_step;
-        if (
-          (st && FINISHED_STATUS.has(st)) ||
-          (step && FINISHED_STEP.has(step))
-        )
+        if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
           continue;
       }
-
-      // Account slug: reservation → conversation → resolve via account_id.
-      let slug = reservation?.account_slug ?? conv.account_slug ?? undefined;
-      if (!slug && conv.account_id) {
-        const acc = await ctx.db.get(conv.account_id);
-        slug = acc?.slug;
-      }
-      if (accountSlug && slug !== accountSlug) continue;
-
-      // Renter profile (rating / trust): prefer the reservation's FK.
-      const renterId = reservation?.renter_id ?? conv.renter_id ?? undefined;
-      const renter = renterId ? await ctx.db.get(renterId) : null;
-
-      // Latest message in the thread — since last_sender === "renter" this is
-      // the renter's unanswered message; use it for the tile preview.
-      const latestMsg = await ctx.db
-        .query("hygglo_messages")
-        .withIndex("by_thread", (q) => q.eq("thread_id", conv.thread_id))
-        .order("desc")
-        .first();
-
-      const renterName =
-        renter?.display_name ??
-        reservation?.renter_name ??
-        latestMsg?.sender_name ??
-        "Renter";
-
-      // Items + images — the "top of chat" context. hygglo_items[] is the
-      // authoritative per-item image source; fall back to image_hints, then the
-      // order-level photos_urls.
-      const richItems = buildRichItems(reservation);
-      const primaryImage =
-        richItems.find((i) => i.image_url)?.image_url ??
-        reservation?.photos_urls?.[0] ??
-        null;
-
-      const step = reservation?.order_step ?? null;
-      const isRequest = step === "REQUEST"; // awaiting my approve/decline
-
-      tiles.push({
-        thread_id: conv.thread_id,
-        account_slug: slug ?? null,
-        renter_name: renterName,
-        renter_rating: renter?.hygglo_rating ?? null,
-        renter_review_count: renter?.hygglo_review_count ?? null,
-        renter_blacklisted: renter?.blacklisted ?? false,
-        renter_flagged: renter?.flag_on_request ?? false,
-        // Booking context (null for inquiry threads with no order).
-        has_reservation: !!reservation,
-        start_date: reservation?.start_date ?? null,
-        end_date: reservation?.end_date ?? null,
-        return_date: reservation?.return_date ?? null,
-        pickup_method: reservation?.pickup_method ?? null,
-        status: reservation?.status ?? null,
-        booking_status: reservation?.booking_status ?? null,
-        order_step: step,
-        is_request: isRequest, // show Approve/Decline
-        can_decide: isRequest,
-        gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
-        net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
-        delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
-        currency: reservation?.currency ?? "GBP",
-        // Items with thumbnails for the card.
-        items: richItems.slice(0, 6),
-        item_count: richItems.length,
-        image_url: primaryImage,
-        // Urgency driver + preview.
-        last_renter_msg_at: conv.last_renter_msg_at ?? conv.last_msg_at,
-        last_msg_at: conv.last_msg_at,
-        preview: latestMsg?.body_text ?? "",
-        has_draft: !!conv.ai_draft_text,
-        ai_draft_text: conv.ai_draft_text ?? null,
-      });
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id);
+      if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }
 
-    // Oldest unanswered renter message first = most urgent at the top.
-    tiles.sort(
-      (a, b) => (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0),
+    // Pass 2 — ALWAYS surface rental REQUESTs awaiting my approve/decline, even
+    // if I spoke last or it's outside the recency window. This is what makes the
+    // Approve / Decline buttons reliably reachable.
+    const requests = await ctx.db
+      .query("reservations")
+      .withIndex("by_order_step", (q) => q.eq("order_step", "REQUEST"))
+      .collect();
+    for (const r of requests) {
+      const threadId = r.hygglo_order_id;
+      if (!threadId || byThread.has(threadId)) continue;
+      const conv = await ctx.db
+        .query("conversations")
+        .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
+        .first();
+      const tile = await assembleTile(ctx, conv, r, threadId);
+      if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
+    }
+
+    // Requests first, then most-urgent (oldest unanswered) first.
+    const tiles = [...byThread.values()].sort(
+      (a, b) =>
+        Number(b.is_request) - Number(a.is_request) ||
+        (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0),
     );
     return tiles.slice(0, limit);
   },

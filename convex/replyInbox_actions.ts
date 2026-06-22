@@ -186,19 +186,11 @@ export const approveOrder = action({
 
 /** Decline a pending rental REQUEST. Same gate + behaviour as approveOrder. */
 export const declineOrder = action({
-  args: {
-    thread_id: v.string(),
-    account_slug: v.string(),
-    reason: v.optional(v.string()),
-  },
-  handler: async (
-    _ctx,
-    { thread_id, account_slug, reason },
-  ): Promise<OrderActionResult> => {
+  args: { thread_id: v.string(), account_slug: v.string() },
+  handler: async (_ctx, { thread_id, account_slug }): Promise<OrderActionResult> => {
     const res = await manualDeclineOrder({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,
-      reason,
     });
     return {
       status: res.status,

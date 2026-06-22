@@ -346,7 +346,15 @@ export async function sendManualRenterMessage(args: {
 }
 
 /**
- * Operator Approve of a rental REQUEST from the Reply Inbox (action:"approve").
+ * Operator Approve of a rental REQUEST from the Reply Inbox.
+ *
+ * VERB: action `accept` — VERIFIED from the captured Hygglo dispatcher zod-union
+ * (`/home/ubuntu/hygglo-probe/out/disp_*.json`):
+ *   'accept' | 'archive' | 'cancelPaid' | 'cancelRequest' | 'deliver' | 'deny'
+ *   | 'provideVehicleInfoAndAccept' | 'rescheduleSecurityCall' | 'return'
+ *   | 'scheduleSecurityCall' | 'submitDocuments'
+ * (NOT "approve" — that literal is not in the union and 422s.) Non-vehicle gear
+ * uses plain `accept`; `provideVehicleInfoAndAccept` is the car-rental variant.
  * Behind the dedicated ALLOW_MANUAL_ORDER_ACTIONS gate. Deliberate clicks only.
  */
 export async function manualApproveOrder(args: {
@@ -356,30 +364,28 @@ export async function manualApproveOrder(args: {
   if (!manualOrderActionsAllowed())
     return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
   try {
-    return await patchOrderAction({ ...args, action: "approve", data: {} });
+    return await patchOrderAction({ ...args, action: "accept", data: {} });
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }
 }
 
 /**
- * Operator Decline of a rental REQUEST from the Reply Inbox (action:"decline").
- * Behind the dedicated ALLOW_MANUAL_ORDER_ACTIONS gate. Deliberate clicks only.
+ * Operator Decline of a rental REQUEST from the Reply Inbox.
+ *
+ * VERB: action `deny` — VERIFIED from the same captured dispatcher union (NOT
+ * "decline"/"reject"). Sent with an empty data payload; if Hygglo turns out to
+ * require a reason field the (sliced) error body on the first real click reveals
+ * it. Behind ALLOW_MANUAL_ORDER_ACTIONS. Deliberate clicks only.
  */
 export async function manualDeclineOrder(args: {
   accountSlug: string;
   hyggloOrderId: string;
-  reason?: string;
 }): Promise<HyggloWriteResult> {
   if (!manualOrderActionsAllowed())
     return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
   try {
-    return await patchOrderAction({
-      accountSlug: args.accountSlug,
-      hyggloOrderId: args.hyggloOrderId,
-      action: "decline",
-      data: { reason: args.reason ?? "" },
-    });
+    return await patchOrderAction({ ...args, action: "deny", data: {} });
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }
