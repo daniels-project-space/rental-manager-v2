@@ -38,7 +38,7 @@ export interface HyggloWriteResult {
   httpStatus?: number;
   error?: string;
   /** Set when status === 'skipped'. */
-  reason?: "READ_ONLY_MODE" | "RETURN_WRITES_DISABLED";
+  reason?: "READ_ONLY_MODE" | "RETURN_WRITES_DISABLED" | "MANUAL_SEND_DISABLED";
 }
 
 // ── Safety rail ──────────────────────────────────────────────────
@@ -68,6 +68,24 @@ function skipResult(): HyggloWriteResult {
  */
 function returnWritesAllowed(): boolean {
   return process.env.ALLOW_RETURN_WRITES === "true";
+}
+
+/**
+ * THIRD, INDEPENDENT gate — governs ONLY the operator's hand-typed renter
+ * replies from the Reply Inbox dashboard widget (`sendManualRenterMessage`).
+ *
+ * Why a dedicated gate (Daniel, 2026-06-22): we want Daniel's manual,
+ * per-message dashboard replies to go out LIVE while keeping READ_ONLY_MODE
+ * ON so automation writes (auto-accept / decline / bot chat) stay blocked.
+ * Flipping READ_ONLY_MODE off to enable chat would also unlock those. So this
+ * verb is decoupled — it sends iff ALLOW_MANUAL_RENTER_SEND === "true",
+ * regardless of READ_ONLY_MODE. ONLY convex/replyInbox_actions.sendRenterReply
+ * (a public action invoked by a deliberate Send click) calls it; no cron or
+ * scheduler ever does. Default ON in prod env; set to anything but "true" to
+ * hard-disable manual sends without touching the rest of the system.
+ */
+function manualRenterSendAllowed(): boolean {
+  return process.env.ALLOW_MANUAL_RENTER_SEND === "true";
 }
 
 // ── Methods ──────────────────────────────────────────────────────
@@ -274,6 +292,35 @@ export async function sendMessage(args: {
     return await patchOrderAction({
       accountSlug: args.accountSlug,
       hyggloOrderId: args.conversationId,
+      action: "chat",
+      data: { message: args.text },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Operator-initiated renter reply from the Reply Inbox widget.
+ *
+ * Identical wire shape to sendMessage (PATCH /v4/my/orders/:id, action:"chat")
+ * but behind its OWN gate (`manualRenterSendAllowed`, env
+ * ALLOW_MANUAL_RENTER_SEND) and DECOUPLED from READ_ONLY_MODE — see the gate
+ * doc above. Returns {status:"skipped", reason:"MANUAL_SEND_DISABLED"} when the
+ * gate is off so the dashboard can surface "sending disabled" instead of
+ * silently dropping the message. The Hygglo order id IS the chat thread id.
+ */
+export async function sendManualRenterMessage(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  text: string;
+}): Promise<HyggloWriteResult> {
+  if (!manualRenterSendAllowed())
+    return { status: "skipped", reason: "MANUAL_SEND_DISABLED" };
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
       action: "chat",
       data: { message: args.text },
     });

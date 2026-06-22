@@ -599,8 +599,23 @@ export default defineSchema({
       v.literal("DEAD"),
     )),
     stage_updated_at: v.optional(v.number()),
+    // ── Reply Inbox (2026-06-22) — "needs my reply" queue support ──
+    // Stamped by hygglo.upsertMessages on every new message so the reply
+    // queue is a cheap indexed read (`by_last_sender`) instead of a per-thread
+    // scan. A thread is "awaiting owner reply" iff last_sender === "renter".
+    // Sending a reply flips last_sender → "owner" (recordSentReply), which
+    // removes the tile from the queue until the renter messages again.
+    last_sender: v.optional(v.union(v.literal("owner"), v.literal("renter"))),
+    last_renter_msg_at: v.optional(v.number()),   // drives the urgency glow
+    account_slug: v.optional(v.string()),          // denormalised for filtering/colour
+    // Cached AI draft reply (lazy, generated on tile expand). Invalidated when
+    // a newer renter message arrives (ai_draft_for_message_id mismatch).
+    ai_draft_text: v.optional(v.string()),
+    ai_draft_for_message_id: v.optional(v.string()),
+    ai_draft_generated_at: v.optional(v.number()),
     created_at: v.number(),
-  }).index("by_thread", ["thread_id"]),
+  }).index("by_thread", ["thread_id"])
+    .index("by_last_sender", ["last_sender"]),
 
   conv_extracted_facts: defineTable({
     conversation_id: v.optional(v.id("conversations")),

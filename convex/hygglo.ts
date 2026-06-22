@@ -146,6 +146,12 @@ export const upsertMessages = mutation({
     let inserted = 0;
     let skipped = 0;
     const changedThreads = new Set<string>();
+    // Reply Inbox: track the newest NEW message per thread so we can stamp the
+    // conversation's last_sender / last_renter_msg_at after the insert loop.
+    const latestByThread = new Map<
+      string,
+      { sender: string; ts: number; message_id: string; sender_name?: string }
+    >();
     for (const msg of messages) {
       const existing = await ctx.db
         .query("hygglo_messages")
@@ -170,6 +176,16 @@ export const upsertMessages = mutation({
       });
       inserted++;
       changedThreads.add(msg.thread_id);
+      const ts = msg.hygglo_sent_at ?? msg.fetched_at;
+      const prevLatest = latestByThread.get(msg.thread_id);
+      if (!prevLatest || ts >= prevLatest.ts) {
+        latestByThread.set(msg.thread_id, {
+          sender: msg.sender,
+          ts,
+          message_id: msg.message_id,
+          sender_name: msg.sender_name,
+        });
+      }
     }
 
     // Schedule a booking-time extraction for each reservation whose thread
@@ -190,6 +206,69 @@ export const upsertMessages = mutation({
       });
       scheduled++;
     }
+
+    // ── Reply Inbox: stamp conversation.last_sender / last_renter_msg_at ──
+    // Makes the "needs my reply" queue a cheap by_last_sender index read and
+    // implements the "tile disappears once I reply, reappears on their next
+    // message" behaviour purely from data. Creates a minimal conversation row
+    // for brand-new threads the conversations batch hasn't seen yet.
+    for (const [threadId, latest] of latestByThread) {
+      const sender: "owner" | "renter" =
+        latest.sender === "owner" ? "owner" : "renter";
+      const conv = await ctx.db
+        .query("conversations")
+        .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
+        .first();
+      if (conv) {
+        const patch: Record<string, unknown> = {};
+        if (!conv.last_msg_at || latest.ts >= conv.last_msg_at) {
+          patch.last_msg_at = Math.max(conv.last_msg_at ?? 0, latest.ts);
+          patch.last_sender = sender;
+        }
+        if (sender === "renter") {
+          patch.last_renter_msg_at = Math.max(
+            conv.last_renter_msg_at ?? 0,
+            latest.ts,
+          );
+          // A newer renter message invalidates any cached AI draft.
+          if (conv.ai_draft_for_message_id !== latest.message_id) {
+            patch.ai_draft_text = undefined;
+            patch.ai_draft_for_message_id = undefined;
+            patch.ai_draft_generated_at = undefined;
+          }
+        }
+        if (!conv.account_slug) patch.account_slug = account_slug;
+        if (Object.keys(patch).length > 0) await ctx.db.patch(conv._id, patch);
+      } else {
+        const account = await ctx.db
+          .query("accounts")
+          .withIndex("by_slug", (q) => q.eq("slug", account_slug))
+          .first();
+        let renter_id:
+          | import("./_generated/dataModel").Id<"renters">
+          | undefined;
+        if (sender === "renter" && latest.sender_name) {
+          const r = await ctx.db
+            .query("renters")
+            .withIndex("by_display_name", (q) =>
+              q.eq("display_name", latest.sender_name!.trim()),
+            )
+            .first();
+          renter_id = r?._id;
+        }
+        await ctx.db.insert("conversations", {
+          thread_id: threadId,
+          account_id: account?._id,
+          account_slug,
+          renter_id,
+          last_msg_at: latest.ts,
+          last_sender: sender,
+          last_renter_msg_at: sender === "renter" ? latest.ts : undefined,
+          created_at: latest.ts,
+        });
+      }
+    }
+
     return { inserted, skipped, scheduled_extractions: scheduled };
   },
 });

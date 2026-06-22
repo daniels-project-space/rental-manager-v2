@@ -144,6 +144,8 @@ import type * as renter_bot_seed from "../renter_bot_seed.js";
 import type * as renter_bot_tools from "../renter_bot_tools.js";
 import type * as renters from "../renters.js";
 import type * as renters_admin from "../renters_admin.js";
+import type * as replyInbox from "../replyInbox.js";
+import type * as replyInbox_actions from "../replyInbox_actions.js";
 import type * as reservation_vision from "../reservation_vision.js";
 import type * as reservations from "../reservations.js";
 import type * as returns_autoclose from "../returns_autoclose.js";
@@ -308,6 +310,8 @@ declare const fullApi: ApiFromModules<{
   renter_bot_tools: typeof renter_bot_tools;
   renters: typeof renters;
   renters_admin: typeof renters_admin;
+  replyInbox: typeof replyInbox;
+  replyInbox_actions: typeof replyInbox_actions;
   reservation_vision: typeof reservation_vision;
   reservations: typeof reservations;
   returns_autoclose: typeof returns_autoclose;

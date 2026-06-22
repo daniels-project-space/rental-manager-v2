@@ -21,6 +21,7 @@ import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsight
 import { AIChat } from "@/components/dashboard/AIChat";
 import { HealthScanner } from "@/components/dashboard/HealthScanner";
 import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
+import { ReplyInbox } from "@/components/dashboard/ReplyInbox";
 import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
 import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
 import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
@@ -46,6 +47,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "competitor-intel",    label: "Competitor Intel",       component: CompetitorIntelPanel },
   { id: "stats-grid",          label: "Stats Grid",             component: StatsGrid },
   { id: "ai-chat",            label: "AI Assistant",           component: AIChat },
+  { id: "reply-inbox",        label: "Reply Inbox",            component: ReplyInbox },
   { id: "lifetime",            label: "Lifetime Revenue",       component: LifetimeRevenue },
   { id: "earnings-chart",      label: "Earnings Chart",         component: EarningsChart },
   { id: "tax-summary",         label: "Tax Summary",            component: TaxSummary },
