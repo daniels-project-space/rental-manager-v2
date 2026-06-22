@@ -27,9 +27,14 @@ import {
   locations,
   editListing,
   setOpeningTimes,
+  createListing,
   slim,
   type ListingChanges,
+  type HyggloPrice,
 } from "@/lib/hygglo/listings";
+import { getR2 } from "@/mastra/lib/r2-client";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { renderFromSource } from "@/lib/render/compose";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -115,11 +120,62 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ path: str
   }
 }
 
-export async function POST(_req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+async function r2Bytes(key: string): Promise<Buffer> {
+  const { s3, bucket } = await getR2();
+  const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  return Buffer.from(await resp.Body!.transformToByteArray());
+}
+
+export async function POST(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   const [account, sub] = path;
   if (!isAllowedAccount(account)) return notFound(`unknown account '${account}'`);
   if (sub !== "item") return notFound(`unknown path '${path.join("/")}'`);
-  // Create needs a rendered image — wired in Phase 2 (R2 → Hygglo presigned).
-  return fail("create-listing is not enabled yet (Phase 2: render → R2 → Hygglo)", 501);
+
+  const body = (await req.json().catch(() => ({}))) as {
+    name?: string;
+    description?: string;
+    categoryId?: number;
+    prices?: HyggloPrice[];
+    valuation?: number;
+    isPublished?: boolean;
+    // image source (one of):
+    r2Key?: string; // pull a rendered PNG from R2
+    sourceImageUrl?: string; // render now from this source photo
+    renderBrand?: string; // brand for the render (default: the account)
+  };
+
+  if (!body.name || !body.categoryId || !Array.isArray(body.prices) || body.prices.length === 0) {
+    return fail("create requires name, categoryId and prices[]", 400);
+  }
+
+  try {
+    // Resolve the rendered image: from R2, or render it now from a source URL.
+    let pngBytes: Buffer;
+    if (body.r2Key) {
+      pngBytes = await r2Bytes(body.r2Key);
+    } else if (body.sourceImageUrl) {
+      pngBytes = await renderFromSource({
+        account: body.renderBrand ?? account,
+        sourceImageUrl: body.sourceImageUrl,
+        title: body.name,
+      });
+    } else {
+      return fail("create requires r2Key or sourceImageUrl for the image", 400);
+    }
+
+    const c = listingClient(account);
+    const res = await createListing(c, {
+      name: body.name,
+      description: body.description,
+      categoryId: body.categoryId,
+      prices: body.prices,
+      valuation: body.valuation,
+      isPublished: body.isPublished,
+      pngBytes,
+    });
+    return NextResponse.json(res);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err), 502);
+  }
 }

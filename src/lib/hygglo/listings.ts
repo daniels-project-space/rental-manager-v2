@@ -289,6 +289,120 @@ export async function editListing(
   return { ok: false, status: lastStatus, error: lastError };
 }
 
+// ── Create / delete ─────────────────────────────────────────────────────────
+
+/**
+ * Upload image bytes to Hygglo's S3 via a presigned URL and return the BARE
+ * `<uuid>.<ext>` filename to reference in create/edit payloads.
+ */
+export async function presignedUpload(
+  c: HyggloClient,
+  bytes: Buffer,
+  mime = "image/png",
+): Promise<string> {
+  const { json } = await c.sendRaw(
+    "POST",
+    `/v2/my/products/presigned-url?country=${COUNTRY}`,
+    { mimeType: mime },
+  );
+  const url = (json as { url?: string })?.url;
+  if (!url) throw new Error("presigned-url returned no url");
+  const put = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": mime },
+    // Buffer is a valid fetch body at runtime; the DOM BodyInit type omits it.
+    body: bytes as unknown as BodyInit,
+  });
+  if (!(put.ok || put.status === 200 || put.status === 204)) {
+    throw new Error(`S3 put failed: ${put.status}`);
+  }
+  return bare(url.split("?")[0].split("/").pop()!)!;
+}
+
+export interface CreatePayload {
+  name: string;
+  description?: string;
+  categoryId: number;
+  prices: HyggloPrice[];
+  valuation?: number;
+  /** Rendered listing image (PNG) — uploaded to Hygglo's S3 first. */
+  pngBytes: Buffer;
+  isPublished?: boolean;
+  cancellationTerms?: string;
+  minimumRentalDays?: number;
+  stockLevel?: number;
+  locationIds?: number[];
+}
+
+/** Create a new Hygglo listing (uploads the image, then POSTs the product). */
+export async function createListing(c: HyggloClient, p: CreatePayload): Promise<WriteResult> {
+  let name = (p.name || "").trim().slice(0, NAME_MAX);
+  const locIds = p.locationIds ?? (await locationIds(c));
+
+  let filename: string;
+  try {
+    filename = await presignedUpload(c, p.pngBytes);
+  } catch (err) {
+    return { ok: false, error: `image upload failed: ${String(err)}` };
+  }
+
+  let aiRetry = true;
+  let lastStatus: number | undefined;
+  let lastError = "exhausted retries";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const body = {
+      name: name.slice(0, NAME_MAX),
+      description: p.description ?? "",
+      categoryId: p.categoryId,
+      valuation: p.valuation,
+      isPublished: p.isPublished ?? true,
+      cancellationTerms: p.cancellationTerms ?? CANCELLATION_DEFAULT,
+      minimumRentalDays: p.minimumRentalDays ?? 1,
+      stockLevel: p.stockLevel ?? 1,
+      locationIds: locIds,
+      prices: cleanPrices(p.prices),
+      images: [{ filename, displayOrder: 0 }],
+    };
+    try {
+      const { json } = await c.sendRaw("POST", `/v2/my/products?country=${COUNTRY}`, body);
+      const id = (json as { id?: number })?.id;
+      // Hygglo publishes on create regardless of the body flag; enforce a
+      // requested draft state with a follow-up PATCH (same as editListing).
+      if (id != null && p.isPublished === false) await publishListing(c, id, false);
+      return { ok: true, id };
+    } catch (err) {
+      if (!(err instanceof HyggloApiError)) {
+        lastError = String(err);
+        if (attempt < 3) { await sleep(2000); continue; }
+        return { ok: false, error: lastError };
+      }
+      lastStatus = err.status;
+      lastError = err.body.slice(0, 300);
+      const lower = (err.body ?? "").toLowerCase();
+      if (isAiFail(lower) && aiRetry) {
+        name = name.replace(COMPETITOR, "").trim();
+        aiRetry = false;
+        await sleep(1500);
+        continue;
+      }
+      if (err.status >= 500 && attempt < 3) { await sleep(2500); continue; }
+      return { ok: false, status: err.status, error: lastError };
+    }
+  }
+  return { ok: false, status: lastStatus, error: lastError };
+}
+
+/** Delete a listing. */
+export async function deleteListing(c: HyggloClient, id: number | string): Promise<WriteResult> {
+  try {
+    await c.sendRaw("DELETE", `/v2/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`);
+    return { ok: true, id };
+  } catch (err) {
+    if (err instanceof HyggloApiError) return { ok: false, status: err.status, error: err.body.slice(0, 200) };
+    return { ok: false, error: String(err) };
+  }
+}
+
 // ── Convenience wrappers ────────────────────────────────────────────────────
 
 export function setPrice(c: HyggloClient, id: number | string, prices: HyggloPrice[]) {
