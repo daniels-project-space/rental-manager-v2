@@ -38,7 +38,11 @@ export interface HyggloWriteResult {
   httpStatus?: number;
   error?: string;
   /** Set when status === 'skipped'. */
-  reason?: "READ_ONLY_MODE" | "RETURN_WRITES_DISABLED" | "MANUAL_SEND_DISABLED";
+  reason?:
+    | "READ_ONLY_MODE"
+    | "RETURN_WRITES_DISABLED"
+    | "MANUAL_SEND_DISABLED"
+    | "MANUAL_ACTION_DISABLED";
 }
 
 // ── Safety rail ──────────────────────────────────────────────────
@@ -86,6 +90,18 @@ function returnWritesAllowed(): boolean {
  */
 function manualRenterSendAllowed(): boolean {
   return process.env.ALLOW_MANUAL_RENTER_SEND === "true";
+}
+
+/**
+ * FOURTH gate — operator's manual Approve / Decline of a rental REQUEST from the
+ * Reply Inbox dashboard. Same rationale as the manual-send gate: decoupled from
+ * READ_ONLY_MODE so dashboard order decisions are explicitly toggle-able
+ * (ALLOW_MANUAL_ORDER_ACTIONS) without affecting any automation accept/decline
+ * path. ONLY the replyInbox approve/decline actions (deliberate clicks) call
+ * these — never a cron/scheduler.
+ */
+function manualOrderActionsAllowed(): boolean {
+  return process.env.ALLOW_MANUAL_ORDER_ACTIONS === "true";
 }
 
 // ── Methods ──────────────────────────────────────────────────────
@@ -323,6 +339,46 @@ export async function sendManualRenterMessage(args: {
       hyggloOrderId: args.hyggloOrderId,
       action: "chat",
       data: { message: args.text },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Operator Approve of a rental REQUEST from the Reply Inbox (action:"approve").
+ * Behind the dedicated ALLOW_MANUAL_ORDER_ACTIONS gate. Deliberate clicks only.
+ */
+export async function manualApproveOrder(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+}): Promise<HyggloWriteResult> {
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
+  try {
+    return await patchOrderAction({ ...args, action: "approve", data: {} });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Operator Decline of a rental REQUEST from the Reply Inbox (action:"decline").
+ * Behind the dedicated ALLOW_MANUAL_ORDER_ACTIONS gate. Deliberate clicks only.
+ */
+export async function manualDeclineOrder(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  reason?: string;
+}): Promise<HyggloWriteResult> {
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "decline",
+      data: { reason: args.reason ?? "" },
     });
   } catch (err) {
     return { status: "failed", error: (err as Error).message };

@@ -17,7 +17,11 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
-import { sendManualRenterMessage } from "../src/lib/hygglo-write";
+import {
+  sendManualRenterMessage,
+  manualApproveOrder,
+  manualDeclineOrder,
+} from "../src/lib/hygglo-write";
 
 // ── AI draft ──────────────────────────────────────────────────────
 
@@ -40,23 +44,35 @@ export const generateDraft = action({
       (c.persona_prompt ??
         "You are the equipment owner replying to a renter on the Hygglo rental marketplace.") +
       "\n\nWrite the owner's next reply to the renter. Be concise, warm and " +
-      "professional (1–4 sentences). Answer their latest message directly. Do " +
-      "NOT invent prices, availability, or policies you weren't given. Output " +
-      "ONLY the message body — no preamble, no surrounding quotes, no sign-off " +
+      "professional (1–4 sentences). Answer their latest message directly. Use " +
+      "the booking context below for grounding. If they have NOT placed a " +
+      "booking request yet (inquiry), encourage them to book; if a request is " +
+      "pending my approval, confirm availability and the next step. Do NOT " +
+      "invent prices, availability, or policies you weren't given. Output ONLY " +
+      "the message body — no preamble, no surrounding quotes, no sign-off " +
       "placeholders.";
 
     const transcript = c.messages
       .map((m) => `${m.role === "owner" ? "Me (owner)" : "Renter"}: ${m.content}`)
       .join("\n");
 
+    const requestLine = !c.has_reservation
+      ? "Booking status: INQUIRY — renter has NOT placed a booking request yet"
+      : c.is_request
+        ? "Booking status: PENDING REQUEST — awaiting my approve/decline"
+        : `Booking status: ${c.status ?? c.order_step ?? "active"}`;
+
     const prompt = [
-      `Renter: ${c.renter_name}`,
+      `Renter: ${c.renter_name}${c.renter_rating != null ? ` (★${c.renter_rating})` : ""}`,
       c.account_slug ? `Account: ${c.account_slug}` : null,
-      c.items.length ? `Items: ${c.items.join(", ")}` : null,
+      c.items.length ? `Items requested: ${c.items.join(", ")}` : null,
       c.start_date ? `Rental period: ${c.start_date} → ${c.end_date ?? "?"}` : null,
       c.return_date ? `Return: ${c.return_date}` : null,
       c.pickup_method ? `Pickup method: ${c.pickup_method}` : null,
-      c.status ? `Booking status: ${c.status}` : null,
+      c.gross_paid_gbp != null
+        ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
+        : null,
+      requestLine,
       c.discount_codes
         ? `Discount codes available: ${JSON.stringify(c.discount_codes)}`
         : null,
@@ -129,6 +145,61 @@ export const sendRenterReply = action({
         account_slug,
       });
     }
+    return {
+      status: res.status,
+      reason: res.reason,
+      httpStatus: res.httpStatus,
+      error: res.error,
+    };
+  },
+});
+
+// ── Approve / Decline a rental request (gated) ────────────────────
+
+type OrderActionResult = {
+  status: "sent" | "skipped" | "failed";
+  reason?: string;
+  httpStatus?: number;
+  error?: string;
+};
+
+/**
+ * Approve a pending rental REQUEST from the dashboard. Live but isolated behind
+ * ALLOW_MANUAL_ORDER_ACTIONS (deliberate clicks only). The poller syncs the new
+ * order_step on its next run; the UI hides the card optimistically meanwhile.
+ */
+export const approveOrder = action({
+  args: { thread_id: v.string(), account_slug: v.string() },
+  handler: async (_ctx, { thread_id, account_slug }): Promise<OrderActionResult> => {
+    const res = await manualApproveOrder({
+      accountSlug: account_slug,
+      hyggloOrderId: thread_id,
+    });
+    return {
+      status: res.status,
+      reason: res.reason,
+      httpStatus: res.httpStatus,
+      error: res.error,
+    };
+  },
+});
+
+/** Decline a pending rental REQUEST. Same gate + behaviour as approveOrder. */
+export const declineOrder = action({
+  args: {
+    thread_id: v.string(),
+    account_slug: v.string(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (
+    _ctx,
+    { thread_id, account_slug, reason },
+  ): Promise<OrderActionResult> => {
+    const res = await manualDeclineOrder({
+      accountSlug: account_slug,
+      hyggloOrderId: thread_id,
+      reason,
+    });
     return {
       status: res.status,
       reason: res.reason,

@@ -14,6 +14,35 @@
  */
 import { query, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
+
+type RichItem = { name: string; qty: number; image_url: string | null };
+
+/**
+ * Per-item name + qty + thumbnail for the reply tile / draft context. Image
+ * source priority: hygglo_items[] (authoritative per-item imagery) →
+ * image_hints[] matched by normalised name → items[] (name/qty only, no image).
+ */
+function buildRichItems(reservation: Doc<"reservations"> | null): RichItem[] {
+  if (!reservation) return [];
+  const hints = reservation.image_hints ?? [];
+  const hintFor = (name: string): string | null =>
+    hints.find((h) => h.item_name_normalised === name.trim().toLowerCase())
+      ?.image_url ?? null;
+  const hItems = reservation.hygglo_items ?? [];
+  if (hItems.length > 0) {
+    return hItems.map((h) => ({
+      name: h.name,
+      qty: h.qty ?? 1,
+      image_url: h.image_url ?? hintFor(h.name ?? ""),
+    }));
+  }
+  return (reservation.items ?? []).map((i) => ({
+    name: i.item_name,
+    qty: i.qty ?? 1,
+    image_url: hintFor(i.item_name ?? ""),
+  }));
+}
 
 // ── Queue ────────────────────────────────────────────────────────
 
@@ -105,6 +134,18 @@ export const getReplyQueue = query({
         latestMsg?.sender_name ??
         "Renter";
 
+      // Items + images — the "top of chat" context. hygglo_items[] is the
+      // authoritative per-item image source; fall back to image_hints, then the
+      // order-level photos_urls.
+      const richItems = buildRichItems(reservation);
+      const primaryImage =
+        richItems.find((i) => i.image_url)?.image_url ??
+        reservation?.photos_urls?.[0] ??
+        null;
+
+      const step = reservation?.order_step ?? null;
+      const isRequest = step === "REQUEST"; // awaiting my approve/decline
+
       tiles.push({
         thread_id: conv.thread_id,
         account_slug: slug ?? null,
@@ -114,17 +155,24 @@ export const getReplyQueue = query({
         renter_blacklisted: renter?.blacklisted ?? false,
         renter_flagged: renter?.flag_on_request ?? false,
         // Booking context (null for inquiry threads with no order).
+        has_reservation: !!reservation,
         start_date: reservation?.start_date ?? null,
         end_date: reservation?.end_date ?? null,
         return_date: reservation?.return_date ?? null,
         pickup_method: reservation?.pickup_method ?? null,
         status: reservation?.status ?? null,
-        order_step: reservation?.order_step ?? null,
+        booking_status: reservation?.booking_status ?? null,
+        order_step: step,
+        is_request: isRequest, // show Approve/Decline
+        can_decide: isRequest,
+        gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
         net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
-        items: (reservation?.items ?? [])
-          .map((i) => i.item_name)
-          .filter(Boolean)
-          .slice(0, 3),
+        delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
+        currency: reservation?.currency ?? "GBP",
+        // Items with thumbnails for the card.
+        items: richItems.slice(0, 6),
+        item_count: richItems.length,
+        image_url: primaryImage,
         // Urgency driver + preview.
         last_renter_msg_at: conv.last_renter_msg_at ?? conv.last_msg_at,
         last_msg_at: conv.last_msg_at,
@@ -192,18 +240,27 @@ export const getThreadContext = internalQuery({
     }));
     const latest = msgs[msgs.length - 1];
 
+    const richItems = buildRichItems(reservation);
     return {
       account_slug: slug ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,
       renter_name:
         renter?.display_name ?? reservation?.renter_name ?? "the renter",
-      items: (reservation?.items ?? []).map((i) => i.item_name).filter(Boolean),
+      renter_rating: renter?.hygglo_rating ?? null,
+      has_reservation: !!reservation,
+      items: richItems.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name)),
       start_date: reservation?.start_date ?? null,
       end_date: reservation?.end_date ?? null,
       return_date: reservation?.return_date ?? null,
       pickup_method: reservation?.pickup_method ?? null,
       status: reservation?.status ?? null,
+      order_step: reservation?.order_step ?? null,
+      is_request: reservation?.order_step === "REQUEST",
+      gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
+      net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
+      delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
+      currency: reservation?.currency ?? "GBP",
       messages: recent,
       last_message_id: latest?.message_id ?? null,
     };
