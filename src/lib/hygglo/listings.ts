@@ -1,0 +1,325 @@
+/**
+ * Hygglo listing-management toolkit (server-side).
+ *
+ * The callable layer the Rental Manager dashboard uses to manage an account's
+ * LIVE Hygglo product listings — list / read / edit price / publish / change
+ * category / set opening times / (Phase 2) create. Runs entirely on Vercel
+ * serverless; no VPS in the path. Auth + token come from `hygglo-core`
+ * (`createClient` → vault creds → OAuth bearer, cached per instance).
+ *
+ * Hard-won Hygglo write mechanics (ported verbatim from the proven VPS
+ * `listings.py`, 2026-06-21/22):
+ *   - EDIT any field (price / category / locations / description / valuation)
+ *     = GET current → merge → **PUT** the FULL payload. PATCH returns 200 but
+ *     silently IGNORES price/category/locations.
+ *   - PUBLISH / UNPUBLISH = **PATCH { isPublished }** only. PUT ignores an
+ *     unpublish, so `editListing` enforces the requested publish state with a
+ *     follow-up PATCH.
+ *   - The image reference on PUT must be the **bare `<uuid>.<ext>`** filename
+ *     (strip any "products/" prefix or Hygglo 500s "Failed to get file
+ *     reference"). PUT reuses the existing image — no re-upload on edit.
+ *   - PUT requires `cancellationTerms` as the enum string "0" | "1" | "2" plus
+ *     every other field; `locationIds` must list ALL of the account's pickup
+ *     locations (PUT is idempotent on them — it won't double them).
+ *   - Hygglo runs an AI validation step on create/edit that can 500 with
+ *     "no object generated" / "transaction is aborted" on certain content →
+ *     retry once with competitor parentheticals stripped from the name.
+ *   - name ≤ 255 chars. There is NO opening-hours API → opening times are
+ *     managed as a "⏰ Opening times:" line inside the description.
+ */
+import { createClient, HyggloApiError, type HyggloClient } from "@/hygglo-core";
+
+const COUNTRY = "GB";
+const NAME_MAX = 255;
+const CANCELLATION_DEFAULT = "1";
+const AI_FAIL = ["no object generated", "did not match schema", "transaction is aborted"];
+// Strip competitor parentheticals (e.g. "(like ARRI Alexa)") that can trip
+// Hygglo's AI-on-edit step.
+const COMPETITOR =
+  /\s*\((?:[^)]*\b(?:like|arri|alexa|red|canon|sony|rode|dzo|similar)\b[^)]*)\)/gi;
+// One "⏰ Opening times: …" line, anywhere in the description.
+const OPENING_LINE = /^[⏰•\-\s]*opening times\s*[:\-].*$/gim;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ── Types (permissive — Hygglo product detail) ──────────────────────────────
+export interface HyggloPrice {
+  days: number;
+  pricePerDay: number;
+  price: number | null;
+}
+export interface HyggloListing {
+  id: number;
+  name?: string;
+  description?: string;
+  categoryId?: number;
+  valuation?: number;
+  isPublished?: boolean;
+  minimumRentalDays?: number;
+  stockLevel?: number;
+  cancellationTerms?: string;
+  prices?: HyggloPrice[];
+  images?: Array<{ filename?: string; fullSizeUrl?: string; displayOrder?: number }>;
+  listings?: Array<{ location?: { id: number; name?: string; address?: string } }>;
+  publicUrl?: string;
+}
+export interface SlimListing {
+  id?: number;
+  name?: string;
+  categoryId?: number;
+  isPublished?: boolean;
+  valuation?: number;
+  prices: HyggloPrice[];
+  image: string | null;
+  locations: number;
+  publicUrl: string | null;
+}
+export interface Loc {
+  id: number;
+  name: string;
+  address?: string;
+}
+export interface WriteResult {
+  ok: boolean;
+  id?: number | string;
+  status?: number;
+  error?: string;
+}
+
+/** Editable fields accepted by `editListing`. */
+export interface ListingChanges {
+  name?: string;
+  description?: string;
+  categoryId?: number;
+  prices?: HyggloPrice[];
+  valuation?: number;
+  isPublished?: boolean;
+  locationIds?: number[];
+  stockLevel?: number;
+  cancellationTerms?: string;
+  minimumRentalDays?: number;
+}
+
+// ── Client ──────────────────────────────────────────────────────────────────
+
+const ALLOWED_ACCOUNTS = new Set(["leo", "dbcinema"]);
+
+export function isAllowedAccount(account: string): boolean {
+  return ALLOWED_ACCOUNTS.has(account);
+}
+
+/** A per-account Hygglo client (mints + caches one bearer for its lifetime). */
+export function listingClient(account: string): HyggloClient {
+  return createClient({ slug: account, country: COUNTRY });
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function bare(filename?: string): string | undefined {
+  return filename ? filename.split("/").pop() : filename;
+}
+
+function cleanPrices(prices?: HyggloPrice[]): HyggloPrice[] {
+  const out: HyggloPrice[] = [];
+  for (const p of prices ?? []) {
+    if (p == null || p.price == null) continue;
+    out.push({ days: p.days, pricePerDay: p.pricePerDay, price: p.price });
+  }
+  return out;
+}
+
+function isAiFail(body: string): boolean {
+  const b = body.toLowerCase();
+  return AI_FAIL.some((k) => b.includes(k));
+}
+
+// ── Reads ─────────────────────────────────────────────────────────────────
+
+export async function getItem(
+  c: HyggloClient,
+  id: number | string,
+): Promise<HyggloListing | null> {
+  try {
+    return await c.getJson<HyggloListing>(`/v2/my/products/${encodeURIComponent(String(id))}`);
+  } catch (err) {
+    if (err instanceof HyggloApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * ALL of the account's products. Hits the bare `/v2/my/products` (no
+ * limit/offset) — the verified way to get the full set (leo has 250+; the
+ * paged `?limit=100` form is ignored by Hygglo on offset and caps at one page).
+ */
+export async function listMine(c: HyggloClient): Promise<HyggloListing[]> {
+  const j = await c.getJson<unknown>(`/v2/my/products`);
+  if (Array.isArray(j)) return j as HyggloListing[];
+  const o = j as { products?: HyggloListing[]; data?: HyggloListing[] } | null;
+  return o?.products ?? o?.data ?? [];
+}
+
+export async function categories(c: HyggloClient): Promise<Array<{ id: number; name?: string }>> {
+  const cats = await c.getJson<Array<{ id: number; name?: string }>>(
+    `/v2/categories?country=${COUNTRY}`,
+  );
+  return (cats ?? []).map((cat) => ({ id: cat.id, name: cat.name }));
+}
+
+/** The account's pickup locations, derived from its products' `listings[]`. */
+export async function locations(c: HyggloClient): Promise<Loc[]> {
+  const rows = await listMine(c);
+  if (!rows.length) return [];
+  const detail = await getItem(c, rows[0].id);
+  const seen = new Map<number, Loc>();
+  for (const lst of detail?.listings ?? []) {
+    const loc = lst?.location;
+    if (loc?.id != null && !seen.has(loc.id)) {
+      seen.set(loc.id, { id: loc.id, name: (loc.name ?? "").trim(), address: loc.address });
+    }
+  }
+  return [...seen.values()].sort(
+    (a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name),
+  );
+}
+
+export async function locationIds(c: HyggloClient): Promise<number[]> {
+  return (await locations(c)).map((l) => l.id);
+}
+
+/** Slim list row for the dashboard (matches the legacy VPS API shape). */
+export function slim(p: HyggloListing): SlimListing {
+  return {
+    id: p.id,
+    name: p.name,
+    categoryId: p.categoryId,
+    isPublished: p.isPublished,
+    valuation: p.valuation,
+    prices: cleanPrices(p.prices),
+    image: p.images?.[0]?.fullSizeUrl ?? null,
+    locations: (p.listings ?? []).length,
+    publicUrl: p.publicUrl ?? null,
+  };
+}
+
+// ── Writes ────────────────────────────────────────────────────────────────
+
+/** Set published state via PATCH (the proven verb; PUT ignores an unpublish). */
+export async function publishListing(
+  c: HyggloClient,
+  id: number | string,
+  published: boolean,
+): Promise<WriteResult> {
+  try {
+    await c.sendRaw("PATCH", `/v2/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, {
+      isPublished: !!published,
+    });
+    return { ok: true, id };
+  } catch (err) {
+    if (err instanceof HyggloApiError) return { ok: false, status: err.status, error: err.body.slice(0, 200) };
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Universal edit via full PUT (the ONLY way to change category / prices /
+ * locations). Reuses the existing image. Publish state is enforced via a
+ * follow-up PATCH because PUT ignores an unpublish.
+ */
+export async function editListing(
+  c: HyggloClient,
+  id: number | string,
+  changes: ListingChanges,
+): Promise<WriteResult> {
+  const cur = await getItem(c, id);
+  if (!cur) return { ok: false, error: `listing ${id} not found` };
+
+  const existingBare = bare(cur.images?.[0]?.filename);
+  const wantPublish = "isPublished" in changes ? !!changes.isPublished : undefined;
+
+  // Locations: reuse the ones already on the product (idempotent), falling back
+  // to a fresh lookup only if the detail carried none.
+  const curLocIds = [
+    ...new Set((cur.listings ?? []).map((l) => l.location?.id).filter((x): x is number => x != null)),
+  ];
+  const locIds = changes.locationIds ?? (curLocIds.length ? curLocIds : await locationIds(c));
+
+  let name = (changes.name ?? cur.name ?? "").slice(0, NAME_MAX);
+  let aiRetry = true;
+  let lastStatus: number | undefined;
+  let lastError = "exhausted retries";
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const body = {
+      name: name.slice(0, NAME_MAX),
+      description: changes.description ?? cur.description ?? "",
+      categoryId: changes.categoryId ?? cur.categoryId,
+      valuation: changes.valuation ?? cur.valuation,
+      isPublished: changes.isPublished ?? cur.isPublished ?? true,
+      minimumRentalDays: changes.minimumRentalDays ?? cur.minimumRentalDays ?? 1,
+      stockLevel: changes.stockLevel ?? cur.stockLevel ?? 1,
+      cancellationTerms: changes.cancellationTerms ?? cur.cancellationTerms ?? CANCELLATION_DEFAULT,
+      locationIds: locIds,
+      prices: cleanPrices(changes.prices ?? cur.prices),
+      images: [{ filename: existingBare, displayOrder: 0 }],
+    };
+    try {
+      await c.sendRaw("PUT", `/v2/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, body);
+      if (wantPublish !== undefined) await publishListing(c, id, wantPublish);
+      return { ok: true, id };
+    } catch (err) {
+      if (!(err instanceof HyggloApiError)) {
+        lastError = String(err);
+        if (attempt < 3) { await sleep(2000); continue; }
+        return { ok: false, error: lastError };
+      }
+      lastStatus = err.status;
+      lastError = err.body.slice(0, 300);
+      const lower = (err.body ?? "").toLowerCase();
+      if (isAiFail(lower) && aiRetry) {
+        name = name.replace(COMPETITOR, "").trim();
+        aiRetry = false;
+        await sleep(1500);
+        continue;
+      }
+      if (err.status >= 500 && attempt < 3) { await sleep(2500); continue; }
+      return { ok: false, status: err.status, error: lastError };
+    }
+  }
+  return { ok: false, status: lastStatus, error: lastError };
+}
+
+// ── Convenience wrappers ────────────────────────────────────────────────────
+
+export function setPrice(c: HyggloClient, id: number | string, prices: HyggloPrice[]) {
+  return editListing(c, id, { prices });
+}
+
+export function setCategory(c: HyggloClient, id: number | string, categoryId: number) {
+  return editListing(c, id, { categoryId });
+}
+
+export function setLocations(c: HyggloClient, id: number | string, locationIds: number[]) {
+  return editListing(c, id, { locationIds });
+}
+
+export function setPublished(c: HyggloClient, id: number | string, published: boolean) {
+  return publishListing(c, id, published);
+}
+
+/** Add/update the "⏰ Opening times:" line in the description (no Hygglo API). */
+export async function setOpeningTimes(
+  c: HyggloClient,
+  id: number | string,
+  text: string,
+): Promise<WriteResult> {
+  const cur = await getItem(c, id);
+  if (!cur) return { ok: false, error: `listing ${id} not found` };
+  const desc = cur.description ?? "";
+  const line = "⏰ Opening times: " + text;
+  // `.match()` with a /g regex is stateless (unlike `.test()`); reuse is safe.
+  const newDesc = desc.match(OPENING_LINE)
+    ? desc.replace(OPENING_LINE, line)
+    : desc.replace(/\s+$/, "") + "\n\n" + line;
+  return editListing(c, id, { description: newDesc });
+}

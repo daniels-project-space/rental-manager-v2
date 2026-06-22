@@ -1,48 +1,125 @@
+/**
+ * Hygglo listing management — NATIVE Vercel serverless (no VPS).
+ *
+ * Replaces the old proxy to the VPS `listings_api.py`. Talks straight to
+ * `api.hygglo.com` via `src/lib/hygglo/listings.ts` (vault-backed auth from
+ * hygglo-core). Server-side only — Hygglo credentials never reach the browser.
+ *
+ * Routes (under /api/listings):
+ *   GET   /health
+ *   GET   /{account}/items                 → slim listing list
+ *   GET   /{account}/categories            → [{id,name}]
+ *   GET   /{account}/locations             → [{id,name,address}]
+ *   GET   /{account}/item/{lid}            → full listing
+ *   PATCH /{account}/item/{lid}            → edit (name,description,categoryId,
+ *                                            prices,valuation,isPublished,
+ *                                            locationIds,openingTimes,…)
+ *   POST  /{account}/item                  → create (Phase 2: from R2 image)
+ */
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  listingClient,
+  isAllowedAccount,
+  listMine,
+  getItem,
+  categories,
+  locations,
+  editListing,
+  setOpeningTimes,
+  slim,
+  type ListingChanges,
+} from "@/lib/hygglo/listings";
 
-// Server-side proxy to the VPS Hygglo Listings API (listings_api.py @ :8792 via
-// nginx /listings-api/). The X-Listings-Token never reaches the browser. RM is
-// HTTPS and the listings API is HTTP, so this must be server-side.
-const BASE = process.env.LISTINGS_API_BASE ?? "http://87.106.233.113/listings-api";
-const TOKEN = process.env.LISTINGS_API_TOKEN ?? "";
-
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // edit = GET + PUT (+ retries) + PATCH
 
-async function forward(method: string, path: string, body?: unknown) {
-  if (!TOKEN) {
-    return NextResponse.json(
-      { error: "LISTINGS_API_TOKEN not configured on the server" },
-      { status: 500 },
-    );
-  }
-  try {
-    const r = await fetch(`${BASE}/${path}`, {
-      method,
-      headers: { "X-Listings-Token": TOKEN, "Content-Type": "application/json" },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      cache: "no-store",
-    });
-    const text = await r.text();
-    const data = text ? JSON.parse(text) : null;
-    return NextResponse.json(data, { status: r.status });
-  } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 502 });
-  }
+const EDITABLE: (keyof ListingChanges)[] = [
+  "name",
+  "description",
+  "categoryId",
+  "prices",
+  "valuation",
+  "isPublished",
+  "locationIds",
+  "stockLevel",
+  "cancellationTerms",
+  "minimumRentalDays",
+];
+
+function notFound(msg: string) {
+  return NextResponse.json({ ok: false, error: msg }, { status: 404 });
+}
+function fail(msg: string, status = 500) {
+  return NextResponse.json({ ok: false, error: msg }, { status });
 }
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
-  return forward("GET", path.join("/"));
+  const [account, sub, lid] = path;
+
+  if (account === "health") {
+    return NextResponse.json({ ok: true, accounts: ["leo", "dbcinema"] });
+  }
+  if (!isAllowedAccount(account)) return notFound(`unknown account '${account}'`);
+
+  try {
+    const c = listingClient(account);
+    if (sub === "items") return NextResponse.json((await listMine(c)).map(slim));
+    if (sub === "categories") return NextResponse.json(await categories(c));
+    if (sub === "locations") return NextResponse.json(await locations(c));
+    if (sub === "item" && lid) {
+      const item = await getItem(c, lid);
+      return item ? NextResponse.json(item) : notFound("listing not found");
+    }
+    return notFound(`unknown path '${path.join("/")}'`);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err), 502);
+  }
 }
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
-  const body = await req.json().catch(() => ({}));
-  return forward("PATCH", path.join("/"), body);
+  const [account, sub, lid] = path;
+  if (!isAllowedAccount(account)) return notFound(`unknown account '${account}'`);
+  if (sub !== "item" || !lid) return notFound(`unknown path '${path.join("/")}'`);
+
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown> & {
+    openingTimes?: string;
+  };
+  const opening = typeof body.openingTimes === "string" ? body.openingTimes : undefined;
+
+  const changes: ListingChanges = {};
+  for (const k of EDITABLE) {
+    if (k in body && body[k] !== undefined) {
+      (changes as Record<string, unknown>)[k] = body[k];
+    }
+  }
+
+  try {
+    const c = listingClient(account);
+    // Opening times → managed description line. Do it first ONLY when the caller
+    // isn't also setting the description (so an explicit desc edit wins).
+    if (opening !== undefined && changes.description === undefined) {
+      const r = await setOpeningTimes(c, lid, opening);
+      if (!r.ok) return NextResponse.json(r);
+    }
+    if (Object.keys(changes).length > 0) {
+      return NextResponse.json(await editListing(c, lid, changes));
+    }
+    if (opening !== undefined) return NextResponse.json({ ok: true, id: lid });
+    return NextResponse.json({ ok: false, error: "no editable fields" });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err), 502);
+  }
 }
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+export async function POST(_req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
-  const body = await req.json().catch(() => ({}));
-  return forward("POST", path.join("/"), body);
+  const [account, sub] = path;
+  if (!isAllowedAccount(account)) return notFound(`unknown account '${account}'`);
+  if (sub !== "item") return notFound(`unknown path '${path.join("/")}'`);
+  // Create needs a rendered image — wired in Phase 2 (R2 → Hygglo presigned).
+  return fail("create-listing is not enabled yet (Phase 2: render → R2 → Hygglo)", 501);
 }

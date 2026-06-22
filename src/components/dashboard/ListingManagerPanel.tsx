@@ -8,7 +8,7 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const MUTED = "#8b8fa3";
 const TEXT = "#e4e6eb";
-const ACCOUNTS = ["leo", "dbc"];
+const ACCOUNTS = ["leo", "dbcinema"];
 
 type Price = { days: number; price: number; pricePerDay: number };
 type Item = {
@@ -171,7 +171,7 @@ export function ListingManagerPanel() {
         className="w-full mb-3 px-3 py-1.5 rounded-lg text-sm" style={{ background: "rgba(0,0,0,0.3)", color: TEXT }} />
 
       {err && <div className="text-xs p-3 rounded-lg" style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444" }}>
-        {err} — is LISTINGS_API_TOKEN set?
+        {err} — check Hygglo vault credentials for this account.
       </div>}
       {!items && !err && <div className="space-y-2">{[...Array(5)].map((_, i) => <SkeletonBlock key={i} className="h-9 rounded-lg" />)}</div>}
       {items && (
