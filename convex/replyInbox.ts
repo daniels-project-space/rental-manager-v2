@@ -26,8 +26,15 @@ export const getReplyQueue = query({
   args: {
     accountSlug: v.optional(v.string()),
     limit: v.optional(v.number()),
+    // Recency floor: ignore threads whose last renter message is older than
+    // this many days. Without it the queue floods with hundreds of ancient,
+    // effectively-dead inquiries and — because we sort oldest-first (most
+    // urgent) — those would dominate the top. Default keeps it actionable;
+    // raise it to dig into the older backlog.
+    withinDays: v.optional(v.number()),
   },
-  handler: async (ctx, { accountSlug, limit = 50 }) => {
+  handler: async (ctx, { accountSlug, limit = 50, withinDays = 30 }) => {
+    const cutoff = Date.now() - withinDays * 86_400_000;
     const convos = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
@@ -35,6 +42,8 @@ export const getReplyQueue = query({
 
     const tiles = [];
     for (const conv of convos) {
+      const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
+      if (recencyTs < cutoff) continue; // skip dead/ancient threads early
       // Reservation context (period / location / account / revenue). Inquiry
       // threads without an order yet simply have no reservation.
       const reservation = await ctx.db
@@ -234,5 +243,52 @@ export const recordSentReply = internalMutation({
       created_at: now,
     });
     return { ok: true };
+  },
+});
+
+// ── One-time backfill ─────────────────────────────────────────────
+
+/**
+ * Stamp last_sender / last_renter_msg_at / account_slug on conversations that
+ * predate the Reply Inbox (they were never touched by the updated
+ * upsertMessages). Without this the queue is empty on day one because no
+ * existing thread has last_sender set. Idempotent + batched: skips already
+ * stamped rows, processes up to `limit` per call. Run via
+ * `npx convex run replyInbox:backfillLastSender '{}'` until remaining === 0.
+ */
+export const backfillLastSender = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit = 400 }) => {
+    const convos = await ctx.db.query("conversations").collect();
+    let processed = 0;
+    let stamped = 0;
+    let remaining = 0;
+    for (const conv of convos) {
+      if (conv.last_sender) continue; // already backfilled
+      if (processed >= limit) {
+        remaining++;
+        continue;
+      }
+      processed++;
+      const latest = await ctx.db
+        .query("hygglo_messages")
+        .withIndex("by_thread", (q) => q.eq("thread_id", conv.thread_id))
+        .order("desc")
+        .first();
+      if (!latest) continue;
+      const sender: "owner" | "renter" =
+        latest.sender === "owner" ? "owner" : "renter";
+      const ts = latest.hygglo_sent_at ?? latest.fetched_at;
+      const patch: Record<string, unknown> = {
+        last_sender: sender,
+        last_msg_at: Math.max(conv.last_msg_at ?? 0, ts),
+      };
+      if (sender === "renter") patch.last_renter_msg_at = ts;
+      if (!conv.account_slug && latest.account_slug)
+        patch.account_slug = latest.account_slug;
+      await ctx.db.patch(conv._id, patch);
+      stamped++;
+    }
+    return { total: convos.length, processed, stamped, remaining };
   },
 });
