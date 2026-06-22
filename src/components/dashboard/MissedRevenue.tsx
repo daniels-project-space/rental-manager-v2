@@ -1,5 +1,6 @@
 "use client";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useAccount } from "@/lib/account-context";
@@ -21,9 +22,9 @@ export function MissedRevenue() {
   const [editingDenial, setEditingDenial] = useState<DenialRow | null>(null);
   const deleteDenial = useMutation(api.denial_records.remove);
 
-  const recentDenials = useQuery(api.denial_records.list, { limit: 10 });
+  const recentDenials = useStableQuery(api.denial_records.list, { limit: 10 });
 
-  const data = useQuery(api.revenue.getMissedRevenue, {
+  const data = useStableQuery(api.revenue.getMissedRevenue, {
     accountSlug: activeAccountSlug,
     days,
   });

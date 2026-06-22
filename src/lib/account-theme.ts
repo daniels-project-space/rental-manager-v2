@@ -23,8 +23,8 @@ export interface AccountTheme {
 
 export const ACCOUNT_THEME: Record<string, AccountTheme> = {
   dbcinema: { label: "DB Cinema", accent: "#6ea8fe" },
-  leo: { label: "Leo Adams", accent: "#22c55e" },
-  diogo: { label: "Diogo Valdivieso", accent: "#ec4899" },
+  leo: { label: "Leo Adams", accent: "#a855f7" },
+  diogo: { label: "Diogo Valdivieso", accent: "#f97316" },
 };
 
 /** Neutral grey for unknown / unmapped slugs. */

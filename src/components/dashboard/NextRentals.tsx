@@ -15,7 +15,7 @@
  */
 
 import { memo, useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { ACCOUNT_PILL, fmtTime } from "./stat-cards/ActiveDrawer";
@@ -492,7 +492,7 @@ function formatHeaderDate(day: "today" | "tomorrow"): string {
 export function NextRentals() {
   const { activeAccountSlug } = useAccount();
   const [day, setDay] = useState<"today" | "tomorrow">("today");
-  const data = useQuery(api.dashboard.getNextRentals, {
+  const data = useStableQuery(api.dashboard.getNextRentals, {
     accountSlug: activeAccountSlug,
     day,
   });

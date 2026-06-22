@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -16,7 +16,7 @@ const KIND_COLORS: Record<string, string> = {
 
 export function AIInvestmentInsights() {
   const { activeAccountSlug } = useAccount();
-  const insights = useQuery(api.ai_insights.getInsights, {
+  const insights = useStableQuery(api.ai_insights.getInsights, {
     accountSlug: activeAccountSlug,
   });
 

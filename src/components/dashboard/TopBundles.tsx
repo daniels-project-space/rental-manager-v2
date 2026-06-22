@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -13,7 +13,7 @@ export function TopBundles() {
   const { activeAccountSlug } = useAccount();
   const [days, setDays] = useState<Days>(90);
 
-  const data = useQuery(api.bundles.getBundleRevenueRanking, {
+  const data = useStableQuery(api.bundles.getBundleRevenueRanking, {
     accountSlug: activeAccountSlug,
     days,
   });

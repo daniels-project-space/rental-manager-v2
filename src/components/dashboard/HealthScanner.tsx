@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -22,7 +22,7 @@ const ISSUE_ICONS: Record<string, string> = {
 
 export function HealthScanner() {
   const { activeAccountSlug } = useAccount();
-  const data = useQuery(api.health.getHealthReport, {
+  const data = useStableQuery(api.health.getHealthReport, {
     accountSlug: activeAccountSlug,
   });
 

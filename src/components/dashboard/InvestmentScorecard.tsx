@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -45,7 +45,7 @@ function HeroRoi({ roiPct, color }: { roiPct: number; color: string }) {
 
 export function InvestmentScorecard() {
   const { activeAccountSlug } = useAccount();
-  const data = useQuery(api.revenue.getInvestmentScorecard, {
+  const data = useStableQuery(api.revenue.getInvestmentScorecard, {
     accountSlug: activeAccountSlug,
   });
 

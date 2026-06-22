@@ -62,8 +62,8 @@ const STAGE_SHORT: Record<Stage, string> = {
 
 const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
   dbcinema: { bg: "bg-blue-900/60 border border-blue-500/30", text: "text-blue-200" },
-  leo:      { bg: "bg-amber-900/40 border border-amber-500/30", text: "text-amber-200" },
-  diogo:    { bg: "bg-pink-900/60 border border-pink-500/30", text: "text-pink-200" },
+  leo:      { bg: "bg-purple-900/60 border border-purple-500/30", text: "text-purple-200" },
+  diogo:    { bg: "bg-orange-900/60 border border-orange-500/30", text: "text-orange-200" },
 };
 
 const fmtDate = (d: string) =>

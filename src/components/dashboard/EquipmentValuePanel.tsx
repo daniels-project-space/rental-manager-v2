@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -50,7 +50,7 @@ function HeroResell({ value }: { value: number }) {
 
 export function EquipmentValuePanel() {
   const { activeAccountSlug } = useAccount();
-  const data = useQuery(api.items.getEquipmentValue, {
+  const data = useStableQuery(api.items.getEquipmentValue, {
     accountSlug: activeAccountSlug,
   });
 

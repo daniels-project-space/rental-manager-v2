@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { accountAccent } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -44,7 +44,7 @@ function PulsingDot() {
 
 export function HyggloInbox() {
   const { activeAccountSlug } = useAccount();
-  const messages = useQuery(api.hygglo.getRecentMessages, {
+  const messages = useStableQuery(api.hygglo.getRecentMessages, {
     accountSlug: activeAccountSlug ?? undefined,
     limit: 15,
   });

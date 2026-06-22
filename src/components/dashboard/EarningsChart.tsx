@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -52,7 +52,7 @@ export function EarningsChart() {
   const [months, setMonths] = useState<Period>(12);
   const periods: Period[] = [3, 6, 12];
 
-  const raw = useQuery(api.revenue.getEarningsByPeriod, {
+  const raw = useStableQuery(api.revenue.getEarningsByPeriod, {
     accountSlug: activeAccountSlug,
     granularity,
     months,

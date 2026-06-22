@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -18,7 +18,7 @@ export function ItemRevenuePanel() {
   const { activeAccountSlug } = useAccount();
   const [showAll, setShowAll] = useState(false);
 
-  const data = useQuery(api.mv.top_earners.getRanking, {
+  const data = useStableQuery(api.mv.top_earners.getRanking, {
     account: activeAccountSlug ?? undefined,
     limit: 20,
   });

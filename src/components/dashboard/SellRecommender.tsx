@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -21,7 +21,7 @@ function UtilPill({ pct }: { pct: number }) {
 
 export function SellRecommender() {
   const { activeAccountSlug } = useAccount();
-  const data = useQuery(api.items.getSellRecommendations, {
+  const data = useStableQuery(api.items.getSellRecommendations, {
     accountSlug: activeAccountSlug,
   });
 

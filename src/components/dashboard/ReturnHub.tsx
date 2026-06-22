@@ -1,5 +1,6 @@
 "use client";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
@@ -495,7 +496,7 @@ function OpenCaseModal({
   const [holdQty, setHoldQty] = useState<Map<string, number>>(() => new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)])));
   const qtyMaxById = new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)]));
   const [manual, setManual] = useState<{ item_id: string; name: string }[]>([]);
-  const inventory = (useQuery(api.items.listActive) ?? []) as { id: string; name: string }[];
+  const inventory = (useStableQuery(api.items.listActive) ?? []) as { id: string; name: string }[];
   const shownItems = (() => {
     const seen = new Set<string>();
     const out: { item_id: string; name: string }[] = [];
@@ -649,7 +650,7 @@ function OpenCaseModal({
 
 export function ReturnHub() {
   const { activeAccountSlug } = useAccount();
-  const rows = useQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
+  const rows = useStableQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
   const [active, setActive] = useState<DueReturn | null>(null);
   const [caseFor, setCaseFor] = useState<DueReturn | null>(null);
   // finalizeReturn = markReturned (CRM save, status, reactive-query refresh that

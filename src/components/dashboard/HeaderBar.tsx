@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { useState } from "react";
 import { SettingsDrawer } from "@/components/dashboard/SettingsDrawer";
@@ -8,8 +8,8 @@ import { SettingsDrawer } from "@/components/dashboard/SettingsDrawer";
 const ACCOUNTS = [
   { slug: null, label: "All" },
   { slug: "dbcinema", label: "DB Cinema", color: "#6ea8fe" },
-  { slug: "leo", label: "Leo Adams", color: "#22c55e" },
-  { slug: "diogo", label: "Diogo", color: "#ec4899" },
+  { slug: "leo", label: "Leo Adams", color: "#a855f7" },
+  { slug: "diogo", label: "Diogo", color: "#f97316" },
 ];
 
 type AccountMeta = { slug: string; display_name: string; profile_image_url: string | null };
@@ -67,13 +67,13 @@ function AllAvatars({ metas }: { metas: AccountMeta[] | undefined }) {
 
 export function HeaderBar() {
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
-  const settings = useQuery(api.settings.get);
+  const settings = useStableQuery(api.settings.get);
   // Per-account profile pictures (Hygglo avatars seeded into the accounts table).
-  const accountsMeta = useQuery(api.accounts.list) as AccountMeta[] | undefined;
+  const accountsMeta = useStableQuery(api.accounts.list) as AccountMeta[] | undefined;
   // Global freshness signal — sourced from sync_state via dashboard.getStatsDrawerData.
   // (the Scanner card already reads the same field; this surfaces it in the header
   // so every widget gets an at-a-glance "how live is this dashboard" cue.)
-  const stats = useQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug }) as any;
+  const stats = useStableQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug }) as any;
   const STALE_THRESHOLD_MS = 60 * 60 * 1000;
   const lastScanAt: number | null = stats?.scanner?.last_scan_at ?? null;
   const staleMin = lastScanAt ? Math.round((Date.now() - lastScanAt) / 60_000) : null;

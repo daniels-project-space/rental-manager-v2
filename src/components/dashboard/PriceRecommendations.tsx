@@ -1,5 +1,6 @@
 "use client";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -13,12 +14,12 @@ export function PriceRecommendations() {
   const [dismissing, setDismissing] = useState<Set<string>>(new Set());
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
 
-  const data = useQuery(api.items.getPriceRecommendations, {
+  const data = useStableQuery(api.items.getPriceRecommendations, {
     accountSlug: activeAccountSlug,
   });
   // No-arg query: pass undefined so we don't churn a fresh `{}` reference
   // every render (audit 2026-05-23: cuts unnecessary Convex serialization).
-  const dismissedNames = useQuery(api.pricing_catalog.getDismissedItemNames);
+  const dismissedNames = useStableQuery(api.pricing_catalog.getDismissedItemNames);
 
   const applyMutation = useMutation(api.pricing_catalog.applyRecommendation);
   const dismissMutation = useMutation(api.pricing_catalog.dismissRecommendation);

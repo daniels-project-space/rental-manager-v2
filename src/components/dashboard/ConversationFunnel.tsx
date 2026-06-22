@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -18,7 +18,7 @@ export function ConversationFunnel() {
   const { activeAccountSlug } = useAccount();
   const [days, setDays] = useState<Days>(30);
 
-  const data = useQuery(api.reservations.getConversionFunnel, {
+  const data = useStableQuery(api.reservations.getConversionFunnel, {
     accountSlug: activeAccountSlug,
     days,
   });

@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState, type ReactElement } from "react";
-import { useQuery } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import {
   DndContext,
   KeyboardSensor,
@@ -164,7 +164,7 @@ export function StatsGrid() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const rawData = useQuery(api.dashboard.getStatsDrawerData, {
+  const rawData = useStableQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
   // Pass 10b (2026-05-25) — drawer drill-down rentals split into a
@@ -175,7 +175,7 @@ export function StatsGrid() {
   // require the rentals payload.
   const RENTAL_DRAWER_IDS = new Set(["active", "ongoing", "upcoming", "confirmed"]);
   const needsRentals = expandedId !== null && RENTAL_DRAWER_IDS.has(expandedId);
-  const rentalsRow = useQuery(
+  const rentalsRow = useStableQuery(
     api.mv.stats_drawer.getRentals,
     needsRentals ? { account: activeAccountSlug ?? "all" } : "skip",
   ) as { rentals?: { active?: unknown[]; ongoing?: unknown[]; upcoming?: unknown[]; confirmed?: unknown[] } } | undefined | null;

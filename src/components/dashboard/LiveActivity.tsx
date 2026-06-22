@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { accountAccent } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -42,7 +42,7 @@ function AccountDot({ slug }: { slug?: string }) {
 
 export function LiveActivity() {
   const { activeAccountSlug } = useAccount();
-  const rows = useQuery(api.reservations.getRecentActivity, {
+  const rows = useStableQuery(api.reservations.getRecentActivity, {
     accountSlug: activeAccountSlug,
     limit: 20,
   });

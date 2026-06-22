@@ -514,7 +514,7 @@ export const getCalendarStrip = query({
         items,
         renterName,
         accountSlug: r.account_slug,
-        accountColor: r.account_slug === "leo" ? "purple" : r.account_slug === "diogo" ? "pink" : "blue",
+        accountColor: r.account_slug === "leo" ? "purple" : r.account_slug === "diogo" ? "orange" : "blue",
         status: r.status,
         orderStep: (r as { order_step?: string | null }).order_step ?? null,
         startDate: r.start_date ?? null,

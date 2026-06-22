@@ -37,7 +37,7 @@ interface GanttItem {
   item_name: string;
   image_url: string | null;
   account_slug: string | null;
-  account_color: "blue" | "purple" | "pink";
+  account_color: "blue" | "purple" | "orange";
   blocks: Block[];
 }
 
@@ -148,8 +148,8 @@ function statusStyle(orderStep: string | null): StatusStyle {
   }
 }
 
-function accountColor(ac: "blue" | "purple" | "pink"): string {
-  return ac === "purple" ? "#a855f7" : ac === "pink" ? "#ec4899" : "#3b82f6";
+function accountColor(ac: "blue" | "purple" | "orange"): string {
+  return ac === "purple" ? "#a855f7" : ac === "orange" ? "#f97316" : "#3b82f6";
 }
 
 // ---------------------------------------------------------------------------
@@ -292,8 +292,8 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
     const geom = barGeom(merged, weekStart, colWidth);
     if (!geom) continue;
     const ongoing = !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
-    const accColor: "blue" | "purple" | "pink" =
-      rep.account_slug === "leo" ? "purple" : rep.account_slug === "diogo" ? "pink" : "blue";
+    const accColor: "blue" | "purple" | "orange" =
+      rep.account_slug === "leo" ? "purple" : rep.account_slug === "diogo" ? "orange" : "blue";
     rows.push({
       reservationId: gid,
       block: merged,

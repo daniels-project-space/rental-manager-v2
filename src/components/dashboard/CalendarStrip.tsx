@@ -1,6 +1,6 @@
 "use client";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useQuery } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card } from "@/components/ui/Card";
@@ -74,7 +74,7 @@ type DayData = {
 const ACCOUNT_COLORS: Record<string, string> = {
   blue: "#3b82f6",
   purple: "#a855f7",
-  pink: "#ec4899",
+  orange: "#f97316",
 };
 
 function resolveColor(accountColor: string | undefined): string {
@@ -507,7 +507,7 @@ function ProgressTimeline({
 // ── V1-style rich booking card ───────────────────────────────────────────────
 function BookingCard({ chip }: { chip: ChipData }) {
   const color = resolveColor(chip.accountColor);
-  const accounts = useQuery(api.accounts.list);
+  const accounts = useStableQuery(api.accounts.list);
   const accountMeta = (accounts as Array<{slug:string;display_name:string;profile_image_url:string|null}>|undefined)?.find((a) => a.slug === chip.accountSlug);
 // (item dropdown state removed — items now render as a single tile row)
 
@@ -980,7 +980,7 @@ export function CalendarStrip() {
   const [expandedDate, setExpandedDate] = useState<string | null>(today);
   const [ganttOpen, setGanttOpen] = useState(false);
 
-  const data = useQuery(api.calendar.getCalendarStrip, {
+  const data = useStableQuery(api.calendar.getCalendarStrip, {
     accountSlug: activeAccountSlug,
     startDate: stripStart,
     days: 7,

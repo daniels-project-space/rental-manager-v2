@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -96,18 +96,18 @@ export function LifetimeRevenue() {
   // Record<string, any> instead of implicit any.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type RawRow = Record<string, any>;
-  const raw = useQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug }) as
+  const raw = useStableQuery(api.revenue.getLifetimeByMonth, { accountSlug: activeAccountSlug }) as
     | { months: RawRow[]; forecast: RawRow[]; currentMonth?: string; [k: string]: unknown }
     | undefined;
   // Single source of truth for the current-month target: the Expected Monthly
   // stat card (data.monthly.target_gbp). The lifetime chart mirrors that value
   // so the two widgets cannot disagree.
-  const stats = useQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug });
+  const stats = useStableQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug });
   const expectedMonthlyTarget = (stats as { monthly?: { target_gbp?: number } } | undefined)
     ?.monthly?.target_gbp ?? 0;
   // ai_active_from: months earlier than this are PRE-AI; defensively zero out
   // their aiBoost contribution client-side regardless of what backend returns.
-  const settingsQ = useQuery(api.settings.get);
+  const settingsQ = useStableQuery(api.settings.get);
   const aiActiveFrom: string =
     (settingsQ as { ai_active_from?: string } | undefined)?.ai_active_from ?? "2026-02";
 

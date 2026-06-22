@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -51,7 +51,7 @@ export function ItemAvailabilityCalendar() {
     return () => clearTimeout(t);
   }, [raw]);
 
-  const data = useQuery(api.calendar.searchCalendarInventory, {
+  const data = useStableQuery(api.calendar.searchCalendarInventory, {
     query,
     weekStartIso: weekStart,
     accountSlug: activeAccountSlug,

@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -34,7 +34,7 @@ export function ItemCycleTracker() {
   const [days, setDays] = useState<Days>(30);
   const [sortBy, setSortBy] = useState<"util" | "name">("util");
 
-  const data = useQuery(api.items.getItemCycles, {
+  const data = useStableQuery(api.items.getItemCycles, {
     accountSlug: activeAccountSlug,
     days,
   });

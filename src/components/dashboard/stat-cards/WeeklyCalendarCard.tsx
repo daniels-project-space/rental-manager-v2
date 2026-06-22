@@ -1,6 +1,6 @@
 "use client";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -53,12 +53,12 @@ export default function WeeklyCalendarCard() {
   }, [raw]);
 
   // Default view: booking counts per day. (Always present so the week renders.)
-  const week = useQuery(api.calendar.getWeeklyCalendar, {
+  const week = useStableQuery(api.calendar.getWeeklyCalendar, {
     accountSlug: activeAccountSlug,
     weekStartDate: weekStart,
   });
   // Search view: per-day availability for the matched item.
-  const search = useQuery(
+  const search = useStableQuery(
     api.calendar.searchCalendarInventory,
     query ? { query, weekStartIso: weekStart, accountSlug: activeAccountSlug } : "skip",
   ) as { items: AvailItem[] } | undefined;

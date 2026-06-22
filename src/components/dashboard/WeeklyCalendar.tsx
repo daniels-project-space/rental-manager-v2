@@ -1,6 +1,6 @@
 "use client";
-import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { accountAccent } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -52,7 +52,7 @@ export function WeeklyCalendar() {
   const { activeAccountSlug } = useAccount();
   const [weekStart, setWeekStart] = useState(() => getMondayOf(londonToday()));
 
-  const data = useQuery(api.calendar.getWeeklyCalendar, {
+  const data = useStableQuery(api.calendar.getWeeklyCalendar, {
     accountSlug: activeAccountSlug,
     weekStartDate: weekStart,
   });
