@@ -27,6 +27,8 @@ import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunn
 import { EquipmentValuePanel } from "@/components/dashboard/EquipmentValuePanel";
 import { CompetitorIntelPanel } from "@/components/dashboard/CompetitorIntelPanel";
 import { PortedListingsPanel } from "@/components/dashboard/PortedListingsPanel";
+import { BrandControlPanel } from "@/components/dashboard/BrandControlPanel";
+import { ListingManagerPanel } from "@/components/dashboard/ListingManagerPanel";
 
 export type PanelWidget = {
   id: string;
@@ -72,6 +74,8 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "verification-funnel", label: "Verification Funnel",   component: VerificationFunnelPanel },
   { id: "equipment-value",     label: "Equipment Value & Resell", component: EquipmentValuePanel },
   { id: "ported-listings",     label: "Ported Listings",        component: PortedListingsPanel },
+  { id: "brand-control",       label: "Brand Control Center",   component: BrandControlPanel },
+  { id: "listing-manager",     label: "Listing Manager",        component: ListingManagerPanel },
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
