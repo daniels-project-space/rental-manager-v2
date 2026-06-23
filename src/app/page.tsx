@@ -14,7 +14,9 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { Suspense } from "react";
 import { HeaderBar } from "@/components/dashboard/HeaderBar";
+import { NotificationDeepLink } from "@/components/dashboard/NotificationDeepLink";
 import { EditModeBar } from "@/components/dashboard/EditModeBar";
 import { AddWidgetDrawer } from "@/components/dashboard/AddWidgetDrawer";
 import { EditableWidget } from "@/components/dashboard/EditableWidget";
@@ -97,6 +99,9 @@ export default function DashboardPage() {
     <DashboardHydrationProvider>
       <div style={{ background: "#070910", minHeight: "100dvh" }}>
         <HeaderBar />
+        <Suspense fallback={null}>
+          <NotificationDeepLink />
+        </Suspense>
         <EditModeBar />
         <main
           className="mx-auto px-4 md:px-6 py-5"

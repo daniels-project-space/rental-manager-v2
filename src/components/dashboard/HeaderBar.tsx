@@ -4,6 +4,7 @@ import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { useState } from "react";
 import { SettingsDrawer } from "@/components/dashboard/SettingsDrawer";
+import { NotificationBell } from "@/components/dashboard/NotificationBell";
 
 const ACCOUNTS = [
   { slug: null, label: "All" },
@@ -163,6 +164,7 @@ export function HeaderBar() {
               Read-only
             </span>
           )}
+          <NotificationBell />
           <button
             onClick={() => setShowSettings(true)}
             className="text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors text-base"

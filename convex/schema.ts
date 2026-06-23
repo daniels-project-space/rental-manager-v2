@@ -1970,4 +1970,42 @@ export default defineSchema({
   })
     .index("by_chat", ["chat_id"])
     .index("by_expires", ["expires_at"]),
+
+  // ── Web Push subscriptions (2026-06-23) ───────────────────────────────
+  // One row per browser/PWA push endpoint that opted in via the dashboard
+  // notification bell. Keyed by endpoint (unique). Dead endpoints (410/404
+  // on send) are pruned by the dispatcher.
+  push_subscriptions: defineTable({
+    endpoint: v.string(),
+    p256dh: v.string(),                      // client public key (base64url)
+    auth: v.string(),                        // client auth secret (base64url)
+    user_agent: v.optional(v.string()),
+    created_at: v.number(),
+    last_seen_at: v.number(),
+  }).index("by_endpoint", ["endpoint"]),
+
+  // ── Notification events (2026-06-23) ──────────────────────────────────
+  // One row per push-worthy event the poller detected: a newly-confirmed
+  // booking ("wohoo") or a new rental request landing in the Reply Inbox.
+  // `delivered_at` gates the dispatcher (send-once); `read_at` drives the
+  // bell's unread badge. `url` deep-links to the chat thread.
+  notification_events: defineTable({
+    type: v.union(
+      v.literal("booking_confirmed"),
+      v.literal("new_request"),
+    ),
+    thread_id: v.string(),                   // hygglo_order_id → deep-link target
+    account_slug: v.optional(v.string()),
+    title: v.string(),
+    body: v.string(),
+    url: v.string(),                         // e.g. "/?thread=<id>&account=<slug>"
+    created_at: v.number(),
+    delivered_at: v.optional(v.number()),    // set once web-push/Telegram fired
+    read_at: v.optional(v.number()),         // set when operator opens the bell
+  })
+    .index("by_created", ["created_at"])
+    .index("by_delivered", ["delivered_at"])
+    // De-dupe guard: at most one event per (thread, type) so a re-poll that
+    // re-sees the same transition can't double-fire.
+    .index("by_thread_type", ["thread_id", "type"]),
 });

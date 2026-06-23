@@ -229,6 +229,31 @@ export const getReplyQueue = query({
   },
 });
 
+/**
+ * Single-thread tile for the notification deep link (2026-06-23). Unlike
+ * getReplyQueue this returns ANY thread by id — including confirmed bookings
+ * that aren't "awaiting my reply" — so a tapped push (booking_confirmed or
+ * new_request) can open the chat modal regardless of queue state. Returns null
+ * when neither a conversation nor a reservation exists for the id.
+ */
+export const getThreadById = query({
+  args: { thread_id: v.string() },
+  handler: async (ctx, { thread_id }) => {
+    const conv = await ctx.db
+      .query("conversations")
+      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
+      .first();
+    const reservation = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) =>
+        q.eq("hygglo_order_id", thread_id),
+      )
+      .first();
+    if (!conv && !reservation) return null;
+    return await assembleTile(ctx, conv, reservation, thread_id);
+  },
+});
+
 // ── Draft context (consumed by replyInbox_actions.generateDraft) ──
 
 export const getThreadContext = internalQuery({

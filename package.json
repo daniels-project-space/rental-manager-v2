@@ -39,6 +39,7 @@
     "@trigger.dev/sdk": "4.4.5",
     "@types/jszip": "^3.4.0",
     "@types/three": "^0.184.1",
+    "@types/web-push": "^3.6.4",
     "ai": "^6.0.176",
     "convex": "^1.37.0",
     "dldr": "^0.0.10",
@@ -54,6 +55,7 @@
     "recharts": "^3.8.1",
     "sharp": "^0.34.5",
     "three": "^0.184.0",
+    "web-push": "^3.6.7",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {

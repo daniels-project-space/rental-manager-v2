@@ -133,6 +133,8 @@ import type * as mv_upcoming_returns from "../mv/upcoming_returns.js";
 import type * as mv_utilization from "../mv/utilization.js";
 import type * as mv_walle_signals from "../mv/walle_signals.js";
 import type * as mv_refresh_locks from "../mv_refresh_locks.js";
+import type * as notifications from "../notifications.js";
+import type * as notifications_send from "../notifications_send.js";
 import type * as order_step_semantics from "../order_step_semantics.js";
 import type * as poller_health from "../poller_health.js";
 import type * as ported_listings from "../ported_listings.js";
@@ -299,6 +301,8 @@ declare const fullApi: ApiFromModules<{
   "mv/utilization": typeof mv_utilization;
   "mv/walle_signals": typeof mv_walle_signals;
   mv_refresh_locks: typeof mv_refresh_locks;
+  notifications: typeof notifications;
+  notifications_send: typeof notifications_send;
   order_step_semantics: typeof order_step_semantics;
   poller_health: typeof poller_health;
   ported_listings: typeof ported_listings;

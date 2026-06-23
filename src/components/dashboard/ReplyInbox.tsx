@@ -25,7 +25,7 @@ interface RichItem {
   qty: number;
   image_url: string | null;
 }
-interface ReplyTileData {
+export interface ReplyTileData {
   thread_id: string;
   account_slug: string | null;
   renter_name: string;
@@ -310,8 +310,10 @@ function ReplyCard({
 }
 
 // ── modal (body portal — escapes widget clipping) ─────────────────
+// Exported so the notification deep-link host can open a thread from a tapped
+// push without the Reply Inbox widget being mounted/visible.
 
-function ReplyModal({
+export function ReplyModal({
   tile,
   onClose,
   onActed,

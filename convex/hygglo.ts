@@ -3,6 +3,11 @@ import type { MutationCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
+import {
+  queueNotificationEvents,
+  type NotifEventInput,
+  type NotifType,
+} from "./notifications";
 
 // ── order_step helpers ────────────────────────────────────────
 
@@ -638,7 +643,48 @@ type UpsertResult = {
 type UpsertImplResult = UpsertResult & {
   bankItems: BankItem[];
   transitionedToObsolete?: boolean;
+  // Push-worthy transitions detected this upsert (confirmed booking / new
+  // request). Collected by the batch handler → queueNotificationEvents.
+  notify?: NotifEventInput[];
 };
+
+/** Short "2× Lens, Tripod +1" style item summary for a notification body. */
+function summarizeNotifyItems(items: UpsertOrderArgs["items"]): string {
+  const names = (items ?? []).map((i) =>
+    i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name,
+  );
+  if (names.length === 0) return "rental";
+  if (names.length <= 2) return names.join(", ");
+  return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+}
+
+/** Build a notification event (title/body/deep-link) from an order's args. */
+function buildNotifyEvent(
+  args: UpsertOrderArgs,
+  type: NotifType,
+): NotifEventInput {
+  const renter = args.renter_name?.trim() || "A renter";
+  const items = summarizeNotifyItems(args.items);
+  const period = args.start_date
+    ? ` · ${args.start_date}${args.end_date ? `→${args.end_date}` : ""}`
+    : "";
+  const acct = args.account_slug;
+  const url = `/?thread=${encodeURIComponent(args.hygglo_order_id)}${
+    acct ? `&account=${encodeURIComponent(acct)}` : ""
+  }`;
+  const title =
+    type === "booking_confirmed"
+      ? "🎉 New booking confirmed"
+      : "🔔 New rental request";
+  return {
+    type,
+    thread_id: args.hygglo_order_id,
+    account_slug: acct,
+    title,
+    body: `${renter} · ${items}${period}`,
+    url,
+  };
+}
 
 /**
  * Core per-order upsert. Returns the per-order result PLUS the hygglo_items
@@ -896,6 +942,20 @@ async function upsertOrderImpl(
         photos_urls,
       });
     }
+    // Push notifications (2026-06-23): fire on genuine TRANSITIONS only so a
+    // re-poll of an unchanged order never re-notifies.
+    //  • booking_confirmed ("wohoo") — status crossed INTO "confirmed".
+    //  • new_request — Hygglo's actions map newly offers accept/deny.
+    const notifyUpdate: NotifEventInput[] = [];
+    if (existing.status !== "confirmed" && finalStatus === "confirmed") {
+      notifyUpdate.push(buildNotifyEvent(args, "booking_confirmed"));
+    }
+    if (
+      args.awaiting_owner_action === true &&
+      existing.awaiting_owner_action !== true
+    ) {
+      notifyUpdate.push(buildNotifyEvent(args, "new_request"));
+    }
     return {
       action: "updated",
       bankItems: hyggloItemsUpdate,
@@ -903,6 +963,7 @@ async function upsertOrderImpl(
       // kept under its original name to avoid renaming the API. Covers
       // obsolete transitions (both directions) and pickup-step crossings.
       transitionedToObsolete: transitionedToObsolete || transitionedFromObsolete || pickupStateChanged,
+      ...(notifyUpdate.length > 0 && { notify: notifyUpdate }),
     };
   }
 
@@ -954,10 +1015,20 @@ async function upsertOrderImpl(
   ]);
   const insertedAsPickedUp =
     typeof incomingStep === "string" && NEWLY_PICKED_UP_STEPS.has(incomingStep);
+  // Push: a brand-new row already awaiting accept/deny is a new request.
+  // We deliberately do NOT fire booking_confirmed on first insert — that would
+  // spam every historical confirmed rental when a NEW account is first synced.
+  // Real bookings are caught by the request→confirmed transition on the update
+  // path above.
+  const notifyInsert: NotifEventInput[] =
+    args.awaiting_owner_action === true
+      ? [buildNotifyEvent(args, "new_request")]
+      : [];
   return {
     action: "inserted",
     reservation_id: newId as unknown as string,
     bankItems: hyggloItemsInsert,
+    ...(notifyInsert.length > 0 && { notify: notifyInsert }),
     // Pass 15a (2026-05-26): newly-inserted rows that come in already-obsolete
     // (renter cancelled before we ever saw it active) count as a transition
     // for MV-refresh purposes. The mv_stats_drawer cached "active" list won't
@@ -999,9 +1070,13 @@ export const upsertOrdersAsReservationsBatch = mutation({
     // within seconds of a cancellation instead of waiting up to ~60 min for
     // the next refreshFast cron. One refresh per batch covers N transitions.
     let anyTransitionedToObsolete = false;
+    // Push-worthy transitions (confirmed bookings / new requests) detected
+    // across the batch — queued once at the end so a busy poll fans out a
+    // single dispatch rather than one per order.
+    const allNotify: NotifEventInput[] = [];
 
     for (const args of orders) {
-      const { action, reservation_id, bankItems, transitionedToObsolete } =
+      const { action, reservation_id, bankItems, transitionedToObsolete, notify } =
         await upsertOrderImpl(ctx, args);
       results.push(reservation_id !== undefined ? { action, reservation_id } : { action });
       if (bankItems.length > 0) {
@@ -1010,6 +1085,18 @@ export const upsertOrdersAsReservationsBatch = mutation({
         else perAccountBank.set(args.account_slug, [...bankItems]);
       }
       if (transitionedToObsolete) anyTransitionedToObsolete = true;
+      if (notify && notify.length > 0) allNotify.push(...notify);
+    }
+
+    if (allNotify.length > 0) {
+      try {
+        await queueNotificationEvents(ctx, allNotify);
+      } catch (err) {
+        console.warn(
+          "[hygglo.upsertOrdersAsReservationsBatch] queueNotificationEvents failed",
+          String(err),
+        );
+      }
     }
 
     for (const [account_slug, items] of perAccountBank) {

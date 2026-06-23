@@ -1,0 +1,25 @@
+{
+  "name": "Rental Manager v2",
+  "short_name": "Rentals",
+  "description": "DB Cinema / Leo / Diogo rental operations dashboard",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070910",
+  "theme_color": "#070910",
+  "icons": [
+    {
+      "src": "/notif-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/notif-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
