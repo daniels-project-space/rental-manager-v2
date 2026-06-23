@@ -256,6 +256,7 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
 
 // ── Task ──────────────────────────────────────────────────────
 
+// build-stamp 2026-06-23T00:45Z — awaiting_owner_action batch-path fix (b68f826)
 export const pollHyggloInbox = schedules.task({
   id: "poll-hygglo-inbox",
   cron: "*/15 * * * *",
