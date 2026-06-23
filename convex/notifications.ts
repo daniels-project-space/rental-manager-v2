@@ -174,6 +174,32 @@ export const markAllRead = mutation({
   },
 });
 
+/**
+ * Fire a test notification (bell "Send test" button). Inserts a one-off event
+ * with a unique thread id (bypasses the dedupe) and dispatches it, so the
+ * operator can confirm their phone actually receives a push after enabling.
+ */
+export const sendTestNotification = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("notification_events", {
+      type: "booking_confirmed",
+      thread_id: `test-${now}`,
+      title: "🎉 Test notification",
+      body: "Push is working — you'll get these for new bookings & requests.",
+      url: "/",
+      created_at: now,
+    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.notifications_send.dispatchPending,
+      {},
+    );
+    return { ok: true as const };
+  },
+});
+
 // ── Internal helpers for the "use node" dispatcher ────────────────────
 
 export const getUndelivered = internalQuery({

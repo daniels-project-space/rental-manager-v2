@@ -44,6 +44,7 @@ export function NotificationBell() {
   const recent = useQuery(api.notifications.listRecent, { limit: 20 });
   const save = useMutation(api.notifications.savePushSubscription);
   const markAllRead = useMutation(api.notifications.markAllRead);
+  const sendTest = useMutation(api.notifications.sendTestNotification);
 
   const [open, setOpen] = useState(false);
   const [pushState, setPushState] = useState<PushState>("loading");
@@ -206,7 +207,12 @@ export function NotificationBell() {
               <span className="text-[11px] text-emerald-400">
                 ✓ Phone notifications on
               </span>
-              <span className="text-[10px] text-[#6b7280]">Recent</span>
+              <button
+                onClick={() => sendTest({}).catch(() => {})}
+                className="text-[10px] text-[#9aa0ad] hover:text-[#e4e6eb] underline-offset-2 hover:underline"
+              >
+                Send test
+              </button>
             </div>
           )}
 
