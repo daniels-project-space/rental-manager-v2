@@ -144,6 +144,8 @@ type OrderReservationPayload = {
     | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED"
     | "BOOKED_AFTER_VERIFIED" | "DELIVERED" | "RETURNED" | "REVIEWED"
     | "CANCELED" | "VERIFICATION_FAILED";
+  /** 2026-06-23 — Hygglo actions map offers accept/deny (awaiting owner approval). */
+  awaiting_owner_action?: boolean;
   /** Phase 3d — derived from activity.event.content. */
   hygglo_system_signal?:
     | "owner_denied"
@@ -239,6 +241,7 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     // common non-denial newly-inserted path). Falls back to `order` then {}.
     detail_payload: (r.detail_payload ?? r.order ?? {}) as OrderDetail,
     order_step_extracted: r.order_step_extracted,
+    awaiting_owner_action: r.awaiting_owner_action,
     hygglo_system_signal: r.hygglo_system_signal,
     hygglo_system_signal_text: r.hygglo_system_signal_text,
   }));
@@ -446,6 +449,7 @@ export const pollHyggloInbox = schedules.task({
                 duration_days: payload.duration_days,
                 ...(needsRawOrder && { order: payload.order }),
                 ...(orderStepExtracted && { order_step_extracted: orderStepExtracted }),
+                ...(payload.awaiting_owner_action !== undefined && { awaiting_owner_action: payload.awaiting_owner_action }),
                 sourceFilter: payload.sourceFilter,
                 renter_name: payload.renter_name,
                 hygglo_user_id: payload.hygglo_user_id,
