@@ -646,6 +646,10 @@ type UpsertImplResult = UpsertResult & {
   // Push-worthy transitions detected this upsert (confirmed booking / new
   // request). Collected by the batch handler → queueNotificationEvents.
   notify?: NotifEventInput[];
+  // True when this order crossed the picked-up threshold (DELIVERED/RETURNED/
+  // REVIEWED) — i.e. REALISED revenue changed. Drives a reactive refresh of the
+  // lifetime-revenue + investment MVs (otherwise daily-only → up to 24h stale).
+  revenueRealized?: boolean;
 };
 
 /** Short "2× Lens, Tripod +1" style item summary for a notification body. */
@@ -997,6 +1001,8 @@ async function upsertOrderImpl(
       // obsolete transitions (both directions) and pickup-step crossings.
       transitionedToObsolete: transitionedToObsolete || transitionedFromObsolete || pickupStateChanged,
       ...(notifyUpdate.length > 0 && { notify: notifyUpdate }),
+      // Realised revenue changed iff the picked-up state flipped (either way).
+      ...(pickupStateChanged && { revenueRealized: true }),
     };
   }
 
@@ -1068,6 +1074,8 @@ async function upsertOrderImpl(
     // know to exclude them otherwise.
     transitionedToObsolete:
       obsoleteFields.is_obsolete === true || insertedAsPickedUp,
+    // A row inserted already picked-up adds realised revenue.
+    ...(insertedAsPickedUp && { revenueRealized: true }),
   };
 }
 
@@ -1103,13 +1111,17 @@ export const upsertOrdersAsReservationsBatch = mutation({
     // within seconds of a cancellation instead of waiting up to ~60 min for
     // the next refreshFast cron. One refresh per batch covers N transitions.
     let anyTransitionedToObsolete = false;
+    // Realised-revenue change in this batch → reactively refresh the lifetime
+    // revenue + investment MVs (otherwise daily-only, so a fresh pickup — e.g.
+    // diogo's first delivered rental — wouldn't show on the chart for up to 24h).
+    let anyRevenueRealized = false;
     // Push-worthy transitions (confirmed bookings / new requests) detected
     // across the batch — queued once at the end so a busy poll fans out a
     // single dispatch rather than one per order.
     const allNotify: NotifEventInput[] = [];
 
     for (const args of orders) {
-      const { action, reservation_id, bankItems, transitionedToObsolete, notify } =
+      const { action, reservation_id, bankItems, transitionedToObsolete, notify, revenueRealized } =
         await upsertOrderImpl(ctx, args);
       results.push(reservation_id !== undefined ? { action, reservation_id } : { action });
       if (bankItems.length > 0) {
@@ -1118,6 +1130,7 @@ export const upsertOrdersAsReservationsBatch = mutation({
         else perAccountBank.set(args.account_slug, [...bankItems]);
       }
       if (transitionedToObsolete) anyTransitionedToObsolete = true;
+      if (revenueRealized) anyRevenueRealized = true;
       if (notify && notify.length > 0) allNotify.push(...notify);
     }
 
@@ -1139,15 +1152,25 @@ export const upsertOrdersAsReservationsBatch = mutation({
       });
     }
 
-    if (anyTransitionedToObsolete) {
-      // Fire-and-forget refresh of the two MVs that cache "active" rentals
-      // lists. Both refreshers are skip-when-clean inside (so back-to-back
-      // batches that touch nothing new short-circuit cheaply), and we
-      // intentionally do not await — the poller's hot path must not block
-      // on MV rebuild latency.
+    // Reactively converge the dashboard the moment something changes, rather
+    // than waiting for the periodic crons (stats hourly, lifetime DAILY). The
+    // refreshers are skip-when-clean / cheap, and we don't await — the poller's
+    // hot path must not block on MV rebuilds.
+    //  • "active/pending" MVs: on any obsolete/pickup transition OR any new
+    //    request/confirmed booking (so the pending lists never lag a poll).
+    //  • revenue MVs: only when realised revenue actually changed (pickups) —
+    //    sparse, so the daily-only staleness that hid diogo's £18 can't recur.
+    const pendingChanged = anyTransitionedToObsolete || allNotify.length > 0;
+    if (pendingChanged || anyRevenueRealized) {
       try {
-        await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, { force: true });
-        await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
+        if (pendingChanged) {
+          await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, { force: true });
+          await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
+        }
+        if (anyRevenueRealized) {
+          await ctx.scheduler.runAfter(0, internal.mv.lifetime_revenue.refresh, {});
+          await ctx.scheduler.runAfter(0, internal.mv.investment_scorecard.refresh, {});
+        }
       } catch (err) {
         console.warn("[hygglo.upsertOrdersAsReservationsBatch] MV refresh schedule failed", String(err));
       }
