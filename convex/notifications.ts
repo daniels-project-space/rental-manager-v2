@@ -183,13 +183,23 @@ export const sendTestNotification = mutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
-    // Representative of the real compact format (account in title, useful body).
+    // Point the test at a REAL pending request so tapping it opens an actual
+    // chat thread (demonstrates the deep link), falling back to the dashboard.
+    const pending = await ctx.db
+      .query("reservations")
+      .withIndex("by_awaiting_owner_action", (q) =>
+        q.eq("awaiting_owner_action", true),
+      )
+      .first();
+    const url = pending?.hygglo_order_id
+      ? `/?thread=${encodeURIComponent(pending.hygglo_order_id)}${pending.account_slug ? `&account=${encodeURIComponent(pending.account_slug)}` : ""}`
+      : "/";
     await ctx.db.insert("notification_events", {
       type: "new_request",
       thread_id: `test-${now}`,
-      title: "🔔 New request · Leo",
-      body: "Test renter · Sony FX3 +2 · 24–26 Jun · £180 · Pickup",
-      url: "/",
+      title: "🔔 Test · taps through to a chat",
+      body: "Tap to confirm the notification opens the rental chat.",
+      url,
       created_at: now,
     });
     await ctx.scheduler.runAfter(
