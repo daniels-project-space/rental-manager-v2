@@ -376,6 +376,35 @@ export const getCalendarStrip = query({
       }
     }
 
+    // Reservation-level fallback photo. `imageByResItemStrip` keys images by the
+    // resolved item id via the product_id→item_id index; when a product isn't in
+    // that index yet (common right after a new account is added, e.g. diogo) the
+    // resolved tile would get NO image even though the reservation HAS a photo.
+    // This picks the reservation's OWN photo (account-correct → never mixes
+    // accounts): per-item image_hints (authoritative, poll-time) → bank /
+    // hygglo_items image_url → order photos.
+    const resFallbackImg = new Map<string, string>();
+    for (const rr of reservations) {
+      const acct = (rr as { account_slug?: string }).account_slug ?? "";
+      let pick: string | null = null;
+      for (const h of (((rr as { image_hints?: Array<{ image_url?: string }> }).image_hints) ?? [])) {
+        if (h.image_url && !h.image_url.includes("example.com")) { pick = h.image_url; break; }
+      }
+      if (!pick) {
+        for (const h of (((rr as { hygglo_items?: Array<{ product_id?: number; image_url?: string }> }).hygglo_items) ?? [])) {
+          const bank = typeof h.product_id === "number" ? bankByProductStrip.get(`${acct}#${h.product_id}`) : undefined;
+          if (bank) { pick = bank; break; }
+          if (h.image_url && !h.image_url.includes("example.com")) { pick = h.image_url; break; }
+        }
+      }
+      if (!pick) {
+        for (const p of (((rr as { photos_urls?: string[] }).photos_urls) ?? [])) {
+          if (p && !p.includes("example.com")) { pick = p; break; }
+        }
+      }
+      if (pick) resFallbackImg.set(String(rr._id), pick);
+    }
+
     type ChipItem = {
       itemId: string | null;
       name: string;
@@ -409,7 +438,10 @@ export const getCalendarStrip = query({
         for (const [id, qty] of ovUnits) {
           const inv = itemById.get(id) as { name_canonical?: string; kind?: string } | undefined;
           if (inv && isStandardAccessory(inv.kind, inv.name_canonical)) continue;
-          const img = imageByResItemStrip.get(`${String(r._id)}#${id}`) ?? null;
+          const img =
+            imageByResItemStrip.get(`${String(r._id)}#${id}`) ??
+            resFallbackImg.get(String(r._id)) ??
+            null;
           const key = img ?? `n:${id}`;
           if (seen.has(key)) continue;
           seen.add(key);
