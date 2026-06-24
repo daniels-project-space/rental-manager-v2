@@ -5,6 +5,7 @@ import {
   isConfirmedWithDates,
   dedupByLogicalRental,
   logicalGroupIds,
+  renterPeriodGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
@@ -288,27 +289,42 @@ export const getCalendarStrip = query({
     }) as typeof reservations;
 
     // Daniel (2026-06-24): pull together everything the SAME renter booked for
-    // the SAME time period into ONE calendar entry (multiple listings booked as
-    // one rental), instead of a separate chip per listing bloating the strip.
-    // Group by renter + account + exact pickup/return period; merge each
-    // member's items so the single chip shows all the gear. Different time
-    // frames stay separate ("unless you see the time frame is different").
-    const renterKeyOf = (r: { renter_id?: string | null; renter_name?: string | null; _id: string }) =>
-      r.renter_id ?? (r.renter_name ? `n:${r.renter_name.trim().toLowerCase()}` : `u:${r._id}`);
+    // the SAME (overlapping) time period into ONE calendar entry — multiple
+    // listings booked as one rental — instead of a chip per listing bloating
+    // the strip. Grouped by renter + account + OVERLAPPING period (a negotiated
+    // early/late pickup of part of the gear still counts as one booking, e.g.
+    // Nartay Ualikhan's 3 same-day orders with one pickup a day early). Combine
+    // each member's items; genuinely different time frames stay separate.
+    const periodGid = renterPeriodGroupIds(
+      logicalMerged as unknown as ReservationRow[],
+    );
     const periodGroups = new Map<string, typeof logicalMerged>();
     for (const r of logicalMerged) {
-      const key = `${renterKeyOf(r as never)}|${(r as { account_slug?: string }).account_slug ?? "?"}|${displayPickupDate(r)}|${displayReturnDate(r)}`;
-      const arr = periodGroups.get(key);
+      const gid = periodGid.get(String(r._id)) ?? String(r._id);
+      const arr = periodGroups.get(gid);
       if (arr) arr.push(r);
-      else periodGroups.set(key, [r]);
+      else periodGroups.set(gid, [r]);
     }
     const mergedReservations = Array.from(periodGroups.values()).map((members) => {
       if (members.length === 1) return members[0];
-      const base = members[0];
+      // Span the whole booking: earliest pickup → latest return.
+      const sorted = members
+        .slice()
+        .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)));
+      const startM = sorted[0];
+      let endM = sorted[0];
+      for (const m of sorted) if (displayReturnDate(m) > displayReturnDate(endM)) endM = m;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const combine = (k: string) => members.flatMap((m) => ((m as any)[k] as unknown[]) ?? []);
       return {
-        ...base,
+        ...startM,
+        pickup_date: displayPickupDate(startM),
+        return_date: displayReturnDate(endM),
+        end_date: endM.end_date,
+        pickup_time: startM.pickup_time,
+        return_time: endM.return_time,
+        pickup_method: (startM as { pickup_method?: string | null }).pickup_method,
+        return_method: (endM as { return_method?: string | null }).return_method,
         items: combine("items"),
         hygglo_items: combine("hygglo_items"),
         resolved_items: combine("resolved_items"),
@@ -1108,7 +1124,11 @@ export const getGanttWeek = query({
 
     // Logical-rental grouping: contiguous same-renter + same-item bookings share
     // one group_id so the frontend can render them as ONE continuous bar.
-    const ganttGroupIds = logicalGroupIds(reservations as unknown as ReservationRow[]);
+    // Group the fullscreen Gantt bars into ONE booking per renter+account+
+    // overlapping period (the frontend groupByReservation keys off this), so a
+    // multi-listing rental shows as a single timeline entry with all its items
+    // rather than one bar per listing. (Daniel, 2026-06-24.)
+    const ganttGroupIds = renterPeriodGroupIds(reservations as unknown as ReservationRow[]);
 
     // --- Renter name lookup ---
     const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];

@@ -397,3 +397,62 @@ export function logicalGroupIds(rows: ReservationRow[]): Map<string, string> {
   }
   return m;
 }
+
+/**
+ * Group ids for "ONE booking" = same renter + account whose rental periods
+ * OVERLAP or sit within a 1-day handover — regardless of which items/listings.
+ * A renter who books several listings together (and may negotiate an early/late
+ * pickup of part of the gear) becomes a single calendar entry; genuinely
+ * separate, non-overlapping rentals stay separate. Daniel, 2026-06-24
+ * ("pull the listings together … only for same renter and same time period").
+ */
+export function renterPeriodGroupIds(rows: ReservationRow[]): Map<string, string> {
+  const m = new Map<string, string>();
+  const buckets = new Map<string, ReservationRow[]>();
+  for (const r of rows) {
+    const rk =
+      r.renter_id ??
+      (r.renter_name ? `n:${r.renter_name.trim().toLowerCase()}` : `u:${r._id}`);
+    const key = `${rk}|${r.account_slug ?? "?"}`;
+    const arr = buckets.get(key);
+    if (arr) arr.push(r);
+    else buckets.set(key, [r]);
+  }
+  for (const arr of buckets.values()) {
+    arr.sort((a, b) => {
+      const pa = displayPickupDate(a);
+      const pb = displayPickupDate(b);
+      if (pa !== pb) return pa < pb ? -1 : 1;
+      const ra = displayReturnDate(a);
+      const rb = displayReturnDate(b);
+      return ra < rb ? -1 : ra > rb ? 1 : 0;
+    });
+    let chain: ReservationRow[] = [];
+    let chainEnd = "";
+    const flush = () => {
+      if (chain.length) {
+        const gid = chain[0]._id;
+        for (const r of chain) m.set(r._id, gid);
+      }
+      chain = [];
+      chainEnd = "";
+    };
+    for (const r of arr) {
+      const p = displayPickupDate(r);
+      const e = displayReturnDate(r);
+      if (chain.length === 0) {
+        chain = [r];
+        chainEnd = e;
+      } else if (p <= addDaysISO(chainEnd, MERGE_GAP_DAYS)) {
+        chain.push(r);
+        if (e > chainEnd) chainEnd = e;
+      } else {
+        flush();
+        chain = [r];
+        chainEnd = e;
+      }
+    }
+    flush();
+  }
+  return m;
+}
