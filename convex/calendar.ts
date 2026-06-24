@@ -121,6 +121,29 @@ function chipProgress(
   return Math.max(1, Math.min(99, Math.round(pct)));
 }
 
+/** The reservation's OWN representative photo — always account-correct (a
+ *  Hygglo per-item/order image, the listing-bank entry, or an order photo from
+ *  THIS reservation). Passed to resolveImageForReservationItem so it never
+ *  bleeds the GLOBAL items_table image (a shared canonical photo from another
+ *  account, e.g. a Leo light showing a DB Cinema tripod). */
+function reservationOwnImage(r: {
+  image_hints?: Array<{ image_url?: string; source?: string }>;
+  hygglo_items?: Array<{ image_url?: string }>;
+  photos_urls?: string[];
+}): string | null {
+  const ok = (u?: string | null): u is string =>
+    !!u && !u.includes("example.com");
+  const hints = r.image_hints ?? [];
+  const perItem = hints.find((h) => h.source === "hygglo_per_item" && ok(h.image_url));
+  if (perItem) return perItem.image_url as string;
+  const anyHint = hints.find((h) => ok(h.image_url));
+  if (anyHint) return anyHint.image_url as string;
+  const hi = (r.hygglo_items ?? []).find((h) => ok(h.image_url));
+  if (hi) return hi.image_url as string;
+  const ph = (r.photos_urls ?? []).find((p) => ok(p));
+  return ph ?? null;
+}
+
 // Phase 13.2: strict-index helper. Matches expanded_items[i].item_id to
 // hygglo_items[i].product_id when array lengths align. Returns null on
 // mismatch (kit listings) — safer than guessing, never produces a wrong image.
@@ -239,7 +262,7 @@ export const getCalendarStrip = query({
       if (arr) arr.push(r);
       else stripByGroup.set(gid, [r]);
     }
-    const mergedReservations = Array.from(stripByGroup.values()).map((members) => {
+    const logicalMerged = Array.from(stripByGroup.values()).map((members) => {
       if (members.length === 1) return members[0];
       const sorted = members
         .slice()
@@ -261,6 +284,41 @@ export const getCalendarStrip = query({
         pickup_method: (startM as { pickup_method?: string | null }).pickup_method,
         return_method: (endM as { return_method?: string | null }).return_method,
         gross_paid_gbp: grossSum,
+      };
+    }) as typeof reservations;
+
+    // Daniel (2026-06-24): pull together everything the SAME renter booked for
+    // the SAME time period into ONE calendar entry (multiple listings booked as
+    // one rental), instead of a separate chip per listing bloating the strip.
+    // Group by renter + account + exact pickup/return period; merge each
+    // member's items so the single chip shows all the gear. Different time
+    // frames stay separate ("unless you see the time frame is different").
+    const renterKeyOf = (r: { renter_id?: string | null; renter_name?: string | null; _id: string }) =>
+      r.renter_id ?? (r.renter_name ? `n:${r.renter_name.trim().toLowerCase()}` : `u:${r._id}`);
+    const periodGroups = new Map<string, typeof logicalMerged>();
+    for (const r of logicalMerged) {
+      const key = `${renterKeyOf(r as never)}|${(r as { account_slug?: string }).account_slug ?? "?"}|${displayPickupDate(r)}|${displayReturnDate(r)}`;
+      const arr = periodGroups.get(key);
+      if (arr) arr.push(r);
+      else periodGroups.set(key, [r]);
+    }
+    const mergedReservations = Array.from(periodGroups.values()).map((members) => {
+      if (members.length === 1) return members[0];
+      const base = members[0];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const combine = (k: string) => members.flatMap((m) => ((m as any)[k] as unknown[]) ?? []);
+      return {
+        ...base,
+        items: combine("items"),
+        hygglo_items: combine("hygglo_items"),
+        resolved_items: combine("resolved_items"),
+        expanded_items: combine("expanded_items"),
+        image_hints: combine("image_hints"),
+        photos_urls: combine("photos_urls"),
+        gross_paid_gbp: members.reduce(
+          (s, m) => s + ((m as { gross_paid_gbp?: number | null }).gross_paid_gbp ?? 0),
+          0,
+        ),
       };
     }) as typeof reservations;
 
@@ -486,6 +544,7 @@ export const getCalendarStrip = query({
           bankByProduct: bankByProductStrip,
           accountSlug: (r as { account_slug?: string }).account_slug ?? null,
           productId: productIdForItemNameInReservation(r as Parameters<typeof productIdForItemNameInReservation>[0], i.item_name),
+          ownAccountFallbackUrl: resFallbackImg.get(String(r._id)) ?? null,
         });
         const tile: ChipItem = {
           itemId: found?._id ?? null,
@@ -878,6 +937,9 @@ export const getWeeklyCalendar = query({
       if (!itemName) return null;
       const it = findItemByName(allItemsWeekly, itemName);
       const productId = r ? productIdForItemNameInReservation(r, itemName) : null;
+      const ownHint =
+        hints.find((h) => h.source === "hygglo_per_item" && h.image_url && !h.image_url.includes("example.com")) ??
+        hints.find((h) => h.image_url && !h.image_url.includes("example.com"));
       return resolveImageForReservationItem({
         imageHints: hints,
         itemName,
@@ -887,6 +949,7 @@ export const getWeeklyCalendar = query({
         bankByProduct: bankByProductWeekly,
         accountSlug: r?.account_slug ?? null,
         productId,
+        ownAccountFallbackUrl: ownHint?.image_url ?? null,
       }).url;
     }
 
@@ -1137,6 +1200,7 @@ export const getGanttWeek = query({
         const tileName = iDoc?.name_canonical ?? iDoc?.name ?? itemName;
         const rAny = r as Parameters<typeof productIdForItemNameInReservation>[0] & { account_slug?: string };
         const pidByItemName = productIdForItemNameInReservation(rAny, itemName);
+        const ownImgG = reservationOwnImage(r as Parameters<typeof reservationOwnImage>[0]);
         const out = resolveImageForReservationItem({
           imageHints: hints,
           itemName: tileName,
@@ -1146,6 +1210,7 @@ export const getGanttWeek = query({
           bankByProduct: bankByProductGantt,
           accountSlug: rAny.account_slug ?? null,
           productId: pidByItemName,
+          ownAccountFallbackUrl: ownImgG,
         });
         // Treat a placeholder as a MISS so scanning continues to the next
         // matching reservation (a later row may carry a real hint/bank image).
@@ -1163,6 +1228,7 @@ export const getGanttWeek = query({
           bankByProduct: bankByProductGantt,
           accountSlug: rAny.account_slug ?? null,
           productId: pidByItemName,
+          ownAccountFallbackUrl: ownImgG,
         });
         if (out2.source !== "placeholder" && out2.url) {
           resolvedImageUrl = out2.url;

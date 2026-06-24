@@ -108,6 +108,12 @@ export function resolveImageForReservationItem(args: {
   bankByProduct?: Map<string, string>;
   accountSlug?: string | null;
   productId?: number | null;
+  /** The reservation's OWN representative photo (account-correct — a Hygglo
+   *  per-item/order image from THIS reservation). Used before the GLOBAL
+   *  items_table fallback so a shared canonical item can never bleed another
+   *  account's photo onto this one (e.g. a Leo light showing a DB Cinema
+   *  tripod). At worst shows another item from the same reservation/account. */
+  ownAccountFallbackUrl?: string | null;
 }): ResolvedImage {
   const {
     imageHints,
@@ -118,6 +124,7 @@ export function resolveImageForReservationItem(args: {
     bankByProduct,
     accountSlug,
     productId,
+    ownAccountFallbackUrl,
   } = args;
 
   // 0. listing_images bank — product_id-keyed canonical photo. Stable PK,
@@ -149,8 +156,17 @@ export function resolveImageForReservationItem(args: {
     }
   }
 
-  // 3. items_table fallback — only when resolver is confident AND URL is not
-  //    in the shared-blacklist (basename-based to dodge query-string drift).
+  // 3. Reservation's OWN account-correct photo — preferred over the GLOBAL
+  //    items_table image below. `items` are shared canonical rows (no
+  //    account_slug), so items_table.image_url is one photo per item across
+  //    ALL accounts and is the root of cross-account image bleed. Falling back
+  //    to the reservation's own Hygglo photo keeps the image account-correct.
+  if (ownAccountFallbackUrl && !ownAccountFallbackUrl.includes("example.com")) {
+    return { url: ownAccountFallbackUrl, source: "hint_normalised", confidence: 0.6 };
+  }
+
+  // 4. items_table fallback — GLOBAL/shared; only reached when the reservation
+  //    has no own photo. Still gated by resolver confidence + shared-blacklist.
   const tableUrl = itemsTableEntry?.image_url ?? null;
   const conf = resolvedConfidence ?? 0;
   if (
@@ -161,7 +177,7 @@ export function resolveImageForReservationItem(args: {
     return { url: tableUrl, source: "items_table", confidence: 0.7 };
   }
 
-  // 4. Give up — UI placeholder.
+  // 5. Give up — UI placeholder.
   return { url: PLACEHOLDER_URL, source: "placeholder", confidence: 0 };
 }
 
