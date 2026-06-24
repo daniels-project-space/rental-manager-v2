@@ -447,6 +447,22 @@ export const getCalendarStrip = query({
           seen.add(key);
           out.push({ itemId: id, name: inv?.name_canonical ?? "item", imageUrl: img, qty, resolved: true });
         }
+        // Safety net: never hide a booked listing. resolved_items can be
+        // INCOMPLETE — the resolver sometimes maps only part of a multi-listing
+        // booking (e.g. Louis Holder 4028967: BMPCC + Canon lens resolved to
+        // just the lens), which silently dropped the other item from the tile
+        // AND the expanded view. Append any hygglo_item (booked listing) whose
+        // photo isn't already shown, using its raw name + own account-correct
+        // image. Image-keyed dedup means a set listing (components share the
+        // listing photo) is NOT duplicated.
+        for (const h of (((r as { hygglo_items?: Array<{ name?: string; product_id?: number; image_url?: string; qty?: number }> }).hygglo_items) ?? [])) {
+          const himg =
+            (typeof h.product_id === "number" ? bankByProductStrip.get(`${acct}#${h.product_id}`) : undefined) ??
+            (h.image_url && !h.image_url.includes("example.com") ? h.image_url : null);
+          if (!himg || seen.has(himg)) continue;
+          seen.add(himg);
+          out.push({ itemId: null, name: h.name ?? "item", imageUrl: himg, qty: h.qty ?? 1, resolved: false });
+        }
         if (out.length > 0) return out;
       }
 
