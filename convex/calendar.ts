@@ -1252,7 +1252,14 @@ export const getGanttWeek = query({
         const effPick = displayPickupDate(r);
         return {
           reservation_id: r._id,
-          image_url: ((iDoc && iDoc._id) ? imageByResItem.get(`${String(r._id)}#${String(iDoc._id)}`) : null) ?? rowImage,
+          // Per-reservation account-correct image first; then THIS reservation's
+          // own photo; only then the row image (global imageByItemId can bleed a
+          // different account when an item is shared, e.g. a diogo bar showing a
+          // DB Cinema photo in the "all accounts" gantt).
+          image_url:
+            ((iDoc && iDoc._id) ? imageByResItem.get(`${String(r._id)}#${String(iDoc._id)}`) : null) ??
+            reservationOwnImage(r as Parameters<typeof reservationOwnImage>[0]) ??
+            rowImage,
           logical_group_id: ganttGroupIds.get(r._id) ?? r._id,
           start_date: effPick || r.start_date,
           end_date: r.end_date,

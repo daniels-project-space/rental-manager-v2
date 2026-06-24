@@ -90,8 +90,11 @@ export const dispatchPending = internalAction({
           }),
         );
       }
-      // 2) Telegram fallback (always-on).
-      await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
+      // 2) Telegram — OFF by default now that web push works on the phone
+      //    (Daniel, 2026-06-24). Re-enable with Convex env NOTIF_TELEGRAM=1.
+      if (process.env.NOTIF_TELEGRAM === "1") {
+        await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
+      }
     }
 
     await ctx.runMutation(internal.notifications.markDelivered, {
