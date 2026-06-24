@@ -183,11 +183,12 @@ export const sendTestNotification = mutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
+    // Representative of the real compact format (account in title, useful body).
     await ctx.db.insert("notification_events", {
-      type: "booking_confirmed",
+      type: "new_request",
       thread_id: `test-${now}`,
-      title: "🎉 Test notification",
-      body: "Push is working — you'll get these for new bookings & requests.",
+      title: "🔔 New request · Leo",
+      body: "Test renter · Sony FX3 +2 · 24–26 Jun · £180 · Pickup",
       url: "/",
       created_at: now,
     });

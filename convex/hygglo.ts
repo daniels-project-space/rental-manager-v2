@@ -658,32 +658,65 @@ function summarizeNotifyItems(items: UpsertOrderArgs["items"]): string {
   return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
 }
 
-/** Build a notification event (title/body/deep-link) from an order's args. */
+const NOTIFY_ACCOUNT_LABELS: Record<string, string> = {
+  dbcinema: "DB Cinema",
+  leo: "Leo",
+  diogo: "Diogo",
+};
+function notifyAccountLabel(slug?: string): string {
+  return slug ? (NOTIFY_ACCOUNT_LABELS[slug] ?? slug) : "Unknown";
+}
+
+const NOTIFY_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+/** "24–26 Jun" / "30 Jun – 2 Jul" / "24 Jun" — compact, no Date/Intl. */
+function compactDateRange(start?: string, end?: string): string {
+  const parse = (iso?: string) => {
+    if (!iso) return null;
+    const [, m, d] = iso.split("-").map((n) => Number(n));
+    if (!m || !d) return null;
+    return { d, mon: NOTIFY_MONTHS[m - 1] ?? "" };
+  };
+  const s = parse(start);
+  if (!s) return "";
+  const e = parse(end);
+  if (!e) return `${s.d} ${s.mon}`;
+  if (s.mon === e.mon) return `${s.d}–${e.d} ${s.mon}`;
+  return `${s.d} ${s.mon} – ${e.d} ${e.mon}`;
+}
+
+/**
+ * Build a notification event from an order's args. Account is in the TITLE
+ * (which account it's for, at a glance) and the body is a compact, useful
+ * single line: renter · items · dates · £value · pickup.
+ */
 function buildNotifyEvent(
   args: UpsertOrderArgs,
   type: NotifType,
 ): NotifEventInput {
   const renter = args.renter_name?.trim() || "A renter";
   const items = summarizeNotifyItems(args.items);
-  const period = args.start_date
-    ? ` · ${args.start_date}${args.end_date ? `→${args.end_date}` : ""}`
-    : "";
+  const dates = compactDateRange(args.start_date, args.end_date);
+  const priceN = args.gross_paid_gbp ?? args.net_to_owner_gbp;
+  const price =
+    typeof priceN === "number" && priceN > 0 ? `£${Math.round(priceN)}` : "";
+  const pickup =
+    args.pickup_method && args.pickup_method !== "unknown"
+      ? args.pickup_method.charAt(0).toUpperCase() + args.pickup_method.slice(1)
+      : "";
   const acct = args.account_slug;
   const url = `/?thread=${encodeURIComponent(args.hygglo_order_id)}${
     acct ? `&account=${encodeURIComponent(acct)}` : ""
   }`;
+  const label = notifyAccountLabel(acct);
   const title =
     type === "booking_confirmed"
-      ? "🎉 New booking confirmed"
-      : "🔔 New rental request";
-  return {
-    type,
-    thread_id: args.hygglo_order_id,
-    account_slug: acct,
-    title,
-    body: `${renter} · ${items}${period}`,
-    url,
-  };
+      ? `🎉 Booking confirmed · ${label}`
+      : `🔔 New request · ${label}`;
+  const body = [renter, items, dates, price, pickup].filter(Boolean).join(" · ");
+  return { type, thread_id: args.hygglo_order_id, account_slug: acct, title, body, url };
 }
 
 /**

@@ -36,7 +36,13 @@ function timeAgo(ts: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-type PushState = "loading" | "unsupported" | "default" | "denied" | "enabled";
+type PushState =
+  | "loading"
+  | "unsupported"
+  | "ios-install" // iPhone Safari tab/bookmark — must Add to Home Screen first
+  | "default"
+  | "denied"
+  | "enabled";
 
 export function NotificationBell() {
   const router = useRouter();
@@ -55,12 +61,20 @@ export function NotificationBell() {
   // Register the service worker + detect any existing subscription.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isStandalone =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      // @ts-expect-error iOS Safari standalone flag
+      window.navigator?.standalone === true;
     if (
       !("serviceWorker" in navigator) ||
       !("PushManager" in window) ||
       !("Notification" in window)
     ) {
-      setPushState("unsupported");
+      // iPhone in a Safari tab/bookmark can't do web push until the site is
+      // added to the Home Screen (Apple restriction) — guide there instead of
+      // a dead "unsupported".
+      setPushState(isIOS && !isStandalone ? "ios-install" : "unsupported");
       return;
     }
     navigator.serviceWorker
@@ -170,16 +184,34 @@ export function NotificationBell() {
           style={{ background: "#101216", borderColor: "rgba(255,255,255,0.1)" }}
         >
           {/* Enable / status banner */}
-          {pushState !== "enabled" && (
+          {pushState !== "enabled" && pushState !== "loading" && (
             <div className="p-3 border-b border-white/10">
-              {pushState === "unsupported" ? (
+              {pushState === "ios-install" ? (
+                <>
+                  <p className="text-[11px] text-[#e4e6eb] font-semibold mb-1">
+                    📲 Add to Home Screen for notifications
+                  </p>
+                  <p className="text-[10px] text-[#9aa0ad] leading-snug">
+                    iPhone only allows app notifications from a Home-Screen app
+                    (a Safari bookmark can&apos;t). Tap{" "}
+                    <b>Share</b> → <b>Add to Home Screen</b>, open{" "}
+                    <b>Rentals</b> from your home screen, then tap this bell →{" "}
+                    <b>Enable</b>.
+                  </p>
+                  <p className="text-[10px] text-emerald-400/90 mt-2 leading-snug">
+                    ✅ Meanwhile you&apos;re already getting these on Telegram —
+                    no install needed.
+                  </p>
+                </>
+              ) : pushState === "unsupported" ? (
                 <p className="text-[11px] text-[#8b8fa3]">
-                  This browser doesn&apos;t support push notifications.
+                  This browser doesn&apos;t support push. You&apos;re still
+                  getting notifications on Telegram.
                 </p>
               ) : pushState === "denied" ? (
                 <p className="text-[11px] text-amber-400">
                   Notifications are blocked — enable them for this site in your
-                  browser settings, then reopen.
+                  browser settings, then reopen. (Telegram still works.)
                 </p>
               ) : (
                 <>
