@@ -94,7 +94,7 @@ export default function TodoWidget() {
                   if (active?._id === l._id) setActiveId(null);
                 }
               }}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] leading-none text-slate-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+              className="absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-slate-400 transition-colors hover:bg-red-500/20 hover:text-red-400"
             >
               ✕
             </button>
