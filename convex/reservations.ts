@@ -963,6 +963,54 @@ export const completeStaleConfirmedCron = internalMutation({
   },
 });
 
+/**
+ * Sibling of completeStaleConfirmedCron for PENDING rows (2026-06-25).
+ *
+ * Root cause of "stale pending forever": Hygglo drops an order from every list
+ * filter once it resolves, so the poller never re-sees it. completeStale*
+ * handles dropped CONFIRMED rows (→ completed) but pending_review rows had no
+ * handler — a request that expired/was cancelled (renter never paid) stayed
+ * `pending_review` indefinitely (Peter O 4029860: CANCELED on Hygglo, stuck
+ * pending_review for 6 days). A pending row whose rental END date has passed
+ * can never reach payment, so once Hygglo has also dropped it from the filters
+ * (stale last_polled_at), demote it to cancelled + obsolete and clear any
+ * awaiting-approval flag. Live-polled rows (fresh last_polled_at) are left
+ * alone — they're genuinely still pending.
+ */
+export const cancelStalePendingCron = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const dateCutoff = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const freshThreshold = Date.now() - 2 * 60 * 60 * 1000;
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "pending_review"))
+      .collect();
+    let cancelled = 0;
+    for (const r of rows) {
+      if (r.status !== "pending_review") continue;
+      if (r.is_obsolete) continue;
+      if (!r.end_date) continue;
+      if ((r.end_date as string) >= dateCutoff) continue; // rental not over yet
+      const lastPolled =
+        (r as { last_polled_at?: number }).last_polled_at ??
+        (r as { _creationTime?: number })._creationTime ??
+        0;
+      if (lastPolled >= freshThreshold) continue; // still polled = genuinely pending
+      await ctx.db.patch(r._id, {
+        status: "cancelled",
+        is_obsolete: true,
+        obsolete_reason: "renter_cancelled",
+        ...(((r as { awaiting_owner_action?: boolean }).awaiting_owner_action) && {
+          awaiting_owner_action: false,
+        }),
+      });
+      cancelled++;
+    }
+    return { total: rows.length, cancelled };
+  },
+});
+
 export const adminCompleteStaleConfirmed = mutation({
   args: {},
   handler: async (ctx) => {

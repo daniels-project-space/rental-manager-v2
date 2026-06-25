@@ -79,6 +79,16 @@ crons.interval(
   {},
 );
 
+// Sibling for PENDING rows Hygglo dropped after their rental date passed
+// (expired / never paid) — they can never reach payment, so demote to
+// cancelled instead of showing "pending" forever (2026-06-25, Peter O).
+crons.interval(
+  "cancel stale-pending reservations",
+  { minutes: 240 },
+  internal.reservations.cancelStalePendingCron,
+  {},
+);
+
 // ── Layer B (2026-05-19) — qty-drift safety net ────────────────
 // Nightly 03:00 UTC re-fetches Hygglo per-order detail for active reservations
 // and compares raw items[].length vs stored expanded_items quantity. Drifted
