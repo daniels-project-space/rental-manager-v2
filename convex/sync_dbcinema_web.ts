@@ -24,9 +24,17 @@
  *   DBCINEMA_ADMIN_TOKEN  (the storefront's ADMIN_TOKEN)
  */
 import { internalAction, internalMutation } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+
+// Self-reference by name: this module is new and not yet in the committed
+// _generated/api type map, so the typed `internal.sync_dbcinema_web.*` would
+// break `next build`'s typecheck. By-name avoids that (same pattern as the
+// dashboard chat tools).
+const upsertBatchRef = makeFunctionReference<"mutation">(
+  "sync_dbcinema_web:upsertSiteBookingsBatch",
+);
 
 const WEB_SLUG = "dbcinema_web";
 // The storefront's gear is DB Cinema's gear; its product IDs live in the
@@ -87,7 +95,7 @@ export const syncDbcinemaWeb = internalAction({
     }
     if (!payload?.authorized) return { ok: false, reason: "unauthorized" };
     const bookings = Array.isArray(payload.bookings) ? payload.bookings : [];
-    const res = await ctx.runMutation(internal.sync_dbcinema_web.upsertSiteBookingsBatch, {
+    const res = await ctx.runMutation(upsertBatchRef, {
       bookings: bookings as unknown[],
     });
     return { ok: true, ...res };

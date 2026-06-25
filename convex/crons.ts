@@ -18,10 +18,18 @@
  * All MV refreshers run as `internalMutation` (no external network calls,
  * so action wrappers are unnecessary for crons — direct mutation is faster).
  */
-import { cronJobs } from "convex/server";
+import { cronJobs, makeFunctionReference } from "convex/server";
 import { internal } from "./_generated/api";
 
 const crons = cronJobs();
+
+// New module not yet in the committed _generated/api type map (only EXISTING
+// modules are picked up via `typeof import`), so reference it by name — same
+// pattern the dashboard chat tools use for drift-prone functions. Keeps
+// `next build`'s typecheck green without committing a regenerated api.
+const syncDbcinemaWebRef = makeFunctionReference<"action">(
+  "sync_dbcinema_web:syncDbcinemaWeb",
+);
 
 // Phase 18.2 — MV cron consolidation.
 // Was: 6 separate cron entries each running a per-MV `refresh` mutation
@@ -105,7 +113,7 @@ crons.interval(
 crons.interval(
   "sync dbcinema website bookings",
   { minutes: 30 },
-  internal.sync_dbcinema_web.syncDbcinemaWeb,
+  syncDbcinemaWebRef,
   {},
 );
 
