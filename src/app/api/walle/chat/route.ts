@@ -33,6 +33,8 @@ import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
 import { buildWalleChatAgent } from "../../../../mastra/agents/walle_chat_agent";
 import {
   COMPAT_INTENT,
+  AVAILABILITY_INTENT,
+  INVENTORY_INTENT,
   buildDashboardTools,
   buildInventoryIndex,
   buildLiveSnapshot,
@@ -153,12 +155,18 @@ export async function POST(req: Request) {
   // would force a tool on EVERY step and never emit final text. The model
   // elects the tools on its own (reliably, on Haiku/Sonnet) for the turns that
   // need them.
-  const isCompat = COMPAT_INTENT.test(lastUserContent);
+  // Compatibility/optics, per-item availability, and inventory/spec/autofocus
+  // turns all go to the smart model. These are the questions with one correct
+  // answer in the data that Haiku kept answering from memory (the "everything
+  // he says is wrong" set); Sonnet reliably elects the grounding tool and
+  // respects the never-guess rules. Everything else stays on cheap Haiku.
+  const needsSmart =
+    COMPAT_INTENT.test(lastUserContent) ||
+    AVAILABILITY_INTENT.test(lastUserContent) ||
+    INVENTORY_INTENT.test(lastUserContent);
 
   const openrouter = createOpenRouter({ apiKey });
-  // Compatibility / optics turns route to Sonnet — Haiku inverted the APS-C vs
-  // full-frame fact answering from memory. Everything else stays on cheap Haiku.
-  const modelId = isCompat ? CHAT_MODEL_SMART : CHAT_MODEL;
+  const modelId = needsSmart ? CHAT_MODEL_SMART : CHAT_MODEL;
   const model = openrouter(modelId);
 
   // v1-style compute-then-phrase: inject the LIVE dashboard snapshot (trusted

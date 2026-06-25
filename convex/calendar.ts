@@ -1637,6 +1637,150 @@ export const searchCalendarInventory = query({
   },
 });
 
+/**
+ * Chat availability — "is the 16-35 free today / when is it next free".
+ *
+ * WHY (2026-06-25): the WallE chat had NO per-item availability tool, only the
+ * whole-inventory weekly grid, so it fabricated bookings ("Sony GM 16-35 booked
+ * with Cian Duignan until June 4" when BOTH 16-35s were free all week). This
+ * resolves a free-text item name to the matching OWNED unit(s) — disambiguating
+ * the two 16-35s, the EF vs Sony bodies, etc. — and returns, per unit, the
+ * confirmed bookings over the horizon plus today's free count and the next free
+ * date. Same occupancy maths as searchCalendarInventory (effective pickup→return
+ * dates, expanded_items units, ONLY confirmed rentals block — pending don't),
+ * just keyed off "today" with a multi-week horizon instead of a fixed week.
+ *
+ * Read-only. The chat tool wraps this; the model answers ONLY from what it
+ * returns, so it can never invent a renter or an end-date again.
+ */
+export const getItemAvailabilityForChat = query({
+  args: {
+    query: v.string(),
+    horizonDays: v.optional(v.number()),
+    accountSlug: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { query: rawQuery, horizonDays, accountSlug }) => {
+    const q = (rawQuery ?? "").trim().toLowerCase();
+    const today = londonToday();
+    const horizon = Math.min(Math.max(horizonDays ?? 21, 1), 60);
+    const dates: string[] = [];
+    for (let i = 0; i < horizon; i++) dates.push(shiftIsoDate(today, i));
+    const lastDate = dates[dates.length - 1];
+    if (!q) return { query: rawQuery, today, horizon_days: horizon, match_count: 0, items: [] };
+
+    // ── Resolve matching items (same normalised token-AND search the calendar
+    // search box uses, so "fx3", "fx 3", "16-35", "gm 24-70" all resolve). ──
+    const allItems = await ctx.db.query("items").collect();
+    const ROMAN: Record<string, string> = { i: "1", ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8", ix: "9", x: "10" };
+    const norm = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/([^a-z]|^)(viii|vii|iii|ix|iv|vi|ii|v|x|i)(?![a-z])/g, (_m, pre, rom) => pre + (ROMAN[rom] ?? rom))
+        .replace(/[^a-z0-9]+/g, "");
+    const qTokens = q.split(/\s+/).map((t) => norm(t)).filter((t) => t.length > 0);
+    const scored = qTokens.length === 0
+      ? []
+      : allItems
+          .map((it) => {
+            const hay = norm(
+              [it.name_canonical, it.name_input, it.slug, it.kind, it.sub_kind, it.category_v1, ...(it.aliases ?? [])]
+                .filter((f): f is string => typeof f === "string")
+                .join(" "),
+            );
+            let score = 0;
+            for (const tok of qTokens) if (hay.includes(tok)) score += tok.length;
+            return { it, score };
+          })
+          .filter((x) => x.score >= 2);
+    const maxScore = scored.reduce((m, x) => Math.max(m, x.score), 0);
+    const matched = scored.filter((x) => x.score === maxScore).map((x) => x.it);
+    if (matched.length === 0) return { query: rawQuery, today, horizon_days: horizon, match_count: 0, items: [] };
+    const matchedById = new Map(matched.map((it) => [String(it._id), it]));
+
+    // ── Confirmed reservations overlapping [today, lastDate] ──
+    const scanStart = shiftIsoDate(today, -CALENDAR_LOOKBACK_DAYS);
+    let reservations = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (qb) => qb.gte("start_date", scanStart))
+      .collect();
+    reservations = reservations.filter((r) => r.start_date !== undefined && r.start_date <= lastDate);
+    if (accountSlug) reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    const confirmed = dedupByLogicalRental(
+      (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
+    ) as typeof reservations;
+
+    const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
+    const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+
+    // Units committed per (item, date) + the booking list per item.
+    const commit = new Map<string, number>();
+    type Bk = { renter: string; pickup: string; return: string; qty: number; account?: string };
+    const bookingsByItem = new Map<string, Bk[]>();
+    for (const r of confirmed) {
+      const effPick = displayPickupDate(r as ReservationRow) || r.start_date;
+      const effRet = (r.return_date ?? r.end_date) ?? effPick;
+      if (!effPick || !effRet) continue;
+      // Skip fully-PAST rentals. The scan reaches back CALENDAR_LOOKBACK_DAYS to
+      // catch rentals that started earlier but are still out (return >= today);
+      // a rental that already ended must never appear as a current/upcoming
+      // booking — that's exactly the "booked with Cian Duignan until June 4"
+      // (3 weeks ago) bug the chat had.
+      if (effRet < today) continue;
+      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap))
+        .filter(([id]) => matchedById.has(id))
+        .map(([id, qty]) => ({ id, qty }));
+      if (lines.length === 0) continue;
+      const pT = (r as { pickup_time?: string }).pickup_time;
+      const rT = (r as { return_time?: string }).return_time;
+      const renter = (r as { renter_name?: string }).renter_name || "renter";
+      for (const ln of lines) {
+        const arr = bookingsByItem.get(ln.id) ?? [];
+        arr.push({
+          renter,
+          pickup: `${effPick}${pT ? " " + pT : ""}`,
+          return: `${effRet}${rT ? " " + rT : ""}`,
+          qty: ln.qty,
+          account: (r as { account_slug?: string }).account_slug,
+        });
+        bookingsByItem.set(ln.id, arr);
+      }
+      for (const d of dates) {
+        if (d < effPick || d > effRet) continue;
+        for (const ln of lines) commit.set(`${ln.id}|${d}`, (commit.get(`${ln.id}|${d}`) ?? 0) + ln.qty);
+      }
+    }
+
+    const items = matched.map((it) => {
+      const id = String(it._id);
+      const total = it.qty ?? 1;
+      const owned = it.status === "active" && !it.is_marketing_only;
+      const perDay = dates.map((d) => {
+        const booked = commit.get(`${id}|${d}`) ?? 0;
+        return { date: d, free: Math.max(0, total - booked), booked, total };
+      });
+      const nextFree = perDay.find((x) => x.free > 0)?.date ?? null;
+      const bookings = (bookingsByItem.get(id) ?? []).sort((a, b) => a.pickup.localeCompare(b.pickup));
+      return {
+        name: it.name_canonical,
+        kind: it.kind,
+        qty: total,
+        owned,
+        is_marketing_only: it.is_marketing_only,
+        lens_mount: it.lens_mount ?? null,
+        // For owned units: real availability. For marketing-only rows: null —
+        // they carry no stock, so the chat must not claim a free/booked state.
+        free_today: owned ? perDay[0].free > 0 : null,
+        free_units_today: owned ? perDay[0].free : null,
+        next_free_date: owned ? nextFree : null,
+        free_whole_horizon: owned ? perDay.every((x) => x.free > 0) : null,
+        upcoming_bookings: bookings,
+      };
+    });
+
+    return { query: rawQuery, today, horizon_days: horizon, match_count: items.length, items };
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Admin: one-shot backfill renter_name for holds that predate denormalization
 // ---------------------------------------------------------------------------

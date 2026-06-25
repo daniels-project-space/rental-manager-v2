@@ -40,6 +40,7 @@ import {
   ANALYTICAL_INTENT,
   COMPAT_INTENT,
   INVENTORY_INTENT,
+  AVAILABILITY_INTENT,
   buildDashboardTools,
   buildInventoryIndex,
   buildLiveSnapshot,
@@ -135,17 +136,22 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-  // Intent routing: compatibility/optics turns go to Sonnet (Haiku inverted
-  // the APS-C vs full-frame fact from memory); existence/analytical turns force
-  // a grounded tool call.
+  // Intent routing: compatibility/optics, availability, and inventory/spec turns
+  // go to Sonnet (Haiku answered these from memory — the "everything he says is
+  // wrong" set); existence/analytical/availability turns force a grounded tool
+  // call on step 0 so the model can't skip it and confabulate.
   const isCompat = COMPAT_INTENT.test(message);
+  const isAvailability = AVAILABILITY_INTENT.test(message);
+  const isInventory = INVENTORY_INTENT.test(message);
   const needsForcedTool =
     ANALYTICAL_INTENT.test(message) ||
-    INVENTORY_INTENT.test(message) ||
+    isInventory ||
+    isAvailability ||
     isCompat;
+  const needsSmart = isCompat || isAvailability || isInventory;
 
   const openrouter = createOpenRouter({ apiKey });
-  const modelId = isCompat ? CHAT_MODEL_SMART : CHAT_MODEL;
+  const modelId = needsSmart ? CHAT_MODEL_SMART : CHAT_MODEL;
   const model = openrouter(modelId);
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
   // v1-style compute-then-phrase: live dashboard snapshot (trusted headline

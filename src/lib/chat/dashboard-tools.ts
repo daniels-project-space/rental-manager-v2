@@ -46,6 +46,12 @@ const inventoryLookupRef = makeFunctionReference<"query">(
   "walle_inventory:lookup",
 );
 const knowledgeSearchRef = makeFunctionReference<"query">("knowledge:search");
+// Per-item availability for the chat (resolve item → free today / next free /
+// upcoming confirmed bookings). New query, so referenced by name for the same
+// generated-api-drift reason as the income-pie refs above.
+const itemAvailabilityRef = makeFunctionReference<"query">(
+  "calendar:getItemAvailabilityForChat",
+);
 
 /**
  * The grounding contract shared by both system prompts. Each widget prepends
@@ -74,7 +80,8 @@ Drill-down tools:
   query_pending          — the full list of booking requests awaiting your accept/decline
   query_recent_activity  — last N rental events (newest first)
   query_funnel           — reservation conversion funnel for last N days
-  query_calendar         — weekly calendar (booked/free/partial)
+  query_calendar         — weekly calendar (booked/free/partial) for the WHOLE inventory
+  query_availability     — is a SPECIFIC named item free today / when is it next free / what it's booked for; the ONLY source for per-item availability ("is the 16-35 free", "when's the FX3 back"). Returns every matching unit + current/upcoming confirmed bookings (past ones excluded)
   query_smart_buys       — NEW items to acquire (unmet demand, ROI-sorted)
   query_revenue_trend    — weekly NET revenue trend
   query_status           — UK tax estimate, business-intel KPIs, scanner, vacation, AI-Boost (£0 by design)
@@ -83,7 +90,9 @@ Drill-down tools:
   query_rental_history   — historical / past completed rentals aggregated per item (net earnings, rent days, utilization) plus a recent rentals list and totals; call for any question about rental history, past/previous rentals, earnings over time, all-time per-item earnings, or "what did I rent in <period>".
 
 INVENTORY & COMPATIBILITY — read before answering "do we have…", "is it an X or a Y", "what cameras/lenses do we own", or any gear-fit / mount / adapter / lens-compatibility question.
-The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inventory — every item Daniel owns, active and non-marketing. NEVER claim he owns something that is not in that index, and NEVER tell him he doesn't own something that IS in it. For exact specs, quantity, the master-vs-marketing distinction, or to resolve a fuzzy name, call query_inventory. For any gear-fit / mount / lens-compatibility question call query_compatibility and answer from the owned item's real mount + compatibility data and the returned FAQ; do not reason about optics from memory. If neither the index nor the tool shows the item, say it's not in the inventory rather than inventing it. Camera/lens optics facts (crop factor, vignetting, mount adapting) are easy to get backwards — if a tool/FAQ doesn't cover it and you are not certain, say so plainly instead of guessing.`;
+The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inventory — every item Daniel owns, active and non-marketing. NEVER claim he owns something that is not in that index, and NEVER tell him he doesn't own something that IS in it. Each lens line carries a focus tag ("AF" = autofocus, "manual focus") — use it directly for autofocus / manual-focus questions; if a line has no focus tag, call query_inventory and read its focus field + spec_description rather than guessing. For exact specs (focal length, aperture, sensor, weight, autofocus system, what card it takes, what's INCLUDED in the rental bundle), quantity, the master-vs-marketing distinction, or to resolve a fuzzy name, call query_inventory and answer ONLY from its returned spec_description / specs_long / focus / compatibility.included_with_rental — never recall an item's specs from memory. For any gear-fit / mount / lens-compatibility question call query_compatibility and answer from the owned item's real mount + compatibility data and the returned FAQ; do not reason about optics from memory. If neither the index nor the tool shows the item, say it's not in the inventory rather than inventing it. Camera/lens optics facts (crop factor, vignetting, mount adapting) are easy to get backwards — if a tool/FAQ doesn't cover it and you are not certain, say so plainly instead of guessing.
+
+AVAILABILITY — "is X free / available today", "when is X next free / back", "what's X booked for", "can I rent out X this weekend": ALWAYS call query_availability with the item name and answer ONLY from it. Never answer availability from the weekly snapshot, from query_calendar, or from memory, and NEVER state a renter name or a booking end-date you did not get from query_availability THIS turn (the old chat invented "booked with <renter> until <date>" from a rental that had already ended — do not do that). It returns every matching unit, so if the name is ambiguous (e.g. "16-35" = both the Canon EF and the Sony GM) name both and give each one's status. free_today=true with an empty upcoming_bookings means it is genuinely free; quote next_free_date for when a booked item frees up.`;
 
 /**
  * Matches user questions whose answer is NOT in the headline snapshot (per-item
@@ -116,6 +125,17 @@ export const INVENTORY_INTENT =
  */
 export const COMPAT_INTENT =
   /\b(compatib|compatible|work(s)? with|fit(s)?|fit on|mount|adapter|adapt|metabones|mc[- ]?11|ef[- ]?mount|e[- ]?mount|l[- ]?mount|rf[- ]?mount|pl[- ]?mount|aps[- ]?c|full[- ]?frame|crop factor|vignett|speed booster|lens(es)? (for|on|with))\b/i;
+
+/**
+ * AVAILABILITY / SPEC intent — "is the 16-35 free today", "when's the FX3 back",
+ * "what's X booked for", "does it autofocus", "what card / what comes with it".
+ * These have a single correct answer in the data (query_availability /
+ * query_inventory) and were the bulk of the "everything he says is wrong"
+ * failures, so the WallE route sends them to CHAT_MODEL_SMART (Sonnet) — Haiku
+ * was electing to answer from memory instead of calling the tool.
+ */
+export const AVAILABILITY_INTENT =
+  /\b(available|availabilit|free (today|tomorrow|this|next|on|right now)|is .* free|booked|booking|reserved|when('?s| is) .* (free|back|available|returned)|next free|can i (rent|hire|book)|out (today|tomorrow)|autofocus|auto-?focus|\baf\b|manual focus|what card|sd card|cf ?express|comes with|come with|included|in the (kit|bundle|box))\b/i;
 
 // ── Module-scoped 60s TTL cache (Phase 7b, 2026-05-24) ──────────────────────
 // Saves re-fetching aggregated data within a single multi-step LLM turn AND
@@ -333,16 +353,23 @@ export async function buildInventoryIndex(
     sub_kind?: string | null;
     qty?: number;
     lens_mount?: string | null;
+    focus?: "autofocus" | "manual_focus" | "fixed" | null;
   }>;
   if (!Array.isArray(rows) || rows.length === 0) return "";
-  // Group by kind for a scannable list; carry qty (>1) and mount where useful.
+  // Group by kind for a scannable list; carry qty (>1), mount, and the focus
+  // tag (AF/MF) where known so "which lenses autofocus" answers straight from
+  // this index — no tool hop, no guessing.
   const byKind = new Map<string, string[]>();
   for (const r of rows) {
     const kind = r.kind ?? "other";
     const mount =
       r.lens_mount && r.lens_mount !== "N/A" ? `, ${r.lens_mount}` : "";
     const qty = r.qty && r.qty > 1 ? ` x${r.qty}` : "";
-    const line = `${r.name ?? "item"}${qty}${mount}`;
+    const focus =
+      r.focus === "autofocus" ? ", AF"
+      : r.focus === "manual_focus" ? ", manual focus"
+      : "";
+    const line = `${r.name ?? "item"}${qty}${mount}${focus}`;
     if (!byKind.has(kind)) byKind.set(kind, []);
     byKind.get(kind)!.push(line);
   }
@@ -507,6 +534,33 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
           }),
         );
       },
+    }),
+    query_availability: tool({
+      description:
+        "Is a SPECIFIC item free today / when is it next free / what's it booked for. ALWAYS use this for any " +
+        "'is X available', 'is X free', 'can I rent out X', 'when is X back/free', 'what's booked' question about a " +
+        "named item — NEVER answer availability from memory or the weekly query_calendar grid. Resolves the free-text " +
+        "name to the real OWNED unit(s) and returns EVERY match (so the two 16-35s — Canon EF and Sony GM — both come " +
+        "back; disambiguate them for Daniel). Each match: { name, qty, owned, free_today (bool), free_units_today, " +
+        "next_free_date (YYYY-MM-DD or null if booked solid through the horizon), free_whole_horizon, upcoming_bookings:" +
+        "[{ renter, pickup, return, account }] }. ONLY confirmed rentals appear and ONLY current/upcoming ones (past " +
+        "rentals are excluded) — if upcoming_bookings is empty the item is genuinely free. State the renter/date ONLY " +
+        "from upcoming_bookings; if owned=false it's a marketing listing with no stock of its own.",
+      inputSchema: z.object({
+        item: z.string().describe("The item the user asked about, e.g. '16-35', 'fx3', 'gm 24-70'."),
+        horizon_days: z
+          .number()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe("How far ahead to look for bookings / next-free. Default 21."),
+      }),
+      execute: async ({ item, horizon_days }: { item: string; horizon_days?: number }) =>
+        convex.query(itemAvailabilityRef, {
+          query: item,
+          accountSlug: null,
+          ...(horizon_days ? { horizonDays: horizon_days } : {}),
+        }),
     }),
     query_due_returns: tool({
       description: "Items overdue or due-soon for return.",
@@ -690,12 +744,17 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
 
     query_inventory: tool({
       description:
-        "Resolve a free-text item reference to the REAL item rows Daniel owns, with specs. Use for 'do we have X', " +
-        "'what's the deck — an RX2 or RX3', 'specs of the BMPCC', 'how many X'. Fuzzy-matches the name/aliases against " +
-        "live inventory and returns ALL matches (so two camera bodies, or a duplicate/phantom row, both surface — never " +
-        "collapsed to one guess). Each match: { name, kind, qty, status, is_marketing_only, lens_mount, compatibility, " +
-        "notes }. resolved_canonical is the single best master-inventory match. is_marketing_only=true means it's a " +
-        "marketing listing, NOT owned master stock — say so. match_count=0 means Daniel does NOT own it; say that, don't invent.",
+        "Resolve a free-text item reference to the REAL item rows Daniel owns, with FULL specs. Use for 'do we have X', " +
+        "'what's the deck — an RX2 or RX3', 'specs of the BMPCC', 'does it autofocus', 'what card does the FX3 take', " +
+        "'what comes with the rental', 'how many X'. Fuzzy-matches name/aliases against live inventory and returns ALL " +
+        "matches (so two camera bodies, or a duplicate/phantom row, both surface — never collapsed to one guess). Each " +
+        "match: { name, kind, qty, status, is_marketing_only, lens_mount, battery_type, card_type, focus " +
+        "('autofocus' | 'manual_focus' | 'fixed' | null — answer AF/MF questions from THIS, not memory; null = uncertain, " +
+        "read spec_description and say you're not sure), compatibility (incl. included_with_rental = what ships in the " +
+        "rental bundle), spec_description + specs_long (the real hand-written/researched spec sheet — focal length, " +
+        "aperture, sensor, weight, AF system, etc. — quote from here for any spec question), notes }. resolved_canonical " +
+        "is the single best master-inventory match. is_marketing_only=true means a marketing listing, NOT owned master " +
+        "stock — say so. match_count=0 means Daniel does NOT own it; say that, don't invent.",
       inputSchema: z.object({
         query: z
           .string()
