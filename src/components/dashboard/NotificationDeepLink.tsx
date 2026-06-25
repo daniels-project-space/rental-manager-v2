@@ -25,5 +25,5 @@ export function NotificationDeepLink() {
   if (tile === undefined || tile === null) return null; // loading / not found
 
   const close = () => router.replace("/", { scroll: false });
-  return <ReplyModal tile={tile} onClose={close} onActed={close} />;
+  return <ReplyModal tile={tile} onClose={close} onActed={close} dryRun={false} />;
 }

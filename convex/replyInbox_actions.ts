@@ -120,10 +120,13 @@ export const sendRenterReply = action({
     thread_id: v.string(),
     account_slug: v.string(),
     text: v.string(),
+    // TEST MODE: simulate the whole flow without sending anything to Hygglo or
+    // touching the thread state. Lets the operator exercise the UI safely.
+    dryRun: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { thread_id, account_slug, text },
+    { thread_id, account_slug, text, dryRun },
   ): Promise<{
     status: "sent" | "skipped" | "failed";
     reason?: string;
@@ -132,6 +135,7 @@ export const sendRenterReply = action({
   }> => {
     const body = text.trim();
     if (!body) return { status: "failed", error: "Empty message" };
+    if (dryRun) return { status: "sent", reason: "DRY_RUN" };
 
     const res = await sendManualRenterMessage({
       accountSlug: account_slug,
@@ -169,8 +173,10 @@ type OrderActionResult = {
  * order_step on its next run; the UI hides the card optimistically meanwhile.
  */
 export const approveOrder = action({
-  args: { thread_id: v.string(), account_slug: v.string() },
-  handler: async (_ctx, { thread_id, account_slug }): Promise<OrderActionResult> => {
+  args: { thread_id: v.string(), account_slug: v.string(), dryRun: v.optional(v.boolean()) },
+  handler: async (_ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
+    if (!account_slug) return { status: "failed", error: "No account for this thread" };
+    if (dryRun) return { status: "sent", reason: "DRY_RUN" };
     const res = await manualApproveOrder({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,
@@ -186,8 +192,10 @@ export const approveOrder = action({
 
 /** Decline a pending rental REQUEST. Same gate + behaviour as approveOrder. */
 export const declineOrder = action({
-  args: { thread_id: v.string(), account_slug: v.string() },
-  handler: async (_ctx, { thread_id, account_slug }): Promise<OrderActionResult> => {
+  args: { thread_id: v.string(), account_slug: v.string(), dryRun: v.optional(v.boolean()) },
+  handler: async (_ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
+    if (!account_slug) return { status: "failed", error: "No account for this thread" };
+    if (dryRun) return { status: "sent", reason: "DRY_RUN" };
     const res = await manualDeclineOrder({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,

@@ -43,6 +43,8 @@ export interface ReplyTileData {
   order_step: string | null;
   is_request: boolean;
   can_decide: boolean;
+  kind: "request" | "message";
+  last_sender: "owner" | "renter" | null;
   gross_paid_gbp: number | null;
   net_to_owner_gbp: number | null;
   delivery_fee_gbp: number | null;
@@ -171,11 +173,13 @@ function ReplyCard({
   now,
   onOpen,
   onActed,
+  dryRun,
 }: {
   tile: ReplyTileData;
   now: number;
   onOpen: () => void;
   onActed: (id: string) => void;
+  dryRun: boolean;
 }) {
   const u = urgency(now - tile.last_renter_msg_at);
   const approve = useAction(api.replyInbox_actions.approveOrder);
@@ -185,16 +189,22 @@ function ReplyCard({
   const [note, setNote] = useState<string | null>(null);
 
   async function act(kind: "approve" | "decline") {
-    if (!tile.account_slug) return setNote("Unknown account");
+    if (!tile.account_slug) return setNote("No account for this thread — can't " + kind + ".");
     setBusy(true);
+    setNote(null);
     try {
       const fn = kind === "approve" ? approve : decline;
-      const r = await fn({ thread_id: tile.thread_id, account_slug: tile.account_slug });
-      if (r.status === "sent") onActed(tile.thread_id);
-      else if (r.status === "skipped") setNote("Order actions disabled (gate off).");
-      else setNote(`${kind} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}.`);
-    } catch {
-      setNote(`${kind} failed.`);
+      const r = await fn({ thread_id: tile.thread_id, account_slug: tile.account_slug, dryRun });
+      if (r.status === "sent") {
+        if (r.reason === "DRY_RUN") setNote(`✓ ${kind} OK (test — nothing sent)`);
+        else onActed(tile.thread_id);
+      } else if (r.status === "skipped") {
+        setNote("Order actions disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
+      } else {
+        setNote(`${kind} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}: ${r.error ?? r.reason ?? "unknown"}`);
+      }
+    } catch (e) {
+      setNote(`${kind} failed: ${e instanceof Error ? e.message : "error"}`);
     } finally {
       setBusy(false);
       setConfirming(null);
@@ -304,7 +314,9 @@ function ReplyCard({
             </div>
           ))}
       </div>
-      {note && <div className="text-[10px] text-amber-400">{note}</div>}
+      {note && (
+        <div className={`text-[10px] ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
+      )}
     </div>
   );
 }
@@ -317,10 +329,12 @@ export function ReplyModal({
   tile,
   onClose,
   onActed,
+  dryRun,
 }: {
   tile: ReplyTileData;
   onClose: () => void;
   onActed: (id: string) => void;
+  dryRun: boolean;
 }) {
   const accent = accountAccent(tile.account_slug);
   const thread = useQuery(api.hygglo.listByThread, { thread_id: tile.thread_id });
@@ -333,7 +347,9 @@ export function ReplyModal({
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [sent, setSent] = useState<string | null>(null);
+  const [sentMsgs, setSentMsgs] = useState<string[]>([]);
+  const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
+  const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
 
   useEffect(() => {
@@ -357,36 +373,52 @@ export function ReplyModal({
   }
   async function onSend() {
     const body = text.trim();
-    if (!body || !tile.account_slug) return;
+    if (!body) return setNote("Type a message first.");
+    if (!tile.account_slug) return setNote("No account for this thread — can't send.");
     setSending(true);
     setNote(null);
     try {
-      const r = await sendReply({ thread_id: tile.thread_id, account_slug: tile.account_slug, text: body });
+      const r = await sendReply({ thread_id: tile.thread_id, account_slug: tile.account_slug, text: body, dryRun });
       if (r.status === "sent") {
-        setSent(body);
+        // Keep the chat OPEN so you can also approve/decline or keep texting.
+        setSentMsgs((p) => [...p, body]);
         setText("");
-        setTimeout(onClose, 650);
-      } else if (r.status === "skipped") setNote("Sending disabled (ALLOW_MANUAL_RENTER_SEND off).");
-      else setNote(`Send failed${r.httpStatus ? ` (${r.httpStatus})` : ""}.`);
-    } catch {
-      setNote("Send failed.");
+        setNote(r.reason === "DRY_RUN" ? "✓ Reply OK (test — nothing sent)" : null);
+      } else if (r.status === "skipped") {
+        setNote("Sending disabled (ALLOW_MANUAL_RENTER_SEND off).");
+      } else {
+        setNote(`Send failed${r.httpStatus ? ` (${r.httpStatus})` : ""}: ${r.error ?? r.reason ?? "unknown"}`);
+      }
+    } catch (e) {
+      setNote(`Send failed: ${e instanceof Error ? e.message : "error"}`);
     } finally {
       setSending(false);
     }
   }
   async function onDecide(kind: "approve" | "decline") {
-    if (!tile.account_slug) return;
+    if (!tile.account_slug) {
+      setConfirming(null);
+      return setNote("No account for this thread — can't " + kind + ".");
+    }
+    setDeciding(true);
+    setNote(null);
     try {
       const fn = kind === "approve" ? approve : decline;
-      const r = await fn({ thread_id: tile.thread_id, account_slug: tile.account_slug });
+      const r = await fn({ thread_id: tile.thread_id, account_slug: tile.account_slug, dryRun });
       if (r.status === "sent") {
-        onActed(tile.thread_id);
-        onClose();
-      } else if (r.status === "skipped") setNote("Order actions disabled (gate off).");
-      else setNote(`${kind} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}.`);
-    } catch {
-      setNote(`${kind} failed.`);
+        // Mark decided IN PLACE — do NOT close, so you can also message.
+        setDecided(kind);
+        if (r.reason === "DRY_RUN") setNote(`✓ ${kind === "approve" ? "Approved" : "Declined"} (test — nothing sent)`);
+        else onActed(tile.thread_id);
+      } else if (r.status === "skipped") {
+        setNote("Order actions disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
+      } else {
+        setNote(`${kind} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}: ${r.error ?? r.reason ?? "unknown"}`);
+      }
+    } catch (e) {
+      setNote(`${kind} failed: ${e instanceof Error ? e.message : "error"}`);
     } finally {
+      setDeciding(false);
       setConfirming(null);
     }
   }
@@ -394,12 +426,12 @@ export function ReplyModal({
   return createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
     >
+      {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
+          you can text AND approve/decline in one session without losing it. */}
       <div
         className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl border bg-[#101216] shadow-2xl overflow-hidden"
         style={{ borderColor: `${accent}44` }}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Context header */}
         <div className="p-4 border-b border-white/10 flex gap-4" style={{ background: `${accent}0d` }}>
@@ -449,38 +481,46 @@ export function ReplyModal({
               </div>
             ))
           )}
-          {sent && (
-            <div className="flex justify-end">
+          {sentMsgs.map((s, i) => (
+            <div key={`sent-${i}`} className="flex justify-end">
               <div className="max-w-[80%] rounded-2xl px-3.5 py-2 text-sm bg-[#2a3a5a]/60 text-[#eef1f5] italic">
-                {sent} <span className="text-[10px] text-[#8b8fa3]">sent ✓</span>
+                {s} <span className="text-[10px] text-[#8b8fa3]">{dryRun ? "test ✓" : "sent ✓"}</span>
               </div>
             </div>
-          )}
+          ))}
         </div>
 
         {/* Compose + decisions */}
         <div className="p-4 border-t border-white/10 space-y-2.5">
           {tile.can_decide && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-[#fdba74] font-medium">Pending request —</span>
-              {confirming ? (
-                <>
-                  <span className="text-xs text-[#9aa0ad] capitalize">{confirming}?</span>
-                  <button onClick={() => onDecide(confirming)} className="text-xs px-3 py-1.5 rounded-lg bg-white/20 text-white">
-                    Confirm
-                  </button>
-                  <button onClick={() => setConfirming(null)} className="text-xs px-2.5 py-1.5 rounded-lg bg-white/5 text-[#8b8fa3]">
-                    Cancel
-                  </button>
-                </>
+              {decided ? (
+                <span className="text-xs font-medium" style={{ color: decided === "approve" ? "#34d399" : "#f87171" }}>
+                  {decided === "approve" ? "✓ Approved" : "✓ Declined"}{dryRun ? " (test)" : ""} — you can still message below.
+                </span>
               ) : (
                 <>
-                  <button onClick={() => setConfirming("approve")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-emerald-600/90 text-white hover:bg-emerald-600">
-                    Approve
-                  </button>
-                  <button onClick={() => setConfirming("decline")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-red-600/80 text-white hover:bg-red-600">
-                    Decline
-                  </button>
+                  <span className="text-xs text-[#fdba74] font-medium">Pending request —</span>
+                  {confirming ? (
+                    <>
+                      <span className="text-xs text-[#9aa0ad] capitalize">{confirming}?</span>
+                      <button disabled={deciding} onClick={() => onDecide(confirming)} className="text-xs px-3 py-1.5 rounded-lg bg-white/20 text-white disabled:opacity-50">
+                        {deciding ? "…" : "Confirm"}
+                      </button>
+                      <button disabled={deciding} onClick={() => setConfirming(null)} className="text-xs px-2.5 py-1.5 rounded-lg bg-white/5 text-[#8b8fa3]">
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => setConfirming("approve")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-emerald-600/90 text-white hover:bg-emerald-600">
+                        Approve
+                      </button>
+                      <button onClick={() => setConfirming("decline")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-red-600/80 text-white hover:bg-red-600">
+                        Decline
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -509,7 +549,9 @@ export function ReplyModal({
               {sending ? "Sending…" : "Send"}
             </button>
           </div>
-          {note && <div className="text-xs text-amber-400">{note}</div>}
+          {note && (
+            <div className={`text-xs ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
+          )}
         </div>
       </div>
     </div>,
@@ -530,6 +572,8 @@ export function ReplyInbox() {
   const [acted, setActed] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
   const [mounted, setMounted] = useState(false);
+  const [filter, setFilter] = useState<"all" | "requests" | "messages">("all");
+  const [testMode, setTestMode] = useState(false);
 
   useEffect(() => setMounted(true), []);
   useEffect(() => {
@@ -538,9 +582,15 @@ export function ReplyInbox() {
   }, []);
 
   const onActed = (id: string) => setActed((p) => new Set(p).add(id));
-  const visible = (queue ?? []).filter((t) => !acted.has(t.thread_id));
-  const requests = visible.filter((t) => t.can_decide).length;
-  const open = openId ? visible.find((t) => t.thread_id === openId) ?? null : null;
+  const all = (queue ?? []).filter((t) => !acted.has(t.thread_id));
+  const requests = all.filter((t) => t.kind === "request").length;
+  const messages = all.filter((t) => t.kind === "message").length;
+  const visible = all.filter((t) =>
+    filter === "all" ? true : filter === "requests" ? t.kind === "request" : t.kind === "message",
+  );
+  // `open` resolves against ALL tiles (not the filtered view) so an open chat
+  // doesn't vanish when you switch the filter.
+  const open = openId ? all.find((t) => t.thread_id === openId) ?? null : null;
 
   return (
     <Card>
@@ -549,22 +599,47 @@ export function ReplyInbox() {
         @keyframes rgBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.3; } }
       `}</style>
       <CardHeader
-        title="Reply Inbox"
+        title="Quick Reply"
         badge={
-          visible.length > 0 ? (
-            <span className="flex items-center gap-1.5">
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 tabular-nums">
-                {visible.length} waiting
-              </span>
-              {requests > 0 && (
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-600/25 text-orange-300 tabular-nums">
-                  {requests} request{requests > 1 ? "s" : ""}
-                </span>
-              )}
+          requests > 0 ? (
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-600/25 text-orange-300 tabular-nums">
+              {requests} request{requests > 1 ? "s" : ""}
             </span>
           ) : undefined
         }
       />
+      {/* Filter (requests vs normal messages) + a TEST MODE toggle that makes
+          approve/decline/send simulate only — nothing reaches Hygglo. */}
+      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+        {([
+          { k: "all", label: `All${all.length ? ` (${all.length})` : ""}` },
+          { k: "requests", label: `Requests${requests ? ` (${requests})` : ""}` },
+          { k: "messages", label: `Messages${messages ? ` (${messages})` : ""}` },
+        ] as const).map((f) => (
+          <button
+            key={f.k}
+            onClick={() => setFilter(f.k)}
+            className={`text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${
+              filter === f.k
+                ? "bg-white/15 text-white"
+                : "bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08]"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+        <button
+          onClick={() => setTestMode((x) => !x)}
+          title="When on, Approve/Decline/Send only simulate — nothing is sent to renters."
+          className={`ml-auto text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${
+            testMode
+              ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+              : "bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08]"
+          }`}
+        >
+          {testMode ? "🧪 Test mode ON" : "Test mode off"}
+        </button>
+      </div>
       {queue === undefined ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -572,7 +647,16 @@ export function ReplyInbox() {
           ))}
         </div>
       ) : visible.length === 0 ? (
-        <EmptyState message="All caught up — no renters waiting on a reply" icon="✅" />
+        <EmptyState
+          message={
+            filter === "requests"
+              ? "No pending requests"
+              : filter === "messages"
+                ? "No messages"
+                : "All caught up — nothing here"
+          }
+          icon="✅"
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3 max-h-[42rem] overflow-y-auto p-0.5">
           {visible.map((tile) => (
@@ -582,12 +666,13 @@ export function ReplyInbox() {
               now={now}
               onOpen={() => setOpenId(tile.thread_id)}
               onActed={onActed}
+              dryRun={testMode}
             />
           ))}
         </div>
       )}
       {mounted && open && (
-        <ReplyModal tile={open} onClose={() => setOpenId(null)} onActed={onActed} />
+        <ReplyModal tile={open} onClose={() => setOpenId(null)} onActed={onActed} dryRun={testMode} />
       )}
     </Card>
   );

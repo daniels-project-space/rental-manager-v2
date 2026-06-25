@@ -117,6 +117,10 @@ async function assembleTile(
     order_step: step,
     is_request: isRequest,
     can_decide: isRequest,
+    // "request" = pending approve/decline; "message" = a normal chat thread.
+    // Drives the Quick Reply filter (All / Requests / Messages).
+    kind: (isRequest ? "request" : "message") as "request" | "message",
+    last_sender: conv?.last_sender ?? null,
     gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
     net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
     delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
@@ -140,10 +144,23 @@ export const getReplyQueue = query({
     withinDays: v.optional(v.number()),
     // When false (default) hide threads whose rental is already finished.
     includeFinished: v.optional(v.boolean()),
+    // Include ALL recent conversations (normal messages), not just ones awaiting
+    // my reply. Lets the Quick Reply "Messages" filter browse any chat thread.
+    includeMessages: v.optional(v.boolean()),
+    // Recency floor for the normal-messages pass (wider than withinDays so older
+    // chats are still browsable).
+    messagesWithinDays: v.optional(v.number()),
   },
   handler: async (
     ctx,
-    { accountSlug, limit = 60, withinDays = 5, includeFinished = false },
+    {
+      accountSlug,
+      limit = 60,
+      withinDays = 5,
+      includeFinished = false,
+      includeMessages = true,
+      messagesWithinDays = 30,
+    },
   ) => {
     const cutoff = Date.now() - withinDays * 86_400_000;
     const FINISHED_STATUS = new Set(["completed", "cancelled", "declined"]);
@@ -219,12 +236,44 @@ export const getReplyQueue = query({
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
 
-    // Requests first, then most-urgent (oldest unanswered) first.
-    const tiles = [...byThread.values()].sort(
-      (a, b) =>
-        Number(b.is_request) - Number(a.is_request) ||
-        (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0),
-    );
+    // Pass 3 — NORMAL MESSAGES: every other recent conversation (owner spoke
+    // last, or just chatter with no pending action), so the "Messages" filter
+    // can browse any thread — not only ones awaiting my reply. Bounded by a
+    // wider recency window; finished rentals still excluded unless asked.
+    if (includeMessages) {
+      const msgCutoff = Date.now() - messagesWithinDays * 86_400_000;
+      const allConvos = await ctx.db.query("conversations").collect();
+      for (const conv of allConvos) {
+        if (byThread.has(conv.thread_id)) continue;
+        const recencyTs = conv.last_msg_at ?? conv.last_renter_msg_at ?? 0;
+        if (recencyTs < msgCutoff) continue;
+        const reservation = await ctx.db
+          .query("reservations")
+          .withIndex("by_hygglo_order_id", (q) =>
+            q.eq("hygglo_order_id", conv.thread_id),
+          )
+          .first();
+        if (!includeFinished && reservation) {
+          const st = reservation.status;
+          const step = reservation.order_step;
+          if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
+            continue;
+        }
+        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id);
+        if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
+      }
+    }
+
+    // Order: requests first → then awaiting-my-reply (oldest/most-urgent first)
+    // → then normal chats (most-recent first).
+    const tiles = [...byThread.values()].sort((a, b) => {
+      if (a.is_request !== b.is_request) return Number(b.is_request) - Number(a.is_request);
+      const aAwait = a.last_sender === "renter";
+      const bAwait = b.last_sender === "renter";
+      if (aAwait !== bAwait) return Number(bAwait) - Number(aAwait);
+      if (aAwait) return (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
+      return (b.last_msg_at ?? 0) - (a.last_msg_at ?? 0);
+    });
     return tiles.slice(0, limit);
   },
 });
