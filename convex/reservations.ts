@@ -51,7 +51,7 @@ export const getRecentActivity = query({
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
 import { discountMessageFor } from "./lib/return_messages";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
-import { groupLogicalRentals, displayReturnDate, type ReservationRow } from "./lib/reservations/predicates";
+import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
 
 export const getDueReturns = query({
   args: {
@@ -1008,6 +1008,93 @@ export const cancelStalePendingCron = internalMutation({
       cancelled++;
     }
     return { total: rows.length, cancelled };
+  },
+});
+
+/**
+ * Propagate confirmed handover times across a renter's grouped orders
+ * (2026-06-25, Nartay). When someone books several listings as ONE rental, the
+ * negotiated pickup/return time usually gets recorded on only ONE of the orders
+ * (the chat where it was agreed) — the others stay timeless, so they don't sit
+ * in the right calendar slot. Group confirmed reservations by renter + account +
+ * overlapping period (same rule the calendar merges with) and copy the confirmed
+ * pickup (date+time+method) and return (date+time+method) onto the members that
+ * lack them. Only FILLS blanks — never overrides an order's own confirmed time.
+ */
+export const propagateGroupedTimesCron = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+      .collect();
+    const live = all.filter(
+      (r) => !r.is_obsolete && !!r.start_date && !!r.end_date,
+    );
+    const gids = renterPeriodGroupIds(live as unknown as ReservationRow[]);
+    const groups = new Map<string, typeof live>();
+    for (const r of live) {
+      const g = gids.get(r._id) ?? r._id;
+      const arr = groups.get(g);
+      if (arr) arr.push(r);
+      else groups.set(g, [r]);
+    }
+    type R = (typeof live)[number];
+    const pt = (r: R) => (r as { pickup_time?: string | null }).pickup_time;
+    const rt = (r: R) => (r as { return_time?: string | null }).return_time;
+    let patched = 0;
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      // Source pickup: earliest-pickup member that HAS a confirmed time; source
+      // return: latest-return member that HAS one.
+      const pSrc = members
+        .filter((m) => pt(m))
+        .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)))[0];
+      const rSrc = members
+        .filter((m) => rt(m))
+        .sort((a, b) => displayReturnDate(b).localeCompare(displayReturnDate(a)))[0];
+      if (!pSrc && !rSrc) continue;
+      // A grouped member whose pickup ends up AFTER its return is broken (a
+      // time was filled against a mismatched date) — re-align it to the source.
+      const invalidPickup = (m: R): boolean => {
+        const p = pt(m);
+        const r = rt(m);
+        if (!p || !r) return false;
+        const pd = displayPickupDate(m);
+        const rd = displayReturnDate(m);
+        return pd !== rd ? pd > rd : p > r;
+      };
+      for (const m of members) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const patch: Record<string, any> = {};
+        const mm = m as {
+          pickup_date?: string | null;
+          pickup_method?: string | null;
+          return_date?: string | null;
+          return_method?: string | null;
+        };
+        const ps = pSrc as typeof mm | undefined;
+        const rs = rSrc as typeof mm | undefined;
+        // It's ONE physical handover for the whole rental, so align the date to
+        // the source too (not just when blank) — otherwise a member that had a
+        // bare pickup_date but no time ends up with pickup-after-return.
+        if (ps && (!pt(m) || (m._id !== pSrc!._id && invalidPickup(m)))) {
+          patch.pickup_time = pt(pSrc!);
+          if (ps.pickup_date) patch.pickup_date = ps.pickup_date;
+          if (ps.pickup_method && !mm.pickup_method) patch.pickup_method = ps.pickup_method;
+        }
+        if (rs && !rt(m)) {
+          patch.return_time = rt(rSrc!);
+          if (rs.return_date) patch.return_date = rs.return_date;
+          if (rs.return_method && !mm.return_method) patch.return_method = rs.return_method;
+        }
+        if (Object.keys(patch).length > 0) {
+          await ctx.db.patch(m._id, patch);
+          patched++;
+        }
+      }
+    }
+    return { groups: groups.size, patched };
   },
 });
 

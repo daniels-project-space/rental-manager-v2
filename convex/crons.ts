@@ -89,6 +89,16 @@ crons.interval(
   {},
 );
 
+// Copy a confirmed handover time recorded on one order onto the other orders of
+// the same renter+period rental (so a multi-listing booking sits in the right
+// calendar slot even though the time was only agreed in one chat). 2026-06-25.
+crons.interval(
+  "propagate grouped handover times",
+  { minutes: 30 },
+  internal.reservations.propagateGroupedTimesCron,
+  {},
+);
+
 // ── Layer B (2026-05-19) — qty-drift safety net ────────────────
 // Nightly 03:00 UTC re-fetches Hygglo per-order detail for active reservations
 // and compares raw items[].length vs stored expanded_items quantity. Drifted
