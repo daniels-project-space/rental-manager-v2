@@ -77,16 +77,22 @@ function addDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Default window start so TODAY is always the 3rd of the 7 visible columns
+ *  (today − 2 days). Daniel, 2026-06-25. */
+function viewAnchor(): string {
+  return addDays(londonToday(), -2);
+}
+
 // Navigation cap: ~1 year back .. +4 weeks (~1 month) ahead.
 const WEEK_AHEAD_CAP = 28;
 const WEEK_BEHIND_CAP = 364;
 
-/** Clamp a Monday-ISO into [this week - ~1 year, +4 weeks]. ISO date strings
+/** Clamp a window-start ISO into [anchor - ~1 year, +4 weeks]. ISO date strings
  *  compare lexicographically, so string `<`/`>` is a valid date order here. */
 function clampWeek(iso: string): string {
-  const thisMonday = mondayOfThisWeek();
-  const min = addDays(thisMonday, -WEEK_BEHIND_CAP);
-  const max = addDays(thisMonday, WEEK_AHEAD_CAP);
+  const anchor = viewAnchor();
+  const min = addDays(anchor, -WEEK_BEHIND_CAP);
+  const max = addDays(anchor, WEEK_AHEAD_CAP);
   if (iso < min) return min;
   if (iso > max) return max;
   return iso;
@@ -165,6 +171,15 @@ const DAY_MS = 86400000;
 const DAY_WINDOW_START_MIN = 9 * 60; // 09:00
 const DAY_WINDOW_END_MIN = 22 * 60; // 22:00
 
+// A few faint dotted vertical guides per day column so you can read roughly what
+// time of day a bar sits at (within the 9am–10pm window).
+const TIME_GRIDLINES: Array<{ t: string; label: string }> = [
+  { t: "12:00", label: "12" },
+  { t: "15:00", label: "3" },
+  { t: "18:00", label: "6" },
+  { t: "21:00", label: "9" },
+];
+
 /** Fraction (0..1) of a "HH:MM" time within the 9am–10pm window, clamped to the
  *  window edges; `fallback` when no time (0 = window start, 1 = window end). */
 function timeFrac(t: string | null, fallback: number): number {
@@ -183,7 +198,11 @@ interface BarGeom { left: number; width: number; }
 /** Pixel geometry for a reservation bar, positioned to the actual pickup time
  *  on the start day and the actual return time on the return day (sub-day
  *  precision). null if the rental doesn't intersect the visible week. */
-function barGeom(block: Block, weekStart: string, colWidth: number): BarGeom | null {
+function barGeom(
+  block: Block,
+  weekStart: string,
+  xAt: (dayFloat: number) => number,
+): BarGeom | null {
   if (!block.start_date) return null;
   const effReturn = block.return_date ?? block.end_date;
   if (!effReturn) return null;
@@ -199,7 +218,10 @@ function barGeom(block: Block, weekStart: string, colWidth: number): BarGeom | n
   if (endMs <= weekStartMs || startMs >= weekEndMs) return null;
   const startDays = Math.max(0, (startMs - weekStartMs) / DAY_MS);
   const endDays = Math.min(7, (endMs - weekStartMs) / DAY_MS);
-  return { left: startDays * colWidth, width: Math.max((endDays - startDays) * colWidth, 8) };
+  // xAt() converts a fractional day index → pixel x, honoring the (possibly
+  // wider) today column so bars stay aligned to the day-column grid.
+  const left = xAt(startDays);
+  return { left, width: Math.max(xAt(endDays) - left, 8) };
 }
 
 // order_step = ACTIVE (next-to-do) step — see src/lib/order_step_semantics.ts.
@@ -234,7 +256,7 @@ interface ResRow {
 /** Collapse the item-centric gantt payload into one row per reservation, so a
  *  renter who booked several items shows once with all their thumbnails — the
  *  same booking-centric view as the small dashboard calendar. */
-function groupByReservation(items: GanttItem[], weekStart: string, colWidth: number, today: string): ResRow[] {
+function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloat: number) => number, today: string): ResRow[] {
   // Collect every member block + item per LOGICAL group. Contiguous
   // same-renter/same-item bookings share a logical_group_id (backend), so they
   // collapse into ONE row spanning earliest pickup → latest return.
@@ -307,7 +329,7 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
       progress_percent: rep.progress_percent,
       account_slug: rep.account_slug,
     };
-    const geom = barGeom(merged, weekStart, colWidth);
+    const geom = barGeom(merged, weekStart, xAt);
     if (!geom) continue;
     const ongoing = !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
     const accColor: "blue" | "purple" | "orange" =
@@ -504,6 +526,16 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, we
       >
         {renterLabel}
       </span>
+      {/* No confirmed pickup/return times yet — say so instead of an empty bar */}
+      {showTimes && !pickup && !ret && (
+        <span
+          className="text-[10px] font-medium flex-shrink-0 leading-none italic"
+          style={{ color: ss.text, opacity: 0.65 }}
+          title="No pickup / return times confirmed yet"
+        >
+          no times yet
+        </span>
+      )}
       {/* Drop-off time pinned to the END of the bar — only on the return day */}
       {showTimes && ret && returnInWeek && (
         <span
@@ -615,7 +647,7 @@ const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails
 const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
-  const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? mondayOfThisWeek());
+  const [weekStart, setWeekStart] = useState<string>(() => viewAnchor());
   const [selectedBlock, setSelectedBlock] = useState<{ block: Block; items: ResItem[]; accent: string } | null>(null);
   // live progress map: reservation_id → computed progress
   const [liveProgress, setLiveProgress] = useState<Record<string, number>>({});
@@ -661,10 +693,12 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
       : "skip",
   );
 
-  // Sync prop weekStartIso if it changes while open (clamped to the nav window)
+  // Anchor the visible week so TODAY is always the 3rd column whenever the
+  // overlay (re)opens. weekStartIso is retained for API compat but the view is
+  // today-anchored now, not strip-week-driven.
   useEffect(() => {
-    if (weekStartIso) setWeekStart(clampWeek(weekStartIso));
-  }, [weekStartIso]);
+    if (open) setWeekStart(viewAnchor());
+  }, [open, weekStartIso]);
 
   // ESC to close; arrow keys step weeks within the [this week, +4 weeks] cap
   useEffect(() => {
@@ -747,13 +781,37 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   const today = londonToday();
   const headers = dayHeaders(weekStart);
-  // Fit 7 columns into the measured width (min 96px so they stay legible and
-  // scroll only on very small screens). Falls back to COL_WIDTH pre-measure.
-  const colWidth = gridWidth > 0 ? Math.max(96, Math.floor((gridWidth - LABEL_WIDTH) / 7)) : COL_WIDTH;
-  const totalGridWidth = colWidth * 7;
+  // TODAY's column is rendered a bit wider so the current day stands out
+  // (Daniel). Non-uniform widths → a small layout table (per-column width + left
+  // offset) and an xAt() mapper that converts a fractional day index to pixels,
+  // used everywhere the old uniform `* colWidth` math lived (bars, now-line).
+  const todayCol = headers.findIndex((h) => h.iso === today); // 0..6 or -1
+  const TODAY_EMPHASIS = 1.5;
+  // Base column width sized so the 6 normal + 1 wider (today) columns still FILL
+  // the measured grid without horizontal scroll. min 96px keeps them legible.
+  const colUnits = todayCol >= 0 ? 6 + TODAY_EMPHASIS : 7;
+  const colWidth =
+    gridWidth > 0
+      ? Math.max(96, Math.floor((gridWidth - LABEL_WIDTH) / colUnits))
+      : COL_WIDTH;
+  const colWidths = headers.map((_, i) =>
+    i === todayCol ? Math.round(colWidth * TODAY_EMPHASIS) : colWidth,
+  );
+  const colLefts: number[] = [];
+  for (let i = 0, acc = 0; i < colWidths.length; i++) {
+    colLefts.push(acc);
+    acc += colWidths[i];
+  }
+  const totalGridWidth = colWidths.reduce((a, b) => a + b, 0);
+  const xAt = (dayFloat: number): number => {
+    if (dayFloat <= 0) return 0;
+    if (dayFloat >= 7) return totalGridWidth;
+    const i = Math.min(colWidths.length - 1, Math.floor(dayFloat));
+    return colLefts[i] + (dayFloat - i) * colWidths[i];
+  };
 
   // Booking-centric rows: one per reservation, all its items grouped together.
-  const resRows = data ? groupByReservation(data.items, weekStart, colWidth, today) : [];
+  const resRows = data ? groupByReservation(data.items, weekStart, xAt, today) : [];
   // While searching, restrict the bars to rentals that touch a matched item
   // (mapped via the calendar_holds ledger on the backend).
   const matchedInv = searching ? searchResult?.items ?? [] : [];
@@ -776,16 +834,15 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // Red "now" marker — placed inside today's column using the SAME 9am–10pm
   // business-hours compression as the bars, so it lines up with them.
   const nowTime = new Date(nowMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Europe/London" });
-  const todayIdx = Math.round((isoToDate(today).getTime() - isoToDate(weekStart).getTime()) / DAY_MS);
   const [nowH, nowM] = nowTime.split(":").map((s) => parseInt(s, 10));
   const nowBizFrac = Math.max(0, Math.min(1, (nowH * 60 + nowM - DAY_WINDOW_START_MIN) / (DAY_WINDOW_END_MIN - DAY_WINDOW_START_MIN)));
-  const showNow = todayIdx >= 0 && todayIdx <= 6;
-  const nowLeft = LABEL_WIDTH + (todayIdx + nowBizFrac) * colWidth;
+  const showNow = todayCol >= 0 && todayCol <= 6;
+  const nowLeft = LABEL_WIDTH + xAt(todayCol + nowBizFrac);
 
   // Nav bounds — disable Prev at ~1 year back, Next at +4 weeks.
-  const minWeek = addDays(mondayOfThisWeek(), -WEEK_BEHIND_CAP);
+  const minWeek = addDays(viewAnchor(), -WEEK_BEHIND_CAP);
   const atMinWeek = weekStart <= minWeek;
-  const atMaxWeek = weekStart >= addDays(mondayOfThisWeek(), WEEK_AHEAD_CAP);
+  const atMaxWeek = weekStart >= addDays(viewAnchor(), WEEK_AHEAD_CAP);
 
   // When searching, gate on matched inventory; the loading state shows its own
   // message (see empty branch) rather than a premature "no match".
@@ -840,7 +897,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
           </button>
           <button
             className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
-            onClick={() => setWeekStart(mondayOfThisWeek())}
+            onClick={() => setWeekStart(viewAnchor())}
           >
             Today
           </button>
@@ -981,14 +1038,14 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                   Renter / Items
                 </div>
                 {/* Day headers */}
-                {headers.map(({ label, iso }) => {
+                {headers.map(({ label, iso }, i) => {
                   const isToday = iso === today;
                   return (
                     <div
                       key={iso}
                       className="flex-shrink-0 flex items-center justify-center text-xs font-medium py-3"
                       style={{
-                        width: colWidth,
+                        width: colWidths[i],
                         color: isToday ? "#3b82f6" : "#6b7280",
                         background: isToday ? "rgba(59,130,246,0.12)" : undefined,
                         borderRight: iso === today ? undefined : "1px solid rgba(255,255,255,0.04)",
@@ -1074,7 +1131,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                               <div
                                 key={iso}
                                 className="flex-shrink-0 flex flex-col items-center justify-center"
-                                style={{ width: colWidth, background: bg, borderRight: "1px solid rgba(255,255,255,0.03)" }}
+                                style={{ width: colWidths[i], background: bg, borderRight: "1px solid rgba(255,255,255,0.03)" }}
                                 title={cell ? `${free} of ${tot} free · ${iso}${showFrom ? ` · 1 free from ${freeFrom}` : ""}` : `no data · ${iso}`}
                               >
                                 <span className="text-sm font-bold tabular-nums leading-none" style={{ color }}>
@@ -1138,23 +1195,34 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
                       {/* Track */}
                       <div className="relative flex-1" style={{ width: totalGridWidth }}>
-                        {/* Day column backgrounds */}
+                        {/* Day column backgrounds + dotted time-of-day guides */}
                         {headers.map(({ iso }, i) => (
-                          <div
-                            key={iso}
-                            className="absolute top-0 bottom-0"
-                            style={{
-                              left: i * colWidth,
-                              width: colWidth,
-                              background:
-                                iso === today
-                                  ? "rgba(59,130,246,0.08)"
-                                  : i % 2 === 0
-                                  ? "rgba(255,255,255,0.01)"
-                                  : undefined,
-                              borderRight: "1px solid rgba(255,255,255,0.03)",
-                            }}
-                          />
+                          <React.Fragment key={iso}>
+                            <div
+                              className="absolute top-0 bottom-0"
+                              style={{
+                                left: colLefts[i],
+                                width: colWidths[i],
+                                background:
+                                  iso === today
+                                    ? "rgba(59,130,246,0.08)"
+                                    : i % 2 === 0
+                                    ? "rgba(255,255,255,0.01)"
+                                    : undefined,
+                                borderRight: "1px solid rgba(255,255,255,0.03)",
+                              }}
+                            />
+                            {TIME_GRIDLINES.map((g) => (
+                              <div
+                                key={`${iso}-${g.t}`}
+                                className="absolute top-0 bottom-0 pointer-events-none"
+                                style={{
+                                  left: colLefts[i] + timeFrac(g.t, 0.5) * colWidths[i],
+                                  borderLeft: "1px dotted rgba(255,255,255,0.08)",
+                                }}
+                              />
+                            ))}
+                          </React.Fragment>
                         ))}
 
                         {/* The reservation bar — time-accurate */}
