@@ -447,7 +447,12 @@ interface BarProps {
 // status, glow + dot = ongoing. The bar physically ends at the return time.
 function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, weekStart }: BarProps) {
   const { block, acc, ongoing } = row;
-  const ss = statusStyle(block.order_step);
+  // DB Cinema Web rentals read as a distinct emerald bar (not the status palette)
+  // so the website channel is unmistakable in the calendar.
+  const isWeb = block.account_slug === "dbcinema_web";
+  const ss = isWeb
+    ? { bg: "rgba(16,185,129,0.20)", border: "#10b981", text: "#34d399" }
+    : statusStyle(block.order_step);
   const showProgress = block.order_step === "DELIVERED" && liveProgress !== null && liveProgress < 100;
   const hasRenter = !!block.renter_name && block.renter_name.trim() !== "" && block.renter_name.trim() !== "?";
   const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);

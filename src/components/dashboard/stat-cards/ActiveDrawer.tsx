@@ -62,9 +62,10 @@ interface Props {
 }
 
 export const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
-  dbcinema: { bg: "bg-blue-900/60 border border-blue-500/30", text: "text-blue-200" },
-  leo:      { bg: "bg-purple-900/60 border border-purple-500/30", text: "text-purple-200" },
-  diogo:    { bg: "bg-orange-900/60 border border-orange-500/30", text: "text-orange-200" },
+  dbcinema:     { bg: "bg-blue-900/60 border border-blue-500/30", text: "text-blue-200" },
+  leo:          { bg: "bg-purple-900/60 border border-purple-500/30", text: "text-purple-200" },
+  diogo:        { bg: "bg-orange-900/60 border border-orange-500/30", text: "text-orange-200" },
+  dbcinema_web: { bg: "bg-emerald-900/60 border border-emerald-500/30", text: "text-emerald-200" },
 };
 
 export const SECTION: Record<Kind, { label: string; color: string; bg: string; border: string; ring: string }> = {
@@ -440,6 +441,12 @@ export function RentalRow({ r }: { r: Rental }) {
   const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
   const s = SECTION[kind];
   const pill = ACCOUNT_PILL[r.account_slug] ?? { bg: "bg-slate-800 border border-slate-700", text: "text-slate-300" };
+  // Website (DB Cinema Web) rentals get a THICK emerald left-rim so they stand
+  // out among the Hygglo rows even in the "All" view; the friendlier "web" pill
+  // label replaces the raw slug.
+  const isWeb = r.account_slug === "dbcinema_web";
+  const rowRing = isWeb ? "shadow-[inset_5px_0_0_#10b981]" : s.ring;
+  const acctLabel = isWeb ? "web" : r.account_slug;
   // PASS-7: v1-faithful multi-item display.
   // Backend (convex/dashboard.ts mapRental) ships `item_names_summary` as
   // the FULL comma-separated list of distinct items (with " ×N" suffix when
@@ -475,7 +482,7 @@ export function RentalRow({ r }: { r: Rental }) {
 
   return (
     <div
-      className={`relative flex items-stretch gap-3 rounded-lg border ${s.border} ${s.bg} ${s.ring} px-2.5 py-2`}
+      className={`relative flex items-stretch gap-3 rounded-lg border ${isWeb ? "border-emerald-500/30" : s.border} ${s.bg} ${rowRing} px-2.5 py-2`}
     >
       {/* Master Thumbnail — v1 pattern (one 56x56 photo per rental).
           Rounding lives on the <img> so hover-zoom is not clipped. */}
@@ -516,7 +523,7 @@ export function RentalRow({ r }: { r: Rental }) {
             <span className="text-[10px] text-slate-500">({r.duration_days}d)</span>
           )}
           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${pill.bg} ${pill.text}`}>
-            {r.account_slug}
+            {acctLabel}
           </span>
         </div>
         {/* PASS-8: additional distinct-image tiles (deduped by image_url).
