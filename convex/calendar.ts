@@ -1304,7 +1304,13 @@ export const getGanttWeek = query({
           start_date: effPick || r.start_date,
           end_date: r.end_date,
           return_date: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
-          renter_name: r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?",
+          // Prefer the renters-table name (Hygglo rows), then the denormalized
+          // renter_name (web/site rows have no renter_id but carry the customer
+          // name), then "?". Was renter_id-only, so web bookings read "?".
+          renter_name:
+            (r.renter_id ? renterMap.get(r.renter_id as string) : undefined) ??
+            (r as { renter_name?: string | null }).renter_name ??
+            "?",
           // Account comes from the RESERVATION (the items table doc has no
           // account_slug, so the item-row account_color is always blue). The
           // frontend groups by reservation and colours from this.
