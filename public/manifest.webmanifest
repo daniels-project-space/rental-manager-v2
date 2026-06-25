@@ -10,13 +10,13 @@
   "theme_color": "#070910",
   "icons": [
     {
-      "src": "/notif-icon.svg",
+      "src": "/app-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/notif-icon.svg",
+      "src": "/app-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"
