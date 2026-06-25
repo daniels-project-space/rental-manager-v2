@@ -99,6 +99,16 @@ crons.interval(
   {},
 );
 
+// Pull the DB Cinema WEBSITE's own paid bookings (db-cinema-v2 storefront) up
+// into RMv2 as the "dbcinema_web" profile — ongoing rentals, availability and
+// revenue, alongside the Hygglo accounts. 30 min. 2026-06-25.
+crons.interval(
+  "sync dbcinema website bookings",
+  { minutes: 30 },
+  internal.sync_dbcinema_web.syncDbcinemaWeb,
+  {},
+);
+
 // ── Layer B (2026-05-19) — qty-drift safety net ────────────────
 // Nightly 03:00 UTC re-fetches Hygglo per-order detail for active reservations
 // and compares raw items[].length vs stored expanded_items quantity. Drifted

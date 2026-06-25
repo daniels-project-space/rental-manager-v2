@@ -14,5 +14,5 @@
  * the new slug and warn about drift forever.
  */
 
-export const ACCOUNT_SLUGS = ["dbcinema", "leo", "diogo", "daniel", "vertus"] as const;
+export const ACCOUNT_SLUGS = ["dbcinema", "leo", "diogo", "dbcinema_web", "daniel", "vertus"] as const;
 export type AccountSlug = (typeof ACCOUNT_SLUGS)[number];
