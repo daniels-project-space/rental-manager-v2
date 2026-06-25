@@ -637,9 +637,18 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     return () => clearTimeout(id);
   }, [q]);
 
+  // In-overlay account filter (top). Starts from whatever account the dashboard
+  // is on, then can be switched per-account or "All" without leaving the overlay.
+  const [filterAccount, setFilterAccount] = useState<string | null>(
+    accountSlug ?? null,
+  );
+  useEffect(() => {
+    setFilterAccount(accountSlug ?? null);
+  }, [accountSlug]);
+
   const data = useQuery(
     api.calendar.getGanttWeek,
-    open ? { weekStartIso: weekStart, accountSlug: accountSlug ?? undefined } : "skip"
+    open ? { weekStartIso: weekStart, accountSlug: filterAccount ?? undefined } : "skip"
   );
 
   // Inventory search (name / tag) + per-day availability + the reservations
@@ -648,7 +657,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const searchResult = useQuery(
     api.calendar.searchCalendarInventory,
     open && debouncedQ.length > 0
-      ? { query: debouncedQ, weekStartIso: weekStart, accountSlug: accountSlug ?? undefined }
+      ? { query: debouncedQ, weekStartIso: weekStart, accountSlug: filterAccount ?? undefined }
       : "skip",
   );
 
@@ -888,29 +897,51 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             </span>
           )}
 
-          {/* Legend — accounts (left stripe color) + booking status (fill). */}
-          <div className="ml-auto hidden md:flex items-center gap-3 text-[11px] text-gray-400">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#3b82f6" }} />
-              DB Cinema
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#a855f7" }} />
-              Leo Adams
-            </span>
-            <span className="w-px h-3.5 bg-white/15" />
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: "#fbbf24" }} />
-              Awaiting
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: "#60a5fa" }} />
-              Out
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: "#34d399" }} />
-              Done
-            </span>
+          {/* Account filter (interactive) + booking-status legend. */}
+          <div className="ml-auto flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              {([
+                { slug: null, label: "All", color: "#9aa0ad" },
+                { slug: "dbcinema", label: "DB Cinema", color: "#3b82f6" },
+                { slug: "leo", label: "Leo", color: "#a855f7" },
+                { slug: "diogo", label: "Diogo", color: "#f97316" },
+              ] as const).map((a) => {
+                const active = filterAccount === a.slug;
+                return (
+                  <button
+                    key={String(a.slug)}
+                    onClick={() => setFilterAccount(a.slug)}
+                    aria-pressed={active}
+                    className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors"
+                    style={{
+                      background: active ? `${a.color}26` : "rgba(255,255,255,0.04)",
+                      color: active ? a.color : "#9aa0ad",
+                      border: `1px solid ${active ? `${a.color}66` : "rgba(255,255,255,0.08)"}`,
+                    }}
+                  >
+                    {a.slug && (
+                      <span className="w-2 h-2 rounded-sm" style={{ background: a.color }} />
+                    )}
+                    {a.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="w-px h-3.5 bg-white/15 hidden lg:inline-block" />
+            <div className="hidden lg:flex items-center gap-3 text-[11px] text-gray-400">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: "#fbbf24" }} />
+                Awaiting
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: "#60a5fa" }} />
+                Out
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: "#34d399" }} />
+                Done
+              </span>
+            </div>
           </div>
         </div>
 
