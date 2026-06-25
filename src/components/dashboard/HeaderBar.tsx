@@ -11,6 +11,7 @@ const ACCOUNTS = [
   { slug: "dbcinema", label: "DB Cinema", color: "#6ea8fe" },
   { slug: "leo", label: "Leo Adams", color: "#a855f7" },
   { slug: "diogo", label: "Diogo", color: "#f97316" },
+  { slug: "dbcinema_web", label: "DB Cinema Web", color: "#10b981" },
 ];
 
 type AccountMeta = { slug: string; display_name: string; profile_image_url: string | null };

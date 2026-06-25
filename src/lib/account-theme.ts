@@ -25,6 +25,10 @@ export const ACCOUNT_THEME: Record<string, AccountTheme> = {
   dbcinema: { label: "DB Cinema", accent: "#6ea8fe" },
   leo: { label: "Leo Adams", accent: "#a855f7" },
   diogo: { label: "Diogo Valdivieso", accent: "#f97316" },
+  // DB Cinema's own rental WEBSITE (db-cinema-v2 storefront), synced in as a
+  // profile alongside the Hygglo accounts. Emerald to stand apart from the
+  // blue Hygglo DB Cinema. 2026-06-25.
+  dbcinema_web: { label: "DB Cinema Web", accent: "#10b981" },
 };
 
 /** Neutral grey for unknown / unmapped slugs. */
