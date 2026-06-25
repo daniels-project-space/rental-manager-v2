@@ -67,7 +67,11 @@ export function classifyFocus(
   name: string,
   kind: string | undefined,
   specText: string | undefined,
-): "autofocus" | "manual_focus" | "fixed" | null {
+): "autofocus" | "manual_focus" | null {
+  // Focus is a LENS property. Gate here so a name token never leaks a focus tag
+  // onto non-glass — e.g. a Sirui *tripod* was matching the Sirui-anamorphic
+  // heuristic and getting a bogus "manual focus" tag in the inventory index.
+  if (kind !== "lens") return null;
   const n = (name ?? "").toLowerCase();
   const s = (specText ?? "").toLowerCase();
   // 1) Spec prose is authoritative when it speaks plainly.
@@ -78,9 +82,8 @@ export function classifyFocus(
   // 2) Family heuristics on the name (only the unambiguous ones).
   if (/\b(anamorphic|blazar|remus|dzofilm|vespid|great joy|samyang|rokinon|laowa|irix|7artisans|sirui|tokina cine|cine prime)\b/.test(n))
     return "manual_focus";
-  if (/\b(gopro|osmo|action|insta360|pocket\s*3|fixed)\b/.test(n)) return "fixed";
   // Native AF still-photo systems we own: Sony E (GM / FE / SEL) and Canon EF.
-  if (kind === "lens" && /\b(sony|gm|fe|sel|canon ef|ef-?s|sigma|tamron|rf)\b/.test(n))
+  if (/\b(sony|gm|fe|sel|canon ef|ef-?s|sigma|tamron|rf)\b/.test(n))
     return "autofocus";
   return null;
 }
