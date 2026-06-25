@@ -68,21 +68,37 @@ export default function TodoWidget() {
         </div>
       </div>
 
-      {/* List tabs */}
+      {/* List tabs (each with a hover ✕ to delete the whole list) */}
       <div className="flex flex-shrink-0 items-center gap-1 overflow-x-auto px-3 py-1.5">
         {lists.map((l) => (
-          <button
-            key={l._id}
-            type="button"
-            onClick={() => setActiveId(l._id)}
-            className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
-              active?._id === l._id
-                ? "bg-blue-500/20 text-blue-200 ring-1 ring-blue-500/40"
-                : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
-            }`}
-          >
-            {l.name}
-          </button>
+          <div key={l._id} className="group relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveId(l._id)}
+              className={`rounded-full py-0.5 pl-2.5 pr-6 text-[11px] font-medium transition-colors ${
+                active?._id === l._id
+                  ? "bg-blue-500/20 text-blue-200 ring-1 ring-blue-500/40"
+                  : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+              }`}
+            >
+              {l.name}
+            </button>
+            <button
+              type="button"
+              title={`Delete list "${l.name}"`}
+              aria-label={`Delete list ${l.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm(`Delete list "${l.name}"? This can't be undone.`)) {
+                  void deleteList({ id: l._id });
+                  if (active?._id === l._id) setActiveId(null);
+                }
+              }}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] leading-none text-slate-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+            >
+              ✕
+            </button>
+          </div>
         ))}
         <button
           type="button"
