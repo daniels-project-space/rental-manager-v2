@@ -35,6 +35,12 @@ import { Id } from "./_generated/dataModel";
 const upsertBatchRef = makeFunctionReference<"mutation">(
   "sync_dbcinema_web:upsertSiteBookingsBatch",
 );
+// Force-rebuild the Active-Rentals MV after a change, exactly like the Hygglo
+// poller does (its dirty-probe only scans recent future-dated rows, so a web
+// status change would otherwise not surface on the tiles until the hourly cron).
+const statsDrawerRefreshRef = makeFunctionReference<"mutation">(
+  "mv/stats_drawer:refresh",
+);
 
 const WEB_SLUG = "dbcinema_web";
 // The storefront's gear is DB Cinema's gear; its product IDs live in the
@@ -126,13 +132,14 @@ export const upsertSiteBookingsBatch = internalMutation({
       ctx.db.query("items").collect(),
     ]);
     const itemById = new Map(items.map((i) => [String(i._id), i]));
-    const pidToItem = new Map<number, { item_id: Id<"items">; name: string }>();
+    const pidToItem = new Map<number, { item_id: Id<"items">; name: string; image_url: string | null }>();
     for (const r of idxRows) {
       if (r.account_slug !== STOCK_ACCOUNT) continue;
       const it = itemById.get(String(r.item_id));
       pidToItem.set(r.product_id, {
         item_id: r.item_id,
         name: it?.name_canonical ?? "item",
+        image_url: (it as { image_url?: string | null } | undefined)?.image_url ?? null,
       });
     }
 
@@ -148,10 +155,22 @@ export const upsertSiteBookingsBatch = internalMutation({
       if (!b || !b.id || !b.start || !b.end) continue;
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
+      // status → RMv2 status + order_step (so due-returns / Return Hub / the
+      // ongoing-vs-upcoming split treat web rentals like Hygglo ones):
+      //   confirmed = paid, not yet collected → upcoming (no order_step)
+      //   active    = currently out with the customer → DELIVERED
+      //   returned  = back → completed (REVIEWED)
       const status = b.status === "returned" ? "completed" : "confirmed";
+      const order_step =
+        b.status === "active" ? "DELIVERED"
+        : b.status === "returned" ? "REVIEWED"
+        : undefined;
 
       // Decompose to physical RMv2 items so availability/conflict count these.
-      const byItem = new Map<string, { item_id: Id<"items">; name: string; qty: number }>();
+      const byItem = new Map<string, { item_id: Id<"items">; name: string; qty: number; image_url: string | null }>();
+      // Per Hygglo-product accumulation, so we can emit hygglo_items — the path
+      // the dashboard's image resolver actually reads for per-rental thumbnails.
+      const byProduct = new Map<number, { name: string; image_url: string | null; qty: number }>();
       for (const li of b.lineItems ?? []) {
         for (const u of li.units ?? []) {
           const hit = pidToItem.get(u.hyggloProductId);
@@ -162,24 +181,53 @@ export const upsertSiteBookingsBatch = internalMutation({
           mappedUnits++;
           const cur = byItem.get(String(hit.item_id));
           if (cur) cur.qty += u.qty;
-          else byItem.set(String(hit.item_id), { item_id: hit.item_id, name: hit.name, qty: u.qty });
+          else byItem.set(String(hit.item_id), { item_id: hit.item_id, name: hit.name, qty: u.qty, image_url: hit.image_url });
+          const pcur = byProduct.get(u.hyggloProductId);
+          if (pcur) pcur.qty += u.qty;
+          else byProduct.set(u.hyggloProductId, { name: hit.name, image_url: hit.image_url, qty: u.qty });
         }
       }
+      const hygglo_items = [...byProduct.entries()].map(([product_id, p]) => ({
+        product_id,
+        name: p.name,
+        qty: p.qty,
+        image_url: p.image_url,
+        type: "item",
+      }));
       const expanded_items = [...byItem.values()].map((e) => ({
         item_id: e.item_id,
         item_name_canonical: e.name,
         qty: e.qty,
       }));
+      // Reservation photos = the mapped items' canonical images, so the cards +
+      // calendar render real thumbnails (web bookings carry no Hygglo photos).
+      // photos_urls feeds the simple mappers; image_hints feeds mapRental (which
+      // ignores photos_urls and builds per-item tiles from hints keyed by the
+      // normalised item name).
+      const photos_urls = [
+        ...new Set([...byItem.values()].map((e) => e.image_url).filter((u): u is string => !!u)),
+      ];
+      const image_hints = [...byItem.values()]
+        .filter((e) => !!e.image_url)
+        .map((e) => ({
+          captured_at: Date.now(),
+          image_url: e.image_url as string,
+          item_name: e.name,
+          item_name_normalised: e.name.toLowerCase().replace(/[^a-z0-9]/g, ""),
+          source: "manual_override" as const,
+        }));
       const resolved_items = expanded_items.map((e) => ({
         item_id: e.item_id,
         item_name_canonical: e.item_name_canonical,
         confidence: 1,
         qty: e.qty,
       }));
-      const itemsDisplay = (b.lineItems ?? []).map((li) => ({
-        item_name: li.title,
-        qty: li.qty,
-      }));
+      // Display the resolved canonical items (clean names + image matches);
+      // fall back to the raw booking titles when nothing mapped.
+      const itemsDisplay =
+        expanded_items.length > 0
+          ? expanded_items.map((e) => ({ item_name: e.item_name_canonical, qty: e.qty }))
+          : (b.lineItems ?? []).map((li) => ({ item_name: li.title, qty: li.qty }));
 
       const method = b.fulfilment === "delivery" ? "delivery" : "collection";
       const net = Math.max(0, (b.subtotal ?? 0) - (b.discount ?? 0));
@@ -200,6 +248,10 @@ export const upsertSiteBookingsBatch = internalMutation({
         items: itemsDisplay,
         resolved_items,
         expanded_items,
+        ...(photos_urls.length > 0 ? { photos_urls } : {}),
+        ...(image_hints.length > 0 ? { image_hints } : {}),
+        ...(hygglo_items.length > 0 ? { hygglo_items } : {}),
+        ...(order_step ? { order_step } : {}),
         gross_paid_gbp: gross,
         net_to_owner_gbp: net,
         platform_fee_gbp: 0,
@@ -252,6 +304,12 @@ export const upsertSiteBookingsBatch = internalMutation({
       }
     }
 
+    // Reactively rebuild the Active-Rentals MV so the dashboard tiles reflect
+    // the change now (the hourly MV cron's dirty-probe can miss web rows).
+    if (upserted > 0 || cancelled > 0) {
+      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
+    }
+
     return { upserted, mapped_units: mappedUnits, unmapped_units: unmappedUnits, cancelled };
   },
 });
@@ -260,6 +318,38 @@ export const upsertSiteBookingsBatch = internalMutation({
  * Admin: hard-delete a synced website reservation by its storefront booking id
  * (e.g. to remove a test row). Reconciliation only soft-cancels; this purges.
  */
+/**
+ * Admin: purge ALL synced website data (reservations + weekly_metrics rows for
+ * the web profile). Used to clear test data / reset the profile to empty.
+ */
+export const adminPurgeWebData = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let reservations = 0;
+    for (const status of ["confirmed", "completed", "cancelled", "pending_review", "declined"]) {
+      const rows = await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (q) => q.eq("status", status))
+        .collect();
+      for (const r of rows) {
+        if (r.account_slug !== WEB_SLUG) continue;
+        await ctx.db.delete(r._id);
+        reservations++;
+      }
+    }
+    let weekly_metrics = 0;
+    for (const m of await ctx.db.query("weekly_metrics").collect()) {
+      if ((m as { account_slug?: string }).account_slug !== WEB_SLUG) continue;
+      await ctx.db.delete(m._id);
+      weekly_metrics++;
+    }
+    if (reservations > 0) {
+      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
+    }
+    return { reservations, weekly_metrics };
+  },
+});
+
 export const adminDeleteSiteBooking = internalMutation({
   args: { externalId: v.string() },
   handler: async (ctx, { externalId }) => {
