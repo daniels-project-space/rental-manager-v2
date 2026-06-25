@@ -51,7 +51,7 @@ function AccountAvatar({
 
 /** Overlapping avatar stack for the "All" pill — reads as "every account". */
 function AllAvatars({ metas }: { metas: AccountMeta[] | undefined }) {
-  const slugs = ["dbcinema", "leo", "diogo"];
+  const slugs = ["dbcinema", "leo", "diogo", "dbcinema_web"];
   return (
     <span className="inline-flex items-center">
       {slugs.map((s, i) => (

@@ -37,7 +37,7 @@ interface GanttItem {
   item_name: string;
   image_url: string | null;
   account_slug: string | null;
-  account_color: "blue" | "purple" | "orange";
+  account_color: "blue" | "purple" | "orange" | "emerald";
   blocks: Block[];
 }
 
@@ -154,8 +154,11 @@ function statusStyle(orderStep: string | null): StatusStyle {
   }
 }
 
-function accountColor(ac: "blue" | "purple" | "orange"): string {
-  return ac === "purple" ? "#a855f7" : ac === "orange" ? "#f97316" : "#3b82f6";
+function accountColor(ac: "blue" | "purple" | "orange" | "emerald"): string {
+  return ac === "purple" ? "#a855f7"
+    : ac === "orange" ? "#f97316"
+    : ac === "emerald" ? "#10b981"
+    : "#3b82f6";
 }
 
 // ---------------------------------------------------------------------------
@@ -332,8 +335,11 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
     const geom = barGeom(merged, weekStart, xAt);
     if (!geom) continue;
     const ongoing = !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
-    const accColor: "blue" | "purple" | "orange" =
-      rep.account_slug === "leo" ? "purple" : rep.account_slug === "diogo" ? "orange" : "blue";
+    const accColor: "blue" | "purple" | "orange" | "emerald" =
+      rep.account_slug === "leo" ? "purple"
+      : rep.account_slug === "diogo" ? "orange"
+      : rep.account_slug === "dbcinema_web" ? "emerald"
+      : "blue";
     rows.push({
       reservationId: gid,
       block: merged,
@@ -962,6 +968,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                 { slug: "dbcinema", label: "DB Cinema", color: "#3b82f6" },
                 { slug: "leo", label: "Leo", color: "#a855f7" },
                 { slug: "diogo", label: "Diogo", color: "#f97316" },
+                { slug: "dbcinema_web", label: "Web", color: "#10b981" },
               ] as const).map((a) => {
                 const active = filterAccount === a.slug;
                 return (

@@ -653,7 +653,11 @@ export const getCalendarStrip = query({
         items,
         renterName,
         accountSlug: r.account_slug,
-        accountColor: r.account_slug === "leo" ? "purple" : r.account_slug === "diogo" ? "orange" : "blue",
+        accountColor:
+          r.account_slug === "leo" ? "purple"
+          : r.account_slug === "diogo" ? "orange"
+          : r.account_slug === "dbcinema_web" ? "emerald"
+          : "blue",
         status: r.status,
         orderStep: (r as { order_step?: string | null }).order_step ?? null,
         startDate: r.start_date ?? null,
@@ -1324,7 +1328,12 @@ export const getGanttWeek = query({
         item_name: itemName,
         image_url: ((iDoc && iDoc._id) ? imageByItemId.get(String(iDoc._id)) : null) ?? resolvedImageUrl,
         account_slug: iDoc?.account_slug ?? null,
-        account_color: (iDoc?.account_slug === "leo" ? "purple" : "blue") as "purple" | "blue",
+        account_color: (
+          iDoc?.account_slug === "leo" ? "purple"
+          : iDoc?.account_slug === "diogo" ? "orange"
+          : iDoc?.account_slug === "dbcinema_web" ? "emerald"
+          : "blue"
+        ) as "purple" | "blue" | "orange" | "emerald",
         blocks,
       };
     });

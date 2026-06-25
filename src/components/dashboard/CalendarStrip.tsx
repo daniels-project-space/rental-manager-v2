@@ -75,6 +75,7 @@ const ACCOUNT_COLORS: Record<string, string> = {
   blue: "#3b82f6",
   purple: "#a855f7",
   orange: "#f97316",
+  emerald: "#10b981", // dbcinema_web (DB Cinema website)
 };
 
 function resolveColor(accountColor: string | undefined): string {
@@ -512,7 +513,13 @@ function BookingCard({ chip }: { chip: ChipData }) {
 // (item dropdown state removed — items now render as a single tile row)
 
   const kind = chip.kind ?? "pickup";
-  const isLeo = chip.accountSlug === "leo";
+  // Per-account avatar accent + short label (was a binary leo-vs-everything,
+  // which silently mis-coloured diogo and dbcinema_web as DB blue).
+  const acctShort =
+    chip.accountSlug === "leo" ? "Leo"
+    : chip.accountSlug === "diogo" ? "Diogo"
+    : chip.accountSlug === "dbcinema_web" ? "Web"
+    : "DB";
   const isPickupDelivery = chip.pickupMethod === "delivery";
   const isReturnDelivery = chip.returnMethod === "delivery";
 
@@ -610,7 +617,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
               src={accountMeta.profile_image_url}
               alt={accountMeta.display_name}
               className="rounded-full object-cover flex-shrink-0"
-              style={{ width: 22, height: 22, border: `2px solid ${isLeo ? "#a855f7" : "#6ea8fe"}` }}
+              style={{ width: 22, height: 22, border: `2px solid ${color}` }}
               loading="lazy"
               data-no-zoom
               title={accountMeta.display_name}
@@ -619,11 +626,11 @@ function BookingCard({ chip }: { chip: ChipData }) {
             <span
               className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{
-                background: isLeo ? "rgba(168,85,247,0.18)" : "rgba(110,168,254,0.18)",
-                color: isLeo ? "#c084fc" : "#6ea8fe",
+                background: `${color}2e`,
+                color,
               }}
             >
-              {isLeo ? "Leo" : "DB"}
+              {acctShort}
             </span>
           )}
           <span className="text-sm font-semibold text-[#e4e6eb] truncate">{renterDisplay}</span>
