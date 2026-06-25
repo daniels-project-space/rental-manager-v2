@@ -272,6 +272,24 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
       const e = b.return_date ?? b.end_date;
       return !!b.start_date && !!e && b.start_date <= today && today <= e;
     }) ?? startMember;
+    // Confirmed handover times can sit on a DIFFERENT member than the one that
+    // defines the span date (a grouped booking where only one order carries the
+    // negotiated time, e.g. Nartay's early-pickup order). Pull the earliest
+    // CONFIRMED pickup + latest CONFIRMED return across the group so the bar
+    // shows real times instead of landing in the "not defined" slot.
+    const byPickup = [...g.blocks].sort((a, b) =>
+      (a.start_date ?? "").localeCompare(b.start_date ?? ""),
+    );
+    const byReturn = [...g.blocks].sort((a, b) => {
+      const ea = a.return_date ?? a.end_date ?? a.start_date ?? "";
+      const eb = b.return_date ?? b.end_date ?? b.start_date ?? "";
+      return eb.localeCompare(ea);
+    });
+    const definedMethod = (v?: string | null): v is string => !!v && v !== "unknown";
+    const pickupTime = byPickup.find((b) => b.pickup_time)?.pickup_time ?? startMember.pickup_time ?? null;
+    const returnTime = byReturn.find((b) => b.return_time)?.return_time ?? endMember.return_time ?? null;
+    const pickupMethod = byPickup.find((b) => definedMethod(b.pickup_method))?.pickup_method ?? startMember.pickup_method ?? null;
+    const returnMethod = byReturn.find((b) => definedMethod(b.return_method))?.return_method ?? endMember.return_method ?? null;
     // Synthetic block spanning the whole rental, carrying the earliest pickup
     // time and the latest return time so the bar's end labels read correctly.
     const merged: Block = {
@@ -282,10 +300,10 @@ function groupByReservation(items: GanttItem[], weekStart: string, colWidth: num
       return_date: spanEnd,
       renter_name: rep.renter_name,
       order_step: rep.order_step,
-      pickup_time: startMember.pickup_time,
-      return_time: endMember.return_time,
-      pickup_method: startMember.pickup_method,
-      return_method: endMember.return_method,
+      pickup_time: pickupTime,
+      return_time: returnTime,
+      pickup_method: pickupMethod,
+      return_method: returnMethod,
       progress_percent: rep.progress_percent,
       account_slug: rep.account_slug,
     };

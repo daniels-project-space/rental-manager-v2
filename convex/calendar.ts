@@ -314,6 +314,22 @@ export const getCalendarStrip = query({
       const startM = sorted[0];
       let endM = sorted[0];
       for (const m of sorted) if (displayReturnDate(m) > displayReturnDate(endM)) endM = m;
+      // Confirmed handover times can live on a member other than the span
+      // start/end (a grouped booking where only one order carries the negotiated
+      // time). Take the earliest CONFIRMED pickup + latest CONFIRMED return so
+      // the booking shows real times rather than defaulting to a member's null.
+      const byReturnDesc = members
+        .slice()
+        .sort((a, b) => displayReturnDate(b).localeCompare(displayReturnDate(a)));
+      const defMethod = (v?: string | null): v is string => !!v && v !== "unknown";
+      const pickTime = sorted.find((m) => m.pickup_time)?.pickup_time ?? startM.pickup_time;
+      const retTime = byReturnDesc.find((m) => m.return_time)?.return_time ?? endM.return_time;
+      const pickMethod =
+        sorted.find((m) => defMethod((m as { pickup_method?: string | null }).pickup_method))?.pickup_method ??
+        (startM as { pickup_method?: string | null }).pickup_method;
+      const retMethod =
+        byReturnDesc.find((m) => defMethod((m as { return_method?: string | null }).return_method))?.return_method ??
+        (endM as { return_method?: string | null }).return_method;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const combine = (k: string) => members.flatMap((m) => ((m as any)[k] as unknown[]) ?? []);
       return {
@@ -321,10 +337,10 @@ export const getCalendarStrip = query({
         pickup_date: displayPickupDate(startM),
         return_date: displayReturnDate(endM),
         end_date: endM.end_date,
-        pickup_time: startM.pickup_time,
-        return_time: endM.return_time,
-        pickup_method: (startM as { pickup_method?: string | null }).pickup_method,
-        return_method: (endM as { return_method?: string | null }).return_method,
+        pickup_time: pickTime,
+        return_time: retTime,
+        pickup_method: pickMethod,
+        return_method: retMethod,
         items: combine("items"),
         hygglo_items: combine("hygglo_items"),
         resolved_items: combine("resolved_items"),
