@@ -18,7 +18,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { accountAccent, accountLabel } from "@/lib/account-theme";
-import { Card, CardHeader } from "@/components/ui/Card";
+import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
@@ -242,7 +242,7 @@ function Thumb({ src, accent, size = 56 }: { src: string | null; accent: string;
   if (!src || broken)
     return (
       <div
-        className="flex items-center justify-center rounded-xl flex-shrink-0 text-base"
+        className="flex items-center justify-center rounded-xl flex-shrink-0 text-base ring-1 ring-white/10"
         style={{ width: size, height: size, background: `${accent}14`, color: accent }}
       >
         📷
@@ -254,7 +254,7 @@ function Thumb({ src, accent, size = 56 }: { src: string | null; accent: string;
       src={src}
       alt=""
       onError={() => setBroken(true)}
-      className="rounded-xl object-cover flex-shrink-0"
+      className="rounded-xl object-cover flex-shrink-0 ring-1 ring-white/10"
       style={{ width: size, height: size }}
     />
   );
@@ -263,8 +263,10 @@ function Thumb({ src, accent, size = 56 }: { src: string | null; accent: string;
 function AccountTag({ slug }: { slug: string | null }) {
   const accent = accountAccent(slug);
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-[#9aa0ad]">
-      <span className="inline-block w-2 h-2 rounded-full" style={{ background: accent }} />
+    <span
+      className="inline-flex items-center text-[10px] font-semibold px-1.5 py-[3px] rounded-md lowercase tracking-wide"
+      style={{ background: `${accent}22`, color: accent }}
+    >
       {accountLabel(slug)}
     </span>
   );
@@ -329,20 +331,24 @@ function ReplyCard({
   return (
     <div
       onClick={onOpen}
-      className="group relative cursor-pointer rounded-xl border bg-[#16181d] hover:bg-[#191c22] transition-colors p-2.5 flex flex-col gap-1.5"
+      className="group relative cursor-pointer rounded-2xl border bg-gradient-to-b from-[#171a21] to-[#12151c] hover:from-[#1a1e27] hover:to-[#14181f] transition-colors p-4 pl-[18px] flex flex-col gap-2.5"
       style={{
-        borderColor: u?.glow ? `${u.color}66` : "rgba(255,255,255,0.06)",
-        ["--u" as string]: u?.color ?? "transparent",
-        animation: u?.glow
-          ? `rgGlow ${u.blink ? "1.2s" : "2.8s"} ease-in-out infinite`
-          : undefined,
+        borderColor: u?.glow ? `${u.color}40` : "rgba(255,255,255,0.07)",
+        boxShadow: u?.glow
+          ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px ${u.color}22, 0 0 26px -10px ${u.color}66`
+          : "inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 24px -16px rgba(0,0,0,0.55)",
       }}
     >
-      <div className="flex gap-2.5">
-        <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} size={42} />
+      {/* account-colour identity strip */}
+      <div
+        className="absolute left-0 top-3.5 bottom-3.5 w-[3px] rounded-r-full"
+        style={{ background: accountAccent(tile.account_slug) }}
+      />
+      <div className="flex gap-3">
+        <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} size={46} />
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-1.5">
-            <span className="text-[13px] font-semibold text-[#f1f3f5] truncate leading-tight">
+            <span className="text-[14px] font-semibold text-[#f1f3f5] truncate leading-tight">
               {tile.renter_name}
             </span>
             {tile.renter_blacklisted && (
@@ -360,19 +366,22 @@ function ReplyCard({
               {u ? (
                 <>
                   <span
-                    className="text-lg font-bold tabular-nums"
+                    className="text-[18px] font-bold tabular-nums leading-none"
                     style={{ color: u.color, animation: u.blink ? "rgBlink 1s step-end infinite" : undefined }}
                   >
                     {waited(tile.last_renter_msg_at, now)}
                   </span>
-                  <span className="text-[9px] uppercase tracking-wider text-[#6b7280] mt-0.5">
+                  <span
+                    className="text-[9px] uppercase tracking-[0.08em] mt-1"
+                    style={{ color: `${u.color}b3` }}
+                  >
                     {u.caption}
                   </span>
                 </>
               ) : (
                 <>
-                  <span className="text-sm font-semibold text-emerald-400/80">✓ replied</span>
-                  <span className="text-[9px] uppercase tracking-wider text-[#6b7280] mt-0.5">
+                  <span className="text-[13px] font-semibold text-emerald-400/90 leading-none">✓ replied</span>
+                  <span className="text-[9px] uppercase tracking-[0.08em] text-[#6b7280] mt-1.5">
                     awaiting renter
                   </span>
                 </>
@@ -386,17 +395,23 @@ function ReplyCard({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 text-[11px]">
-        <span
-          className="uppercase tracking-wide font-medium"
-          style={{ color: tile.is_request ? "#fdba74" : "#7a8190" }}
-        >
-          {statusText(tile)}
-        </span>
-      </div>
+      <span
+        className="self-start text-[11px] font-medium px-2 py-[3px] rounded-full"
+        style={
+          tile.is_request
+            ? {
+                background: "rgba(251,191,36,0.14)",
+                color: "#fcd34d",
+                boxShadow: "inset 0 0 0 1px rgba(251,191,36,0.20)",
+              }
+            : { background: "rgba(255,255,255,0.06)", color: "#9aa0ad" }
+        }
+      >
+        {statusText(tile)}
+      </span>
 
       {itemLine(tile) && (
-        <div className="text-[13px] text-[#c5cad3] truncate">{itemLine(tile)}</div>
+        <div className="text-[13px] text-[#cbd0d8] truncate">{itemLine(tile)}</div>
       )}
       {tile.has_reservation && contextLine(tile) && (
         <div className="text-[11px] text-[#7a8190]">{contextLine(tile)}</div>
@@ -467,7 +482,7 @@ function ReplyCard({
               {ds.canApprove && (
                 <button
                   onClick={() => setConfirming("approve")}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg bg-emerald-600/90 text-white hover:bg-emerald-600"
+                  className="text-[12px] font-medium px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 shadow-[0_2px_8px_-2px_rgba(16,185,129,0.5)]"
                 >
                   Approve
                 </button>
@@ -475,7 +490,7 @@ function ReplyCard({
               {ds.canDecline && (
                 <button
                   onClick={() => setConfirming("decline")}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg bg-red-600/80 text-white hover:bg-red-600"
+                  className="text-[12px] font-medium px-3 py-1.5 rounded-lg bg-white/[0.06] text-red-300 hover:bg-red-500/15"
                 >
                   Decline
                 </button>
@@ -780,17 +795,25 @@ export function ReplyModal({
       {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
           you can text AND approve/decline in one session without losing it. */}
       <div
-        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl border bg-[#101216] shadow-2xl overflow-hidden"
-        style={{ borderColor: `${accent}44` }}
+        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
+        style={{ borderColor: `${accent}4d` }}
       >
+        {/* Accent top line */}
+        <div className="h-[3px] w-full" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}1a)` }} />
         {/* Context header */}
-        <div className="p-4 border-b border-white/10 flex gap-4" style={{ background: `${accent}0d` }}>
+        <div
+          className="p-4 border-b border-white/[0.07] flex gap-3.5"
+          style={{ background: `linear-gradient(180deg, ${accent}0f, transparent)` }}
+        >
           <Thumb src={tile.image_url} accent={accent} size={64} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3">
-              <span className="text-lg font-semibold text-[#f1f3f5] truncate">{tile.renter_name}</span>
+            <div className="flex items-center gap-2.5">
+              <span className="text-[17px] font-semibold text-[#f1f3f5] truncate">{tile.renter_name}</span>
               <Stars rating={tile.renter_rating} count={tile.renter_review_count} />
-              <button onClick={onClose} className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none">
+              <button
+                onClick={onClose}
+                className="ml-auto w-7 h-7 rounded-lg flex items-center justify-center text-[#8b8fa3] hover:text-white hover:bg-white/[0.06] text-xl leading-none"
+              >
                 ×
               </button>
             </div>
@@ -844,7 +867,7 @@ export function ReplyModal({
         </div>
 
         {/* Thread */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-black/20 min-h-[10rem]">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-black/25 min-h-[10rem]">
           {thread === undefined ? (
             <SkeletonBlock className="h-24 w-full" />
           ) : thread.length === 0 ? (
@@ -853,9 +876,16 @@ export function ReplyModal({
             thread.map((m, i) => (
               <div key={i} className={`flex ${m.role === "owner" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-sm ${
-                    m.role === "owner" ? "bg-[#2a3a5a] text-[#eef1f5]" : "bg-white/[0.07] text-[#d8dce3]"
+                  className={`max-w-[78%] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${
+                    m.role === "owner"
+                      ? "rounded-2xl rounded-tr-md text-[#eef1f5]"
+                      : "rounded-2xl rounded-tl-md bg-white/[0.06] text-[#d8dce3]"
                   }`}
+                  style={
+                    m.role === "owner"
+                      ? { background: `linear-gradient(135deg, ${accent}40, ${accent}24)` }
+                      : undefined
+                  }
                 >
                   {m.content}
                 </div>
@@ -864,15 +894,18 @@ export function ReplyModal({
           )}
           {sentMsgs.map((s, i) => (
             <div key={`sent-${i}`} className="flex justify-end">
-              <div className="max-w-[80%] rounded-2xl px-3.5 py-2 text-sm bg-[#2a3a5a]/60 text-[#eef1f5] italic">
-                {s} <span className="text-[10px] text-[#8b8fa3]">{dryRun ? "test ✓" : "sent ✓"}</span>
+              <div
+                className="max-w-[78%] rounded-2xl rounded-tr-md px-3.5 py-2.5 text-[13.5px] leading-relaxed text-[#eef1f5]"
+                style={{ background: `linear-gradient(135deg, ${accent}33, ${accent}1a)` }}
+              >
+                {s} <span className="text-[10px] text-[#9aa0ad] ml-1">{dryRun ? "test ✓" : "sent ✓"}</span>
               </div>
             </div>
           ))}
         </div>
 
         {/* Compose + decisions */}
-        <div className="p-4 border-t border-white/10 space-y-2.5">
+        <div className="p-4 border-t border-white/[0.07] space-y-3 bg-[#0e1014]">
           {(ds.canApprove || ds.canDecline || decided) && (
             <div className="flex items-center gap-2 flex-wrap">
               {decided ? (
@@ -897,12 +930,12 @@ export function ReplyModal({
                   ) : (
                     <>
                       {ds.canApprove && (
-                        <button onClick={() => setConfirming("approve")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-emerald-600/90 text-white hover:bg-emerald-600">
+                        <button onClick={() => setConfirming("approve")} className="text-xs font-semibold px-4 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 shadow-[0_2px_10px_-2px_rgba(16,185,129,0.55)]">
                           Approve
                         </button>
                       )}
                       {ds.canDecline && (
-                        <button onClick={() => setConfirming("decline")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-red-600/80 text-white hover:bg-red-600">
+                        <button onClick={() => setConfirming("decline")} className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-white/[0.06] text-red-300 hover:bg-red-500/15">
                           Decline
                         </button>
                       )}
@@ -988,7 +1021,7 @@ export function ReplyModal({
             onChange={(e) => setText(e.target.value)}
             placeholder="Write a reply…"
             rows={3}
-            className="w-full resize-y rounded-xl bg-black/30 border border-white/10 px-3 py-2.5 text-sm text-[#eef1f5] placeholder-[#6b7280] focus:outline-none focus:border-white/25"
+            className="w-full resize-y rounded-xl bg-black/35 border border-white/10 px-3.5 py-2.5 text-[13.5px] text-[#eef1f5] placeholder-[#5b6170] focus:outline-none focus:border-white/25 focus:ring-2 focus:ring-white/[0.04]"
           />
           <div className="flex items-center gap-2">
             {!draft && !drafting && (
@@ -999,11 +1032,12 @@ export function ReplyModal({
                 ✨ Draft (AI)
               </button>
             )}
+            <span className="text-[11px] text-[#6b7280] hidden sm:block">Nothing sends until you hit Send</span>
             <button
               onClick={onSend}
               disabled={sending || !text.trim()}
-              className="ml-auto text-sm font-medium px-5 py-2 rounded-lg text-white disabled:opacity-40"
-              style={{ background: accent }}
+              className="ml-auto text-[13px] font-semibold px-6 py-2 rounded-lg text-white disabled:opacity-40 transition-transform active:scale-[0.98]"
+              style={{ background: accent, boxShadow: `0 4px 14px -4px ${accent}99` }}
             >
               {sending ? "Sending…" : "Send"}
             </button>
@@ -1071,72 +1105,83 @@ export function ReplyInbox() {
         @keyframes rgGlow { 0%,100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 18px -4px var(--u); } }
         @keyframes rgBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.3; } }
       `}</style>
-      <CardHeader
-        title="Quick Reply"
-        badge={
-          requests > 0 ? (
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-600/25 text-orange-300 tabular-nums">
-              {requests} request{requests > 1 ? "s" : ""}
-            </span>
-          ) : undefined
-        }
-      />
-      {/* Filter (requests vs normal messages) + a TEST MODE toggle that makes
-          approve/decline/send simulate only — nothing reaches Hygglo. */}
-      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+      {/* Header — aperture mark + title + request pill + controls */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-400/20 to-sky-500/[0.05] border border-sky-400/20 flex items-center justify-center shrink-0">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#56c7fb" strokeWidth="2">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M6 6l2.5 2.5M18 18l-2.5-2.5M18 6l-2.5 2.5M6 18l2.5-2.5" strokeWidth="1.4" opacity="0.65" />
+          </svg>
+        </div>
+        <div>
+          <div className="text-[15.5px] font-semibold text-[#f2f4f8] leading-none tracking-[-0.01em]">Quick Reply</div>
+          <div className="text-[11px] text-[#6b7280] mt-[5px] leading-none">renters waiting on you</div>
+        </div>
+        {requests > 0 && (
+          <span className="ml-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-orange-500/12 text-orange-300 ring-1 ring-orange-400/25 tabular-nums">
+            {requests} request{requests > 1 ? "s" : ""}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end">
+          <button
+            onClick={() => updateSettings({ availability_include_pending: !includePending })}
+            title="When on, not-yet-confirmed (pending) requests also count as occupying stock in the availability / double-booking check."
+            className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-colors ${
+              includePending
+                ? "bg-sky-500/12 text-sky-300 ring-1 ring-sky-400/25"
+                : "bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09]"
+            }`}
+          >
+            {includePending ? "⏳ Pending counted" : "Pending off"}
+          </button>
+          <button
+            onClick={() => setShowManager(true)}
+            title="See + edit each account's saved quick texts (delivery, location, bank details…)."
+            className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09] transition-colors"
+          >
+            ✏️ Quick texts
+          </button>
+          <button
+            onClick={() => setTestMode((x) => !x)}
+            title="When on, Approve/Decline/Send only simulate — nothing is sent to renters."
+            className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-colors ${
+              testMode
+                ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30"
+                : "bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09]"
+            }`}
+          >
+            {testMode ? "🧪 Test mode ON" : "Test mode"}
+          </button>
+        </div>
+      </div>
+
+      {/* Filter — segmented control */}
+      <div className="inline-flex items-center gap-0.5 mb-4 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
         {([
-          { k: "todo", label: `To reply${todo ? ` (${todo})` : ""}` },
-          { k: "requests", label: `Requests${requests ? ` (${requests})` : ""}` },
-          { k: "all", label: `All${all.length ? ` (${all.length})` : ""}` },
+          { k: "todo", label: "To reply", n: todo },
+          { k: "requests", label: "Requests", n: requests },
+          { k: "all", label: "All", n: all.length },
         ] as const).map((f) => (
           <button
             key={f.k}
             onClick={() => setFilter(f.k)}
-            className={`text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${
+            className={`text-[12px] px-3.5 py-1.5 rounded-lg transition-colors ${
               filter === f.k
-                ? "bg-white/15 text-white"
-                : "bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08]"
+                ? "bg-white/[0.10] text-white font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
+                : "text-[#8b8fa3] font-medium hover:text-white"
             }`}
           >
             {f.label}
+            {f.n ? (
+              <span className={`ml-1 ${filter === f.k ? "text-[#9ca3af] font-normal" : "opacity-50"}`}>{f.n}</span>
+            ) : null}
           </button>
         ))}
-        <button
-          onClick={() =>
-            updateSettings({ availability_include_pending: !includePending })
-          }
-          title="When on, not-yet-confirmed (pending) requests also count as occupying stock in the availability / double-booking check."
-          className={`ml-auto text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${
-            includePending
-              ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
-              : "bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08]"
-          }`}
-        >
-          {includePending ? "⏳ Pending counted" : "Pending off"}
-        </button>
-        <button
-          onClick={() => setShowManager(true)}
-          title="See + edit each account's saved quick texts (delivery, location, bank details…)."
-          className="text-xs font-medium px-2.5 py-1 rounded-full bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08] transition-colors"
-        >
-          ✏️ Quick texts
-        </button>
-        <button
-          onClick={() => setTestMode((x) => !x)}
-          title="When on, Approve/Decline/Send only simulate — nothing is sent to renters."
-          className={`text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${
-            testMode
-              ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
-              : "bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08]"
-          }`}
-        >
-          {testMode ? "🧪 Test mode ON" : "Test mode off"}
-        </button>
       </div>
       {queue === undefined ? (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
           {Array.from({ length: 6 }).map((_, i) => (
-            <SkeletonBlock key={i} className="h-28 w-full rounded-xl" />
+            <SkeletonBlock key={i} className="h-44 w-full rounded-2xl" />
           ))}
         </div>
       ) : visible.length === 0 ? (
@@ -1151,7 +1196,7 @@ export function ReplyInbox() {
           icon="✅"
         />
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[44rem] overflow-y-auto p-0.5">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[44rem] overflow-y-auto p-0.5">
           {visible.map((tile) => (
             <ReplyCard
               key={tile.thread_id}
