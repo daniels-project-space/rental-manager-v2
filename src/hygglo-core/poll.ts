@@ -115,6 +115,23 @@ function extractAwaitingOwnerAction(order: unknown): boolean | undefined {
   );
 }
 
+/**
+ * Granular owner actions from the same `actions` map (2026-06-26). Lets Quick
+ * Reply distinguish a NEW request (accept available) from one already approved
+ * (accept gone, only deny). Returns {} when the order has no actions map so the
+ * consumer keeps any existing/derived state rather than forcing false.
+ */
+function extractOwnerActions(order: unknown): { can_accept?: boolean; can_deny?: boolean } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const o = order as any;
+  const actions = o?.actions ?? o?.detail?.actions ?? o?._detail?.actions;
+  if (!actions || typeof actions !== "object") return {};
+  return {
+    can_accept: actions.accept === true || actions.provideVehicleInfoAndAccept === true,
+    can_deny: actions.deny === true,
+  };
+}
+
 // ── Result shape ─────────────────────────────────────────────────────────
 
 export interface CorePollResult {
@@ -277,6 +294,7 @@ export async function corePoll(
         : undefined;
     const needsRawOrder = DENIAL_SIGNALS.has(payload.hygglo_system_signal ?? "");
     const awaitingOwnerAction = extractAwaitingOwnerAction(payload.order);
+    const ownerActions = extractOwnerActions(payload.order);
 
     reservations.push({
       account_slug,
@@ -298,6 +316,8 @@ export async function corePoll(
       ...(awaitingOwnerAction !== undefined && {
         awaiting_owner_action: awaitingOwnerAction,
       }),
+      ...(ownerActions.can_accept !== undefined && { can_accept: ownerActions.can_accept }),
+      ...(ownerActions.can_deny !== undefined && { can_deny: ownerActions.can_deny }),
       sourceFilter: payload.sourceFilter,
       renter_name: payload.renter_name,
       hygglo_user_id: payload.hygglo_user_id,

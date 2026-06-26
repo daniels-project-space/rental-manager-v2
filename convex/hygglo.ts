@@ -619,6 +619,9 @@ const upsertOrderArgsFields = {
   hygglo_system_signal_text: v.optional(v.string()),
   /** Reply Inbox: Hygglo `actions` map offers accept/deny (awaiting my approval). */
   awaiting_owner_action: v.optional(v.boolean()),
+  /** Granular owner actions (2026-06-26) — accept available vs only deny. */
+  can_accept: v.optional(v.boolean()),
+  can_deny: v.optional(v.boolean()),
 } as const;
 
 const upsertOrderArgsValidator = v.object(upsertOrderArgsFields);
@@ -846,6 +849,9 @@ async function upsertOrderImpl(
     ...(args.hygglo_system_signal_text !== undefined && { hygglo_system_signal_text: args.hygglo_system_signal_text }),
     // Reply Inbox: drives the Approve/Decline buttons (insert + every baseFields patch).
     ...(args.awaiting_owner_action !== undefined && { awaiting_owner_action: args.awaiting_owner_action }),
+    // Granular state — accept gone + deny left = already approved (show only Decline).
+    ...(args.can_accept !== undefined && { can_accept: args.can_accept }),
+    ...(args.can_deny !== undefined && { can_deny: args.can_deny }),
   };
 
   if (existing) {

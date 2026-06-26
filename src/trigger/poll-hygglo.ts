@@ -146,6 +146,9 @@ type OrderReservationPayload = {
     | "CANCELED" | "VERIFICATION_FAILED";
   /** 2026-06-23 — Hygglo actions map offers accept/deny (awaiting owner approval). */
   awaiting_owner_action?: boolean;
+  /** 2026-06-26 — granular owner actions (accept vs deny) for state-aware UI. */
+  can_accept?: boolean;
+  can_deny?: boolean;
   /** Phase 3d — derived from activity.event.content. */
   hygglo_system_signal?:
     | "owner_denied"
@@ -242,6 +245,8 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     detail_payload: (r.detail_payload ?? r.order ?? {}) as OrderDetail,
     order_step_extracted: r.order_step_extracted,
     awaiting_owner_action: r.awaiting_owner_action,
+    can_accept: r.can_accept,
+    can_deny: r.can_deny,
     hygglo_system_signal: r.hygglo_system_signal,
     hygglo_system_signal_text: r.hygglo_system_signal_text,
   }));
@@ -451,6 +456,8 @@ export const pollHyggloInbox = schedules.task({
                 ...(needsRawOrder && { order: payload.order }),
                 ...(orderStepExtracted && { order_step_extracted: orderStepExtracted }),
                 ...(payload.awaiting_owner_action !== undefined && { awaiting_owner_action: payload.awaiting_owner_action }),
+                ...(payload.can_accept !== undefined && { can_accept: payload.can_accept }),
+                ...(payload.can_deny !== undefined && { can_deny: payload.can_deny }),
                 sourceFilter: payload.sourceFilter,
                 renter_name: payload.renter_name,
                 hygglo_user_id: payload.hygglo_user_id,

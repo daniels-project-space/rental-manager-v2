@@ -295,6 +295,10 @@ export interface ReservationUpsertArgs {
   order_step_extracted?: HyggloOrderStepKey;
   /** Reply Inbox: Hygglo `actions` map offers accept/deny (awaiting my approval). */
   awaiting_owner_action?: boolean;
+  /** Granular owner actions still on the order (2026-06-26). Lets Quick Reply
+   *  show only Decline once accept is gone (I've approved). Same `actions` map. */
+  can_accept?: boolean;
+  can_deny?: boolean;
   sourceFilter?: string;
   renter_name?: string;
   hygglo_user_id?: string;
