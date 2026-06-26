@@ -9,7 +9,7 @@
  * ALLOW_MANUAL_ORDER_ACTIONS). Click a card → a body-portaled modal (escapes the
  * widget's clipping) with the full thread + AI draft + Send.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -61,6 +61,8 @@ export interface ReplyTileData {
   gross_paid_gbp: number | null;
   net_to_owner_gbp: number | null;
   delivery_fee_gbp: number | null;
+  estimate_gbp: number | null;
+  estimate_days: number | null;
   currency: string;
   items: RichItem[];
   item_count: number;
@@ -229,10 +231,15 @@ function ReplyCard({
   const decline = useAction(api.replyInbox_actions.declineOrder);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
   const [busy, setBusy] = useState(false);
+  const [optimistic, setOptimistic] = useState<"approve" | "decline" | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  // OPTIMISTIC — flip to "✓ done" the instant you confirm, fire the Hygglo call
+  // in the background, revert only on rejection. Makes the trigger feel instant.
   async function act(kind: "approve" | "decline") {
     if (!tile.account_slug) return setNote("No account for this thread — can't " + kind + ".");
+    setConfirming(null);
+    setOptimistic(kind);
     setBusy(true);
     setNote(null);
     try {
@@ -242,22 +249,24 @@ function ReplyCard({
         if (r.reason === "DRY_RUN") setNote(`✓ ${kind} OK (test — nothing sent)`);
         else onActed(tile.thread_id);
       } else if (r.status === "skipped") {
+        setOptimistic(null);
         setNote("Order actions disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
       } else {
+        setOptimistic(null);
         setNote(`${kind} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}: ${r.error ?? r.reason ?? "unknown"}`);
       }
     } catch (e) {
+      setOptimistic(null);
       setNote(`${kind} failed: ${e instanceof Error ? e.message : "error"}`);
     } finally {
       setBusy(false);
-      setConfirming(null);
     }
   }
 
   return (
     <div
       onClick={onOpen}
-      className="group relative cursor-pointer rounded-2xl border bg-[#16181d] hover:bg-[#191c22] transition-colors p-3.5 flex flex-col gap-2.5"
+      className="group relative cursor-pointer rounded-xl border bg-[#16181d] hover:bg-[#191c22] transition-colors p-2.5 flex flex-col gap-1.5"
       style={{
         borderColor: u?.glow ? `${u.color}66` : "rgba(255,255,255,0.06)",
         ["--u" as string]: u?.color ?? "transparent",
@@ -266,11 +275,11 @@ function ReplyCard({
           : undefined,
       }}
     >
-      <div className="flex gap-3">
-        <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} />
+      <div className="flex gap-2.5">
+        <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} size={42} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-start gap-2">
-            <span className="text-[15px] font-semibold text-[#f1f3f5] truncate leading-tight">
+          <div className="flex items-start gap-1.5">
+            <span className="text-[13px] font-semibold text-[#f1f3f5] truncate leading-tight">
               {tile.renter_name}
             </span>
             {tile.renter_blacklisted && (
@@ -280,7 +289,7 @@ function ReplyCard({
               {u ? (
                 <>
                   <span
-                    className="text-2xl font-bold tabular-nums"
+                    className="text-lg font-bold tabular-nums"
                     style={{ color: u.color, animation: u.blink ? "rgBlink 1s step-end infinite" : undefined }}
                   >
                     {waited(tile.last_renter_msg_at, now)}
@@ -332,7 +341,15 @@ function ReplyCard({
         >
           💬 Reply{tile.has_draft ? " ✨" : ""}
         </button>
-        {(ds.canApprove || ds.canDecline) &&
+        {optimistic ? (
+          <span
+            className="ml-auto text-[11px] font-semibold"
+            style={{ color: optimistic === "approve" ? "#34d399" : "#f87171" }}
+          >
+            {optimistic === "approve" ? "✓ Approved" : "✓ Declined"}
+            {dryRun ? " (test)" : ""}
+          </span>
+        ) : (ds.canApprove || ds.canDecline) &&
           (confirming ? (
             <div className="ml-auto flex items-center gap-1.5">
               <span className="text-[11px] text-[#9aa0ad] capitalize">{confirming}?</span>
@@ -394,6 +411,10 @@ type Canned = {
 };
 
 const CANNED_ACCOUNTS = ["dbcinema", "leo", "diogo", "dbcinema_web"];
+
+/** Pasted into the box (not sent) when a thread has no booking request yet. */
+const ASK_REQUEST_TEXT =
+  "Whenever you're ready, just send a booking request for the dates you'd like and I'll confirm availability and the price right away 👍";
 
 /** Manage overlay — see/add/edit/delete each account's saved auto-replies. */
 function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; onClose: () => void }) {
@@ -545,17 +566,36 @@ export function ReplyModal({
   const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
-  // Per-account canned "quick texts" + the one pending a send-confirm.
+  // Per-account canned "quick texts" — tapping one PASTES into the box.
   const canned = (useQuery(cannedListRef, {
     account_slug: tile.account_slug ?? undefined,
   }) ?? []) as Canned[];
-  const [pendingCanned, setPendingCanned] = useState<Canned | null>(null);
+
+  // Paste a snippet into the compose box (never sends). Appends with a blank
+  // line if there's already text, so you can stack delivery + bank + your own.
+  function pasteText(snippet: string) {
+    setText((t) => (t.trim() ? `${t.trimEnd()}\n\n${snippet}` : snippet));
+    setNote(null);
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Auto-draft an AI reply ON OPEN — into the box, NEVER sent. Only when the
+  // renter is the one waiting and there's no existing draft / typed text, so it
+  // never clobbers something you started. You edit + Send (or discard) yourself.
+  const autoDraftedRef = useRef(false);
+  useEffect(() => {
+    if (autoDraftedRef.current) return;
+    if (tile.ai_draft_text || text.trim()) return;
+    if (!awaitingMe(tile)) return;
+    autoDraftedRef.current = true;
+    void onGenerate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function onGenerate() {
     setDrafting(true);
@@ -610,26 +650,32 @@ export function ReplyModal({
       setConfirming(null);
       return setNote("No account for this thread — can't " + kind + ".");
     }
+    // OPTIMISTIC — flip the UI to decided INSTANTLY, fire the Hygglo call in the
+    // background, and revert only if it's rejected. Makes the trigger feel
+    // immediate instead of waiting on the round-trip. Modal stays open (you can
+    // still message); the card leaves the list only on confirmed success.
+    setConfirming(null);
     setDeciding(true);
+    setDecided(kind);
     setNote(null);
     try {
       const fn = kind === "approve" ? approve : decline;
       const r = await fn({ thread_id: tile.thread_id, account_slug: tile.account_slug, dryRun });
       if (r.status === "sent") {
-        // Mark decided IN PLACE — do NOT close, so you can also message.
-        setDecided(kind);
         if (r.reason === "DRY_RUN") setNote(`✓ ${kind === "approve" ? "Approved" : "Declined"} (test — nothing sent)`);
         else onActed(tile.thread_id);
       } else if (r.status === "skipped") {
+        setDecided(null);
         setNote("Order actions disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
       } else {
+        setDecided(null);
         setNote(`${kind} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}: ${r.error ?? r.reason ?? "unknown"}`);
       }
     } catch (e) {
+      setDecided(null);
       setNote(`${kind} failed: ${e instanceof Error ? e.message : "error"}`);
     } finally {
       setDeciding(false);
-      setConfirming(null);
     }
   }
 
@@ -668,6 +714,21 @@ export function ReplyModal({
             )}
             {tile.has_reservation && contextLine(tile) && (
               <div className="text-[12px] text-[#7a8190] mt-0.5">{contextLine(tile)}</div>
+            )}
+            {tile.estimate_gbp != null && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-sky-400/30 bg-sky-400/[0.08] px-2.5 py-1">
+                <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-sky-300/90">
+                  Estimate
+                </span>
+                <span className="text-[14px] font-semibold text-sky-100 leading-none">
+                  {fmtMoney(tile.estimate_gbp, tile.currency)}
+                </span>
+                {tile.estimate_days != null && (
+                  <span className="text-[11px] text-sky-200/70">
+                    for {tile.estimate_days} day{tile.estimate_days === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -742,44 +803,43 @@ export function ReplyModal({
             </div>
           )}
 
-          {/* Quick texts — tap a symbol to paste + send a saved reply (after a
-              confirm). Per-account; manage them via the widget's "Quick texts". */}
-          {pendingCanned ? (
-            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-2.5">
-              <span className="text-lg leading-none">{pendingCanned.symbol}</span>
-              <span className="text-xs text-[#c5cad3] flex-1 min-w-0 line-clamp-2">
-                Send <span className="font-medium text-[#eef1f5]">{pendingCanned.label}</span>: “{pendingCanned.text}”
-              </span>
-              <button
-                disabled={sending}
-                onClick={async () => {
-                  const c = pendingCanned;
-                  const ok = await sendBody(c.text, false);
-                  if (ok) setPendingCanned(null);
-                }}
-                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-emerald-600/90 text-white hover:bg-emerald-600 disabled:opacity-50"
-              >
-                {sending ? "Sending…" : dryRun ? "Send (test)" : "Send"}
-              </button>
-              <button onClick={() => setPendingCanned(null)} className="text-xs px-2.5 py-1.5 rounded-lg bg-white/5 text-[#8b8fa3]">
-                Cancel
-              </button>
-            </div>
-          ) : canned.length > 0 ? (
+          {/* Quick texts — tap a chip to PASTE into the box. Never auto-sends:
+              edit it, add/remove, then hit Send yourself. The amber "Ask to
+              request" chip shows only on inquiry threads with no booking yet. */}
+          {(canned.length > 0 || !tile.has_reservation) && (
             <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] uppercase tracking-[0.12em] text-[#5f6675] font-semibold mr-0.5 select-none">
+                Insert ↓
+              </span>
+              {!tile.has_reservation && (
+                <button
+                  type="button"
+                  onClick={() => pasteText(ASK_REQUEST_TEXT)}
+                  title={`Paste: ${ASK_REQUEST_TEXT}`}
+                  className="group/q flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full border border-amber-400/30 bg-gradient-to-b from-amber-500/[0.18] to-amber-600/[0.08] hover:border-amber-300/60 hover:from-amber-500/[0.28] transition-all hover:-translate-y-px shadow-sm"
+                >
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-400/20 text-sm leading-none">📩</span>
+                  <span className="text-[11px] font-semibold text-amber-200/90">Ask to request</span>
+                </button>
+              )}
               {canned.map((c) => (
                 <button
                   key={c._id}
-                  onClick={() => setPendingCanned(c)}
-                  title={c.text}
-                  className="flex flex-col items-center justify-center gap-0.5 px-2.5 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] transition-colors min-w-[3.5rem]"
+                  type="button"
+                  onClick={() => pasteText(c.text)}
+                  title={`Paste: ${c.text}`}
+                  className="group/q flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full border border-white/10 bg-white/[0.05] hover:border-white/25 hover:bg-white/[0.12] transition-all hover:-translate-y-px shadow-sm"
                 >
-                  <span className="text-base leading-none">{c.symbol}</span>
-                  <span className="text-[9px] text-[#9aa0ad] leading-none max-w-[4.5rem] truncate">{c.label}</span>
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-white/[0.08] group-hover/q:bg-white/[0.16] text-sm leading-none transition-colors">
+                    {c.symbol}
+                  </span>
+                  <span className="text-[11px] font-medium text-[#cbd5e1] group-hover/q:text-white transition-colors">
+                    {c.label}
+                  </span>
                 </button>
               ))}
             </div>
-          ) : null}
+          )}
 
           <textarea
             value={text}
@@ -828,7 +888,9 @@ export function ReplyInbox() {
   const [acted, setActed] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
   const [mounted, setMounted] = useState(false);
-  const [filter, setFilter] = useState<"all" | "requests" | "messages">("all");
+  // Default to "To reply" so chats I already answered (owner spoke last) DON'T
+  // clutter the view — only new requests + renters waiting on me.
+  const [filter, setFilter] = useState<"todo" | "requests" | "all">("todo");
   const [testMode, setTestMode] = useState(false);
   const [showManager, setShowManager] = useState(false);
 
@@ -841,13 +903,14 @@ export function ReplyInbox() {
   const onActed = (id: string) => setActed((p) => new Set(p).add(id));
   const all = (queue ?? []).filter((t) => !acted.has(t.thread_id));
   const requests = all.filter((t) => t.kind === "request").length;
-  const messages = all.filter((t) => t.kind === "message").length;
+  const todo = all.filter((t) => awaitingMe(t)).length;
   const visible = all.filter((t) =>
-    filter === "all" ? true : filter === "requests" ? t.kind === "request" : t.kind === "message",
+    filter === "all" ? true : filter === "requests" ? t.kind === "request" : awaitingMe(t),
   );
-  // `open` resolves against ALL tiles (not the filtered view) so an open chat
-  // doesn't vanish when you switch the filter.
-  const open = openId ? all.find((t) => t.thread_id === openId) ?? null : null;
+  // `open` resolves against the RAW queue (not `all`/visible) so approving or
+  // declining a card — which drops it from `all` via onActed — does NOT close
+  // the chat overlay. Only the × button closes it.
+  const open = openId ? (queue ?? []).find((t) => t.thread_id === openId) ?? null : null;
 
   return (
     <Card>
@@ -869,9 +932,9 @@ export function ReplyInbox() {
           approve/decline/send simulate only — nothing reaches Hygglo. */}
       <div className="flex items-center gap-1.5 mb-3 flex-wrap">
         {([
-          { k: "all", label: `All${all.length ? ` (${all.length})` : ""}` },
+          { k: "todo", label: `To reply${todo ? ` (${todo})` : ""}` },
           { k: "requests", label: `Requests${requests ? ` (${requests})` : ""}` },
-          { k: "messages", label: `Messages${messages ? ` (${messages})` : ""}` },
+          { k: "all", label: `All${all.length ? ` (${all.length})` : ""}` },
         ] as const).map((f) => (
           <button
             key={f.k}
@@ -905,9 +968,9 @@ export function ReplyInbox() {
         </button>
       </div>
       {queue === undefined ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
           {Array.from({ length: 6 }).map((_, i) => (
-            <SkeletonBlock key={i} className="h-32 w-full rounded-2xl" />
+            <SkeletonBlock key={i} className="h-28 w-full rounded-xl" />
           ))}
         </div>
       ) : visible.length === 0 ? (
@@ -915,14 +978,14 @@ export function ReplyInbox() {
           message={
             filter === "requests"
               ? "No pending requests"
-              : filter === "messages"
-                ? "No messages"
-                : "All caught up — nothing here"
+              : filter === "todo"
+                ? "All caught up — nobody waiting on a reply"
+                : "Nothing here"
           }
           icon="✅"
         />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3 max-h-[42rem] overflow-y-auto p-0.5">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[44rem] overflow-y-auto p-0.5">
           {visible.map((tile) => (
             <ReplyCard
               key={tile.thread_id}

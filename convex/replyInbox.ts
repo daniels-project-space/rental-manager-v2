@@ -45,6 +45,77 @@ function buildRichItems(reservation: Doc<"reservations"> | null): RichItem[] {
   }));
 }
 
+// ── Estimate (pricing_catalog × days) ────────────────────────────
+// A rough quote for a requested set over a date range, shown CLEARLY labelled
+// "Estimate" only when there's no confirmed price yet. Names are fuzzy-matched
+// (normalised + token overlap) against pricing_catalog; unpriceable items are
+// skipped and the estimate is omitted entirely if nothing matched.
+
+const DAY_MS = 86_400_000;
+const normName = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+type PriceRow = { min: number; max: number; tokens: Set<string> };
+type PriceIndex = Map<string, PriceRow>;
+
+async function loadPriceIndex(ctx: QueryCtx): Promise<PriceIndex> {
+  const rows = await ctx.db.query("pricing_catalog").collect();
+  const map: PriceIndex = new Map();
+  for (const r of rows) {
+    const n = normName(r.item_name_canonical);
+    if (!n || map.has(n)) continue;
+    map.set(n, {
+      min: r.daily_price_min,
+      max: r.daily_price_max,
+      tokens: new Set(n.split(" ").filter(Boolean)),
+    });
+  }
+  return map;
+}
+
+function priceFor(index: PriceIndex, name: string): PriceRow | null {
+  const n = normName(name);
+  const exact = index.get(n);
+  if (exact) return exact;
+  const want = new Set(n.split(" ").filter(Boolean));
+  if (want.size === 0) return null;
+  let best: PriceRow | null = null;
+  let bestScore = 0;
+  for (const row of index.values()) {
+    let hit = 0;
+    for (const t of want) if (row.tokens.has(t)) hit++;
+    const score = hit / Math.max(want.size, row.tokens.size);
+    if (score > bestScore) {
+      bestScore = score;
+      best = row;
+    }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
+function computeEstimate(
+  index: PriceIndex,
+  items: RichItem[],
+  start: string | null,
+  end: string | null,
+): { gbp: number | null; days: number | null } {
+  if (!start || !end || items.length === 0) return { gbp: null, days: null };
+  const s = new Date(`${start}T00:00:00`).getTime();
+  const e = new Date(`${end}T00:00:00`).getTime();
+  if (isNaN(s) || isNaN(e) || e < s) return { gbp: null, days: null };
+  const days = Math.max(1, Math.round((e - s) / DAY_MS));
+  let total = 0;
+  let priced = 0;
+  for (const it of items) {
+    const p = priceFor(index, it.name);
+    if (!p) continue;
+    total += ((p.min + p.max) / 2) * (it.qty || 1) * days;
+    priced++;
+  }
+  if (priced === 0) return { gbp: null, days };
+  return { gbp: Math.round(total), days };
+}
+
 // ── Queue ────────────────────────────────────────────────────────
 
 /**
@@ -62,6 +133,7 @@ async function assembleTile(
   conv: Doc<"conversations"> | null,
   reservation: Doc<"reservations"> | null,
   threadId: string,
+  priceIndex?: PriceIndex,
 ) {
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
   if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
@@ -94,6 +166,27 @@ async function assembleTile(
     latestMsg?.hygglo_sent_at ??
     latestMsg?.fetched_at ??
     0;
+
+  // Estimate ONLY when there's a date range but no confirmed price yet (pending
+  // request / quote). Labelled "Estimate" in the UI; never overrides a real
+  // gross_paid figure.
+  let estimateGbp: number | null = null;
+  let estimateDays: number | null = null;
+  if (
+    priceIndex &&
+    reservation?.gross_paid_gbp == null &&
+    reservation?.start_date &&
+    reservation?.end_date
+  ) {
+    const est = computeEstimate(
+      priceIndex,
+      richItems,
+      reservation.start_date,
+      reservation.end_date,
+    );
+    estimateGbp = est.gbp;
+    estimateDays = est.days;
+  }
 
   return {
     thread_id: threadId,
@@ -128,6 +221,8 @@ async function assembleTile(
     gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
     net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
     delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
+    estimate_gbp: estimateGbp,
+    estimate_days: estimateDays,
     currency: reservation?.currency ?? "GBP",
     items: richItems.slice(0, 6),
     item_count: richItems.length,
@@ -181,6 +276,7 @@ export const getReplyQueue = query({
       string,
       NonNullable<Awaited<ReturnType<typeof assembleTile>>>
     >();
+    const priceIndex = await loadPriceIndex(ctx);
 
     // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
     const convos = await ctx.db
@@ -202,7 +298,7 @@ export const getReplyQueue = query({
         if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
           continue;
       }
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id);
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex);
       if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }
 
@@ -236,7 +332,7 @@ export const getReplyQueue = query({
         .query("conversations")
         .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
         .first();
-      const tile = await assembleTile(ctx, conv, r, threadId);
+      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex);
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
 
@@ -263,7 +359,7 @@ export const getReplyQueue = query({
           if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
             continue;
         }
-        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id);
+        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex);
         if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
       }
     }
@@ -303,7 +399,8 @@ export const getThreadById = query({
       )
       .first();
     if (!conv && !reservation) return null;
-    return await assembleTile(ctx, conv, reservation, thread_id);
+    const priceIndex = await loadPriceIndex(ctx);
+    return await assembleTile(ctx, conv, reservation, thread_id, priceIndex);
   },
 });
 
