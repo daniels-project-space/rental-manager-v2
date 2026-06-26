@@ -317,6 +317,44 @@ export function orderToReservation(
 }
 
 /**
+ * orderToInquiryItems — lightweight product snapshot for a DATE-LESS inquiry
+ * (a renter asking "is this available?" without picking dates). Such an order
+ * has `rentalPeriod.startDateUTC/endDateUTC` absent, so `orderToReservation`
+ * hard-returns null and the poller drops `detail.items[]` entirely — leaving
+ * the Reply Inbox tile blank (no image, no item info). The item + image data
+ * IS present on the order detail; we snapshot it onto the conversation row so
+ * `assembleTile` can fall back to it when there is no reservation.
+ *
+ * Mirrors the item/image extraction in `orderToReservation` (INSURANCE rows
+ * filtered out; image url prefers fullSizeUrl → url) but emits the minimal
+ * `{ name, qty, image_url }` shape the tile needs. `image_url` is the first
+ * item image (matching `photos_urls`' item-image fallback). Returns undefined
+ * for both fields when no non-insurance product item carries usable data, so
+ * callers can spread the result without writing empty arrays.
+ */
+export function orderToInquiryItems(detail: HyggloOrderDetail): {
+  inquiry_items?: Array<{ name: string; qty: number; image_url?: string }>;
+  inquiry_image_url?: string;
+} {
+  const items = (detail.items ?? [])
+    .filter((i) => i.type !== "INSURANCE")
+    .map((i) => {
+      const image_url = i?.image?.fullSizeUrl ?? i?.image?.url ?? undefined;
+      return {
+        name: i.name ?? "Unknown item",
+        qty: typeof i.qty === "number" ? i.qty : 1,
+        ...(image_url ? { image_url } : {}),
+      };
+    });
+  if (items.length === 0) return {};
+  const inquiry_image_url = items.find((i) => i.image_url)?.image_url;
+  return {
+    inquiry_items: items,
+    ...(inquiry_image_url ? { inquiry_image_url } : {}),
+  };
+}
+
+/**
  * orderToHolds — calendar holds for a set of reservations.
  *
  * IMPORTANT (parity): in poll-hygglo.ts holds are NOT a per-order projection —

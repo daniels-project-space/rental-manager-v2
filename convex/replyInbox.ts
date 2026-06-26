@@ -23,9 +23,24 @@ type RichItem = { name: string; qty: number; image_url: string | null };
  * Per-item name + qty + thumbnail for the reply tile / draft context. Image
  * source priority: hygglo_items[] (authoritative per-item imagery) →
  * image_hints[] matched by normalised name → items[] (name/qty only, no image).
+ *
+ * When there is NO reservation (a date-less inquiry — renter asked "is this
+ * available?" without picking dates), fall back to the conversation's
+ * `inquiry_items` snapshot so the tile still shows the listing being asked
+ * about. A reservation always wins when present; inquiry items are only the
+ * no-reservation fallback.
  */
-function buildRichItems(reservation: Doc<"reservations"> | null): RichItem[] {
-  if (!reservation) return [];
+function buildRichItems(
+  reservation: Doc<"reservations"> | null,
+  conv?: Doc<"conversations"> | null,
+): RichItem[] {
+  if (!reservation) {
+    return (conv?.inquiry_items ?? []).map((i) => ({
+      name: i.name,
+      qty: i.qty ?? 1,
+      image_url: i.image_url ?? null,
+    }));
+  }
   const hints = reservation.image_hints ?? [];
   const hintFor = (name: string): string | null =>
     hints.find((h) => h.item_name_normalised === name.trim().toLowerCase())
@@ -149,10 +164,13 @@ async function assembleTile(
     .order("desc")
     .first();
 
-  const richItems = buildRichItems(reservation);
+  const richItems = buildRichItems(reservation, conv);
   const primaryImage =
     richItems.find((i) => i.image_url)?.image_url ??
     reservation?.photos_urls?.[0] ??
+    // Date-less inquiry fallback (no reservation): the snapshot's own image, or
+    // the first inquiry item's image.
+    (reservation ? null : conv?.inquiry_image_url ?? null) ??
     null;
 
   const step = reservation?.order_step ?? null;

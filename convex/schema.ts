@@ -629,6 +629,22 @@ export default defineSchema({
     ai_draft_text: v.optional(v.string()),
     ai_draft_for_message_id: v.optional(v.string()),
     ai_draft_generated_at: v.optional(v.number()),
+    // ── Date-less inquiry product snapshot (2026-06-26) ──
+    // A renter asking "is this available?" WITHOUT submitting dates produces a
+    // Hygglo order with no rentalPeriod, so no reservation row is built and the
+    // order's items[] (the listing + image) are discarded — leaving the Reply
+    // Inbox tile blank. The poller snapshots the listing here so assembleTile
+    // can fall back to it when there is no reservation.
+    inquiry_items: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          qty: v.number(),
+          image_url: v.optional(v.string()),
+        })
+      )
+    ),
+    inquiry_image_url: v.optional(v.string()),
     created_at: v.number(),
   }).index("by_thread", ["thread_id"])
     .index("by_last_sender", ["last_sender"]),

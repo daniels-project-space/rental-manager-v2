@@ -1261,6 +1261,19 @@ export const upsertConversationsBatch = mutation({
         display_name: v.string(),
         last_msg_at: v.number(),
         created_at: v.number(),
+        // Date-less inquiry product snapshot (renter asked about a listing
+        // without dates → no reservation). Lets the Reply Inbox tile show the
+        // listing being asked about (assembleTile falls back to these).
+        inquiry_items: v.optional(
+          v.array(
+            v.object({
+              name: v.string(),
+              qty: v.number(),
+              image_url: v.optional(v.string()),
+            })
+          )
+        ),
+        inquiry_image_url: v.optional(v.string()),
       })
     ),
   },
@@ -1281,9 +1294,21 @@ export const upsertConversationsBatch = mutation({
         .first();
 
       if (existing) {
-        if (c.last_msg_at > existing.last_msg_at) {
-          await ctx.db.patch(existing._id, { last_msg_at: c.last_msg_at });
+        const patch: {
+          last_msg_at?: number;
+          inquiry_items?: typeof c.inquiry_items;
+          inquiry_image_url?: string;
+        } = {};
+        if (c.last_msg_at > existing.last_msg_at) patch.last_msg_at = c.last_msg_at;
+        // Backfill the date-less inquiry snapshot onto threads that already
+        // exist (the common case: these inquiry conversations were created by
+        // an earlier message poll before this field existed). Only write when
+        // the poll carries one; never clear an existing snapshot.
+        if (c.inquiry_items && c.inquiry_items.length > 0) {
+          patch.inquiry_items = c.inquiry_items;
+          if (c.inquiry_image_url) patch.inquiry_image_url = c.inquiry_image_url;
         }
+        if (Object.keys(patch).length > 0) await ctx.db.patch(existing._id, patch);
         skipped++;
         continue;
       }
@@ -1311,6 +1336,12 @@ export const upsertConversationsBatch = mutation({
         renter_id,
         last_msg_at: c.last_msg_at,
         created_at: c.created_at,
+        ...(c.inquiry_items && c.inquiry_items.length > 0
+          ? {
+              inquiry_items: c.inquiry_items,
+              ...(c.inquiry_image_url ? { inquiry_image_url: c.inquiry_image_url } : {}),
+            }
+          : {}),
       });
       upserted++;
     }

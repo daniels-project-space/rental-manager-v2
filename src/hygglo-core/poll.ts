@@ -41,6 +41,7 @@ import {
   orderToRenter,
   orderToMessages,
   orderToConversation,
+  orderToInquiryItems,
 } from "./shape";
 import type {
   ConversationPayload,
@@ -275,7 +276,20 @@ export async function corePoll(
       order.sourceFilter,
       order.latest_activity,
     );
-    if (!payload) continue;
+    if (!payload) {
+      // Date-less inquiry: no reservation row will be built, so the order's
+      // `detail.items[]` (the listing the renter is asking about + its image)
+      // would be discarded and the Reply Inbox tile left blank. Snapshot the
+      // product onto the conversation so `assembleTile` can fall back to it.
+      if (conversation) {
+        const snapshot = orderToInquiryItems(detail);
+        if (snapshot.inquiry_items) {
+          conversation.inquiry_items = snapshot.inquiry_items;
+          conversation.inquiry_image_url = snapshot.inquiry_image_url;
+        }
+      }
+      continue;
+    }
 
     // ── batch-level fields (poll-hygglo.ts run() L741-776) ──
     // B3 — `order_step_extracted` MUST be defined on every active-step row.

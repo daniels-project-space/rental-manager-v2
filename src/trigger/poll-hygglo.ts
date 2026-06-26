@@ -199,6 +199,11 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     display_name: string;
     last_msg_at: number;
     created_at: number;
+    // Date-less inquiry product snapshot (renter asked about a listing without
+    // dates → no reservation). Forwarded to upsertConversationsBatch so the
+    // Reply Inbox tile can show the listing being asked about.
+    inquiry_items?: Array<{ name: string; qty: number; image_url?: string }>;
+    inquiry_image_url?: string;
   }>;
 }> {
   const core = await corePoll(accountSlug, { fetchedAt: Date.now() });
