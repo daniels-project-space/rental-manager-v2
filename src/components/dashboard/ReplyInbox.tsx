@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { makeFunctionReference } from "convex/server";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
@@ -20,6 +21,15 @@ import { accountAccent, accountLabel } from "@/lib/account-theme";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+
+// canned_responses is a NEW convex module not yet in the committed _generated/api
+// type map (only existing modules are picked up via `typeof import`), so the
+// typed `api.canned_responses.*` breaks `next build`. Reference by name — same
+// pattern the dashboard chat tools + the dbcinema_web sync use.
+const cannedListRef = makeFunctionReference<"query">("canned_responses:list");
+const cannedCreateRef = makeFunctionReference<"mutation">("canned_responses:create");
+const cannedUpdateRef = makeFunctionReference<"mutation">("canned_responses:update");
+const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remove");
 
 interface RichItem {
   name: string;
@@ -388,10 +398,10 @@ const CANNED_ACCOUNTS = ["dbcinema", "leo", "diogo", "dbcinema_web"];
 /** Manage overlay — see/add/edit/delete each account's saved auto-replies. */
 function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; onClose: () => void }) {
   const [acct, setAcct] = useState<string>(accountSlug ?? CANNED_ACCOUNTS[0]);
-  const list = (useQuery(api.canned_responses.list, { account_slug: acct }) ?? []) as Canned[];
-  const create = useMutation(api.canned_responses.create);
-  const update = useMutation(api.canned_responses.update);
-  const remove = useMutation(api.canned_responses.remove);
+  const list = (useQuery(cannedListRef, { account_slug: acct }) ?? []) as Canned[];
+  const create = useMutation(cannedCreateRef);
+  const update = useMutation(cannedUpdateRef);
+  const remove = useMutation(cannedRemoveRef);
 
   const [symbol, setSymbol] = useState("💬");
   const [label, setLabel] = useState("");
@@ -536,7 +546,7 @@ export function ReplyModal({
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
   // Per-account canned "quick texts" + the one pending a send-confirm.
-  const canned = (useQuery(api.canned_responses.list, {
+  const canned = (useQuery(cannedListRef, {
     account_slug: tile.account_slug ?? undefined,
   }) ?? []) as Canned[];
   const [pendingCanned, setPendingCanned] = useState<Canned | null>(null);
