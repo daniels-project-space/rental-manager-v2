@@ -36,6 +36,20 @@ interface RichItem {
   qty: number;
   image_url: string | null;
 }
+interface ItemAvail {
+  name: string;
+  requested: number;
+  total_units: number;
+  booked: number;
+  pending: number;
+  free: number;
+  available: boolean;
+}
+interface TileAvailability {
+  status: "available" | "conflict";
+  include_pending: boolean;
+  items: ItemAvail[];
+}
 export interface ReplyTileData {
   thread_id: string;
   account_slug: string | null;
@@ -63,6 +77,7 @@ export interface ReplyTileData {
   delivery_fee_gbp: number | null;
   estimate_gbp: number | null;
   estimate_days: number | null;
+  availability: TileAvailability | null;
   currency: string;
   items: RichItem[];
   item_count: number;
@@ -163,6 +178,54 @@ function itemLine(t: ReplyTileData): string {
   const names = t.items.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name));
   const extra = t.item_count > t.items.length ? ` +${t.item_count - t.items.length}` : "";
   return names.join(", ") + extra;
+}
+
+/**
+ * Double-booking badge. Green when the requested set is free for the dates; red
+ * when accepting would over-book a unit (shows the tightest item). `incl.
+ * pending` tag appears when not-yet-confirmed bookings were counted.
+ */
+function AvailabilityBadge({ a, compact }: { a: TileAvailability; compact?: boolean }) {
+  const ok = a.status === "available";
+  // Tightest item drives the message (smallest free-minus-requested margin).
+  const worst =
+    [...a.items].sort(
+      (x, y) => x.free - x.requested - (y.free - y.requested),
+    )[0] ?? null;
+  const color = ok ? "#34d399" : "#f87171";
+  const bg = ok ? "rgba(16,185,129,0.10)" : "rgba(239,68,68,0.12)";
+  const border = ok ? "rgba(16,185,129,0.32)" : "rgba(239,68,68,0.38)";
+  const label = ok
+    ? compact
+      ? "Free for these dates"
+      : "Available for the requested dates"
+    : worst
+      ? `Double-booking · ${worst.name}: ${Math.max(0, worst.free)}/${worst.requested} free`
+      : "Double-booking risk";
+  return (
+    <div
+      className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 max-w-full"
+      style={{ background: bg, border: `1px solid ${border}` }}
+    >
+      <span className="text-[11px] leading-none" style={{ color }}>
+        {ok ? "✓" : "⚠"}
+      </span>
+      <span
+        className="text-[11px] font-medium truncate"
+        style={{ color }}
+      >
+        {label}
+      </span>
+      {a.include_pending && (
+        <span
+          className="text-[8px] uppercase tracking-wider opacity-70 flex-shrink-0"
+          style={{ color }}
+        >
+          incl pending
+        </span>
+      )}
+    </div>
+  );
 }
 
 function Stars({ rating, count }: { rating: number | null; count: number | null }) {
@@ -332,6 +395,11 @@ function ReplyCard({
       )}
       {tile.preview && (
         <div className="text-[12px] text-[#8b92a0] line-clamp-2">“{tile.preview}”</div>
+      )}
+      {tile.availability && (
+        <div className="pt-0.5">
+          <AvailabilityBadge a={tile.availability} compact />
+        </div>
       )}
 
       <div className="flex items-center gap-2 mt-auto pt-1" onClick={(e) => e.stopPropagation()}>
@@ -730,6 +798,22 @@ export function ReplyModal({
                 )}
               </div>
             )}
+            {tile.availability && (
+              <div className="mt-2 flex flex-col gap-1">
+                <AvailabilityBadge a={tile.availability} />
+                {tile.availability.status === "conflict" && (
+                  <div className="text-[11px] text-[#f8a4a4] pl-1">
+                    {tile.availability.items
+                      .filter((i) => !i.available)
+                      .map(
+                        (i) =>
+                          `${i.name}: ${Math.max(0, i.free)} of ${i.total_units} free, you'd need ${i.requested}`,
+                      )
+                      .join(" · ")}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -879,9 +963,14 @@ export function ReplyModal({
 
 export function ReplyInbox() {
   const { activeAccountSlug } = useAccount();
+  // Persisted "count pending bookings in the double-booking check" toggle.
+  const settings = useQuery(api.settings.get, {});
+  const updateSettings = useMutation(api.settings.update);
+  const includePending = settings?.availability_include_pending ?? false;
   const queue = useStableQuery(api.replyInbox.getReplyQueue, {
     accountSlug: activeAccountSlug ?? undefined,
     limit: 60,
+    includePending,
   }) as ReplyTileData[] | undefined;
 
   const [openId, setOpenId] = useState<string | null>(null);
@@ -949,9 +1038,22 @@ export function ReplyInbox() {
           </button>
         ))}
         <button
+          onClick={() =>
+            updateSettings({ availability_include_pending: !includePending })
+          }
+          title="When on, not-yet-confirmed (pending) requests also count as occupying stock in the availability / double-booking check."
+          className={`ml-auto text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${
+            includePending
+              ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
+              : "bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08]"
+          }`}
+        >
+          {includePending ? "⏳ Pending counted" : "Pending off"}
+        </button>
+        <button
           onClick={() => setShowManager(true)}
           title="See + edit each account's saved quick texts (delivery, location, bank details…)."
-          className="ml-auto text-xs font-medium px-2.5 py-1 rounded-full bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08] transition-colors"
+          className="text-xs font-medium px-2.5 py-1 rounded-full bg-white/[0.04] text-[#8b8fa3] hover:bg-white/[0.08] transition-colors"
         >
           ✏️ Quick texts
         </button>

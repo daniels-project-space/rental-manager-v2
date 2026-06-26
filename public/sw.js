@@ -21,8 +21,11 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Rental Manager";
   const options = {
     body: data.body || "",
-    icon: "/notif-icon.svg",
-    badge: "/notif-icon.svg",
+    // Big icon: the blue Aputure mark, recoloured per account by the server
+    // (data.icon) so you can tell the account at a glance. Falls back to blue.
+    icon: data.icon || "/icons/notif-aputure.png",
+    // Badge: OS-tinted monochrome silhouette (Android status bar).
+    badge: data.badge || "/icons/notif-badge.png",
     tag: data.tag || undefined,
     renotify: true,
     data: { url: data.url || "/" },

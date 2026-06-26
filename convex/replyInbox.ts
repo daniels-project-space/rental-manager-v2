@@ -15,7 +15,14 @@
 import { query, internalQuery, internalMutation } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import { bookedUnitsOnDate } from "./lib/availability";
+import {
+  reservationItemUnits,
+  buildProductIndexMap,
+  buildOverrideMap,
+  type OverrideMap,
+} from "./lib/reservations/itemUnits";
 
 type RichItem = { name: string; qty: number; image_url: string | null };
 
@@ -186,6 +193,156 @@ function parseMentionedDays(text: string | null | undefined): number | null {
   return null;
 }
 
+// ── Availability / double-booking ────────────────────────────────
+// For a reservation/request with dates, work out whether accepting it would be
+// a double-booking: per resolved item, compare existing occupancy (CONFIRMED,
+// and OPTIONALLY pending) over the window against owned units. Reuses the same
+// occupancy maths as the calendar/overbooking (bookedUnitsOnDate + the canonical
+// reservationItemUnits resolution), so the verdict matches the rest of the app.
+
+type ItemAvail = {
+  name: string;
+  requested: number;
+  total_units: number;
+  booked: number; // peak confirmed units out over the window (excl. this res)
+  pending: number; // peak pending units (only when include_pending)
+  free: number; // total - occupancy
+  available: boolean; // free >= requested
+};
+type TileAvailability = {
+  status: "available" | "conflict";
+  include_pending: boolean;
+  items: ItemAvail[];
+};
+
+type AvailCtx = {
+  confirmed: Doc<"reservations">[];
+  pending: Doc<"reservations">[];
+  productIndex: Map<string, string>;
+  overrideMap: OverrideMap;
+  itemQty: Map<string, number>;
+  itemName: Map<string, string>;
+  includePending: boolean;
+};
+
+/** Inclusive YYYY-MM-DD list from start→end, capped to bound query cost. */
+function expandDates(start: string, end: string, cap = 45): string[] {
+  const s = new Date(`${start}T00:00:00Z`).getTime();
+  const e = new Date(`${end}T00:00:00Z`).getTime();
+  if (isNaN(s) || isNaN(e) || e < s) return [start];
+  const out: string[] = [];
+  for (let t = s; t <= e && out.length < cap; t += 86_400_000) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+async function loadAvailCtx(
+  ctx: QueryCtx,
+  includePending: boolean,
+): Promise<AvailCtx> {
+  const confirmed = await ctx.db
+    .query("reservations")
+    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+    .collect();
+  const pending = includePending
+    ? (await ctx.db.query("reservations").collect()).filter(
+        (r) =>
+          r.status === "pending_review" &&
+          r.order_step === "VERIFIED" &&
+          !r.is_obsolete,
+      )
+    : [];
+  const [pidx, ovr, items] = await Promise.all([
+    ctx.db.query("hygglo_product_index").collect(),
+    ctx.db.query("listing_resolution_override").collect(),
+    ctx.db.query("items").collect(),
+  ]);
+  const itemQty = new Map<string, number>();
+  const itemName = new Map<string, string>();
+  for (const it of items) {
+    const id = String(it._id);
+    itemQty.set(id, it.is_marketing_only ? 0 : it.qty ?? 0);
+    itemName.set(id, it.name_canonical ?? "item");
+  }
+  return {
+    confirmed,
+    pending,
+    productIndex: buildProductIndexMap(
+      pidx as Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }>,
+    ),
+    overrideMap: buildOverrideMap(
+      ovr as Array<{
+        account_slug: string;
+        product_id: number;
+        components: Array<{ item_id: Id<"items"> | string; qty: number }>;
+      }>,
+    ),
+    itemQty,
+    itemName,
+    includePending,
+  };
+}
+
+function computeAvailability(
+  reservation: Doc<"reservations"> | null,
+  av?: AvailCtx,
+): TileAvailability | null {
+  if (!av || !reservation) return null;
+  const start = reservation.pickup_date ?? reservation.start_date;
+  const end = reservation.return_date ?? reservation.end_date;
+  if (!start || !end) return null;
+  const units = reservationItemUnits(
+    reservation,
+    av.productIndex,
+    av.overrideMap,
+  );
+  if (units.size === 0) return null;
+
+  const selfId = reservation._id;
+  const confirmed = av.confirmed.filter((r) => r._id !== selfId);
+  const pendingRows = av.includePending
+    ? av.pending.filter((r) => r._id !== selfId)
+    : [];
+  const dates = expandDates(start, end);
+
+  const out: ItemAvail[] = [];
+  let anyConflict = false;
+  for (const [itemIdStr, reqQty] of units) {
+    const total = av.itemQty.get(itemIdStr) ?? 0;
+    if (total <= 0) continue; // marketing-only / unknown — can't assess, skip
+    const itemId = itemIdStr as Id<"items">;
+    let booked = 0;
+    let pending = 0;
+    for (const d of dates) {
+      const b = bookedUnitsOnDate(confirmed, itemId, d);
+      if (b > booked) booked = b;
+      if (av.includePending) {
+        const p = bookedUnitsOnDate(pendingRows, itemId, d);
+        if (p > pending) pending = p;
+      }
+    }
+    const free = total - booked - pending;
+    const available = free >= reqQty;
+    if (!available) anyConflict = true;
+    out.push({
+      name: av.itemName.get(itemIdStr) ?? "item",
+      requested: reqQty,
+      total_units: total,
+      booked,
+      pending,
+      free,
+      available,
+    });
+  }
+  if (out.length === 0) return null;
+  return {
+    status: anyConflict ? "conflict" : "available",
+    include_pending: av.includePending,
+    items: out,
+  };
+}
+
 // ── Queue ────────────────────────────────────────────────────────
 
 /**
@@ -204,6 +361,7 @@ async function assembleTile(
   reservation: Doc<"reservations"> | null,
   threadId: string,
   priceIndex?: PriceIndex,
+  availCtx?: AvailCtx,
 ) {
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
   if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
@@ -272,6 +430,9 @@ async function assembleTile(
     }
   }
 
+  // Double-booking check for dated reservations/requests (null otherwise).
+  const availability = computeAvailability(reservation, availCtx);
+
   return {
     thread_id: threadId,
     account_slug: slug ?? null,
@@ -307,6 +468,7 @@ async function assembleTile(
     delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
     estimate_gbp: estimateGbp,
     estimate_days: estimateDays,
+    availability,
     currency: reservation?.currency ?? "GBP",
     items: richItems.slice(0, 6),
     item_count: richItems.length,
@@ -333,6 +495,9 @@ export const getReplyQueue = query({
     // Recency floor for the normal-messages pass (wider than withinDays so older
     // chats are still browsable).
     messagesWithinDays: v.optional(v.number()),
+    // Count pending (not-yet-confirmed) reservations as occupying stock in the
+    // double-booking check. Omitted → reads the persisted setting.
+    includePending: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -343,6 +508,7 @@ export const getReplyQueue = query({
       includeFinished = false,
       includeMessages = true,
       messagesWithinDays = 30,
+      includePending,
     },
   ) => {
     const cutoff = Date.now() - withinDays * 86_400_000;
@@ -361,6 +527,11 @@ export const getReplyQueue = query({
       NonNullable<Awaited<ReturnType<typeof assembleTile>>>
     >();
     const priceIndex = await loadPriceIndex(ctx);
+    const incPending =
+      includePending ??
+      (await ctx.db.query("settings").first())?.availability_include_pending ??
+      false;
+    const availCtx = await loadAvailCtx(ctx, incPending);
 
     // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
     const convos = await ctx.db
@@ -382,7 +553,7 @@ export const getReplyQueue = query({
         if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
           continue;
       }
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex);
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx);
       if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }
 
@@ -416,7 +587,7 @@ export const getReplyQueue = query({
         .query("conversations")
         .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
         .first();
-      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex);
+      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx);
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
 
@@ -443,7 +614,7 @@ export const getReplyQueue = query({
           if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
             continue;
         }
-        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex);
+        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx);
         if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
       }
     }
@@ -484,7 +655,18 @@ export const getThreadById = query({
       .first();
     if (!conv && !reservation) return null;
     const priceIndex = await loadPriceIndex(ctx);
-    return await assembleTile(ctx, conv, reservation, thread_id, priceIndex);
+    const incPending =
+      (await ctx.db.query("settings").first())?.availability_include_pending ??
+      false;
+    const availCtx = await loadAvailCtx(ctx, incPending);
+    return await assembleTile(
+      ctx,
+      conv,
+      reservation,
+      thread_id,
+      priceIndex,
+      availCtx,
+    );
   },
 });
 

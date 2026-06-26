@@ -22,6 +22,7 @@ export const update = mutation({
     escalate_to_sonnet: v.optional(v.boolean()),
     ai_boost_rate: v.optional(v.number()),
     ai_active_from: v.optional(v.string()),
+    availability_include_pending: v.optional(v.boolean()),
   },
   handler: async (ctx, fields) => {
     // Double-unlock guard: refuse read_only_mode=false + ALLOW_HYGGLO_SEND=true together
@@ -40,6 +41,8 @@ export const update = mutation({
     if (fields.escalate_to_sonnet !== undefined) patch.escalate_to_sonnet = fields.escalate_to_sonnet;
     if (fields.ai_boost_rate !== undefined) patch.ai_boost_rate = fields.ai_boost_rate;
     if (fields.ai_active_from !== undefined) patch.ai_active_from = fields.ai_active_from;
+    if (fields.availability_include_pending !== undefined)
+      patch.availability_include_pending = fields.availability_include_pending;
 
     await ctx.db.patch(existing._id, patch);
     return { ok: true };

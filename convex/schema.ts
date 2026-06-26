@@ -724,6 +724,11 @@ export default defineSchema({
     polling_interval_ms: v.number(),
     escalate_to_sonnet: v.boolean(),
 
+    // Quick Reply availability check: when true, count not-yet-confirmed
+    // (pending_review/VERIFIED) reservations as occupying stock when flagging a
+    // would-be double-booking. Toggled from the widget. Default false.
+    availability_include_pending: v.optional(v.boolean()),
+
     // Phase 1.B.3 — operator policy fields
     read_only_mode_blocks: v.optional(v.array(v.string())),
 

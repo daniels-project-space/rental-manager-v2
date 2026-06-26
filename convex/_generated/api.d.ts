@@ -14,6 +14,7 @@ import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_me
 import type * as admin_backfill_weekly_metrics_5b from "../admin_backfill_weekly_metrics_5b.js";
 import type * as admin_bootstrap_pidindex from "../admin_bootstrap_pidindex.js";
 import type * as admin_debug_steps from "../admin_debug_steps.js";
+import type * as admin_fix_inventory_20260625 from "../admin_fix_inventory_20260625.js";
 import type * as admin_item_attribution from "../admin_item_attribution.js";
 import type * as admin_migrate from "../admin_migrate.js";
 import type * as admin_reclassify from "../admin_reclassify.js";
@@ -34,6 +35,7 @@ import type * as audit_thread_join from "../audit_thread_join.js";
 import type * as bundles from "../bundles.js";
 import type * as bundles_seed from "../bundles_seed.js";
 import type * as calendar from "../calendar.js";
+import type * as canned_responses from "../canned_responses.js";
 import type * as competitor_intel from "../competitor_intel.js";
 import type * as conflict_dismissals from "../conflict_dismissals.js";
 import type * as crons from "../crons.js";
@@ -161,6 +163,7 @@ import type * as seed_renter_bot_rules from "../seed/renter_bot_rules.js";
 import type * as seed_settings from "../seed/settings.js";
 import type * as settings from "../settings.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
+import type * as sync_dbcinema_web from "../sync_dbcinema_web.js";
 import type * as sync_state from "../sync_state.js";
 import type * as tax from "../tax.js";
 import type * as telegram_inbound from "../telegram_inbound.js";
@@ -182,6 +185,7 @@ declare const fullApi: ApiFromModules<{
   admin_backfill_weekly_metrics_5b: typeof admin_backfill_weekly_metrics_5b;
   admin_bootstrap_pidindex: typeof admin_bootstrap_pidindex;
   admin_debug_steps: typeof admin_debug_steps;
+  admin_fix_inventory_20260625: typeof admin_fix_inventory_20260625;
   admin_item_attribution: typeof admin_item_attribution;
   admin_migrate: typeof admin_migrate;
   admin_reclassify: typeof admin_reclassify;
@@ -202,6 +206,7 @@ declare const fullApi: ApiFromModules<{
   bundles: typeof bundles;
   bundles_seed: typeof bundles_seed;
   calendar: typeof calendar;
+  canned_responses: typeof canned_responses;
   competitor_intel: typeof competitor_intel;
   conflict_dismissals: typeof conflict_dismissals;
   crons: typeof crons;
@@ -329,6 +334,7 @@ declare const fullApi: ApiFromModules<{
   "seed/settings": typeof seed_settings;
   settings: typeof settings;
   sync_account_profiles: typeof sync_account_profiles;
+  sync_dbcinema_web: typeof sync_dbcinema_web;
   sync_state: typeof sync_state;
   tax: typeof tax;
   telegram_inbound: typeof telegram_inbound;

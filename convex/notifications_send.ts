@@ -20,6 +20,20 @@ import { internal } from "./_generated/api";
 const BASE_URL =
   process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
 
+// Per-account Aputure notification icon (recoloured to the account accent so you
+// can tell at a glance which account a notification came from). dbcinema keeps
+// the original blue; the default also blue. Relative — the SW resolves against
+// the PWA origin. PNGs live in public/icons/.
+const NOTIF_ICON: Record<string, string> = {
+  dbcinema: "/icons/notif-aputure.png", // blue (original)
+  leo: "/icons/notif-aputure-leo.png", // purple
+  diogo: "/icons/notif-aputure-diogo.png", // orange
+  dbcinema_web: "/icons/notif-aputure-dbcinema_web.png", // emerald
+};
+function accountIcon(slug?: string | null): string {
+  return (slug && NOTIF_ICON[slug]) || "/icons/notif-aputure.png";
+}
+
 function configureVapid(): boolean {
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
@@ -74,6 +88,8 @@ export const dispatchPending = internalAction({
           body: e.body,
           url: e.url, // relative — SW resolves against the PWA origin
           tag: `${e.type}:${e.thread_id}`,
+          icon: accountIcon(e.account_slug), // per-account Aputure (recoloured)
+          badge: "/icons/notif-badge.png",
         });
         await Promise.all(
           subs.map(async (s) => {
