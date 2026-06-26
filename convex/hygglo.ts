@@ -155,7 +155,7 @@ export const upsertMessages = mutation({
     // conversation's last_sender / last_renter_msg_at after the insert loop.
     const latestByThread = new Map<
       string,
-      { sender: string; ts: number; message_id: string; sender_name?: string }
+      { sender: string; ts: number; message_id: string; sender_name?: string; body_text?: string }
     >();
     for (const msg of messages) {
       const existing = await ctx.db
@@ -189,6 +189,7 @@ export const upsertMessages = mutation({
           ts,
           message_id: msg.message_id,
           sender_name: msg.sender_name,
+          body_text: msg.body_text,
         });
       }
     }
@@ -271,6 +272,43 @@ export const upsertMessages = mutation({
           last_renter_msg_at: sender === "renter" ? latest.ts : undefined,
           created_at: latest.ts,
         });
+      }
+    }
+
+    // ── Notify on a new RENTER message ────────────────────────────────────
+    // The Quick Reply widget is for replying to renters, but pushes only fired
+    // on new_request / booking_confirmed — a plain renter message or reply sent
+    // nothing, so messages went unnoticed (2026-06-26). Fire a `renter_message`
+    // push when a fresh message from a renter lands. Skipped when the order is a
+    // pending request (new_request already covers it) so we never double-notify;
+    // queueNotificationEvents dedupes per (thread, type) for 24h so a burst of
+    // renter messages is at most one push per thread per day.
+    const renterNotify: NotifEventInput[] = [];
+    for (const [threadId, latest] of latestByThread) {
+      if (latest.sender !== "renter") continue;
+      const reservation = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId))
+        .first();
+      if (reservation?.awaiting_owner_action) continue; // new_request covers it
+      const label = notifyAccountLabel(account_slug);
+      const renter =
+        latest.sender_name?.trim() || reservation?.renter_name || "A renter";
+      const preview = (latest.body_text ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+      renterNotify.push({
+        type: "renter_message",
+        thread_id: threadId,
+        account_slug,
+        title: `💬 ${renter} · ${label}`,
+        body: preview || "sent a message",
+        url: `/?thread=${encodeURIComponent(threadId)}&account=${encodeURIComponent(account_slug)}`,
+      });
+    }
+    if (renterNotify.length > 0) {
+      try {
+        await queueNotificationEvents(ctx, renterNotify);
+      } catch (err) {
+        console.warn("[hygglo.upsertMessages] renter_message notify failed", String(err));
       }
     }
 

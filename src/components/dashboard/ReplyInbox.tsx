@@ -969,7 +969,9 @@ export function ReplyInbox() {
   const includePending = settings?.availability_include_pending ?? false;
   const queue = useStableQuery(api.replyInbox.getReplyQueue, {
     accountSlug: activeAccountSlug ?? undefined,
-    limit: 60,
+    // High cap: renter inquiries on cancelled/finished orders now surface too,
+    // so the awaiting-me backlog is much larger — don't truncate it away.
+    limit: 200,
     includePending,
   }) as ReplyTileData[] | undefined;
 

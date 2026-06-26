@@ -534,6 +534,13 @@ export const getReplyQueue = query({
     const availCtx = await loadAvailCtx(ctx, incPending);
 
     // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
+    // A renter who spoke last is waiting on me REGARDLESS of the order's
+    // lifecycle state, so we do NOT drop finished reservations here. Live
+    // inquiries land on cancelled/declined/expired Hygglo orders all the time
+    // ("super interested in renting this lens", "looking to rent Saturday") —
+    // excluding finished orders here was hiding ~88% of recent renter messages
+    // from the widget (2026-06-26). The finished-exclusion still applies to the
+    // browse-everything Pass 3 below (owner-last / no pending reply).
     const convos = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
@@ -547,12 +554,6 @@ export const getReplyQueue = query({
           q.eq("hygglo_order_id", conv.thread_id),
         )
         .first();
-      if (!includeFinished && reservation) {
-        const st = reservation.status;
-        const step = reservation.order_step;
-        if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
-          continue;
-      }
       const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx);
       if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }

@@ -28,7 +28,7 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
-export const NOTIF_TYPES = ["booking_confirmed", "new_request"] as const;
+export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message"] as const;
 export type NotifType = (typeof NOTIF_TYPES)[number];
 
 export interface NotifEventInput {

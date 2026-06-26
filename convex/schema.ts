@@ -2021,6 +2021,7 @@ export default defineSchema({
     type: v.union(
       v.literal("booking_confirmed"),
       v.literal("new_request"),
+      v.literal("renter_message"),
     ),
     thread_id: v.string(),                   // hygglo_order_id → deep-link target
     account_slug: v.optional(v.string()),
