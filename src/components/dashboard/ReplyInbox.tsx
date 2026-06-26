@@ -348,6 +348,14 @@ function ReplyCard({
             {tile.renter_blacklisted && (
               <span className="text-[9px] px-1 rounded bg-red-500/20 text-red-400 mt-0.5">BL</span>
             )}
+            {!tile.renter_blacklisted && tile.renter_flagged && (
+              <span
+                title="Flagged renter"
+                className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-400 mt-0.5"
+              >
+                ⚑
+              </span>
+            )}
             <span className="ml-auto flex flex-col items-end leading-none flex-shrink-0">
               {u ? (
                 <>
@@ -395,6 +403,21 @@ function ReplyCard({
       )}
       {tile.preview && (
         <div className="text-[12px] text-[#8b92a0] line-clamp-2">“{tile.preview}”</div>
+      )}
+      {tile.estimate_gbp != null && (
+        <div className="inline-flex items-center gap-1.5 rounded-md border border-sky-400/30 bg-sky-400/[0.08] px-1.5 py-0.5 self-start">
+          <span className="text-[8px] font-bold uppercase tracking-[0.12em] text-sky-300/90">
+            Est
+          </span>
+          <span className="text-[11px] font-semibold text-sky-100 leading-none">
+            {fmtMoney(tile.estimate_gbp, tile.currency)}
+          </span>
+          {tile.estimate_days != null && (
+            <span className="text-[10px] text-sky-200/70">
+              · {tile.estimate_days}d
+            </span>
+          )}
+        </div>
       )}
       {tile.availability && (
         <div className="pt-0.5">

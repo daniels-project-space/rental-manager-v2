@@ -609,6 +609,11 @@ export const getReplyQueue = query({
             q.eq("hygglo_order_id", conv.thread_id),
           )
           .first();
+        // Drop finished rentals from the wide (30-day) browse pass. Recent
+        // renter-last threads on finished orders are already caught by Pass 1's
+        // 5-day window; surfacing the FULL 30-day finished backlog here floods
+        // "To reply" with hundreds of dead cancelled-order inquiries the renter
+        // long moved on from — so keep excluding finished in this pass.
         if (!includeFinished && reservation) {
           const st = reservation.status;
           const step = reservation.order_step;
