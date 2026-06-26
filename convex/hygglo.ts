@@ -139,6 +139,20 @@ function deriveStatusFromStep(
 // ── Mutations ─────────────────────────────────────────────────
 
 /**
+ * A renter message that's just a polite closer ("thanks", "ok", "no worries") —
+ * no reply needed, so we skip pre-generating an AI draft for it. Conservative:
+ * only matches obvious closers / very short fragments so real questions still
+ * get a draft.
+ */
+function isCloserMessage(body?: string): boolean {
+  const t = (body ?? "").trim().toLowerCase().replace(/[!.…\s]+$/g, "");
+  if (t.length < 4) return true;
+  return /^(thanks|thank you|thank u|thx|ty|cheers|no worries|no problem|np|ok|okay|kk|great|perfect|awesome|brilliant|lovely|got it|sounds good|will do|see you|see ya|noted|understood|👍|🙏|❤️|😊)\b/.test(
+    t,
+  );
+}
+
+/**
  * Public mutation called by Trigger.dev via ConvexHttpClient.
  * Deduplicates by (thread_id, message_id) — safe to call repeatedly.
  */
@@ -290,7 +304,22 @@ export const upsertMessages = mutation({
         .query("reservations")
         .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId))
         .first();
-      if (reservation?.awaiting_owner_action) continue; // new_request covers it
+
+      // Pre-generate the AI draft the MOMENT a renter message lands, so it's
+      // already waiting when I open the thread (no on-open spinner). This only
+      // STORES a draft (setDraft) — it never sends anything. Skip obvious
+      // closers ("thanks", "ok") so we don't burn a generation on a dead thread.
+      if (!isCloserMessage(latest.body_text)) {
+        try {
+          await ctx.scheduler.runAfter(0, api.replyInbox_actions.generateDraft, {
+            thread_id: threadId,
+          });
+        } catch (err) {
+          console.warn("[hygglo.upsertMessages] draft pre-gen schedule failed", String(err));
+        }
+      }
+
+      if (reservation?.awaiting_owner_action) continue; // new_request covers notify
       const label = notifyAccountLabel(account_slug);
       const renter =
         latest.sender_name?.trim() || reservation?.renter_name || "A renter";
