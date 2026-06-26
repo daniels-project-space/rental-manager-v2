@@ -12,7 +12,7 @@
  * truth.
  */
 import { v } from "convex/values";
-import { query } from "../_generated/server";
+import { query, internalMutation } from "../_generated/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { effectiveDate, isLive } from "../lib/reservations/predicates";
 
@@ -163,5 +163,42 @@ export const get = query({
       return thursday.getFullYear() + "-W" + String(weekNum).padStart(2, "0");
     })();
     return row.buckets.filter((b) => b.period >= cutoffWeekKey);
+  },
+});
+
+/**
+ * Reactive refresh (re-added 2026-06-26). The daily-only cron left the monthly
+ * income chart up to 24h stale — a confirmed booking or pickup landing during
+ * the day didn't show until the next 04:00 UTC. The poller now schedules this
+ * on any booking change / realised-revenue (convex/hygglo.ts), so the chart
+ * converges within seconds. Recomputes all (account, granularity) rows from a
+ * single reservations collect — same shape as master.writeEarningsByPeriod.
+ */
+export const refresh = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const reservations = await ctx.db.query("reservations").collect();
+    const rows = computeEarningsByPeriod({ reservations, generatedAt: Date.now() });
+    for (const r of rows) {
+      const existing = await ctx.db
+        .query("mv_earnings_by_period")
+        .withIndex("by_account_granularity", (q) =>
+          q.eq("account", r.account).eq("granularity", r.granularity),
+        )
+        .first();
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          generatedAt: r.generatedAt,
+          buckets: r.buckets,
+        });
+      } else {
+        await ctx.db.insert("mv_earnings_by_period", {
+          account: r.account,
+          granularity: r.granularity,
+          generatedAt: r.generatedAt,
+          buckets: r.buckets,
+        });
+      }
+    }
   },
 });

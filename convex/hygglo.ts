@@ -1177,6 +1177,11 @@ export const upsertOrdersAsReservationsBatch = mutation({
           await ctx.scheduler.runAfter(0, internal.mv.lifetime_revenue.refresh, {});
           await ctx.scheduler.runAfter(0, internal.mv.investment_scorecard.refresh, {});
         }
+        // Monthly income chart (mv_earnings_by_period) sums gross_paid over all
+        // LIVE reservations by month, so BOTH a new confirmed booking
+        // (pendingChanged) AND a pickup (anyRevenueRealized) move the current
+        // bucket. Was daily-only → up to 24h stale; refresh on either change.
+        await ctx.scheduler.runAfter(0, internal.mv.earnings_by_period.refresh, {});
       } catch (err) {
         console.warn("[hygglo.upsertOrdersAsReservationsBatch] MV refresh schedule failed", String(err));
       }
