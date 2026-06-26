@@ -345,6 +345,13 @@ export default defineSchema({
      *  shown atop the messages board). Authoritative source for the Approve/Decline
      *  buttons; the queue falls back to order_step==="REQUEST" when unset. */
     awaiting_owner_action: v.optional(v.boolean()),
+    /** Granular owner actions still available on the order (2026-06-26). Lets the
+     *  Quick Reply widget distinguish a NEW request (both true → Approve+Decline)
+     *  from one I've already APPROVED (accept gone, only deny → show Approve done
+     *  + Decline only). Set optimistically when I approve/decline in the widget;
+     *  undefined → derive from awaiting_owner_action (a fresh request = both). */
+    can_accept: v.optional(v.boolean()),
+    can_deny: v.optional(v.boolean()),
 
     /** LLM-resolved master-inventory items for this reservation.
      *  Cleared on poll if items[] changes; re-populated by item_resolver action. */
@@ -2008,4 +2015,19 @@ export default defineSchema({
     // De-dupe guard: at most one event per (thread, type) so a re-poll that
     // re-sees the same transition can't double-fire.
     .index("by_thread_type", ["thread_id", "type"]),
+
+  // ── Canned responses (Quick Reply, 2026-06-26) ───────────────────────
+  // Per-account saved auto-replies (delivery text, location, bank details, …).
+  // Surfaced as little symbol buttons in the chat that paste+send the text
+  // after a confirm, and editable via the manage overlay. Per-account because
+  // each account has its own pickup address / bank details / tone.
+  canned_responses: defineTable({
+    account_slug: v.string(),
+    label: v.string(),          // short name shown under the button ("Bank")
+    symbol: v.string(),         // emoji / glyph on the button ("🏦")
+    text: v.string(),           // the message body pasted + sent
+    sort: v.number(),           // manual ordering
+    created_at: v.number(),
+    updated_at: v.number(),
+  }).index("by_account", ["account_slug"]),
 });

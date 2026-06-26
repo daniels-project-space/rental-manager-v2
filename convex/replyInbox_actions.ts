@@ -174,13 +174,23 @@ type OrderActionResult = {
  */
 export const approveOrder = action({
   args: { thread_id: v.string(), account_slug: v.string(), dryRun: v.optional(v.boolean()) },
-  handler: async (_ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
+  handler: async (ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
     if (!account_slug) return { status: "failed", error: "No account for this thread" };
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
     const res = await manualApproveOrder({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,
     });
+    // Approved → accept no longer available, but I can still decline (cancel)
+    // until the renter pays. Persist so the widget shows only Decline + the
+    // "approved before" marker, instantly and across reloads.
+    if (res.status === "sent") {
+      await ctx.runMutation(internal.replyInbox.setOwnerActionState, {
+        thread_id,
+        can_accept: false,
+        can_deny: true,
+      });
+    }
     return {
       status: res.status,
       reason: res.reason,
@@ -193,13 +203,21 @@ export const approveOrder = action({
 /** Decline a pending rental REQUEST. Same gate + behaviour as approveOrder. */
 export const declineOrder = action({
   args: { thread_id: v.string(), account_slug: v.string(), dryRun: v.optional(v.boolean()) },
-  handler: async (_ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
+  handler: async (ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
     if (!account_slug) return { status: "failed", error: "No account for this thread" };
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
     const res = await manualDeclineOrder({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,
     });
+    // Declined → no owner actions remain.
+    if (res.status === "sent") {
+      await ctx.runMutation(internal.replyInbox.setOwnerActionState, {
+        thread_id,
+        can_accept: false,
+        can_deny: false,
+      });
+    }
     return {
       status: res.status,
       reason: res.reason,

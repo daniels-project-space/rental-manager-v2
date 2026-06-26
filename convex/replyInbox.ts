@@ -121,6 +121,10 @@ async function assembleTile(
     // Drives the Quick Reply filter (All / Requests / Messages).
     kind: (isRequest ? "request" : "message") as "request" | "message",
     last_sender: conv?.last_sender ?? null,
+    // Granular owner actions (undefined → UI derives from is_request). Lets the
+    // widget show only Decline once I've approved (accept gone, deny remains).
+    can_accept: (reservation as { can_accept?: boolean } | null)?.can_accept ?? null,
+    can_deny: (reservation as { can_deny?: boolean } | null)?.can_deny ?? null,
     gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
     net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
     delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
@@ -438,6 +442,24 @@ export const recordSentReply = internalMutation({
       last_sender: "owner",
       created_at: now,
     });
+    return { ok: true };
+  },
+});
+
+/**
+ * Persist the owner-action state on a reservation after an approve/decline in
+ * the widget, so the buttons immediately + persistently reflect it (approve →
+ * accept gone, deny remains; decline → neither). Keyed by hygglo_order_id.
+ */
+export const setOwnerActionState = internalMutation({
+  args: { thread_id: v.string(), can_accept: v.boolean(), can_deny: v.boolean() },
+  handler: async (ctx, { thread_id, can_accept, can_deny }) => {
+    const r = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
+      .first();
+    if (!r) return { ok: false };
+    await ctx.db.patch(r._id, { can_accept, can_deny });
     return { ok: true };
   },
 });
