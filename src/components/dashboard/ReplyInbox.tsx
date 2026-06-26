@@ -649,7 +649,10 @@ export function ReplyModal({
   const approve = useAction(api.replyInbox_actions.approveOrder);
   const decline = useAction(api.replyInbox_actions.declineOrder);
 
-  const [text, setText] = useState(tile.ai_draft_text ?? "");
+  const [text, setText] = useState("");
+  // AI draft lives in its OWN preview box (not the compose box). Tap it to copy
+  // it into the message box, then edit + Send yourself — never auto-sent.
+  const [draft, setDraft] = useState(tile.ai_draft_text ?? "");
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -675,13 +678,13 @@ export function ReplyModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Auto-draft an AI reply ON OPEN — into the box, NEVER sent. Only when the
-  // renter is the one waiting and there's no existing draft / typed text, so it
-  // never clobbers something you started. You edit + Send (or discard) yourself.
+  // Auto-draft an AI reply ON OPEN — into the SEPARATE draft box, never the
+  // compose box and never sent. Only when the renter is the one waiting and
+  // there's no draft yet. You tap the draft to copy it across if you want it.
   const autoDraftedRef = useRef(false);
   useEffect(() => {
     if (autoDraftedRef.current) return;
-    if (tile.ai_draft_text || text.trim()) return;
+    if (draft.trim()) return;
     if (!awaitingMe(tile)) return;
     autoDraftedRef.current = true;
     void onGenerate();
@@ -693,7 +696,7 @@ export function ReplyModal({
     setNote(null);
     try {
       const r = await generateDraft({ thread_id: tile.thread_id });
-      if (r.status === "ok" && r.draft) setText(r.draft);
+      if (r.status === "ok" && r.draft) setDraft(r.draft);
       else setNote("Draft unavailable.");
     } catch {
       setNote("Draft failed.");
@@ -948,6 +951,38 @@ export function ReplyModal({
             </div>
           )}
 
+          {/* AI draft — its OWN box. Tap to copy it into the message box below;
+              it never auto-fills the compose box and is never sent on its own. */}
+          {(draft || drafting) && (
+            <div className="rounded-xl border border-violet-400/25 bg-violet-500/[0.07]">
+              <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-violet-300/90">
+                  ✨ AI draft
+                </span>
+                {draft && !drafting && (
+                  <span className="text-[10px] text-violet-200/60">tap to use ↓</span>
+                )}
+                <button
+                  onClick={onGenerate}
+                  disabled={drafting}
+                  className="ml-auto text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] text-[#c5cad3] hover:bg-white/[0.12] disabled:opacity-50"
+                >
+                  {drafting ? "Drafting…" : "↻ Redraft"}
+                </button>
+              </div>
+              {draft && (
+                <button
+                  type="button"
+                  onClick={() => pasteText(draft)}
+                  title="Copy this draft into the message box"
+                  className="block w-full text-left px-3 pb-2.5 text-sm text-[#dcd6f0] hover:text-white whitespace-pre-wrap"
+                >
+                  {draft}
+                </button>
+              )}
+            </div>
+          )}
+
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -956,13 +991,14 @@ export function ReplyModal({
             className="w-full resize-y rounded-xl bg-black/30 border border-white/10 px-3 py-2.5 text-sm text-[#eef1f5] placeholder-[#6b7280] focus:outline-none focus:border-white/25"
           />
           <div className="flex items-center gap-2">
-            <button
-              onClick={onGenerate}
-              disabled={drafting}
-              className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#c5cad3] hover:bg-white/[0.12] disabled:opacity-50"
-            >
-              {drafting ? "Drafting…" : tile.has_draft ? "↻ Redraft (AI)" : "✨ Draft (AI)"}
-            </button>
+            {!draft && !drafting && (
+              <button
+                onClick={onGenerate}
+                className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#c5cad3] hover:bg-white/[0.12] disabled:opacity-50"
+              >
+                ✨ Draft (AI)
+              </button>
+            )}
             <button
               onClick={onSend}
               disabled={sending || !text.trim()}
@@ -995,6 +1031,9 @@ export function ReplyInbox() {
     // High cap: renter inquiries on cancelled/finished orders now surface too,
     // so the awaiting-me backlog is much larger — don't truncate it away.
     limit: 200,
+    // Nothing older than 10 days, in either pass (Daniel, 2026-06-26).
+    withinDays: 10,
+    messagesWithinDays: 10,
     includePending,
   }) as ReplyTileData[] | undefined;
 
