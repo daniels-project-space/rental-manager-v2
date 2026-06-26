@@ -185,6 +185,20 @@ function productIdForItemNameInReservation(
 }
 
 /**
+ * Pick the handover method for a merged calendar tile. DELIVERY wins over
+ * collection — if any member of a consolidated booking is delivered, the owner
+ * has a delivery to plan, and that fact must survive consolidation (Daniel,
+ * 2026-06-26). Falls back to the first definite (non-"unknown") method, then the
+ * first value.
+ */
+function preferDeliveryMethod(
+  methods: Array<string | null | undefined>,
+): string | null | undefined {
+  if (methods.some((m) => m === "delivery")) return "delivery";
+  return methods.find((m) => m && m !== "unknown") ?? methods[0];
+}
+
+/**
  * W06 5-Day Calendar Strip
  * Returns reservations and holds for [startDate, startDate + days - 1]
  */
@@ -282,8 +296,12 @@ export const getCalendarStrip = query({
         end_date: endM.end_date,
         pickup_time: startM.pickup_time,
         return_time: endM.return_time,
-        pickup_method: (startM as { pickup_method?: string | null }).pickup_method,
-        return_method: (endM as { return_method?: string | null }).return_method,
+        pickup_method: preferDeliveryMethod(
+          members.map((m) => (m as { pickup_method?: string | null }).pickup_method),
+        ),
+        return_method: preferDeliveryMethod(
+          members.map((m) => (m as { return_method?: string | null }).return_method),
+        ),
         gross_paid_gbp: grossSum,
       };
     }) as typeof reservations;
@@ -321,14 +339,16 @@ export const getCalendarStrip = query({
       const byReturnDesc = members
         .slice()
         .sort((a, b) => displayReturnDate(b).localeCompare(displayReturnDate(a)));
-      const defMethod = (v?: string | null): v is string => !!v && v !== "unknown";
       const pickTime = sorted.find((m) => m.pickup_time)?.pickup_time ?? startM.pickup_time;
       const retTime = byReturnDesc.find((m) => m.return_time)?.return_time ?? endM.return_time;
+      // Delivery wins so a planned delivery never gets hidden by a collection
+      // member (the grouping guard already keeps conflicting methods apart, but
+      // unknown+delivery can still merge — surface the delivery).
       const pickMethod =
-        sorted.find((m) => defMethod((m as { pickup_method?: string | null }).pickup_method))?.pickup_method ??
+        preferDeliveryMethod(members.map((m) => (m as { pickup_method?: string | null }).pickup_method)) ??
         (startM as { pickup_method?: string | null }).pickup_method;
       const retMethod =
-        byReturnDesc.find((m) => defMethod((m as { return_method?: string | null }).return_method))?.return_method ??
+        preferDeliveryMethod(members.map((m) => (m as { return_method?: string | null }).return_method)) ??
         (endM as { return_method?: string | null }).return_method;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const combine = (k: string) => members.flatMap((m) => ((m as any)[k] as unknown[]) ?? []);

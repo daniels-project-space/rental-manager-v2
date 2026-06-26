@@ -294,6 +294,12 @@ export type LogicalRental = {
  */
 const MERGE_GAP_DAYS = 1;
 
+/** The reservation's pickup method when it's a real, known value (not "unknown"). */
+function definitePickupMethod(r: ReservationRow): string | null {
+  const v = (r as { pickup_method?: string | null }).pickup_method;
+  return v && v !== "unknown" ? v : null;
+}
+
 /** Add `n` days to an ISO yyyy-mm-dd date, returning ISO yyyy-mm-dd. */
 function addDaysISO(iso: string, n: number): string {
   if (!iso) return iso;
@@ -429,6 +435,12 @@ export function renterPeriodGroupIds(rows: ReservationRow[]): Map<string, string
     });
     let chain: ReservationRow[] = [];
     let chainEnd = "";
+    // Track the chain's established handover method so we never merge a
+    // COLLECTION with a DELIVERY (they're distinct events the owner must handle
+    // separately — merging hid Ella Griffith's delivery + its transmitter under
+    // an earlier collection tile, 2026-06-26). An "unknown" method stays
+    // compatible with either.
+    let chainMethod: string | null = null;
     const flush = () => {
       if (chain.length) {
         const gid = chain[0]._id;
@@ -436,20 +448,28 @@ export function renterPeriodGroupIds(rows: ReservationRow[]): Map<string, string
       }
       chain = [];
       chainEnd = "";
+      chainMethod = null;
     };
     for (const r of arr) {
       const p = displayPickupDate(r);
       const e = displayReturnDate(r);
+      const rm = definitePickupMethod(r);
       if (chain.length === 0) {
         chain = [r];
         chainEnd = e;
-      } else if (p <= addDaysISO(chainEnd, MERGE_GAP_DAYS)) {
+        chainMethod = rm;
+      } else if (
+        p <= addDaysISO(chainEnd, MERGE_GAP_DAYS) &&
+        !(chainMethod && rm && chainMethod !== rm)
+      ) {
         chain.push(r);
         if (e > chainEnd) chainEnd = e;
+        if (!chainMethod && rm) chainMethod = rm;
       } else {
         flush();
         chain = [r];
         chainEnd = e;
+        chainMethod = rm;
       }
     }
     flush();
