@@ -9,6 +9,15 @@ export const metadata: Metadata = {
   // app on Android, so push notifications can be delivered to the phone.
   manifest: "/manifest.webmanifest",
   applicationName: "Rental Manager",
+  // Blue Aputure mark. iOS shows the apple-touch-icon (NOT a per-notification
+  // icon) on push, so this is what makes an iPhone notification recognisable.
+  icons: {
+    icon: [
+      { url: "/app-icon.svg", type: "image/svg+xml" },
+      { url: "/app-icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [{ url: "/app-icon-180.png", sizes: "180x180", type: "image/png" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

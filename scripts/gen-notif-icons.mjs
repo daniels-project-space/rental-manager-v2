@@ -1,10 +1,14 @@
 // Generate per-account Aputure notification icons (recoloured) + a monochrome
 // badge, rasterised to PNG via sharp. Output → public/icons/.
+// Also writes the PWA app icon (public/app-icon.svg + PNGs) as the blue Aputure
+// so iOS — which shows the installed app icon on push notifications, not the
+// per-notification icon — still surfaces the Aputure mark.
 import sharp from "sharp";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const OUT = join(process.cwd(), "public", "icons");
+const PUBLIC = join(process.cwd(), "public");
+const OUT = join(PUBLIC, "icons");
 mkdirSync(OUT, { recursive: true });
 
 // Base Aputure mark (the dbcinemarentals.com tab icon): aperture iris + record
@@ -58,4 +62,16 @@ await sharp(Buffer.from(badge))
   .png()
   .toFile(join(OUT, "notif-badge.png"));
 n++;
-console.log(`wrote ${n} icons to ${OUT}`);
+
+// PWA app icon = blue Aputure (default). SVG for the manifest + PNGs for iOS
+// apple-touch-icon / Android.
+const appSvg = mark("#38bdf8", "#7dd3fc");
+writeFileSync(join(PUBLIC, "app-icon.svg"), appSvg);
+for (const px of [180, 192, 512]) {
+  await sharp(Buffer.from(appSvg))
+    .resize(px, px)
+    .png()
+    .toFile(join(PUBLIC, `app-icon-${px}.png`));
+  n++;
+}
+console.log(`wrote ${n} icons (notif + app) to ${PUBLIC}`);
