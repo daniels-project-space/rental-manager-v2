@@ -67,45 +67,75 @@ function buildRichItems(
 // skipped and the estimate is omitted entirely if nothing matched.
 
 const DAY_MS = 86_400_000;
-const normName = (s: string) =>
-  s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+// Squash to a case/space/punctuation-free key. The catalog stores camelCase,
+// punctuation-smushed canonicals ("CanonR5", "SonyFX6", "Aputure300x"), so token
+// overlap is hopeless — but substring containment on the squashed key is precise.
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-type PriceRow = { min: number; max: number; tokens: Set<string> };
-type PriceIndex = Map<string, PriceRow>;
+type PriceRow = { min: number; max: number; key: string };
+type PriceIndex = PriceRow[];
 
 async function loadPriceIndex(ctx: QueryCtx): Promise<PriceIndex> {
   const rows = await ctx.db.query("pricing_catalog").collect();
-  const map: PriceIndex = new Map();
+  const out: PriceIndex = [];
   for (const r of rows) {
-    const n = normName(r.item_name_canonical);
-    if (!n || map.has(n)) continue;
-    map.set(n, {
-      min: r.daily_price_min,
-      max: r.daily_price_max,
-      tokens: new Set(n.split(" ").filter(Boolean)),
-    });
+    const key = squash(r.item_name_canonical);
+    // Skip very short keys (would substring-match almost anything).
+    if (key.length < 5) continue;
+    out.push({ min: r.daily_price_min, max: r.daily_price_max, key });
   }
-  return map;
+  return out;
 }
 
-function priceFor(index: PriceIndex, name: string): PriceRow | null {
-  const n = normName(name);
-  const exact = index.get(n);
-  if (exact) return exact;
-  const want = new Set(n.split(" ").filter(Boolean));
-  if (want.size === 0) return null;
-  let best: PriceRow | null = null;
-  let bestScore = 0;
-  for (const row of index.values()) {
-    let hit = 0;
-    for (const t of want) if (row.tokens.has(t)) hit++;
-    const score = hit / Math.max(want.size, row.tokens.size);
-    if (score > bestScore) {
-      bestScore = score;
-      best = row;
-    }
+/**
+ * True if `key` occurs in `item` NOT immediately followed by another digit — so
+ * a model key like "sonyfx3" won't match inside a longer model number
+ * ("sonyfx30"). Prevents FX3 being priced as an FX30, A1 as an A10, etc.
+ */
+function keyMatches(item: string, key: string): boolean {
+  let i = item.indexOf(key);
+  while (i !== -1) {
+    const after = item[i + key.length];
+    if (after === undefined || after < "0" || after > "9") return true;
+    i = item.indexOf(key, i + 1);
   }
-  return bestScore >= 0.5 ? best : null;
+  return false;
+}
+
+/**
+ * Confident-or-nothing price match. A catalog canonical matches an item only
+ * when its squashed key appears verbatim inside the item's squashed name
+ * (e.g. "canonr5" ⊂ "canonr5cinemacamera"), with no trailing-digit collision.
+ * The LONGEST such key wins (most specific). Items not in the catalog (e.g. an
+ * FX30, which isn't listed) return null → no estimate, rather than a misleading
+ * coincidental match.
+ */
+function priceFor(index: PriceIndex, name: string): PriceRow | null {
+  const item = squash(name);
+  if (item.length < 5) return null;
+  let best: PriceRow | null = null;
+  for (const row of index) {
+    if (keyMatches(item, row.key) && (!best || row.key.length > best.key.length))
+      best = row;
+  }
+  return best;
+}
+
+/** Sum mid daily-price × qty × days for the priceable items. null if none matched. */
+function estimateForDays(
+  index: PriceIndex,
+  items: RichItem[],
+  days: number,
+): number | null {
+  let total = 0;
+  let priced = 0;
+  for (const it of items) {
+    const p = priceFor(index, it.name);
+    if (!p) continue;
+    total += ((p.min + p.max) / 2) * (it.qty || 1) * days;
+    priced++;
+  }
+  return priced === 0 ? null : Math.round(total);
 }
 
 function computeEstimate(
@@ -119,16 +149,41 @@ function computeEstimate(
   const e = new Date(`${end}T00:00:00`).getTime();
   if (isNaN(s) || isNaN(e) || e < s) return { gbp: null, days: null };
   const days = Math.max(1, Math.round((e - s) / DAY_MS));
-  let total = 0;
-  let priced = 0;
-  for (const it of items) {
-    const p = priceFor(index, it.name);
-    if (!p) continue;
-    total += ((p.min + p.max) / 2) * (it.qty || 1) * days;
-    priced++;
+  return { gbp: estimateForDays(index, items, days), days };
+}
+
+/**
+ * Best-effort: pull a rental length (in days) out of a free-text renter message,
+ * for inquiries that mention a time frame but haven't formally requested dates
+ * (e.g. "is this free this weekend?" / "for 3 days" / "26th-28th"). Returns null
+ * when no time frame is detectable — the estimate is then simply not shown.
+ * Heuristic by design; the UI labels the result "Estimate" so it's never taken
+ * as a firm quote.
+ */
+function parseMentionedDays(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  let m = t.match(/(\d+)\s*(?:day|night)s?\b/);
+  if (m) return Math.min(60, Math.max(1, parseInt(m[1], 10)));
+  m = t.match(/(\d+)\s*weeks?\b/);
+  if (m) return Math.min(60, Math.max(1, parseInt(m[1], 10) * 7));
+  if (/\b(?:a|one)\s+week\b/.test(t)) return 7;
+  if (/weekend/.test(t)) return 2;
+  // numeric day-of-month range: "26-28", "26 to 28", "26th – 28th". Both numbers
+  // must be plausible days (≤31) and span ≤31 — guards against focal lengths
+  // like "24-70mm" (70 > 31 → rejected).
+  m = t.match(
+    /\b(\d{1,2})\s*(?:st|nd|rd|th)?\s*(?:-|–|—|to|until|till)\s*(\d{1,2})\s*(?:st|nd|rd|th)?\b/,
+  );
+  if (m) {
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    if (a >= 1 && a <= 31 && b >= 1 && b <= 31 && b >= a && b - a <= 31)
+      return Math.max(1, b - a);
   }
-  if (priced === 0) return { gbp: null, days };
-  return { gbp: Math.round(total), days };
+  if (/\b(?:tomorrow|today|tonight|one day|a day|single day|for the day)\b/.test(t))
+    return 1;
+  return null;
 }
 
 // ── Queue ────────────────────────────────────────────────────────
@@ -185,25 +240,36 @@ async function assembleTile(
     latestMsg?.fetched_at ??
     0;
 
-  // Estimate ONLY when there's a date range but no confirmed price yet (pending
-  // request / quote). Labelled "Estimate" in the UI; never overrides a real
-  // gross_paid figure.
+  // Estimate, always CLEARLY labelled "Estimate" in the UI and never shown when
+  // a real price exists. Two sources:
+  //  1. A reservation with dates but no confirmed gross yet (rare — Hygglo
+  //     usually fills gross on request) → price the set over that date range.
+  //  2. A date-less INQUIRY (no reservation) whose chat mentions a time frame
+  //     ("this weekend", "for 3 days", "26-28") → parse the length and price the
+  //     listing the renter is asking about. This is the common, useful case.
   let estimateGbp: number | null = null;
   let estimateDays: number | null = null;
-  if (
-    priceIndex &&
-    reservation?.gross_paid_gbp == null &&
-    reservation?.start_date &&
-    reservation?.end_date
-  ) {
-    const est = computeEstimate(
-      priceIndex,
-      richItems,
-      reservation.start_date,
-      reservation.end_date,
-    );
-    estimateGbp = est.gbp;
-    estimateDays = est.days;
+  if (priceIndex && richItems.length > 0) {
+    if (
+      reservation?.gross_paid_gbp == null &&
+      reservation?.start_date &&
+      reservation?.end_date
+    ) {
+      const est = computeEstimate(
+        priceIndex,
+        richItems,
+        reservation.start_date,
+        reservation.end_date,
+      );
+      estimateGbp = est.gbp;
+      estimateDays = est.days;
+    } else if (!reservation) {
+      const days = parseMentionedDays(latestMsg?.body_text);
+      if (days) {
+        estimateGbp = estimateForDays(priceIndex, richItems, days);
+        estimateDays = estimateGbp != null ? days : null;
+      }
+    }
   }
 
   return {
@@ -472,7 +538,7 @@ export const getThreadContext = internalQuery({
     }));
     const latest = msgs[msgs.length - 1];
 
-    const richItems = buildRichItems(reservation);
+    const richItems = buildRichItems(reservation, conv);
     return {
       account_slug: slug ?? null,
       persona_prompt: persona_prompt ?? null,
