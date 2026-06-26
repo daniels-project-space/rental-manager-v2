@@ -2039,15 +2039,15 @@ export default defineSchema({
     .index("by_thread_type", ["thread_id", "type"]),
 
   // ── Canned responses (Quick Reply, 2026-06-26) ───────────────────────
-  // Per-account saved auto-replies (delivery text, location, bank details, …).
-  // Surfaced as little symbol buttons in the chat that paste+send the text
-  // after a confirm, and editable via the manage overlay. Per-account because
-  // each account has its own pickup address / bank details / tone.
+  // Per-account saved quick-texts (delivery text, location, bank details, …).
+  // Surfaced as chips in the chat that PASTE the text into the compose box (never
+  // auto-send — you edit then Send yourself), editable via the manage overlay.
+  // Per-account because each account has its own pickup address / bank / tone.
   canned_responses: defineTable({
     account_slug: v.string(),
-    label: v.string(),          // short name shown under the button ("Bank")
-    symbol: v.string(),         // emoji / glyph on the button ("🏦")
-    text: v.string(),           // the message body pasted + sent
+    label: v.string(),          // short name shown on the chip ("Bank")
+    symbol: v.string(),         // emoji / glyph on the chip ("🏦")
+    text: v.string(),           // the message body pasted into the box
     sort: v.number(),           // manual ordering
     created_at: v.number(),
     updated_at: v.number(),
