@@ -59,15 +59,46 @@ export const update = mutation({
   },
 });
 
-// ── Main rental hub (geocoded via postcodes.io — the address register) ──
+// ── Per-account rental hub (geocoded via postcodes.io — the register) ──
 
-/** Confirm a postcode against postcodes.io and store the hub coords. The UI
- *  sends the typed postcode; we return the matched admin district as proof. */
+/** Every draft account (excludes dbcinema_web) + its confirmed hub. */
+export const listAccountHubs = query({
+  args: {},
+  handler: async (ctx) => {
+    const accounts = await ctx.db.query("accounts").collect();
+    const out: {
+      account_id: Id<"accounts">;
+      slug: string;
+      display_name: string;
+      hub_postcode: string | null;
+      hub_label: string | null;
+    }[] = [];
+    for (const a of accounts) {
+      if (a.slug === "dbcinema_web") continue;
+      const profile = await ctx.db
+        .query("account_profiles")
+        .withIndex("by_account", (q) => q.eq("account_id", a._id))
+        .first();
+      out.push({
+        account_id: a._id,
+        slug: a.slug,
+        display_name: a.display_name ?? a.slug,
+        hub_postcode: profile?.hub_postcode ?? null,
+        hub_label: profile?.hub_label ?? null,
+      });
+    }
+    out.sort((x, y) => x.slug.localeCompare(y.slug));
+    return out;
+  },
+});
+
+/** Confirm a postcode against postcodes.io and store it as THIS account's hub.
+ *  Returns the matched admin district as proof. */
 export const setHub = action({
-  args: { postcode: v.string() },
+  args: { account_id: v.id("accounts"), postcode: v.string() },
   handler: async (
     ctx,
-    { postcode },
+    { account_id, postcode },
   ): Promise<{ ok: boolean; reason?: string; label?: string; postcode?: string }> => {
     const pc = postcode.replace(/\s+/g, "").toUpperCase();
     if (pc.length < 5) return { ok: false, reason: "Enter a full UK postcode" };
@@ -88,7 +119,8 @@ export const setHub = action({
       res.admin_district ||
       res.parish ||
       pc;
-    await ctx.runMutation(internal.settings.applyHub, {
+    await ctx.runMutation(internal.settings.applyAccountHub, {
+      account_id,
       postcode: res.postcode ?? pc,
       label,
       lat: res.latitude,
@@ -98,22 +130,29 @@ export const setHub = action({
   },
 });
 
-export const applyHub = internalMutation({
+export const applyAccountHub = internalMutation({
   args: {
+    account_id: v.id("accounts"),
     postcode: v.string(),
     label: v.string(),
     lat: v.number(),
     lng: v.number(),
   },
-  handler: async (ctx, { postcode, label, lat, lng }) => {
-    const existing = await ctx.db.query("settings").first();
-    if (!existing) throw new Error("No settings row found — seed the database first.");
-    await ctx.db.patch(existing._id, {
-      hub_postcode: postcode,
-      hub_label: label,
-      hub_lat: lat,
-      hub_lng: lng,
-    });
+  handler: async (ctx, { account_id, postcode, label, lat, lng }) => {
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", account_id))
+      .first();
+    const now = Date.now();
+    const fields = { hub_postcode: postcode, hub_label: label, hub_lat: lat, hub_lng: lng };
+    if (profile) await ctx.db.patch(profile._id, { ...fields, updated_at: now });
+    else
+      await ctx.db.insert("account_profiles", {
+        account_id,
+        ...fields,
+        created_at: now,
+        updated_at: now,
+      });
     return { ok: true };
   },
 });

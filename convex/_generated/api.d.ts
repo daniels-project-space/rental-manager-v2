@@ -161,6 +161,7 @@ import type * as returns_autoclose from "../returns_autoclose.js";
 import type * as returns_reconcile from "../returns_reconcile.js";
 import type * as revenue from "../revenue.js";
 import type * as rules from "../rules.js";
+import type * as seed_account_hubs from "../seed/account_hubs.js";
 import type * as seed_data from "../seed/data.js";
 import type * as seed_diogo_profile from "../seed/diogo_profile.js";
 import type * as seed_hard_truths from "../seed/hard_truths.js";
@@ -339,6 +340,7 @@ declare const fullApi: ApiFromModules<{
   returns_reconcile: typeof returns_reconcile;
   revenue: typeof revenue;
   rules: typeof rules;
+  "seed/account_hubs": typeof seed_account_hubs;
   "seed/data": typeof seed_data;
   "seed/diogo_profile": typeof seed_diogo_profile;
   "seed/hard_truths": typeof seed_hard_truths;

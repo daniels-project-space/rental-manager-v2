@@ -154,37 +154,37 @@ function HardTruthsEditor() {
   );
 }
 
-/**
- * Main rental hub editor — type a UK postcode, confirm it against postcodes.io
- * (the address register), and store the hub coords. Tile distance + the
- * too-heavy tag are measured from here. Also sets the heavy/max travel ranges.
- */
-function HubEditor() {
-  const settings = useQuery(api.settings.get);
+/** One account's hub row: confirmed chip + postcode input + Confirm. */
+function HubRow({
+  account_id,
+  display_name,
+  hub_postcode,
+  hub_label,
+}: {
+  account_id: string;
+  display_name: string;
+  hub_postcode: string | null;
+  hub_label: string | null;
+}) {
   const setHub = useAction(api.settings.setHub);
-  const update = useMutation(api.settings.update);
   const [pc, setPc] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  if (!settings) return null;
   return (
-    <div className="py-3">
-      <label className="text-sm text-[#e4e6eb] block mb-1">Main rental hub</label>
-      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
-        Where your gear lives. Distance to each chat&apos;s pickup location and the
-        &ldquo;too heavy&rdquo; tag are measured from here. Enter a UK postcode — we
-        confirm it against the address register.
-      </p>
-      {settings.hub_label && (
-        <div className="mb-2 inline-flex items-center gap-1.5 text-[12px] text-emerald-300 bg-emerald-500/[0.08] border border-emerald-400/25 rounded-lg px-2 py-1">
-          📍 {settings.hub_label} · {settings.hub_postcode}
-        </div>
-      )}
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-semibold text-[#cbd5e1]">{display_name}</span>
+        {hub_label && (
+          <span className="text-[11px] text-emerald-300">
+            📍 {hub_label} · {hub_postcode}
+          </span>
+        )}
+      </div>
       <div className="flex items-center gap-2">
         <input
           value={pc}
           onChange={(e) => setPc(e.target.value)}
-          placeholder={settings.hub_postcode ?? "e.g. WC2H 7ER"}
+          placeholder={hub_postcode ?? "e.g. WC2H 7ER"}
           className="text-sm rounded-lg px-2.5 py-1.5 flex-1 min-w-0"
           style={INPUT_STYLE}
         />
@@ -194,7 +194,10 @@ function HubEditor() {
             setBusy(true);
             setMsg(null);
             try {
-              const r = await setHub({ postcode: pc });
+              const r = await setHub({
+                account_id: account_id as Parameters<typeof setHub>[0]["account_id"],
+                postcode: pc,
+              });
               if (r.ok) {
                 setMsg({ ok: true, text: `Confirmed: ${r.label}` });
                 setPc("");
@@ -211,13 +214,44 @@ function HubEditor() {
         </button>
       </div>
       {msg && (
-        <p
-          className="mt-1.5 text-xs"
-          style={{ color: msg.ok ? "#22c55e" : "#ef4444" }}
-        >
+        <p className="mt-1 text-xs" style={{ color: msg.ok ? "#22c55e" : "#ef4444" }}>
           {msg.text}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Per-account rental hubs — each account's gear lives somewhere different. Type
+ * a UK postcode per account, confirmed against postcodes.io (the register). Tile
+ * distance + the too-heavy tag are measured from that account's hub. The
+ * heavy/max travel ranges below are shared across accounts.
+ */
+function HubEditor() {
+  const hubs = useQuery(api.settings.listAccountHubs);
+  const settings = useQuery(api.settings.get);
+  const update = useMutation(api.settings.update);
+  if (!hubs || !settings) return null;
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">Rental hubs (per account)</label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        Where each account&apos;s gear lives. Distance to a chat&apos;s pickup
+        location and the &ldquo;too heavy&rdquo; tag are measured from that
+        account&apos;s hub. Enter a UK postcode — confirmed against the register.
+      </p>
+      <div className="space-y-3">
+        {hubs.map((h) => (
+          <HubRow
+            key={String(h.account_id)}
+            account_id={String(h.account_id)}
+            display_name={h.display_name}
+            hub_postcode={h.hub_postcode}
+            hub_label={h.hub_label}
+          />
+        ))}
+      </div>
       <div className="flex items-center gap-4 mt-3 flex-wrap">
         <label className="text-xs text-[#cbd5e1] flex items-center gap-1.5">
           Heavy items reach

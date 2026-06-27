@@ -45,6 +45,13 @@ export default defineSchema({
     // prompt (recency bias) — e.g. included-free accessories, battery families,
     // "suggest only gear we own". Account-specific. See generateDraft.
     hard_truths: v.optional(v.string()),
+    // Per-account main rental hub (where THIS account's gear lives). Confirmed
+    // via postcodes.io. Tile distance + the too-heavy tag measure from here.
+    // (The heavy/max-km ranges stay global in `settings`.)
+    hub_postcode: v.optional(v.string()),
+    hub_label: v.optional(v.string()),
+    hub_lat: v.optional(v.number()),
+    hub_lng: v.optional(v.number()),
     message_templates: v.optional(v.any()),
     unknown_categories: v.optional(v.array(v.string())),
     last_synced_v1: v.optional(v.number()),

@@ -33,33 +33,45 @@ import {
 } from "./lib/delivery_weight";
 
 /** Settings hub config slice used to rate a tile's location. */
-type HubCfg = {
-  lat?: number | null;
-  lng?: number | null;
-  heavyMaxKm?: number | null;
-  maxKm?: number | null;
-} | null;
+// Per-account hub book: each account's hub coords (from its account_profiles)
+// plus the global heavy/max-km ranges (from settings). Built once per query.
+type HubBook = {
+  bySlug: Map<string, { lat: number | null; lng: number | null }>;
+  heavyMaxKm: number | null;
+  maxKm: number | null;
+};
 
-function hubFrom(settings: Doc<"settings"> | null): HubCfg {
-  if (!settings) return null;
+async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
+  const settings = await ctx.db.query("settings").first();
+  const profiles = await ctx.db.query("account_profiles").collect();
+  const bySlug = new Map<string, { lat: number | null; lng: number | null }>();
+  for (const p of profiles) {
+    const acc = await ctx.db.get(p.account_id);
+    if (acc?.slug)
+      bySlug.set(acc.slug, { lat: p.hub_lat ?? null, lng: p.hub_lng ?? null });
+  }
   return {
-    lat: settings.hub_lat ?? null,
-    lng: settings.hub_lng ?? null,
-    heavyMaxKm: settings.hub_heavy_max_km ?? null,
-    maxKm: settings.hub_max_km ?? null,
+    bySlug,
+    heavyMaxKm: settings?.hub_heavy_max_km ?? null,
+    maxKm: settings?.hub_max_km ?? null,
   };
 }
 
 /**
  * Build the tile/thread location overlay from the cached listing location + the
- * current hub. Distance + the too-heavy/out-of-range flags are derived LIVE so
- * they follow the Settings hub without rewriting reservations.
+ * order's OWN account hub. Distance + the too-heavy/out-of-range flags are
+ * derived LIVE so they follow each account's hub without rewriting reservations.
  */
-function computeLocation(reservation: Doc<"reservations"> | null, hub: HubCfg) {
+function computeLocation(
+  reservation: Doc<"reservations"> | null,
+  slug: string | undefined,
+  hubBook: HubBook | null,
+) {
   if (!reservation || reservation.loc_lat == null || reservation.loc_lng == null)
     return null;
   const lat = reservation.loc_lat;
   const lng = reservation.loc_lng;
+  const hub = slug ? hubBook?.bySlug.get(slug) : undefined;
   let distance_km: number | null = null;
   let too_heavy = false;
   let out_of_range = false;
@@ -77,8 +89,8 @@ function computeLocation(reservation: Doc<"reservations"> | null, hub: HubCfg) {
     const r = tooHeavyForLocation(
       order,
       distance_km,
-      hub.heavyMaxKm ?? 5,
-      hub.maxKm ?? 30,
+      hubBook?.heavyMaxKm ?? 5,
+      hubBook?.maxKm ?? 30,
     );
     too_heavy = r.tooHeavy;
     out_of_range = r.outOfRange;
@@ -435,7 +447,7 @@ async function assembleTile(
   threadId: string,
   priceIndex?: PriceIndex,
   availCtx?: AvailCtx,
-  hub?: HubCfg,
+  hub?: HubBook,
 ) {
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
   if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
@@ -561,7 +573,7 @@ async function assembleTile(
     ai_draft_text: conv?.ai_draft_text ?? null,
     ai_draft_confidence: conv?.ai_draft_confidence ?? null,
     ai_draft_flags: conv?.ai_draft_flags ?? null,
-    location: computeLocation(reservation, hub ?? null),
+    location: computeLocation(reservation, slug, hub ?? null),
   };
 }
 
@@ -614,7 +626,7 @@ export const getReplyQueue = query({
     const settingsRow = await ctx.db.query("settings").first();
     const incPending =
       includePending ?? settingsRow?.availability_include_pending ?? false;
-    const hub = hubFrom(settingsRow);
+    const hub = await loadHubBook(ctx);
     const availCtx = await loadAvailCtx(ctx, incPending);
 
     // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
@@ -768,7 +780,7 @@ export const getThreadById = query({
       thread_id,
       priceIndex,
       availCtx,
-      hubFrom(settingsRow),
+      await loadHubBook(ctx),
     );
   },
 });
@@ -1063,7 +1075,7 @@ export const getThreadContext = internalQuery({
 
     return {
       account_slug: slug ?? null,
-      location: computeLocation(reservation, hubFrom(settingsRow)),
+      location: computeLocation(reservation, slug, await loadHubBook(ctx)),
       renter_id: renterId ?? null,
       conversation_id: conv?._id ?? null,
       conversation_stage,
