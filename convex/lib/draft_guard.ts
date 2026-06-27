@@ -64,6 +64,10 @@ export interface GuardOpts {
   /** Booked items we can't fulfil (marketing/SEO listing, not owned). The draft
    *  must not confirm them. */
   unfulfillableItems?: string[];
+  /** Whether we have ANY item-level grounding (real availability / specs /
+   *  pricing). When false, the draft must ask — never assert availability,
+   *  stock, or price. */
+  hasItemGrounding?: boolean;
 }
 
 // ── Shared patterns (from patterns.ts) ────────────────────────────
@@ -89,6 +93,8 @@ const SEVERITY: Record<string, FlagSeverity> = {
   EQUIPMENT_SUBSTITUTION: "critical",
   FABRICATED_QUOTE: "critical",
   UNFULFILLABLE_BOOKING: "critical",
+  UNGROUNDED_AVAILABILITY: "critical",
+  UNGROUNDED_PRICE: "critical",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
@@ -429,6 +435,28 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     }
   }
 
+  // 8c. UNGROUNDED AVAILABILITY / PRICE — FLAG (the inquiry-fabrication bug)
+  // When we have no item-level grounding, the draft must ASK, not assert. Catch
+  // confident "yeah it's available" / "we've got 3" / "£5/day" with no basis.
+  if (opts.hasItemGrounding === false) {
+    const assertsAvail =
+      /\b(?:it'?s|that'?s|they'?re|these are|those are)\s+(?:all\s+)?(?:available|free|in stock)\b|\byeah,?\s*(?:it'?s|that'?s|they'?re|we'?ve got|i'?ve got)\b|\bavailable\s+(?:for|from|on|today|tomorrow|those|that|this|the\s+\d)\b|\bin stock\b|\b(?:we'?ve|i'?ve)\s+got\s+\d|\bfree\s+for\s+(?:those|that|the|today|tomorrow|your)\b/i.test(
+        text,
+      );
+    if (assertsAvail)
+      push(
+        "UNGROUNDED_AVAILABILITY",
+        "Asserts availability/stock with no item grounding — should ask which item + say I'll check",
+        "flagged",
+      );
+    if (/£\s?\d/.test(text))
+      push(
+        "UNGROUNDED_PRICE",
+        "Quotes a price with no pricing grounding for this item",
+        "flagged",
+      );
+  }
+
   // 9. INVALID PICKUP TIME (renter proposed, draft accepted) — FLAG
   if (ranges.length > 0) {
     const rt = message.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
@@ -742,25 +770,28 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   // Future-tense "I'll get it accepted" / "let me approve it" always flags (the
   // chat can't do admin actions). Past-tense "I've approved your request" only
   // flags when the booking ISN'T actually approved yet — otherwise it's true.
+  // Admin actions the chat can NEVER do (mark pickup/return, process) — always.
   if (
-    /\b(?:I'?ll (?:get it|have it) (?:accepted|confirmed|approved|sorted)|let me (?:accept|confirm|approve) (?:it|that|the|your)|I'?m (?:accepting|confirming|approving) (?:it|the|your))\b/i.test(
+    /\b(?:I'?ll (?:get it|have it) (?:accepted|confirmed|approved|sorted)|let me (?:accept|confirm|approve) (?:it|that|the|your)|I'?m (?:accepting|confirming|approving) (?:it|the|your)|(?:just |I'?ve |I have )?marked (?:it|the|your|this)?\s*(?:as )?(?:picked up|collected|returned|complete)|process(?:ed|ing)? the return|I'?ll process the return)\b/i.test(
       text,
     )
   )
     push(
       "FALSE_ACTION_CLAIM",
-      "Claims it will perform an admin action (accept/approve/verify) the chat can't do",
+      "Claims it performed/will perform an admin action (approve/mark pickup/return) the chat can't do",
       "flagged",
     );
+  // Approval claims ("(just) approved your booking", "I've accepted it") — only
+  // a problem when the booking ISN'T actually approved yet.
   else if (
     !opts.ownerApproved &&
-    /\bI'?ve (?:just |now )?(?:accepted|confirmed|approved) (?:it|the|your)\b/i.test(
+    /\b(?:just |I'?ve |I have )?(?:accepted|confirmed|approved) (?:it|the|your|this)\b/i.test(
       text,
     )
   )
     push(
       "FALSE_ACTION_CLAIM",
-      "Claims the booking is already approved, but it isn't approved yet",
+      "Says the booking is approved, but it isn't approved yet",
       "flagged",
     );
 
@@ -793,6 +824,9 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     .replace(/\n{3,}/g, "\n\n")
     .replace(/(\*{2,}|_{2,}|#{1,})/g, "")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s*—\s*/g, ", ") // em-dash → comma (persona forbids em-dashes)
+    .replace(/(\d)\s*–\s*(\d)/g, "$1-$2") // en-dash range "10 – 12" → "10-12"
+    .replace(/\s*–\s*/g, ", ") // any other en-dash → comma
     .replace(/^\s+|\s+$/g, "")
     .replace(/  +/g, " ");
   if (text !== before) push("FORMATTING", "Cleaned formatting artifacts", "stripped");

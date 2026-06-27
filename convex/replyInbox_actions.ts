@@ -191,12 +191,23 @@ export const generateDraft = action({
       );
     if (c.unfulfillable?.length)
       facts.push(
-        `NOT IN OUR INVENTORY — ${c.unfulfillable.join(", ")}. This booking is for gear we don't actually own (a marketing/SEO listing). Do NOT confirm or say it's approved/sorted; tell the renter we can't fulfil that exact item and offer a real owned alternative, or say I'll sort it.`,
+        `NOT IN OUR INVENTORY — ${c.unfulfillable.join(", ")}. We don't stock this exact item. Do NOT confirm it, say it's approved, or quote a price for it. Tell the renter warmly that we can't provide that specific item and offer a real owned alternative (or say I'll sort it). Do NOT explain why the listing exists or call it a test/error.`,
       );
     const factsBlock = facts.length
       ? "FACTS — the ONLY information you may state as fact. If something you need isn't listed, say I'll check; never guess prices, specs, availability, dates, policies, or gear we don't have:\n" +
         facts.map((f, i) => `[F${i + 1}] ${f}`).join("\n")
       : null;
+
+    // Do we have ANY item-level grounding? If not (a bare inquiry with no
+    // resolved item/availability/pricing), the draft must ASK, not assert.
+    const hasItemGrounding = !!(
+      c.availability?.items?.length ||
+      c.fact_pack?.specs?.length ||
+      c.fact_pack?.pricing?.itemPrices?.length
+    );
+    const noGroundingLine = hasItemGrounding
+      ? null
+      : "I do NOT have this item's availability, stock count, or price in front of me. Do NOT say it's available/free/in stock, do NOT state a quantity, and do NOT quote a price. Ask which exact item or listing they mean and tell them to send a booking request so I can check and confirm.";
 
     // Renter trust line — feed the AI who it's talking to (it must NOT repeat
     // this to the renter; it just informs tone + caution).
@@ -254,6 +265,7 @@ export const generateDraft = action({
         : null,
       requestLine,
       factsBlock,
+      noGroundingLine,
       c.business_hours
         ? c.business_hours
         : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
@@ -322,6 +334,7 @@ export const generateDraft = action({
         ].includes(c.order_step ?? "") ||
         ["confirmed", "ongoing", "completed"].includes(c.status ?? ""),
       unfulfillableItems: c.unfulfillable ?? undefined,
+      hasItemGrounding,
       factPack: c.fact_pack
         ? {
             pricing: c.fact_pack.pricing,
