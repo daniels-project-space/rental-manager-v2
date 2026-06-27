@@ -84,6 +84,76 @@ function LockedToggle({
   );
 }
 
+/**
+ * Per-account "hard truths" editor — the ground-truth block injected verbatim at
+ * the end of every AI draft for that account. Each account gets its own textarea
+ * with a Save button that appears only when there are unsaved edits.
+ */
+function HardTruthsEditor() {
+  const accounts = useQuery(api.settings.listAccountHardTruths);
+  const save = useMutation(api.settings.setAccountHardTruths);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  if (!accounts) return null;
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">AI ground truth (hard truths)</label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        Account-specific facts the AI must always respect — injected at the end of
+        every draft (e.g. included-free accessories, battery families, gear you do
+        / don&apos;t own). Never shown to renters.
+      </p>
+      <div className="space-y-3">
+        {accounts.map((a) => {
+          const id = String(a.account_id);
+          const value = drafts[id] ?? a.hard_truths;
+          const dirty = value !== a.hard_truths;
+          return (
+            <div key={id}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-[#cbd5e1]">
+                  {a.display_name}
+                </span>
+                {dirty ? (
+                  <button
+                    disabled={savingId === id}
+                    onClick={async () => {
+                      setSavingId(id);
+                      setSavedId(null);
+                      try {
+                        await save({ account_id: a.account_id, hard_truths: value });
+                        setSavedId(id);
+                      } finally {
+                        setSavingId(null);
+                      }
+                    }}
+                    className="text-[11px] px-2 py-0.5 rounded-md bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 disabled:opacity-50"
+                  >
+                    {savingId === id ? "Saving…" : "Save"}
+                  </button>
+                ) : savedId === id ? (
+                  <span className="text-[11px] text-green-400">Saved</span>
+                ) : null}
+              </div>
+              <textarea
+                value={value}
+                onChange={(e) =>
+                  setDrafts((d) => ({ ...d, [id]: e.target.value }))
+                }
+                rows={4}
+                placeholder="e.g. SD cards & batteries are included free; only suggest gear I actually own…"
+                className="w-full resize-y rounded-lg px-2.5 py-2 text-[13px]"
+                style={INPUT_STYLE}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   onClose: () => void;
 }
@@ -289,6 +359,8 @@ export function SettingsDrawer({ onClose }: Props) {
             </button>
           </div>
         </div>
+
+        <HardTruthsEditor />
       </div>
 
       {saveError && (

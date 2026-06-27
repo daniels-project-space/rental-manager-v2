@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 
 // W01, W02, W20 — settings singleton row
 export const get = query({
@@ -49,6 +50,61 @@ export const update = mutation({
     if (fields.pickup_hours !== undefined) patch.pickup_hours = fields.pickup_hours;
 
     await ctx.db.patch(existing._id, patch);
+    return { ok: true };
+  },
+});
+
+// ── Per-account AI "hard truths" (account_profiles.hard_truths) ───
+// Owner-editable ground-truth injected verbatim at the end of every AI draft
+// for that account. Edited from the Settings drawer.
+
+/** All draft accounts (excludes the dbcinema_web storefront) + their hard_truths. */
+export const listAccountHardTruths = query({
+  args: {},
+  handler: async (ctx) => {
+    const accounts = await ctx.db.query("accounts").collect();
+    const out: {
+      account_id: Id<"accounts">;
+      slug: string;
+      display_name: string;
+      hard_truths: string;
+    }[] = [];
+    for (const a of accounts) {
+      if (a.slug === "dbcinema_web") continue; // storefront, not a draft account
+      const profile = await ctx.db
+        .query("account_profiles")
+        .withIndex("by_account", (q) => q.eq("account_id", a._id))
+        .first();
+      out.push({
+        account_id: a._id,
+        slug: a.slug,
+        display_name: a.display_name ?? a.slug,
+        hard_truths: profile?.hard_truths ?? "",
+      });
+    }
+    out.sort((x, y) => x.slug.localeCompare(y.slug));
+    return out;
+  },
+});
+
+export const setAccountHardTruths = mutation({
+  args: { account_id: v.id("accounts"), hard_truths: v.string() },
+  handler: async (ctx, { account_id, hard_truths }) => {
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", account_id))
+      .first();
+    const now = Date.now();
+    if (profile) {
+      await ctx.db.patch(profile._id, { hard_truths, updated_at: now });
+    } else {
+      await ctx.db.insert("account_profiles", {
+        account_id,
+        hard_truths,
+        created_at: now,
+        updated_at: now,
+      });
+    }
     return { ok: true };
   },
 });
