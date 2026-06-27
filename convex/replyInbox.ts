@@ -720,9 +720,13 @@ export const getThreadContext = internalQuery({
       slug = acc?.slug;
     }
 
-    // Per-account persona / tone / discount codes for grounded drafting.
+    // Per-account persona / voice / business rules for grounded drafting.
     let persona_prompt: string | undefined;
     let discount_codes: unknown;
+    let business_rules: unknown;
+    let delivery_policy: unknown;
+    let response_style: unknown;
+    let business_hours: unknown;
     if (accountId) {
       const profile = await ctx.db
         .query("account_profiles")
@@ -730,10 +734,16 @@ export const getThreadContext = internalQuery({
         .first();
       persona_prompt = profile?.persona_prompt ?? profile?.persona ?? undefined;
       discount_codes = profile?.discount_codes;
+      business_rules = profile?.rules;
+      delivery_policy = profile?.delivery;
+      response_style = profile?.response_style;
+      business_hours = profile?.business_hours;
     }
 
     const renterId = reservation?.renter_id ?? conv?.renter_id ?? undefined;
-    const renter = renterId ? await ctx.db.get(renterId) : null;
+    const renter = renterId
+      ? ((await ctx.db.get(renterId)) as Doc<"renters"> | null)
+      : null;
 
     const msgs = await ctx.db
       .query("hygglo_messages")
@@ -751,9 +761,18 @@ export const getThreadContext = internalQuery({
       account_slug: slug ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,
+      business_rules: business_rules ?? null,
+      delivery_policy: delivery_policy ?? null,
+      response_style: response_style ?? null,
+      business_hours: business_hours ?? null,
       renter_name:
         renter?.display_name ?? reservation?.renter_name ?? "the renter",
       renter_rating: renter?.hygglo_rating ?? null,
+      renter_review_count: renter?.hygglo_review_count ?? null,
+      renter_blacklisted: renter?.blacklisted ?? renter?.blacklist ?? false,
+      renter_flagged:
+        (renter as { flag_on_request?: boolean } | null)?.flag_on_request ?? false,
+      renter_total_rentals: renter?.total_rentals_count ?? null,
       has_reservation: !!reservation,
       items: richItems.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name)),
       start_date: reservation?.start_date ?? null,

@@ -230,10 +230,17 @@ function AvailabilityBadge({ a, compact }: { a: TileAvailability; compact?: bool
 
 function Stars({ rating, count }: { rating: number | null; count: number | null }) {
   if (rating == null) return <span className="text-[11px] text-[#64748b]">no rating</span>;
+  // Flag low-rated renters (< 4★) in red everywhere this renders (card + modal).
+  const low = rating < 4;
   return (
-    <span className="text-xs text-[#f5c518] tabular-nums whitespace-nowrap">
-      ★ {rating.toFixed(1)}
-      {count != null && <span className="text-[#64748b]"> ({count})</span>}
+    <span
+      className={`text-xs tabular-nums whitespace-nowrap ${low ? "text-red-400 font-semibold" : "text-[#f5c518]"}`}
+      title={low ? "Low-rated renter — vet their history before accepting" : undefined}
+    >
+      {low ? "⚠ " : ""}★ {rating.toFixed(1)}
+      {count != null && (
+        <span className={low ? "text-red-400/70" : "text-[#64748b]"}> ({count})</span>
+      )}
     </span>
   );
 }
@@ -807,12 +814,13 @@ export function ReplyModal({
         >
           <Thumb src={tile.image_url} accent={accent} size={64} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[17px] font-semibold text-[#f1f3f5] truncate">{tile.renter_name}</span>
-              <Stars rating={tile.renter_rating} count={tile.renter_review_count} />
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-[17px] font-semibold text-[#f1f3f5] truncate min-w-0 flex-1">{tile.renter_name}</span>
+              <span className="shrink-0"><Stars rating={tile.renter_rating} count={tile.renter_review_count} /></span>
               <button
                 onClick={onClose}
-                className="ml-auto w-7 h-7 rounded-lg flex items-center justify-center text-[#8b8fa3] hover:text-white hover:bg-white/[0.06] text-xl leading-none"
+                aria-label="Close"
+                className="shrink-0 w-9 h-9 -mr-1 rounded-lg flex items-center justify-center text-[#9aa0ad] hover:text-white hover:bg-white/[0.08] text-2xl leading-none"
               >
                 ×
               </button>
@@ -826,6 +834,16 @@ export function ReplyModal({
                 {statusText(tile)}
               </span>
             </div>
+            {tile.renter_rating != null && tile.renter_rating < 4 && (
+              <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2.5 py-1.5">
+                <span className="text-red-400 text-[13px] leading-none mt-px">⚠</span>
+                <span className="text-[11.5px] text-red-200/90 leading-snug">
+                  Low-rated renter — {tile.renter_rating.toFixed(1)}★
+                  {tile.renter_review_count != null ? ` over ${tile.renter_review_count} reviews` : ""}.
+                  Vet their history before you accept.
+                </span>
+              </div>
+            )}
             {itemLine(tile) && (
               <div className="text-[13px] text-[#c5cad3] mt-1.5">{itemLine(tile)}</div>
             )}
@@ -866,8 +884,9 @@ export function ReplyModal({
           </div>
         </div>
 
-        {/* Thread */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-black/25 min-h-[10rem]">
+        {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
+            (with Send) is ALWAYS visible, never clipped off-screen on mobile. */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-black/25">
           {thread === undefined ? (
             <SkeletonBlock className="h-24 w-full" />
           ) : thread.length === 0 ? (
@@ -904,8 +923,8 @@ export function ReplyModal({
           ))}
         </div>
 
-        {/* Compose + decisions */}
-        <div className="p-4 border-t border-white/[0.07] space-y-3 bg-[#0e1014]">
+        {/* Compose + decisions — shrink-0 so it never gets compressed/clipped. */}
+        <div className="shrink-0 p-4 border-t border-white/[0.07] space-y-3 bg-[#0e1014]">
           {(ds.canApprove || ds.canDecline || decided) && (
             <div className="flex items-center gap-2 flex-wrap">
               {decided ? (
@@ -1021,7 +1040,9 @@ export function ReplyModal({
             onChange={(e) => setText(e.target.value)}
             placeholder="Write a reply…"
             rows={3}
-            className="w-full resize-y rounded-xl bg-black/35 border border-white/10 px-3.5 py-2.5 text-[13.5px] text-[#eef1f5] placeholder-[#5b6170] focus:outline-none focus:border-white/25 focus:ring-2 focus:ring-white/[0.04]"
+            // text-[16px]: iOS Safari zooms the page when a focused input is
+            // <16px — keep it exactly 16 to stop the zoom-on-type.
+            className="w-full resize-y rounded-xl bg-black/35 border border-white/10 px-3.5 py-2.5 text-[16px] text-[#eef1f5] placeholder-[#5b6170] focus:outline-none focus:border-white/25 focus:ring-2 focus:ring-white/[0.04]"
           />
           <div className="flex items-center gap-2">
             {!draft && !drafting && (

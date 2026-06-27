@@ -59,20 +59,55 @@ export const generateDraft = action({
       "availability, dates, or policies you weren't given. If they haven't placed a " +
       "booking request yet (inquiry), nudge them to send one; if a request is pending " +
       "my approval, confirm availability and the next step.\n\n" +
-      "Output ONLY the message body. No preamble, no surrounding quotes, no sign-off.";
+      "TIMES, HOURS & RULES (important):\n" +
+      "- Do NOT rubber-stamp a specific pickup/return time or say a time 'is fine' on " +
+      "your own. Only agree to a time if it clearly falls within the business hours " +
+      "below; if hours aren't given or the time looks early/late (e.g. 8am, late night), " +
+      "say I'll confirm the exact time rather than committing to it.\n" +
+      "- Respect the delivery policy and business rules below; don't promise delivery " +
+      "outside the stated area or invent terms.\n" +
+      "- NEVER mention internal policy, flags, ratings, or blacklisting to the renter.\n" +
+      (c.response_style
+        ? `\nMatch this house voice exactly: ${JSON.stringify(c.response_style)}.\n`
+        : "") +
+      "\nOutput ONLY the message body. No preamble, no surrounding quotes, no sign-off.";
 
     const transcript = c.messages
       .map((m) => `${m.role === "owner" ? "Me (owner)" : "Renter"}: ${m.content}`)
       .join("\n");
 
+    const STAGE: Record<string, string> = {
+      REQUEST: "PENDING REQUEST — awaiting my approve/decline",
+      APPROVED: "APPROVED — awaiting the renter's payment",
+      FUNDS_RESERVED: "APPROVED — awaiting the renter's payment",
+      VERIFIED: "VERIFYING the renter's ID",
+      BOOKED_AFTER_VERIFIED: "CONFIRMED — booking is locked in",
+      DELIVERED: "OUT — gear is currently with the renter",
+      RETURNED: "RETURNED — gear back, wrapping up",
+      REVIEWED: "COMPLETE",
+      CANCELED: "CANCELLED",
+    };
     const requestLine = !c.has_reservation
-      ? "Booking status: INQUIRY — renter has NOT placed a booking request yet"
+      ? "Booking stage: INQUIRY — renter has NOT placed a booking request yet"
       : c.is_request
-        ? "Booking status: PENDING REQUEST — awaiting my approve/decline"
-        : `Booking status: ${c.status ?? c.order_step ?? "active"}`;
+        ? "Booking stage: PENDING REQUEST — awaiting my approve/decline"
+        : `Booking stage: ${(c.order_step && STAGE[c.order_step]) ?? c.status ?? "active"}`;
+
+    // Renter trust line — feed the AI who it's talking to (it must NOT repeat
+    // this to the renter; it just informs tone + caution).
+    const rt: string[] = [];
+    if (c.renter_rating != null) rt.push(`${c.renter_rating}★${c.renter_review_count != null ? ` from ${c.renter_review_count} reviews` : ""}`);
+    if (c.renter_total_rentals) rt.push(`${c.renter_total_rentals} past rentals`);
+    if (c.renter_blacklisted) rt.push("BLACKLISTED");
+    else if (c.renter_flagged) rt.push("FLAGGED for manual review");
+    const lowRated = c.renter_rating != null && c.renter_rating < 4;
+    const renterLine = rt.length
+      ? `Renter trust (internal, do NOT mention): ${rt.join(", ")}.${lowRated ? " Low rating — be helpful but don't over-commit; I'll vet them." : ""}`
+      : null;
 
     const prompt = [
-      `Renter: ${c.renter_name}${c.renter_rating != null ? ` (★${c.renter_rating})` : ""}`,
+      `Renter: ${c.renter_name}`,
+      renterLine,
       c.account_slug ? `Account: ${c.account_slug}` : null,
       c.items.length ? `Items requested: ${c.items.join(", ")}` : null,
       c.start_date ? `Rental period: ${c.start_date} → ${c.end_date ?? "?"}` : null,
@@ -82,6 +117,11 @@ export const generateDraft = action({
         ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
         : null,
       requestLine,
+      c.business_hours
+        ? `Business hours: ${JSON.stringify(c.business_hours)}`
+        : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
+      c.delivery_policy ? `Delivery policy: ${JSON.stringify(c.delivery_policy)}` : null,
+      c.business_rules ? `House rules (internal, follow but never quote verbatim or mention blacklisting): ${JSON.stringify(c.business_rules)}` : null,
       c.discount_codes
         ? `Discount codes available: ${JSON.stringify(c.discount_codes)}`
         : null,
