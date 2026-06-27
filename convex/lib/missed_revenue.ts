@@ -58,7 +58,7 @@ export type MissedRevenueResult = {
 const CAUSE_LABEL: Record<string, string> = {
   owner_denied: "declined",
   verification_failed: "verification failed",
-  renter_cancelled: "cancelled after paying",
+  renter_cancelled: "cancelled",
   other: "fell through",
 };
 
