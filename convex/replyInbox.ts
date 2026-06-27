@@ -24,6 +24,7 @@ import {
   type OverrideMap,
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
+import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 
 type RichItem = { name: string; qty: number; image_url: string | null };
 
@@ -820,6 +821,32 @@ export const getThreadContext = internalQuery({
       }
     }
 
+    // Phase 4 conversation stage (sales funnel). A reservation's DB status is
+    // authoritative; a date-less inquiry is read from renter interest signals.
+    let conversation_stage: string;
+    if (reservation) {
+      conversation_stage = stageFromReservationStatus(
+        reservation.status,
+        reservation.order_step,
+      );
+    } else {
+      const renterText = renterMsgs.join(" ").toLowerCase();
+      const interest =
+        /\b(price|cost|how much|available|free|book|rent|hire|when|date|deliver|pickup|collect)\b/.test(
+          renterText,
+        );
+      const affirmative =
+        /\b(sounds good|perfect|great|yes|sure|let'?s do|i'?ll take|go ahead|book it)\b/.test(
+          renterText,
+        );
+      conversation_stage =
+        affirmative && renterMsgs.length >= 3
+          ? "READY_TO_BOOK"
+          : interest
+            ? "INTERESTED"
+            : "INQUIRY";
+    }
+
     const richItems = buildRichItems(reservation, conv);
 
     // Phase 0 unblock: resolve the requested items to real inventory units and
@@ -913,6 +940,8 @@ export const getThreadContext = internalQuery({
     return {
       account_slug: slug ?? null,
       renter_id: renterId ?? null,
+      conversation_id: conv?._id ?? null,
+      conversation_stage,
       renter_dna,
       prior_rentals,
       last_rental_at,
@@ -961,6 +990,7 @@ export const setDraft = internalMutation({
     thread_id: v.string(),
     draft_text: v.string(),
     message_id: v.optional(v.string()),
+    conversation_stage: v.optional(v.string()),
     confidence: v.optional(v.number()),
     flags: v.optional(
       v.array(
@@ -982,19 +1012,27 @@ export const setDraft = internalMutation({
       ),
     ),
   },
-  handler: async (ctx, { thread_id, draft_text, message_id, confidence, flags }) => {
+  handler: async (
+    ctx,
+    { thread_id, draft_text, message_id, conversation_stage, confidence, flags },
+  ) => {
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
     if (!conv) return { ok: false };
-    await ctx.db.patch(conv._id, {
+    const patch: Record<string, unknown> = {
       ai_draft_text: draft_text,
       ai_draft_for_message_id: message_id,
       ai_draft_generated_at: Date.now(),
       ai_draft_confidence: confidence,
       ai_draft_flags: flags,
-    });
+    };
+    if (conversation_stage && conversation_stage !== conv.conversation_stage) {
+      patch.conversation_stage = conversation_stage;
+      patch.stage_updated_at = Date.now();
+    }
+    await ctx.db.patch(conv._id, patch);
     return { ok: true };
   },
 });

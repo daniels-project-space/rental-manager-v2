@@ -19,6 +19,7 @@ import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
 import { dnaSummary } from "./lib/renter_dna";
+import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import {
   sendManualRenterMessage,
   manualApproveOrder,
@@ -46,6 +47,66 @@ export const generateDraft = action({
     const c = await ctx.runQuery(internal.replyInbox.getThreadContext, {
       thread_id,
     });
+
+    // Renter messages (oldest→newest) for negotiation + routing reads.
+    const renterMsgs = c.messages
+      .filter((m) => m.role === "renter")
+      .map((m) => m.content);
+    const lastRenter = renterMsgs[renterMsgs.length - 1] ?? "";
+
+    // Phase 4 negotiation ladder (harvested from the dormant renter_bot stack):
+    // objection count → HOLD_FIRM / OFFER_ALTERNATIVES / SOFT_YIELD framing.
+    const negotiation = computeNegotiationStance({
+      latestMessage: lastRenter,
+      priorRenterMessages: renterMsgs.slice(0, -1),
+      lastPriceOfferedGbp: c.gross_paid_gbp ?? null,
+      isHighValue: (c.prior_rentals ?? 0) >= 3,
+    });
+
+    // Phase 4 model routing: high-stakes turns go to the stronger model.
+    const lr = lastRenter.toLowerCase();
+    const rentalShipped =
+      ["VERIFIED", "BOOKED_AFTER_VERIFIED", "DELIVERED"].includes(
+        c.order_step ?? "",
+      ) ||
+      c.status === "ongoing" ||
+      c.status === "confirmed";
+    const highStakes =
+      /\b(refund|compensat|money back|my money|reimburse|chargeback)\b/.test(lr) ||
+      (rentalShipped &&
+        /\b(scratched|broke|broken|damaged|dropped|not working|won'?t turn on|cracked|smashed|shattered|malfunction|faulty)\b/.test(
+          lr,
+        )) ||
+      /\b(lawyer|sue|legal action|court|trading standards|small.?claims|ombudsman|paypal dispute)\b/.test(
+        lr,
+      ) ||
+      /🙄|😒|😤|\b(oh (?:great|wonderful|fantastic|perfect|brilliant)|really professional|wow.*service)\b/.test(
+        lr,
+      ) ||
+      (negotiation.objectionCount >= 1 && (c.gross_paid_gbp ?? 0) >= 200);
+
+    // Stage-specific objective for the draft (sales funnel awareness).
+    const STAGE_OBJECTIVE: Record<string, string> = {
+      INQUIRY:
+        "They're just asking — answer clearly and nudge them to send a booking request.",
+      INTERESTED:
+        "They're warming up — build confidence, answer their questions, move toward a request.",
+      READY_TO_BOOK:
+        "They're close — remove the last bit of friction and get the request in.",
+      BOOKED:
+        "Request placed but NOT yet confirmed/paid — guide them through payment/verification; do NOT say it's confirmed.",
+      CONFIRMED:
+        "Booked and paid — handle logistics (pickup, times) precisely; this is locked in.",
+      COMPLETED: "Rental's done — wrap up warmly, no upsell.",
+      DEAD: "Likely lost — a light, no-pressure door-open only.",
+    };
+    const stageLine = c.conversation_stage
+      ? `Stage goal: ${STAGE_OBJECTIVE[c.conversation_stage] ?? c.conversation_stage}`
+      : null;
+    const negotiationLine =
+      negotiation.stance !== "NONE"
+        ? `Negotiation (internal, ${negotiation.stance}): ${negotiation.suggestedFraming}`
+        : null;
 
     const system =
       (c.persona_prompt ??
@@ -164,6 +225,8 @@ export const generateDraft = action({
       renterLine,
       dnaLine,
       welcomeLine,
+      stageLine,
+      negotiationLine,
       c.account_slug ? `Account: ${c.account_slug}` : null,
       c.items.length ? `Items requested: ${c.items.join(", ")}` : null,
       c.start_date ? `Rental period: ${c.start_date} → ${c.end_date ?? "?"}` : null,
@@ -192,7 +255,7 @@ export const generateDraft = action({
       .join("\n");
 
     const gen = await gatedGenerateText({
-      model: await getActionLlmModel(),
+      model: await getActionLlmModel({ strong: highStakes }),
       system,
       prompt,
       bypass: true,
@@ -208,8 +271,6 @@ export const generateDraft = action({
     // (internal leaks, leaked reasoning, "Hygglo", timestamps, markdown, Leo/
     // diogo we→I) and FLAG judgement calls for my review (price/availability
     // claims, premature confirmation, false action claims, out-of-hours times…).
-    const lastRenter =
-      [...c.messages].reverse().find((m) => m.role === "renter")?.content ?? "";
     const guardStage =
       c.order_step === "RETURNED" ||
       c.order_step === "REVIEWED" ||
@@ -252,6 +313,7 @@ export const generateDraft = action({
       thread_id,
       draft_text: finalDraft,
       message_id: c.last_message_id ?? undefined,
+      conversation_stage: c.conversation_stage ?? undefined,
       confidence: guard.confidence,
       flags: guard.flags,
     });

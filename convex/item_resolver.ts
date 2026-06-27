@@ -65,7 +65,7 @@ let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
  *  are stable. */
 const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
 
-export async function getActionLlmModel() {
+export async function getActionLlmModel(opts?: { strong?: boolean }) {
   const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
   if (useXai) {
     if (!_xai) {
@@ -77,6 +77,14 @@ export async function getActionLlmModel() {
   if (!_openrouter) {
     const key = await getVaultKey("openrouter", "OPENROUTER_API_KEY");
     _openrouter = createOpenRouter({ apiKey: key });
+  }
+  // High-stakes turns (refund, damage-on-shipped, big-£ negotiation, legal,
+  // sarcasm) route to a stronger reasoning model — same Sonnet the dashboard
+  // chat uses for its hard turns. No provider pin (anthropic is its own).
+  if (opts?.strong) {
+    return _openrouter(
+      process.env.CHAT_MODEL_SMART ?? "anthropic/claude-sonnet-4.6",
+    );
   }
   return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash", {
     extraBody: { provider: PROVIDER_PIN },
