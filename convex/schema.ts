@@ -2059,4 +2059,21 @@ export default defineSchema({
     created_at: v.number(),
     updated_at: v.number(),
   }).index("by_account", ["account_slug"]),
+
+  // ── Renter reviews (Quick Reply, 2026-06-27) ─────────────────────────
+  // Individual reviews a renter RECEIVED, fetched from Hygglo's public
+  // /v2/product-reviews?vendorId=<hygglo_user_id> endpoint (text + rating +
+  // author + date). Cached so the chat can show them on star-click + flag any
+  // review under 4★. Refreshed on demand.
+  renter_reviews: defineTable({
+    renter_id: v.id("renters"),
+    hygglo_review_id: v.number(),
+    rating: v.optional(v.number()),
+    text: v.optional(v.string()),
+    author: v.optional(v.string()),
+    created_at: v.optional(v.string()), // ISO from Hygglo
+    fetched_at: v.number(),
+  })
+    .index("by_renter", ["renter_id"])
+    .index("by_renter_review", ["renter_id", "hygglo_review_id"]),
 });

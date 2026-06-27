@@ -101,8 +101,12 @@ export const generateDraft = action({
     if (c.renter_blacklisted) rt.push("BLACKLISTED");
     else if (c.renter_flagged) rt.push("FLAGGED for manual review");
     const lowRated = c.renter_rating != null && c.renter_rating < 4;
+    const lowRevText =
+      c.low_reviews && c.low_reviews.length
+        ? ` Past low reviews: ${c.low_reviews.map((r) => `${r.rating}★ "${r.text.slice(0, 80)}"`).join("; ")}.`
+        : "";
     const renterLine = rt.length
-      ? `Renter trust (internal, do NOT mention): ${rt.join(", ")}.${lowRated ? " Low rating — be helpful but don't over-commit; I'll vet them." : ""}`
+      ? `Renter trust (internal, do NOT mention): ${rt.join(", ")}.${lowRated ? " Low rating — be helpful but don't over-commit; I'll vet them." : ""}${lowRevText}`
       : null;
 
     const prompt = [

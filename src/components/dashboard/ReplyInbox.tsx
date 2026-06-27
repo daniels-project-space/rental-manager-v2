@@ -30,6 +30,12 @@ const cannedListRef = makeFunctionReference<"query">("canned_responses:list");
 const cannedCreateRef = makeFunctionReference<"mutation">("canned_responses:create");
 const cannedUpdateRef = makeFunctionReference<"mutation">("canned_responses:update");
 const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remove");
+// renter_reviews is a new module → reference by name (api.renter_reviews.* would
+// break next build until _generated catches up).
+const reviewsGetRef = makeFunctionReference<"query">("renter_reviews:getForThread");
+const reviewsRefreshRef = makeFunctionReference<"action">("renter_reviews:refreshForThread");
+type RenterReview = { id: string; rating: number | null; text: string | null; author: string | null; created_at: string | null };
+type RenterReviewsResult = { reviews: RenterReview[]; lowCount: number; fetched: boolean };
 
 interface RichItem {
   name: string;
@@ -684,6 +690,20 @@ export function ReplyModal({
   const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
+  // Renter reviews — fetched live from Hygglo on first star-click, then cached.
+  const [showReviews, setShowReviews] = useState(false);
+  const reviews = useQuery(
+    reviewsGetRef,
+    showReviews ? { thread_id: tile.thread_id } : "skip",
+  ) as RenterReviewsResult | undefined;
+  const refreshReviews = useAction(reviewsRefreshRef);
+  const reviewsRefreshedRef = useRef(false);
+  useEffect(() => {
+    if (showReviews && !reviewsRefreshedRef.current) {
+      reviewsRefreshedRef.current = true;
+      void refreshReviews({ thread_id: tile.thread_id });
+    }
+  }, [showReviews, refreshReviews, tile.thread_id]);
   // Per-account canned "quick texts" — tapping one PASTES into the box.
   const canned = (useQuery(cannedListRef, {
     account_slug: tile.account_slug ?? undefined,
@@ -818,7 +838,16 @@ export function ReplyModal({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="text-[17px] font-semibold text-[#f1f3f5] truncate min-w-0 flex-1">{tile.renter_name}</span>
-              <span className="shrink-0"><Stars rating={tile.renter_rating} count={tile.renter_review_count} /></span>
+              <button
+                onClick={() => setShowReviews((s) => !s)}
+                className="shrink-0 inline-flex items-center gap-0.5 hover:opacity-80"
+                title="See this renter's reviews"
+              >
+                <Stars rating={tile.renter_rating} count={tile.renter_review_count} />
+                {tile.renter_rating != null && (
+                  <span className="text-[9px] text-[#6b7280]">{showReviews ? "▴" : "▾"}</span>
+                )}
+              </button>
               <button
                 onClick={onClose}
                 aria-label="Close"
@@ -885,6 +914,56 @@ export function ReplyModal({
             )}
           </div>
         </div>
+
+        {/* Renter reviews — opened by tapping the stars. Lowest-rated first; any
+            review under 4★ is highlighted with its text. */}
+        {showReviews && (
+          <div className="shrink-0 border-b border-white/[0.07] bg-black/25 max-h-56 overflow-y-auto">
+            <div className="flex items-center gap-2 px-4 pt-2.5 pb-1 sticky top-0 bg-[#101216]">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa0ad]">
+                Reviews{reviews?.reviews.length ? ` (${reviews.reviews.length})` : ""}
+                {reviews?.lowCount ? <span className="text-red-400"> · {reviews.lowCount} under 4★</span> : null}
+              </span>
+              <button onClick={() => setShowReviews(false)} className="ml-auto text-[#8b8fa3] hover:text-white text-sm leading-none">×</button>
+            </div>
+            <div className="px-4 pb-3 space-y-1.5">
+              {reviews === undefined ? (
+                <div className="text-xs text-[#6b7280] py-2">Loading reviews…</div>
+              ) : reviews.reviews.length === 0 ? (
+                <div className="text-xs text-[#6b7280] py-2">No reviews found for this renter.</div>
+              ) : (
+                reviews.reviews.map((r) => {
+                  const low = r.rating != null && r.rating < 4;
+                  return (
+                    <div
+                      key={r.id}
+                      className="rounded-lg px-2.5 py-1.5"
+                      style={{
+                        background: low ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
+                        border: low ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[11px] font-semibold ${low ? "text-red-400" : "text-amber-300/90"}`}>
+                          {r.rating != null ? `${r.rating}★` : "—"}
+                        </span>
+                        {r.author && <span className="text-[10px] text-[#8b8fa3] truncate">{r.author}</span>}
+                        {r.created_at && (
+                          <span className="text-[10px] text-[#6b7280] ml-auto shrink-0">
+                            {new Date(r.created_at).toLocaleDateString("en-GB")}
+                          </span>
+                        )}
+                      </div>
+                      {r.text && (
+                        <div className={`text-[12px] mt-0.5 ${low ? "text-red-100/90" : "text-[#c5cad3]"}`}>{r.text}</div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
             (with Send) is ALWAYS visible, never clipped off-screen on mobile. */}

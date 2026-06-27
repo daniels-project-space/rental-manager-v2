@@ -757,6 +757,20 @@ export const getThreadContext = internalQuery({
       ? ((await ctx.db.get(renterId)) as Doc<"renters"> | null)
       : null;
 
+    // Cached low (<4★) reviews for this renter, if any have been fetched — the
+    // AI uses them to stay cautious (it must NOT quote them to the renter).
+    let low_reviews: Array<{ rating: number; text: string }> = [];
+    if (renterId) {
+      const revs = await ctx.db
+        .query("renter_reviews")
+        .withIndex("by_renter", (q) => q.eq("renter_id", renterId))
+        .collect();
+      low_reviews = revs
+        .filter((r) => r.rating != null && r.rating < 4 && !!r.text)
+        .map((r) => ({ rating: r.rating as number, text: r.text as string }))
+        .slice(0, 3);
+    }
+
     const msgs = await ctx.db
       .query("hygglo_messages")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -785,6 +799,7 @@ export const getThreadContext = internalQuery({
       renter_flagged:
         (renter as { flag_on_request?: boolean } | null)?.flag_on_request ?? false,
       renter_total_rentals: renter?.total_rentals_count ?? null,
+      low_reviews,
       has_reservation: !!reservation,
       items: richItems.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name)),
       start_date: reservation?.start_date ?? null,
