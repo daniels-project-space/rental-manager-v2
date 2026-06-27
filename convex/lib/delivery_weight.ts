@@ -108,8 +108,14 @@ export function nameHeavy(items: Array<{ name?: string | null; qty?: number | nu
     )
   )
     return true;
+  // Effective quantity: max of the qty field and a leading "Nx" in the name
+  // ("3x Sony FX3" as one line item → 3, not 1).
+  const qtyOf = (i: { name?: string | null; qty?: number | null }) => {
+    const m = (i.name ?? "").match(/(?:^|\b)(\d{1,2})\s?x\b/i);
+    return Math.max(i.qty ?? 1, m ? parseInt(m[1]) : 1, 1);
+  };
   const count = (re: RegExp) =>
-    items.reduce((s, i) => (re.test((i.name ?? "").toLowerCase()) ? s + Math.max(1, i.qty ?? 1) : s), 0);
+    items.reduce((s, i) => (re.test((i.name ?? "").toLowerCase()) ? s + qtyOf(i) : s), 0);
   // multiple cameras
   if (
     count(

@@ -207,7 +207,7 @@ export const generateDraft = action({
     );
     const noGroundingLine = hasItemGrounding
       ? null
-      : "I do NOT have this item's availability, stock count, or price in front of me. Do NOT say it's available/free/in stock, do NOT state a quantity, and do NOT quote a price. Ask which exact item or listing they mean and tell them to send a booking request so I can check and confirm.";
+      : "I do NOT have this item's availability, stock count, price, or specs in front of me. Do NOT say it's available/free/in stock, do NOT state a quantity, do NOT quote a price, and do NOT state any spec or dimension (screen size, resolution, weight, aperture, etc.). Ask which exact item or listing they mean and tell them to send a booking request so I can check and confirm.";
 
     // Renter trust line — feed the AI who it's talking to (it must NOT repeat
     // this to the renter; it just informs tone + caution).

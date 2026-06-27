@@ -95,6 +95,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   UNFULFILLABLE_BOOKING: "critical",
   UNGROUNDED_AVAILABILITY: "critical",
   UNGROUNDED_PRICE: "critical",
+  UNGROUNDED_SPEC: "high",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
@@ -455,6 +456,18 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
         "Quotes a price with no pricing grounding for this item",
         "flagged",
       );
+    // Spec/dimension assertions (screen size, resolution, weight, aperture) with
+    // no specs in context — the projector "100 inches" fabrication class.
+    if (
+      /\b\d+(?:\.\d+)?\s?(?:inch|inches|"|mm|cm|kg|metres?|meters?|ft|feet|fps|megapixel|mp|watts?|w)\b|\b(?:1080p|4k|6k|8k|f\/?\d|t\d\.\d)\b/i.test(
+        text,
+      )
+    )
+      push(
+        "UNGROUNDED_SPEC",
+        "States a spec/dimension with no specs grounding for this item",
+        "flagged",
+      );
   }
 
   // 9. INVALID PICKUP TIME (renter proposed, draft accepted) — FLAG
@@ -770,22 +783,27 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   // Future-tense "I'll get it accepted" / "let me approve it" always flags (the
   // chat can't do admin actions). Past-tense "I've approved your request" only
   // flags when the booking ISN'T actually approved yet — otherwise it's true.
-  // Admin actions the chat can NEVER do (mark pickup/return, process) — always.
-  if (
-    /\b(?:I'?ll (?:get it|have it) (?:accepted|confirmed|approved|sorted)|let me (?:accept|confirm|approve) (?:it|that|the|your)|I'?m (?:accepting|confirming|approving) (?:it|the|your)|(?:just |I'?ve |I have )?marked (?:it|the|your|this)?\s*(?:as )?(?:picked up|collected|returned|complete)|process(?:ed|ing)? the return|I'?ll process the return)\b/i.test(
-      text,
-    )
-  )
+  // SELF-ATTRIBUTED admin actions — the chat can NEVER approve/accept/mark/
+  // process, so attributing the act to itself is always wrong, even on an order
+  // that IS approved ("just approved your booking" implies the chat did it).
+  const selfAdminAction =
+    /\bjust (?:approved|accepted|confirmed) (?:your|the|this)\b/i.test(text) ||
+    /\bI(?:'?ve| have| just)? (?:approved|accepted|confirmed) (?:it|your|the|this)\b/i.test(text) ||
+    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get it |have it )?(?:accept|approve|confirm)(?:ed)?\b/i.test(text) ||
+    /\b(?:I'?ll|let me|I can|I'?ve|just|I'?m) (?:going to )?mark(?:ing|ed)? (?:it|the|your|this)?\s*(?:as )?(?:picked up|collected|returned|complete)\b/i.test(text) ||
+    /\bprocess(?:ed|ing)? the return\b/i.test(text) ||
+    /\bI'?m (?:accepting|confirming|approving)\b/i.test(text);
+  if (selfAdminAction)
     push(
       "FALSE_ACTION_CLAIM",
-      "Claims it performed/will perform an admin action (approve/mark pickup/return) the chat can't do",
+      "Attributes an admin action (approve/mark pickup/return) to the chat — it can only draft, never act",
       "flagged",
     );
-  // Approval claims ("(just) approved your booking", "I've accepted it") — only
-  // a problem when the booking ISN'T actually approved yet.
+  // Passive "your booking is approved" — fine when it actually is; flag only when
+  // it isn't approved yet.
   else if (
     !opts.ownerApproved &&
-    /\b(?:just |I'?ve |I have )?(?:accepted|confirmed|approved) (?:it|the|your|this)\b/i.test(
+    /\b(?:your |the |it'?s )?(?:booking|request|order)?\s*(?:is |has been |'?s )?(?:approved|accepted|confirmed)\b/i.test(
       text,
     )
   )
