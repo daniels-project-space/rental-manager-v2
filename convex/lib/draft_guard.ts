@@ -56,6 +56,8 @@ export interface GuardOpts {
     marketingItems?: string[];
     lowValueInstruction?: string;
   };
+  /** Real per-item availability for the rental dates (verify.ts cross-check). */
+  availability?: { items: { name: string; available: boolean }[] };
 }
 
 // ── Shared patterns (from patterns.ts) ────────────────────────────
@@ -80,6 +82,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   MARKETING_ITEM_AVAILABLE: "critical",
   EQUIPMENT_SUBSTITUTION: "critical",
   FABRICATED_QUOTE: "critical",
+  AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
   INVALID_TIME_ACCEPTED: "high",
@@ -391,6 +394,34 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     }
   }
 
+  // 8b. AVAILABILITY CONTRADICTION (verify.ts) — draft vs the real calendar
+  if (opts.availability?.items?.length) {
+    const tl = text.toLowerCase();
+    const saysUnavail =
+      /\b(not available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i.test(
+        text,
+      );
+    const saysAvail =
+      /\b(available|in stock|i'?ve got|i have|free for|ready for|can do|yep,? got)\b/i.test(
+        text,
+      );
+    for (const it of opts.availability.items) {
+      if (!tl.includes(it.name.toLowerCase())) continue;
+      if (it.available && saysUnavail && !saysAvail)
+        push(
+          "AVAILABILITY_CONTRADICTION",
+          `Draft says ${it.name} is unavailable, but the calendar shows it free for these dates`,
+          "flagged",
+        );
+      if (!it.available && saysAvail && !saysUnavail)
+        push(
+          "AVAILABILITY_CONTRADICTION",
+          `Draft implies ${it.name} is available, but it's booked out for these dates`,
+          "flagged",
+        );
+    }
+  }
+
   // 9. INVALID PICKUP TIME (renter proposed, draft accepted) — FLAG
   if (ranges.length > 0) {
     const rt = message.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
@@ -567,9 +598,14 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
           for (let v = Math.floor(p.min * mult * 0.9); v <= Math.ceil(p.max * mult * 1.1); v++)
             valid.add(v);
       }
-      for (let v = 10; v <= 100; v++) valid.add(v);
-      for (let v = 50; v <= 500; v += 10) valid.add(v);
-      for (let v = 5; v <= 15; v++) valid.add(v);
+      // Only widen for delivery/deposit when the conversation is actually about
+      // them — otherwise a £10-100 catch-all hides wrong daily-rate quotes (v1 bug).
+      const ctxText = `${message} ${text}`.toLowerCase();
+      if (/\b(deliver|delivery|courier|drop.?off|postage|ship)\b/.test(ctxText))
+        for (let v = 10; v <= 100; v++) valid.add(v);
+      if (/\b(deposit|security|hold)\b/.test(ctxText))
+        for (let v = 50; v <= 500; v += 10) valid.add(v);
+      for (let v = 5; v <= 15; v++) valid.add(v); // small included-extra add-ons
       const wrong = stated.filter((p) => p >= 5 && !valid.has(Math.round(p)));
       if (wrong.length) {
         const known = factPack.pricing.itemPrices
@@ -595,9 +631,16 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     );
 
   // 18. MODEL NAME CONFUSION — FLAG (factPack-gated)
+  // Token-boundary match, NOT substring: "fx30" contains "fx3" and "x100vi"
+  // contains "x100v", so a naive includes() never fires (v1 bug). (?<![a-z0-9])
+  // … (?![a-z0-9]) ensures a model token isn't matched inside a longer one.
   if (factPack?.verifiedListingItem) {
     const listing = factPack.verifiedListingItem.toLowerCase();
-    const rl = text.toLowerCase();
+    const present = (hay: string, tok: string) =>
+      new RegExp(
+        `(?<![a-z0-9])${tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`,
+        "i",
+      ).test(hay);
     const confusions: [string, string][] = [
       ["x100vi", "x100v"],
       ["x100v", "x100vi"],
@@ -609,14 +652,14 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       ["a7rv", "a7riv"],
       ["rs3 pro", "rs4 pro"],
       ["rs4 pro", "rs3 pro"],
-      ["r5c", "r5 "],
+      ["r5c", "r5"],
       ["bmpcc 4k", "bmpcc 6k"],
       ["bmpcc 6k", "bmpcc 4k"],
       ["6k pro", "6k g2"],
       ["6k g2", "6k pro"],
     ];
     for (const [correct, wrong] of confusions)
-      if (listing.includes(correct) && rl.includes(wrong) && !rl.includes(correct)) {
+      if (present(listing, correct) && present(text, wrong) && !present(text, correct)) {
         push("EQUIPMENT_SUBSTITUTION", `Wrong model "${wrong}" — listing is "${correct}"`, "flagged");
         break;
       }

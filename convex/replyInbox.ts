@@ -793,18 +793,92 @@ export const getThreadContext = internalQuery({
     // ground specs/availability. `availability` carries the resolved canonical
     // item names + per-item free/booked counts for the draft prompt + guard.
     let availability: TileAvailability | null = null;
+    // Phase 2 FactPack: per-item specs + price + marketing flags for the
+    // resolved items, plus a catalogue-wide owned-camera guard. Feeds the
+    // Knowledge Fence in the prompt AND the draft guard (price/spec/model checks).
+    let fact_pack: {
+      pricing?: { itemPrices: { name: string; min: number; max: number }[] };
+      specs: { name: string; text: string }[];
+      marketingItems: string[];
+      verifiedListingItem?: string;
+    } | null = null;
+    let owned_cameras: string[] = [];
     if (reservation) {
       try {
         const availCtx = await loadAvailCtx(ctx, false);
         availability = computeAvailability(reservation, availCtx);
+
+        const units = reservationItemUnits(
+          reservation,
+          availCtx.productIndex,
+          availCtx.overrideMap,
+        );
+        const resolvedIds = [...units.keys()].slice(0, 8);
+        const priceRows = await ctx.db.query("pricing_catalog").collect();
+        const specs: { name: string; text: string }[] = [];
+        const itemPrices: { name: string; min: number; max: number }[] = [];
+        const marketingItems: string[] = [];
+        for (const idStr of resolvedIds) {
+          const item = await ctx.db.get(idStr as Id<"items">);
+          if (!item) continue;
+          const name = item.name_canonical ?? "item";
+          if (item.is_marketing_only) marketingItems.push(name);
+          const spec = await ctx.db
+            .query("item_specs")
+            .withIndex("by_item", (q) => q.eq("item_id", idStr as Id<"items">))
+            .first();
+          if (spec)
+            specs.push({
+              name,
+              text: `${spec.description}${spec.specs_long ? ` ${spec.specs_long}` : ""}`
+                .replace(/\s+/g, " ")
+                .slice(0, 320),
+            });
+          const sq = squash(name);
+          const pr = priceRows.find((r) => {
+            const k = squash(r.item_name_canonical);
+            return k.length >= 5 && keyMatches(sq, k);
+          });
+          if (pr)
+            itemPrices.push({
+              name,
+              min: pr.daily_price_min,
+              max: pr.daily_price_max,
+            });
+        }
+        fact_pack = {
+          pricing: itemPrices.length ? { itemPrices } : undefined,
+          specs,
+          marketingItems,
+          verifiedListingItem:
+            resolvedIds.length === 1
+              ? availCtx.itemName.get(resolvedIds[0])
+              : undefined,
+        };
+
+        // Owned-camera guard: only ever suggest a camera that's really in stock.
+        const allItems = await ctx.db.query("items").collect();
+        owned_cameras = allItems
+          .filter(
+            (it) =>
+              it.kind === "camera" &&
+              it.status === "active" &&
+              !it.is_marketing_only,
+          )
+          .map((it) => it.name_canonical)
+          .sort()
+          .slice(0, 40);
       } catch {
         availability = null; // grounding is best-effort; never block a draft
+        fact_pack = null;
       }
     }
 
     return {
       account_slug: slug ?? null,
       availability,
+      fact_pack,
+      owned_cameras,
       pickup_windows: pickupHours ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,

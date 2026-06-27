@@ -61,10 +61,12 @@ export const generateDraft = action({
       "- NO em-dashes. Use commas, full stops, or separate sentences.\n" +
       "- No greeting unless it genuinely fits, and no formal sign-off or name placeholder.\n" +
       "- Don't over-explain or hedge. Say the useful thing plainly.\n\n" +
-      "Grounding: use ONLY the facts in the booking context. Do NOT invent prices, " +
-      "availability, dates, or policies you weren't given. If they haven't placed a " +
-      "booking request yet (inquiry), nudge them to send one; if a request is pending " +
-      "my approval, confirm availability and the next step.\n\n" +
+      "Grounding: state as fact ONLY what's in the FACTS list and booking context " +
+      "below. Do NOT invent prices, availability, specs, dates, policies, or suggest " +
+      "gear we don't own. If you need something that isn't listed, say I'll check " +
+      "rather than guessing. If they haven't placed a booking request yet (inquiry), " +
+      "nudge them to send one; if a request is pending my approval, confirm " +
+      "availability and the next step.\n\n" +
       "TIMES, HOURS & RULES (important):\n" +
       "- Do NOT rubber-stamp a specific pickup/return time or say a time 'is fine' on " +
       "your own. Only agree to a time if it clearly falls within the business hours " +
@@ -99,19 +101,36 @@ export const generateDraft = action({
         ? "Booking stage: PENDING REQUEST — awaiting my approve/decline"
         : `Booking stage: ${(c.order_step && STAGE[c.order_step]) ?? c.status ?? "active"}`;
 
-    // Phase 0/2 grounding: real availability for the requested items + dates,
-    // resolved from inventory (confirmed bookings only). Overrides any guess.
-    const availLine =
-      c.availability && c.availability.items.length
-        ? "Live availability for these dates (real, confirmed bookings only — trust this over any assumption):\n" +
-          c.availability.items
-            .map((it) =>
-              it.available
-                ? `- ${it.name}: AVAILABLE (${it.free} of ${it.total_units} free)`
-                : `- ${it.name}: NOT AVAILABLE (${it.free <= 0 ? "none" : it.free} of ${it.total_units} free) — do NOT confirm this item; offer an alternative or say I'll check`,
-            )
-            .join("\n")
-        : null;
+    // Phase 2 Knowledge Fence: a numbered list of the ONLY facts the AI may
+    // state — real availability + price + specs (resolved from inventory,
+    // confirmed bookings only) + pickup windows + the owned-camera guard.
+    const facts: string[] = [];
+    if (c.availability && c.availability.items.length)
+      for (const it of c.availability.items)
+        facts.push(
+          it.available
+            ? `${it.name}: AVAILABLE for these dates (${it.free} of ${it.total_units} free)`
+            : `${it.name}: NOT available for these dates (booked out) — do not confirm it; offer an alternative or say I'll check`,
+        );
+    if (c.fact_pack?.pricing?.itemPrices?.length)
+      for (const p of c.fact_pack.pricing.itemPrices)
+        facts.push(
+          `${p.name}: daily price £${p.min}${p.max !== p.min ? `–${p.max}` : ""}`,
+        );
+    if (c.fact_pack?.specs?.length)
+      for (const s of c.fact_pack.specs) facts.push(`${s.name} — ${s.text}`);
+    if (c.pickup_windows?.length)
+      facts.push(
+        `Pickup/return windows (Europe/London): ${c.pickup_windows.map((w) => `${w.start}–${w.end}`).join(", ")}`,
+      );
+    if (c.owned_cameras?.length)
+      facts.push(
+        `Cameras in inventory (ONLY ever suggest a camera from this list; we own no others): ${c.owned_cameras.join(", ")}`,
+      );
+    const factsBlock = facts.length
+      ? "FACTS — the ONLY information you may state as fact. If something you need isn't listed, say I'll check; never guess prices, specs, availability, dates, policies, or gear we don't have:\n" +
+        facts.map((f, i) => `[F${i + 1}] ${f}`).join("\n")
+      : null;
 
     // Renter trust line — feed the AI who it's talking to (it must NOT repeat
     // this to the renter; it just informs tone + caution).
@@ -141,7 +160,7 @@ export const generateDraft = action({
         ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
         : null,
       requestLine,
-      availLine,
+      factsBlock,
       c.business_hours
         ? c.business_hours
         : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
@@ -198,6 +217,21 @@ export const generateDraft = action({
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
       firstPerson: c.account_slug === "leo" || c.account_slug === "diogo",
+      factPack: c.fact_pack
+        ? {
+            pricing: c.fact_pack.pricing,
+            verifiedListingItem: c.fact_pack.verifiedListingItem,
+            marketingItems: c.fact_pack.marketingItems,
+          }
+        : undefined,
+      availability: c.availability
+        ? {
+            items: c.availability.items.map((it) => ({
+              name: it.name,
+              available: it.available,
+            })),
+          }
+        : undefined,
     });
     const finalDraft = guard.text.trim() || draft;
 
