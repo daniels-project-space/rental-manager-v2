@@ -220,6 +220,19 @@ export const generateDraft = action({
       ? `Returning renter — this is rental #${c.prior_rentals + 1} with me; they've rented before, so a warm, familiar tone fits (no need to over-explain the basics).`
       : null;
 
+    // Phase 5: house rules (rules table), money-saving bundle, hard truths.
+    const rulesBlock = c.house_rules?.length
+      ? `House rules (internal, follow but NEVER quote verbatim or mention to the renter):\n${c.house_rules.map((r) => `- ${r}`).join("\n")}`
+      : c.business_rules
+        ? `House rules (internal, follow but never quote): ${JSON.stringify(c.business_rules)}`
+        : null;
+    const bundleLine = c.bundle_suggestion
+      ? `Optional money-saving bundle (mention only if it genuinely fits their shoot — never pushy): ${c.bundle_suggestion.name}${c.bundle_suggestion.price ? ` (${c.bundle_suggestion.price})` : ""}${c.bundle_suggestion.note ? ` — ${c.bundle_suggestion.note}` : ""}`
+      : null;
+    const hardTruthsBlock = c.hard_truths
+      ? `HARD TRUTHS (read these last, they override anything above):\n${c.hard_truths}`
+      : null;
+
     const prompt = [
       `Renter: ${c.renter_name}`,
       renterLine,
@@ -241,7 +254,8 @@ export const generateDraft = action({
         ? c.business_hours
         : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
       c.delivery_policy ? `Delivery policy: ${JSON.stringify(c.delivery_policy)}` : null,
-      c.business_rules ? `House rules (internal, follow but never quote verbatim or mention blacklisting): ${JSON.stringify(c.business_rules)}` : null,
+      rulesBlock,
+      bundleLine,
       c.discount_codes
         ? `Discount codes available: ${JSON.stringify(c.discount_codes)}`
         : null,
@@ -249,6 +263,7 @@ export const generateDraft = action({
       "Conversation so far:",
       transcript || "(no prior messages)",
       "",
+      hardTruthsBlock,
       "Draft my reply to the renter's most recent message:",
     ]
       .filter((l) => l !== null)
@@ -291,6 +306,17 @@ export const generateDraft = action({
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
       firstPerson: c.account_slug === "leo" || c.account_slug === "diogo",
+      ownerApproved:
+        [
+          "APPROVED",
+          "FUNDS_RESERVED",
+          "VERIFIED",
+          "BOOKED_AFTER_VERIFIED",
+          "DELIVERED",
+          "RETURNED",
+          "REVIEWED",
+        ].includes(c.order_step ?? "") ||
+        ["confirmed", "ongoing", "completed"].includes(c.status ?? ""),
       factPack: c.fact_pack
         ? {
             pricing: c.fact_pack.pricing,

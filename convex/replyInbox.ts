@@ -731,6 +731,7 @@ export const getThreadContext = internalQuery({
     let delivery_policy: unknown;
     let response_style: unknown;
     let business_hours: unknown;
+    let hard_truths: string | undefined;
     if (accountId) {
       const profile = await ctx.db
         .query("account_profiles")
@@ -742,7 +743,24 @@ export const getThreadContext = internalQuery({
       delivery_policy = profile?.delivery;
       response_style = profile?.response_style;
       business_hours = profile?.business_hours;
+      hard_truths = profile?.hard_truths;
     }
+
+    // Phase 5: house rules from the dedicated `rules` table (enabled, this
+    // account or global), priority-sorted. Carries the critical disclosure
+    // guards (never reveal AI / shared inventory, payment-template rules) the
+    // draft previously never saw. Tiny table — collect + filter in JS.
+    const allRules = await ctx.db.query("rules").collect();
+    const house_rules = allRules
+      .filter(
+        (r) =>
+          r.enabled &&
+          (r.account_id == null ||
+            (accountId != null && r.account_id === accountId)),
+      )
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+      .slice(0, 24)
+      .map((r) => r.rule_body);
 
     // Pickup/collection windows are owner-editable in Settings (singleton) and
     // take precedence over any account-profile hours — this is what stops the AI
@@ -937,6 +955,39 @@ export const getThreadContext = internalQuery({
       }
     }
 
+    // Phase 5: a gentle, money-saving bundle suggestion — ONLY early-funnel
+    // (never while negotiating/confirmed, where it would read as pushy). Matched
+    // by trigger keywords / use-cases against the conversation + requested items.
+    let bundle_suggestion: { name: string; price: string | null; note: string | null } | null =
+      null;
+    if (conversation_stage === "INQUIRY" || conversation_stage === "INTERESTED") {
+      const text = `${renterMsgs.join(" ")} ${richItems.map((i) => i.name).join(" ")}`.toLowerCase();
+      const bundles = await ctx.db.query("bundles").collect();
+      const match = bundles
+        .filter(
+          (b) =>
+            !b.account_scope ||
+            b.account_scope === "both" ||
+            b.account_scope === slug,
+        )
+        .find(
+          (b) =>
+            (b.trigger_keywords ?? []).some((k) => k && text.includes(k.toLowerCase())) ||
+            (b.use_cases ?? []).some((u) => u && text.includes(u.toLowerCase())),
+        );
+      if (match) {
+        const price =
+          match.daily_price_min != null
+            ? `£${match.daily_price_min}${match.daily_price_max && match.daily_price_max !== match.daily_price_min ? `–${match.daily_price_max}` : ""}/day`
+            : null;
+        bundle_suggestion = {
+          name: match.bundle_name,
+          price,
+          note: match.savings_note ?? null,
+        };
+      }
+    }
+
     return {
       account_slug: slug ?? null,
       renter_id: renterId ?? null,
@@ -948,6 +999,9 @@ export const getThreadContext = internalQuery({
       availability,
       fact_pack,
       owned_cameras,
+      house_rules,
+      hard_truths: hard_truths ?? null,
+      bundle_suggestion,
       pickup_windows: pickupHours ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,

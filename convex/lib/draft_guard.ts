@@ -58,6 +58,9 @@ export interface GuardOpts {
   };
   /** Real per-item availability for the rental dates (verify.ts cross-check). */
   availability?: { items: { name: string; available: boolean }[] };
+  /** True once the owner has actually approved the booking — so an accurate
+   *  "I've approved your request" is not mis-flagged as a false action claim. */
+  ownerApproved?: boolean;
 }
 
 // ── Shared patterns (from patterns.ts) ────────────────────────────
@@ -718,14 +721,28 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   }
 
   // 22. FALSE ACTION CLAIM — FLAG
+  // Future-tense "I'll get it accepted" / "let me approve it" always flags (the
+  // chat can't do admin actions). Past-tense "I've approved your request" only
+  // flags when the booking ISN'T actually approved yet — otherwise it's true.
   if (
-    /\b(?:I'?ll (?:get it|have it) (?:accepted|confirmed|approved|sorted)|I'?ve (?:just |now )?(?:accepted|confirmed|approved) (?:it|the|your)|I'?m (?:accepting|confirming|approving) (?:it|the|your)|let me (?:accept|confirm|approve) (?:it|that|the|your))\b/i.test(
+    /\b(?:I'?ll (?:get it|have it) (?:accepted|confirmed|approved|sorted)|let me (?:accept|confirm|approve) (?:it|that|the|your)|I'?m (?:accepting|confirming|approving) (?:it|the|your))\b/i.test(
       text,
     )
   )
     push(
       "FALSE_ACTION_CLAIM",
-      "Claims to perform an admin action (accept/approve/verify) the chat can't do",
+      "Claims it will perform an admin action (accept/approve/verify) the chat can't do",
+      "flagged",
+    );
+  else if (
+    !opts.ownerApproved &&
+    /\bI'?ve (?:just |now )?(?:accepted|confirmed|approved) (?:it|the|your)\b/i.test(
+      text,
+    )
+  )
+    push(
+      "FALSE_ACTION_CLAIM",
+      "Claims the booking is already approved, but it isn't approved yet",
       "flagged",
     );
 

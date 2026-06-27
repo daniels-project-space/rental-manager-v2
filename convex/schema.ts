@@ -41,6 +41,10 @@ export default defineSchema({
     discount_codes: v.optional(v.array(v.any())),
     response_style: v.optional(v.any()),    // widened from string to JSON object
     rules: v.optional(v.any()),
+    // Owner-editable ground-truth injected verbatim at the END of the draft
+    // prompt (recency bias) — e.g. included-free accessories, battery families,
+    // "suggest only gear we own". Account-specific. See generateDraft.
+    hard_truths: v.optional(v.string()),
     message_templates: v.optional(v.any()),
     unknown_categories: v.optional(v.array(v.string())),
     last_synced_v1: v.optional(v.number()),

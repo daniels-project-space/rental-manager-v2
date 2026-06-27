@@ -161,6 +161,7 @@ import type * as revenue from "../revenue.js";
 import type * as rules from "../rules.js";
 import type * as seed_data from "../seed/data.js";
 import type * as seed_diogo_profile from "../seed/diogo_profile.js";
+import type * as seed_hard_truths from "../seed/hard_truths.js";
 import type * as seed_inventory from "../seed/inventory.js";
 import type * as seed_renter_bot_memories from "../seed/renter_bot_memories.js";
 import type * as seed_renter_bot_rules from "../seed/renter_bot_rules.js";
@@ -336,6 +337,7 @@ declare const fullApi: ApiFromModules<{
   rules: typeof rules;
   "seed/data": typeof seed_data;
   "seed/diogo_profile": typeof seed_diogo_profile;
+  "seed/hard_truths": typeof seed_hard_truths;
   "seed/inventory": typeof seed_inventory;
   "seed/renter_bot_memories": typeof seed_renter_bot_memories;
   "seed/renter_bot_rules": typeof seed_renter_bot_rules;
