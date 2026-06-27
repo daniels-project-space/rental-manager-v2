@@ -1780,34 +1780,19 @@ export const getStatsDrawerData = query({
     // (account, days=30) row), refreshed hourly by master.refreshFast.
     // Cold-start fallback to live computeMissedRevenue keeps numbers
     // present for the first hour after deploy.
-    const missedRevenueAccount = accountSlug ?? "all";
-    const missedRevenueRow = await ctx.db
-      .query("mv_missed_revenue")
-      .withIndex("by_account_days", (q) =>
-        q.eq("account", missedRevenueAccount).eq("days", 30),
-      )
-      .first();
-    const missedRevenueResult = missedRevenueRow ?? await computeMissedRevenue(ctx, accountSlug, 30);
+    // 2026-06-27 overhaul: turned-away DEMAND, classified live. The old idle-
+    // capacity mv_missed_revenue is retired (idle days × price wasn't real loss).
+    const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30);
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
-      items: [
-        ...missedRevenueResult.denialLosses.slice(0, 10).map((d) => ({
-          reservation_id: d.denialId as string,
-          renter_name: null as string | null,
-          gross: d.estimatedValueGross ?? null,
-          net: d.estimatedValue,
-          reason: d.reason ?? null,
-          kind: "denial" as const,
-        })),
-        ...missedRevenueResult.gapLosses.slice(0, 10).map((g) => ({
-          reservation_id: g.itemName as string,
-          renter_name: null as string | null,
-          gross: null as number | null,
-          net: g.estimatedGapLoss,
-          reason: `idle_gap (${g.idleDays}d)` as string | null,
-          kind: "gap" as const,
-        })),
-      ].slice(0, 15),
+      items: missedRevenueResult.items.slice(0, 15).map((it) => ({
+        reservation_id: it.itemName,
+        renter_name: null as string | null,
+        gross: null as number | null,
+        net: it.value,
+        reason: `${it.cause} ·×${it.count}`,
+        kind: "demand" as const,
+      })),
     };
 
     // ── card: ai_boost (Wave AI-BE rework, 2026-05-22) ────────────

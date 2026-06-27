@@ -76,28 +76,36 @@ export function MissedRevenue() {
 
       {data !== undefined && (
         <>
-          {/* Summary */}
+          {/* Summary — turned-away demand */}
           <div className="mb-4 pb-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
             <p className="text-xs uppercase tracking-wider mb-1" style={{ color: "#8b8fa3" }}>
-              Missed — idle capacity
+              Missed — turned-away demand
             </p>
             <p className="text-3xl font-bold" style={{ color: "#ef4444" }}>
               £{data.totalMissed.toFixed(2)}
             </p>
             <p className="text-xs mt-1" style={{ color: "#8b8fa3" }}>
-              Theoretical idle-capacity opportunity — last {days} days. Declined requests are counted separately under Denied Revenue.
+              Real lost bookings the renter wanted but didn&apos;t get — last {days} days.
+              {(data.denialTotal > 0 || data.lostBookingTotal > 0) && (
+                <>
+                  {" "}
+                  ({data.denialTotal > 0 ? `£${data.denialTotal.toFixed(0)} declined` : ""}
+                  {data.denialTotal > 0 && data.lostBookingTotal > 0 ? " · " : ""}
+                  {data.lostBookingTotal > 0 ? `£${data.lostBookingTotal.toFixed(0)} fell through` : ""})
+                </>
+              )}
             </p>
           </div>
 
-          {/* Idle-capacity gap losses */}
-          {data.gapLosses.length === 0 ? (
-            <EmptyState message="No idle-capacity gaps this period" icon="✓" />
+          {/* Per-item turned-away demand */}
+          {data.items.length === 0 ? (
+            <EmptyState message="No turned-away demand this period — every request converted" icon="✓" />
           ) : (
             <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
               <p className="text-xs font-medium mb-2" style={{ color: "#8b8fa3" }}>
-                Top idle items
+                Most-requested gear you turned away
               </p>
-              {data.gapLosses.slice(0, 12).map((g) => (
+              {data.items.slice(0, 12).map((g) => (
                 <div
                   key={g.itemName}
                   className="flex items-center justify-between px-2.5 py-2 rounded-lg"
@@ -108,14 +116,14 @@ export function MissedRevenue() {
                       {g.itemName}
                     </p>
                     <p className="text-xs truncate" style={{ color: "#8b8fa3" }}>
-                      {g.idleDays}d idle of {days}d
+                      {g.count} {g.count === 1 ? "request" : "requests"} · {g.cause}
                     </p>
                   </div>
                   <span
                     className="text-xs font-semibold flex-shrink-0 ml-2"
-                    style={{ color: g.estimatedGapLoss > 0 ? "#ef4444" : "#8b8fa3" }}
+                    style={{ color: g.value > 0 ? "#ef4444" : "#8b8fa3" }}
                   >
-                    {g.estimatedGapLoss > 0 ? `−£${g.estimatedGapLoss.toFixed(2)}` : "—"}
+                    {g.value > 0 ? `−£${g.value.toFixed(2)}` : "—"}
                   </span>
                 </div>
               ))}

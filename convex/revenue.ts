@@ -147,33 +147,16 @@ export const getMissedRevenue = query({
     days: v.number(),
   },
   handler: async (ctx, { accountSlug, days }) => {
-    const account = accountSlug ?? "all";
-    const isStandardWindow = days === 30 || days === 90;
-    if (isStandardWindow) {
-      const row = await ctx.db
-        .query("mv_missed_revenue")
-        .withIndex("by_account_days", (q) =>
-          q.eq("account", account).eq("days", days),
-        )
-        .first();
-      if (row) {
-        return {
-          totalMissed: row.totalMissed,
-          denialLosses: row.denialLosses,
-          gapLosses: row.gapLosses,
-          gapTotal: row.gapTotal,
-          denialTotal: row.denialTotal,
-        };
-      }
-      // Cold-start: MV row not yet written. Fall through to live compute.
-    }
+    // Turned-away DEMAND, classified live (2026-06-27 overhaul). The old
+    // idle-capacity mv_missed_revenue is no longer read — idle days × price was
+    // not actually missed revenue.
     const result = await computeMissedRevenue(ctx, accountSlug, days);
     return {
       totalMissed: result.totalMissed,
-      denialLosses: result.denialLosses,
-      gapLosses: result.gapLosses,
-      gapTotal: result.gapTotal,
       denialTotal: result.denialTotal,
+      lostBookingTotal: result.lostBookingTotal,
+      items: result.items,
+      denialLosses: result.denialLosses,
     };
   },
 });
