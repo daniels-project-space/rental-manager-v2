@@ -4,7 +4,7 @@ import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPe
 import { realisedMonthRevenue, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
-import { computeMissedRevenue } from "./lib/missed_revenue";
+import { computeMissedRevenue, OWNER_SHARE } from "./lib/missed_revenue";
 import {
   tieredCreditTotals,
   type AiDecisionLite,
@@ -153,9 +153,11 @@ export const getMissedRevenue = query({
     const result = await computeMissedRevenue(ctx, accountSlug, days);
     return {
       totalMissed: result.totalMissed,
+      lostRevenueTotal: result.lostRevenueTotal,
+      missedMarketingTotal: result.missedMarketingTotal,
       denialTotal: result.denialTotal,
-      lostBookingTotal: result.lostBookingTotal,
-      items: result.items,
+      lostItems: result.lostItems,
+      marketingItems: result.marketingItems,
       denialLosses: result.denialLosses,
     };
   },
@@ -169,15 +171,9 @@ export const getInvestmentScorecard = query({
     accountSlug: v.union(v.string(), v.null()),
     _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, _bypassMv }) => {
-    if (!_bypassMv) {
-      const accountKey = accountSlug ?? "all";
-      const cached = await ctx.db
-        .query("mv_investment_scorecard")
-        .withIndex("by_account", (q) => q.eq("account", accountKey))
-        .first();
-      if (cached) return cached.payload;
-    }
+  handler: async (ctx, { accountSlug }) => {
+    // Computed live (2026-06-27 rework). The cached mv_investment_scorecard
+    // carried GROSS revenue; we now sum NET, so read live for correctness.
     const allItems = await ctx.db.query("items").collect();
     // Only count active non-marketing items WITH known acquisition cost (null items excluded, not treated as 0)
     const itemsWithCost = allItems.filter(
@@ -224,8 +220,10 @@ export const getInvestmentScorecard = query({
       // v1 imports: no order_step, but status="completed" on every paid row.
       return r.status === "confirmed" || r.status === "completed";
     });
+    // NET take-home (post ~36% Hygglo fee) to match every other revenue widget.
+    // Previously summed GROSS, which inflated revenue + ROI ~1.5x.
     const totalRevenue = realisedReservations.reduce(
-      (sum, r) => sum + (r.gross_paid_gbp ?? 0),
+      (sum, r) => sum + (r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE),
       0
     );
 

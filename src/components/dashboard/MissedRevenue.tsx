@@ -76,57 +76,80 @@ export function MissedRevenue() {
 
       {data !== undefined && (
         <>
-          {/* Summary — turned-away demand */}
+          {/* Headline — LOST REVENUE (owned gear we couldn't fulfil) */}
           <div className="mb-4 pb-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
             <p className="text-xs uppercase tracking-wider mb-1" style={{ color: "#8b8fa3" }}>
-              Missed — turned-away demand
+              Lost revenue — couldn&apos;t fulfil
             </p>
             <p className="text-3xl font-bold" style={{ color: "#ef4444" }}>
               £{data.totalMissed.toFixed(2)}
             </p>
             <p className="text-xs mt-1" style={{ color: "#8b8fa3" }}>
-              Real lost bookings the renter wanted but didn&apos;t get — last {days} days.
-              {(data.denialTotal > 0 || data.lostBookingTotal > 0) && (
-                <>
-                  {" "}
-                  ({data.denialTotal > 0 ? `£${data.denialTotal.toFixed(0)} declined` : ""}
-                  {data.denialTotal > 0 && data.lostBookingTotal > 0 ? " · " : ""}
-                  {data.lostBookingTotal > 0 ? `£${data.lostBookingTotal.toFixed(0)} fell through` : ""})
-                </>
-              )}
+              Requests for gear you OWN that were double-booked at the dates (plus
+              recorded denials) — last {days} days. Real money capacity cost you.
             </p>
           </div>
 
-          {/* Per-item turned-away demand */}
-          {data.items.length === 0 ? (
-            <EmptyState message="No turned-away demand this period — every request converted" icon="✓" />
+          {data.lostItems.length === 0 ? (
+            <EmptyState message="No double-booking losses this period — every request for owned gear could be met" icon="✓" />
           ) : (
-            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
               <p className="text-xs font-medium mb-2" style={{ color: "#8b8fa3" }}>
-                Most-requested gear you turned away
+                Owned gear you had to turn away
               </p>
-              {data.items.slice(0, 12).map((g) => (
+              {data.lostItems.slice(0, 10).map((g) => (
                 <div
                   key={g.itemName}
                   className="flex items-center justify-between px-2.5 py-2 rounded-lg"
                   style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.1)" }}
                 >
                   <div className="min-w-0">
-                    <p className="text-xs font-medium truncate" style={{ color: "#e4e6eb" }}>
-                      {g.itemName}
-                    </p>
+                    <p className="text-xs font-medium truncate" style={{ color: "#e4e6eb" }}>{g.itemName}</p>
                     <p className="text-xs truncate" style={{ color: "#8b8fa3" }}>
-                      {g.count} {g.count === 1 ? "request" : "requests"} · {g.cause}
+                      {g.count} {g.count === 1 ? "request" : "requests"} · fully booked
                     </p>
                   </div>
-                  <span
-                    className="text-xs font-semibold flex-shrink-0 ml-2"
-                    style={{ color: g.value > 0 ? "#ef4444" : "#8b8fa3" }}
-                  >
-                    {g.value > 0 ? `−£${g.value.toFixed(2)}` : "—"}
+                  <span className="text-xs font-semibold flex-shrink-0 ml-2" style={{ color: "#ef4444" }}>
+                    −£{g.value.toFixed(2)}
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* MISSED MARKETING — demand for gear we don't own (buy signals) */}
+          {data.marketingItems.length > 0 && (
+            <div className="mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <div className="flex items-baseline justify-between mb-2">
+                <p className="text-xs uppercase tracking-wider" style={{ color: "#8b8fa3" }}>
+                  Missed marketing — gear you don&apos;t own
+                </p>
+                <p className="text-sm font-bold" style={{ color: "#f59e0b" }}>
+                  £{data.missedMarketingTotal.toFixed(0)}
+                </p>
+              </div>
+              <p className="text-[11px] mb-2" style={{ color: "#8b8fa3" }}>
+                Demand you couldn&apos;t accept because it isn&apos;t in your inventory — a buy signal, not real lost revenue.
+              </p>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {data.marketingItems.slice(0, 8).map((g) => (
+                  <div
+                    key={g.itemName}
+                    className="flex items-center justify-between px-2.5 py-2 rounded-lg"
+                    style={{ background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.12)" }}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate" style={{ color: "#e4e6eb" }}>{g.itemName}</p>
+                      <p className="text-xs truncate" style={{ color: "#8b8fa3" }}>
+                        {g.count} {g.count === 1 ? "request" : "requests"} · not owned
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold flex-shrink-0 ml-2" style={{ color: "#f59e0b" }}>
+                      £{g.value.toFixed(0)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </>

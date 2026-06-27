@@ -1785,12 +1785,12 @@ export const getStatsDrawerData = query({
     const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30);
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
-      items: missedRevenueResult.items.slice(0, 15).map((it) => ({
+      items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({
         reservation_id: it.itemName,
         renter_name: null as string | null,
         gross: null as number | null,
         net: it.value,
-        reason: `${it.cause} ·×${it.count}`,
+        reason: `${it.count} ${it.count === 1 ? "request" : "requests"} · couldn't fulfil`,
         kind: "demand" as const,
       })),
     };

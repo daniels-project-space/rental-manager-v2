@@ -89,7 +89,7 @@ export function InvestmentScorecard() {
               color="#6ea8fe"
             />
             <Metric
-              label="Total Revenue"
+              label="Revenue (net)"
               value={`£${data.totalRevenue.toFixed(0)}`}
               color="#22c55e"
             />
@@ -115,11 +115,19 @@ export function InvestmentScorecard() {
               color="#f59e0b"
             />
             <Metric
-              label="ROI Status"
-              value={data.roiPct >= 100 ? "Recovered" : data.roiPct >= 0 ? "In profit" : "Negative"}
+              label="Status"
+              value={data.roiPct >= 100 ? "Doubled+" : data.roiPct >= 0 ? "Recovered" : "Below cost"}
               color={roiColor}
             />
           </div>
+
+          {data.itemsMissingCostCount > 0 && (
+            <p className="text-[11px] leading-snug" style={{ color: "#8b8fa3" }}>
+              ⓘ Revenue is net of Hygglo fees. {data.itemsMissingCostCount} owned
+              item{data.itemsMissingCostCount === 1 ? " has" : "s have"} no recorded
+              purchase cost, so true invested is higher and real ROI is lower than shown.
+            </p>
+          )}
         </div>
       )}
     </Card>

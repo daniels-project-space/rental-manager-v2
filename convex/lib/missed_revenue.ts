@@ -7,106 +7,154 @@
  *   - convex/revenue.ts          → getMissedRevenue (the large panel)
  *   - convex/dashboard.ts        → getStatsDrawerData.missed_revenue (top tile)
  *
- *  LOGIC OVERHAUL (2026-06-27, Daniel): "missed revenue" now means TURNED-AWAY
- *  DEMAND — real bookings that didn't happen — NOT idle capacity. Idle days ×
- *  daily price was a vanity number (an item nobody wanted still "missed" money).
- *  The new headline = lost requests the renter genuinely wanted but didn't get:
- *    • recorded denials (denial_records — owner explicitly declined), PLUS
- *    • reservations classified `genuine_demand` by the vetted demand classifier
- *      (owner-denied / verification-failed / paid-then-cancelled / booked-then-
- *      lost). Classified LIVE here so it never depends on a stale batch.
- *  Renter-walked browsers and never-booked inquiries are deliberately excluded.
+ *  LOGIC (2026-06-27, Daniel). "Missed" splits into two genuinely different
+ *  things, by whether we actually OWN the requested gear:
  *
- *  Net convention: denial_records.estimated_value + pricing are GROSS Hygglo £;
- *  multiply by OWNER_SHARE (0.64) so this matches every other revenue widget
- *  (reservation values use net_to_owner_gbp directly, already net).
+ *   • LOST REVENUE (real, headline): turned-away demand for gear we DO own that
+ *     we couldn't fulfil — it was fully booked at the requested dates (a real
+ *     double-booking conflict), plus recorded owner denials. This is money we
+ *     could have earned but capacity stopped us.
+ *
+ *   • MISSED MARKETING (buy signal): demand for gear we DON'T own (marketing-
+ *     only listings — e.g. a RED Komodo we list to attract enquiries). The
+ *     renter wanted it but we never had it, so it was never real revenue and
+ *     can't have been "cancelled after paying". It's a signal of what to buy.
+ *
+ *  Owned gear that was AVAILABLE but the request still fell through (the renter
+ *  walked) is NOT counted — that's not a capacity loss.
+ *
+ *  Demand is detected by the vetted classifier (demand_loss.classifyRow →
+ *  genuine_demand), run LIVE so it never depends on a stale batch. Values are
+ *  NET (reservation net_to_owner_gbp; gross sources × OWNER_SHARE).
  */
 import type { QueryCtx } from "../_generated/server";
-import type { Doc } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { OWNER_SHARE } from "./revenue_attribution";
 import { classifyRow } from "../demand_loss";
+import { bookedUnitsOnDate } from "./availability";
+import {
+  reservationItemUnits,
+  buildProductIndexMap,
+  buildOverrideMap,
+} from "./reservations/itemUnits";
 
-// Re-export so existing import sites stay valid.
 export { OWNER_SHARE };
 
 export type DenialLoss = {
   denialId: string;
   reason: string | undefined;
   itemName: string | undefined;
-  estimatedValue: number; // net (post-platform-fee)
+  estimatedValue: number; // net
   estimatedValueGross: number;
   notes: string | undefined;
   createdAt: number;
 };
 
-/** Per-item rollup of turned-away demand, sorted by value desc. */
 export type MissedItem = {
   itemName: string;
-  value: number; // net £, summed
-  count: number; // how many turned-away requests
-  cause: string; // dominant cause label ("declined" / "cancelled" / "mixed" …)
+  value: number; // net £
+  count: number; // # turned-away requests
 };
 
 export type MissedRevenueResult = {
-  totalMissed: number; // NET turned-away demand — headline
-  denialTotal: number; // recorded-denial portion
-  lostBookingTotal: number; // auto-classified lost-booking portion
-  items: MissedItem[]; // per-item rollup
-  denialLosses: DenialLoss[]; // recorded denials (for the "Recent denials" drawer)
+  totalMissed: number; // headline = LOST REVENUE (real, owned + couldn't fulfil)
+  lostRevenueTotal: number;
+  missedMarketingTotal: number;
+  denialTotal: number;
+  lostItems: MissedItem[]; // owned gear we couldn't fulfil (double-booked) + denials
+  marketingItems: MissedItem[]; // demand for gear we don't own → buy signals
+  denialLosses: DenialLoss[]; // recorded denials (for the drawer)
 };
 
-const CAUSE_LABEL: Record<string, string> = {
-  owner_denied: "declined",
-  verification_failed: "verification failed",
-  renter_cancelled: "cancelled",
-  other: "fell through",
-};
+const DAY = 86_400_000;
 
-function primaryItemName(r: Doc<"reservations">): string {
-  const resolved = (r.resolved_items ?? [])[0];
-  if (resolved?.item_name_canonical) return resolved.item_name_canonical;
-  const raw = (r.items ?? [])[0];
-  if (raw?.item_name) return raw.item_name;
-  return "Unknown item";
+function primaryRawName(r: Doc<"reservations">): string {
+  return (
+    (r.resolved_items ?? [])[0]?.item_name_canonical ||
+    (r.items ?? [])[0]?.item_name ||
+    (r.hygglo_items ?? [])[0]?.name ||
+    "Unknown item"
+  );
 }
 
-/**
- * Turned-away demand for an account over the trailing N days. Headline
- * `totalMissed` (NET) = recorded denials + live-classified genuine-demand
- * losses, so the top tile and the panel always agree.
- */
+function expandDates(start: string, end: string, cap = 45): string[] {
+  const s = new Date(`${start}T00:00:00Z`).getTime();
+  const e = new Date(`${end}T00:00:00Z`).getTime();
+  if (isNaN(s) || isNaN(e) || e < s) return [start];
+  const out: string[] = [];
+  for (let t = s; t <= e && out.length < cap; t += DAY) out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
+function rollup(rows: { name: string; value: number }[]): MissedItem[] {
+  const m = new Map<string, { value: number; count: number }>();
+  for (const r of rows) {
+    const e = m.get(r.name) ?? { value: 0, count: 0 };
+    e.value += r.value;
+    e.count += 1;
+    m.set(r.name, e);
+  }
+  return [...m.entries()]
+    .map(([itemName, e]) => ({ itemName, value: parseFloat(e.value.toFixed(2)), count: e.count }))
+    .sort((a, b) => b.value - a.value);
+}
+
 export async function computeMissedRevenue(
   ctx: QueryCtx,
   accountSlug: string | null,
   days: number,
 ): Promise<MissedRevenueResult> {
-  const cutoffMs = Date.now() - days * 86_400_000;
+  const cutoffMs = Date.now() - days * DAY;
   const cutoffStr = new Date(cutoffMs).toISOString().slice(0, 10);
 
   let accountId: Doc<"accounts">["_id"] | undefined;
   if (accountSlug) {
-    const accountRow = await ctx.db
-      .query("accounts")
-      .withIndex("by_slug", (q) => q.eq("slug", accountSlug))
-      .first();
-    accountId = accountRow?._id;
+    const acc = await ctx.db.query("accounts").withIndex("by_slug", (q) => q.eq("slug", accountSlug)).first();
+    accountId = acc?._id;
   }
 
-  // ── 1. Recorded denials (owner explicitly declined) ──────────────
+  // ── Inventory + resolution maps ──────────────────────────────────
+  const items = await ctx.db.query("items").collect();
+  const itemById = new Map(items.map((i) => [String(i._id), i]));
+  const productIndex = buildProductIndexMap(
+    (await ctx.db.query("hygglo_product_index").collect()) as Array<{
+      account_slug: string; product_id: number; item_id: Id<"items">;
+    }>,
+  );
+  const overrideMap = buildOverrideMap(
+    (await ctx.db.query("listing_resolution_override").collect()) as Array<{
+      account_slug: string; product_id: number;
+      components: Array<{ item_id: Id<"items"> | string; qty: number }>;
+    }>,
+  );
+  // Confirmed occupancy (for the fully-booked / double-booking test).
+  const confirmed = await ctx.db
+    .query("reservations")
+    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+    .collect();
+
+  const ownedUnitsOf = (r: Doc<"reservations">): Array<[Id<"items">, number]> => {
+    const out: Array<[Id<"items">, number]> = [];
+    for (const [idStr, qty] of reservationItemUnits(r, productIndex, overrideMap)) {
+      const it = itemById.get(idStr);
+      if (it && !it.is_marketing_only && it.status === "active" && (it.qty ?? 0) > 0) {
+        out.push([idStr as Id<"items">, qty]);
+      }
+    }
+    return out;
+  };
+
+  // ── 1. Recorded denials (explicit owner declines → real lost revenue) ──
   let denials = await ctx.db.query("denial_records").collect();
   if (accountId) denials = denials.filter((d) => d.account_id === accountId);
   denials = denials.filter((d) => d.created_at >= cutoffMs);
-
-  const pricingRows = await ctx.db.query("pricing_catalog").collect();
-  const priceByName = new Map(
-    pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
-  );
-
+  const pricing = await ctx.db.query("pricing_catalog").collect();
+  const priceByName = new Map(pricing.map((p) => [p.item_name_canonical, p.daily_price_min]));
   const denialLosses: DenialLoss[] = denials.map((d) => {
     let gross = d.estimated_value ?? 0;
     if (gross === 0 && d.item_name) {
       const rate = priceByName.get(d.item_name);
-      if (rate) gross = rate * 2; // assume a 2-day rental when no value recorded
+      if (rate) gross = rate * 2;
     }
     return {
       denialId: d._id as string,
@@ -118,14 +166,9 @@ export async function computeMissedRevenue(
       createdAt: d.created_at,
     };
   });
-  const denialTotal = parseFloat(
-    denialLosses.reduce((s, d) => s + d.estimatedValue, 0).toFixed(2),
-  );
+  const denialTotal = parseFloat(denialLosses.reduce((s, d) => s + d.estimatedValue, 0).toFixed(2));
 
-  // ── 2. Live-classified lost bookings (genuine demand that didn't convert) ──
-  // Bounded fetch by start_date window (cancelled requests carry a rental date
-  // in/after the window); classify each with the vetted decision tree and keep
-  // only genuine_demand. Renter-walked / unbooked / browsers are dropped.
+  // ── 2. Turned-away demand, split by ownership + capacity ─────────
   let cancelled = await ctx.db
     .query("reservations")
     .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
@@ -135,52 +178,59 @@ export async function computeMissedRevenue(
     (r) => r.is_obsolete || r.status === "cancelled" || r.status === "declined",
   );
 
-  type Lost = { name: string; value: number; cause: string };
-  const lost: Lost[] = [];
+  const lostRows: { name: string; value: number }[] = [];
+  const marketingRows: { name: string; value: number }[] = [];
   for (const r of cancelled) {
     if (classifyRow(r) !== "genuine_demand") continue;
-    const value =
-      r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE;
+    const value = r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE;
     if (value <= 0) continue;
-    lost.push({
-      name: primaryItemName(r),
-      value: parseFloat(value.toFixed(2)),
-      cause: CAUSE_LABEL[r.obsolete_reason ?? "other"] ?? "lost",
-    });
+
+    const owned = ownedUnitsOf(r);
+    if (owned.length === 0) {
+      // We don't own it — demand for marketing-only / un-stocked gear.
+      marketingRows.push({ name: primaryRawName(r), value });
+      continue;
+    }
+    // Owned: was it actually un-fulfillable (fully booked) at the dates?
+    const start = r.pickup_date ?? r.start_date;
+    const end = r.return_date ?? r.end_date;
+    if (!start || !end) continue;
+    const dates = expandDates(start, end);
+    const otherConfirmed = confirmed.filter((c) => c._id !== r._id);
+    let fullyBooked = false;
+    let lostName = "";
+    for (const [id, reqQty] of owned) {
+      const total = itemById.get(String(id))?.qty ?? 0;
+      let peak = 0;
+      for (const d of dates) {
+        const b = bookedUnitsOnDate(otherConfirmed, id, d);
+        if (b > peak) peak = b;
+      }
+      if (total - peak < reqQty) {
+        fullyBooked = true;
+        lostName = itemById.get(String(id))?.name_canonical ?? primaryRawName(r);
+        break;
+      }
+    }
+    // Owned + available + cancelled = renter walked → NOT a capacity loss, skip.
+    if (fullyBooked) lostRows.push({ name: lostName || primaryRawName(r), value });
   }
-  const lostBookingTotal = parseFloat(
-    lost.reduce((s, l) => s + l.value, 0).toFixed(2),
-  );
 
-  // ── 3. Merge into a per-item rollup (denials + lost bookings) ─────
-  const byItem = new Map<
-    string,
-    { value: number; count: number; causes: Map<string, number> }
-  >();
-  const add = (name: string, value: number, cause: string) => {
-    const e = byItem.get(name) ?? { value: 0, count: 0, causes: new Map() };
-    e.value += value;
-    e.count += 1;
-    e.causes.set(cause, (e.causes.get(cause) ?? 0) + 1);
-    byItem.set(name, e);
+  // Recorded denials are explicit owner declines → count as lost revenue.
+  for (const d of denialLosses) lostRows.push({ name: d.itemName ?? "Unknown item", value: d.estimatedValue });
+
+  const lostItems = rollup(lostRows);
+  const marketingItems = rollup(marketingRows);
+  const lostRevenueTotal = parseFloat(lostRows.reduce((s, l) => s + l.value, 0).toFixed(2));
+  const missedMarketingTotal = parseFloat(marketingRows.reduce((s, l) => s + l.value, 0).toFixed(2));
+
+  return {
+    totalMissed: lostRevenueTotal,
+    lostRevenueTotal,
+    missedMarketingTotal,
+    denialTotal,
+    lostItems,
+    marketingItems,
+    denialLosses,
   };
-  for (const d of denialLosses) add(d.itemName ?? "Unknown item", d.estimatedValue, "declined");
-  for (const l of lost) add(l.name, l.value, l.cause);
-
-  const items: MissedItem[] = [...byItem.entries()]
-    .map(([itemName, e]) => {
-      const causes = [...e.causes.entries()].sort((a, b) => b[1] - a[1]);
-      const cause = causes.length === 1 ? causes[0][0] : "mixed";
-      return {
-        itemName,
-        value: parseFloat(e.value.toFixed(2)),
-        count: e.count,
-        cause,
-      };
-    })
-    .sort((a, b) => b.value - a.value);
-
-  const totalMissed = parseFloat((denialTotal + lostBookingTotal).toFixed(2));
-
-  return { totalMissed, denialTotal, lostBookingTotal, items, denialLosses };
 }
