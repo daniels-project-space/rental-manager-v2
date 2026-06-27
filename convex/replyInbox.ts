@@ -391,12 +391,19 @@ async function assembleTile(
   // accept/deny trigger. Fall back to the active order step for rows not yet
   // re-polled with the actions signal.
   const isRequest = reservation?.awaiting_owner_action ?? step === "REQUEST";
+  // "Waiting since" timestamp driving the urgency timer. A booking REQUEST often
+  // has NO chat messages (renter just submitted dates), so without the
+  // reservation-created fallback this is 0 (epoch) and the card shows a nonsense
+  // ~20,000-day age that reads as "over 10 days old" (Daniel, 2026-06-27). Fall
+  // back to when the order/request was created so the timer shows real wait time.
   const lastRenterAt =
-    conv?.last_renter_msg_at ??
-    conv?.last_msg_at ??
-    latestMsg?.hygglo_sent_at ??
-    latestMsg?.fetched_at ??
-    0;
+    conv?.last_renter_msg_at ||
+    conv?.last_msg_at ||
+    latestMsg?.hygglo_sent_at ||
+    latestMsg?.fetched_at ||
+    reservation?.created_at ||
+    reservation?._creationTime ||
+    Date.now();
 
   // Estimate, always CLEARLY labelled "Estimate" in the UI and never shown when
   // a real price exists. Two sources:
@@ -588,6 +595,19 @@ export const getReplyQueue = query({
         .query("conversations")
         .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
         .first();
+      // Respect the recency window even for requests. A request with no activity
+      // in `withinDays` (no recent message AND created long ago) is stale —
+      // Hygglo requests expire, so a 10-day-old "pending" one is almost always
+      // dead and shouldn't sit at the top of the queue forever (Daniel,
+      // 2026-06-27 "still showing messages over 10 days old"). Newest of: last
+      // message / last renter message / when the order row was created.
+      const reqTs = Math.max(
+        conv?.last_msg_at ?? 0,
+        conv?.last_renter_msg_at ?? 0,
+        (r as { created_at?: number }).created_at ?? 0,
+        r._creationTime ?? 0,
+      );
+      if (reqTs && reqTs < cutoff) continue;
       const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx);
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
