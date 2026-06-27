@@ -258,10 +258,13 @@ crons.daily(
 // was previously only populated on-demand via the dashboard star-click). Daily,
 // capped per run to bound external calls. Owner-side signal — see
 // renter_reviews.fetchHyggloReviews caveat.
+// Renter trust (rating + renter-side reviews) from the Hygglo order detail
+// (users.otherPart.rating + customerStats). Replaced the old owner-side
+// product-reviews source that left almost every renter rating-less (2026-06-27).
 crons.daily(
-  "refresh_active_renter_reviews",
+  "refresh_active_renter_trust",
   { hourUTC: 4, minuteUTC: 30 },
-  internal.renter_reviews.refreshActiveRenters,
+  internal.renter_trust.resolveActiveTrust,
   {},
 );
 

@@ -36,7 +36,10 @@ const reviewsGetRef = makeFunctionReference<"query">("renter_reviews:getForThrea
 // locations is a new convex module — reference by name so `next build`'s
 // typecheck stays green against the committed (lagging) _generated api.
 const resolveLocRef = makeFunctionReference<"action">("locations:resolveForThread");
-const reviewsRefreshRef = makeFunctionReference<"action">("renter_reviews:refreshForThread");
+const resolveTrustRef = makeFunctionReference<"action">("renter_trust:resolveForThread");
+// Star-click refresh uses the renter-trust resolver (renter-side reviews from
+// the order detail) — NOT the old owner-side product-reviews source.
+const reviewsRefreshRef = makeFunctionReference<"action">("renter_trust:resolveForThread");
 type RenterReview = { id: string; rating: number | null; text: string | null; author: string | null; created_at: string | null };
 type RenterReviewsResult = { reviews: RenterReview[]; lowCount: number; fetched: boolean };
 
@@ -745,12 +748,15 @@ export function ReplyModal({
   });
   const loc = (liveTile?.location ?? tile.location) as TileLocation | null;
   const resolveLoc = useAction(resolveLocRef);
+  const resolveTrust = useAction(resolveTrustRef);
   const locResolvedRef = useRef(false);
   useEffect(() => {
     if (locResolvedRef.current) return;
     locResolvedRef.current = true;
     void resolveLoc({ thread_id: tile.thread_id });
-  }, [resolveLoc, tile.thread_id]);
+    // Pull the renter's real rating + reviews (Hygglo order detail) on open.
+    void resolveTrust({ thread_id: tile.thread_id });
+  }, [resolveLoc, resolveTrust, tile.thread_id]);
   const generateDraft = useAction(api.replyInbox_actions.generateDraft);
   const sendReply = useAction(api.replyInbox_actions.sendRenterReply);
   const approve = useAction(api.replyInbox_actions.approveOrder);

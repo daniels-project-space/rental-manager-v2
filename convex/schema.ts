@@ -199,6 +199,9 @@ export default defineSchema({
     hygglo_rating: v.optional(v.number()),
     hygglo_review_count: v.optional(v.number()),
     total_rentals_count: v.optional(v.number()),
+    // When renter_trust last read this renter's Hygglo order detail. Lets the
+    // backfill cron progress past already-checked (incl. 0-review) renters.
+    trust_checked_at: v.optional(v.number()),
     total_spend_gbp: v.optional(v.number()),
     first_rental_at: v.optional(v.number()),
     last_rental_at: v.optional(v.number()),

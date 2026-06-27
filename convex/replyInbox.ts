@@ -326,10 +326,22 @@ async function loadAvailCtx(
   ctx: QueryCtx,
   includePending: boolean,
 ): Promise<AvailCtx> {
-  const confirmed = await ctx.db
-    .query("reservations")
-    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-    .collect();
+  // Confirmed rentals only — but EXCLUDE ones whose gear is already back
+  // (step RETURNED/REVIEWED) or that were superseded (is_obsolete). Hygglo
+  // leaves status="confirmed" after a return, so without this a returned rental
+  // kept blocking its item for the old dates (the "anamorphic shows rented but
+  // it has no live booking" bug, 2026-06-27).
+  const confirmed = (
+    await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+      .collect()
+  ).filter(
+    (r) =>
+      !r.is_obsolete &&
+      r.order_step !== "RETURNED" &&
+      r.order_step !== "REVIEWED",
+  );
   const pending = includePending
     ? (await ctx.db.query("reservations").collect()).filter(
         (r) =>
