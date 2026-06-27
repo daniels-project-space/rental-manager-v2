@@ -28,6 +28,7 @@ import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import {
   haversineKm,
   tooHeavyForLocation,
+  nameHeavy,
   type OrderWeight,
   type Vehicle,
 } from "./lib/delivery_weight";
@@ -86,14 +87,13 @@ function computeLocation(
       vehicleLabel: "",
       heaviestKg: reservation.loc_heaviest_kg ?? 0,
     };
-    const r = tooHeavyForLocation(
-      order,
-      distance_km,
-      hubBook?.heavyMaxKm ?? 5,
-      hubBook?.maxKm ?? 30,
-    );
-    too_heavy = r.tooHeavy;
+    const heavyMaxKm = hubBook?.heavyMaxKm ?? 0.5;
+    const r = tooHeavyForLocation(order, distance_km, heavyMaxKm, hubBook?.maxKm ?? 30);
     out_of_range = r.outOfRange;
+    // Name-based heaviness catches gear whose inventory weight_kg is missing
+    // (power stations, DJ decks, speakers, multiple cameras/lights).
+    const heavyByName = nameHeavy(reservation.hygglo_items ?? []);
+    too_heavy = r.tooHeavy || (heavyByName && distance_km > heavyMaxKm);
   }
   return {
     label: reservation.loc_label ?? reservation.loc_area ?? null,

@@ -94,6 +94,34 @@ export function classifyOrderWeight(items: Array<{ spec: ItemSpec; qty: number }
   return { totalWeightKg, maxSizeScore, bigItems, vehicle, vehicleLabel, heaviestKg };
 }
 
+/**
+ * Heaviness from item NAMES — robust where inventory weight_kg is missing (most
+ * rows). Matches the owner's real list: speakers, DJ decks, lights, power
+ * stations, and multiple cameras/lights are too heavy to hand-carry far.
+ */
+export function nameHeavy(items: Array<{ name?: string | null; qty?: number | null }>): boolean {
+  const names = items.map((i) => (i.name ?? "").toLowerCase());
+  const text = names.join(" | ");
+  if (
+    /speaker|subwoofer|\bsub\b|\bpa system\b|\bamp\b|\bdj\b|cdj|xdj|ddj|\bdeck\b|controller|turntable|power station|ecoflow|delta pro|jackery|generator|\bhmi\b|fresnel|\bdolly\b|\bslider\b|c-?stand|light stand|wind machine|smoke machine|\bhaze|projector/i.test(
+      text,
+    )
+  )
+    return true;
+  const count = (re: RegExp) =>
+    items.reduce((s, i) => (re.test((i.name ?? "").toLowerCase()) ? s + Math.max(1, i.qty ?? 1) : s), 0);
+  // multiple cameras
+  if (
+    count(
+      /camera|\bfx3\b|\bfx6\b|\bfx30\b|\ba7\b|a7s|a7r|a7 |a7v|a7iii|a7iv|bmpcc|blackmagic|\br5\b|\br6\b|c70|c300|komodo|\bgh\d|lumix|eos|nikon z|cinema/i,
+    ) >= 2
+  )
+    return true;
+  // multiple lights
+  if (count(/light|led|aputure|godox|nanlite|amaran|forza|tube light|softbox/i) >= 2) return true;
+  return false;
+}
+
 /** Straight-line distance in km (Haversine). */
 export function haversineKm(
   a: { lat: number; lng: number },
@@ -111,19 +139,27 @@ export function haversineKm(
 }
 
 /**
- * Decide whether an order is "too heavy for this location" from the hub.
- * heavyMaxKm = how far a heavy item can reasonably be carried from the hub
- * (default 5km); maxKm = absolute delivery range (default 30km).
+ * Decide whether an order is "too heavy to carry to this location" from the hub.
+ * Anything past ~500m from the hub (Trafalgar Square) is too far to hand-carry a
+ * heavy load — speakers, DJ decks, lights, multiple cameras, etc. So:
+ *   heavyMaxKm = 0.5  (carry limit for a heavy load)
+ *   maxKm      = 30   (absolute range)
+ * "Heavy" = anything beyond a bike/tube load: needs a car/van, or >6kg total, or
+ * any bulky/≥5kg item (a lone camera+lens stays light).
  */
 export function tooHeavyForLocation(
   order: OrderWeight,
   distanceKm: number | null,
-  heavyMaxKm = 5,
+  heavyMaxKm = 0.5,
   maxKm = 30,
 ): { tooHeavy: boolean; outOfRange: boolean } {
   if (distanceKm == null) return { tooHeavy: false, outOfRange: false };
   const outOfRange = distanceKm > maxKm;
-  const heavy = order.vehicle === "van" || order.bigItems > 0 || order.heaviestKg >= 5;
+  const heavy =
+    order.vehicle !== "motorcycle" ||
+    order.totalWeightKg > 6 ||
+    order.bigItems > 0 ||
+    order.heaviestKg >= 5;
   const tooHeavy = heavy && distanceKm > heavyMaxKm;
   return { tooHeavy, outOfRange };
 }
