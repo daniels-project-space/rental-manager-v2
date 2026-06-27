@@ -1,5 +1,6 @@
-import { mutation, query } from "./_generated/server";
+import { action, mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
 // W01, W02, W20 — settings singleton row
@@ -27,6 +28,8 @@ export const update = mutation({
     pickup_hours: v.optional(
       v.array(v.object({ start: v.string(), end: v.string() })),
     ),
+    hub_heavy_max_km: v.optional(v.number()),
+    hub_max_km: v.optional(v.number()),
   },
   handler: async (ctx, fields) => {
     // Double-unlock guard: refuse read_only_mode=false + ALLOW_HYGGLO_SEND=true together
@@ -48,8 +51,69 @@ export const update = mutation({
     if (fields.availability_include_pending !== undefined)
       patch.availability_include_pending = fields.availability_include_pending;
     if (fields.pickup_hours !== undefined) patch.pickup_hours = fields.pickup_hours;
+    if (fields.hub_heavy_max_km !== undefined) patch.hub_heavy_max_km = fields.hub_heavy_max_km;
+    if (fields.hub_max_km !== undefined) patch.hub_max_km = fields.hub_max_km;
 
     await ctx.db.patch(existing._id, patch);
+    return { ok: true };
+  },
+});
+
+// ── Main rental hub (geocoded via postcodes.io — the address register) ──
+
+/** Confirm a postcode against postcodes.io and store the hub coords. The UI
+ *  sends the typed postcode; we return the matched admin district as proof. */
+export const setHub = action({
+  args: { postcode: v.string() },
+  handler: async (
+    ctx,
+    { postcode },
+  ): Promise<{ ok: boolean; reason?: string; label?: string; postcode?: string }> => {
+    const pc = postcode.replace(/\s+/g, "").toUpperCase();
+    if (pc.length < 5) return { ok: false, reason: "Enter a full UK postcode" };
+    let res: Record<string, any> | undefined;
+    try {
+      const r = await fetch(
+        `https://api.postcodes.io/postcodes/${encodeURIComponent(pc)}`,
+      );
+      if (!r.ok) return { ok: false, reason: "We couldn't find that postcode" };
+      res = (await r.json())?.result;
+    } catch {
+      return { ok: false, reason: "Lookup failed — try again" };
+    }
+    if (!res || typeof res.latitude !== "number")
+      return { ok: false, reason: "We couldn't find that postcode" };
+    const label =
+      [res.admin_ward, res.admin_district].filter(Boolean).join(", ") ||
+      res.admin_district ||
+      res.parish ||
+      pc;
+    await ctx.runMutation(internal.settings.applyHub, {
+      postcode: res.postcode ?? pc,
+      label,
+      lat: res.latitude,
+      lng: res.longitude,
+    });
+    return { ok: true, label, postcode: res.postcode ?? pc };
+  },
+});
+
+export const applyHub = internalMutation({
+  args: {
+    postcode: v.string(),
+    label: v.string(),
+    lat: v.number(),
+    lng: v.number(),
+  },
+  handler: async (ctx, { postcode, label, lat, lng }) => {
+    const existing = await ctx.db.query("settings").first();
+    if (!existing) throw new Error("No settings row found — seed the database first.");
+    await ctx.db.patch(existing._id, {
+      hub_postcode: postcode,
+      hub_label: label,
+      hub_lat: lat,
+      hub_lng: lng,
+    });
     return { ok: true };
   },
 });

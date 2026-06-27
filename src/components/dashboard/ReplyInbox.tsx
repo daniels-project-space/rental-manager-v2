@@ -33,6 +33,9 @@ const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remo
 // renter_reviews is a new module → reference by name (api.renter_reviews.* would
 // break next build until _generated catches up).
 const reviewsGetRef = makeFunctionReference<"query">("renter_reviews:getForThread");
+// locations is a new convex module — reference by name so `next build`'s
+// typecheck stays green against the committed (lagging) _generated api.
+const resolveLocRef = makeFunctionReference<"action">("locations:resolveForThread");
 const reviewsRefreshRef = makeFunctionReference<"action">("renter_reviews:refreshForThread");
 type RenterReview = { id: string; rating: number | null; text: string | null; author: string | null; created_at: string | null };
 type RenterReviewsResult = { reviews: RenterReview[]; lowCount: number; fetched: boolean };
@@ -101,9 +104,62 @@ export interface ReplyTileData {
   ai_draft_text: string | null;
   ai_draft_confidence: number | null;
   ai_draft_flags: DraftFlag[] | null;
+  location: TileLocation | null;
+}
+
+export interface TileLocation {
+  label: string | null;
+  area: string | null;
+  zip: string | null;
+  street: string | null;
+  public_url: string | null;
+  map_url: string;
+  distance_km: number | null;
+  vehicle: string | null;
+  too_heavy: boolean;
+  out_of_range: boolean;
 }
 
 // ── helpers ───────────────────────────────────────────────────────
+
+/**
+ * Pickup-location overlay: the listing's area as a Google Maps hyperlink (shows
+ * streets + stations), distance from the hub, and a red tag when the order is
+ * too heavy / out of range for that location.
+ */
+function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean }) {
+  const tag = loc.out_of_range
+    ? { text: "Out of range", cls: "bg-rose-500/20 text-rose-300" }
+    : loc.too_heavy
+      ? { text: "Too heavy here", cls: "bg-rose-500/20 text-rose-300" }
+      : null;
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+      <a
+        href={loc.map_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        title={`${loc.street ? loc.street + ", " : ""}${loc.zip ?? ""} — open map`}
+        className="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200 hover:underline max-w-full"
+      >
+        <span>📍</span>
+        <span className="truncate">{loc.label ?? loc.area ?? loc.zip ?? "Location"}</span>
+      </a>
+      {loc.distance_km != null && (
+        <span className="text-[#7f8694]">{loc.distance_km}km</span>
+      )}
+      {!compact && loc.vehicle && (
+        <span className="text-[#7f8694] capitalize">· {loc.vehicle}</span>
+      )}
+      {tag && (
+        <span className={`px-1.5 py-0.5 rounded-md font-semibold ${tag.cls}`}>
+          ⚠ {tag.text}
+        </span>
+      )}
+    </div>
+  );
+}
 
 const STEP_LABEL: Record<string, string> = {
   REQUEST: "Request · awaiting you",
@@ -440,6 +496,7 @@ function ReplyCard({
       {tile.preview && (
         <div className="text-[12px] text-[#8b92a0] line-clamp-2">“{tile.preview}”</div>
       )}
+      {tile.location && <LocationBadge loc={tile.location} compact />}
       {tile.estimate_gbp != null && (
         <div className="inline-flex items-center gap-1.5 rounded-md border border-sky-400/30 bg-sky-400/[0.08] px-1.5 py-0.5 self-start">
           <span className="text-[8px] font-bold uppercase tracking-[0.12em] text-sky-300/90">
@@ -682,6 +739,18 @@ export function ReplyModal({
   const accent = accountAccent(tile.account_slug);
   const ds = decideState(tile);
   const thread = useQuery(api.hygglo.listByThread, { thread_id: tile.thread_id });
+  // Live tile (reactive) so the location overlay appears the moment it resolves.
+  const liveTile = useQuery(api.replyInbox.getThreadById, {
+    thread_id: tile.thread_id,
+  });
+  const loc = (liveTile?.location ?? tile.location) as TileLocation | null;
+  const resolveLoc = useAction(resolveLocRef);
+  const locResolvedRef = useRef(false);
+  useEffect(() => {
+    if (locResolvedRef.current) return;
+    locResolvedRef.current = true;
+    void resolveLoc({ thread_id: tile.thread_id });
+  }, [resolveLoc, tile.thread_id]);
   const generateDraft = useAction(api.replyInbox_actions.generateDraft);
   const sendReply = useAction(api.replyInbox_actions.sendRenterReply);
   const approve = useAction(api.replyInbox_actions.approveOrder);
@@ -883,6 +952,11 @@ export function ReplyModal({
                 {statusText(tile)}
               </span>
             </div>
+            {loc && (
+              <div className="mt-2">
+                <LocationBadge loc={loc} />
+              </div>
+            )}
             {tile.renter_rating != null && tile.renter_rating < 4 && (
               <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2.5 py-1.5">
                 <span className="text-red-400 text-[13px] leading-none mt-px">⚠</span>

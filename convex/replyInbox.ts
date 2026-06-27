@@ -25,6 +25,77 @@ import {
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
+import {
+  haversineKm,
+  tooHeavyForLocation,
+  type OrderWeight,
+  type Vehicle,
+} from "./lib/delivery_weight";
+
+/** Settings hub config slice used to rate a tile's location. */
+type HubCfg = {
+  lat?: number | null;
+  lng?: number | null;
+  heavyMaxKm?: number | null;
+  maxKm?: number | null;
+} | null;
+
+function hubFrom(settings: Doc<"settings"> | null): HubCfg {
+  if (!settings) return null;
+  return {
+    lat: settings.hub_lat ?? null,
+    lng: settings.hub_lng ?? null,
+    heavyMaxKm: settings.hub_heavy_max_km ?? null,
+    maxKm: settings.hub_max_km ?? null,
+  };
+}
+
+/**
+ * Build the tile/thread location overlay from the cached listing location + the
+ * current hub. Distance + the too-heavy/out-of-range flags are derived LIVE so
+ * they follow the Settings hub without rewriting reservations.
+ */
+function computeLocation(reservation: Doc<"reservations"> | null, hub: HubCfg) {
+  if (!reservation || reservation.loc_lat == null || reservation.loc_lng == null)
+    return null;
+  const lat = reservation.loc_lat;
+  const lng = reservation.loc_lng;
+  let distance_km: number | null = null;
+  let too_heavy = false;
+  let out_of_range = false;
+  if (hub?.lat != null && hub?.lng != null) {
+    distance_km =
+      Math.round(haversineKm({ lat: hub.lat, lng: hub.lng }, { lat, lng }) * 10) / 10;
+    const order: OrderWeight = {
+      totalWeightKg: reservation.loc_total_weight_kg ?? 0,
+      maxSizeScore: 0,
+      bigItems: reservation.loc_big_items ?? 0,
+      vehicle: (reservation.loc_vehicle as Vehicle) ?? "car",
+      vehicleLabel: "",
+      heaviestKg: reservation.loc_heaviest_kg ?? 0,
+    };
+    const r = tooHeavyForLocation(
+      order,
+      distance_km,
+      hub.heavyMaxKm ?? 5,
+      hub.maxKm ?? 30,
+    );
+    too_heavy = r.tooHeavy;
+    out_of_range = r.outOfRange;
+  }
+  return {
+    label: reservation.loc_label ?? reservation.loc_area ?? null,
+    area: reservation.loc_area ?? null,
+    zip: reservation.loc_zip ?? null,
+    street: reservation.loc_street ?? null,
+    public_url: reservation.loc_public_url ?? null,
+    map_url: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+    distance_km,
+    vehicle: reservation.loc_vehicle ?? null,
+    too_heavy,
+    out_of_range,
+  };
+}
 
 type RichItem = { name: string; qty: number; image_url: string | null };
 
@@ -364,6 +435,7 @@ async function assembleTile(
   threadId: string,
   priceIndex?: PriceIndex,
   availCtx?: AvailCtx,
+  hub?: HubCfg,
 ) {
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
   if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
@@ -489,6 +561,7 @@ async function assembleTile(
     ai_draft_text: conv?.ai_draft_text ?? null,
     ai_draft_confidence: conv?.ai_draft_confidence ?? null,
     ai_draft_flags: conv?.ai_draft_flags ?? null,
+    location: computeLocation(reservation, hub ?? null),
   };
 }
 
@@ -538,10 +611,10 @@ export const getReplyQueue = query({
       NonNullable<Awaited<ReturnType<typeof assembleTile>>>
     >();
     const priceIndex = await loadPriceIndex(ctx);
+    const settingsRow = await ctx.db.query("settings").first();
     const incPending =
-      includePending ??
-      (await ctx.db.query("settings").first())?.availability_include_pending ??
-      false;
+      includePending ?? settingsRow?.availability_include_pending ?? false;
+    const hub = hubFrom(settingsRow);
     const availCtx = await loadAvailCtx(ctx, incPending);
 
     // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
@@ -565,7 +638,7 @@ export const getReplyQueue = query({
           q.eq("hygglo_order_id", conv.thread_id),
         )
         .first();
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx);
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub);
       if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }
 
@@ -612,7 +685,7 @@ export const getReplyQueue = query({
         r._creationTime ?? 0,
       );
       if (reqTs && reqTs < cutoff) continue;
-      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx);
+      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx, hub);
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
 
@@ -644,7 +717,7 @@ export const getReplyQueue = query({
           if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
             continue;
         }
-        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx);
+        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub);
         if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
       }
     }
@@ -685,9 +758,8 @@ export const getThreadById = query({
       .first();
     if (!conv && !reservation) return null;
     const priceIndex = await loadPriceIndex(ctx);
-    const incPending =
-      (await ctx.db.query("settings").first())?.availability_include_pending ??
-      false;
+    const settingsRow = await ctx.db.query("settings").first();
+    const incPending = settingsRow?.availability_include_pending ?? false;
     const availCtx = await loadAvailCtx(ctx, incPending);
     return await assembleTile(
       ctx,
@@ -696,6 +768,7 @@ export const getThreadById = query({
       thread_id,
       priceIndex,
       availCtx,
+      hubFrom(settingsRow),
     );
   },
 });
@@ -990,6 +1063,7 @@ export const getThreadContext = internalQuery({
 
     return {
       account_slug: slug ?? null,
+      location: computeLocation(reservation, hubFrom(settingsRow)),
       renter_id: renterId ?? null,
       conversation_id: conv?._id ?? null,
       conversation_stage,

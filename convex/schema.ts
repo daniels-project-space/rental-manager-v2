@@ -293,6 +293,25 @@ export default defineSchema({
     return_date: v.optional(v.string()),           // ISO date — may differ from end_date (e.g. morning after)
     pickup_method: v.optional(v.string()),         // "delivery" | "collection" | "unknown"
     return_method: v.optional(v.string()),
+    // ── Listing location cache (2026-06-27) ──
+    // The pickup/listing location shown on Hygglo, resolved from the public
+    // listing endpoint and cached here. Distance-from-hub + the heavy tag are
+    // computed LIVE at read time (from these coords + the current Settings hub),
+    // so changing the hub re-rates every tile without a rewrite.
+    loc_label: v.optional(v.string()),             // "St James's, Westminster"
+    loc_area: v.optional(v.string()),              // "St James's"
+    loc_municipality: v.optional(v.string()),      // "London"
+    loc_street: v.optional(v.string()),            // "Whitehall 3"
+    loc_zip: v.optional(v.string()),               // "SW1A 2DD"
+    loc_lat: v.optional(v.number()),
+    loc_lng: v.optional(v.number()),
+    loc_public_url: v.optional(v.string()),
+    loc_resolved_at: v.optional(v.number()),
+    // Cached order weight summary (items don't change, so safe to cache).
+    loc_total_weight_kg: v.optional(v.number()),
+    loc_heaviest_kg: v.optional(v.number()),
+    loc_big_items: v.optional(v.number()),
+    loc_vehicle: v.optional(v.string()),           // "motorcycle" | "car" | "van"
     /** Hash of the last N messages used for time extraction. If unchanged, skip the LLM call. */
     times_transcript_hash: v.optional(v.string()),
     /** When the extractor last ran successfully for this reservation. */
@@ -761,6 +780,17 @@ export default defineSchema({
     pickup_hours: v.optional(
       v.array(v.object({ start: v.string(), end: v.string() })),
     ),
+
+    // ── Main rental hub (2026-06-27) ──
+    // Where the gear physically lives. Set by postcode in Settings, confirmed
+    // against postcodes.io (the register). Tile distance-to-listing + the
+    // too-heavy tag are measured from here.
+    hub_postcode: v.optional(v.string()),
+    hub_label: v.optional(v.string()),             // confirmed admin district from postcodes.io
+    hub_lat: v.optional(v.number()),
+    hub_lng: v.optional(v.number()),
+    hub_heavy_max_km: v.optional(v.number()),       // how far a heavy item can go (default 5)
+    hub_max_km: v.optional(v.number()),             // absolute range (default 30)
 
     // Phase 1.B.3 — operator policy fields
     read_only_mode_blocks: v.optional(v.array(v.string())),

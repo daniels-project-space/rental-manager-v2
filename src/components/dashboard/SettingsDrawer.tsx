@@ -1,5 +1,5 @@
 "use client";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useState } from "react";
 import { Drawer } from "@/components/ui/Drawer";
@@ -154,6 +154,104 @@ function HardTruthsEditor() {
   );
 }
 
+/**
+ * Main rental hub editor — type a UK postcode, confirm it against postcodes.io
+ * (the address register), and store the hub coords. Tile distance + the
+ * too-heavy tag are measured from here. Also sets the heavy/max travel ranges.
+ */
+function HubEditor() {
+  const settings = useQuery(api.settings.get);
+  const setHub = useAction(api.settings.setHub);
+  const update = useMutation(api.settings.update);
+  const [pc, setPc] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  if (!settings) return null;
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">Main rental hub</label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        Where your gear lives. Distance to each chat&apos;s pickup location and the
+        &ldquo;too heavy&rdquo; tag are measured from here. Enter a UK postcode — we
+        confirm it against the address register.
+      </p>
+      {settings.hub_label && (
+        <div className="mb-2 inline-flex items-center gap-1.5 text-[12px] text-emerald-300 bg-emerald-500/[0.08] border border-emerald-400/25 rounded-lg px-2 py-1">
+          📍 {settings.hub_label} · {settings.hub_postcode}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <input
+          value={pc}
+          onChange={(e) => setPc(e.target.value)}
+          placeholder={settings.hub_postcode ?? "e.g. WC2H 7ER"}
+          className="text-sm rounded-lg px-2.5 py-1.5 flex-1 min-w-0"
+          style={INPUT_STYLE}
+        />
+        <button
+          disabled={busy || pc.trim().length < 5}
+          onClick={async () => {
+            setBusy(true);
+            setMsg(null);
+            try {
+              const r = await setHub({ postcode: pc });
+              if (r.ok) {
+                setMsg({ ok: true, text: `Confirmed: ${r.label}` });
+                setPc("");
+              } else {
+                setMsg({ ok: false, text: r.reason ?? "Couldn't confirm" });
+              }
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="text-xs px-3 py-1.5 rounded-lg bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 disabled:opacity-50 shrink-0"
+        >
+          {busy ? "Checking…" : "Confirm"}
+        </button>
+      </div>
+      {msg && (
+        <p
+          className="mt-1.5 text-xs"
+          style={{ color: msg.ok ? "#22c55e" : "#ef4444" }}
+        >
+          {msg.text}
+        </p>
+      )}
+      <div className="flex items-center gap-4 mt-3 flex-wrap">
+        <label className="text-xs text-[#cbd5e1] flex items-center gap-1.5">
+          Heavy items reach
+          <input
+            type="number"
+            min={1}
+            defaultValue={settings.hub_heavy_max_km ?? 5}
+            onBlur={(e) =>
+              void update({ hub_heavy_max_km: Number(e.target.value) || 5 })
+            }
+            className="w-14 text-sm rounded-lg px-2 py-1"
+            style={INPUT_STYLE}
+          />
+          km
+        </label>
+        <label className="text-xs text-[#cbd5e1] flex items-center gap-1.5">
+          Max range
+          <input
+            type="number"
+            min={1}
+            defaultValue={settings.hub_max_km ?? 30}
+            onBlur={(e) =>
+              void update({ hub_max_km: Number(e.target.value) || 30 })
+            }
+            className="w-14 text-sm rounded-lg px-2 py-1"
+            style={INPUT_STYLE}
+          />
+          km
+        </label>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   onClose: () => void;
 }
@@ -298,6 +396,8 @@ export function SettingsDrawer({ onClose }: Props) {
             <span className="text-xs text-[#8b8fa3]">min</span>
           </div>
         </div>
+
+        <HubEditor />
 
         <div className="py-3">
           <label className="text-sm text-[#e4e6eb] block mb-1">Pickup / collection hours</label>

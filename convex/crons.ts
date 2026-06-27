@@ -265,4 +265,15 @@ crons.daily(
   {},
 );
 
+// ── Phase 5b (2026-06-27) — listing-location backfill ──
+// Resolve the pickup/listing location (label + postcode + coords) for active
+// threads so the tile can show the map link + distance/heavy tag. Hourly; the
+// modal-open lazy resolve covers immediacy for the thread you open.
+crons.interval(
+  "resolve_active_locations",
+  { minutes: 60 },
+  internal.locations.resolveActive,
+  {},
+);
+
 export default crons;
