@@ -657,11 +657,13 @@ export function ReplyModal({
   onClose,
   onActed,
   dryRun,
+  zClass = "z-[200]",
 }: {
   tile: ReplyTileData;
   onClose: () => void;
   onActed: (id: string) => void;
   dryRun: boolean;
+  zClass?: string;
 }) {
   const accent = accountAccent(tile.account_slug);
   const ds = decideState(tile);
@@ -797,7 +799,7 @@ export function ReplyModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/70 backdrop-blur-sm p-4`}
     >
       {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
           you can text AND approve/decline in one session without losing it. */}
@@ -1103,6 +1105,17 @@ export function ReplyInbox() {
   const [showManager, setShowManager] = useState(false);
 
   useEffect(() => setMounted(true), []);
+  // Yield to a tapped notification: when the SW asks to deep-link to a thread,
+  // close this widget's own modal so the deep-link host (z-[300]) is the only
+  // chat showing — otherwise a stale widget modal would sit behind it.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
+    const onMsg = (e: MessageEvent) => {
+      if ((e.data as { type?: string } | undefined)?.type === "deep-link") setOpenId(null);
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, []);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(id);

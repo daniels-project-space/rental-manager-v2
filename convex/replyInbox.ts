@@ -740,6 +740,18 @@ export const getThreadContext = internalQuery({
       business_hours = profile?.business_hours;
     }
 
+    // Pickup/collection windows are owner-editable in Settings (singleton) and
+    // take precedence over any account-profile hours — this is what stops the AI
+    // confirming out-of-hours pickups (e.g. 8am).
+    const settingsRow = await ctx.db.query("settings").first();
+    const pickupHours = settingsRow?.pickup_hours;
+    const businessHoursText =
+      pickupHours && pickupHours.length
+        ? `Pickup/collection windows (Europe/London): ${pickupHours.map((h) => `${h.start}–${h.end}`).join(", ")}. Only confirm times inside these windows.`
+        : business_hours
+          ? JSON.stringify(business_hours)
+          : null;
+
     const renterId = reservation?.renter_id ?? conv?.renter_id ?? undefined;
     const renter = renterId
       ? ((await ctx.db.get(renterId)) as Doc<"renters"> | null)
@@ -764,7 +776,7 @@ export const getThreadContext = internalQuery({
       business_rules: business_rules ?? null,
       delivery_policy: delivery_policy ?? null,
       response_style: response_style ?? null,
-      business_hours: business_hours ?? null,
+      business_hours: businessHoursText,
       renter_name:
         renter?.display_name ?? reservation?.renter_name ?? "the renter",
       renter_rating: renter?.hygglo_rating ?? null,

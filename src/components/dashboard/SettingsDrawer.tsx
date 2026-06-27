@@ -228,6 +228,67 @@ export function SettingsDrawer({ onClose }: Props) {
             <span className="text-xs text-[#8b8fa3]">min</span>
           </div>
         </div>
+
+        <div className="py-3">
+          <label className="text-sm text-[#e4e6eb] block mb-1">Pickup / collection hours</label>
+          <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+            Windows you accept pickups &amp; returns (London time). The AI only confirms times inside these.
+          </p>
+          <div className="space-y-2">
+            {(settings.pickup_hours ?? []).map((w, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={w.start}
+                  onChange={(e) =>
+                    applyField({
+                      pickup_hours: (settings.pickup_hours ?? []).map((x, idx) =>
+                        idx === i ? { ...x, start: e.target.value } : x,
+                      ),
+                    })
+                  }
+                  className="text-sm rounded-lg px-2 py-1.5"
+                  style={INPUT_STYLE}
+                />
+                <span className="text-xs text-[#8b8fa3]">to</span>
+                <input
+                  type="time"
+                  value={w.end}
+                  onChange={(e) =>
+                    applyField({
+                      pickup_hours: (settings.pickup_hours ?? []).map((x, idx) =>
+                        idx === i ? { ...x, end: e.target.value } : x,
+                      ),
+                    })
+                  }
+                  className="text-sm rounded-lg px-2 py-1.5"
+                  style={INPUT_STYLE}
+                />
+                <button
+                  onClick={() =>
+                    applyField({
+                      pickup_hours: (settings.pickup_hours ?? []).filter((_, idx) => idx !== i),
+                    })
+                  }
+                  className="text-[#8b8fa3] hover:text-red-400 px-1.5 text-lg leading-none"
+                  aria-label="Remove window"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() =>
+                applyField({
+                  pickup_hours: [...(settings.pickup_hours ?? []), { start: "10:00", end: "12:00" }],
+                })
+              }
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-white/[0.06] text-[#cbd5e1] hover:bg-white/[0.12]"
+            >
+              + Add window
+            </button>
+          </div>
+        </div>
       </div>
 
       {saveError && (

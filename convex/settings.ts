@@ -23,6 +23,9 @@ export const update = mutation({
     ai_boost_rate: v.optional(v.number()),
     ai_active_from: v.optional(v.string()),
     availability_include_pending: v.optional(v.boolean()),
+    pickup_hours: v.optional(
+      v.array(v.object({ start: v.string(), end: v.string() })),
+    ),
   },
   handler: async (ctx, fields) => {
     // Double-unlock guard: refuse read_only_mode=false + ALLOW_HYGGLO_SEND=true together
@@ -43,6 +46,7 @@ export const update = mutation({
     if (fields.ai_active_from !== undefined) patch.ai_active_from = fields.ai_active_from;
     if (fields.availability_include_pending !== undefined)
       patch.availability_include_pending = fields.availability_include_pending;
+    if (fields.pickup_hours !== undefined) patch.pickup_hours = fields.pickup_hours;
 
     await ctx.db.patch(existing._id, patch);
     return { ok: true };

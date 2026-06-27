@@ -729,6 +729,13 @@ export default defineSchema({
     // would-be double-booking. Toggled from the widget. Default false.
     availability_include_pending: v.optional(v.boolean()),
 
+    // Pickup / collection windows (Europe/London), editable in Settings. Fed to
+    // the AI draft so it only confirms times inside these windows and stops
+    // blindly agreeing to e.g. an 8am pickup. e.g. [{start:"10:00",end:"12:00"}].
+    pickup_hours: v.optional(
+      v.array(v.object({ start: v.string(), end: v.string() })),
+    ),
+
     // Phase 1.B.3 — operator policy fields
     read_only_mode_blocks: v.optional(v.array(v.string())),
 

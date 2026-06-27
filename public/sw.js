@@ -42,11 +42,17 @@ self.addEventListener("notificationclick", (event) => {
         type: "window",
         includeUncontrolled: true,
       });
-      // Reuse an existing dashboard tab if one is open — navigate it to the thread.
+      // Reuse an existing dashboard tab if one is open. postMessage is the
+      // RELIABLE path on iOS (where WindowClient.navigate() frequently no-ops,
+      // so a tapped push wouldn't switch the open chat); the app listens for it
+      // and routes to the thread. navigate() stays as a fallback for desktop.
       for (const client of all) {
         try {
           await client.focus();
-          if ("navigate" in client) await client.navigate(targetUrl);
+          client.postMessage({ type: "deep-link", url: targetUrl });
+          if ("navigate" in client) {
+            try { await client.navigate(targetUrl); } catch (e) { /* iOS: ignore */ }
+          }
           return;
         } catch (e) {
           /* fall through to openWindow */

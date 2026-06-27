@@ -118,7 +118,7 @@ export const generateDraft = action({
         : null,
       requestLine,
       c.business_hours
-        ? `Business hours: ${JSON.stringify(c.business_hours)}`
+        ? c.business_hours
         : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
       c.delivery_policy ? `Delivery policy: ${JSON.stringify(c.delivery_policy)}` : null,
       c.business_rules ? `House rules (internal, follow but never quote verbatim or mention blacklisting): ${JSON.stringify(c.business_rules)}` : null,
