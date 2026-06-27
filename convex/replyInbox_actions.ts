@@ -44,6 +44,15 @@ export const generateDraft = action({
     confidence?: number;
     flags?: DraftFlag[];
   }> => {
+    // Make sure we know the inquiry's listing before drafting — pulls the order
+    // detail's items onto conv.inquiry_items (no-op if cached or a reservation
+    // already carries the items). This is what stops "I don't know which item."
+    try {
+      await ctx.runAction(api.inquiry_context.resolveForThread, { thread_id });
+    } catch {
+      /* best-effort grounding */
+    }
+
     const c = await ctx.runQuery(internal.replyInbox.getThreadContext, {
       thread_id,
     });

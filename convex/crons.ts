@@ -279,6 +279,15 @@ crons.interval(
   {},
 );
 
+// Snapshot the inquiry listing (the item the renter asked about) onto inquiry
+// threads so the tile shows it + the draft is grounded. 2026-06-27.
+crons.interval(
+  "resolve_inquiry_listings",
+  { minutes: 30 },
+  internal.inquiry_context.resolveActive,
+  {},
+);
+
 // Pre-generate AI drafts for awaiting-reply threads so they're ready before the
 // box is opened (on-message pre-gen only covers new messages). 2026-06-27.
 crons.interval(

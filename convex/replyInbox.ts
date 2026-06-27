@@ -971,9 +971,11 @@ export const getThreadContext = internalQuery({
     // ground specs/availability. `availability` carries the resolved canonical
     // item names + per-item free/booked counts for the draft prompt + guard.
     let availability: TileAvailability | null = null;
-    // Phase 2 FactPack: per-item specs + price + marketing flags for the
-    // resolved items, plus a catalogue-wide owned-camera guard. Feeds the
-    // Knowledge Fence in the prompt AND the draft guard (price/spec/model checks).
+    // Phase 2 FactPack: per-item specs + price + marketing flags for the items
+    // in play — resolved from the RESERVATION when there is one, otherwise from
+    // the INQUIRY's listing (the product the renter clicked "ask owner" on, kept
+    // in conv.inquiry_items). This is what makes the bot KNOW the listing on a
+    // bare inquiry instead of asking "which item?".
     let fact_pack: {
       pricing?: { itemPrices: { name: string; min: number; max: number }[] };
       specs: { name: string; text: string }[];
@@ -981,25 +983,61 @@ export const getThreadContext = internalQuery({
       verifiedListingItem?: string;
     } | null = null;
     let owned_cameras: string[] = [];
-    if (reservation) {
-      try {
+    // line items with a product_id, from reservation OR inquiry listing.
+    const lineItems: { name?: string | null; product_id?: number | null }[] =
+      reservation
+        ? (reservation.hygglo_items ?? []).map((h) => ({ name: h.name, product_id: h.product_id }))
+        : (conv?.inquiry_items ?? []).map((it) => ({
+            name: it.name,
+            product_id: (it as { product_id?: number }).product_id,
+          }));
+    try {
+      // Owned cameras (catalogue-wide) — always available as a grounding fact.
+      const allItems = await ctx.db.query("items").collect();
+      owned_cameras = allItems
+        .filter((it) => it.kind === "camera" && it.status === "active" && !it.is_marketing_only)
+        .map((it) => it.name_canonical)
+        .sort()
+        .slice(0, 40);
+
+      // Resolve the items in play to inventory itemIds.
+      const resolvedIds: string[] = [];
+      const itemNameOf = new Map<string, string>();
+      if (reservation) {
         const availCtx = await loadAvailCtx(ctx, false);
         availability = computeAvailability(reservation, availCtx);
+        const units = reservationItemUnits(reservation, availCtx.productIndex, availCtx.overrideMap);
+        for (const id of [...units.keys()].slice(0, 8)) {
+          resolvedIds.push(id);
+          itemNameOf.set(id, availCtx.itemName.get(id) ?? "item");
+        }
+      } else if (slug) {
+        // Inquiry: product_id → hygglo_products.masterItemId → inventory item.
+        for (const li of lineItems) {
+          if (typeof li.product_id !== "number") continue;
+          const prod = await ctx.db
+            .query("hygglo_products")
+            .withIndex("by_account_product", (q) =>
+              q.eq("accountSlug", slug!).eq("productId", li.product_id!),
+            )
+            .first();
+          if (prod?.masterItemId) {
+            const idStr = String(prod.masterItemId);
+            if (!resolvedIds.includes(idStr)) resolvedIds.push(idStr);
+          }
+        }
+      }
 
-        const units = reservationItemUnits(
-          reservation,
-          availCtx.productIndex,
-          availCtx.overrideMap,
-        );
-        const resolvedIds = [...units.keys()].slice(0, 8);
+      if (resolvedIds.length) {
         const priceRows = await ctx.db.query("pricing_catalog").collect();
         const specs: { name: string; text: string }[] = [];
         const itemPrices: { name: string; min: number; max: number }[] = [];
         const marketingItems: string[] = [];
-        for (const idStr of resolvedIds) {
+        for (const idStr of resolvedIds.slice(0, 8)) {
           const item = await ctx.db.get(idStr as Id<"items">);
           if (!item) continue;
-          const name = item.name_canonical ?? "item";
+          const name = item.name_canonical ?? itemNameOf.get(idStr) ?? "item";
+          itemNameOf.set(idStr, name);
           if (item.is_marketing_only) marketingItems.push(name);
           const spec = await ctx.db
             .query("item_specs")
@@ -1017,64 +1055,37 @@ export const getThreadContext = internalQuery({
             const k = squash(r.item_name_canonical);
             return k.length >= 5 && keyMatches(sq, k);
           });
-          if (pr)
-            itemPrices.push({
-              name,
-              min: pr.daily_price_min,
-              max: pr.daily_price_max,
-            });
+          if (pr) itemPrices.push({ name, min: pr.daily_price_min, max: pr.daily_price_max });
         }
         fact_pack = {
           pricing: itemPrices.length ? { itemPrices } : undefined,
           specs,
           marketingItems,
           verifiedListingItem:
-            resolvedIds.length === 1
-              ? availCtx.itemName.get(resolvedIds[0])
-              : undefined,
+            resolvedIds.length === 1 ? itemNameOf.get(resolvedIds[0]) : undefined,
         };
-
-        // Owned-camera guard: only ever suggest a camera that's really in stock.
-        const allItems = await ctx.db.query("items").collect();
-        owned_cameras = allItems
-          .filter(
-            (it) =>
-              it.kind === "camera" &&
-              it.status === "active" &&
-              !it.is_marketing_only,
-          )
-          .map((it) => it.name_canonical)
-          .sort()
-          .slice(0, 40);
-      } catch {
-        availability = null; // grounding is best-effort; never block a draft
-        fact_pack = null;
       }
+    } catch {
+      availability = null; // grounding is best-effort; never block a draft
+      fact_pack = null;
     }
 
-    // Unfulfillable booked items: products that are marketing-only or never
-    // resolved to owned inventory (e.g. an "FX30" SEO listing for a camera we
-    // don't stock). The draft must NOT confirm these.
+    // Unfulfillable items (marketing/SEO listing or unowned camera model) —
+    // from the reservation OR the inquiry listing.
     const unfulfillable: string[] = [];
-    if (reservation && slug) {
-      // (a) whole product is marketing-only / never resolved to inventory.
-      for (const h of reservation.hygglo_items ?? []) {
-        if (typeof h.product_id !== "number") continue;
+    if (slug) {
+      for (const li of lineItems) {
+        if (typeof li.product_id !== "number") continue;
         const prod = await ctx.db
           .query("hygglo_products")
           .withIndex("by_account_product", (q) =>
-            q.eq("accountSlug", slug!).eq("productId", h.product_id!),
+            q.eq("accountSlug", slug!).eq("productId", li.product_id!),
           )
           .first();
         if (prod && (prod.isMarketingOnly || !prod.masterItemId))
-          unfulfillable.push(h.name ?? prod.name ?? "an item");
+          unfulfillable.push(li.name ?? prod.name ?? "an item");
       }
-      // (b) the listing TITLE names a camera model we don't own (SEO bait like
-      // "fx30" / "like Canon R5"), even if the kit resolved to other parts.
-      const titles = (reservation.hygglo_items ?? [])
-        .map((h) => h.name ?? "")
-        .join(" | ")
-        .toLowerCase();
+      const titles = lineItems.map((li) => li.name ?? "").join(" | ").toLowerCase();
       const ownedLc = owned_cameras.join(" | ").toLowerCase();
       const tok = (hay: string, t: string) =>
         new RegExp(

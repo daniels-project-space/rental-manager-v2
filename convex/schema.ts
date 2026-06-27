@@ -696,6 +696,7 @@ export default defineSchema({
           name: v.string(),
           qty: v.number(),
           image_url: v.optional(v.string()),
+          product_id: v.optional(v.number()),
         })
       )
     ),
