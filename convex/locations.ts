@@ -1,64 +1,29 @@
 /**
- * Listing-location resolution (2026-06-27).
+ * Per-order pickup/meetup location (2026-06-27, reworked).
  *
- * Resolves the pickup/listing location Hygglo shows for an order — label, street,
- * postcode and EXACT lat/lng — from the public listing endpoint (no auth), and
- * caches it on the reservation. Distance-from-hub + the too-heavy tag are derived
- * live at read time (assembleTile), so they track the Settings hub automatically.
+ * The authoritative location for an order is on the AUTH'd order detail
+ * (GET /v4/my/orders/{id}) as `location: { street, zip, municipality }` — the
+ * agreed handover point for THAT order. (The earlier version guessed the
+ * listing's fixed area via product→listings[0], which was the seller's default
+ * area and wrong for almost every order.) The zip has no coords, so we geocode
+ * it with postcodes.io (the same address register the hub uses).
  *
- *   GET https://api.hygglo.com/api/v2/product-listings/{listingId}?country=GB
- *     → location: { label, street, zip, zipLatitude, zipLongitude,
- *                   municipality, bestLocation:{ name, position:{coordinates:[lng,lat]} } }
+ * Cached on the reservation; distance-from-hub + the heavy tag are derived live
+ * in replyInbox.computeLocation against the order's OWN account hub.
  */
-import { v } from "convex/values";
 import { action, internalAction, internalQuery, internalMutation } from "./_generated/server";
 import { api, internal } from "./_generated/api";
+import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { classifyOrderWeight } from "./lib/delivery_weight";
+import {
+  getAccountCredentials,
+  getHyggloAccessToken,
+  hyggloAuthHeaders,
+  HYGGLO_API_BASE,
+} from "../src/lib/hygglo-auth";
 
-type ParsedLoc = {
-  label?: string;
-  area?: string;
-  municipality?: string;
-  street?: string;
-  zip?: string;
-  lat: number;
-  lng: number;
-  publicUrl?: string;
-};
-
-function parseLoc(l: unknown): ParsedLoc | null {
-  if (!l || typeof l !== "object") return null;
-  const o = l as Record<string, any>;
-  const lat = typeof o.zipLatitude === "number" ? o.zipLatitude : o.bestLocation?.position?.coordinates?.[1];
-  const lng = typeof o.zipLongitude === "number" ? o.zipLongitude : o.bestLocation?.position?.coordinates?.[0];
-  if (typeof lat !== "number" || typeof lng !== "number") return null;
-  return {
-    label: o.label ?? o.bestLocation?.label ?? o.bestLocation?.name,
-    area: o.bestLocation?.name,
-    municipality: o.municipality,
-    street: o.street,
-    zip: o.zip,
-    lat,
-    lng,
-  };
-}
-
-async function fetchListingLocation(listingId: number): Promise<ParsedLoc | null> {
-  try {
-    const r = await fetch(
-      `https://api.hygglo.com/api/v2/product-listings/${listingId}?country=GB`,
-      { headers: { Country: "GB", "User-Client": "Hygglo-web" } },
-    );
-    if (!r.ok) return null;
-    const d = (await r.json()) as { location?: unknown; publicUrl?: string };
-    const parsed = parseLoc(d?.location);
-    if (parsed && d?.publicUrl) parsed.publicUrl = d.publicUrl;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
+const TZ = "Europe/London";
 
 export const resolveInput = internalQuery({
   args: { thread_id: v.string() },
@@ -67,12 +32,7 @@ export const resolveInput = internalQuery({
       .query("reservations")
       .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
       .first();
-    if (!res) return null;
-    const slug = res.account_slug ?? null;
-    const productIds = (res.hygglo_items ?? [])
-      .map((h) => h.product_id)
-      .filter((x): x is number => typeof x === "number");
-
+    if (!res || !res.account_slug) return null;
     const items: { weight_kg?: number; size_score?: number; kind?: string; qty: number }[] = [];
     for (const ri of res.resolved_items ?? []) {
       const idAny = (ri as { item_id?: unknown }).item_id;
@@ -86,35 +46,7 @@ export const resolveInput = internalQuery({
           qty: (ri as { qty?: number }).qty ?? 1,
         });
     }
-
-    let listingId: number | undefined;
-    let publicUrl: string | undefined;
-    let storedLoc: unknown;
-    if (slug) {
-      for (const pid of productIds) {
-        const prod = await ctx.db
-          .query("hygglo_products")
-          .withIndex("by_account_product", (q) =>
-            q.eq("accountSlug", slug).eq("productId", pid),
-          )
-          .first();
-        const lst = prod?.listings?.[0];
-        if (lst?.id) {
-          listingId = lst.id;
-          publicUrl = lst.publicUrl ?? prod?.publicUrl;
-          storedLoc = lst.location;
-          break;
-        }
-      }
-    }
-    return {
-      reservation_id: res._id,
-      listingId: listingId ?? null,
-      publicUrl: publicUrl ?? null,
-      storedLoc: storedLoc ?? null,
-      items,
-      resolved_at: res.loc_resolved_at ?? null,
-    };
+    return { reservation_id: res._id, account_slug: res.account_slug, items, resolved_at: res.loc_resolved_at ?? null };
   },
 });
 
@@ -141,63 +73,113 @@ export const patchLocation = internalMutation({
   },
 });
 
-/** Resolve (and cache) one thread's listing location + weight summary. */
+/** GET the auth'd order detail's location { street, zip, municipality }. */
+async function fetchOrderLocation(
+  accountSlug: string,
+  hyggloOrderId: string,
+): Promise<{ street?: string; zip?: string; municipality?: string } | null> {
+  try {
+    const creds = await getAccountCredentials(accountSlug);
+    const token = await getHyggloAccessToken({ ...creds, accountSlug });
+    const res = await fetch(
+      `${HYGGLO_API_BASE}/v4/my/orders/${encodeURIComponent(hyggloOrderId)}?timezone=${encodeURIComponent(TZ)}`,
+      { headers: hyggloAuthHeaders(token) },
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as { location?: { street?: string; zip?: string; municipality?: string } };
+    return d.location ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Geocode a UK postcode via postcodes.io (the address register). */
+async function geocodeZip(
+  zip: string,
+): Promise<{ lat: number; lng: number; label: string; postcode: string } | null> {
+  const pc = zip.replace(/\s+/g, "").toUpperCase();
+  if (pc.length < 5) return null;
+  try {
+    const r = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(pc)}`);
+    if (!r.ok) return null;
+    const res = (await r.json())?.result;
+    if (!res || typeof res.latitude !== "number") return null;
+    const label =
+      [res.admin_ward, res.admin_district].filter(Boolean).join(", ") ||
+      res.admin_district ||
+      res.parish ||
+      res.postcode ||
+      pc;
+    return { lat: res.latitude, lng: res.longitude, label, postcode: res.postcode ?? pc };
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve (and cache) one thread's per-order location + weight summary. */
 export const resolveForThread = action({
   args: { thread_id: v.string(), force: v.optional(v.boolean()) },
   handler: async (
     ctx,
     { thread_id, force },
-  ): Promise<{ ok: boolean; cached?: boolean; reason?: string }> => {
+  ): Promise<{ ok: boolean; cached?: boolean; reason?: string; label?: string }> => {
     const inp = await ctx.runQuery(internal.locations.resolveInput, { thread_id });
     if (!inp) return { ok: false, reason: "no reservation" };
     if (inp.resolved_at && !force) return { ok: true, cached: true };
 
-    let loc = parseLoc(inp.storedLoc);
-    if (!loc && inp.listingId != null) loc = await fetchListingLocation(inp.listingId);
-    if (!loc) return { ok: false, reason: "no location" };
+    const orderLoc = await fetchOrderLocation(inp.account_slug, thread_id);
+    if (!orderLoc?.zip) return { ok: false, reason: "no order location" };
+    const geo = await geocodeZip(orderLoc.zip);
+    if (!geo) return { ok: false, reason: "geocode failed" };
 
-    const order = classifyOrderWeight(
-      inp.items.map((it) => ({ spec: it, qty: it.qty })),
-    );
+    const order = classifyOrderWeight(inp.items.map((it) => ({ spec: it, qty: it.qty })));
     await ctx.runMutation(internal.locations.patchLocation, {
       reservation_id: inp.reservation_id,
       loc: {
-        loc_label: loc.label,
-        loc_area: loc.area,
-        loc_municipality: loc.municipality,
-        loc_street: loc.street,
-        loc_zip: loc.zip,
-        loc_lat: loc.lat,
-        loc_lng: loc.lng,
-        loc_public_url: inp.publicUrl ?? loc.publicUrl,
+        loc_label: geo.label,
+        loc_area: orderLoc.municipality ?? geo.label,
+        loc_municipality: orderLoc.municipality,
+        loc_street: orderLoc.street,
+        loc_zip: geo.postcode,
+        loc_lat: geo.lat,
+        loc_lng: geo.lng,
         loc_total_weight_kg: order.totalWeightKg,
         loc_heaviest_kg: order.heaviestKg,
         loc_big_items: order.bigItems,
         loc_vehicle: order.vehicle,
       },
     });
-    return { ok: true };
+    return { ok: true, label: geo.label };
   },
 });
 
-/** Thread ids (awaiting reply) that still need a location resolved. */
+/** Active threads (requests + renter-last) still missing a location. */
 export const unresolvedThreads = internalQuery({
   args: { limit: v.number() },
   handler: async (ctx, { limit }) => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const consider = async (tid: string | undefined, resHas: boolean) => {
+      if (!tid || seen.has(tid) || out.length >= limit) return;
+      seen.add(tid);
+      if (resHas) out.push(tid);
+    };
+    const reqs = await ctx.db
+      .query("reservations")
+      .withIndex("by_awaiting_owner_action", (q) => q.eq("awaiting_owner_action", true))
+      .take(200);
+    for (const r of reqs) await consider(r.hygglo_order_id, !r.loc_resolved_at);
     const convs = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
       .take(400);
-    const out: string[] = [];
     for (const conv of convs) {
+      if (out.length >= limit) break;
       const res = await ctx.db
         .query("reservations")
-        .withIndex("by_hygglo_order_id", (q) =>
-          q.eq("hygglo_order_id", conv.thread_id),
-        )
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", conv.thread_id))
         .first();
-      if (res && !res.loc_resolved_at) out.push(conv.thread_id);
-      if (out.length >= limit) break;
+      if (res && !res.loc_resolved_at) await consider(conv.thread_id, true);
     }
     return out;
   },
@@ -212,9 +194,7 @@ export const resolveActive = internalAction({
     });
     let resolved = 0;
     for (const t of threads) {
-      const r = await ctx.runAction(api.locations.resolveForThread, {
-        thread_id: t,
-      });
+      const r = await ctx.runAction(api.locations.resolveForThread, { thread_id: t });
       if (r.ok) resolved++;
     }
     return { resolved };
