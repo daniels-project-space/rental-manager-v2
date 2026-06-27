@@ -485,6 +485,8 @@ async function assembleTile(
     preview: latestMsg?.body_text ?? "",
     has_draft: !!conv?.ai_draft_text,
     ai_draft_text: conv?.ai_draft_text ?? null,
+    ai_draft_confidence: conv?.ai_draft_confidence ?? null,
+    ai_draft_flags: conv?.ai_draft_flags ?? null,
   };
 }
 
@@ -783,8 +785,27 @@ export const getThreadContext = internalQuery({
     const latest = msgs[msgs.length - 1];
 
     const richItems = buildRichItems(reservation, conv);
+
+    // Phase 0 unblock: resolve the requested items to real inventory units and
+    // compute live availability for the rental dates — the SAME engine the queue
+    // tile uses (confirmed-only, V1 rule: never count unaccepted requests). The
+    // draft path previously saw only raw Hygglo listing text, so it could never
+    // ground specs/availability. `availability` carries the resolved canonical
+    // item names + per-item free/booked counts for the draft prompt + guard.
+    let availability: TileAvailability | null = null;
+    if (reservation) {
+      try {
+        const availCtx = await loadAvailCtx(ctx, false);
+        availability = computeAvailability(reservation, availCtx);
+      } catch {
+        availability = null; // grounding is best-effort; never block a draft
+      }
+    }
+
     return {
       account_slug: slug ?? null,
+      availability,
+      pickup_windows: pickupHours ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,
       business_rules: business_rules ?? null,
@@ -826,8 +847,28 @@ export const setDraft = internalMutation({
     thread_id: v.string(),
     draft_text: v.string(),
     message_id: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    flags: v.optional(
+      v.array(
+        v.object({
+          type: v.string(),
+          detail: v.string(),
+          severity: v.union(
+            v.literal("critical"),
+            v.literal("high"),
+            v.literal("medium"),
+            v.literal("low"),
+          ),
+          action: v.union(
+            v.literal("stripped"),
+            v.literal("rewritten"),
+            v.literal("flagged"),
+          ),
+        }),
+      ),
+    ),
   },
-  handler: async (ctx, { thread_id, draft_text, message_id }) => {
+  handler: async (ctx, { thread_id, draft_text, message_id, confidence, flags }) => {
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -837,6 +878,8 @@ export const setDraft = internalMutation({
       ai_draft_text: draft_text,
       ai_draft_for_message_id: message_id,
       ai_draft_generated_at: Date.now(),
+      ai_draft_confidence: confidence,
+      ai_draft_flags: flags,
     });
     return { ok: true };
   },

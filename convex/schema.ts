@@ -629,6 +629,28 @@ export default defineSchema({
     ai_draft_text: v.optional(v.string()),
     ai_draft_for_message_id: v.optional(v.string()),
     ai_draft_generated_at: v.optional(v.number()),
+    // Output-policing result (Phase 1 draft guard): confidence 0..1 + the flags
+    // raised on the draft (auto-fixed leaks + items flagged for owner review).
+    ai_draft_confidence: v.optional(v.number()),
+    ai_draft_flags: v.optional(
+      v.array(
+        v.object({
+          type: v.string(),
+          detail: v.string(),
+          severity: v.union(
+            v.literal("critical"),
+            v.literal("high"),
+            v.literal("medium"),
+            v.literal("low"),
+          ),
+          action: v.union(
+            v.literal("stripped"),
+            v.literal("rewritten"),
+            v.literal("flagged"),
+          ),
+        }),
+      ),
+    ),
     // ── Date-less inquiry product snapshot (2026-06-26) ──
     // A renter asking "is this available?" WITHOUT submitting dates produces a
     // Hygglo order with no rentalPeriod, so no reservation row is built and the

@@ -56,6 +56,12 @@ interface TileAvailability {
   include_pending: boolean;
   items: ItemAvail[];
 }
+export interface DraftFlag {
+  type: string;
+  detail: string;
+  severity: "critical" | "high" | "medium" | "low";
+  action: "stripped" | "rewritten" | "flagged";
+}
 export interface ReplyTileData {
   thread_id: string;
   account_slug: string | null;
@@ -93,6 +99,8 @@ export interface ReplyTileData {
   preview: string;
   has_draft: boolean;
   ai_draft_text: string | null;
+  ai_draft_confidence: number | null;
+  ai_draft_flags: DraftFlag[] | null;
 }
 
 // ── helpers ───────────────────────────────────────────────────────
@@ -683,6 +691,13 @@ export function ReplyModal({
   // AI draft lives in its OWN preview box (not the compose box). Tap it to copy
   // it into the message box, then edit + Send yourself — never auto-sent.
   const [draft, setDraft] = useState(tile.ai_draft_text ?? "");
+  const [draftConfidence, setDraftConfidence] = useState<number | null>(
+    tile.ai_draft_confidence ?? null,
+  );
+  const [draftFlags, setDraftFlags] = useState<DraftFlag[]>(
+    tile.ai_draft_flags ?? [],
+  );
+  const [showFlags, setShowFlags] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -740,8 +755,11 @@ export function ReplyModal({
     setNote(null);
     try {
       const r = await generateDraft({ thread_id: tile.thread_id });
-      if (r.status === "ok" && r.draft) setDraft(r.draft);
-      else setNote("Draft unavailable.");
+      if (r.status === "ok" && r.draft) {
+        setDraft(r.draft);
+        setDraftConfidence(r.confidence ?? null);
+        setDraftFlags(r.flags ?? []);
+      } else setNote("Draft unavailable.");
     } catch {
       setNote("Draft failed.");
     } finally {
@@ -1092,6 +1110,20 @@ export function ReplyModal({
                 <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-violet-300/90">
                   ✨ AI draft
                 </span>
+                {draftConfidence != null && !drafting && (
+                  <span
+                    title="Draft confidence — lower means the AI flagged something worth a closer look"
+                    className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${
+                      draftConfidence >= 0.75
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : draftConfidence >= 0.4
+                          ? "bg-amber-500/15 text-amber-300"
+                          : "bg-rose-500/15 text-rose-300"
+                    }`}
+                  >
+                    {Math.round(draftConfidence * 100)}%
+                  </span>
+                )}
                 {draft && !drafting && (
                   <span className="text-[10px] text-violet-200/60">tap to use ↓</span>
                 )}
@@ -1113,6 +1145,55 @@ export function ReplyModal({
                   {draft}
                 </button>
               )}
+              {/* Draft-guard flags: items the AI flagged for my review (amber)
+                  and the leaks it auto-cleaned (muted). Never blocks — informs. */}
+              {draft && !drafting && draftFlags.length > 0 && (() => {
+                const review = draftFlags.filter((f) => f.action === "flagged");
+                const auto = draftFlags.filter((f) => f.action !== "flagged");
+                return (
+                  <div className="px-3 pb-2.5 border-t border-violet-400/15 pt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowFlags((s) => !s)}
+                      className="flex items-center gap-2 text-[10px]"
+                    >
+                      {review.length > 0 && (
+                        <span className="font-semibold text-amber-300">
+                          ⚠ {review.length} to review
+                        </span>
+                      )}
+                      {auto.length > 0 && (
+                        <span className="text-[#8a8f9c]">
+                          {auto.length} auto-fixed
+                        </span>
+                      )}
+                      <span className="text-violet-200/50">
+                        {showFlags ? "▴" : "▾"}
+                      </span>
+                    </button>
+                    {showFlags && (
+                      <ul className="mt-1.5 space-y-1">
+                        {review.map((f, i) => (
+                          <li
+                            key={`r${i}`}
+                            className="text-[11px] leading-snug text-amber-200/90"
+                          >
+                            ⚠ {f.detail}
+                          </li>
+                        ))}
+                        {auto.map((f, i) => (
+                          <li
+                            key={`a${i}`}
+                            className="text-[11px] leading-snug text-[#7f8694]"
+                          >
+                            ✓ {f.detail}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

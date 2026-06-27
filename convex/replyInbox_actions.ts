@@ -17,6 +17,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
+import { guardDraft, type DraftFlag } from "./lib/draft_guard";
 import {
   sendManualRenterMessage,
   manualApproveOrder,
@@ -35,7 +36,12 @@ export const generateDraft = action({
   handler: async (
     ctx,
     { thread_id },
-  ): Promise<{ status: "ok" | "skipped"; draft?: string }> => {
+  ): Promise<{
+    status: "ok" | "skipped";
+    draft?: string;
+    confidence?: number;
+    flags?: DraftFlag[];
+  }> => {
     const c = await ctx.runQuery(internal.replyInbox.getThreadContext, {
       thread_id,
     });
@@ -93,6 +99,20 @@ export const generateDraft = action({
         ? "Booking stage: PENDING REQUEST — awaiting my approve/decline"
         : `Booking stage: ${(c.order_step && STAGE[c.order_step]) ?? c.status ?? "active"}`;
 
+    // Phase 0/2 grounding: real availability for the requested items + dates,
+    // resolved from inventory (confirmed bookings only). Overrides any guess.
+    const availLine =
+      c.availability && c.availability.items.length
+        ? "Live availability for these dates (real, confirmed bookings only — trust this over any assumption):\n" +
+          c.availability.items
+            .map((it) =>
+              it.available
+                ? `- ${it.name}: AVAILABLE (${it.free} of ${it.total_units} free)`
+                : `- ${it.name}: NOT AVAILABLE (${it.free <= 0 ? "none" : it.free} of ${it.total_units} free) — do NOT confirm this item; offer an alternative or say I'll check`,
+            )
+            .join("\n")
+        : null;
+
     // Renter trust line — feed the AI who it's talking to (it must NOT repeat
     // this to the renter; it just informs tone + caution).
     const rt: string[] = [];
@@ -121,6 +141,7 @@ export const generateDraft = action({
         ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
         : null,
       requestLine,
+      availLine,
       c.business_hours
         ? c.business_hours
         : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
@@ -148,14 +169,51 @@ export const generateDraft = action({
     if (gen.skipped) return { status: "skipped" };
 
     const draft = (gen.result.text ?? "").trim();
-    if (draft) {
-      await ctx.runMutation(internal.replyInbox.setDraft, {
-        thread_id,
-        draft_text: draft,
-        message_id: c.last_message_id ?? undefined,
-      });
-    }
-    return { status: "ok", draft };
+    if (!draft) return { status: "ok", draft };
+
+    // ── Output policing (Phase 1 guard) ──────────────────────────
+    // Port of the V1 FILTER + CONTRACT layers: auto-clean unambiguous garbage
+    // (internal leaks, leaked reasoning, "Hygglo", timestamps, markdown, Leo/
+    // diogo we→I) and FLAG judgement calls for my review (price/availability
+    // claims, premature confirmation, false action claims, out-of-hours times…).
+    const lastRenter =
+      [...c.messages].reverse().find((m) => m.role === "renter")?.content ?? "";
+    const guardStage =
+      c.order_step === "RETURNED" ||
+      c.order_step === "REVIEWED" ||
+      c.status === "completed"
+        ? "completed"
+        : c.order_step === "BOOKED_AFTER_VERIFIED" ||
+            c.order_step === "DELIVERED" ||
+            c.status === "confirmed" ||
+            c.status === "ongoing"
+          ? "confirmed"
+          : c.order_step === "VERIFIED"
+            ? "booked"
+            : undefined;
+    const guard = guardDraft(draft, {
+      history: c.messages as { role: "owner" | "renter"; content: string }[],
+      lastRenterMessage: lastRenter,
+      account: c.account_slug ?? undefined,
+      stage: guardStage,
+      pickupWindows: c.pickup_windows ?? undefined,
+      firstPerson: c.account_slug === "leo" || c.account_slug === "diogo",
+    });
+    const finalDraft = guard.text.trim() || draft;
+
+    await ctx.runMutation(internal.replyInbox.setDraft, {
+      thread_id,
+      draft_text: finalDraft,
+      message_id: c.last_message_id ?? undefined,
+      confidence: guard.confidence,
+      flags: guard.flags,
+    });
+    return {
+      status: "ok",
+      draft: finalDraft,
+      confidence: guard.confidence,
+      flags: guard.flags,
+    };
   },
 });
 
