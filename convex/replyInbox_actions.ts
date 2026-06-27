@@ -18,6 +18,7 @@ import { internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
+import { dnaSummary } from "./lib/renter_dna";
 import {
   sendManualRenterMessage,
   manualApproveOrder,
@@ -136,7 +137,8 @@ export const generateDraft = action({
     // this to the renter; it just informs tone + caution).
     const rt: string[] = [];
     if (c.renter_rating != null) rt.push(`${c.renter_rating}★${c.renter_review_count != null ? ` from ${c.renter_review_count} reviews` : ""}`);
-    if (c.renter_total_rentals) rt.push(`${c.renter_total_rentals} past rentals`);
+    const pastRentals = c.prior_rentals || c.renter_total_rentals || 0;
+    if (pastRentals) rt.push(`${pastRentals} past rentals with me`);
     if (c.renter_blacklisted) rt.push("BLACKLISTED");
     else if (c.renter_flagged) rt.push("FLAGGED for manual review");
     const lowRated = c.renter_rating != null && c.renter_rating < 4;
@@ -148,9 +150,20 @@ export const generateDraft = action({
       ? `Renter trust (internal, do NOT mention): ${rt.join(", ")}.${lowRated ? " Low rating — be helpful but don't over-commit; I'll vet them." : ""}${lowRevText}`
       : null;
 
+    // RenterDNA tone read + returning-renter awareness (internal, adapt tone).
+    const dnaText = dnaSummary(c.renter_dna);
+    const dnaLine = dnaText
+      ? `Renter style (internal, adapt my tone to match, never mention): ${dnaText}.`
+      : null;
+    const welcomeLine = c.prior_rentals
+      ? `Returning renter — this is rental #${c.prior_rentals + 1} with me; they've rented before, so a warm, familiar tone fits (no need to over-explain the basics).`
+      : null;
+
     const prompt = [
       `Renter: ${c.renter_name}`,
       renterLine,
+      dnaLine,
+      welcomeLine,
       c.account_slug ? `Account: ${c.account_slug}` : null,
       c.items.length ? `Items requested: ${c.items.join(", ")}` : null,
       c.start_date ? `Rental period: ${c.start_date} → ${c.end_date ?? "?"}` : null,
@@ -242,6 +255,17 @@ export const generateDraft = action({
       confidence: guard.confidence,
       flags: guard.flags,
     });
+
+    // Persist the RenterDNA + rental counts so the trust read carries across
+    // threads (best-effort — never block the draft on it).
+    if (c.renter_id) {
+      await ctx.runMutation(internal.replyInbox.persistRenterStats, {
+        renter_id: c.renter_id,
+        renter_dna: c.renter_dna ?? undefined,
+        total_rentals_count: c.prior_rentals,
+        last_rental_at: c.last_rental_at ?? undefined,
+      });
+    }
     return {
       status: "ok",
       draft: finalDraft,

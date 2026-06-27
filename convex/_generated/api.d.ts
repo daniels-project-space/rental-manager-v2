@@ -88,6 +88,7 @@ import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_renter_bot_filters from "../lib/renter_bot_filters.js";
 import type * as lib_renter_bot_intents from "../lib/renter_bot_intents.js";
 import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.js";
+import type * as lib_renter_dna from "../lib/renter_dna.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
 import type * as lib_reservations_itemUnits from "../lib/reservations/itemUnits.js";
@@ -262,6 +263,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_filters": typeof lib_renter_bot_filters;
   "lib/renter_bot_intents": typeof lib_renter_bot_intents;
   "lib/renter_bot_negotiation": typeof lib_renter_bot_negotiation;
+  "lib/renter_dna": typeof lib_renter_dna;
   "lib/renters": typeof lib_renters;
   "lib/reservations/accounts": typeof lib_reservations_accounts;
   "lib/reservations/itemUnits": typeof lib_reservations_itemUnits;

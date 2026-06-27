@@ -252,4 +252,17 @@ crons.daily(
 // One-time backfill of pre-rework pending rows: api.returns_autoclose.adminBackfillClose
 // (manual, token-guarded — never a cron). See convex/returns_autoclose.ts.
 
+// ── Phase 3 (2026-06-27) — renter trust refresh ──
+// Fetch Hygglo reviews for renters currently awaiting a reply and derive their
+// rating/review_count, so the AI-draft trust-line works for active threads (it
+// was previously only populated on-demand via the dashboard star-click). Daily,
+// capped per run to bound external calls. Owner-side signal — see
+// renter_reviews.fetchHyggloReviews caveat.
+crons.daily(
+  "refresh_active_renter_reviews",
+  { hourUTC: 4, minuteUTC: 30 },
+  internal.renter_reviews.refreshActiveRenters,
+  {},
+);
+
 export default crons;

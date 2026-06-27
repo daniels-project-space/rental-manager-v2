@@ -23,6 +23,7 @@ import {
   buildOverrideMap,
   type OverrideMap,
 } from "./lib/reservations/itemUnits";
+import { profileRenter } from "./lib/renter_dna";
 
 type RichItem = { name: string; qty: number; image_url: string | null };
 
@@ -784,6 +785,41 @@ export const getThreadContext = internalQuery({
     }));
     const latest = msgs[msgs.length - 1];
 
+    // Phase 3 RenterDNA — a tone read derived purely from the renter's own
+    // messages, evolved from any prior DNA. Persisted by generateDraft.
+    const renterMsgs = msgs
+      .filter((m) => m.sender !== "owner")
+      .map((m) => m.body_text);
+    const renter_dna =
+      renterId && renterMsgs.length
+        ? profileRenter(renterMsgs, renter?.renter_dna ?? undefined)
+        : (renter?.renter_dna ?? null);
+
+    // Phase 3 welcome-back — prior rentals WITH US for this renter (the current
+    // thread excluded). Counts anything that reached payment/handoff or beyond.
+    let prior_rentals = 0;
+    let last_rental_at: number | null = null;
+    if (renterId) {
+      const rs = await ctx.db
+        .query("reservations")
+        .withIndex("by_renter", (q) => q.eq("renter_id", renterId))
+        .collect();
+      for (const r of rs) {
+        if (r.hygglo_order_id === thread_id) continue;
+        const done =
+          r.status === "completed" ||
+          r.status === "confirmed" ||
+          r.order_step === "DELIVERED" ||
+          r.order_step === "RETURNED" ||
+          r.order_step === "REVIEWED";
+        if (!done) continue;
+        prior_rentals++;
+        const t = r.created_at ?? r._creationTime;
+        if (typeof t === "number" && (last_rental_at == null || t > last_rental_at))
+          last_rental_at = t;
+      }
+    }
+
     const richItems = buildRichItems(reservation, conv);
 
     // Phase 0 unblock: resolve the requested items to real inventory units and
@@ -876,6 +912,10 @@ export const getThreadContext = internalQuery({
 
     return {
       account_slug: slug ?? null,
+      renter_id: renterId ?? null,
+      renter_dna,
+      prior_rentals,
+      last_rental_at,
       availability,
       fact_pack,
       owned_cameras,
@@ -955,6 +995,42 @@ export const setDraft = internalMutation({
       ai_draft_confidence: confidence,
       ai_draft_flags: flags,
     });
+    return { ok: true };
+  },
+});
+
+// ── Renter intelligence persistence (Phase 3) ────────────────────
+
+/**
+ * Persist the RenterDNA + rental counts computed in getThreadContext. Called by
+ * generateDraft so the trust read survives across threads/sessions. Cheap, and
+ * only patches fields we actually have.
+ */
+export const persistRenterStats = internalMutation({
+  args: {
+    renter_id: v.id("renters"),
+    renter_dna: v.optional(
+      v.object({
+        style: v.optional(v.string()),
+        expertise: v.optional(v.string()),
+        driver: v.optional(v.string()),
+        energy: v.optional(v.string()),
+        decisionSpeed: v.optional(v.string()),
+        signals_observed: v.optional(v.number()),
+        updated_at: v.optional(v.number()),
+      }),
+    ),
+    total_rentals_count: v.optional(v.number()),
+    last_rental_at: v.optional(v.number()),
+  },
+  handler: async (ctx, { renter_id, renter_dna, total_rentals_count, last_rental_at }) => {
+    const renter = await ctx.db.get(renter_id);
+    if (!renter) return { ok: false };
+    const patch: Record<string, unknown> = {};
+    if (renter_dna) patch.renter_dna = { ...renter_dna, updated_at: Date.now() };
+    if (total_rentals_count != null) patch.total_rentals_count = total_rentals_count;
+    if (last_rental_at != null) patch.last_rental_at = last_rental_at;
+    if (Object.keys(patch).length) await ctx.db.patch(renter_id, patch);
     return { ok: true };
   },
 });

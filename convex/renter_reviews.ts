@@ -10,11 +10,13 @@
 import { v } from "convex/values";
 import {
   action,
+  internalAction,
   query,
   internalQuery,
   internalMutation,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 
 const HYGGLO_API = "https://api.hygglo.com/api";
 
@@ -25,6 +27,43 @@ type RawReview = {
   createdAt?: string;
   author?: { shortName?: string } | null;
 };
+
+type MappedReview = {
+  hygglo_review_id: number;
+  rating?: number;
+  text?: string;
+  author?: string;
+  created_at?: string;
+};
+
+/**
+ * Fetch + map a user's RECEIVED reviews from Hygglo's public endpoint. NB: these
+ * are reviews the user got as a VENDOR/owner — the best public trust signal we
+ * can read without auth, but it's owner-side, so a pure-renter-who-never-owned
+ * returns nothing (their rating stays null).
+ */
+async function fetchHyggloReviews(uid: string): Promise<MappedReview[]> {
+  try {
+    const res = await fetch(
+      `${HYGGLO_API}/v2/product-reviews?vendorId=${encodeURIComponent(uid)}&$limit=50&$skip=0`,
+      { headers: { Country: "GB", "User-Client": "Hygglo-web" } },
+    );
+    if (!res.ok) return [];
+    const env = (await res.json()) as { data?: RawReview[] };
+    const rows = Array.isArray(env?.data) ? env.data : [];
+    return rows
+      .filter((r) => typeof r.id === "number")
+      .map((r) => ({
+        hygglo_review_id: r.id as number,
+        rating: typeof r.rating === "number" ? r.rating : undefined,
+        text: r.text?.trim() || undefined,
+        author: r.author?.shortName || undefined,
+        created_at: r.createdAt || undefined,
+      }));
+  } catch {
+    return [];
+  }
+}
 
 async function renterFromThread(
   ctx: { db: import("./_generated/server").QueryCtx["db"] },
@@ -78,6 +117,20 @@ export const store = internalMutation({
       if (existing) await ctx.db.patch(existing._id, doc);
       else await ctx.db.insert("renter_reviews", doc);
     }
+    // Derive the renter's rating from ALL their stored reviews (lights up the
+    // draft trust-line). Owner-side signal — see fetchHyggloReviews caveat.
+    const all = await ctx.db
+      .query("renter_reviews")
+      .withIndex("by_renter", (q) => q.eq("renter_id", renter_id))
+      .collect();
+    const rated = all.filter((r) => typeof r.rating === "number");
+    if (rated.length) {
+      const avg = rated.reduce((s, r) => s + (r.rating as number), 0) / rated.length;
+      await ctx.db.patch(renter_id, {
+        hygglo_rating: Math.round(avg * 10) / 10,
+        hygglo_review_count: rated.length,
+      });
+    }
   },
 });
 
@@ -88,34 +141,62 @@ export const refreshForThread = action({
       thread_id,
     });
     if (!info || !info.hygglo_user_id) return { count: 0 };
-    let rows: RawReview[] = [];
-    try {
-      const res = await fetch(
-        `${HYGGLO_API}/v2/product-reviews?vendorId=${encodeURIComponent(info.hygglo_user_id)}&$limit=50&$skip=0`,
-        { headers: { Country: "GB", "User-Client": "Hygglo-web" } },
-      );
-      if (res.ok) {
-        const env = (await res.json()) as { data?: RawReview[] };
-        rows = Array.isArray(env?.data) ? env.data : [];
-      }
-    } catch {
-      /* network — return whatever's cached */
-    }
-    const reviews = rows
-      .filter((r) => typeof r.id === "number")
-      .map((r) => ({
-        hygglo_review_id: r.id as number,
-        rating: typeof r.rating === "number" ? r.rating : undefined,
-        text: r.text?.trim() || undefined,
-        author: r.author?.shortName || undefined,
-        created_at: r.createdAt || undefined,
-      }));
+    const reviews = await fetchHyggloReviews(info.hygglo_user_id);
     if (reviews.length)
       await ctx.runMutation(internal.renter_reviews.store, {
         renter_id: info.renter_id,
         reviews,
       });
     return { count: reviews.length };
+  },
+});
+
+// ── Scheduled refresh of active renters (cron) ────────────────────
+
+/** Renters currently awaiting our reply, with a Hygglo id — the set worth
+ *  keeping a fresh rating for. Capped per run to bound external calls. */
+export const activeRentersToRefresh = internalQuery({
+  args: { limit: v.number() },
+  handler: async (ctx, { limit }) => {
+    const convs = await ctx.db
+      .query("conversations")
+      .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
+      .take(400);
+    const seen = new Set<string>();
+    const out: { renter_id: Id<"renters">; hygglo_user_id: string }[] = [];
+    for (const conv of convs) {
+      if (!conv.renter_id || seen.has(String(conv.renter_id))) continue;
+      seen.add(String(conv.renter_id));
+      const r = await ctx.db.get(conv.renter_id);
+      if (r?.hygglo_user_id) {
+        out.push({ renter_id: conv.renter_id, hygglo_user_id: r.hygglo_user_id });
+        if (out.length >= limit) break;
+      }
+    }
+    return out;
+  },
+});
+
+/** Daily cron: fetch reviews for active renters → store + derive rating. */
+export const refreshActiveRenters = internalAction({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }): Promise<{ checked: number; updated: number }> => {
+    const renters = await ctx.runQuery(
+      internal.renter_reviews.activeRentersToRefresh,
+      { limit: limit ?? 40 },
+    );
+    let updated = 0;
+    for (const r of renters) {
+      const reviews = await fetchHyggloReviews(r.hygglo_user_id);
+      if (reviews.length) {
+        await ctx.runMutation(internal.renter_reviews.store, {
+          renter_id: r.renter_id,
+          reviews,
+        });
+        updated++;
+      }
+    }
+    return { checked: renters.length, updated };
   },
 });
 
