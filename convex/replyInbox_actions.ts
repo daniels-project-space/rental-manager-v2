@@ -12,9 +12,9 @@
  * out for real while automation writes stay blocked by READ_ONLY_MODE. ONLY a
  * deliberate Send click reaches this action — no cron/scheduler calls it.
  */
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
@@ -365,6 +365,34 @@ export const generateDraft = action({
       confidence: guard.confidence,
       flags: guard.flags,
     };
+  },
+});
+
+// ── Draft pre-gen backfill (cron) ─────────────────────────────────
+
+/**
+ * Pre-generate AI drafts for awaiting-reply threads that don't have one yet, so
+ * the draft is ready before the box is opened. On-message pre-gen only fires for
+ * NEW messages; this backfills existing threads. Capped per run.
+ */
+export const pregenerateActiveDrafts = internalAction({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }): Promise<{ made: number; checked: number }> => {
+    const threads = await ctx.runQuery(internal.replyInbox.threadsNeedingDraft, {
+      limit: limit ?? 20,
+    });
+    let made = 0;
+    for (const t of threads) {
+      try {
+        const r = await ctx.runAction(api.replyInbox_actions.generateDraft, {
+          thread_id: t,
+        });
+        if (r.status === "ok" && r.draft) made++;
+      } catch {
+        /* best-effort */
+      }
+    }
+    return { made, checked: threads.length };
   },
 });
 

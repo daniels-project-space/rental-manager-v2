@@ -1184,6 +1184,25 @@ export const getThreadContext = internalQuery({
   },
 });
 
+/** Awaiting-reply threads with no cached AI draft — for the pre-gen backfill.
+ *  (On-message pre-gen only covers NEW messages; this catches existing threads
+ *  so a draft is ready before you open the box.) */
+export const threadsNeedingDraft = internalQuery({
+  args: { limit: v.number() },
+  handler: async (ctx, { limit }) => {
+    const convs = await ctx.db
+      .query("conversations")
+      .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
+      .take(400);
+    const out: string[] = [];
+    for (const c of convs) {
+      if (!c.ai_draft_text) out.push(c.thread_id);
+      if (out.length >= limit) break;
+    }
+    return out;
+  },
+});
+
 // ── Draft cache write (called by generateDraft action) ────────────
 
 export const setDraft = internalMutation({

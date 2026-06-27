@@ -319,7 +319,12 @@ export const upsertMessages = mutation({
         }
       }
 
-      if (reservation?.awaiting_owner_action) continue; // new_request covers notify
+      // NB: we used to `continue` here when the order was awaiting_owner_action,
+      // assuming new_request covered it — but new_request fires only ONCE on the
+      // awaiting transition, so follow-up messages on a pending request went
+      // silent (the "didn't get notified for the 70-200 message" bug,
+      // 2026-06-27). Now we always queue a renter_message; the per-(thread,type)
+      // 24h dedup keeps it to at most one message push per thread per day.
       const label = notifyAccountLabel(account_slug);
       const renter =
         latest.sender_name?.trim() || reservation?.renter_name || "A renter";

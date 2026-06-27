@@ -279,4 +279,13 @@ crons.interval(
   {},
 );
 
+// Pre-generate AI drafts for awaiting-reply threads so they're ready before the
+// box is opened (on-message pre-gen only covers new messages). 2026-06-27.
+crons.interval(
+  "pregenerate_active_drafts",
+  { minutes: 30 },
+  internal.replyInbox_actions.pregenerateActiveDrafts,
+  {},
+);
+
 export default crons;
