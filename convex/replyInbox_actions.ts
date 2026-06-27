@@ -189,6 +189,10 @@ export const generateDraft = action({
       facts.push(
         `Cameras in inventory (ONLY ever suggest a camera from this list; we own no others): ${c.owned_cameras.join(", ")}`,
       );
+    if (c.unfulfillable?.length)
+      facts.push(
+        `NOT IN OUR INVENTORY — ${c.unfulfillable.join(", ")}. This booking is for gear we don't actually own (a marketing/SEO listing). Do NOT confirm or say it's approved/sorted; tell the renter we can't fulfil that exact item and offer a real owned alternative, or say I'll sort it.`,
+      );
     const factsBlock = facts.length
       ? "FACTS — the ONLY information you may state as fact. If something you need isn't listed, say I'll check; never guess prices, specs, availability, dates, policies, or gear we don't have:\n" +
         facts.map((f, i) => `[F${i + 1}] ${f}`).join("\n")
@@ -317,6 +321,7 @@ export const generateDraft = action({
           "REVIEWED",
         ].includes(c.order_step ?? "") ||
         ["confirmed", "ongoing", "completed"].includes(c.status ?? ""),
+      unfulfillableItems: c.unfulfillable ?? undefined,
       factPack: c.fact_pack
         ? {
             pricing: c.fact_pack.pricing,

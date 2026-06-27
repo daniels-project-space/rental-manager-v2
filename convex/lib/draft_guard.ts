@@ -61,6 +61,9 @@ export interface GuardOpts {
   /** True once the owner has actually approved the booking — so an accurate
    *  "I've approved your request" is not mis-flagged as a false action claim. */
   ownerApproved?: boolean;
+  /** Booked items we can't fulfil (marketing/SEO listing, not owned). The draft
+   *  must not confirm them. */
+  unfulfillableItems?: string[];
 }
 
 // ── Shared patterns (from patterns.ts) ────────────────────────────
@@ -85,6 +88,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   MARKETING_ITEM_AVAILABLE: "critical",
   EQUIPMENT_SUBSTITUTION: "critical",
   FABRICATED_QUOTE: "critical",
+  UNFULFILLABLE_BOOKING: "critical",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
@@ -716,6 +720,20 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       push(
         "PREMATURE_CONFIRMATION",
         "Claims the booking is confirmed but verification is still pending",
+        "flagged",
+      );
+  }
+
+  // 21b. UNFULFILLABLE BOOKING — FLAG (confirms gear we don't own)
+  if (opts.unfulfillableItems?.length) {
+    const confirms =
+      /\b(available|in stock|approved|confirmed|all set|sorted|good to go|booked for you|just (?:needs?|pay)|go ahead and pay|ready for you|locked in)\b/i.test(
+        text,
+      );
+    if (confirms)
+      push(
+        "UNFULFILLABLE_BOOKING",
+        `Confirms/offers an item we don't own (${opts.unfulfillableItems.slice(0, 2).join(", ")}) — should decline or offer a real alternative`,
         "flagged",
       );
   }

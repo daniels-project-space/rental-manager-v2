@@ -1052,6 +1052,54 @@ export const getThreadContext = internalQuery({
       }
     }
 
+    // Unfulfillable booked items: products that are marketing-only or never
+    // resolved to owned inventory (e.g. an "FX30" SEO listing for a camera we
+    // don't stock). The draft must NOT confirm these.
+    const unfulfillable: string[] = [];
+    if (reservation && slug) {
+      // (a) whole product is marketing-only / never resolved to inventory.
+      for (const h of reservation.hygglo_items ?? []) {
+        if (typeof h.product_id !== "number") continue;
+        const prod = await ctx.db
+          .query("hygglo_products")
+          .withIndex("by_account_product", (q) =>
+            q.eq("accountSlug", slug!).eq("productId", h.product_id!),
+          )
+          .first();
+        if (prod && (prod.isMarketingOnly || !prod.masterItemId))
+          unfulfillable.push(h.name ?? prod.name ?? "an item");
+      }
+      // (b) the listing TITLE names a camera model we don't own (SEO bait like
+      // "fx30" / "like Canon R5"), even if the kit resolved to other parts.
+      const titles = (reservation.hygglo_items ?? [])
+        .map((h) => h.name ?? "")
+        .join(" | ")
+        .toLowerCase();
+      const ownedLc = owned_cameras.join(" | ").toLowerCase();
+      const tok = (hay: string, t: string) =>
+        new RegExp(
+          `(?<![a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`,
+          "i",
+        ).test(hay);
+      const NOT_OWNED = [
+        "fx30",
+        "a7iv",
+        "a7 iv",
+        "a7sii",
+        "a7s ii",
+        "a7riii",
+        "a7r iii",
+        "a6600",
+        "r5c",
+        "canon r5",
+        "canon r6",
+      ];
+      for (const model of NOT_OWNED)
+        if (tok(titles, model) && !tok(ownedLc, model))
+          unfulfillable.push(model.toUpperCase());
+    }
+    const unfulfillableUniq = [...new Set(unfulfillable)];
+
     // Phase 5: a gentle, money-saving bundle suggestion — ONLY early-funnel
     // (never while negotiating/confirmed, where it would read as pushy). Matched
     // by trigger keywords / use-cases against the conversation + requested items.
@@ -1097,6 +1145,7 @@ export const getThreadContext = internalQuery({
       availability,
       fact_pack,
       owned_cameras,
+      unfulfillable: unfulfillableUniq,
       house_rules,
       hard_truths: hard_truths ?? null,
       bundle_suggestion,
