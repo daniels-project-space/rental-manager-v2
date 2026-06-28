@@ -192,6 +192,9 @@ function decideState(t: ReplyTileData): {
 }
 /** True when the ball is in MY court (renter spoke last, or a pending request). */
 function awaitingMe(t: ReplyTileData): boolean {
+  // If I sent the last message, it's the renter's turn — never "waiting on me",
+  // even for a still-open request (I've already replied / approved it).
+  if (t.last_sender === "owner") return false;
   return t.last_sender === "renter" || t.is_request;
 }
 function statusText(t: ReplyTileData): string {
@@ -1363,10 +1366,13 @@ export function ReplyInbox() {
 
   const onActed = (id: string) => setActed((p) => new Set(p).add(id));
   const all = (queue ?? []).filter((t) => !acted.has(t.thread_id));
-  const requests = all.filter((t) => t.kind === "request").length;
+  // A request still "needs me" only until I've replied/approved (owner-last).
+  const pendingRequest = (t: ReplyTileData) =>
+    t.kind === "request" && t.last_sender !== "owner";
+  const requests = all.filter(pendingRequest).length;
   const todo = all.filter((t) => awaitingMe(t)).length;
   const visible = all.filter((t) =>
-    filter === "all" ? true : filter === "requests" ? t.kind === "request" : awaitingMe(t),
+    filter === "all" ? true : filter === "requests" ? pendingRequest(t) : awaitingMe(t),
   );
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
   // declining a card — which drops it from `all` via onActed — does NOT close
