@@ -523,6 +523,22 @@ async function assembleTile(
   const dismissed =
     !!conv?.dismissed_at && lastRenterAt <= conv.dismissed_at;
 
+  // REAL most-recent activity — NOT the cached conv.last_msg_at, which gets
+  // stale-bumped by re-polls and lets year-old dead threads slip past the
+  // recency window (Daniel, 2026-06-28 "still showing tiles older than 5 days").
+  // Use the genuine latest message time, falling back to the request/reservation
+  // creation time for a brand-new request that has no chat yet. The queue applies
+  // a hard cutoff against this value so nothing truly old can leak through any
+  // pass.
+  const latestMsgTs = latestMsg
+    ? latestMsg.hygglo_sent_at ?? latestMsg.fetched_at ?? 0
+    : 0;
+  const lastActivityAt = Math.max(
+    latestMsgTs,
+    reservation?.created_at ?? 0,
+    reservation?._creationTime ?? 0,
+  );
+
   // Estimate, always CLEARLY labelled "Estimate" in the UI and never shown when
   // a real price exists. Two sources:
   //  1. A reservation with dates but no confirmed gross yet (rare — Hygglo
@@ -600,6 +616,7 @@ async function assembleTile(
     image_url: primaryImage,
     last_renter_msg_at: lastRenterAt,
     dismissed,
+    last_activity_at: lastActivityAt,
     last_msg_at: conv?.last_msg_at ?? lastRenterAt,
     preview: latestMsg?.body_text ?? "",
     has_draft: !!conv?.ai_draft_text,
@@ -771,10 +788,18 @@ export const getReplyQueue = query({
       }
     }
 
+    // HARD recency guard — the single source of truth. Every pass above
+    // pre-filters on cached fields for speed, but those can be stale-bumped, so
+    // the genuine last_activity_at (real latest message / request creation) is
+    // re-checked here against the SAME `withinDays` window. Nothing older than the
+    // window survives, regardless of which pass surfaced it or how stale its
+    // cached timestamps are.
+    const hardCutoff = Date.now() - withinDays * 86_400_000;
     // Owner-dismissed threads drop out of the whole widget until the renter
     // messages again (assembleTile re-clears `dismissed` once that happens).
     const tiles = [...byThread.values()]
       .filter((t) => !t.dismissed)
+      .filter((t) => (t.last_activity_at ?? 0) >= hardCutoff)
       .sort((a, b) => {
       if (a.is_request !== b.is_request) return Number(b.is_request) - Number(a.is_request);
       const aAwait = a.last_sender === "renter";

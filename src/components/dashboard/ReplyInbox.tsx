@@ -103,6 +103,7 @@ export interface ReplyTileData {
   image_url: string | null;
   last_renter_msg_at: number;
   dismissed?: boolean;
+  last_activity_at: number;
   last_msg_at: number;
   preview: string;
   has_draft: boolean;
@@ -1463,9 +1464,10 @@ export function ReplyInbox() {
     // High cap: renter inquiries on cancelled/finished orders now surface too,
     // so the awaiting-me backlog is much larger — don't truncate it away.
     limit: 200,
-    // Nothing older than 10 days, in either pass (Daniel, 2026-06-26).
-    withinDays: 10,
-    messagesWithinDays: 10,
+    // Hard 5-day window on REAL activity — nothing older shows, in any pass
+    // (Daniel, 2026-06-28 "don't show me tiles/messages older than 5 days").
+    withinDays: 5,
+    messagesWithinDays: 5,
     includePending,
   }) as ReplyTileData[] | undefined;
 
