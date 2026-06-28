@@ -1213,10 +1213,18 @@ export const getThreadContext = internalQuery({
 export const threadsNeedingDraft = internalQuery({
   args: { limit: v.number() },
   handler: async (ctx, { limit }) => {
+    // MOST-RECENT renter-last threads first, so the backfill fills what the
+    // owner actually sees in the queue before older/buried threads (the index
+    // order is arbitrary, which left visible threads draft-less, 2026-06-28).
     const convs = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
-      .take(400);
+      .collect();
+    convs.sort(
+      (a, b) =>
+        (b.last_renter_msg_at ?? b.last_msg_at ?? 0) -
+        (a.last_renter_msg_at ?? a.last_msg_at ?? 0),
+    );
     const out: string[] = [];
     for (const c of convs) {
       if (!c.ai_draft_text) out.push(c.thread_id);
