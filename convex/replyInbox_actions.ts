@@ -151,6 +151,16 @@ export const generateDraft = action({
       "acknowledge, confirm availability if known, and say I'll get it approved/" +
       "sorted shortly. Only say it's approved + they can pay when the stage clearly " +
       "says APPROVED/awaiting payment (not pending).\n\n" +
+      "REAL-WORLD FACTS — reason carefully: NEVER claim a product 'isn't out " +
+      "yet', 'isn't released', is discontinued, fake, or doesn't exist. Your " +
+      "training is months out of date, so anything the renter names (a new iPhone, " +
+      "camera, lens, etc.) is almost certainly real and already released, treat it " +
+      "that way. Answer compatibility/technical questions on the merits, the " +
+      "physical connection (HDMI/SDI out, USB-C, mount, power, file format), not on " +
+      "release dates. Example: 'The Atomos records via HDMI, so as long as the " +
+      "phone has clean HDMI out it'll work' — never 'that phone isn't out yet'. The " +
+      "ONLY existence claim you may make is whether WE stock an item, and only from " +
+      "the FACTS.\n\n" +
       "TIMES, HOURS & RULES (important):\n" +
       "- Do NOT rubber-stamp a specific pickup/return time or say a time 'is fine' on " +
       "your own. Only agree to a time if it clearly falls within the business hours " +

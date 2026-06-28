@@ -656,6 +656,9 @@ export default defineSchema({
     // removes the tile from the queue until the renter messages again.
     last_sender: v.optional(v.union(v.literal("owner"), v.literal("renter"))),
     last_renter_msg_at: v.optional(v.number()),   // drives the urgency glow
+    // Owner "× close" stamp. The thread leaves the Quick Reply widget until a
+    // renter message newer than this arrives (then it re-surfaces).
+    dismissed_at: v.optional(v.number()),
     account_slug: v.optional(v.string()),          // denormalised for filtering/colour
     // Cached AI draft reply (lazy, generated on tile expand). Invalidated when
     // a newer renter message arrives (ai_draft_for_message_id mismatch).

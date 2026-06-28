@@ -12,7 +12,7 @@
  * gated Hygglo send live in the sibling "use node" module
  * `replyInbox_actions.ts`.
  */
-import { query, internalQuery, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -493,12 +493,21 @@ async function assembleTile(
   // accept/deny trigger. Fall back to the active order step for rows not yet
   // re-polled with the actions signal.
   const isRequest = reservation?.awaiting_owner_action ?? step === "REQUEST";
-  // "Waiting since" timestamp driving the urgency timer. A booking REQUEST often
-  // has NO chat messages (renter just submitted dates), so without the
-  // reservation-created fallback this is 0 (epoch) and the card shows a nonsense
-  // ~20,000-day age that reads as "over 10 days old" (Daniel, 2026-06-27). Fall
-  // back to when the order/request was created so the timer shows real wait time.
+  // "Waiting since" timestamp driving the urgency timer. Prefer the ACTUAL latest
+  // renter message so a follow-up RESETS the clock instead of still reading "3d
+  // unreplied" off the first message (Daniel, 2026-06-28). When the renter spoke
+  // last, latestMsg IS that message — read it straight from the thread rather
+  // than trusting the cached conv field, which can lag. A booking REQUEST often
+  // has NO chat messages (renter just submitted dates), so fall back to the
+  // cached fields then the order-created time — without that this is 0 (epoch)
+  // and the card shows a nonsense ~20,000-day age that reads as "over 10 days
+  // old" (Daniel, 2026-06-27).
+  const renterSpokeLast = !!latestMsg && latestMsg.sender !== "owner";
+  const renterLatestTs = renterSpokeLast
+    ? latestMsg!.hygglo_sent_at ?? latestMsg!.fetched_at
+    : 0;
   const lastRenterAt =
+    renterLatestTs ||
     conv?.last_renter_msg_at ||
     conv?.last_msg_at ||
     latestMsg?.hygglo_sent_at ||
@@ -506,6 +515,13 @@ async function assembleTile(
     reservation?.created_at ||
     reservation?._creationTime ||
     Date.now();
+
+  // Owner-dismissed ("× close") threads stay hidden until the renter speaks
+  // again: dismissed when a dismissed_at stamp exists AND no renter message has
+  // landed since (their newest message is older-or-equal to the stamp). A fresh
+  // renter message (lastRenterAt > dismissed_at) un-hides it automatically.
+  const dismissed =
+    !!conv?.dismissed_at && lastRenterAt <= conv.dismissed_at;
 
   // Estimate, always CLEARLY labelled "Estimate" in the UI and never shown when
   // a real price exists. Two sources:
@@ -583,6 +599,7 @@ async function assembleTile(
     item_count: richItems.length,
     image_url: primaryImage,
     last_renter_msg_at: lastRenterAt,
+    dismissed,
     last_msg_at: conv?.last_msg_at ?? lastRenterAt,
     preview: latestMsg?.body_text ?? "",
     has_draft: !!conv?.ai_draft_text,
@@ -754,9 +771,11 @@ export const getReplyQueue = query({
       }
     }
 
-    // Order: requests first → then awaiting-my-reply (oldest/most-urgent first)
-    // → then normal chats (most-recent first).
-    const tiles = [...byThread.values()].sort((a, b) => {
+    // Owner-dismissed threads drop out of the whole widget until the renter
+    // messages again (assembleTile re-clears `dismissed` once that happens).
+    const tiles = [...byThread.values()]
+      .filter((t) => !t.dismissed)
+      .sort((a, b) => {
       if (a.is_request !== b.is_request) return Number(b.is_request) - Number(a.is_request);
       const aAwait = a.last_sender === "renter";
       const bAwait = b.last_sender === "renter";
@@ -765,6 +784,42 @@ export const getReplyQueue = query({
       return (b.last_msg_at ?? 0) - (a.last_msg_at ?? 0);
     });
     return tiles.slice(0, limit);
+  },
+});
+
+/**
+ * Owner "× close" — dismiss a thread so it leaves the Quick Reply widget. Stays
+ * gone until the renter sends another message (assembleTile compares the newest
+ * renter message against dismissed_at and un-hides it). Upserts a minimal
+ * conversation row for request-only threads that have no conversation yet.
+ */
+export const dismissThread = mutation({
+  args: { thread_id: v.string() },
+  handler: async (ctx, { thread_id }) => {
+    const now = Date.now();
+    const conv = await ctx.db
+      .query("conversations")
+      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
+      .first();
+    if (conv) {
+      await ctx.db.patch(conv._id, { dismissed_at: now });
+    } else {
+      // No conversation row (pure request) — find the reservation's account so
+      // the placeholder is still attributable.
+      const reservation = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
+        .first();
+      await ctx.db.insert("conversations", {
+        thread_id,
+        account_slug: reservation?.account_slug,
+        last_msg_at: now,
+        last_sender: "owner",
+        created_at: now,
+        dismissed_at: now,
+      });
+    }
+    return { ok: true };
   },
 });
 

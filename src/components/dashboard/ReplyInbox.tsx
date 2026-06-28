@@ -35,6 +35,7 @@ const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remo
 const reviewsGetRef = makeFunctionReference<"query">("renter_reviews:getForThread");
 // locations is a new convex module — reference by name so `next build`'s
 // typecheck stays green against the committed (lagging) _generated api.
+const dismissThreadRef = makeFunctionReference<"mutation">("replyInbox:dismissThread");
 const resolveLocRef = makeFunctionReference<"action">("locations:resolveForThread");
 const resolveTrustRef = makeFunctionReference<"action">("renter_trust:resolveForThread");
 // Star-click refresh uses the renter-trust resolver (renter-side reviews from
@@ -101,6 +102,7 @@ export interface ReplyTileData {
   item_count: number;
   image_url: string | null;
   last_renter_msg_at: number;
+  dismissed?: boolean;
   last_msg_at: number;
   preview: string;
   has_draft: boolean;
@@ -479,6 +481,18 @@ function ReplyCard({
   const [busy, setBusy] = useState(false);
   const [optimistic, setOptimistic] = useState<"approve" | "decline" | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const dismiss = useMutation(dismissThreadRef);
+
+  // "× close" — hide the tile now (optimistic), persist the dismissal so it stays
+  // gone across reloads, and let it re-surface only when the renter messages again.
+  async function onDismiss() {
+    onActed(tile.thread_id);
+    try {
+      await dismiss({ thread_id: tile.thread_id });
+    } catch {
+      /* a failed close just means the next queue refresh re-lists it */
+    }
+  }
 
   // OPTIMISTIC — flip to "✓ done" the instant you confirm, fire the Hygglo call
   // in the background, revert only on rejection. Makes the trigger feel instant.
@@ -525,6 +539,20 @@ function ReplyCard({
         className="absolute left-0 top-3.5 bottom-3.5 w-[3px] rounded-r-full"
         style={{ background: accountAccent(tile.account_slug) }}
       />
+      {/* × close — hides this thread until the renter messages again */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss();
+        }}
+        title="Close — hides this thread until the renter messages again"
+        aria-label="Close thread"
+        className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center text-[#7b8190] bg-[#12151c]/80 opacity-0 group-hover:opacity-100 hover:bg-white/12 hover:text-[#eef1f5] transition-all"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
       <div className="flex gap-3">
         <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} size={46} />
         <div className="flex-1 min-w-0">
@@ -543,7 +571,7 @@ function ReplyCard({
                 ⚑
               </span>
             )}
-            <span className="ml-auto flex flex-col items-end leading-none flex-shrink-0">
+            <span className="ml-auto flex flex-col items-end leading-none flex-shrink-0 transition-[margin] group-hover:mr-6">
               {u ? (
                 <>
                   <span
