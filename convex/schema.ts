@@ -662,6 +662,11 @@ export default defineSchema({
     ai_draft_text: v.optional(v.string()),
     ai_draft_for_message_id: v.optional(v.string()),
     ai_draft_generated_at: v.optional(v.number()),
+    // Draft-logic version this draft was generated under. When settings.draft_epoch
+    // is bumped (after a draft-logic fix), drafts with an older epoch are treated
+    // as stale and auto-regenerated — so a fix reaches every thread without a
+    // manual flush.
+    ai_draft_epoch: v.optional(v.number()),
     // Output-policing result (Phase 1 draft guard): confidence 0..1 + the flags
     // raised on the draft (auto-fixed leaks + items flagged for owner review).
     ai_draft_confidence: v.optional(v.number()),
@@ -802,6 +807,8 @@ export default defineSchema({
     hub_lng: v.optional(v.number()),
     hub_heavy_max_km: v.optional(v.number()),       // how far a heavy item can go (default 5)
     hub_max_km: v.optional(v.number()),             // absolute range (default 30)
+    // Bump to invalidate all cached AI drafts after a draft-logic change.
+    draft_epoch: v.optional(v.number()),
 
     // Phase 1.B.3 — operator policy fields
     read_only_mode_blocks: v.optional(v.array(v.string())),

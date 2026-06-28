@@ -107,6 +107,7 @@ export interface ReplyTileData {
   ai_draft_text: string | null;
   ai_draft_confidence: number | null;
   ai_draft_flags: DraftFlag[] | null;
+  ai_draft_stale?: boolean;
   location: TileLocation | null;
 }
 
@@ -821,7 +822,9 @@ export function ReplyModal({
   const autoDraftedRef = useRef(false);
   useEffect(() => {
     if (autoDraftedRef.current) return;
-    if (draft.trim()) return;
+    // Regenerate if there's no draft OR the cached one is stale (older draft
+    // logic) — so a fix reaches whatever thread you open without a manual flush.
+    if (draft.trim() && !tile.ai_draft_stale) return;
     if (!awaitingMe(tile)) return;
     autoDraftedRef.current = true;
     void onGenerate();

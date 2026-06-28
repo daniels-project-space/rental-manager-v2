@@ -30,6 +30,7 @@ export const update = mutation({
     ),
     hub_heavy_max_km: v.optional(v.number()),
     hub_max_km: v.optional(v.number()),
+    draft_epoch: v.optional(v.number()),
   },
   handler: async (ctx, fields) => {
     // Double-unlock guard: refuse read_only_mode=false + ALLOW_HYGGLO_SEND=true together
@@ -53,6 +54,7 @@ export const update = mutation({
     if (fields.pickup_hours !== undefined) patch.pickup_hours = fields.pickup_hours;
     if (fields.hub_heavy_max_km !== undefined) patch.hub_heavy_max_km = fields.hub_heavy_max_km;
     if (fields.hub_max_km !== undefined) patch.hub_max_km = fields.hub_max_km;
+    if (fields.draft_epoch !== undefined) patch.draft_epoch = fields.draft_epoch;
 
     await ctx.db.patch(existing._id, patch);
     return { ok: true };

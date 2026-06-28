@@ -40,6 +40,7 @@ type HubBook = {
   bySlug: Map<string, { lat: number | null; lng: number | null }>;
   heavyMaxKm: number | null;
   maxKm: number | null;
+  draftEpoch: number;
 };
 
 async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
@@ -55,6 +56,7 @@ async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
     bySlug,
     heavyMaxKm: settings?.hub_heavy_max_km ?? null,
     maxKm: settings?.hub_max_km ?? null,
+    draftEpoch: settings?.draft_epoch ?? 0,
   };
 }
 
@@ -585,6 +587,10 @@ async function assembleTile(
     ai_draft_text: conv?.ai_draft_text ?? null,
     ai_draft_confidence: conv?.ai_draft_confidence ?? null,
     ai_draft_flags: conv?.ai_draft_flags ?? null,
+    // Stale = generated under an older draft-logic epoch → regenerate on open.
+    ai_draft_stale:
+      !!conv?.ai_draft_text &&
+      (conv?.ai_draft_epoch ?? 0) !== (hub?.draftEpoch ?? 0),
     location: computeLocation(reservation, slug, hub ?? null),
   };
 }
@@ -1229,6 +1235,8 @@ export const threadsNeedingDraft = internalQuery({
     // MOST-RECENT renter-last threads first, so the backfill fills what the
     // owner actually sees in the queue before older/buried threads (the index
     // order is arbitrary, which left visible threads draft-less, 2026-06-28).
+    const settings = await ctx.db.query("settings").first();
+    const epoch = settings?.draft_epoch ?? 0;
     const convs = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
@@ -1240,7 +1248,8 @@ export const threadsNeedingDraft = internalQuery({
     );
     const out: string[] = [];
     for (const c of convs) {
-      if (!c.ai_draft_text) out.push(c.thread_id);
+      // No draft, OR a draft from an older draft-logic epoch (stale).
+      if (!c.ai_draft_text || (c.ai_draft_epoch ?? 0) !== epoch) out.push(c.thread_id);
       if (out.length >= limit) break;
     }
     return out;
@@ -1285,10 +1294,12 @@ export const setDraft = internalMutation({
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
     if (!conv) return { ok: false };
+    const settings = await ctx.db.query("settings").first();
     const patch: Record<string, unknown> = {
       ai_draft_text: draft_text,
       ai_draft_for_message_id: message_id,
       ai_draft_generated_at: Date.now(),
+      ai_draft_epoch: settings?.draft_epoch ?? 0,
       ai_draft_confidence: confidence,
       ai_draft_flags: flags,
     };
