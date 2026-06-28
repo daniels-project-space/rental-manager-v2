@@ -597,7 +597,7 @@ function ReplyCard({
         }}
         title="Close — hides this thread until the renter messages again"
         aria-label="Close thread"
-        className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center text-[#7b8190] bg-[#12151c]/80 opacity-0 group-hover:opacity-100 hover:bg-white/12 hover:text-[#eef1f5] transition-all"
+        className="absolute top-1.5 right-1.5 z-10 w-7 h-7 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[#9aa0ad] sm:text-[#7b8190] bg-white/[0.07] sm:bg-[#12151c]/80 ring-1 ring-white/10 sm:ring-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-white/12 hover:text-[#eef1f5] transition-all"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
           <path d="M6 6l12 12M18 6L6 18" />
@@ -621,7 +621,7 @@ function ReplyCard({
                 ⚑
               </span>
             )}
-            <span className="ml-auto flex flex-col items-end leading-none flex-shrink-0 transition-[margin] group-hover:mr-6">
+            <span className="ml-auto flex flex-col items-end leading-none flex-shrink-0 transition-[margin] mr-7 sm:mr-0 sm:group-hover:mr-6">
               {u ? (
                 <>
                   <span
@@ -1095,12 +1095,12 @@ export function ReplyModal({
 
   return createPortal(
     <div
-      className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/70 backdrop-blur-sm p-4`}
+      className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4`}
     >
       {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
           you can text AND approve/decline in one session without losing it. */}
       <div
-        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
+        className="w-full max-w-2xl h-full sm:h-auto max-h-screen sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
         style={{ borderColor: `${accent}4d` }}
       >
         {/* Accent top line */}
@@ -1607,14 +1607,16 @@ export function ReplyInbox() {
                 : "bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09]"
             }`}
           >
-            {includePending ? "⏳ Pending counted" : "Pending off"}
+            <span className="sm:hidden">⏳</span>
+            <span className="hidden sm:inline">{includePending ? "⏳ Pending counted" : "Pending off"}</span>
           </button>
           <button
             onClick={() => setShowManager(true)}
             title="See + edit each account's saved quick texts (delivery, location, bank details…)."
             className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09] transition-colors"
           >
-            ✏️ Quick texts
+            <span className="sm:hidden">✏️</span>
+            <span className="hidden sm:inline">✏️ Quick texts</span>
           </button>
           <button
             onClick={() => setTestMode((x) => !x)}
@@ -1625,15 +1627,16 @@ export function ReplyInbox() {
                 : "bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09]"
             }`}
           >
-            {testMode ? "🧪 Test mode ON" : "Test mode"}
+            <span className="sm:hidden">🧪</span>
+            <span className="hidden sm:inline">{testMode ? "🧪 Test mode ON" : "Test mode"}</span>
           </button>
         </div>
       </div>
 
       {/* Filter + sort */}
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        {/* Filter — segmented control */}
-        <div className="inline-flex items-center gap-0.5 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+        {/* Filter — segmented control (spreads full-width on mobile) */}
+        <div className="flex sm:inline-flex items-center justify-between sm:justify-start gap-0.5 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
           {([
             { k: "todo", label: "To reply", n: todo },
             { k: "requests", label: "Requests", n: requests },
@@ -1660,7 +1663,7 @@ export function ReplyInbox() {
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
           title="Sort the list"
-          className="text-[12px] px-2.5 py-1.5 rounded-lg bg-black/30 border border-white/[0.06] text-[#cbd0d8] hover:bg-white/[0.05] focus:outline-none cursor-pointer"
+          className="w-full sm:w-auto text-[12px] px-2.5 py-2 sm:py-1.5 rounded-lg bg-black/30 border border-white/[0.06] text-[#cbd0d8] hover:bg-white/[0.05] focus:outline-none cursor-pointer"
         >
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
@@ -1668,7 +1671,7 @@ export function ReplyInbox() {
         </select>
       </div>
       {queue === undefined ? (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {Array.from({ length: 6 }).map((_, i) => (
             <SkeletonBlock key={i} className="h-44 w-full rounded-2xl" />
           ))}
@@ -1685,7 +1688,7 @@ export function ReplyInbox() {
           icon="✅"
         />
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[44rem] overflow-y-auto p-0.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[44rem] overflow-y-auto p-0.5">
           {sorted.map((tile) => (
             <ReplyCard
               key={tile.thread_id}
