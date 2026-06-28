@@ -311,6 +311,55 @@ function statusText(t: ReplyTileData): string {
   if (t.last_sender === "owner") return "You replied · awaiting renter";
   return t.status ?? "Active";
 }
+// ── rental lifecycle bar ──────────────────────────────────────────
+// Minimal 5-stage stepper showing where a rental is in its lifecycle.
+const RENTAL_STAGES = ["Request", "Approved", "Confirmed", "Out", "Returned"] as const;
+function stageIndex(t: ReplyTileData): number {
+  const step = (t.order_step ?? "").toUpperCase();
+  if (step === "RETURNED" || step === "REVIEWED") return 4;
+  if (step === "DELIVERED") return 3;
+  if (step === "VERIFIED" || step === "BOOKED_AFTER_VERIFIED") return 2;
+  if (step === "APPROVED" || step === "FUNDS_RESERVED") return 1;
+  if (step === "REQUEST") return 0;
+  // No usable step — infer from the decision state / coarse status.
+  const { canApprove, canDecline, approved } = decideState(t);
+  if (canApprove && canDecline) return 0;
+  if (approved) return 1;
+  const st = (t.status ?? "").toLowerCase();
+  if (st === "completed") return 4;
+  if (st === "ongoing") return 3;
+  if (st === "confirmed") return 2;
+  return 0;
+}
+/** Small, minimal progress bar: 5 segments filled up to the current stage. */
+function StageBar({ t }: { t: ReplyTileData }) {
+  if (!t.has_reservation) return null;
+  const cancelled = isResolvedClosed(t);
+  const idx = stageIndex(t);
+  const accent = accountAccent(t.account_slug);
+  return (
+    <div className="flex flex-col gap-1 pt-0.5">
+      <div className="flex items-center gap-[3px]">
+        {RENTAL_STAGES.map((_, i) => (
+          <div
+            key={i}
+            className="h-[3px] flex-1 rounded-full transition-colors"
+            style={{
+              background: cancelled
+                ? "rgba(248,113,113,0.30)"
+                : i <= idx
+                  ? accent
+                  : "rgba(255,255,255,0.10)",
+            }}
+          />
+        ))}
+      </div>
+      <span className="text-[9px] uppercase tracking-[0.08em] text-[#7a8190] leading-none">
+        {cancelled ? "Cancelled" : `${RENTAL_STAGES[idx]} · ${idx + 1}/${RENTAL_STAGES.length}`}
+      </span>
+    </div>
+  );
+}
 function fmtDate(iso?: string | null): string | null {
   if (!iso) return null;
   const d = new Date(`${iso}T00:00:00`);
@@ -619,6 +668,8 @@ function ReplyCard({
       >
         {statusText(tile)}
       </span>
+
+      <StageBar t={tile} />
 
       {itemLine(tile) && (
         <div className="text-[13px] text-[#cbd0d8] truncate">{itemLine(tile)}</div>
@@ -1478,6 +1529,7 @@ export function ReplyInbox() {
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
   const [filter, setFilter] = useState<"todo" | "requests" | "all">("todo");
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "waiting">("newest");
   const [testMode, setTestMode] = useState(false);
   const [showManager, setShowManager] = useState(false);
 
@@ -1508,6 +1560,15 @@ export function ReplyInbox() {
   const visible = all.filter((t) =>
     filter === "all" ? true : filter === "requests" ? pendingRequest(t) : awaitingMe(t),
   );
+  const sorted = [...visible].sort((a, b) => {
+    if (sortBy === "newest") return (b.last_activity_at ?? 0) - (a.last_activity_at ?? 0);
+    if (sortBy === "oldest") return (a.last_activity_at ?? 0) - (b.last_activity_at ?? 0);
+    // "waiting": longest-unanswered first — renters waiting on me, oldest message up top.
+    const aw = a.last_sender === "renter" ? 0 : 1;
+    const bw = b.last_sender === "renter" ? 0 : 1;
+    if (aw !== bw) return aw - bw;
+    return (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
+  });
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
   // declining a card — which drops it from `all` via onActed — does NOT close
   // the chat overlay. Only the × button closes it.
@@ -1569,28 +1630,42 @@ export function ReplyInbox() {
         </div>
       </div>
 
-      {/* Filter — segmented control */}
-      <div className="inline-flex items-center gap-0.5 mb-4 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
-        {([
-          { k: "todo", label: "To reply", n: todo },
-          { k: "requests", label: "Requests", n: requests },
-          { k: "all", label: "All", n: all.length },
-        ] as const).map((f) => (
-          <button
-            key={f.k}
-            onClick={() => setFilter(f.k)}
-            className={`text-[12px] px-3.5 py-1.5 rounded-lg transition-colors ${
-              filter === f.k
-                ? "bg-white/[0.10] text-white font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
-                : "text-[#8b8fa3] font-medium hover:text-white"
-            }`}
-          >
-            {f.label}
-            {f.n ? (
-              <span className={`ml-1 ${filter === f.k ? "text-[#9ca3af] font-normal" : "opacity-50"}`}>{f.n}</span>
-            ) : null}
-          </button>
-        ))}
+      {/* Filter + sort */}
+      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+        {/* Filter — segmented control */}
+        <div className="inline-flex items-center gap-0.5 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
+          {([
+            { k: "todo", label: "To reply", n: todo },
+            { k: "requests", label: "Requests", n: requests },
+            { k: "all", label: "All", n: all.length },
+          ] as const).map((f) => (
+            <button
+              key={f.k}
+              onClick={() => setFilter(f.k)}
+              className={`text-[12px] px-3.5 py-1.5 rounded-lg transition-colors ${
+                filter === f.k
+                  ? "bg-white/[0.10] text-white font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
+                  : "text-[#8b8fa3] font-medium hover:text-white"
+              }`}
+            >
+              {f.label}
+              {f.n ? (
+                <span className={`ml-1 ${filter === f.k ? "text-[#9ca3af] font-normal" : "opacity-50"}`}>{f.n}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+        {/* Sort */}
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          title="Sort the list"
+          className="text-[12px] px-2.5 py-1.5 rounded-lg bg-black/30 border border-white/[0.06] text-[#cbd0d8] hover:bg-white/[0.05] focus:outline-none cursor-pointer"
+        >
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="waiting">Longest waiting</option>
+        </select>
       </div>
       {queue === undefined ? (
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
@@ -1611,7 +1686,7 @@ export function ReplyInbox() {
         />
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[44rem] overflow-y-auto p-0.5">
-          {visible.map((tile) => (
+          {sorted.map((tile) => (
             <ReplyCard
               key={tile.thread_id}
               tile={tile}

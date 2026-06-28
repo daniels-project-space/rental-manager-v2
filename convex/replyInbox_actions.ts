@@ -150,7 +150,9 @@ export const generateDraft = action({
       "NOT approved it yet — do NOT say it's approved/confirmed or tell them to pay; " +
       "acknowledge, confirm availability if known, and say I'll get it approved/" +
       "sorted shortly. Only say it's approved + they can pay when the stage clearly " +
-      "says APPROVED/awaiting payment (not pending).\n\n" +
+      "says APPROVED/awaiting payment (not pending). Once a booking is approved " +
+      "or confirmed, do NOT mention availability or say items are 'free for these " +
+      "dates' — they're already booked for them, just answer the actual question.\n\n" +
       "REAL-WORLD FACTS — reason carefully: NEVER claim a product 'isn't out " +
       "yet', 'isn't released', is discontinued, fake, or doesn't exist. Your " +
       "training is months out of date, so anything the renter names (a new iPhone, " +
@@ -195,11 +197,31 @@ export const generateDraft = action({
         ? "Booking stage: PENDING REQUEST — awaiting my approve/decline"
         : `Booking stage: ${(c.order_step && STAGE[c.order_step]) ?? c.status ?? "active"}`;
 
+    // Once the booking is approved/confirmed, availability is moot (the gear is
+    // already theirs) — feeding "AVAILABLE / free for these dates" just makes the
+    // draft say "free for these days" pointlessly (Daniel, 2026-06-28). Only an
+    // un-approved request/inquiry still cares whether it's free.
+    const APPROVED_OR_LATER = new Set([
+      "APPROVED",
+      "FUNDS_RESERVED",
+      "VERIFIED",
+      "BOOKED_AFTER_VERIFIED",
+      "DELIVERED",
+      "RETURNED",
+      "REVIEWED",
+    ]);
+    const bookingApproved =
+      !c.is_request &&
+      (((c.order_step ?? "") && APPROVED_OR_LATER.has(c.order_step ?? "")) ||
+        ["confirmed", "ongoing", "completed"].includes(
+          (c.status ?? "").toLowerCase(),
+        ));
+
     // Phase 2 Knowledge Fence: a numbered list of the ONLY facts the AI may
     // state — real availability + price + specs (resolved from inventory,
     // confirmed bookings only) + pickup windows + the owned-camera guard.
     const facts: string[] = [];
-    if (c.availability && c.availability.items.length)
+    if (!bookingApproved && c.availability && c.availability.items.length)
       for (const it of c.availability.items)
         facts.push(
           it.available
