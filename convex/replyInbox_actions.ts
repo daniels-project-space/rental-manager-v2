@@ -140,8 +140,11 @@ export const generateDraft = action({
       "inventory, so 'we don't have it' is usually wrong. Only say an item isn't ours " +
       "if it's explicitly listed as NOT IN OUR INVENTORY in the FACTS; for anything " +
       "else say I'll check. If they haven't placed a booking request yet (inquiry), " +
-      "nudge them to send one; if a request is pending my approval, confirm " +
-      "availability and the next step.\n\n" +
+      "nudge them to send one. If the booking stage says PENDING REQUEST, I have " +
+      "NOT approved it yet — do NOT say it's approved/confirmed or tell them to pay; " +
+      "acknowledge, confirm availability if known, and say I'll get it approved/" +
+      "sorted shortly. Only say it's approved + they can pay when the stage clearly " +
+      "says APPROVED/awaiting payment (not pending).\n\n" +
       "TIMES, HOURS & RULES (important):\n" +
       "- Do NOT rubber-stamp a specific pickup/return time or say a time 'is fine' on " +
       "your own. Only agree to a time if it clearly falls within the business hours " +
@@ -335,8 +338,12 @@ export const generateDraft = action({
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
       firstPerson: c.account_slug === "leo" || c.account_slug === "diogo",
+      // Genuinely approved ONLY when it's no longer awaiting my approve/decline.
+      // (order_step=APPROVED + awaiting_owner_action=true is still a PENDING
+      // request, not an approval.)
       ownerApproved:
-        [
+        !c.awaiting_owner_action &&
+        ([
           "APPROVED",
           "FUNDS_RESERVED",
           "VERIFIED",
@@ -345,7 +352,7 @@ export const generateDraft = action({
           "RETURNED",
           "REVIEWED",
         ].includes(c.order_step ?? "") ||
-        ["confirmed", "ongoing", "completed"].includes(c.status ?? ""),
+          ["confirmed", "ongoing", "completed"].includes(c.status ?? "")),
       unfulfillableItems: c.unfulfillable ?? undefined,
       hasItemGrounding,
       factPack: c.fact_pack

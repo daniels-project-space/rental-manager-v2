@@ -1196,7 +1196,13 @@ export const getThreadContext = internalQuery({
       pickup_method: reservation?.pickup_method ?? null,
       status: reservation?.status ?? null,
       order_step: reservation?.order_step ?? null,
-      is_request: reservation?.order_step === "REQUEST",
+      // AUTHORITATIVE pending signal = Hygglo's awaiting_owner_action (the actions
+      // map), NOT order_step==="REQUEST". Orders sit at order_step=APPROVED while
+      // still awaiting my approve/decline — the draft was reading order_step and
+      // telling renters "your booking's approved, just pay" when I hadn't approved
+      // it yet (2026-06-28). Mirror the tile's isRequest exactly.
+      is_request: reservation?.awaiting_owner_action ?? reservation?.order_step === "REQUEST",
+      awaiting_owner_action: reservation?.awaiting_owner_action ?? false,
       gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
       net_to_owner_gbp: reservation?.net_to_owner_gbp ?? null,
       delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
