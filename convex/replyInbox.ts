@@ -1004,11 +1004,14 @@ export const getThreadContext = internalQuery({
         .sort()
         .slice(0, 40);
 
-      // Resolve the items in play to inventory itemIds.
+      // Resolve the items in play to inventory itemIds, using the SAME good
+      // resolver for reservations AND inquiries: override map → product index →
+      // masterItemId fallback. (The old inquiry path used only masterItemId,
+      // which is null for lots of real gear, so inquiries kept "not stocked".)
+      const availCtx = await loadAvailCtx(ctx, false);
       const resolvedIds: string[] = [];
       const itemNameOf = new Map<string, string>();
       if (reservation) {
-        const availCtx = await loadAvailCtx(ctx, false);
         availability = computeAvailability(reservation, availCtx);
         const units = reservationItemUnits(reservation, availCtx.productIndex, availCtx.overrideMap);
         for (const id of [...units.keys()].slice(0, 8)) {
@@ -1016,9 +1019,20 @@ export const getThreadContext = internalQuery({
           itemNameOf.set(id, availCtx.itemName.get(id) ?? "item");
         }
       } else if (slug) {
-        // Inquiry: product_id → hygglo_products.masterItemId → inventory item.
         for (const li of lineItems) {
           if (typeof li.product_id !== "number") continue;
+          const key = `${slug}#${li.product_id}`;
+          const ov = availCtx.overrideMap.get(key);
+          if (ov && ov.length) {
+            for (const c of ov)
+              if (!resolvedIds.includes(c.item_id)) resolvedIds.push(c.item_id);
+            continue;
+          }
+          const direct = availCtx.productIndex.get(key);
+          if (direct) {
+            if (!resolvedIds.includes(direct)) resolvedIds.push(direct);
+            continue;
+          }
           const prod = await ctx.db
             .query("hygglo_products")
             .withIndex("by_account_product", (q) =>
@@ -1074,35 +1088,15 @@ export const getThreadContext = internalQuery({
       fact_pack = null;
     }
 
-    // Unfulfillable items. The RESOLVER is authoritative: if the order resolved
-    // to real owned inventory (resolved_items / specs / price / availability),
-    // it IS fulfillable — hygglo_products.isMarketingOnly + masterItemId are
-    // stale/low-coverage (a real owned "JBL Dual Wireless" set was wrongly
-    // marketing-flagged AND unlinked, making the bot tell the renter it doesn't
-    // exist). So: only treat a marketing-only listing as unfulfillable when
-    // NOTHING in the order resolved; the curated unowned-camera title scan below
-    // always applies (catches SEO bait like an "fx30" kit even if its lens did
-    // resolve).
+    // Unfulfillable = ONLY the owner-confirmed not-owned CAMERA list, matched in
+    // the listing title (SEO bait like an "fx30" / "like Canon R5" kit). We do
+    // NOT infer "we don't stock it" from hygglo_products flags or resolution
+    // gaps — those misfire on real owned gear (a JBL set, an A7 II combo, a
+    // Handycam) and made the bot tell renters their item doesn't exist. Telling
+    // a renter a real item is unavailable is far worse than missing a rare
+    // genuinely-unowned non-camera item.
     const unfulfillable: string[] = [];
-    const anyResolved =
-      (reservation?.resolved_items?.length ?? 0) > 0 ||
-      (fact_pack?.specs.length ?? 0) > 0 ||
-      !!fact_pack?.pricing?.itemPrices?.length ||
-      (availability?.items.length ?? 0) > 0;
     if (slug) {
-      if (!anyResolved) {
-        for (const li of lineItems) {
-          if (typeof li.product_id !== "number") continue;
-          const prod = await ctx.db
-            .query("hygglo_products")
-            .withIndex("by_account_product", (q) =>
-              q.eq("accountSlug", slug!).eq("productId", li.product_id!),
-            )
-            .first();
-          if (prod?.isMarketingOnly)
-            unfulfillable.push(li.name ?? prod.name ?? "an item");
-        }
-      }
       const titles = lineItems.map((li) => li.name ?? "").join(" | ").toLowerCase();
       const ownedLc = owned_cameras.join(" | ").toLowerCase();
       const tok = (hay: string, t: string) =>

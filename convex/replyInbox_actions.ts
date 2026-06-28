@@ -135,7 +135,11 @@ export const generateDraft = action({
       "Grounding: state as fact ONLY what's in the FACTS list and booking context " +
       "below. Do NOT invent prices, availability, specs, dates, policies, or suggest " +
       "gear we don't own. If you need something that isn't listed, say I'll check " +
-      "rather than guessing. If they haven't placed a booking request yet (inquiry), " +
+      "rather than guessing. CRITICAL: never tell a renter we DON'T have an item, or " +
+      "that we have 'no other'/'no alternative' options — you don't see the full " +
+      "inventory, so 'we don't have it' is usually wrong. Only say an item isn't ours " +
+      "if it's explicitly listed as NOT IN OUR INVENTORY in the FACTS; for anything " +
+      "else say I'll check. If they haven't placed a booking request yet (inquiry), " +
       "nudge them to send one; if a request is pending my approval, confirm " +
       "availability and the next step.\n\n" +
       "TIMES, HOURS & RULES (important):\n" +
