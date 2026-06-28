@@ -118,6 +118,7 @@ export interface TileLocation {
   street: string | null;
   public_url: string | null;
   map_url: string;
+  map_embed_url?: string;
   distance_km: number | null;
   vehicle: string | null;
   too_heavy: boolean;
@@ -131,7 +132,67 @@ export interface TileLocation {
  * streets + stations), distance from the hub, and a red tag when the order is
  * too heavy / out of range for that location.
  */
+/** In-app map overlay — keyless Google embed (streets + stations) + external link. */
+function MapOverlay({ loc, onClose }: { loc: TileLocation; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const title = [loc.street, loc.zip].filter(Boolean).join(", ") || loc.label || "Location";
+  return (
+    <div
+      className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-2xl overflow-hidden bg-[#13151a] border border-white/10 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.07]">
+          <span className="text-[13px]">📍</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-[#eef1f5] truncate">
+              {loc.label ?? loc.area ?? "Location"}
+            </div>
+            <div className="text-[11px] text-[#8b8fa3] truncate">{title}</div>
+          </div>
+          <a
+            href={loc.map_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] px-2 py-1 rounded-md bg-white/[0.06] text-sky-300 hover:bg-white/[0.12] shrink-0"
+          >
+            Open in Google Maps ↗
+          </a>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#9aa0ad] hover:text-white hover:bg-white/[0.08] text-xl leading-none"
+          >
+            ×
+          </button>
+        </div>
+        {loc.map_embed_url ? (
+          <iframe
+            title="Pickup location map"
+            src={loc.map_embed_url}
+            className="w-full h-[60vh] border-0"
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+          />
+        ) : (
+          <div className="h-40 flex items-center justify-center text-[#8b8fa3] text-sm">
+            No map available
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean }) {
+  const [showMap, setShowMap] = useState(false);
   const tag = loc.out_of_range
     ? { text: "Out of range", cls: "bg-rose-500/20 text-rose-300" }
     : loc.too_heavy
@@ -139,17 +200,18 @@ function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean 
       : null;
   return (
     <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-      <a
-        href={loc.map_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        title={`${loc.street ? loc.street + ", " : ""}${loc.zip ?? ""} — open map`}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setShowMap(true);
+        }}
+        title={`${loc.street ? loc.street + ", " : ""}${loc.zip ?? ""} — view map`}
         className="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200 hover:underline max-w-full"
       >
         <span>📍</span>
         <span className="truncate">{loc.label ?? loc.area ?? loc.zip ?? "Location"}</span>
-      </a>
+      </button>
       {loc.distance_km != null && (
         <span className="text-[#7f8694]">{loc.distance_km}km</span>
       )}
@@ -161,6 +223,7 @@ function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean 
           ⚠ {tag.text}
         </span>
       )}
+      {showMap && <MapOverlay loc={loc} onClose={() => setShowMap(false)} />}
     </div>
   );
 }
