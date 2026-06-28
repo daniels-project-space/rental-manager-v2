@@ -856,7 +856,11 @@ export const getThreadContext = internalQuery({
             (accountId != null && r.account_id === accountId)),
       )
       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
-      .slice(0, 24)
+      // Include ALL enabled rules — the old slice(0,24) truncated past priority 9
+      // and dropped load-bearing rules like "when a renter asks for an item we
+      // don't stock, offer the closest owned alternative" (#27) and the delivery
+      // rules (2026-06-28).
+      .slice(0, 60)
       .map((r) => r.rule_body);
 
     // Pickup/collection windows are owner-editable in Settings (singleton) and
@@ -1070,20 +1074,34 @@ export const getThreadContext = internalQuery({
       fact_pack = null;
     }
 
-    // Unfulfillable items (marketing/SEO listing or unowned camera model) —
-    // from the reservation OR the inquiry listing.
+    // Unfulfillable items. The RESOLVER is authoritative: if the order resolved
+    // to real owned inventory (resolved_items / specs / price / availability),
+    // it IS fulfillable — hygglo_products.isMarketingOnly + masterItemId are
+    // stale/low-coverage (a real owned "JBL Dual Wireless" set was wrongly
+    // marketing-flagged AND unlinked, making the bot tell the renter it doesn't
+    // exist). So: only treat a marketing-only listing as unfulfillable when
+    // NOTHING in the order resolved; the curated unowned-camera title scan below
+    // always applies (catches SEO bait like an "fx30" kit even if its lens did
+    // resolve).
     const unfulfillable: string[] = [];
+    const anyResolved =
+      (reservation?.resolved_items?.length ?? 0) > 0 ||
+      (fact_pack?.specs.length ?? 0) > 0 ||
+      !!fact_pack?.pricing?.itemPrices?.length ||
+      (availability?.items.length ?? 0) > 0;
     if (slug) {
-      for (const li of lineItems) {
-        if (typeof li.product_id !== "number") continue;
-        const prod = await ctx.db
-          .query("hygglo_products")
-          .withIndex("by_account_product", (q) =>
-            q.eq("accountSlug", slug!).eq("productId", li.product_id!),
-          )
-          .first();
-        if (prod && (prod.isMarketingOnly || !prod.masterItemId))
-          unfulfillable.push(li.name ?? prod.name ?? "an item");
+      if (!anyResolved) {
+        for (const li of lineItems) {
+          if (typeof li.product_id !== "number") continue;
+          const prod = await ctx.db
+            .query("hygglo_products")
+            .withIndex("by_account_product", (q) =>
+              q.eq("accountSlug", slug!).eq("productId", li.product_id!),
+            )
+            .first();
+          if (prod?.isMarketingOnly)
+            unfulfillable.push(li.name ?? prod.name ?? "an item");
+        }
       }
       const titles = lineItems.map((li) => li.name ?? "").join(" | ").toLowerCase();
       const ownedLc = owned_cameras.join(" | ").toLowerCase();
