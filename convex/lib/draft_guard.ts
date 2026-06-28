@@ -166,6 +166,17 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   const push = (type: string, detail: string, action: FlagAction) =>
     flags.push({ type, detail, severity: sev(type), action });
 
+  // 0. LEAKED REASONING TAGS — strip <think>…</think> blocks + stray tags that
+  // some models emit (e.g. a draft starting with "</think>").
+  if (/<\/?think>|<\/?reasoning>/i.test(text)) {
+    text = text
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+      .replace(/<\/?think>|<\/?reasoning>/gi, "")
+      .trim();
+    push("CHAIN_OF_THOUGHT", "Stripped leaked reasoning tag", "stripped");
+  }
+
   const account = opts.account;
   const stage = opts.stage?.toLowerCase();
   const message = opts.lastRenterMessage ?? "";

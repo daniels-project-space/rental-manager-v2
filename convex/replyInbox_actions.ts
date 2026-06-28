@@ -201,9 +201,36 @@ export const generateDraft = action({
       facts.push(
         `Pickup/return windows (Europe/London): ${c.pickup_windows.map((w) => `${w.start}–${w.end}`).join(", ")}`,
       );
-    if (c.owned_cameras?.length)
+    // Full owned inventory by category — lets the draft offer the closest real
+    // alternative when we don't have exactly what the renter asked for.
+    const KIND_LABEL: Record<string, string> = {
+      camera: "Cameras",
+      lens: "Lenses",
+      audio: "Audio/mics",
+      lighting: "Lighting",
+      monitor: "Monitors",
+      gimbal: "Gimbals",
+      stabilizer: "Stabilizers",
+      drone: "Drones",
+      dj_audio: "DJ/PA",
+      power: "Power",
+      grip: "Grip",
+      support: "Tripods/support",
+      motion: "Sliders/motion",
+      video: "Video",
+      effects: "FX",
+      transmission: "Wireless video",
+      accessory: "Accessories",
+      storage_card: "Cards",
+      smoke_fx: "Smoke/FX",
+    };
+    const inv = c.owned_inventory ?? {};
+    const invParts = Object.keys(KIND_LABEL)
+      .filter((k) => (inv[k] ?? []).length)
+      .map((k) => `${KIND_LABEL[k]}: ${inv[k].join(", ")}`);
+    if (invParts.length)
       facts.push(
-        `Cameras in inventory (ONLY ever suggest a camera from this list; we own no others): ${c.owned_cameras.join(", ")}`,
+        `Gear I own (ONLY ever offer items from this list; if I don't have exactly what they asked, suggest the closest of these in the SAME category instead of just saying no) — ${invParts.join("; ")}`,
       );
     if (c.unfulfillable?.length)
       facts.push(

@@ -987,6 +987,9 @@ export const getThreadContext = internalQuery({
       verifiedListingItem?: string;
     } | null = null;
     let owned_cameras: string[] = [];
+    // Full owned inventory grouped by kind — so the draft can offer the closest
+    // alternative in ANY category (audio/monitor/power/light/…), not just cameras.
+    const owned_inventory: Record<string, string[]> = {};
     // line items with a product_id, from reservation OR inquiry listing.
     const lineItems: { name?: string | null; product_id?: number | null }[] =
       reservation
@@ -996,13 +999,16 @@ export const getThreadContext = internalQuery({
             product_id: (it as { product_id?: number }).product_id,
           }));
     try {
-      // Owned cameras (catalogue-wide) — always available as a grounding fact.
+      // Owned inventory grouped by kind (active, real, in stock) — the source
+      // for both the camera guard and offering alternatives in any category.
       const allItems = await ctx.db.query("items").collect();
-      owned_cameras = allItems
-        .filter((it) => it.kind === "camera" && it.status === "active" && !it.is_marketing_only)
-        .map((it) => it.name_canonical)
-        .sort()
-        .slice(0, 40);
+      for (const it of allItems) {
+        if (it.status !== "active" || it.is_marketing_only || (it.qty ?? 0) <= 0) continue;
+        (owned_inventory[it.kind] ??= []).push(it.name_canonical);
+      }
+      for (const k of Object.keys(owned_inventory))
+        owned_inventory[k] = owned_inventory[k].sort().slice(0, 16);
+      owned_cameras = owned_inventory["camera"] ?? [];
 
       // Resolve the items in play to inventory itemIds, using the SAME good
       // resolver for reservations AND inquiries: override map → product index →
@@ -1168,6 +1174,7 @@ export const getThreadContext = internalQuery({
       availability,
       fact_pack,
       owned_cameras,
+      owned_inventory,
       unfulfillable: unfulfillableUniq,
       house_rules,
       hard_truths: hard_truths ?? null,
