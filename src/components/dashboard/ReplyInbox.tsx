@@ -127,6 +127,24 @@ export interface TileLocation {
 
 // ── helpers ───────────────────────────────────────────────────────
 
+/** Friendly send-time for a chat bubble. Same day → "14:32"; otherwise
+ *  "16 Jun, 14:32". Accepts ms-epoch or an ISO/parseable string; returns "" when
+ *  there's nothing usable so the caller can skip the caption. */
+function fmtMsgTime(ts: number | string | null | undefined): string {
+  if (ts === null || ts === undefined || ts === "") return "";
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return "";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return time;
+  const day = d.toLocaleDateString([], { day: "numeric", month: "short" });
+  return `${day}, ${time}`;
+}
+
 /**
  * Pickup-location overlay: the listing's area as a Google Maps hyperlink (shows
  * streets + stations), distance from the hub, and a red tag when the order is
@@ -254,11 +272,27 @@ function decideState(t: ReplyTileData): {
   const canDecline = t.can_deny ?? t.is_request;
   return { canApprove, canDecline, approved: !canApprove && canDecline };
 }
+/** Lifecycle states I (the owner) have already resolved. Once a request is
+ *  cancelled or declined the thread is closed — cancelling IS the answer — so it
+ *  should drop out of the action lists even when the renter's message was last. */
+function isResolvedClosed(t: ReplyTileData): boolean {
+  const s = (t.status ?? "").toLowerCase();
+  if (s === "cancelled" || s === "canceled" || s === "declined" || s === "denied") return true;
+  const step = (t.order_step ?? "").toUpperCase();
+  return (
+    step === "CANCELED" ||
+    step === "CANCELLED" ||
+    step === "DENIED" ||
+    step === "VERIFICATION_FAILED"
+  );
+}
 /** True when the ball is in MY court (renter spoke last, or a pending request). */
 function awaitingMe(t: ReplyTileData): boolean {
   // If I sent the last message, it's the renter's turn — never "waiting on me",
   // even for a still-open request (I've already replied / approved it).
   if (t.last_sender === "owner") return false;
+  // Cancelled / declined → I already closed it; don't keep nagging me.
+  if (isResolvedClosed(t)) return false;
   return t.last_sender === "renter" || t.is_request;
 }
 function statusText(t: ReplyTileData): string {
@@ -1140,24 +1174,28 @@ export function ReplyModal({
           ) : thread.length === 0 ? (
             <div className="text-sm text-[#6b7280]">No messages yet.</div>
           ) : (
-            thread.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "owner" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[78%] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${
-                    m.role === "owner"
-                      ? "rounded-2xl rounded-tr-md text-[#eef1f5]"
-                      : "rounded-2xl rounded-tl-md bg-white/[0.06] text-[#d8dce3]"
-                  }`}
-                  style={
-                    m.role === "owner"
-                      ? { background: `linear-gradient(135deg, ${accent}40, ${accent}24)` }
-                      : undefined
-                  }
-                >
-                  {m.content}
+            thread.map((m, i) => {
+              const sent = fmtMsgTime(m.timestamp);
+              return (
+                <div key={i} className={`flex flex-col ${m.role === "owner" ? "items-end" : "items-start"}`}>
+                  <div
+                    className={`max-w-[78%] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${
+                      m.role === "owner"
+                        ? "rounded-2xl rounded-tr-md text-[#eef1f5]"
+                        : "rounded-2xl rounded-tl-md bg-white/[0.06] text-[#d8dce3]"
+                    }`}
+                    style={
+                      m.role === "owner"
+                        ? { background: `linear-gradient(135deg, ${accent}40, ${accent}24)` }
+                        : undefined
+                    }
+                  >
+                    {m.content}
+                  </div>
+                  {sent && <span className="text-[10px] text-[#6b7280] mt-1 px-1 tabular-nums">{sent}</span>}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
           {sentMsgs.map((s, i) => (
             <div key={`sent-${i}`} className="flex justify-end">
@@ -1434,7 +1472,7 @@ export function ReplyInbox() {
   const all = (queue ?? []).filter((t) => !acted.has(t.thread_id));
   // A request still "needs me" only until I've replied/approved (owner-last).
   const pendingRequest = (t: ReplyTileData) =>
-    t.kind === "request" && t.last_sender !== "owner";
+    t.kind === "request" && t.last_sender !== "owner" && !isResolvedClosed(t);
   const requests = all.filter(pendingRequest).length;
   const todo = all.filter((t) => awaitingMe(t)).length;
   const visible = all.filter((t) =>

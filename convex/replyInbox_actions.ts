@@ -131,7 +131,13 @@ export const generateDraft = action({
       "convenience', 'kindly', 'rest assured'.\n" +
       "- NO em-dashes. Use commas, full stops, or separate sentences.\n" +
       "- No greeting unless it genuinely fits, and no formal sign-off or name placeholder.\n" +
-      "- Don't over-explain or hedge. Say the useful thing plainly.\n\n" +
+      "- Don't over-explain or hedge. Say the useful thing plainly.\n" +
+      "- Only say 'I'll check' when the answer genuinely is NOT in the FACTS below. " +
+      "If the FACTS already say an item is AVAILABLE for the dates, tell them it's " +
+      "available, do NOT say you'll check. If an item is listed as NOT IN OUR " +
+      "INVENTORY, say we don't have that exact one and offer the closest thing we " +
+      "do, do NOT say you'll check on it. Don't promise to check something you " +
+      "already know.\n\n" +
       "Grounding: state as fact ONLY what's in the FACTS list and booking context " +
       "below. Do NOT invent prices, availability, specs, dates, policies, or suggest " +
       "gear we don't own. If you need something that isn't listed, say I'll check " +
