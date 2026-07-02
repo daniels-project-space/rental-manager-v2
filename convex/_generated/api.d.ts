@@ -97,6 +97,7 @@ import type * as lib_reservations_itemUnits from "../lib/reservations/itemUnits.
 import type * as lib_reservations_monthRevenue from "../lib/reservations/monthRevenue.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
 import type * as lib_reservations_views from "../lib/reservations/views.js";
+import type * as lib_return_discounts from "../lib/return_discounts.js";
 import type * as lib_return_messages from "../lib/return_messages.js";
 import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
@@ -278,6 +279,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reservations/monthRevenue": typeof lib_reservations_monthRevenue;
   "lib/reservations/predicates": typeof lib_reservations_predicates;
   "lib/reservations/views": typeof lib_reservations_views;
+  "lib/return_discounts": typeof lib_return_discounts;
   "lib/return_messages": typeof lib_return_messages;
   "lib/revenue_attribution": typeof lib_revenue_attribution;
   "lib/telegram_convex": typeof lib_telegram_convex;
