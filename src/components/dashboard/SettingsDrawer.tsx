@@ -154,6 +154,135 @@ function HardTruthsEditor() {
   );
 }
 
+/** Small labelled read-only preview of one outbound text. */
+function TextPreview({ label, text }: { label: string; text: string | null }) {
+  if (!text) return null;
+  return (
+    <div>
+      <p className="text-[10px] font-semibold mb-0.5" style={{ color: "#8b8fa3" }}>{label}</p>
+      <p
+        className="text-[11px] leading-snug rounded-md px-2 py-1.5 whitespace-pre-wrap"
+        style={{ background: "rgba(255,255,255,0.04)", color: "#cbd5e1", border: "1px solid rgba(255,255,255,0.07)" }}
+      >
+        {text}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Per-account post-return discount code + percent editor, with the exact texts
+ * a good renter gets (discount message, review-only ask, 5★ review comment).
+ * Code/percent save to account_profiles and are rendered into the outbound
+ * chat text at return time — so an edit here changes every future automatic
+ * text for that account. Wordings themselves are fixed per-account brand copy
+ * (convex/lib/return_messages.ts).
+ */
+function ReturnTextsEditor() {
+  const rows = useQuery(api.settings.listReturnDiscounts);
+  const save = useMutation(api.settings.setReturnDiscount);
+  const [drafts, setDrafts] = useState<Record<string, { code: string; percent: string }>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  if (!rows) return null;
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">Return texts &amp; discount codes</label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        What a good renter gets when you close a return: a 5★ review + one chat
+        text. Change the code / % here and every future automatic text for that
+        account uses the new value.
+      </p>
+      {error && <p className="text-xs mb-2" style={{ color: "#ef4444" }}>{error}</p>}
+      <div className="space-y-3">
+        {rows.map((r) => {
+          const id = String(r.account_id);
+          const d = drafts[id] ?? { code: r.code, percent: String(r.percent) };
+          const dirty = d.code !== r.code || d.percent !== String(r.percent);
+          const open = openId === id;
+          return (
+            <div
+              key={id}
+              className="rounded-lg px-2.5 py-2"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-[#cbd5e1]">{r.display_name}</span>
+                {dirty ? (
+                  <button
+                    disabled={savingId === id}
+                    onClick={async () => {
+                      setSavingId(id);
+                      setSavedId(null);
+                      setError(null);
+                      try {
+                        await save({
+                          account_id: r.account_id,
+                          code: d.code,
+                          percent: Number(d.percent),
+                        });
+                        setDrafts((prev) => {
+                          const next = { ...prev };
+                          delete next[id];
+                          return next;
+                        });
+                        setSavedId(id);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : String(e));
+                      } finally {
+                        setSavingId(null);
+                      }
+                    }}
+                    className="text-[11px] px-2 py-0.5 rounded-md bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 disabled:opacity-50"
+                  >
+                    {savingId === id ? "Saving…" : "Save"}
+                  </button>
+                ) : savedId === id ? (
+                  <span className="text-[11px] text-green-400">Saved</span>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={d.code}
+                  onChange={(e) => setDrafts((p) => ({ ...p, [id]: { ...d, code: e.target.value.toUpperCase() } }))}
+                  placeholder="DISCOUNT CODE"
+                  className="flex-1 min-w-0 rounded-lg px-2.5 py-1.5 text-[13px] font-mono tracking-wide"
+                  style={INPUT_STYLE}
+                />
+                <input
+                  value={d.percent}
+                  onChange={(e) => setDrafts((p) => ({ ...p, [id]: { ...d, percent: e.target.value } }))}
+                  type="number"
+                  min={1}
+                  max={90}
+                  className="w-16 rounded-lg px-2 py-1.5 text-[13px] text-right"
+                  style={INPUT_STYLE}
+                />
+                <span className="text-xs text-[#8b8fa3] shrink-0">% off</span>
+              </div>
+              <button
+                onClick={() => setOpenId(open ? null : id)}
+                className="text-[11px] mt-1.5 text-[#8b8fa3] hover:text-[#cbd5e1] transition-colors"
+              >
+                {open ? "▾ Hide the texts" : "▸ Show the texts that get sent"}
+              </button>
+              {open && (
+                <div className="space-y-1.5 mt-1.5">
+                  <TextPreview label="Chat text — discount + review ask" text={r.preview_discount} />
+                  <TextPreview label="Chat text — review ask only (code toggle off)" text={r.preview_review_only} />
+                  <TextPreview label="5★ review left on the renter" text={r.preview_review_comment} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** One account's hub row: confirmed chip + postcode input + Confirm. */
 function HubRow({
   account_id,
@@ -495,6 +624,8 @@ export function SettingsDrawer({ onClose }: Props) {
         </div>
 
         <HardTruthsEditor />
+
+        <ReturnTextsEditor />
       </div>
 
       {saveError && (

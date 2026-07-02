@@ -52,6 +52,11 @@ export default defineSchema({
     hub_label: v.optional(v.string()),
     hub_lat: v.optional(v.number()),
     hub_lng: v.optional(v.number()),
+    // Post-return discount code texted to good renters (Settings drawer).
+    // Interpolated into the account's return message template at return time;
+    // unset -> DEFAULT_RETURN_DISCOUNTS (convex/lib/return_messages.ts).
+    return_discount_code: v.optional(v.string()),
+    return_discount_percent: v.optional(v.number()),
     message_templates: v.optional(v.any()),
     unknown_categories: v.optional(v.array(v.string())),
     last_synced_v1: v.optional(v.number()),

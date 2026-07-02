@@ -2,6 +2,12 @@ import { action, mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import {
+  renderDiscountMessage,
+  reviewOnlyMessageFor,
+  reviewCommentFor,
+} from "./lib/return_messages";
+import { resolveReturnDiscount } from "./lib/return_discounts";
 
 // W01, W02, W20 — settings singleton row
 export const get = query({
@@ -211,6 +217,87 @@ export const setAccountHardTruths = mutation({
       });
     }
     return { ok: true };
+  },
+});
+
+// ── Per-account post-return discount code + message previews ──────────────
+
+/**
+ * Every Hygglo account's EFFECTIVE return-discount config (saved value or
+ * default) plus the exact texts that would go out — so the Settings drawer
+ * and the Return Hub overlay always show what markReturned will really send.
+ */
+export const listReturnDiscounts = query({
+  args: {},
+  handler: async (ctx) => {
+    const accounts = await ctx.db.query("accounts").collect();
+    const out: {
+      account_id: Id<"accounts">;
+      slug: string;
+      display_name: string;
+      code: string;
+      percent: number;
+      preview_discount: string;
+      preview_review_only: string | null;
+      preview_review_comment: string;
+    }[] = [];
+    for (const a of accounts) {
+      if (a.slug === "dbcinema_web") continue; // storefront, no Hygglo chat
+      const d = await resolveReturnDiscount(ctx.db, a.slug);
+      if (!d) continue;
+      const preview = renderDiscountMessage(a.slug, d.code, d.percent);
+      if (!preview) continue; // account has no message template
+      out.push({
+        account_id: a._id,
+        slug: a.slug,
+        display_name: a.display_name ?? a.slug,
+        code: d.code,
+        percent: d.percent,
+        preview_discount: preview,
+        preview_review_only: reviewOnlyMessageFor(a.slug),
+        preview_review_comment: reviewCommentFor(a.slug),
+      });
+    }
+    out.sort((x, y) => x.slug.localeCompare(y.slug));
+    return out;
+  },
+});
+
+/** Save an account's discount code + percent (drives all future return texts). */
+export const setReturnDiscount = mutation({
+  args: {
+    account_id: v.id("accounts"),
+    code: v.string(),
+    percent: v.number(),
+  },
+  handler: async (ctx, { account_id, code, percent }) => {
+    const clean = code.trim().toUpperCase().replace(/\s+/g, "");
+    if (!clean) throw new Error("Discount code can't be empty");
+    if (!Number.isFinite(percent) || percent < 1 || percent > 90) {
+      throw new Error("Percent must be between 1 and 90");
+    }
+    const rounded = Math.round(percent);
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", account_id))
+      .first();
+    const now = Date.now();
+    if (profile) {
+      await ctx.db.patch(profile._id, {
+        return_discount_code: clean,
+        return_discount_percent: rounded,
+        updated_at: now,
+      });
+    } else {
+      await ctx.db.insert("account_profiles", {
+        account_id,
+        return_discount_code: clean,
+        return_discount_percent: rounded,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    return { ok: true, code: clean, percent: rounded };
   },
 });
 

@@ -155,20 +155,20 @@ function ReturnModal({
   const [result, setResult] = useState<FinalizeResult | null>(null);
   const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
   const [goodTags, setGoodTags] = useState<Set<string>>(() => new Set());
-  // Per-account post-rental discount code sent with the 5★ review ask. Codes
-  // are honoured manually in chat, so "live" just means the account has copy
-  // in convex/lib/return_messages.ts (RETURN_DISCOUNT_BY_ACCOUNT).
-  const DISCOUNT_CODES: Record<string, string> = {
-    dbcinema: "DB15OFF",
-    leo: "LEO10OFF",
-    diogo: "DIOGO10OFF",
-  };
-  const discountCode = DISCOUNT_CODES[item.accountSlug ?? ""] ?? "DB15OFF";
-  const CODE_IS_LIVE: Record<string, boolean> = { dbcinema: true, leo: true, diogo: true };
-  const codeLive = CODE_IS_LIVE[item.accountSlug ?? ""] ?? false;
-  // Operator choice: send the promo code with the review ask (default when the
-  // code is live), or just a "please leave a review" text. Smooth + fantastic.
-  const [sendDiscount, setSendDiscount] = useState(codeLive);
+  // Per-account post-rental discount code sent with the 5★ review ask — the
+  // SAME effective config markReturned renders from (Settings-drawer value or
+  // default), so the overlay always shows exactly what would be texted.
+  const discounts = useStableQuery(api.settings.listReturnDiscounts) as
+    | { slug: string; code: string; percent: number }[]
+    | undefined;
+  const disc = discounts?.find((d) => d.slug === (item.accountSlug ?? ""));
+  const discountCode = disc?.code ?? "the discount code";
+  // Optimistic while the query loads; a truly unconfigured account (no saved
+  // code, no default, e.g. dbcinema_web) warns + sends nothing.
+  const codeLive = discounts === undefined || !!disc;
+  // Operator choice: send the promo code with the review ask (default), or
+  // just a "please leave a review" text. Smooth + fantastic.
+  const [sendDiscount, setSendDiscount] = useState(true);
   const makeToggle = (setter: Dispatch<SetStateAction<Set<string>>>) => (t: string) =>
     setter((prev) => {
       const next = new Set(prev);
@@ -266,7 +266,7 @@ function ReturnModal({
         </span>
         <span className="block text-[10px] text-[#8b8fa3]">
           {sendDiscount
-            ? (codeLive ? "Review ask + promo code text" : `⚠ ${discountCode} isn't on Hygglo yet — no text will send`)
+            ? (codeLive ? "Review ask + promo code text" : "⚠ no discount code set for this account — no text will send")
             : "Just a “please leave a review” text"}
         </span>
       </span>

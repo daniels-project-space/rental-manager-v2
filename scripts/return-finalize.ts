@@ -32,6 +32,7 @@
  */
 import { ConvexHttpClient } from "convex/browser";
 import { returnOrder, reviewRenter, sendOrderMessage } from "../src/lib/hygglo-write";
+import { reviewCommentFor } from "../convex/lib/return_messages";
 import {
   getAccountCredentials,
   getHyggloAccessToken,
@@ -105,7 +106,7 @@ function parseReviewShape(errBody: string): { fields: string[]; needsComment: bo
     const accountSlug = r.account_slug as string;
     const hyggloOrderId = String(r.hygglo_order_id);
     const base = { accountSlug, hyggloOrderId };
-    const reviewComment = "5/5 — great renter, looked after the gear and easy to deal with. Welcome back any time!";
+    const reviewComment = reviewCommentFor(accountSlug);
     // Eligibility: a prepared `review_message` is present ONLY for renters who
     // passed the trust gate in markReturned (flagged/blacklisted are suppressed
     // there). We additionally treat "no prepared message" as "no discount text"

@@ -1,98 +1,88 @@
 /**
- * Post-rental discount + review-request copy, per Hygglo account.
+ * Post-rental copy, per Hygglo account — PURE module (no server imports) so it
+ * can be used from Convex functions, the CLI and (via query previews) the UI.
+ *
+ * Three texts per account, each with its own human voice so the accounts don't
+ * read like the same person copy-pasting:
+ *   1. discount message   — chat text with the promo code + review ask
+ *   2. review-only message — chat text asking for a review, no code
+ *   3. review comment      — the public 5★ review left ON the renter
  *
  * Sent (via the gated hygglo-write chokepoint) ONLY to "good" renters on a
  * smooth/fantastic return — NEVER to renters currently flagged or blacklisted
  * (the suppression gate lives in `markReturned`, convex/reservations.ts).
  *
- * Hardcoded on purpose (operator decision 2026-06-15): the wording + codes are
- * fixed brand copy, so editing them is a deliberate redeploy rather than a
- * silently-editable DB row. Unknown account slug -> null -> no message is sent
- * (fail-safe: we never send a wrong/blank promo code).
- *
- * NB: minor typo fixes vs. the operator's literal dictation were applied
- * ("oyu"->"you", "texst em"->"text me") so the message reads cleanly to a real
- * renter; the casual lowercase voice is intentional and preserved verbatim.
+ * WORDINGS are fixed brand copy (deliberate redeploy to change). The CODE and
+ * PERCENT are operator-editable per account in the Settings drawer
+ * (account_profiles.return_discount_code/_percent, resolved by
+ * convex/lib/return_discounts.ts) — these defaults apply until a value is
+ * saved there. Unknown account slug -> null -> no message is sent (fail-safe:
+ * we never text a wrong/blank promo code).
  */
-export interface ReturnDiscount {
+
+export interface ReturnDiscountConfig {
   /** Promo code the renter texts back in chat. */
   code: string;
   /** Percent off applied to the renter's next rental. */
   percent: number;
-  /** Full chat message body sent to the renter. */
-  message: string;
 }
 
-const LEO_MESSAGE =
-  "Hey all gear is good and back thx so much for taking care of the equipment! " +
-  "im still quite new here and trying to grow, so if you could leave a review that " +
-  "would really help me out on here! and for the future text me code LEO10OFF here " +
-  "in chat and i will apply 10% off onto your entire rental :)";
-
-const DBCINEMA_MESSAGE =
-  "Hey all gear is good and back thx so much for taking care of the equipment! " +
-  "im still quite new here and trying to grow, so if you could leave a review that " +
-  "would really help me out on here! and for the future text me code DB15OFF here " +
-  "in chat and i will apply 15% off onto your entire rental :)";
-
-const DIOGO_MESSAGE =
-  "Hey all gear is good and back thx so much for taking care of the equipment! " +
-  "im still quite new here and trying to grow, so if you could leave a review that " +
-  "would really help me out on here! and for the future text me code DIOGO10OFF here " +
-  "in chat and i will apply 10% off onto your entire rental :)";
-
-/**
- * account_slug -> discount copy. Keys MUST match `reservations.account_slug`
- * values ("leo" | "dbcinema" | "diogo"). The codes are honoured MANUALLY in
- * chat (renter texts the code back, operator applies the % off) — there is no
- * Hygglo-side promo-code object to create, so a new account only needs an
- * entry here (+ CODE_IS_LIVE in ReturnHub.tsx). diogo added 2026-07-02 after
- * Cecily G (order 4051157) got no text because this entry was missing.
- */
-export const RETURN_DISCOUNT_BY_ACCOUNT: Record<string, ReturnDiscount> = {
-  leo: { code: "LEO10OFF", percent: 10, message: LEO_MESSAGE },
-  dbcinema: { code: "DB15OFF", percent: 15, message: DBCINEMA_MESSAGE },
-  diogo: { code: "DIOGO10OFF", percent: 10, message: DIOGO_MESSAGE },
+/** Fallback code/percent per account when nothing is saved in Settings. */
+export const DEFAULT_RETURN_DISCOUNTS: Record<string, ReturnDiscountConfig> = {
+  leo: { code: "LEO10OFF", percent: 10 },
+  dbcinema: { code: "DB15OFF", percent: 15 },
+  diogo: { code: "DIOGO10OFF", percent: 10 },
 };
 
-/** The discount copy block for an account, or null if the account is unknown. */
-export function discountForAccount(accountSlug?: string | null): ReturnDiscount | null {
-  if (!accountSlug) return null;
-  return RETURN_DISCOUNT_BY_ACCOUNT[accountSlug] ?? null;
-}
+// ── 1. Discount + review-ask chat message (code/percent interpolated) ──────
+// leo keeps the operator's original dictated voice; dbcinema reads a bit more
+// "shop", diogo a bit more personal — all casual and human.
+
+const DISCOUNT_TEMPLATES: Record<string, (code: string, percent: number) => string> = {
+  leo: (code, percent) =>
+    "Hey all gear is good and back thx so much for taking care of the equipment! " +
+    "im still quite new here and trying to grow, so if you could leave a review that " +
+    `would really help me out on here! and for the future text me code ${code} here ` +
+    `in chat and i will apply ${percent}% off onto your entire rental :)`,
+  dbcinema: (code, percent) =>
+    "Hey! everything came back safe and in great shape, really appreciate you looking " +
+    "after the kit. if you have a minute, a quick review would mean a lot to us. " +
+    `and for next time — text me code ${code} in chat and ill take ${percent}% off ` +
+    "your whole rental :)",
+  diogo: (code, percent) =>
+    "Hey, just gave the gear a once-over and its all perfect, thanks for being so " +
+    "careful with it! a review would honestly make my day if you can spare a sec. " +
+    `oh and keep code ${code} handy — text it to me on your next rental and ill ` +
+    `knock ${percent}% off everything :)`,
+};
 
 /**
- * The chat message body to send a good renter on close, or null when the
- * account has no defined copy (in which case NO message is sent).
+ * The discount chat message for an account with the given code/percent, or
+ * null when the account has no template (nothing is sent).
  */
-export function discountMessageFor(accountSlug?: string | null): string | null {
-  return discountForAccount(accountSlug)?.message ?? null;
+export function renderDiscountMessage(
+  accountSlug: string | null | undefined,
+  code: string,
+  percent: number,
+): string | null {
+  if (!accountSlug || !code) return null;
+  const tpl = DISCOUNT_TEMPLATES[accountSlug];
+  return tpl ? tpl(code, percent) : null;
 }
 
-const LEO_REVIEW_ONLY =
-  "Hey all gear is good and back thx so much for taking care of the equipment! " +
-  "im still quite new here and trying to grow, so if you could leave a review that " +
-  "would really help me out on here :)";
+// ── 2. Review-only chat message (operator unticked "send discount code") ───
 
-const DBCINEMA_REVIEW_ONLY =
-  "Hey all gear is good and back thx so much for taking care of the equipment! " +
-  "im still quite new here and trying to grow, so if you could leave a review that " +
-  "would really help me out on here :)";
-
-const DIOGO_REVIEW_ONLY =
-  "Hey all gear is good and back thx so much for taking care of the equipment! " +
-  "im still quite new here and trying to grow, so if you could leave a review that " +
-  "would really help me out on here :)";
-
-/**
- * account_slug -> review-ask copy WITHOUT a promo code, for when the operator
- * unticks "send discount code" in the Return Hub overlay but the rental was
- * good.
- */
-export const RETURN_REVIEW_ONLY_BY_ACCOUNT: Record<string, string> = {
-  leo: LEO_REVIEW_ONLY,
-  dbcinema: DBCINEMA_REVIEW_ONLY,
-  diogo: DIOGO_REVIEW_ONLY,
+const REVIEW_ONLY_MESSAGES: Record<string, string> = {
+  leo:
+    "Hey all gear is good and back thx so much for taking care of the equipment! " +
+    "im still quite new here and trying to grow, so if you could leave a review that " +
+    "would really help me out on here :)",
+  dbcinema:
+    "Hey! everything came back safe and in great shape, really appreciate you looking " +
+    "after the kit. if you have a minute, a quick review would mean a lot to us :)",
+  diogo:
+    "Hey, just gave the gear a once-over and its all perfect, thanks for being so " +
+    "careful with it! if you can spare a sec, a review would honestly make my day :)",
 };
 
 /**
@@ -101,5 +91,25 @@ export const RETURN_REVIEW_ONLY_BY_ACCOUNT: Record<string, string> = {
  */
 export function reviewOnlyMessageFor(accountSlug?: string | null): string | null {
   if (!accountSlug) return null;
-  return RETURN_REVIEW_ONLY_BY_ACCOUNT[accountSlug] ?? null;
+  return REVIEW_ONLY_MESSAGES[accountSlug] ?? null;
+}
+
+// ── 3. Public 5★ review comment left ON the renter's profile ───────────────
+
+const REVIEW_COMMENTS: Record<string, string> = {
+  leo:
+    "Great renter — took good care of the gear, easy to reach, and returned everything on time. Welcome back any time!",
+  dbcinema:
+    "Everything came back in perfect condition. Friendly, reliable and easy to deal with — happy to rent to them again.",
+  diogo:
+    "Really smooth rental from start to finish, the gear came back spotless. Recommended!",
+};
+
+const REVIEW_COMMENT_FALLBACK =
+  "5/5 — great renter, looked after the gear and easy to deal with. Welcome back any time!";
+
+/** The 5★ review comment for an account (generic fallback for unknown slugs). */
+export function reviewCommentFor(accountSlug?: string | null): string {
+  if (!accountSlug) return REVIEW_COMMENT_FALLBACK;
+  return REVIEW_COMMENTS[accountSlug] ?? REVIEW_COMMENT_FALLBACK;
 }

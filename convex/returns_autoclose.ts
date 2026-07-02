@@ -59,6 +59,7 @@ import { v } from "convex/values";
 // READ_ONLY_MODE). With the flag OFF it returns {status:"skipped"} — finalizeReturn
 // marks the rental returned then no-ops the close, fully inert until go-live.
 import { reviewRenter, sendOrderMessage, returnOrder } from "../src/lib/hygglo-write";
+import { reviewCommentFor } from "./lib/return_messages";
 import {
   getAccountCredentials,
   getHyggloAccessToken,
@@ -67,8 +68,6 @@ import {
 } from "../src/lib/hygglo-auth";
 
 const TZ = "Europe/London";
-const REVIEW_COMMENT =
-  "5/5 — great renter, looked after the gear and easy to deal with. Welcome back any time!";
 
 /** Mirror of hygglo-write's READ_ONLY_MODE gate so the helper can pre-check
  *  without a write. PERMISSIVE-BY-DEFAULT: unset => writes ALLOWED. */
@@ -319,7 +318,7 @@ async function finalizeReservationClose(
   // 2a. 5★ review.
   if (reviewEligible && !alreadyReviewed) {
     if (reviewUnlocked) {
-      const rev = await reviewRenter({ ...base, rating: 5, comment: REVIEW_COMMENT });
+      const rev = await reviewRenter({ ...base, rating: 5, comment: reviewCommentFor(r.account_slug) });
       if (rev.status === "sent") {
         await ctx.runMutation(internal.reservations.stampAutoCloseStep, {
           reservationId,

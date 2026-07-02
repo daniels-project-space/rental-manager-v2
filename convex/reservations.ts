@@ -49,7 +49,8 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
-import { discountMessageFor, reviewOnlyMessageFor } from "./lib/return_messages";
+import { renderDiscountMessage, reviewOnlyMessageFor } from "./lib/return_messages";
+import { resolveReturnDiscount } from "./lib/return_discounts";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
 
@@ -394,19 +395,26 @@ export const markReturned = mutation({
     // Post-rental message. Two per-account variants, both PREPARED ONLY — the
     // actual send + platform close run through the gated hygglo-write
     // chokepoint (READ_ONLY by default), so nothing reaches a real renter yet:
-    //   sendDiscount !== false  -> discount + review-request copy (LEO10OFF /
-    //                              DB15OFF; default, backward compatible)
+    //   sendDiscount !== false  -> discount + review-request copy; the code and
+    //                              percent come from the Settings drawer
+    //                              (account_profiles) with hardcoded defaults
     //   sendDiscount === false  -> plain review-ask copy, no promo code (the
     //                              overlay's "don't send discount" choice)
     // Gated: good outcome only (sendReview), renter is NOT a current bad actor
     // and is NOT being flagged/blacklisted on THIS return, and the account has
     // defined copy (unknown account -> no message sent).
     const eligibleForMessage = !!sendReview && !alreadyBadActor && !blacklistRenter && !flagOnRequest;
-    const reviewMessage = eligibleForMessage
-      ? ((sendDiscount === false
-          ? reviewOnlyMessageFor(res.account_slug)
-          : discountMessageFor(res.account_slug)) ?? undefined)
-      : undefined;
+    let reviewMessage: string | undefined;
+    if (eligibleForMessage) {
+      if (sendDiscount === false) {
+        reviewMessage = reviewOnlyMessageFor(res.account_slug) ?? undefined;
+      } else {
+        const discount = await resolveReturnDiscount(ctx.db, res.account_slug);
+        reviewMessage = discount
+          ? (renderDiscountMessage(res.account_slug, discount.code, discount.percent) ?? undefined)
+          : undefined;
+      }
+    }
 
     const resPatch: Record<string, unknown> = {
       status: "completed",
