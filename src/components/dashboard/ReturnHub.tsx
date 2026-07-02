@@ -97,6 +97,8 @@ type ReturnPayload = {
   whitelist?: boolean;
   whitelistReason?: string;
   sendReview?: boolean;
+  /** false = good return but text the review ask WITHOUT the promo code. */
+  sendDiscount?: boolean;
   goodTags?: string[];
   badTags?: string[];
 };
@@ -162,6 +164,14 @@ function ReturnModal({
     diogo: "DIOGO10OFF",
   };
   const discountCode = DISCOUNT_CODES[item.accountSlug ?? ""] ?? "DB15OFF";
+  // Accounts whose code has backend copy (convex/lib/return_messages.ts) AND
+  // exists on Hygglo. diogo's doesn't yet, so a ticked toggle would text
+  // nothing — default it to the plain review ask instead.
+  const CODE_IS_LIVE: Record<string, boolean> = { dbcinema: true, leo: true, diogo: false };
+  const codeLive = CODE_IS_LIVE[item.accountSlug ?? ""] ?? false;
+  // Operator choice: send the promo code with the review ask (default when the
+  // code is live), or just a "please leave a review" text. Smooth + fantastic.
+  const [sendDiscount, setSendDiscount] = useState(codeLive);
   const makeToggle = (setter: Dispatch<SetStateAction<Set<string>>>) => (t: string) =>
     setter((prev) => {
       const next = new Set(prev);
@@ -239,6 +249,43 @@ function ReturnModal({
     </div>
   );
 
+  // Discount-code choice for good returns (shown on smooth + fantastic paths):
+  // ON  -> review ask + promo code text (today's behaviour)
+  // OFF -> plain "please leave a review" text, no code
+  const discountToggle = (
+    <button
+      type="button"
+      onClick={() => setSendDiscount((v) => !v)}
+      disabled={submitting}
+      className="w-full flex items-center justify-between px-3 py-2 rounded-xl mb-3 transition-colors hover:brightness-125 disabled:opacity-40"
+      style={{
+        background: sendDiscount ? "rgba(168,85,247,0.1)" : "rgba(255,255,255,0.04)",
+        border: `1px solid ${sendDiscount ? "rgba(168,85,247,0.45)" : "rgba(255,255,255,0.12)"}`,
+      }}
+    >
+      <span className="text-left">
+        <span className="block text-xs font-semibold" style={{ color: sendDiscount ? "#c084fc" : "#9296a6" }}>
+          {sendDiscount ? `Send discount code (${discountCode})` : "No discount code"}
+        </span>
+        <span className="block text-[10px] text-[#8b8fa3]">
+          {sendDiscount
+            ? (codeLive ? "Review ask + promo code text" : `⚠ ${discountCode} isn't on Hygglo yet — no text will send`)
+            : "Just a “please leave a review” text"}
+        </span>
+      </span>
+      <span
+        aria-hidden
+        className="relative inline-block w-8 h-[18px] rounded-full transition-colors shrink-0"
+        style={{ background: sendDiscount ? "rgba(168,85,247,0.6)" : "rgba(255,255,255,0.15)" }}
+      >
+        <span
+          className="absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all"
+          style={{ left: sendDiscount ? 16 : 2 }}
+        />
+      </span>
+    </button>
+  );
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -268,15 +315,16 @@ function ReturnModal({
             {errorBanner}
             <p className="text-[11px] text-[#8b8fa3] mb-1.5">Tag what was good (optional)</p>
             {goodChips}
+            {discountToggle}
             <div className="space-y-2">
               <button
                 disabled={submitting}
-                onClick={() => stage({ outcome: "smooth", condition: "good", sendReview: true, goodTags: goodList.length ? goodList : undefined }, `✓ Closed on Hygglo · 5★ left · ${discountCode} sent`)}
+                onClick={() => stage({ outcome: "smooth", condition: "good", sendReview: true, sendDiscount, goodTags: goodList.length ? goodList : undefined }, `✓ Closed on Hygglo · 5★ left · ${sendDiscount ? `${discountCode} sent` : "review ask sent"}`)}
                 className="w-full text-left px-3 py-2.5 rounded-xl transition-colors hover:brightness-125 disabled:opacity-40"
                 style={{ border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#34d399" }}>🟢 Smooth — all good</div>
-                <div className="text-[11px] text-[#8b8fa3]">Mark returned · prepare the discount code + review ask</div>
+                <div className="text-[11px] text-[#8b8fa3]">{sendDiscount ? "Mark returned · prepare the discount code + review ask" : "Mark returned · review ask only (no code)"}</div>
               </button>
               <button
                 disabled={submitting}
@@ -285,7 +333,7 @@ function ReturnModal({
                 style={{ border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.08)" }}
               >
                 <div className="text-sm font-semibold" style={{ color: "#fbbf24" }}>🏆 Fantastic renter</div>
-                <div className="text-[11px] text-[#8b8fa3]">Whitelist them (trusted) · discount code + review ask</div>
+                <div className="text-[11px] text-[#8b8fa3]">{sendDiscount ? "Whitelist them (trusted) · discount code + review ask" : "Whitelist them (trusted) · review ask only (no code)"}</div>
               </button>
               <button
                 disabled={submitting}
@@ -387,6 +435,7 @@ function ReturnModal({
             </p>
             <p className="text-[11px] text-[#8b8fa3] mb-1.5">Tag what was good (optional)</p>
             {goodChips}
+            {discountToggle}
             <input
               type="text"
               placeholder="Why? (optional — spotless return, great comms…)"
@@ -399,7 +448,7 @@ function ReturnModal({
               <button onClick={() => setView("choose")} disabled={submitting} className="text-sm px-3 py-1.5 rounded text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors disabled:opacity-40">Back</button>
               <button
                 disabled={submitting}
-                onClick={() => stage({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted · Closed on Hygglo · 5★ left · ${discountCode} sent`)}
+                onClick={() => stage({ outcome: "fantastic", condition: "good", whitelist: true, whitelistReason: wlReason || undefined, sendReview: true, sendDiscount, goodTags: goodList.length ? goodList : undefined }, `🏆 Whitelisted · Closed on Hygglo · 5★ left · ${sendDiscount ? `${discountCode} sent` : "review ask sent"}`)}
                 className="text-sm px-4 py-1.5 rounded font-semibold transition-colors disabled:opacity-40"
                 style={{ background: "rgba(251,191,36,0.18)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)" }}
               >
@@ -418,7 +467,9 @@ function ReturnModal({
               <div className="text-xs mb-3 px-2.5 py-2 rounded-lg leading-snug" style={{ background: "rgba(245,158,11,0.1)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.3)" }}>
                 Closes <b>{item.renterName}</b> on Hygglo now — <b>this can&apos;t be undone</b>.
                 {green
-                  ? <> Then auto-leaves a <b>5★ rating</b> + sends <b>{discountCode}</b>.</>
+                  ? (pending?.sendDiscount === false
+                      ? <> Then auto-leaves a <b>5★ rating</b> + sends a <b>review ask</b> (no discount code).</>
+                      : <> Then auto-leaves a <b>5★ rating</b> + sends <b>{discountCode}</b>.</>)
                   : <> No rating or discount is sent (issues).</>}
               </div>
               <div className="flex gap-2 justify-end">
@@ -448,10 +499,11 @@ function ReturnModal({
           const inert = r?.closed === "skipped";
           let headline = summary;
           if (inert) headline = "Marked returned — Hygglo close is currently disabled";
+          const withCode = pending?.sendDiscount !== false;
           const subNotes: string[] = [];
           if (r?.closed === "sent" && green) {
             if (r.reviewed === "skipped") subNotes.push("5★ rating wasn’t left");
-            if (r.messaged === "skipped") subNotes.push(`${discountCode} wasn’t sent`);
+            if (r.messaged === "skipped") subNotes.push(withCode ? `${discountCode} wasn’t sent` : "review ask wasn’t sent");
           }
           return (
             <div className="flex flex-col items-center py-3 gap-2 text-center">
@@ -466,7 +518,7 @@ function ReturnModal({
                 {inert
                   ? <>The rental is marked returned. Hygglo close is gated off pre-go-live — nothing was closed or sent.</>
                   : green
-                    ? <>Closed on Hygglo for you. A good renter is auto-sent a <b>5★ rating + {discountCode}</b>; flag / whitelist / blacklist are saved.</>
+                    ? <>Closed on Hygglo for you. A good renter is auto-sent a <b>5★ rating + {withCode ? discountCode : "review ask"}</b>; flag / whitelist / blacklist are saved.</>
                     : <>Closed on Hygglo for you. No rating or discount is sent on an issues return; flag / blacklist are saved.</>}
               </p>
             </div>
@@ -672,6 +724,9 @@ export function ReturnHub() {
       whitelistReason: p.whitelistReason,
       outcome: p.outcome,
       sendReview: p.sendReview || undefined,
+      // NB: false is meaningful here (review ask without the promo code), so
+      // forward it verbatim — the `|| undefined` pattern would erase it.
+      sendDiscount: p.sendDiscount,
       goodTags: p.goodTags,
       badTags: p.badTags,
       memberIds: active.memberIds && active.memberIds.length > 1 ? active.memberIds : undefined,

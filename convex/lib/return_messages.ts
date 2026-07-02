@@ -57,3 +57,39 @@ export function discountForAccount(accountSlug?: string | null): ReturnDiscount 
 export function discountMessageFor(accountSlug?: string | null): string | null {
   return discountForAccount(accountSlug)?.message ?? null;
 }
+
+const LEO_REVIEW_ONLY =
+  "Hey all gear is good and back thx so much for taking care of the equipment! " +
+  "im still quite new here and trying to grow, so if you could leave a review that " +
+  "would really help me out on here :)";
+
+const DBCINEMA_REVIEW_ONLY =
+  "Hey all gear is good and back thx so much for taking care of the equipment! " +
+  "im still quite new here and trying to grow, so if you could leave a review that " +
+  "would really help me out on here :)";
+
+const DIOGO_REVIEW_ONLY =
+  "Hey all gear is good and back thx so much for taking care of the equipment! " +
+  "im still quite new here and trying to grow, so if you could leave a review that " +
+  "would really help me out on here :)";
+
+/**
+ * account_slug -> review-ask copy WITHOUT a promo code, for when the operator
+ * unticks "send discount code" in the Return Hub overlay but the rental was
+ * good. diogo is included here even though it has no discount entry above
+ * (DIOGO10OFF doesn't exist on Hygglo yet — a plain review ask needs no code).
+ */
+export const RETURN_REVIEW_ONLY_BY_ACCOUNT: Record<string, string> = {
+  leo: LEO_REVIEW_ONLY,
+  dbcinema: DBCINEMA_REVIEW_ONLY,
+  diogo: DIOGO_REVIEW_ONLY,
+};
+
+/**
+ * The no-discount review-ask body for an account, or null when the account has
+ * no defined copy (unknown account -> nothing is sent, same fail-safe as above).
+ */
+export function reviewOnlyMessageFor(accountSlug?: string | null): string | null {
+  if (!accountSlug) return null;
+  return RETURN_REVIEW_ONLY_BY_ACCOUNT[accountSlug] ?? null;
+}

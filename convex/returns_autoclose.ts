@@ -442,6 +442,7 @@ export const finalizeReturn = action({
     whitelistReason: v.optional(v.string()),
     outcome: v.optional(v.string()),
     sendReview: v.optional(v.boolean()),
+    sendDiscount: v.optional(v.boolean()),
     goodTags: v.optional(v.array(v.string())),
     badTags: v.optional(v.array(v.string())),
     memberIds: v.optional(v.array(v.id("reservations"))),

@@ -49,7 +49,7 @@ export const getRecentActivity = query({
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
-import { discountMessageFor } from "./lib/return_messages";
+import { discountMessageFor, reviewOnlyMessageFor } from "./lib/return_messages";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
 
@@ -356,12 +356,13 @@ export const markReturned = mutation({
     whitelistReason: v.optional(v.string()),
     outcome: v.optional(v.string()),
     sendReview: v.optional(v.boolean()),
+    sendDiscount: v.optional(v.boolean()),
     goodTags: v.optional(v.array(v.string())),
     badTags: v.optional(v.array(v.string())),
     memberIds: v.optional(v.array(v.id("reservations"))),
   },
   handler: async (ctx, args) => {
-    const { reservationId, condition, notes, issueDetails, blacklistRenter, blacklistReason, flagOnRequest, whitelist, whitelistReason, outcome, sendReview, goodTags, badTags, memberIds } = args;
+    const { reservationId, condition, notes, issueDetails, blacklistRenter, blacklistReason, flagOnRequest, whitelist, whitelistReason, outcome, sendReview, sendDiscount, goodTags, badTags, memberIds } = args;
     const cleanGood = (goodTags ?? []).map((t) => t.trim()).filter(Boolean);
     const cleanBad = (badTags ?? []).map((t) => t.trim()).filter(Boolean);
     const tagsNote = cleanGood.length || cleanBad.length
@@ -390,16 +391,21 @@ export const markReturned = mutation({
       renterDoc && (renterDoc.blacklisted || renterDoc.blacklist || renterDoc.flag_on_request)
     );
 
-    // Post-rental message = the per-account discount + review-request copy
-    // (LEO10OFF / DB15OFF). PREPARED ONLY — the actual send + platform close run
-    // through the gated hygglo-write chokepoint (READ_ONLY by default) via the
-    // return-finalize CLI, so nothing reaches a real renter / the platform yet.
+    // Post-rental message. Two per-account variants, both PREPARED ONLY — the
+    // actual send + platform close run through the gated hygglo-write
+    // chokepoint (READ_ONLY by default), so nothing reaches a real renter yet:
+    //   sendDiscount !== false  -> discount + review-request copy (LEO10OFF /
+    //                              DB15OFF; default, backward compatible)
+    //   sendDiscount === false  -> plain review-ask copy, no promo code (the
+    //                              overlay's "don't send discount" choice)
     // Gated: good outcome only (sendReview), renter is NOT a current bad actor
     // and is NOT being flagged/blacklisted on THIS return, and the account has
     // defined copy (unknown account -> no message sent).
     const eligibleForMessage = !!sendReview && !alreadyBadActor && !blacklistRenter && !flagOnRequest;
     const reviewMessage = eligibleForMessage
-      ? (discountMessageFor(res.account_slug) ?? undefined)
+      ? ((sendDiscount === false
+          ? reviewOnlyMessageFor(res.account_slug)
+          : discountMessageFor(res.account_slug)) ?? undefined)
       : undefined;
 
     const resPatch: Record<string, unknown> = {
