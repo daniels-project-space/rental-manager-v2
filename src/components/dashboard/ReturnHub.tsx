@@ -155,19 +155,16 @@ function ReturnModal({
   const [result, setResult] = useState<FinalizeResult | null>(null);
   const [issueTags, setIssueTags] = useState<Set<string>>(() => new Set());
   const [goodTags, setGoodTags] = useState<Set<string>>(() => new Set());
-  // Per-account post-rental discount code sent with the 5★ review ask.
-  // NOTE: diogo's "DIOGO10OFF" must be created on Hygglo before it works —
-  // until then diogo no longer silently inherits leo's "LEO10OFF".
+  // Per-account post-rental discount code sent with the 5★ review ask. Codes
+  // are honoured manually in chat, so "live" just means the account has copy
+  // in convex/lib/return_messages.ts (RETURN_DISCOUNT_BY_ACCOUNT).
   const DISCOUNT_CODES: Record<string, string> = {
     dbcinema: "DB15OFF",
     leo: "LEO10OFF",
     diogo: "DIOGO10OFF",
   };
   const discountCode = DISCOUNT_CODES[item.accountSlug ?? ""] ?? "DB15OFF";
-  // Accounts whose code has backend copy (convex/lib/return_messages.ts) AND
-  // exists on Hygglo. diogo's doesn't yet, so a ticked toggle would text
-  // nothing — default it to the plain review ask instead.
-  const CODE_IS_LIVE: Record<string, boolean> = { dbcinema: true, leo: true, diogo: false };
+  const CODE_IS_LIVE: Record<string, boolean> = { dbcinema: true, leo: true, diogo: true };
   const codeLive = CODE_IS_LIVE[item.accountSlug ?? ""] ?? false;
   // Operator choice: send the promo code with the review ask (default when the
   // code is live), or just a "please leave a review" text. Smooth + fantastic.
