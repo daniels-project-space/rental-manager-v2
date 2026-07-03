@@ -52,6 +52,10 @@ const knowledgeSearchRef = makeFunctionReference<"query">("knowledge:search");
 const itemAvailabilityRef = makeFunctionReference<"query">(
   "calendar:getItemAvailabilityForChat",
 );
+// Master settings read/change (settings.ts). Referenced by name for the same
+// generated-api-drift reason as the refs above.
+const settingsGetRef = makeFunctionReference<"query">("settings:get");
+const settingsUpdateRef = makeFunctionReference<"mutation">("settings:update");
 
 /**
  * The grounding contract shared by both system prompts. Each widget prepends
@@ -88,6 +92,10 @@ Drill-down tools:
   query_inventory        — does Daniel OWN an item / its specs / "is the deck an RX2 or RX3" / "do we have a Blackmagic"; resolves a free-text name to the real item rows (kind, qty, lens_mount, compatibility, marketing-vs-master flag). Returns ALL matches, so two bodies or a duplicate row both show.
   query_compatibility    — gear-fit questions ("will an EF lens fit the BMPCC", "is X compatible with Y", mount/adapter/battery/card questions); returns the OWNED item's mount + compatible lenses/batteries/cards AND any matching gear FAQ from the knowledge base.
   query_rental_history   — historical / past completed rentals aggregated per item (net earnings, rent days, utilization) plus a recent rentals list and totals; call for any question about rental history, past/previous rentals, earnings over time, all-time per-item earnings, or "what did I rent in <period>".
+  read_settings          — the rental manager's current master settings (pickup/collection hours, poll interval, delivery radius, toggles)
+  change_settings        — CHANGE a master setting the operator asks for (pickup hours, poll interval, delivery radius, escalate-to-sonnet, count-pending toggle, AI boost). NOT the read-only-mode or Hygglo-send safety rails — for those tell them to use the Settings screen.
+
+SETTINGS — when the operator asks to change a master setting (e.g. "set pickup hours to 10-12 and 7-9", "poll every 5 minutes", "raise the delivery radius to 25km", "count pending bookings in availability"), call change_settings with the fields to change and confirm what you changed. When adding to a list like pickup hours, call read_settings first and send the full new list. Never change the read-only-mode or Hygglo-send safety rails from chat.
 
 INVENTORY & COMPATIBILITY — read before answering "do we have…", "is it an X or a Y", "what cameras/lenses do we own", or any gear-fit / mount / adapter / lens-compatibility question.
 The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inventory — every item Daniel owns, active and non-marketing. NEVER claim he owns something that is not in that index, and NEVER tell him he doesn't own something that IS in it. Each lens line carries a focus tag ("AF" = autofocus, "manual focus") — use it directly for autofocus / manual-focus questions; if a line has no focus tag, call query_inventory and read its focus field + spec_description rather than guessing. For exact specs (focal length, aperture, sensor, weight, autofocus system, what card it takes, what's INCLUDED in the rental bundle), quantity, the master-vs-marketing distinction, or to resolve a fuzzy name, call query_inventory and answer ONLY from its returned spec_description / specs_long / focus / compatibility.included_with_rental — never recall an item's specs from memory. What "comes with" / is "included" in a rental is EXACTLY compatibility.included_with_rental and nothing else — never infer that an adapter, lens or accessory ships with an item because it appears in a compatible-with list. If a listed-compatible lens needs a mount adapter, only say the adapter is included when it is actually in included_with_rental (or owned as its own inventory row); otherwise say the adapter would be needed. For any gear-fit / mount / lens-compatibility question call query_compatibility and answer from the owned item's real mount + compatibility data and the returned FAQ; do not reason about optics from memory. If neither the index nor the tool shows the item, say it's not in the inventory rather than inventing it. Camera/lens optics facts (crop factor, vignetting, mount adapting) are easy to get backwards — if a tool/FAQ doesn't cover it and you are not certain, say so plainly instead of guessing.
@@ -392,6 +400,53 @@ export async function buildInventoryIndex(
  */
 export function buildDashboardTools(convex: ConvexHttpClient): Record<string, Tool> {
   return {
+    read_settings: tool({
+      description:
+        "Read the rental manager's current MASTER SETTINGS — pickup/collection hours, polling interval, " +
+        "delivery radius (hub_max_km / hub_heavy_max_km) and the operational toggles (escalate_to_sonnet, " +
+        "availability_include_pending, ai_boost_rate, ai_active_from). Use before changing a setting, or when " +
+        "the operator asks what a setting currently is.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const s = await convex.query(settingsGetRef, {});
+        return JSON.stringify(s ?? {});
+      },
+    }),
+    change_settings: tool({
+      description:
+        "Change the rental manager's MASTER SETTINGS when the operator asks (e.g. 'set pickup hours to 10-12 and " +
+        "7-9', 'poll every 5 minutes', 'raise the delivery radius to 25km', 'count pending in availability'). You " +
+        "CAN set: pickup_hours, polling_interval_ms, escalate_to_sonnet, availability_include_pending, hub_max_km, " +
+        "hub_heavy_max_km, ai_boost_rate, ai_active_from. You CANNOT change the read-only-mode or Hygglo-send " +
+        "safety rails from chat — if asked, tell the operator to use the Settings screen for those. When editing " +
+        "part of a list (e.g. ADDING one pickup window), call read_settings first and send the full new list. " +
+        "Confirm the change back to the operator in plain language.",
+      inputSchema: z.object({
+        pickup_hours: z
+          .array(z.object({ start: z.string(), end: z.string() }))
+          .optional()
+          .describe("Full replacement list of pickup/collection windows, London time, 24h HH:MM."),
+        polling_interval_ms: z.number().optional().describe("Poll interval in ms (60000-3600000)."),
+        escalate_to_sonnet: z.boolean().optional(),
+        availability_include_pending: z.boolean().optional(),
+        hub_max_km: z.number().optional().describe("Max delivery radius, km."),
+        hub_heavy_max_km: z.number().optional().describe("Max delivery radius for heavy items, km."),
+        ai_boost_rate: z.number().optional(),
+        ai_active_from: z.string().optional().describe("HH:MM the AI becomes active."),
+      }),
+      execute: async (input) => {
+        const fields = Object.fromEntries(
+          Object.entries(input).filter(([, v]) => v !== undefined),
+        );
+        if (Object.keys(fields).length === 0) return "No settings were provided to change.";
+        try {
+          await convex.mutation(settingsUpdateRef, fields);
+          return `Done — updated: ${Object.keys(fields).join(", ")}.`;
+        } catch (e) {
+          return `Couldn't update settings: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      },
+    }),
     query_utilization: tool({
       description:
         "Idle Inventory — the items COSTING the most money while sitting unused (the dashboard 'Idle Inventory' " +
