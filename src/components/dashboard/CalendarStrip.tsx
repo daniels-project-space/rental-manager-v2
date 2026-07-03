@@ -429,7 +429,6 @@ function ProgressTimeline({
   const isActive = progress.status === "active";
   const isCompleted = progress.status === "completed";
   const isUpcoming = progress.status === "upcoming";
-  const isAway = (chip.kind ?? "pickup") === "away";
 
   // RED lead-up: how close we are to the pickup MOMENT (fills over a 72h horizon).
   const pickupMs = (() => {
@@ -448,25 +447,22 @@ function ProgressTimeline({
   // Tick fast in the final stretch of a lead-up, else once a minute while live.
   useTick(soon ? 1000 : 60_000, isActive || isUpcoming);
 
-  // Bar fill + colour by lifecycle: RED lead-up → BLUE out → GREEN returned;
-  // GREY when the item is just AWAY (out all day, no handover today).
+  // Bar fill + colour by lifecycle: RED lead-up → BLUE while out (incl. away —
+  // it's still an ongoing rental) → GREEN once returned. The GREY for away lives
+  // on the CARD BACKGROUND, not the bar (Daniel).
   const fillPct = isUpcoming ? leadFill : progress.pct;
   const fillGradient = isCompleted
     ? "linear-gradient(90deg, #16a34a 0%, #22c55e 100%)"
     : isUpcoming
       ? "linear-gradient(90deg, #f87171 0%, #ef4444 100%)"
-      : isAway
-        ? "linear-gradient(90deg, #6b7280 0%, #9ca3af 100%)"
-        : "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)";
+      : "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)";
   const fillShadow = isCompleted
     ? "0 0 8px rgba(34,197,94,0.4)"
     : isUpcoming
       ? soon ? "0 0 8px rgba(239,68,68,0.85)" : "0 0 6px rgba(239,68,68,0.45)"
-      : isAway
-        ? "none"
-        : "0 0 10px rgba(59,130,246,0.55), inset 0 0 6px rgba(255,255,255,0.18)";
-  const labelColor = isCompleted ? "#22c55e" : isUpcoming ? "#f87171" : isAway ? "#9ca3af" : "#60a5fa";
-  const labelIcon = isCompleted ? "✓" : isUpcoming ? "⏱" : isAway ? "○" : "●";
+      : "0 0 10px rgba(59,130,246,0.55), inset 0 0 6px rgba(255,255,255,0.18)";
+  const labelColor = isCompleted ? "#22c55e" : isUpcoming ? "#f87171" : "#60a5fa";
+  const labelIcon = isCompleted ? "✓" : isUpcoming ? "⏱" : "●";
 
   return (
     <div className="mt-2.5">
@@ -505,7 +501,7 @@ function ProgressTimeline({
           }}
         />
         {/* Shimmer overlay for active (out) rentals — not for a static away bar */}
-        {isActive && !isAway && (
+        {isActive && (
           <div
             className="absolute inset-y-0 left-0 rounded-full pointer-events-none"
             style={{
@@ -519,7 +515,7 @@ function ProgressTimeline({
           />
         )}
         {/* Now marker — sits on top of bar at progress.pct (active out rentals) */}
-        {isActive && !isAway && (
+        {isActive && (
           <div
             className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
             style={{
@@ -646,6 +642,14 @@ function BookingCard({ chip }: { chip: ChipData }) {
     : lifeState === "upcoming" ? "#ef4444"
     : lifeState === "away" ? "#9ca3af"
     : "#3b82f6";
+  // Whole-card background tint: GREEN once returned, GREY while away/out-all-day
+  // (the bar itself stays blue for away). Otherwise the neutral card.
+  const stateBg =
+    lifeState === "completed"
+      ? "linear-gradient(135deg, rgba(34,197,94,0.16) 0%, rgba(22,101,52,0.07) 100%)"
+      : lifeState === "away"
+        ? "linear-gradient(135deg, rgba(148,163,184,0.15) 0%, rgba(71,85,105,0.06) 100%)"
+        : "linear-gradient(135deg, rgba(20,24,40,0.65) 0%, rgba(14,17,28,0.45) 100%)";
 
   // (Method pills rendered inline as <MethodPill /> per direction below.)
 
@@ -660,8 +664,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
     <div
       className="flex gap-3 p-3 rounded-xl transition-colors hover:bg-white/[0.05]"
       style={{
-        background:
-          "linear-gradient(135deg, rgba(20,24,40,0.65) 0%, rgba(14,17,28,0.45) 100%)",
+        background: stateBg,
         border: "1px solid rgba(255,255,255,0.06)",
         borderLeft: `4px solid ${stateAccent}`,
         boxShadow:
