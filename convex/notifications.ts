@@ -231,10 +231,30 @@ export const getSubscriptions = internalQuery({
 });
 
 export const markDelivered = internalMutation({
-  args: { ids: v.array(v.id("notification_events")) },
-  handler: async (ctx, { ids }) => {
+  args: {
+    ids: v.array(v.id("notification_events")),
+    // Per-event channel outcome (how many pushes landed / Telegram ok) so a
+    // "delivered" event that reached NO channel is visible in the data.
+    outcomes: v.optional(
+      v.array(
+        v.object({
+          id: v.id("notification_events"),
+          push_ok: v.number(),
+          telegram_ok: v.boolean(),
+        }),
+      ),
+    ),
+  },
+  handler: async (ctx, { ids, outcomes }) => {
     const now = Date.now();
-    for (const id of ids) await ctx.db.patch(id, { delivered_at: now });
+    const byId = new Map((outcomes ?? []).map((o) => [o.id, o]));
+    for (const id of ids) {
+      const o = byId.get(id);
+      await ctx.db.patch(id, {
+        delivered_at: now,
+        ...(o ? { push_ok: o.push_ok, telegram_ok: o.telegram_ok } : {}),
+      });
+    }
   },
 });
 

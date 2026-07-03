@@ -10,6 +10,7 @@ import {
 } from "./lib/reservations/predicates";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
 import { buildHyggloListingTiles } from "./lib/reservations/hyggloTiles";
+import { claimHoldsStock } from "./lib/availability";
 import {
   resolveImageForReservationItem,
   // bank-aware helpers below also rely on this type
@@ -1456,13 +1457,13 @@ export const searchCalendarInventory = query({
     // Search the canonical inventory by name / slug / tag (kind, sub_kind,
     // category) and aliases. Substring, case-insensitive.
     const allItems = await ctx.db.query("items").collect();
-    // Units out on repair (open cases) reduce effective stock here too.
-    const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
+    // Units out on repair reduce effective stock here too — but only while the
+    // case's stage means the gear is physically away (claimHoldsStock), same
+    // rule as the overbooking widget and lib/availability.
     const repairByItem = new Map<string, number>();
     for (const c of await ctx.db.query("insurance_claims").collect()) {
       const cc = c as { stage?: string; status?: string; repair_item_ids?: string[] };
-      const st = cc.stage ?? (cc.status === "denied" ? "denied" : cc.status === "settled" ? "added_to_revenue" : "case_opened");
-      if (REPAIR_TERMINAL.has(st)) continue;
+      if (!claimHoldsStock(cc)) continue;
       for (const iid of (cc.repair_item_ids ?? [])) repairByItem.set(iid as string, (repairByItem.get(iid as string) ?? 0) + 1);
     }
     // Normalised, token-AND search: every query word must appear somewhere in

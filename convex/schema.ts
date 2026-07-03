@@ -2120,6 +2120,12 @@ export default defineSchema({
     created_at: v.number(),
     delivered_at: v.optional(v.number()),    // set once web-push/Telegram fired
     read_at: v.optional(v.number()),         // set when operator opens the bell
+    // Dispatch outcome (2026-07-03): how many web-push endpoints actually
+    // accepted the payload + whether Telegram accepted. "delivered_at set but
+    // push_ok 0 / telegram_ok false" = the silent-death mode where every
+    // channel failed and nobody noticed (how the wohoo went missing).
+    push_ok: v.optional(v.number()),
+    telegram_ok: v.optional(v.boolean()),
   })
     .index("by_created", ["created_at"])
     .index("by_delivered", ["delivered_at"])

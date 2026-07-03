@@ -28,6 +28,7 @@ import {
   type ImageHint,
 } from "./lib/imageResolution";
 import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_booking";
+import { claimHoldsStock } from "./lib/availability";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
@@ -576,14 +577,14 @@ export const getStatsDrawerData = query({
       : await ctx.db.query("insurance_claims").collect();
     claimRows = claimRows.slice().sort((a, b) => (a.claim_date < b.claim_date ? 1 : a.claim_date > b.claim_date ? -1 : 0));
 
-    // Units currently OUT ON REPAIR per item. Every open (non-terminal) case
-    // holds its repair_item_ids, reducing effective availability until closed.
+    // Units currently OUT ON REPAIR per item. A case holds stock only while
+    // the gear is physically away (claimHoldsStock: quote_received /
+    // in_for_repair) — a merely-logged or settling case must not shrink
+    // effective qty (that produced phantom overbooking alerts).
     // Cross-account (inventory is shared) so collect all claims.
-    const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
     const repairByItem = new Map<string, number>();
     for (const c of await ctx.db.query("insurance_claims").collect()) {
-      const st = c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
-      if (REPAIR_TERMINAL.has(st)) continue;
+      if (!claimHoldsStock(c)) continue;
       for (const iid of ((c as { repair_item_ids?: string[] }).repair_item_ids ?? [])) {
         repairByItem.set(iid as string, (repairByItem.get(iid as string) ?? 0) + 1);
       }
@@ -1032,7 +1033,12 @@ export const getStatsDrawerData = query({
       /** "confirmed" = confirmed bookings alone oversell; "pending" = only
        *  oversells if a pending request is accepted. */
       severity: "confirmed" | "pending";
+      /** EFFECTIVE capacity = owned_qty − in_repair (what the sweep compares against). */
       qty: number;
+      /** Total units owned (items.qty) — shown so a shrunken effective qty is explicable. */
+      owned_qty: number;
+      /** Units held by repair cases (stage quote_received / in_for_repair). */
+      in_repair: number;
       conflict_start: string;
       conflict_end: string;
       overlap_count: number;
@@ -1199,6 +1205,8 @@ export const getStatsDrawerData = query({
           item_image_url: ((item as any).image_url as string | null) ?? resImage,
           severity,
           qty: effQty,
+          owned_qty: item.qty,
+          in_repair: repairByItem.get(itemIdStr) ?? 0,
           conflict_start: worstStart,
           conflict_end: earliestEnd,
           overlap_count: worstCount,

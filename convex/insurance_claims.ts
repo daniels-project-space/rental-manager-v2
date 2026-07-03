@@ -192,10 +192,12 @@ export const update = mutation({
     description: v.optional(v.string()),
     status: v.optional(v.string()),
     item_name_canonical: v.optional(v.string()),
+    /** Replace which units the case holds out of stock (empty array = none). */
+    repair_item_ids: v.optional(v.array(v.id("items"))),
   },
   handler: async (ctx, { id, ...fields }) => {
     const patch: Record<string, unknown> = {};
-    for (const k of ["amount_gbp", "claim_date", "description", "status", "item_name_canonical"] as const) {
+    for (const k of ["amount_gbp", "claim_date", "description", "status", "item_name_canonical", "repair_item_ids"] as const) {
       if (fields[k] !== undefined) patch[k] = fields[k];
     }
     await ctx.db.patch(id, patch);

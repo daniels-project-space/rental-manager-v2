@@ -541,7 +541,13 @@ function OpenCaseModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const allItems = item.items ?? [];
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(allItems.map((i) => i.item_id)));
+  // Preselect ONLY when the rental has a single item. Preselecting the whole
+  // bundle held every component (camera + lens + gimbal) as "in repair" when
+  // one thing broke — silently shrinking availability and firing phantom
+  // "potentially overbooked" alerts. The owner ticks what's actually damaged.
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(allItems.length === 1 ? allItems.map((i) => i.item_id) : []),
+  );
   const [holdQty, setHoldQty] = useState<Map<string, number>>(() => new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)])));
   const qtyMaxById = new Map(allItems.map((i) => [i.item_id, Math.max(1, i.qty ?? 1)]));
   const [manual, setManual] = useState<{ item_id: string; name: string }[]>([]);

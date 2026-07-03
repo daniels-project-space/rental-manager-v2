@@ -23,7 +23,12 @@ interface Conflict {
   /** "confirmed" = confirmed bookings alone exceed stock (live oversell).
    *  "pending" = only overbooks if a pending request gets accepted. */
   severity?: "confirmed" | "pending";
+  /** Effective capacity (owned − in repair) the sweep compared against. */
   qty: number;
+  /** Total units owned; shown so a shrunken effective qty is explicable. */
+  owned_qty?: number;
+  /** Units held by repair cases (quote_received / in_for_repair stages). */
+  in_repair?: number;
   conflict_start: string;
   conflict_end: string;
   overlap_count: number;
@@ -257,6 +262,11 @@ function ConflictCard({ conflict, variant }: { conflict: Conflict; variant: Vari
         <div className="min-w-0 flex-1">
           <div className="text-[12px] font-semibold text-white truncate">{conflict.item_canonical}</div>
           <div className="mt-0.5"><CapacityMeter qty={conflict.qty} booked={conflict.overlap_count} color={t.base} /></div>
+          {(conflict.in_repair ?? 0) > 0 && (
+            <div className="text-[10px]" style={{ color: "rgba(255,255,255,0.45)" }} title="Capacity = owned units minus units held by open repair cases">
+              {conflict.owned_qty ?? conflict.qty + (conflict.in_repair ?? 0)} owned − {conflict.in_repair} in repair
+            </div>
+          )}
         </div>
         <button
           onClick={onResolve}

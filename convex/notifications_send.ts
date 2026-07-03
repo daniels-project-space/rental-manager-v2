@@ -46,12 +46,12 @@ function configureVapid(): boolean {
 async function sendTelegramWithButton(
   text: string,
   buttonUrl: string,
-): Promise<void> {
+): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID_DANIEL;
-  if (!token || !chatId) return;
+  if (!token || !chatId) return false;
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -63,8 +63,14 @@ async function sendTelegramWithButton(
         },
       }),
     });
-  } catch {
-    /* non-fatal: web push still delivered */
+    if (!res.ok) {
+      console.warn("[notifications] telegram send failed", res.status, (await res.text()).slice(0, 200));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("[notifications] telegram send threw", String(err));
+    return false;
   }
 }
 
@@ -76,11 +82,14 @@ export const dispatchPending = internalAction({
 
     const subs = await ctx.runQuery(internal.notifications.getSubscriptions, {});
     const vapidOk = configureVapid();
+    if (!vapidOk) console.warn("[notifications] VAPID keys missing — web push disabled");
     const deadEndpoints = new Set<string>();
     let pushed = 0;
+    const outcomes: { id: (typeof events)[number]["_id"]; push_ok: number; telegram_ok: boolean }[] = [];
 
     for (const e of events) {
       const absUrl = `${BASE_URL}${e.url}`;
+      let eventPushed = 0;
       // 1) Web push to all subscriptions.
       if (vapidOk) {
         const payload = JSON.stringify({
@@ -99,22 +108,39 @@ export const dispatchPending = internalAction({
                 payload,
               );
               pushed++;
+              eventPushed++;
             } catch (err) {
               const code = (err as { statusCode?: number })?.statusCode;
               if (code === 404 || code === 410) deadEndpoints.add(s.endpoint);
+              // Every failure is LOGGED: silent non-404 failures (403 expired
+              // Apple tokens, 400 VAPID mismatch…) are how the "wohoo" died
+              // without anyone noticing — delivered_at was set regardless.
+              console.warn(
+                "[notifications] web push failed",
+                code ?? String(err).slice(0, 120),
+                s.endpoint.slice(0, 60),
+              );
             }
           }),
         );
       }
-      // 2) Telegram — OFF by default now that web push works on the phone
-      //    (Daniel, 2026-06-24). Re-enable with Convex env NOTIF_TELEGRAM=1.
-      if (process.env.NOTIF_TELEGRAM === "1") {
-        await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
+      // 2) Telegram — the always-on fallback. Enabled unless explicitly turned
+      //    off (NOTIF_TELEGRAM=0). Was opt-in from 2026-06-24 ("web push works
+      //    on the phone") — then the Apple push endpoints went stale and every
+      //    channel silently failed; bookings ("wohoo") stopped notifying.
+      let telegramOk = false;
+      if (process.env.NOTIF_TELEGRAM !== "0") {
+        telegramOk = await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
       }
+      if (eventPushed === 0 && !telegramOk) {
+        console.warn(`[notifications] event ${String(e._id)} (${e.type}) reached NO channel — check subscriptions/Telegram env`);
+      }
+      outcomes.push({ id: e._id, push_ok: eventPushed, telegram_ok: telegramOk });
     }
 
     await ctx.runMutation(internal.notifications.markDelivered, {
       ids: events.map((e) => e._id),
+      outcomes,
     });
     if (deadEndpoints.size > 0) {
       await ctx.runMutation(internal.notifications.pruneSubscriptions, {

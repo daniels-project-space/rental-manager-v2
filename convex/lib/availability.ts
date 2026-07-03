@@ -37,7 +37,28 @@ export type AvailabilityResult = {
 //    NOT the calendar_holds ledger (1 row/day, can't represent >1 unit out). ──
 type ResRow = Doc<"reservations">;
 type ClaimRow = Doc<"insurance_claims">;
-const REPAIR_TERMINAL = new Set(["added_to_revenue", "denied"]);
+
+/**
+ * SINGLE SOURCE OF TRUTH for when a damage case blocks stock.
+ *
+ * A case holds its repair_item_ids units ONLY while the gear is physically
+ * away: quote_received (at the shop being assessed) and in_for_repair.
+ * case_opened = damage merely logged at return — the gear is back on the
+ * shelf and usually still rentable; payout_confirmation = repair done,
+ * awaiting settlement money. Holding for EVERY non-terminal stage (the old
+ * rule) silently shrank effective qty for weeks and produced phantom
+ * "potentially overbooked" alerts (the FX3 case: two lingering cases held
+ * 2 of 4 bodies, so 3 legitimate bookings read as an oversell of qty 2).
+ */
+const HOLDING_STAGES = new Set(["quote_received", "in_for_repair"]);
+
+export function claimStage(c: { stage?: string; status?: string }): string {
+  return c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
+}
+
+export function claimHoldsStock(c: { stage?: string; status?: string }): boolean {
+  return HOLDING_STAGES.has(claimStage(c));
+}
 
 export function bookedUnitsOnDate(rows: ResRow[], itemId: Id<"items">, date: string): number {
   let n = 0;
@@ -52,12 +73,11 @@ export function bookedUnitsOnDate(rows: ResRow[], itemId: Id<"items">, date: str
   return n;
 }
 
-/** Units of an item held by OPEN (non-terminal) cases. Date-independent. */
+/** Units of an item held by cases whose stage means the gear is AWAY. */
 export function repairHeldUnits(claims: ClaimRow[], itemId: Id<"items">): number {
   let n = 0;
   for (const c of claims) {
-    const st = c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
-    if (REPAIR_TERMINAL.has(st)) continue;
+    if (!claimHoldsStock(c)) continue;
     for (const id of (c.repair_item_ids ?? [])) if (id === itemId) n += 1;
   }
   return n;
