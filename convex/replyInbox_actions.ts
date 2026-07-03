@@ -475,11 +475,13 @@ export const generateDraft = action({
       .join("\n");
 
     const gen = await gatedGenerateText({
-      // Master "Escalate to Sonnet" toggle GATES escalation (tooltip: "Sonnet for
-      // complex responses"). On (default) → high-stakes turns use Sonnet; off →
-      // everything stays on the cheaper model (operator's cost choice). Was a
-      // decorative toggle before.
-      model: await getActionLlmModel({ strong: highStakes && c.escalate_to_sonnet !== false }),
+      // Drafts default to the STRONG model (Sonnet). deepseek-v4-flash was the
+      // real bottleneck — context-blind, assumption-prone, hallucinated specs —
+      // no amount of grounding/rules fixes a weak base model. The "Escalate to
+      // Sonnet" master toggle is now the escape hatch: turn it OFF to drop the
+      // NON-high-stakes drafts back to the cheap model to save cost. High-stakes
+      // turns always use Sonnet regardless.
+      model: await getActionLlmModel({ strong: highStakes || c.escalate_to_sonnet !== false }),
       system,
       prompt,
       bypass: true,
