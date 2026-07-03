@@ -89,6 +89,50 @@ export function NotificationBell() {
       );
   }, []);
 
+  // Keep push alive so notifications never silently expire. Whenever the app
+  // loads with permission already granted, re-attach the subscription — RE-
+  // subscribing if the browser has dropped/rotated it — and re-save it.
+  // savePushSubscription upserts by endpoint (refreshes last_seen), so this is
+  // idempotent and won't duplicate. This is the reliable cross-platform heal;
+  // iOS doesn't fire `pushsubscriptionchange`, so we refresh on every open.
+  useEffect(() => {
+    if (typeof window === "undefined" || !vapidKey) return;
+    if (
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window) ||
+      Notification.permission !== "granted"
+    )
+      return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource,
+          });
+        }
+        if (cancelled) return;
+        const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
+        await save({
+          endpoint: sub.endpoint,
+          p256dh: json.keys?.p256dh ?? "",
+          auth: json.keys?.auth ?? "",
+          user_agent: navigator.userAgent,
+        });
+        if (!cancelled) setPushState("enabled");
+      } catch {
+        /* best-effort keep-alive; the manual Enable button is the fallback */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vapidKey, save]);
+
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {

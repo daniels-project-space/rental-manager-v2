@@ -11,6 +11,47 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Self-heal: when the browser rotates or expires the push subscription, resubscribe
+// with the VAPID key and re-save it — so notifications never silently stop. (iOS
+// Safari rarely fires this; the app also re-attaches on every open as the primary
+// heal. This covers Chrome/Android background rotation.)
+function urlB64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const res = await fetch("/api/push/vapid");
+        const { key } = await res.json();
+        if (!key) return;
+        const sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(key),
+        });
+        const json = sub.toJSON();
+        await fetch("/api/push/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endpoint: sub.endpoint,
+            p256dh: (json.keys && json.keys.p256dh) || "",
+            auth: (json.keys && json.keys.auth) || "",
+          }),
+        });
+      } catch (e) {
+        /* best-effort */
+      }
+    })(),
+  );
+});
+
 self.addEventListener("push", (event) => {
   let data = {};
   try {
