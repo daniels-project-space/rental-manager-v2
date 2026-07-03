@@ -2328,6 +2328,9 @@ export function ReplyInbox() {
   }) as ReplyTileData[] | undefined;
 
   const [openId, setOpenId] = useState<string | null>(null);
+  // Last-known row for the open thread, so the overlay survives the thread
+  // leaving the queue after a send/approve (see `open` below).
+  const openCacheRef = useRef<ReplyTileData | null>(null);
   const [acted, setActed] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
   const [mounted, setMounted] = useState(false);
@@ -2376,8 +2379,18 @@ export function ReplyInbox() {
   });
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
   // declining a card — which drops it from `all` via onActed — does NOT close
-  // the chat overlay. Only the × button closes it.
-  const open = openId ? (queue ?? []).find((t) => t.thread_id === openId) ?? null : null;
+  // the chat overlay. Sending ALSO drops the thread from the queue (owner now
+  // spoke last), which used to unmount the modal = the "auto-close on send" bug.
+  // Cache the last-known row and fall back to it, so the overlay stays open
+  // until YOU close it (× ) or tap a notification. (Daniel, 2026-07-03)
+  const openFromQueue = openId
+    ? (queue ?? []).find((t) => t.thread_id === openId) ?? null
+    : null;
+  if (openFromQueue) openCacheRef.current = openFromQueue;
+  const open = openId
+    ? openFromQueue ??
+      (openCacheRef.current?.thread_id === openId ? openCacheRef.current : null)
+    : null;
 
   return (
     <Card>
