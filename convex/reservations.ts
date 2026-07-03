@@ -61,6 +61,10 @@ export const getDueReturns = query({
   },
   handler: async (ctx, { accountSlug, _bypassMv }) => {
     const now = Date.now();
+    // London wall-clock "YYYY-MM-DD HH:MM:SS". Convex runs in UTC, so comparing
+    // a London return time as a UTC Date was an hour off in summer (BST). Compare
+    // wall-clock strings in Europe/London instead.
+    const nowLondon = new Date().toLocaleString("sv-SE", { timeZone: "Europe/London" });
     if (!_bypassMv) {
       const accountKey = accountSlug ?? "all";
       const cached = await ctx.db
@@ -92,8 +96,7 @@ export const getDueReturns = query({
           const retTime = row.returnTime as string | null | undefined;
           if (retDate) {
             const t0 = retTime && /^[0-9][0-9]:[0-9][0-9]/.test(retTime) ? retTime : "23:59";
-            const retMomentMs = new Date(retDate + "T" + t0 + ":00").getTime();
-            if (Number.isFinite(retMomentMs) && retMomentMs > now) continue;
+            if (retDate + " " + t0 + ":00" > nowLondon) continue; // not due yet (London)
           }
           fresh.push(row);
         }
@@ -168,8 +171,7 @@ export const getDueReturns = query({
       // Time-aware: only surface once the effective return MOMENT has passed. No
       // time → start-of-day, so a same-day no-time return still shows that day.
       const t0 = retTime && /^\d\d:\d\d/.test(retTime) ? retTime : "23:59";
-      const retMomentMs = new Date(`${retDate}T${t0}:00`).getTime();
-      if (Number.isFinite(retMomentMs) && retMomentMs > now) continue; // not due yet
+      if (`${retDate} ${t0}:00` > nowLondon) continue; // not due yet (London wall-clock)
 
       const renterDoc = await renterForReservation(ctx, base, maps);
       const t = trustOf(renterDoc);
