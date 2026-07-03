@@ -1137,10 +1137,19 @@ async function upsertOrderImpl(
   // spam every historical confirmed rental when a NEW account is first synced.
   // Real bookings are caught by the request→confirmed transition on the update
   // path above.
-  const notifyInsert: NotifEventInput[] =
-    args.awaiting_owner_action === true
-      ? [buildNotifyEvent(args, "new_request")]
-      : [];
+  const notifyInsert: NotifEventInput[] = [];
+  if (args.awaiting_owner_action === true) {
+    notifyInsert.push(buildNotifyEvent(args, "new_request"));
+  } else if (
+    incomingStatus === "confirmed" &&
+    typeof args.start_date === "string" &&
+    args.start_date >= new Date().toISOString().slice(0, 10)
+  ) {
+    // "wohoo" for a booking first SEEN already-confirmed (a fast request->confirm
+    // that happened between polls). Guarded to current/upcoming rentals so a
+    // first-time account sync of historical confirmed bookings can't flood.
+    notifyInsert.push(buildNotifyEvent(args, "booking_confirmed"));
+  }
   return {
     action: "inserted",
     reservation_id: newId as unknown as string,

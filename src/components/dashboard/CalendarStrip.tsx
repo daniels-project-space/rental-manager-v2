@@ -812,6 +812,22 @@ function DayCard({
   if (away.length > 0) dots.push("#3b82f6");
   if (day.holds.length > 0) dots.push("#f59e0b");
 
+  // Card status colour (Daniel): GREEN when something was RETURNED that day,
+  // GREY when the item is OUT the whole day (away only — no pickup/return).
+  const isReturnDay = day.returns.length > 0;
+  const isOutAllDay =
+    away.length > 0 && day.pickups.length === 0 && day.returns.length === 0;
+  const statusBg = isReturnDay
+    ? "rgba(34,197,94,0.12)"
+    : isOutAllDay
+      ? "rgba(148,163,184,0.10)"
+      : "rgba(14,17,28,0.35)";
+  const statusBorder = isReturnDay
+    ? "rgba(34,197,94,0.42)"
+    : isOutAllDay
+      ? "rgba(148,163,184,0.30)"
+      : "rgba(255,255,255,0.08)";
+
   // Ongoing (away) rentals get a thin live progress bar on the collapsed tile so
   // active rentals are visible at a glance — not just a static blue dot. Pick the
   // away chip returning soonest, using its effective (negotiated) dates.
@@ -840,7 +856,7 @@ function DayCard({
       style={{
         width: "104px",
         minHeight: "118px",
-        border: "1px solid rgba(255,255,255,0.08)",
+        border: `1px solid ${statusBorder}`,
         outline: isToday ? "2px solid #3b82f6" : undefined,
         outlineOffset: isToday ? "-1px" : undefined,
         boxShadow: isToday
@@ -850,9 +866,11 @@ function DayCard({
             : "none",
         background: isExpanded
           ? "rgba(59,130,246,0.07)"
-          : isToday
-            ? "rgba(59,130,246,0.05)"
-            : "rgba(14,17,28,0.35)",
+          : isReturnDay || isOutAllDay
+            ? statusBg
+            : isToday
+              ? "rgba(59,130,246,0.05)"
+              : "rgba(14,17,28,0.35)",
         transform: isExpanded ? "scale(1.02)" : "scale(1)",
         display: "flex",
         flexDirection: "column",
