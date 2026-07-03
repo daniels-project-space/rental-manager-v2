@@ -2346,12 +2346,23 @@ export function ReplyInbox() {
   // close this widget's own modal so the deep-link host (z-[300]) is the only
   // chat showing — otherwise a stale widget modal would sit behind it.
   useEffect(() => {
-    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
+    const yieldModal = () => setOpenId(null);
     const onMsg = (e: MessageEvent) => {
-      if ((e.data as { type?: string } | undefined)?.type === "deep-link") setOpenId(null);
+      if ((e.data as { type?: string } | undefined)?.type === "deep-link") yieldModal();
     };
-    navigator.serviceWorker.addEventListener("message", onMsg);
-    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+    const sw =
+      typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
+    sw?.addEventListener("message", onMsg);
+    // Also yield when a notification is opened from the bell dropdown (a URL nav,
+    // which sends no SW message) — the bell dispatches this so the deep-link host
+    // is the ONLY chat showing, never a stale widget tile behind it.
+    if (typeof window !== "undefined")
+      window.addEventListener("rm-deeplink", yieldModal);
+    return () => {
+      sw?.removeEventListener("message", onMsg);
+      if (typeof window !== "undefined")
+        window.removeEventListener("rm-deeplink", yieldModal);
+    };
   }, []);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);

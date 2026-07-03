@@ -10,7 +10,7 @@
  * iOS PWAs WindowClient.navigate() frequently no-ops, so a tapped push wouldn't
  * change the URL and the chat wouldn't open — the message path routes reliably.
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -34,13 +34,22 @@ export function NotificationDeepLink() {
     return () => navigator.serviceWorker.removeEventListener("message", onMsg);
   }, [router]);
 
-  const tile = useQuery(
+  const tileLive = useQuery(
     api.replyInbox.getThreadById,
     threadId ? { thread_id: threadId } : "skip",
   ) as unknown as ReplyTileData | null | undefined;
 
+  // Keep the modal open after approve/decline/send drop the thread out of
+  // getThreadById — cache the last row for THIS thread and fall back to it, so
+  // it closes only via × (which clears ?thread=). Mirrors the widget's fix.
+  const tileCacheRef = useRef<{ id: string; tile: ReplyTileData } | null>(null);
+  if (tileLive && threadId) tileCacheRef.current = { id: threadId, tile: tileLive };
+  const tile =
+    tileLive ??
+    (tileCacheRef.current?.id === threadId ? tileCacheRef.current.tile : null);
+
   if (!threadId) return null;
-  if (tile === undefined || tile === null) return null; // loading / not found
+  if (!tile) return null; // loading / not found
 
   const close = () => router.replace("/", { scroll: false });
   // onActed = no-op so approve/decline keeps the chat open (close only via ×),

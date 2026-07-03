@@ -635,7 +635,8 @@ async function assembleTile(
     // Stale = generated under an older draft-logic epoch → regenerate on open.
     ai_draft_stale:
       !!conv?.ai_draft_text &&
-      (conv?.ai_draft_epoch ?? 0) !== (hub?.draftEpoch ?? 0),
+      ((conv?.ai_draft_epoch ?? 0) !== (hub?.draftEpoch ?? 0) ||
+        (conv?.ai_draft_generated_at ?? 0) < (conv?.last_renter_msg_at ?? 0)),
     location: computeLocation(reservation, slug, hub ?? null),
   };
 }
@@ -1416,7 +1417,14 @@ export const threadsNeedingDraft = internalQuery({
     const out: string[] = [];
     for (const c of convs) {
       // No draft, OR a draft from an older draft-logic epoch (stale).
-      if (!c.ai_draft_text || (c.ai_draft_epoch ?? 0) !== epoch) out.push(c.thread_id);
+      // No draft, OR epoch-stale, OR a NEW renter message arrived after the
+      // draft was generated -> redraft with the new context. (Daniel, 2026-07-03)
+      if (
+        !c.ai_draft_text ||
+        (c.ai_draft_epoch ?? 0) !== epoch ||
+        (c.ai_draft_generated_at ?? 0) < (c.last_renter_msg_at ?? 0)
+      )
+        out.push(c.thread_id);
       if (out.length >= limit) break;
     }
     return out;

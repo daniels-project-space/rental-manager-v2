@@ -186,6 +186,10 @@ export function NotificationBell() {
 
   function openThread(url: string) {
     setOpen(false);
+    // Tell any open widget chat modal to yield, so the deep-link host is the only
+    // chat that shows the thread I clicked (never a stale old tile behind it).
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new CustomEvent("rm-deeplink"));
     router.push(url, { scroll: false });
   }
 
