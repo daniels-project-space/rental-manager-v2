@@ -51,6 +51,8 @@ import type * as denial_canonicalizer_queries from "../denial_canonicalizer_quer
 import type * as denial_records from "../denial_records.js";
 import type * as denial_resolutions from "../denial_resolutions.js";
 import type * as denial_resolver from "../denial_resolver.js";
+import type * as draft_learning from "../draft_learning.js";
+import type * as draft_learning_actions from "../draft_learning_actions.js";
 import type * as extract_booking_times from "../extract_booking_times.js";
 import type * as extract_booking_times_q from "../extract_booking_times_q.js";
 import type * as feature_flags from "../feature_flags.js";
@@ -239,6 +241,8 @@ declare const fullApi: ApiFromModules<{
   denial_records: typeof denial_records;
   denial_resolutions: typeof denial_resolutions;
   denial_resolver: typeof denial_resolver;
+  draft_learning: typeof draft_learning;
+  draft_learning_actions: typeof draft_learning_actions;
   extract_booking_times: typeof extract_booking_times;
   extract_booking_times_q: typeof extract_booking_times_q;
   feature_flags: typeof feature_flags;

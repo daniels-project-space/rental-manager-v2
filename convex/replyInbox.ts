@@ -25,7 +25,7 @@ import {
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
-import { selectPlaybook, type MemoryRow } from "./lib/draft_playbook";
+import { selectPlaybook, selectLessons, type MemoryRow, type LessonRow } from "./lib/draft_playbook";
 import {
   haversineKm,
   tooHeavyForLocation,
@@ -1300,6 +1300,22 @@ export const getThreadContext = internalQuery({
       /* best-effort — the draft still works without the playbook */
     }
 
+    // LEARNED LESSONS — the corrections distilled from the operator's own edits
+    // (draft_lessons), scored for THIS turn. Injected so the draft improves toward
+    // how the owner actually writes, until the drafts are good enough to use.
+    let learned_lessons: string[] = [];
+    try {
+      const rows = await ctx.db.query("draft_lessons").collect();
+      const relevant = rows.filter((l) => l.account_slug == null || l.account_slug === slug);
+      learned_lessons = selectLessons({
+        lessons: relevant as unknown as LessonRow[],
+        renterText: renterMsgs.slice(-4).join("  "),
+        itemNames: richItems.map((i) => i.name),
+      });
+    } catch {
+      /* best-effort */
+    }
+
     return {
       account_slug: slug ?? null,
       location: computeLocation(reservation, slug, await loadHubBook(ctx)),
@@ -1331,6 +1347,7 @@ export const getThreadContext = internalQuery({
       playbook_templates: playbook.templates,
       playbook_frameworks: playbook.frameworks,
       playbook_intents: playbook.intents,
+      learned_lessons,
       pickup_windows: pickupHours ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,

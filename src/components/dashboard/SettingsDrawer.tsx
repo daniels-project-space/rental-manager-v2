@@ -9,6 +9,8 @@ import { Drawer } from "@/components/ui/Drawer";
 // committed (lagging) _generated api (same pattern as ReplyInbox's new modules).
 const listingsSyncRef = makeFunctionReference<"query">("online_listings:syncMeta");
 const rescanListingsRef = makeFunctionReference<"action">("online_listings_actions:rescan");
+const lessonsListRef = makeFunctionReference<"query">("draft_learning:list");
+const lessonRemoveRef = makeFunctionReference<"mutation">("draft_learning:remove");
 const LISTING_ACCOUNTS = [
   { slug: "leo", label: "Leo" },
   { slug: "dbcinema", label: "DB Cinema" },
@@ -500,6 +502,69 @@ function OnlineListingsEditor() {
   );
 }
 
+type Lesson = {
+  _id: string;
+  account_slug: string | null;
+  applies_when: string;
+  lesson: string;
+  draft_mistake: string | null;
+  weight: number;
+};
+
+/**
+ * Learned drafting lessons — what the AI has picked up from the replies you send
+ * instead of its drafts. Consolidated + capped (it refines/merges rather than
+ * piling up). Delete any that aren't right.
+ */
+function DraftLessonsEditor() {
+  const lessons = (useQuery(lessonsListRef, {}) ?? []) as Lesson[];
+  const remove = useMutation(lessonRemoveRef);
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">
+        What the AI has learned from your replies
+      </label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        When you send something other than the AI draft, it works out why and distils a general
+        rule so future drafts write more like you. It refines existing rules instead of piling up.
+        Remove any that are wrong.
+      </p>
+      {lessons.length === 0 ? (
+        <p className="text-xs" style={{ color: "#6b7280" }}>
+          Nothing learned yet — it starts adapting once you send replies that differ from the drafts.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {lessons.map((l) => (
+            <div key={l._id} className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-[#cbd5e1]">{l.applies_when}</span>
+                  {l.account_slug && (
+                    <span className="text-[9px] px-1 rounded bg-white/[0.06] text-[#8b8fa3]">{l.account_slug}</span>
+                  )}
+                  {l.weight > 1 && (
+                    <span className="text-[9px] px-1 rounded bg-emerald-500/15 text-emerald-300" title="Reinforced this many times">
+                      ×{l.weight}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-[#9aa0ad] mt-0.5">{l.lesson}</div>
+              </div>
+              <button
+                onClick={() => { if (confirm("Delete this learned rule?")) void remove({ id: l._id }); }}
+                className="shrink-0 text-[11px] px-2 py-1 rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsDrawer({ onClose }: Props) {
   const settings = useQuery(api.settings.get);
   const updateSettings = useMutation(api.settings.update);
@@ -705,6 +770,8 @@ export function SettingsDrawer({ onClose }: Props) {
         </div>
 
         <OnlineListingsEditor />
+
+        <DraftLessonsEditor />
 
         <HardTruthsEditor />
 

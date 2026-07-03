@@ -32,6 +32,17 @@ import {
   HYGGLO_API_BASE,
 } from "../src/lib/hygglo-auth";
 
+/** Token Jaccard similarity (0..1) — how close the sent reply is to the draft. */
+function jaccard(a: string, b: string): number {
+  const toks = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) ?? []);
+  const A = toks(a);
+  const B = toks(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+
 // ── AI draft ──────────────────────────────────────────────────────
 
 /**
@@ -424,6 +435,13 @@ export const generateDraft = action({
       ? "HOUSE WORDING for this kind of reply (adapt naturally to the conversation, don't paste verbatim, but KEEP the exact operational details like the meetup instructions or postcode ask):\n" +
         c.playbook_templates.map((t) => `- ${t.title}: ${t.content}`).join("\n")
       : null;
+    // LEARNED FROM THE OWNER'S OWN EDITS — corrections the system distilled when
+    // the owner sent something other than a past draft. These reflect how the
+    // owner actually wants replies written; weight them heavily.
+    const lessonsBlock = c.learned_lessons?.length
+      ? "LEARNED FROM HOW THE OWNER WRITES (these come from the owner's own past replies — follow them closely; they override the generic guidance above):\n" +
+        c.learned_lessons.map((l) => `- ${l}`).join("\n")
+      : null;
 
     const prompt = [
       `Renter: ${c.renter_name}`,
@@ -460,6 +478,7 @@ export const generateDraft = action({
       transcript || "(no prior messages)",
       "",
       templatesBlock,
+      lessonsBlock,
       hardTruthsBlock,
       "Draft my reply to the renter's most recent message:",
     ]
@@ -635,6 +654,11 @@ export const sendRenterReply = action({
     if (!body) return { status: "failed", error: "Empty message" };
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
 
+    // Grab the draft that was shown BEFORE recordSentReply clears/rotates it, so
+    // the learner can compare it to what the owner actually sent.
+    const shownDraft =
+      (await ctx.runQuery(internal.draft_learning.getDraftText, { thread_id })) ?? "";
+
     const res = await sendManualRenterMessage({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,
@@ -646,6 +670,22 @@ export const sendRenterReply = action({
         thread_id,
         account_slug,
       });
+
+      // SELF-IMPROVEMENT: if the owner sent something meaningfully DIFFERENT from
+      // the AI draft (or wrote from scratch with no draft), learn from it — reason
+      // about why, distil a general rule, and apply it to future drafts. Async,
+      // best-effort, never blocks the send.
+      const divergent =
+        body.length >= 20 &&
+        (shownDraft.trim().length === 0 || jaccard(body, shownDraft) < 0.6);
+      if (divergent) {
+        await ctx.scheduler.runAfter(0, internal.draft_learning_actions.analyzeDivergence, {
+          thread_id,
+          account_slug,
+          sent_text: body,
+          draft_text: shownDraft,
+        });
+      }
     }
     return {
       status: res.status,

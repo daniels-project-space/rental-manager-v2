@@ -2178,6 +2178,23 @@ export default defineSchema({
     .index("by_account", ["account_slug"])
     .index("by_account_product", ["account_slug", "product_id"]),
 
+  // ── Draft self-improvement (2026-07-03) ─────────────────────────
+  // Lessons learned when the operator sends a reply DIFFERENT from the AI draft.
+  // An LLM reasons about why the owner's reply was better + distils a general,
+  // reusable rule; getThreadContext injects the relevant ones into future drafts
+  // so the bot drafts more like the owner over time. Operator-prunable in Settings.
+  draft_lessons: defineTable({
+    account_slug: v.optional(v.string()),   // undefined = applies to all accounts
+    applies_when: v.string(),               // short trigger, e.g. renter asks about delivery price
+    tags: v.array(v.string()),              // keywords for relevance matching
+    lesson: v.string(),                     // the corrected behaviour to apply
+    draft_mistake: v.optional(v.string()),  // what the draft got wrong (for the operator's view)
+    weight: v.number(),                     // reinforcement count (merged duplicates bump this)
+    example_sent: v.optional(v.string()),   // the owner reply that taught it
+    created_at: v.number(),
+    updated_at: v.number(),
+  }).index("by_account", ["account_slug"]),
+
   // Per-account rescan marker (last run + count) for the Settings caption.
   online_listings_sync: defineTable({
     account_slug: v.string(),

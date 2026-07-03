@@ -189,3 +189,37 @@ export function selectPlaybook(args: {
 
   return { rules, faqs, templates, frameworks, intents };
 }
+
+export interface LessonRow {
+  applies_when: string;
+  lesson: string;
+  tags?: string[];
+  weight?: number;
+}
+
+/**
+ * Pick the learned lessons (from the operator's own edits) most relevant to this
+ * turn. Higher-weight (reinforced) + keyword/intent-matching lessons win. Capped
+ * so the prompt stays tight. Returns "applies_when — lesson" strings.
+ */
+export function selectLessons(args: {
+  lessons: LessonRow[];
+  renterText: string;
+  itemNames?: string[];
+  max?: number;
+}): string[] {
+  const { lessons, renterText, itemNames = [], max = 8 } = args;
+  const intents = detectIntents(renterText);
+  const kw = new Set([...tokens(renterText), ...itemNames.flatMap(tokens)]);
+  const scored = lessons
+    .map((l) => {
+      const hay = `${l.applies_when} ${(l.tags ?? []).join(" ")} ${l.lesson}`.toLowerCase();
+      let s = (l.weight ?? 1) * 2; // reinforced lessons are stickier
+      for (const w of kw) if (hay.includes(w)) s += 3;
+      for (const tag of l.tags ?? []) if (intents.includes(tag as Intent)) s += 6;
+      return { l, s };
+    })
+    .sort((a, b) => b.s - a.s)
+    .slice(0, max);
+  return scored.map(({ l }) => `${l.applies_when} — ${l.lesson}`.replace(/\s+/g, " ").trim());
+}
