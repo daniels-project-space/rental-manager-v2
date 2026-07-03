@@ -9,6 +9,7 @@ import {
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import { buildHyggloListingTiles } from "./lib/reservations/hyggloTiles";
 import {
   resolveImageForReservationItem,
   // bank-aware helpers below also rely on this type
@@ -538,60 +539,22 @@ export const getCalendarStrip = query({
         captured_at: number;
       }> }).image_hints) ?? [];
 
-      // PRIMARY (2026-07-03): build one tile per ACTUAL Hygglo listing rented,
-      // each with its OWN listing image — mirroring the Active-Rentals widget
-      // (convex/dashboard.ts mapRental). Resolution order per listing:
-      //   1. listing_images bank  (account_slug, product_id)  — trusted
-      //   2. hygglo_items[i].image_url (poller snapshot, skip example.com seed)
-      //   3. image_hints[] by exact item_name (same-row fallback)
-      // Tiles keyed by resolved image URL so genuinely-identical photos merge;
-      // listings without any image become placeholder tiles so they still show.
-      //
-      // Why this replaces the resolved_items/override path below: resolved_items
-      // is frequently INCOMPLETE for multi-listing sets — e.g. Willow Bidwell
-      // (diogo) rented 6 distinct Hygglo listings (BMPCC 6K FF, GVM light kit,
-      // BMPCC 6K Pro, SmallRig tripod, 2x Canon lenses, 4x Sony batteries) but
-      // has only 3 resolved_items, which all fell back to the reservation's one
-      // listing photo → image-dedup collapsed the overlay to a single BMPCC
-      // tile. hygglo_items is the authoritative rented-listing list.
+      // PRIMARY (2026-07-03): one tile per ACTUAL Hygglo listing rented, each
+      // with its OWN image — via the shared buildHyggloListingTiles helper, so
+      // this overlay matches the Active-Rentals widget. resolved_items is often
+      // INCOMPLETE for multi-listing sets (e.g. Willow Bidwell: 6 Hygglo
+      // listings, 3 resolved_items), which made the override path below collapse
+      // the set to a single tile. Legacy path kept for rows w/o hygglo_items.
       {
-        const acctH = (r as { account_slug?: string }).account_slug ?? "";
-        const hItemsH = (((r as {
-          hygglo_items?: Array<{ name?: string; product_id?: number; image_url?: string | null; type?: string; qty?: number }>;
-        }).hygglo_items) ?? []).filter((h) => h && h.name && h.type !== "INSURANCE");
-        if (hItemsH.length > 0) {
-          const hintByNameH = new Map<string, string>();
-          for (const hint of imageHints) {
-            if (hint.item_name && hint.image_url) hintByNameH.set(hint.item_name, hint.image_url);
-          }
-          const tileByImgH = new Map<string, ChipItem>();
-          const orderH: string[] = [];
-          const noImgH: ChipItem[] = [];
-          for (const h of hItemsH) {
-            const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-            const bankUrl =
-              typeof h.product_id === "number" ? bankByProductStrip.get(`${acctH}#${h.product_id}`) : undefined;
-            const hyggloUrl =
-              h.image_url && !h.image_url.includes("example.com") ? h.image_url : undefined;
-            const hintUrl = h.name ? hintByNameH.get(h.name) : undefined;
-            const url = bankUrl ?? hyggloUrl ?? hintUrl ?? null;
-            const tileId = typeof h.product_id === "number" ? `pid:${h.product_id}` : null;
-            if (url) {
-              const ex = tileByImgH.get(url);
-              if (ex) {
-                ex.qty += q;
-                if ((h.name ?? "").length < ex.name.length) ex.name = h.name ?? ex.name;
-              } else {
-                const tile: ChipItem = { itemId: tileId, name: h.name ?? "item", imageUrl: url, qty: q, resolved: true };
-                tileByImgH.set(url, tile);
-                orderH.push(url);
-              }
-            } else {
-              noImgH.push({ itemId: tileId, name: h.name ?? "item", imageUrl: null, qty: q, resolved: false });
-            }
-          }
-          const outH = [...orderH.map((u) => tileByImgH.get(u) as ChipItem), ...noImgH];
-          if (outH.length > 0) return outH;
+        const hy = buildHyggloListingTiles(r as Parameters<typeof buildHyggloListingTiles>[0], bankByProductStrip);
+        if (hy.length > 0) {
+          return hy.map((t) => ({
+            itemId: t.productId != null ? `pid:${t.productId}` : null,
+            name: t.name,
+            imageUrl: t.imageUrl,
+            qty: t.qty,
+            resolved: t.imageUrl != null,
+          }));
         }
       }
 
@@ -1282,6 +1245,23 @@ export const getGanttWeek = query({
       }
     }
 
+    // Per-reservation Hygglo-listing tiles (ALL listings actually rented, each
+    // with its own image) — the fullscreen Gantt renders THESE as a booking's
+    // thumbnails so multi-listing sets aren't truncated to the few items that
+    // resolved_items happened to cover (e.g. Willow Bidwell showed only 2 of 6
+    // listings). Shared with the day-strip overlay + Active-Rentals widget via
+    // buildHyggloListingTiles.
+    const setTilesByRes = new Map<string, Array<{ name: string; image_url: string | null; qty: number }>>();
+    for (const r of reservations) {
+      const tiles = buildHyggloListingTiles(r as Parameters<typeof buildHyggloListingTiles>[0], bankByProductGantt);
+      if (tiles.length > 0) {
+        setTilesByRes.set(
+          String(r._id),
+          tiles.map((t) => ({ name: t.name, image_url: t.imageUrl, qty: t.qty })),
+        );
+      }
+    }
+
     type GanttImageHint = {
       item_name: string;
       item_name_normalised: string;
@@ -1369,6 +1349,9 @@ export const getGanttWeek = query({
         const effPick = displayPickupDate(r);
         return {
           reservation_id: r._id,
+          // ALL Hygglo listings on this booking (each own image) — the frontend
+          // renders these as the booking's thumbnails so the whole set shows.
+          set_tiles: setTilesByRes.get(String(r._id)) ?? null,
           // Per-reservation account-correct image first; then THIS reservation's
           // own photo; only then the row image (global imageByItemId can bleed a
           // different account when an item is shared, e.g. a diogo bar showing a

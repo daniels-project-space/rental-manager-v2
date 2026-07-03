@@ -30,6 +30,11 @@ interface Block {
   logical_group_id?: string;
   // Account-correct listing photo for this reservation's resolved item.
   image_url?: string | null;
+  // ALL Hygglo listings actually rented on this booking, each with its own
+  // image (server-side, from hygglo_items). Preferred source for the row's
+  // thumbnails so a multi-listing set shows every listing, not just the few
+  // items resolved_items happened to cover.
+  set_tiles?: Array<{ name: string; image_url: string | null; qty?: number }> | null;
 }
 
 interface GanttItem {
@@ -272,13 +277,26 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
       if (!g) { g = { blocks: [], items: [], shown: new Set(), resIds: new Set() }; groups.set(gid, g); }
       g.blocks.push(block);
       g.resIds.add(block.reservation_id);
-      // Per-reservation (account-correct) listing photo; dedupe by IMAGE so a
-      // multi-item set shows ONE thumbnail, not one per resolved item.
-      const img = block.image_url ?? item.image_url;
-      const key = img ?? `n:${item.item_name}`;
-      if (!g.shown.has(key)) {
-        g.shown.add(key);
-        g.items.push({ name: item.item_name, image: img ?? null });
+      // Prefer the server-built per-reservation listing tiles: ONE thumbnail per
+      // Hygglo listing actually rented, each with its own image, so a
+      // multi-listing set (e.g. Willow: 6 listings) shows every listing. Falls
+      // back to the item-row image (deduped) only for legacy rows that carry no
+      // set_tiles (reservations without hygglo_items).
+      if (block.set_tiles && block.set_tiles.length > 0) {
+        for (const t of block.set_tiles) {
+          const key = `t:${t.name}|${t.image_url ?? ""}`;
+          if (!g.shown.has(key)) {
+            g.shown.add(key);
+            g.items.push({ name: t.name, image: t.image_url ?? null });
+          }
+        }
+      } else {
+        const img = block.image_url ?? item.image_url;
+        const key = img ?? `n:${item.item_name}`;
+        if (!g.shown.has(key)) {
+          g.shown.add(key);
+          g.items.push({ name: item.item_name, image: img ?? null });
+        }
       }
     }
   }
