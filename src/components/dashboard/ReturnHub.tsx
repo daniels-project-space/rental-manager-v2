@@ -29,6 +29,7 @@ type DueReturn = {
   accountSlug?: string;
   orderStep?: string | null;
   imageUrl?: string | null;
+  images?: string[] | null;
   renter?: RenterTrust;
   returnTime?: string | null;
   memberIds?: Id<"reservations">[];
@@ -784,7 +785,24 @@ export function ReturnHub() {
                   >
                     <div className="flex gap-3 p-3">
                       <div className="relative flex-shrink-0">
-                        <Thumb url={r.imageUrl} name={r.renterName} size={56} />
+                        {r.images && r.images.length > 1 ? (
+                          <div className="flex gap-1 max-w-[128px] overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+                            {r.images.slice(0, 6).map((u, i) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                key={i}
+                                src={u}
+                                alt=""
+                                loading="lazy"
+                                className="w-14 h-14 rounded-lg object-cover flex-shrink-0"
+                                style={{ background: "rgba(255,255,255,0.06)" }}
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <Thumb url={r.imageUrl} name={r.renterName} size={56} />
+                        )}
                         <span
                           className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full"
                           style={{ background: accent, border: "2px solid #0e111c" }}

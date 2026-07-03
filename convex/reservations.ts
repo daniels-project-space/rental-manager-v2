@@ -179,6 +179,28 @@ export const getDueReturns = query({
       const imageUrl =
         hy.find((h) => h.image_url)?.image_url ??
         ((base as { photos_urls?: string[] }).photos_urls?.[0] ?? null);
+      // Full listing gallery — every photo from the listing_images table for the
+      // products in this rental, so the card shows all images, not just one.
+      const images: string[] = [];
+      const seenImg = new Set<string>();
+      const pushImg = (u?: string | null) => {
+        if (u && !seenImg.has(u)) { seenImg.add(u); images.push(u); }
+      };
+      pushImg(imageUrl);
+      const galleryPids = new Set<number>();
+      for (const m of members)
+        for (const h of (((m as { hygglo_items?: Array<{ product_id?: number }> }).hygglo_items) ?? []))
+          if (typeof h.product_id === "number") galleryPids.add(h.product_id);
+      const gallerySlug = (base as { account_slug?: string }).account_slug;
+      if (gallerySlug)
+        for (const pid of galleryPids) {
+          if (images.length >= 10) break;
+          const rows = await ctx.db
+            .query("listing_images")
+            .withIndex("by_account_product", (q) => q.eq("account_slug", gallerySlug).eq("product_id", pid))
+            .take(12);
+          for (const r of rows) { pushImg(r.image_url); if (images.length >= 10) break; }
+        }
       const itemNames = (() => {
         // Override-resolved component list (actual kit contents), not listing titles.
         const agg = new Map<string, number>();
@@ -228,6 +250,7 @@ export const getDueReturns = query({
         accountSlug: base.account_slug,
         orderStep: (last as { order_step?: string }).order_step ?? null,
         imageUrl,
+        images,
         renter: {
           blacklisted: t.blacklisted,
           whitelisted: t.whitelisted,

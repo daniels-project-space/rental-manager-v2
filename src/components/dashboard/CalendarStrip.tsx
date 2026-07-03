@@ -824,88 +824,44 @@ function DayCard({
   isExpanded: boolean;
   onClick: () => void;
 }) {
-  const away = day.away ?? [];
-  const totalEvents = day.pickups.length + day.returns.length + away.length + day.holds.length;
+  // Bare day tile (Daniel): the tiles carry NOTHING but the date — all the
+  // per-rental info + colour lives on the cards in the drawer below. Days with
+  // any activity are shown at full opacity so you know which to open.
   const { wd, num } = dayLabelSplit(day.date);
-
-  // Per-card color dots: green = pickup, red = return, blue = away (matches v1 screenshot).
-  const dots: string[] = [];
-  if (day.pickups.length > 0) dots.push("#22c55e");
-  if (day.returns.length > 0) dots.push("#ef4444");
-  if (away.length > 0) dots.push("#3b82f6");
-  if (day.holds.length > 0) dots.push("#f59e0b");
-
-  // Card status colour (Daniel): GREEN when something was RETURNED that day,
-  // GREY when the item is OUT the whole day (away only — no pickup/return).
-  const isReturnDay = day.returns.length > 0;
-  const isOutAllDay =
-    away.length > 0 && day.pickups.length === 0 && day.returns.length === 0;
-  const statusBg = isReturnDay
-    ? "rgba(34,197,94,0.12)"
-    : isOutAllDay
-      ? "rgba(148,163,184,0.10)"
-      : "rgba(14,17,28,0.35)";
-  const statusBorder = isReturnDay
-    ? "rgba(34,197,94,0.42)"
-    : isOutAllDay
-      ? "rgba(148,163,184,0.30)"
-      : "rgba(255,255,255,0.08)";
-
-  // Ongoing (away) rentals get a thin live progress bar on the collapsed tile so
-  // active rentals are visible at a glance — not just a static blue dot. Pick the
-  // away chip returning soonest, using its effective (negotiated) dates.
-  const awayProgress = (() => {
-    if (away.length === 0) return null;
-    let best: { pct: number; status: "upcoming" | "active" | "completed" } | null = null;
-    let bestEndMs = Infinity;
-    for (const c of away) {
-      const effPickupDate = c.pickupDate ?? c.startDate ?? null;
-      const effReturnDate = c.returnDate ?? c.endDate ?? null;
-      if (!effReturnDate) continue;
-      const endMs = new Date(effReturnDate + "T23:59:59").getTime();
-      if (endMs < bestEndMs) {
-        bestEndMs = endMs;
-        const p = computeProgress(effPickupDate, effReturnDate, c.pickupTime, c.returnTime);
-        best = { pct: p.pct, status: p.status };
-      }
-    }
-    return best;
-  })();
+  const hasAny =
+    day.pickups.length + day.returns.length + (day.away?.length ?? 0) + day.holds.length > 0;
 
   return (
     <button
       onClick={onClick}
       className="flex-shrink-0 text-left rounded-xl p-2.5 transition-all duration-150 select-none"
       style={{
-        width: "104px",
-        minHeight: "118px",
-        border: `1px solid ${statusBorder}`,
+        width: "72px",
+        minHeight: "72px",
+        border: "1px solid rgba(255,255,255,0.08)",
         outline: isToday ? "2px solid #3b82f6" : undefined,
         outlineOffset: isToday ? "-1px" : undefined,
         boxShadow: isToday
-          ? "inset 0 0 0 2px #3b82f6, 0 0 12px rgba(59,130,246,0.4), 0 0 24px rgba(59,130,246,0.15)"
+          ? "inset 0 0 0 2px #3b82f6, 0 0 12px rgba(59,130,246,0.4)"
           : isExpanded
             ? "0 4px 16px rgba(0,0,0,0.3)"
             : "none",
         background: isExpanded
           ? "rgba(59,130,246,0.07)"
-          : isReturnDay || isOutAllDay
-            ? statusBg
-            : isToday
-              ? "rgba(59,130,246,0.05)"
-              : "rgba(14,17,28,0.35)",
+          : isToday
+            ? "rgba(59,130,246,0.05)"
+            : "rgba(14,17,28,0.35)",
+        opacity: hasAny || isToday ? 1 : 0.5,
         transform: isExpanded ? "scale(1.02)" : "scale(1)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "flex-start",
+        justifyContent: "center",
       }}
     >
-      {/* Weekday (small, uppercase, muted) */}
       <div className="text-[10px] font-semibold uppercase tracking-wider text-[#8b8fa3]">
         {wd}
       </div>
-      {/* Date number */}
       <div
         className="text-xl font-bold leading-none mt-0.5"
         style={{ color: isToday ? "#3b82f6" : "#e4e6eb" }}
@@ -920,61 +876,6 @@ function DayCard({
           Today
         </span>
       )}
-
-      {/* Color dots row */}
-      {dots.length > 0 && (
-        <div className="flex items-center gap-1 mt-2">
-          {dots.map((c, i) => (
-            <span
-              key={i}
-              className="inline-block w-2 h-2 rounded-full"
-              style={{ background: c }}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* (Pickup lead-up red bar moved to the rental cards in the drawer, where
-          the blue progress bar lives — Daniel.) */}
-
-      {/* Ongoing-rental progress affordance — thin live bar for away chips so an
-          active rental reads as progress on the strip, not just a blue dot.
-          Reuses the active fill gradient + shimmer from ProgressTimeline. */}
-      {awayProgress && awayProgress.status === "active" && (
-        <div
-          className="relative h-1 w-full rounded-full mt-2 overflow-hidden"
-          style={{
-            background: "rgba(255,255,255,0.06)",
-            boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)",
-          }}
-        >
-          <div
-            className="absolute inset-y-0 left-0 rounded-full"
-            style={{
-              width: `${awayProgress.pct}%`,
-              background: "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)",
-              boxShadow: "0 0 6px rgba(59,130,246,0.5)",
-              transition: "width 800ms cubic-bezier(0.16, 1, 0.3, 1)",
-            }}
-          />
-          <div
-            className="absolute inset-y-0 left-0 rounded-full pointer-events-none"
-            style={{
-              width: `${awayProgress.pct}%`,
-              background:
-                "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 50%, transparent 100%)",
-              backgroundSize: "200% 100%",
-              animation: "rental-shimmer 2.2s linear infinite",
-              mixBlendMode: "overlay",
-            }}
-          />
-        </div>
-      )}
-
-      {/* Count number below dots */}
-      <div className="mt-auto pt-2 text-[11px] text-[#8b8fa3] font-medium">
-        {totalEvents > 0 ? totalEvents : "—"}
-      </div>
     </button>
   );
 }
