@@ -449,18 +449,29 @@ export const getOutOfStockItems = query({
       }
     }
 
-    return activeItems
-      .filter(
-        (i) =>
-          holdCounts.has(i.name_canonical) &&
-          (holdCounts.get(i.name_canonical) ?? 0) >= i.qty
-      )
-      .map((i) => ({
-        itemId: i._id,
-        name: i.name_canonical,
-        nextAvailableDate: nextAvailMap.get(i.name_canonical) ?? null,
-        activeReservationCount: holdCounts.get(i.name_canonical) ?? 0,
-      }));
+    const oos = activeItems.filter(
+      (i) =>
+        holdCounts.has(i.name_canonical) &&
+        (holdCounts.get(i.name_canonical) ?? 0) >= i.qty,
+    );
+    // Listing thumbnail per OOS item (indexed by_master_item lookup, only the
+    // few out-of-stock rows).
+    const imageByItem = new Map<string, string>();
+    for (const i of oos) {
+      const prod = await ctx.db
+        .query("hygglo_products")
+        .withIndex("by_master_item", (q) => q.eq("masterItemId", i._id))
+        .first();
+      const img = prod?.images?.[0]?.fullSizeUrl ?? prod?.images?.[0]?.thumbnailUrl;
+      if (img) imageByItem.set(String(i._id), img);
+    }
+    return oos.map((i) => ({
+      itemId: i._id,
+      name: i.name_canonical,
+      image: imageByItem.get(String(i._id)) ?? null,
+      nextAvailableDate: nextAvailMap.get(i.name_canonical) ?? null,
+      activeReservationCount: holdCounts.get(i.name_canonical) ?? 0,
+    }));
   },
 });
 

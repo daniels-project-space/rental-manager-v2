@@ -297,9 +297,10 @@ export const getConversionFunnel = query({
         );
       }
     }
-    const inquiries = conversations.filter(
+    const windowConvs = conversations.filter(
       (c) => c._creationTime >= cutoff.getTime()
-    ).length;
+    );
+    const inquiries = windowConvs.length;
 
     let denials = await ctx.db.query("denial_records").collect();
     if (accountSlug) {
@@ -320,7 +321,18 @@ export const getConversionFunnel = query({
     // (bookings + conversations have real dates); the denial rate is all-time.
     const recentDenials = denials.length;
 
-    const responses = inquiries; // conversations == responses (no separate sent-count available)
+    // Real "responses": the inquiries where WE (owner) actually replied at least
+    // once (was a fake ). Bounded per-thread indexed
+    // lookup over just the in-window conversations.
+    let responses = 0;
+    for (const c of windowConvs) {
+      const ownerMsg = await ctx.db
+        .query("hygglo_messages")
+        .withIndex("by_thread", (q) => q.eq("thread_id", c.thread_id))
+        .filter((q) => q.eq(q.field("sender"), "owner"))
+        .first();
+      if (ownerMsg) responses++;
+    }
     const conversionRate = inquiries > 0 ? bookings / inquiries : 0;
     // denial_records can exceed tracked conversations — an auto-declined Hygglo
     // request never opens a conversation thread, and a multi-item decline can
