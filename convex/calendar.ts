@@ -538,6 +538,63 @@ export const getCalendarStrip = query({
         captured_at: number;
       }> }).image_hints) ?? [];
 
+      // PRIMARY (2026-07-03): build one tile per ACTUAL Hygglo listing rented,
+      // each with its OWN listing image — mirroring the Active-Rentals widget
+      // (convex/dashboard.ts mapRental). Resolution order per listing:
+      //   1. listing_images bank  (account_slug, product_id)  — trusted
+      //   2. hygglo_items[i].image_url (poller snapshot, skip example.com seed)
+      //   3. image_hints[] by exact item_name (same-row fallback)
+      // Tiles keyed by resolved image URL so genuinely-identical photos merge;
+      // listings without any image become placeholder tiles so they still show.
+      //
+      // Why this replaces the resolved_items/override path below: resolved_items
+      // is frequently INCOMPLETE for multi-listing sets — e.g. Willow Bidwell
+      // (diogo) rented 6 distinct Hygglo listings (BMPCC 6K FF, GVM light kit,
+      // BMPCC 6K Pro, SmallRig tripod, 2x Canon lenses, 4x Sony batteries) but
+      // has only 3 resolved_items, which all fell back to the reservation's one
+      // listing photo → image-dedup collapsed the overlay to a single BMPCC
+      // tile. hygglo_items is the authoritative rented-listing list.
+      {
+        const acctH = (r as { account_slug?: string }).account_slug ?? "";
+        const hItemsH = (((r as {
+          hygglo_items?: Array<{ name?: string; product_id?: number; image_url?: string | null; type?: string; qty?: number }>;
+        }).hygglo_items) ?? []).filter((h) => h && h.name && h.type !== "INSURANCE");
+        if (hItemsH.length > 0) {
+          const hintByNameH = new Map<string, string>();
+          for (const hint of imageHints) {
+            if (hint.item_name && hint.image_url) hintByNameH.set(hint.item_name, hint.image_url);
+          }
+          const tileByImgH = new Map<string, ChipItem>();
+          const orderH: string[] = [];
+          const noImgH: ChipItem[] = [];
+          for (const h of hItemsH) {
+            const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
+            const bankUrl =
+              typeof h.product_id === "number" ? bankByProductStrip.get(`${acctH}#${h.product_id}`) : undefined;
+            const hyggloUrl =
+              h.image_url && !h.image_url.includes("example.com") ? h.image_url : undefined;
+            const hintUrl = h.name ? hintByNameH.get(h.name) : undefined;
+            const url = bankUrl ?? hyggloUrl ?? hintUrl ?? null;
+            const tileId = typeof h.product_id === "number" ? `pid:${h.product_id}` : null;
+            if (url) {
+              const ex = tileByImgH.get(url);
+              if (ex) {
+                ex.qty += q;
+                if ((h.name ?? "").length < ex.name.length) ex.name = h.name ?? ex.name;
+              } else {
+                const tile: ChipItem = { itemId: tileId, name: h.name ?? "item", imageUrl: url, qty: q, resolved: true };
+                tileByImgH.set(url, tile);
+                orderH.push(url);
+              }
+            } else {
+              noImgH.push({ itemId: tileId, name: h.name ?? "item", imageUrl: null, qty: q, resolved: false });
+            }
+          }
+          const outH = [...orderH.map((u) => tileByImgH.get(u) as ChipItem), ...noImgH];
+          if (outH.length > 0) return outH;
+        }
+      }
+
       // Override-resolved items, account-correct listing photo, deduped by IMAGE
       // (a multi-item set listing shows ONE tile, not one per resolved item).
       const ovUnits = Array.from(reservationItemUnits(r as unknown as Parameters<typeof reservationItemUnits>[0], productIndexStrip, overrideMapStrip));
