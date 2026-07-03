@@ -542,16 +542,16 @@ const MONEY_TIERS = [
  * estimate (priced from the items × the requested/mentioned days, default 1).
  */
 function MoneyHeadline({ tile, compact = false }: { tile: ReplyTileData; compact?: boolean }) {
-  const revenue = tile.gross_paid_gbp ?? tile.estimate_gbp;
-  if (revenue == null) return null;
+  // Owner EARNINGS only (not what the renter pays), still scaled in £100 steps.
   const earnings = tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp;
+  if (earnings == null) return null;
   const isEstimate = tile.gross_paid_gbp == null;
-  const tier = Math.max(0, Math.min(4, Math.floor(revenue / 100)));
+  const tier = Math.max(0, Math.min(4, Math.floor(earnings / 100)));
   const T = MONEY_TIERS[tier];
   const size = compact ? Math.round(T.size * 0.82) : T.size;
   return (
     <div
-      className="inline-flex items-center gap-2.5 rounded-xl px-3 py-1.5"
+      className="inline-flex items-baseline gap-1.5 rounded-xl px-2.5 py-1"
       style={{
         background: `${T.color}14`,
         border: `1px solid ${T.ring}`,
@@ -559,22 +559,12 @@ function MoneyHeadline({ tile, compact = false }: { tile: ReplyTileData; compact
         animation: T.pulse ? "rgMoney 2.2s ease-in-out infinite" : undefined,
       }}
     >
-      <div className="flex flex-col leading-none">
-        <span className="font-extrabold tabular-nums tracking-tight" style={{ fontSize: size, color: T.color }}>
-          {fmtMoney(revenue, tile.currency)}
-        </span>
-        <span className="text-[9px] uppercase tracking-[0.1em] mt-1" style={{ color: `${T.color}b3` }}>
-          {isEstimate ? `est${tile.estimate_days ? ` · ${tile.estimate_days}d` : ""}` : "booked"}
-        </span>
-      </div>
-      {earnings != null && (
-        <div className="flex flex-col leading-none border-l pl-2.5" style={{ borderColor: `${T.color}33` }}>
-          <span className={`${compact ? "text-[15px]" : "text-[18px]"} font-bold tabular-nums text-[#d6f5e4]`}>
-            {fmtMoney(earnings, tile.currency)}
-          </span>
-          <span className="text-[9px] uppercase tracking-[0.1em] text-[#7f9c8b] mt-1">you keep</span>
-        </div>
-      )}
+      <span className="font-extrabold tabular-nums tracking-tight" style={{ fontSize: size, color: T.color }}>
+        {fmtMoney(earnings, tile.currency)}
+      </span>
+      <span className="text-[8.5px] uppercase tracking-[0.1em] font-semibold" style={{ color: `${T.color}b3` }}>
+        {isEstimate ? "est earn" : "you keep"}
+      </span>
     </div>
   );
 }
@@ -893,9 +883,14 @@ function ReplyCard({
         <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} size={46} />
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-1.5">
-            <span className="text-[14px] font-semibold text-[#f1f3f5] truncate leading-tight">
+            <span className="text-[14px] font-semibold text-[#f1f3f5] truncate leading-tight min-w-0">
               {tile.renter_name}
             </span>
+            {tile.renter_rating != null && (
+              <span className="shrink-0 mt-[3px]">
+                <Stars rating={tile.renter_rating} count={null} size={10} />
+              </span>
+            )}
             {tile.renter_blacklisted && (
               <span className="text-[9px] px-1 rounded bg-red-500/20 text-red-400 mt-0.5">BL</span>
             )}
@@ -934,8 +929,12 @@ function ReplyCard({
             </span>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <Stars rating={tile.renter_rating} count={tile.renter_review_count} />
             <AccountTag slug={tile.account_slug} />
+            {tile.renter_review_count != null && (
+              <span className="text-[10px] text-[#64748b]">
+                {tile.renter_review_count} review{tile.renter_review_count === 1 ? "" : "s"}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -967,7 +966,7 @@ function ReplyCard({
         <div className="text-[12px] text-[#8b92a0] line-clamp-2">“{tile.preview}”</div>
       )}
       {tile.location && <LocationBadge loc={tile.location} compact />}
-      {(tile.gross_paid_gbp != null || tile.estimate_gbp != null) && (
+      {(tile.net_to_owner_gbp != null || tile.estimate_earnings_gbp != null) && (
         <div className="self-start">
           <MoneyHeadline tile={tile} compact />
         </div>
