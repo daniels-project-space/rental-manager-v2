@@ -2179,8 +2179,22 @@ export const getStatsDrawerData = query({
         if (nm) blByName.set(nm, reason);
       }
       if (blById.size > 0) {
+        // ONE alert per PERSON, and only where the owner can still act: gear
+        // currently out (ongoing) or about to go out (upcoming). Cased rentals
+        // are excluded — opening a case auto-blacklists the renter, so their
+        // own cased rental echoing back here was pure noise (the Cases
+        // pipeline already tracks it). Prefer the ongoing rental as the shown
+        // example, else the soonest upcoming one.
+        const bestByRenter = new Map<
+          string,
+          { row: (typeof blacklistAlerts)[number]; ongoing: boolean; start: string }
+        >();
         for (const r of allRes) {
           if (r.status === "cancelled" || r.status === "declined" || r.status === "completed" || r.is_obsolete) continue;
+          if ((r as { case_open?: boolean }).case_open === true) continue;
+          const ongoing = isOngoing(r as ResRow, activeToday);
+          const upcoming = isUpcoming(r as ResRow, activeToday);
+          if (!ongoing && !upcoming) continue;
           const rid = r.renter_id as string | undefined;
           const huid = (r as { hygglo_user_id?: string }).hygglo_user_id;
           const nm = (r.renter_name ?? "").trim().toLowerCase();
@@ -2189,17 +2203,30 @@ export const getStatsDrawerData = query({
             (huid && blByHuid.has(huid) ? blByHuid.get(huid) : undefined) ??
             (blByName.has(nm) ? blByName.get(nm) : undefined);
           if (reason === undefined) continue;
-          blacklistAlerts.push({
-            reservation_id: (r.hygglo_order_id ?? r._id) as string,
-            renter_name: r.renter_name ?? null,
-            order_step: r.order_step ?? null,
-            start_date: r.start_date ?? null,
-            end_date: r.end_date ?? null,
-            items: (r.items ?? []).map((i) => i.item_name).slice(0, 3),
-            account_slug: r.account_slug ?? null,
-            reason: reason ?? null,
+          const key = rid ?? huid ?? (nm || ((r.hygglo_order_id ?? r._id) as string));
+          const start = (r.start_date ?? "9999") as string;
+          const prev = bestByRenter.get(key);
+          const better =
+            !prev ||
+            (ongoing && !prev.ongoing) ||
+            (ongoing === prev.ongoing && start < prev.start);
+          if (!better) continue;
+          bestByRenter.set(key, {
+            ongoing,
+            start,
+            row: {
+              reservation_id: (r.hygglo_order_id ?? r._id) as string,
+              renter_name: r.renter_name ?? null,
+              order_step: r.order_step ?? null,
+              start_date: r.start_date ?? null,
+              end_date: r.end_date ?? null,
+              items: (r.items ?? []).map((i) => i.item_name).slice(0, 3),
+              account_slug: r.account_slug ?? null,
+              reason: reason ?? null,
+            },
           });
         }
+        blacklistAlerts.push(...Array.from(bestByRenter.values()).map((b) => b.row));
       }
     }
 
