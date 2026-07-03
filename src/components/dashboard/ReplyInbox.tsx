@@ -1972,9 +1972,18 @@ export function ReplyModal({
                 )}
               </button>
               <button
+                type="button"
                 onClick={onClose}
+                // Mobile: the click sometimes never lands on the tiny X (tap
+                // delay / ghost-click). Handle touchend directly and prevent the
+                // synthetic click so it fires exactly once on tap.
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  onClose();
+                }}
                 aria-label="Close"
-                className="shrink-0 w-9 h-9 -mr-1 rounded-lg flex items-center justify-center text-[#9aa0ad] hover:text-white hover:bg-white/[0.08] text-2xl leading-none"
+                style={{ touchAction: "manipulation" }}
+                className="shrink-0 w-10 h-10 -mr-1 rounded-lg flex items-center justify-center text-[#9aa0ad] hover:text-white active:bg-white/[0.14] hover:bg-white/[0.08] text-2xl leading-none"
               >
                 ×
               </button>
