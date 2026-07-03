@@ -60,6 +60,7 @@ export const getDueReturns = query({
     _bypassMv: v.optional(v.boolean()),
   },
   handler: async (ctx, { accountSlug, _bypassMv }) => {
+    const now = Date.now();
     if (!_bypassMv) {
       const accountKey = accountSlug ?? "all";
       const cached = await ctx.db
@@ -84,13 +85,22 @@ export const getDueReturns = query({
           if (!live) continue; // reservation gone
           const r = live as { status?: string; case_open?: boolean; is_obsolete?: boolean; order_step?: string };
           if (r.status === "completed" || r.case_open || r.is_obsolete || r.order_step === "REVIEWED") continue;
+          // Time-aware (Daniel): only surface once the calendar return MOMENT
+          // (return date + time) has elapsed, matching the live path. Uses the
+          // row own merged return date/time.
+          const retDate = row.endDate as string | undefined;
+          const retTime = row.returnTime as string | null | undefined;
+          if (retDate) {
+            const t0 = retTime && /^[0-9][0-9]:[0-9][0-9]/.test(retTime) ? retTime : "23:59";
+            const retMomentMs = new Date(retDate + "T" + t0 + ":00").getTime();
+            if (Number.isFinite(retMomentMs) && retMomentMs > now) continue;
+          }
           fresh.push(row);
         }
         return fresh;
       }
     }
     const today = TODAY();
-    const now = Date.now();
     let active = await ctx.db
       .query("reservations")
       .withIndex("by_status", (q) => q.eq("status", "confirmed"))
@@ -157,7 +167,7 @@ export const getDueReturns = query({
       const retTime = (last as { return_time?: string }).return_time;
       // Time-aware: only surface once the effective return MOMENT has passed. No
       // time → start-of-day, so a same-day no-time return still shows that day.
-      const t0 = retTime && /^\d\d:\d\d/.test(retTime) ? retTime : "00:00";
+      const t0 = retTime && /^\d\d:\d\d/.test(retTime) ? retTime : "23:59";
       const retMomentMs = new Date(`${retDate}T${t0}:00`).getTime();
       if (Number.isFinite(retMomentMs) && retMomentMs > now) continue; // not due yet
 
