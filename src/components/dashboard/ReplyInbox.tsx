@@ -454,6 +454,29 @@ function itemLine(t: ReplyTileData): string {
   const extra = t.item_count > t.items.length ? ` +${t.item_count - t.items.length}` : "";
   return names.join(", ") + extra;
 }
+/**
+ * Shorten a Hygglo listing title for the overlay. Their titles are
+ * "Real Name | keyword salad" / "Name – long SEO description" — show the
+ * meaningful first half (before the first separator), or literally half the
+ * text when there's no separator. Keeps the chat, not the SEO title, in focus.
+ */
+function shortListing(name: string): string {
+  const bySep = name.split(/\s*[|–—]\s*| - /)[0].trim();
+  let base = bySep.length >= 6 && bySep.length < name.length ? bySep : name;
+  const cap = Math.max(28, Math.ceil(name.length / 2));
+  if (base.length > cap) {
+    const cut = base.slice(0, cap);
+    const lastSpace = cut.lastIndexOf(" ");
+    base = (lastSpace > 16 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+  }
+  return base;
+}
+/** Modal item line — shortened listing names (overlay stays compact). */
+function itemLineShort(t: ReplyTileData): string {
+  const names = t.items.map((i) => (i.qty > 1 ? `${i.qty}× ${shortListing(i.name)}` : shortListing(i.name)));
+  const extra = t.item_count > t.items.length ? ` +${t.item_count - t.items.length}` : "";
+  return names.join(", ") + extra;
+}
 
 /**
  * Double-booking badge. Green when the requested set is free for the dates; red
@@ -1414,9 +1437,9 @@ function OrderEditor({
       <div className="px-3 pb-2 space-y-1.5">
         {st.items.map((it) => (
           <div key={it.item_id ?? it.name} className="flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2">
-            <Thumb src={it.image} accent={accent} size={40} />
+            <Thumb src={it.image} accent={accent} size={36} />
             <div className="flex-1 min-w-0">
-              <div className="text-[12.5px] text-[#e6e9ef] truncate">{it.name}</div>
+              <div className="text-[12px] text-[#e6e9ef] truncate" title={it.name}>{shortListing(it.name)}</div>
               {it.price_label && <div className="text-[11px] text-[#7a8190]">{it.price_label}</div>}
             </div>
             {confirmRemove === it.item_id ? (
@@ -1760,15 +1783,15 @@ export function ReplyModal({
       >
         {/* Accent top line */}
         <div className="h-[3px] w-full" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}1a)` }} />
-        {/* Context header */}
+        {/* Context header — kept compact so the conversation gets the room. */}
         <div
-          className="p-4 border-b border-white/[0.07] flex gap-3.5"
+          className="px-3 py-2.5 border-b border-white/[0.07] flex gap-2.5"
           style={{ background: `linear-gradient(180deg, ${accent}0f, transparent)` }}
         >
-          <Thumb src={tile.image_url} accent={accent} size={64} />
+          <Thumb src={tile.image_url} accent={accent} size={40} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="text-[17px] font-semibold text-[#f1f3f5] truncate min-w-0 flex-1">{tile.renter_name}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[13.5px] font-semibold text-[#f1f3f5] truncate min-w-0 flex-1">{tile.renter_name}</span>
               <button
                 onClick={() => setShowReviews((s) => !s)}
                 className="shrink-0 inline-flex items-center gap-0.5 hover:opacity-80"
@@ -1787,46 +1810,45 @@ export function ReplyModal({
                 ×
               </button>
             </div>
-            <div className="flex items-center gap-3 mt-1.5">
+            <div className="flex items-center gap-2 mt-1">
               <AccountTag slug={tile.account_slug} />
               <span
-                className="text-[11px] uppercase tracking-wide font-medium"
+                className="text-[10px] uppercase tracking-wide font-medium truncate"
                 style={{ color: tile.is_request ? "#fdba74" : "#7a8190" }}
               >
                 {statusText(tile)}
               </span>
             </div>
             {loc && (
-              <div className="mt-2">
+              <div className="mt-1.5">
                 <LocationBadge loc={loc} />
               </div>
             )}
             {tile.renter_rating != null && tile.renter_rating < 4 && (
-              <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2.5 py-1.5">
-                <span className="text-red-400 text-[13px] leading-none mt-px">⚠</span>
-                <span className="text-[11.5px] text-red-200/90 leading-snug">
+              <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2 py-1">
+                <span className="text-red-400 text-[12px] leading-none mt-px">⚠</span>
+                <span className="text-[11px] text-red-200/90 leading-snug">
                   Low-rated renter — {tile.renter_rating.toFixed(1)}★
-                  {tile.renter_review_count != null ? ` over ${tile.renter_review_count} reviews` : ""}.
-                  Vet their history before you accept.
+                  {tile.renter_review_count != null ? ` over ${tile.renter_review_count} reviews` : ""}. Vet before accepting.
                 </span>
               </div>
             )}
-            {itemLine(tile) && (
-              <div className="text-[13px] text-[#c5cad3] mt-1.5">{itemLine(tile)}</div>
+            {itemLineShort(tile) && (
+              <div className="text-[11.5px] text-[#c5cad3] mt-1 truncate">{itemLineShort(tile)}</div>
             )}
             {tile.has_reservation && contextLine(tile) && (
-              <div className="text-[12px] text-[#7a8190] mt-0.5">{contextLine(tile)}</div>
+              <div className="text-[11px] text-[#7a8190] mt-0.5">{contextLine(tile)}</div>
             )}
             {(tile.gross_paid_gbp != null || tile.estimate_gbp != null) && (
-              <div className="mt-2">
-                <MoneyHeadline tile={tile} />
+              <div className="mt-1.5">
+                <MoneyHeadline tile={tile} compact />
               </div>
             )}
             {tile.availability && (
-              <div className="mt-2 flex flex-col gap-1">
+              <div className="mt-1.5 flex flex-col gap-1">
                 <AvailabilityBadge a={tile.availability} />
                 {tile.availability.status === "conflict" && (
-                  <div className="text-[11px] text-[#f8a4a4] pl-1">
+                  <div className="text-[10.5px] text-[#f8a4a4] pl-1">
                     {tile.availability.items
                       .filter((i) => !i.available)
                       .map(
@@ -1986,19 +2008,19 @@ export function ReplyModal({
               edit it, add/remove, then hit Send yourself. The amber "Ask to
               request" chip shows only on inquiry threads with no booking yet. */}
           {(canned.length > 0 || !tile.has_reservation) && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] uppercase tracking-[0.12em] text-[#5f6675] font-semibold mr-0.5 select-none">
-                Insert ↓
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[9px] uppercase tracking-[0.12em] text-[#5f6675] font-semibold mr-0.5 select-none">
+                Insert
               </span>
               {!tile.has_reservation && (
                 <button
                   type="button"
                   onClick={() => pasteText(ASK_REQUEST_TEXT)}
                   title={`Paste: ${ASK_REQUEST_TEXT}`}
-                  className="group/q flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full border border-amber-400/30 bg-gradient-to-b from-amber-500/[0.18] to-amber-600/[0.08] hover:border-amber-300/60 hover:from-amber-500/[0.28] transition-all hover:-translate-y-px shadow-sm"
+                  className="group/q flex items-center gap-1 pl-1 pr-2 py-0.5 rounded-full border border-amber-400/30 bg-gradient-to-b from-amber-500/[0.18] to-amber-600/[0.08] hover:border-amber-300/60 hover:from-amber-500/[0.28] transition-colors"
                 >
-                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-400/20 text-sm leading-none">📩</span>
-                  <span className="text-[11px] font-semibold text-amber-200/90">Ask to request</span>
+                  <span className="flex items-center justify-center w-4 h-4 rounded-full bg-amber-400/20 text-[10px] leading-none">📩</span>
+                  <span className="text-[10px] font-semibold text-amber-200/90">Ask to request</span>
                 </button>
               )}
               {canned.map((c) => (
@@ -2007,12 +2029,12 @@ export function ReplyModal({
                   type="button"
                   onClick={() => pasteText(c.text)}
                   title={`Paste: ${c.text}`}
-                  className="group/q flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full border border-white/10 bg-white/[0.05] hover:border-white/25 hover:bg-white/[0.12] transition-all hover:-translate-y-px shadow-sm"
+                  className="group/q flex items-center gap-1 pl-1 pr-2 py-0.5 rounded-full border border-white/10 bg-white/[0.05] hover:border-white/25 hover:bg-white/[0.12] transition-colors"
                 >
-                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-white/[0.08] group-hover/q:bg-white/[0.16] text-sm leading-none transition-colors">
+                  <span className="flex items-center justify-center w-4 h-4 rounded-full bg-white/[0.08] group-hover/q:bg-white/[0.16] text-[10px] leading-none transition-colors">
                     {c.symbol}
                   </span>
-                  <span className="text-[11px] font-medium text-[#cbd5e1] group-hover/q:text-white transition-colors">
+                  <span className="text-[10px] font-medium text-[#cbd5e1] group-hover/q:text-white transition-colors">
                     {c.label}
                   </span>
                 </button>
