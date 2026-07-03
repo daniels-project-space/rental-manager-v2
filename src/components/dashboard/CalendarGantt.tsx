@@ -117,11 +117,16 @@ function formatWeekRange(weekStart: string): string {
 }
 
 function dayHeaders(weekStart: string): Array<{ label: string; iso: string }> {
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  return days.map((label, i) => {
+  // Weekday name is derived from EACH column's real date, not a fixed Mon→Sun
+  // sequence: the visible window starts at today−2 (viewAnchor), which is only
+  // a Monday one day in seven. Hardcoding Mon→Sun mislabelled every column on
+  // the other six days — e.g. Sat Jul 4 rendered as "Thu 4", so a Saturday
+  // return read as a weekday earlier in the week (Nico Varanese bug, 2026-07-03).
+  const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return Array.from({ length: 7 }, (_, i) => {
     const iso = addDays(weekStart, i);
-    const num = isoToDate(iso).getUTCDate();
-    return { label: `${label} ${num}`, iso };
+    const d = isoToDate(iso);
+    return { label: `${names[d.getUTCDay()]} ${d.getUTCDate()}`, iso };
   });
 }
 
