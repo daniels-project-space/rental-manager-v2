@@ -32,15 +32,30 @@ import {
   HYGGLO_API_BASE,
 } from "../src/lib/hygglo-auth";
 
-/** Token Jaccard similarity (0..1) — how close the sent reply is to the draft. */
-function jaccard(a: string, b: string): number {
-  const toks = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) ?? []);
-  const A = toks(a);
-  const B = toks(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  for (const x of A) if (B.has(x)) inter++;
-  return inter / (A.size + B.size - inter);
+const tokenSet = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) ?? []);
+
+/**
+ * How did the owner use the AI draft? Drives self-improvement:
+ *   - "scratch": no draft was shown → they wrote their own.
+ *   - "rewrote": a draft existed but they kept little of it → different reply.
+ *   - "added":  they KEPT most of the draft but added meaningful text on top →
+ *               the draft was INCOMPLETE (learn what was missing).
+ *   - null:     used it verbatim / trivial tweak → nothing to learn.
+ */
+function classifyDraftUse(sent: string, draft: string): "scratch" | "rewrote" | "added" | null {
+  if (sent.trim().length < 20) return null;
+  if (draft.trim().length === 0) return "scratch";
+  const D = tokenSet(draft);
+  const S = tokenSet(sent);
+  if (!D.size) return "scratch";
+  let keptN = 0;
+  for (const x of D) if (S.has(x)) keptN++;
+  const kept = keptN / D.size; // fraction of the draft that survived
+  let added = 0;
+  for (const x of S) if (!D.has(x)) added++; // new tokens the owner introduced
+  if (kept < 0.6) return "rewrote";
+  if (added >= 6) return "added"; // kept the draft but added on top
+  return null; // basically used it as-is
 }
 
 // ── AI draft ──────────────────────────────────────────────────────
@@ -671,19 +686,18 @@ export const sendRenterReply = action({
         account_slug,
       });
 
-      // SELF-IMPROVEMENT: if the owner sent something meaningfully DIFFERENT from
-      // the AI draft (or wrote from scratch with no draft), learn from it — reason
-      // about why, distil a general rule, and apply it to future drafts. Async,
+      // SELF-IMPROVEMENT: learn whenever the owner didn't just use the draft
+      // as-is — whether they rewrote it, wrote from scratch, OR kept the draft
+      // and added meaningful text on top (the draft was incomplete). Async,
       // best-effort, never blocks the send.
-      const divergent =
-        body.length >= 20 &&
-        (shownDraft.trim().length === 0 || jaccard(body, shownDraft) < 0.6);
-      if (divergent) {
+      const mode = classifyDraftUse(body, shownDraft);
+      if (mode) {
         await ctx.scheduler.runAfter(0, internal.draft_learning_actions.analyzeDivergence, {
           thread_id,
           account_slug,
           sent_text: body,
           draft_text: shownDraft,
+          mode,
         });
       }
     }

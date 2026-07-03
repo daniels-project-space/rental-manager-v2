@@ -33,8 +33,10 @@ export const analyzeDivergence = internalAction({
     account_slug: v.optional(v.string()),
     sent_text: v.string(),
     draft_text: v.optional(v.string()),
+    // "scratch" | "rewrote" | "added" — how the owner used the draft.
+    mode: v.optional(v.string()),
   },
-  handler: async (ctx, { thread_id, account_slug, sent_text, draft_text }) => {
+  handler: async (ctx, { thread_id, account_slug, sent_text, draft_text, mode }) => {
     const draft =
       draft_text ??
       (await ctx.runQuery(internal.draft_learning.getDraftText, { thread_id })) ??
@@ -63,11 +65,16 @@ export const analyzeDivergence = internalAction({
       "CONVERSATION SO FAR:",
       transcript || "(unavailable)",
       "",
-      "AI DRAFT (owner chose NOT to send this):",
+      mode === "added"
+        ? "AI DRAFT (the owner KEPT this and ADDED to it — so the draft was INCOMPLETE):"
+        : "AI DRAFT (owner chose NOT to send this):",
       draft || "(no draft was shown)",
       "",
       "WHAT THE OWNER ACTUALLY SENT:",
       sent_text,
+      mode === "added"
+        ? "\nNOTE: the owner used the draft but added text on top. Work out WHAT the draft was MISSING (what the owner added) and make the lesson about including that kind of thing in this situation."
+        : "",
       "",
       "CURRENT LESSON SET (keep it small; PREFER refining one of these over adding a new one):",
       existing.length
