@@ -415,7 +415,10 @@ export const resolveReservation = action({
         const isKitTitle = KIT_RE.test(oneTitle);
 
         const gated = await gatedGenerateObject({
-          model: await getActionLlmModel(),
+          // Haiku 4.5: resolving a renter's fuzzy item mention -> the real listing
+          // is what feeds the draft its facts. Better resolution = more threads
+          // grounded = fewer hedges/guesses. (was deepseek-flash)
+          model: await getActionLlmModel({ haiku: true }),
           schema: RESOLUTION_SCHEMA,
           messages: [
             { role: "system", content: modelPrompt() },

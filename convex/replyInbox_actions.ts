@@ -492,6 +492,44 @@ export const generateDraft = action({
     const draft = (gen.result.text ?? "").trim();
     if (!draft) return { status: "ok", draft };
 
+    // ── Grounded self-check (lever 3) ────────────────────────────
+    // ~half of threads carry no real listing facts (audit: 54% grounded), so
+    // the model is tempted to assert a price/spec/stock it doesn't actually
+    // have. When we have NO item-level listing facts, run one cheap Haiku pass
+    // that hedges any unsupported factual claim before the operator sees it.
+    // Skipped when the thread IS grounded (the model has the facts to use).
+    let checkedDraft = draft;
+    if (listingFacts.length === 0) {
+      try {
+        const groundingForCheck = factsBlock ?? "";
+        const chk = await gatedGenerateText({
+          model: await getActionLlmModel({ haiku: true }),
+          system:
+            "You fact-check an equipment-rental owner's reply drafts. You get the GROUNDING (the only true facts) and a DRAFT. " +
+            "Find any sentence that states a specific PRICE, a SPEC, what's INCLUDED, AVAILABILITY/dates, or that we OWN or have a specific item/accessory IN STOCK, which the grounding does NOT support. " +
+            "Rewrite ONLY those parts to hedge instead of asserting (e.g. 'let me check the exact price', 'I'd need to confirm availability', 'I'll check if we have that adapter'). " +
+            "Keep the tone and everything else word-for-word identical. If nothing is unsupported, return the draft unchanged. Output ONLY the reply text.",
+          prompt:
+            "GROUNDING (the only facts you may treat as true):\n" +
+            (groundingForCheck ||
+              "(no item-level facts were available — so ANY specific price / spec / what's-included / availability / 'we have it in stock' claim is UNSUPPORTED and must be hedged)") +
+            "\n\nDRAFT:\n" +
+            draft +
+            "\n\nReturn the corrected reply text only.",
+          bypass: true,
+          context: { source: "replyInbox.selfCheck", tag: "draft_selfcheck" },
+        });
+        if (!chk.skipped) {
+          const revised = (chk.result.text ?? "").trim();
+          // Keep the revision only if it's sane (non-empty, not runaway-long).
+          if (revised && revised.length <= Math.floor(draft.length * 1.6))
+            checkedDraft = revised;
+        }
+      } catch {
+        /* self-check is best-effort — fall back to the raw draft */
+      }
+    }
+
     // ── Output policing (Phase 1 guard) ──────────────────────────
     // Port of the V1 FILTER + CONTRACT layers: auto-clean unambiguous garbage
     // (internal leaks, leaked reasoning, "Hygglo", timestamps, markdown, Leo/
@@ -510,7 +548,7 @@ export const generateDraft = action({
           : c.order_step === "VERIFIED"
             ? "booked"
             : undefined;
-    const guard = guardDraft(draft, {
+    const guard = guardDraft(checkedDraft, {
       history: c.messages as { role: "owner" | "renter"; content: string }[],
       lastRenterMessage: lastRenter,
       account: c.account_slug ?? undefined,
@@ -560,7 +598,7 @@ export const generateDraft = action({
           }
         : undefined,
     });
-    const finalDraft = guard.text.trim() || draft;
+    const finalDraft = guard.text.trim() || checkedDraft;
 
     await ctx.runMutation(internal.replyInbox.setDraft, {
       thread_id,
