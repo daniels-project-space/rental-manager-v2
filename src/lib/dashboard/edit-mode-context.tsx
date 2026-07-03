@@ -70,6 +70,23 @@ export function EditModeProvider({ children }: { children: React.ReactNode }) {
   const [showAddDrawer, setShowAddDrawer] = useState(false);
   const [local, setLocal] = useState<LayoutState | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirror of `local` readable from event handlers (pagehide/visibilitychange)
+  // without re-subscribing them on every edit.
+  const localRef = useRef<LayoutState | null>(null);
+  useEffect(() => {
+    localRef.current = local;
+  }, [local]);
+
+  const saveNow = useCallback(
+    (next: LayoutState) => {
+      // Surface failures instead of silently dropping them — a swallowed error
+      // used to look like "my change didn't save / the widget came back".
+      void updateLayoutMut({ userId: USER_ID, ...next }).catch((e) => {
+        console.error("[dashboard-layout] save failed", e);
+      });
+    },
+    [updateLayoutMut],
+  );
 
   // Hydrate local state from remote whenever a fresh remote arrives AND we have no
   // pending local changes (debounce-flushed). On first load `remote` is undefined
@@ -103,11 +120,34 @@ export function EditModeProvider({ children }: { children: React.ReactNode }) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null;
-        void updateLayoutMut({ userId: USER_ID, ...next });
+        saveNow(next);
       }, DEBOUNCE_MS);
     },
-    [updateLayoutMut],
+    [saveNow],
   );
+
+  // Durability: flush a pending debounced save the instant the tab is hidden or
+  // unloaded (redeploy reload, tab close, backgrounding). Without this, a widget
+  // removed within the last DEBOUNCE_MS before leaving is lost — so it "comes
+  // back" on the next load. The flush guarantees the removal is committed.
+  useEffect(() => {
+    const flush = () => {
+      if (!debounceRef.current) return;
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+      const cur = localRef.current;
+      if (cur) saveNow(cur);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [saveNow]);
 
   const apply = useCallback(
     (mut: (prev: LayoutState) => LayoutState) => {
