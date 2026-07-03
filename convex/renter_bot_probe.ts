@@ -85,6 +85,29 @@ export const run = action({
   },
 });
 
+/**
+ * Mirrors sendRenterReply's on-send trigger EXACTLY (schedule the analyzer),
+ * without hitting Hygglo — so the automatic + immediate learning path can be
+ * validated. Returns instantly; the lesson is written by the scheduled action.
+ */
+export const simulateSend = action({
+  args: {
+    thread_id: v.string(),
+    account_slug: v.optional(v.string()),
+    sent_text: v.string(),
+    draft_text: v.optional(v.string()),
+  },
+  handler: async (ctx, a): Promise<{ scheduled: true }> => {
+    await ctx.scheduler.runAfter(0, internal.draft_learning_actions.analyzeDivergence, {
+      thread_id: a.thread_id,
+      account_slug: a.account_slug,
+      sent_text: a.sent_text,
+      draft_text: a.draft_text,
+    });
+    return { scheduled: true };
+  },
+});
+
 export const cleanup = mutation({
   args: {},
   handler: async (ctx) => {

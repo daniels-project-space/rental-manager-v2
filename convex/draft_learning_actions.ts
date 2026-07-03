@@ -27,20 +27,48 @@ function extractJson(text: string): string {
   return first >= 0 && last > first ? text.slice(first, last + 1) : text;
 }
 
+const tokenSet = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) ?? []);
+
+/**
+ * How the owner used the draft (drives what/whether to learn):
+ *   scratch  — no draft was shown → they wrote their own
+ *   rewrote  — a draft existed but they kept little of it
+ *   added    — kept most of the draft but added meaningful text on top (draft was incomplete)
+ *   null     — used it verbatim / trivial tweak → nothing to learn
+ */
+function classifyDraftUse(sent: string, draft: string): "scratch" | "rewrote" | "added" | null {
+  if (sent.trim().length < 20) return null;
+  if (draft.trim().length === 0) return "scratch";
+  const D = tokenSet(draft);
+  const S = tokenSet(sent);
+  if (!D.size) return "scratch";
+  let keptN = 0;
+  for (const x of D) if (S.has(x)) keptN++;
+  const kept = keptN / D.size;
+  let added = 0;
+  for (const x of S) if (!D.has(x)) added++;
+  if (kept < 0.6) return "rewrote";
+  if (added >= 6) return "added";
+  return null;
+}
+
 export const analyzeDivergence = internalAction({
   args: {
     thread_id: v.string(),
     account_slug: v.optional(v.string()),
     sent_text: v.string(),
     draft_text: v.optional(v.string()),
-    // "scratch" | "rewrote" | "added" — how the owner used the draft.
-    mode: v.optional(v.string()),
   },
-  handler: async (ctx, { thread_id, account_slug, sent_text, draft_text, mode }) => {
+  handler: async (ctx, { thread_id, account_slug, sent_text, draft_text }) => {
     const draft =
       draft_text ??
       (await ctx.runQuery(internal.draft_learning.getDraftText, { thread_id })) ??
       "";
+
+    // Classify how the owner used the draft; only learn when they didn't just
+    // use it as-is. This is the whole trigger — it runs on every real send.
+    const mode = classifyDraftUse(sent_text, draft);
+    if (!mode) return;
 
     let transcript = "";
     try {
