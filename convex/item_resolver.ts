@@ -65,7 +65,7 @@ let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
  *  are stable. */
 const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
 
-export async function getActionLlmModel(opts?: { strong?: boolean }) {
+export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boolean }) {
   const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
   if (useXai) {
     if (!_xai) {
@@ -85,6 +85,12 @@ export async function getActionLlmModel(opts?: { strong?: boolean }) {
     return _openrouter(
       process.env.CHAT_MODEL_SMART ?? "anthropic/claude-sonnet-4.6",
     );
+  }
+  // Haiku 4.5 — the default draft tier now. Much stronger than deepseek-flash at
+  // tracking context + following the grounding, cheap/fast enough for every draft.
+  // Anthropic is its own provider, so no deepseek provider pin.
+  if (opts?.haiku) {
+    return _openrouter(process.env.HAIKU_MODEL ?? "anthropic/claude-haiku-4.5");
   }
   return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash", {
     extraBody: { provider: PROVIDER_PIN },

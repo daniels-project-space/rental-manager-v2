@@ -474,14 +474,14 @@ export const generateDraft = action({
       .filter((l) => l !== null)
       .join("\n");
 
+    // Haiku 4.5 is the default draft model now — much smarter than the old
+    // deepseek-flash at tracking context and following the grounding, and
+    // cheap/fast enough for every draft. Genuine high-stakes turns (refund,
+    // damage-on-shipped, legal, big-£) still escalate to Sonnet when the master
+    // "Escalate to Sonnet" toggle is on; everything else runs on Haiku.
+    const useStrongModel = highStakes && c.escalate_to_sonnet !== false;
     const gen = await gatedGenerateText({
-      // Drafts default to the STRONG model (Sonnet). deepseek-v4-flash was the
-      // real bottleneck — context-blind, assumption-prone, hallucinated specs —
-      // no amount of grounding/rules fixes a weak base model. The "Escalate to
-      // Sonnet" master toggle is now the escape hatch: turn it OFF to drop the
-      // NON-high-stakes drafts back to the cheap model to save cost. High-stakes
-      // turns always use Sonnet regardless.
-      model: await getActionLlmModel({ strong: highStakes || c.escalate_to_sonnet !== false }),
+      model: await getActionLlmModel(useStrongModel ? { strong: true } : { haiku: true }),
       system,
       prompt,
       bypass: true,
