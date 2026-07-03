@@ -163,6 +163,10 @@ function buildRichItems(
 // skipped and the estimate is omitted entirely if nothing matched.
 
 const DAY_MS = 86_400_000;
+// Owner's share of the rental after Hygglo's ~20% lender fee — used to estimate
+// earnings when there's no confirmed payout yet. Verified on a live order:
+// £176 lender earnings on a £220 rental (0.8). See feature_rmv2_order_edit_api.
+const OWNER_SHARE = 0.8;
 // Squash to a case/space/punctuation-free key. The catalog stores camelCase,
 // punctuation-smushed canonicals ("CanonR5", "SonyFX6", "Aputure300x"), so token
 // overlap is hopeless — but substring containment on the squashed key is precise.
@@ -546,14 +550,15 @@ async function assembleTile(
   //  2. A date-less INQUIRY (no reservation) whose chat mentions a time frame
   //     ("this weekend", "for 3 days", "26-28") → parse the length and price the
   //     listing the renter is asking about. This is the common, useful case.
+  // The rental length used for the estimate, in priority order:
+  //   1. real requested/booked dates  → price over that range
+  //   2. a time frame mentioned in the chat ("weekend", "3 days", "26-28")
+  //   3. NOTHING said → assume ONE DAY (Daniel: "if no time is talked about or
+  //      requested assume one day price for that item").
   let estimateGbp: number | null = null;
   let estimateDays: number | null = null;
-  if (priceIndex && richItems.length > 0) {
-    if (
-      reservation?.gross_paid_gbp == null &&
-      reservation?.start_date &&
-      reservation?.end_date
-    ) {
+  if (priceIndex && richItems.length > 0 && reservation?.gross_paid_gbp == null) {
+    if (reservation?.start_date && reservation?.end_date) {
       const est = computeEstimate(
         priceIndex,
         richItems,
@@ -562,14 +567,16 @@ async function assembleTile(
       );
       estimateGbp = est.gbp;
       estimateDays = est.days;
-    } else if (!reservation) {
-      const days = parseMentionedDays(latestMsg?.body_text);
-      if (days) {
-        estimateGbp = estimateForDays(priceIndex, richItems, days);
-        estimateDays = estimateGbp != null ? days : null;
-      }
+    } else {
+      const days = parseMentionedDays(latestMsg?.body_text) ?? 1;
+      estimateGbp = estimateForDays(priceIndex, richItems, days);
+      estimateDays = estimateGbp != null ? days : null;
     }
   }
+  // Owner earnings for the headline: the real payout when known, else ~80% of
+  // the estimated rental (Hygglo's lender fee).
+  const estimateEarningsGbp =
+    estimateGbp != null ? Math.round(estimateGbp * OWNER_SHARE) : null;
 
   // Double-booking check for dated reservations/requests (null otherwise).
   const availability = computeAvailability(reservation, availCtx);
@@ -609,6 +616,7 @@ async function assembleTile(
     delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
     estimate_gbp: estimateGbp,
     estimate_days: estimateDays,
+    estimate_earnings_gbp: estimateEarningsGbp,
     availability,
     currency: reservation?.currency ?? "GBP",
     items: richItems.slice(0, 6),

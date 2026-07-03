@@ -145,6 +145,7 @@ export interface ReplyTileData {
   delivery_fee_gbp: number | null;
   estimate_gbp: number | null;
   estimate_days: number | null;
+  estimate_earnings_gbp: number | null;
   availability: TileAvailability | null;
   currency: string;
   items: RichItem[];
@@ -440,13 +441,12 @@ function urgency(elapsedMs: number) {
   return { color: "#94a3b8", caption: "unanswered", glow: false, blink: false };
 }
 function contextLine(t: ReplyTileData): string {
+  // Money is shown separately by MoneyHeadline now — keep this to dates + pickup.
   const parts: string[] = [];
   const p = fmtDate(t.start_date);
   if (p) parts.push(`${p} → ${fmtDate(t.end_date) ?? "?"}`);
   if (t.pickup_method && t.pickup_method !== "unknown")
     parts.push(t.pickup_method[0].toUpperCase() + t.pickup_method.slice(1));
-  const m = fmtMoney(t.gross_paid_gbp ?? t.net_to_owner_gbp, t.currency);
-  if (m) parts.push(m);
   return parts.join("  ·  ");
 }
 function itemLine(t: ReplyTileData): string {
@@ -498,6 +498,59 @@ function AvailabilityBadge({ a, compact }: { a: TileAvailability; compact?: bool
         >
           incl pending
         </span>
+      )}
+    </div>
+  );
+}
+
+// Prospective money, scaled in £100 steps — bigger + warmer + more glow the more
+// the rental is worth. tier 0 <£100 … tier 4 £400+ (bright gold, pulsing).
+const MONEY_TIERS = [
+  { size: 22, color: "#86efac", ring: "rgba(134,239,172,0.22)", glow: "none", pulse: false },
+  { size: 27, color: "#34d399", ring: "rgba(52,211,153,0.30)", glow: "0 0 16px -6px rgba(52,211,153,0.65)", pulse: false },
+  { size: 33, color: "#5eead4", ring: "rgba(45,212,191,0.38)", glow: "0 0 22px -5px rgba(45,212,191,0.7)", pulse: false },
+  { size: 39, color: "#fbbf24", ring: "rgba(251,191,36,0.45)", glow: "0 0 26px -4px rgba(251,191,36,0.75)", pulse: true },
+  { size: 46, color: "#fcd34d", ring: "rgba(251,191,36,0.6)", glow: "0 0 34px -2px rgba(251,191,36,0.9)", pulse: true },
+] as const;
+
+/**
+ * The rental's prospective value + owner earnings, sized/coloured by how much
+ * money it is (in £100 steps). Uses the confirmed price when booked, else the
+ * estimate (priced from the items × the requested/mentioned days, default 1).
+ */
+function MoneyHeadline({ tile, compact = false }: { tile: ReplyTileData; compact?: boolean }) {
+  const revenue = tile.gross_paid_gbp ?? tile.estimate_gbp;
+  if (revenue == null) return null;
+  const earnings = tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp;
+  const isEstimate = tile.gross_paid_gbp == null;
+  const tier = Math.max(0, Math.min(4, Math.floor(revenue / 100)));
+  const T = MONEY_TIERS[tier];
+  const size = compact ? Math.round(T.size * 0.82) : T.size;
+  return (
+    <div
+      className="inline-flex items-center gap-2.5 rounded-xl px-3 py-1.5"
+      style={{
+        background: `${T.color}14`,
+        border: `1px solid ${T.ring}`,
+        boxShadow: T.glow,
+        animation: T.pulse ? "rgMoney 2.2s ease-in-out infinite" : undefined,
+      }}
+    >
+      <div className="flex flex-col leading-none">
+        <span className="font-extrabold tabular-nums tracking-tight" style={{ fontSize: size, color: T.color }}>
+          {fmtMoney(revenue, tile.currency)}
+        </span>
+        <span className="text-[9px] uppercase tracking-[0.1em] mt-1" style={{ color: `${T.color}b3` }}>
+          {isEstimate ? `est${tile.estimate_days ? ` · ${tile.estimate_days}d` : ""}` : "booked"}
+        </span>
+      </div>
+      {earnings != null && (
+        <div className="flex flex-col leading-none border-l pl-2.5" style={{ borderColor: `${T.color}33` }}>
+          <span className={`${compact ? "text-[15px]" : "text-[18px]"} font-bold tabular-nums text-[#d6f5e4]`}>
+            {fmtMoney(earnings, tile.currency)}
+          </span>
+          <span className="text-[9px] uppercase tracking-[0.1em] text-[#7f9c8b] mt-1">you keep</span>
+        </div>
       )}
     </div>
   );
@@ -730,19 +783,9 @@ function ReplyCard({
         <div className="text-[12px] text-[#8b92a0] line-clamp-2">“{tile.preview}”</div>
       )}
       {tile.location && <LocationBadge loc={tile.location} compact />}
-      {tile.estimate_gbp != null && (
-        <div className="inline-flex items-center gap-1.5 rounded-md border border-sky-400/30 bg-sky-400/[0.08] px-1.5 py-0.5 self-start">
-          <span className="text-[8px] font-bold uppercase tracking-[0.12em] text-sky-300/90">
-            Est
-          </span>
-          <span className="text-[11px] font-semibold text-sky-100 leading-none">
-            {fmtMoney(tile.estimate_gbp, tile.currency)}
-          </span>
-          {tile.estimate_days != null && (
-            <span className="text-[10px] text-sky-200/70">
-              · {tile.estimate_days}d
-            </span>
-          )}
+      {(tile.gross_paid_gbp != null || tile.estimate_gbp != null) && (
+        <div className="self-start">
+          <MoneyHeadline tile={tile} compact />
         </div>
       )}
       {tile.availability && (
@@ -1212,6 +1255,8 @@ function OrderEditor({
   const [pricePreview, setPricePreview] = useState<string | null>(null);
   const [showCal, setShowCal] = useState(false);
   const [unavail, setUnavail] = useState<{ dates: Set<string>; minDays: number }>({ dates: new Set(), minDays: 1 });
+  // Collapsed by default so the conversation stays visible — expand to edit.
+  const [expanded, setExpanded] = useState(false);
 
   async function refresh() {
     try {
@@ -1339,11 +1384,29 @@ function OrderEditor({
   const canDiscount = a.change_price || a.partial_refund;
   return (
     <div className="border-b border-white/[0.07] bg-[#0d0f13]">
-      <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
-        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#7a8190]">
-          Booking · edit
+      {/* Collapsed summary — click to expand the editor. Keeps the chat visible. */}
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-white/[0.02]"
+      >
+        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#7a8190] shrink-0">
+          Booking
         </span>
-        {dryRun && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-semibold">TEST</span>}
+        {!expanded && (
+          <span className="text-[11.5px] text-[#9aa0ad] truncate">
+            {st.items.length} item{st.items.length === 1 ? "" : "s"} · {money(st.price.order_price, st.currency)} · {prettyDay(st.dates.start)}
+          </span>
+        )}
+        {dryRun && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-semibold shrink-0">TEST</span>}
+        <span className="ml-auto text-[11px] font-medium text-sky-300 shrink-0">
+          {expanded ? "Done ▴" : "✎ Edit ▾"}
+        </span>
+      </button>
+
+      {expanded && (
+      <>
+      <div className="flex items-center gap-2 px-4 pb-1">
+        <span className="text-[10px] uppercase tracking-[0.1em] text-[#5f6675]">items · price · dates</span>
         <button onClick={() => void refresh()} title="Refresh from Hygglo" className="ml-auto text-[11px] text-[#7a8190] hover:text-white">↻</button>
       </div>
 
@@ -1469,6 +1532,8 @@ function OrderEditor({
           )}
         </div>
       </div>
+      </>
+      )}
 
       {note && (
         <div className={`px-4 pb-2 text-[11px] ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
@@ -1752,19 +1817,9 @@ export function ReplyModal({
             {tile.has_reservation && contextLine(tile) && (
               <div className="text-[12px] text-[#7a8190] mt-0.5">{contextLine(tile)}</div>
             )}
-            {tile.estimate_gbp != null && (
-              <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-sky-400/30 bg-sky-400/[0.08] px-2.5 py-1">
-                <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-sky-300/90">
-                  Estimate
-                </span>
-                <span className="text-[14px] font-semibold text-sky-100 leading-none">
-                  {fmtMoney(tile.estimate_gbp, tile.currency)}
-                </span>
-                {tile.estimate_days != null && (
-                  <span className="text-[11px] text-sky-200/70">
-                    for {tile.estimate_days} day{tile.estimate_days === 1 ? "" : "s"}
-                  </span>
-                )}
+            {(tile.gross_paid_gbp != null || tile.estimate_gbp != null) && (
+              <div className="mt-2">
+                <MoneyHeadline tile={tile} />
               </div>
             )}
             {tile.availability && (
@@ -2175,6 +2230,7 @@ export function ReplyInbox() {
       <style>{`
         @keyframes rgGlow { 0%,100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 18px -4px var(--u); } }
         @keyframes rgBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.3; } }
+        @keyframes rgMoney { 0%,100% { box-shadow: 0 0 18px -8px rgba(251,191,36,0.55); } 50% { box-shadow: 0 0 30px -4px rgba(251,191,36,0.95); } }
       `}</style>
       {/* Header — aperture mark + title + request pill + controls */}
       <div className="flex items-center gap-3 mb-4">
