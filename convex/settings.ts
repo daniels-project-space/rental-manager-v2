@@ -62,8 +62,26 @@ export const update = mutation({
     if (fields.hub_max_km !== undefined) patch.hub_max_km = fields.hub_max_km;
     if (fields.draft_epoch !== undefined) patch.draft_epoch = fields.draft_epoch;
 
+    // WIRE-THROUGH: when a setting that feeds the AI draft / renter-facing bot
+    // changes, bump draft_epoch so every CACHED draft is marked stale and
+    // regenerates with the new setting (widgets read settings reactively already;
+    // drafts are cached, so they need this nudge). Skip if the caller is itself
+    // setting draft_epoch, or only changed poll/gate fields the draft ignores.
+    const DRAFT_FIELDS: (keyof typeof fields)[] = [
+      "pickup_hours",
+      "escalate_to_sonnet",
+      "availability_include_pending",
+      "hub_max_km",
+      "hub_heavy_max_km",
+      "ai_boost_rate",
+      "ai_active_from",
+    ];
+    if (fields.draft_epoch === undefined && DRAFT_FIELDS.some((f) => fields[f] !== undefined)) {
+      patch.draft_epoch = ((existing as { draft_epoch?: number }).draft_epoch ?? 0) + 1;
+    }
+
     await ctx.db.patch(existing._id, patch);
-    return { ok: true };
+    return { ok: true, draft_epoch: patch.draft_epoch };
   },
 });
 
