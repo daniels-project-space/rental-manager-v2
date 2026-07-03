@@ -475,9 +475,11 @@ export const generateDraft = action({
       .join("\n");
 
     const gen = await gatedGenerateText({
-      // Master "Escalate to Sonnet" toggle forces the strong model for every
-      // draft; otherwise only high-stakes turns escalate.
-      model: await getActionLlmModel({ strong: highStakes || !!c.escalate_to_sonnet }),
+      // Master "Escalate to Sonnet" toggle GATES escalation (tooltip: "Sonnet for
+      // complex responses"). On (default) → high-stakes turns use Sonnet; off →
+      // everything stays on the cheaper model (operator's cost choice). Was a
+      // decorative toggle before.
+      model: await getActionLlmModel({ strong: highStakes && c.escalate_to_sonnet !== false }),
       system,
       prompt,
       bypass: true,
