@@ -258,6 +258,31 @@ function nextPickupLeadup(pickups: ChipData[]): { fillPct: number; countdown: st
   return { fillPct, countdown: fmtCountdown(untilMs), soon: untilH <= 6 };
 }
 
+/**
+ * Soonest still-upcoming pickup OR return on a day, in ms (Infinity if the day
+ * has nothing left ahead of now). Used to sort the strip so the day with the
+ * next pickup/return is first.
+ */
+function dayNextEventMs(day: DayData): number {
+  const now = Date.now();
+  let best = Infinity;
+  const consider = (dateStr: string | null | undefined, timeStr: string | null) => {
+    if (!dateStr) return;
+    const d = new Date(dateStr + "T00:00:00");
+    if (timeStr) {
+      const [h, m] = timeStr.split(":").map(Number);
+      d.setHours(h, m || 0, 0, 0);
+    } else {
+      d.setHours(23, 59, 59, 999);
+    }
+    const ms = d.getTime();
+    if (ms >= now && ms < best) best = ms;
+  };
+  for (const c of day.pickups) consider(c.pickupDate ?? c.startDate, c.pickupTime);
+  for (const c of day.returns ?? []) consider(c.returnDate ?? c.endDate, c.returnTime);
+  return best;
+}
+
 /** Split a `notes` blob into bullet lines (handles newline + "• "/"- " prefixes). */
 function splitNotes(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -1145,7 +1170,16 @@ export function CalendarStrip() {
           className="flex gap-2 overflow-x-auto pb-1"
           style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
         >
-          {(data as DayData[]).map((day) => (
+          {[...(data as DayData[])]
+            .sort((a, b) => {
+              // Day with the soonest upcoming pickup/return first; days with
+              // nothing left ahead (Infinity) fall to the end, kept in date order.
+              const ea = dayNextEventMs(a);
+              const eb = dayNextEventMs(b);
+              if (ea !== eb) return ea - eb;
+              return a.date.localeCompare(b.date);
+            })
+            .map((day) => (
             <DayCard
               key={day.date}
               day={day}

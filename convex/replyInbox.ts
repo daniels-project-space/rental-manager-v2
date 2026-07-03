@@ -1355,6 +1355,10 @@ export const getThreadContext = internalQuery({
       delivery_policy: delivery_policy ?? null,
       response_style: response_style ?? null,
       business_hours: businessHoursText,
+      // Master-settings toggle: when on, the operator wants every draft on the
+      // stronger model (Sonnet), not just high-stakes ones. Wired into
+      // generateDraft's model routing (was a decorative Settings toggle).
+      escalate_to_sonnet: settingsRow?.escalate_to_sonnet ?? false,
       renter_name:
         renter?.display_name ?? reservation?.renter_name ?? "the renter",
       renter_rating: renter?.hygglo_rating ?? null,

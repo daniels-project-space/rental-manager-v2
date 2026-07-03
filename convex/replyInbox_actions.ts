@@ -475,7 +475,9 @@ export const generateDraft = action({
       .join("\n");
 
     const gen = await gatedGenerateText({
-      model: await getActionLlmModel({ strong: highStakes }),
+      // Master "Escalate to Sonnet" toggle forces the strong model for every
+      // draft; otherwise only high-stakes turns escalate.
+      model: await getActionLlmModel({ strong: highStakes || !!c.escalate_to_sonnet }),
       system,
       prompt,
       bypass: true,
