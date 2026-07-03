@@ -32,6 +32,7 @@ interface RawPrice {
 interface RawProduct {
   id?: number;
   name?: string;
+  description?: string;
   isPublished?: boolean;
   prices?: RawPrice[];
   images?: Array<{ fullSizeUrl?: string; thumbnailUrl?: string }>;
@@ -83,6 +84,10 @@ export const rescan = action({
           daily_price: dayPrice(p),
           is_published: p.isPublished !== false,
           public_url: p.publicUrl,
+          // The list endpoint omits descriptions; leave undefined so the draft
+          // path lazily fetches + caches the real "Included in this rental" text.
+          description:
+            p.description && p.description.trim() ? p.description.slice(0, 600) : undefined,
         }));
       const out = await ctx.runMutation(
         internal.online_listings.replaceForAccount,

@@ -75,6 +75,7 @@ import type * as lib_delivery_weight from "../lib/delivery_weight.js";
 import type * as lib_denial_classifier from "../lib/denial_classifier.js";
 import type * as lib_double_booking from "../lib/double_booking.js";
 import type * as lib_draft_guard from "../lib/draft_guard.js";
+import type * as lib_draft_playbook from "../lib/draft_playbook.js";
 import type * as lib_effectiveDates from "../lib/effectiveDates.js";
 import type * as lib_feature_flags_helper from "../lib/feature_flags_helper.js";
 import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
@@ -93,6 +94,7 @@ import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.
 import type * as lib_renter_dna from "../lib/renter_dna.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
+import type * as lib_reservations_hyggloTiles from "../lib/reservations/hyggloTiles.js";
 import type * as lib_reservations_itemUnits from "../lib/reservations/itemUnits.js";
 import type * as lib_reservations_monthRevenue from "../lib/reservations/monthRevenue.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
@@ -153,6 +155,7 @@ import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as rate_limit_config from "../rate_limit_config.js";
 import type * as renter_bot_batch from "../renter_bot_batch.js";
 import type * as renter_bot_drafts from "../renter_bot_drafts.js";
+import type * as renter_bot_probe from "../renter_bot_probe.js";
 import type * as renter_bot_seed from "../renter_bot_seed.js";
 import type * as renter_bot_tools from "../renter_bot_tools.js";
 import type * as renter_reviews from "../renter_reviews.js";
@@ -260,6 +263,7 @@ declare const fullApi: ApiFromModules<{
   "lib/denial_classifier": typeof lib_denial_classifier;
   "lib/double_booking": typeof lib_double_booking;
   "lib/draft_guard": typeof lib_draft_guard;
+  "lib/draft_playbook": typeof lib_draft_playbook;
   "lib/effectiveDates": typeof lib_effectiveDates;
   "lib/feature_flags_helper": typeof lib_feature_flags_helper;
   "lib/gatedGenerate": typeof lib_gatedGenerate;
@@ -278,6 +282,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_dna": typeof lib_renter_dna;
   "lib/renters": typeof lib_renters;
   "lib/reservations/accounts": typeof lib_reservations_accounts;
+  "lib/reservations/hyggloTiles": typeof lib_reservations_hyggloTiles;
   "lib/reservations/itemUnits": typeof lib_reservations_itemUnits;
   "lib/reservations/monthRevenue": typeof lib_reservations_monthRevenue;
   "lib/reservations/predicates": typeof lib_reservations_predicates;
@@ -338,6 +343,7 @@ declare const fullApi: ApiFromModules<{
   rate_limit_config: typeof rate_limit_config;
   renter_bot_batch: typeof renter_bot_batch;
   renter_bot_drafts: typeof renter_bot_drafts;
+  renter_bot_probe: typeof renter_bot_probe;
   renter_bot_seed: typeof renter_bot_seed;
   renter_bot_tools: typeof renter_bot_tools;
   renter_reviews: typeof renter_reviews;

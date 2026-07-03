@@ -2169,6 +2169,7 @@ export default defineSchema({
     product_id: v.number(),
     name: v.string(),
     image: v.optional(v.string()),
+    description: v.optional(v.string()),
     daily_price: v.optional(v.number()),
     is_published: v.boolean(),
     public_url: v.optional(v.string()),

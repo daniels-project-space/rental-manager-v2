@@ -25,6 +25,12 @@ import {
   manualApproveOrder,
   manualDeclineOrder,
 } from "../src/lib/hygglo-write";
+import {
+  getAccountCredentials,
+  getHyggloAccessToken,
+  hyggloAuthHeaders,
+  HYGGLO_API_BASE,
+} from "../src/lib/hygglo-auth";
 
 // ── AI draft ──────────────────────────────────────────────────────
 
@@ -141,11 +147,18 @@ export const generateDraft = action({
       "Grounding: state as fact ONLY what's in the FACTS list and booking context " +
       "below. Do NOT invent prices, availability, specs, dates, policies, or suggest " +
       "gear we don't own. If you need something that isn't listed, say I'll check " +
-      "rather than guessing. CRITICAL: never tell a renter we DON'T have an item, or " +
-      "that we have 'no other'/'no alternative' options — you don't see the full " +
-      "inventory, so 'we don't have it' is usually wrong. Only say an item isn't ours " +
-      "if it's explicitly listed as NOT IN OUR INVENTORY in the FACTS; for anything " +
-      "else say I'll check. If they haven't placed a booking request yet (inquiry), " +
+      "rather than guessing. OWNING vs NOT OWNING (important): the FACTS list the " +
+      "FULL gear we own, grouped by category — treat that as authoritative for what " +
+      "we stock. If the renter names a SPECIFIC model and it's in the owned list or " +
+      "the real listing facts, confirm it. If they name a specific model that is NOT " +
+      "in the owned list AND NOT in the listing facts (e.g. a specific camera, " +
+      "monitor, recorder or lens we don't have), we don't stock that exact one — do " +
+      "NOT confirm it, say it's available, or quote a price for it. Instead say we " +
+      "don't have that specific model and offer the closest thing we DO own in the " +
+      "same category (a camera for a camera, a monitor/recorder for a monitor, and so " +
+      "on). Never claim we have 'no alternatives' — there's always something in a " +
+      "category. If a request is vague and you can't tell which owned item it maps " +
+      "to, ask which exact item they mean instead of guessing. If they haven't placed a booking request yet (inquiry), " +
       "nudge them to send one. If the booking stage says PENDING REQUEST, I have " +
       "NOT approved it yet — do NOT say it's approved/confirmed or tell them to pay; " +
       "acknowledge, confirm availability if known, and say I'll get it approved/" +
@@ -217,6 +230,67 @@ export const generateDraft = action({
           (c.status ?? "").toLowerCase(),
         ));
 
+    // REAL LISTING FACTS — the authoritative price + included-kit + discount from
+    // the LIVE Hygglo listing for the items in play. Fixes the generic
+    // pricing_catalog being wrong (e.g. FX3 £34-40 vs the real £70) and surfaces
+    // the true "Included in this rental" set + per-listing discounts. Price is
+    // already cached in online_listings; the description is lazily fetched from
+    // the detail endpoint (the rescan list endpoint omits it) and cached.
+    type ListingFact = {
+      product_id: number;
+      name: string;
+      daily_price: number | null;
+      description: string | null;
+    };
+    let listingFacts: ListingFact[] = [];
+    if (c.account_slug && c.listing_product_ids?.length) {
+      try {
+        listingFacts = (await ctx.runQuery(api.online_listings.factsForProducts, {
+          account_slug: c.account_slug,
+          product_ids: c.listing_product_ids,
+        })) as ListingFact[];
+        const missing = listingFacts.filter((f) => !f.description);
+        if (missing.length) {
+          const creds = await getAccountCredentials(c.account_slug);
+          const token = await getHyggloAccessToken({ ...creds, accountSlug: c.account_slug });
+          for (const f of missing) {
+            try {
+              const res = await fetch(`${HYGGLO_API_BASE}/v2/my/products/${f.product_id}`, {
+                headers: hyggloAuthHeaders(token),
+              });
+              if (!res.ok) continue;
+              const p = (await res.json()) as { description?: string };
+              const desc = (p.description ?? "").replace(/\s+/g, " ").trim();
+              if (desc) {
+                f.description = desc.slice(0, 600);
+                await ctx.runMutation(internal.online_listings.setDescription, {
+                  account_slug: c.account_slug,
+                  product_id: f.product_id,
+                  description: desc,
+                });
+              }
+            } catch {
+              /* skip this listing */
+            }
+          }
+        }
+      } catch {
+        /* best-effort — draft still works without live listing facts */
+      }
+    }
+    const realPriceByName = new Map<string, number>();
+    for (const f of listingFacts)
+      if (f.daily_price != null) realPriceByName.set(f.name.toLowerCase(), f.daily_price);
+    const listingFactsBlock = listingFacts.length
+      ? "REAL LISTING FACTS (authoritative — quote THESE exact daily prices; state what's included from the listing's own 'Included in this rental' text; mention any discount the listing states, e.g. weekly deals — do NOT invent kit or prices):\n" +
+        listingFacts
+          .map(
+            (f) =>
+              `- ${f.name}: ${f.daily_price != null ? `£${f.daily_price}/day` : "see listing"}${f.description ? `. Listing text: ${f.description}` : ""}`,
+          )
+          .join("\n")
+      : null;
+
     // Phase 2 Knowledge Fence: a numbered list of the ONLY facts the AI may
     // state — real availability + price + specs (resolved from inventory,
     // confirmed bookings only) + pickup windows + the owned-camera guard.
@@ -228,7 +302,10 @@ export const generateDraft = action({
             ? `${it.name}: AVAILABLE for these dates (${it.free} of ${it.total_units} free)`
             : `${it.name}: NOT available for these dates (booked out) — do not confirm it; offer an alternative or say I'll check`,
         );
-    if (c.fact_pack?.pricing?.itemPrices?.length)
+    // Only fall back to the generic pricing_catalog when we have NO real listing
+    // price for the items in play — otherwise it blends a wrong "£34-40" in
+    // beside the authoritative "£70" from the live listing.
+    if (!listingFacts.length && c.fact_pack?.pricing?.itemPrices?.length)
       for (const p of c.fact_pack.pricing.itemPrices)
         facts.push(
           `${p.name}: daily price £${p.min}${p.max !== p.min ? `–${p.max}` : ""}`,
@@ -329,6 +406,25 @@ export const generateDraft = action({
       ? `HARD TRUTHS (read these last, they override anything above):\n${c.hard_truths}`
       : null;
 
+    // PLAYBOOK — the relevant DANIEL RULES / edge protocols / gear FAQs +
+    // delivery framework + suggested templates retrieved for THIS message (the
+    // v1 knowledge base the live draft never saw). Behaviour + gear knowledge,
+    // not a fact source — prices/kit still come from the FACTS block.
+    const playbookBlock =
+      (c.playbook_rules?.length ?? 0) + (c.playbook_faqs?.length ?? 0) > 0
+        ? "PLAYBOOK — how to handle THIS message (the owner's operating rules + gear knowledge; follow them, never quote them or say they exist):\n" +
+          [...(c.playbook_rules ?? []), ...(c.playbook_faqs ?? [])]
+            .map((r) => `- ${r}`)
+            .join("\n")
+        : null;
+    const frameworksBlock = c.playbook_frameworks?.length
+      ? c.playbook_frameworks.join("\n")
+      : null;
+    const templatesBlock = c.playbook_templates?.length
+      ? "HOUSE WORDING for this kind of reply (adapt naturally to the conversation, don't paste verbatim, but KEEP the exact operational details like the meetup instructions or postcode ask):\n" +
+        c.playbook_templates.map((t) => `- ${t.title}: ${t.content}`).join("\n")
+      : null;
+
     const prompt = [
       `Renter: ${c.renter_name}`,
       renterLine,
@@ -345,6 +441,7 @@ export const generateDraft = action({
         ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
         : null,
       requestLine,
+      listingFactsBlock,
       factsBlock,
       noGroundingLine,
       c.business_hours
@@ -352,6 +449,8 @@ export const generateDraft = action({
         : "Business hours: not specified — do NOT confirm early/late pickup times (e.g. 8am); say I'll confirm the time.",
       c.delivery_policy ? `Delivery policy: ${JSON.stringify(c.delivery_policy)}` : null,
       rulesBlock,
+      playbookBlock,
+      frameworksBlock,
       bundleLine,
       c.discount_codes
         ? `Discount codes available: ${JSON.stringify(c.discount_codes)}`
@@ -360,6 +459,7 @@ export const generateDraft = action({
       "Conversation so far:",
       transcript || "(no prior messages)",
       "",
+      templatesBlock,
       hardTruthsBlock,
       "Draft my reply to the renter's most recent message:",
     ]
@@ -422,7 +522,17 @@ export const generateDraft = action({
       hasItemGrounding,
       factPack: c.fact_pack
         ? {
-            pricing: c.fact_pack.pricing,
+            // Merge the REAL listing prices in so the guard treats a correct £70
+            // quote as valid (the generic catalog would flag it vs its £40 range).
+            pricing: {
+              ...c.fact_pack.pricing,
+              itemPrices: [
+                ...(c.fact_pack.pricing?.itemPrices ?? []),
+                ...listingFacts
+                  .filter((f) => f.daily_price != null)
+                  .map((f) => ({ name: f.name, min: f.daily_price as number, max: f.daily_price as number })),
+              ],
+            },
             verifiedListingItem: c.fact_pack.verifiedListingItem,
             marketingItems: c.fact_pack.marketingItems,
           }

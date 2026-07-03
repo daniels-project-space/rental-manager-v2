@@ -25,6 +25,7 @@ import {
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
+import { selectPlaybook, type MemoryRow } from "./lib/draft_playbook";
 import {
   haversineKm,
   tooHeavyForLocation,
@@ -1223,6 +1224,21 @@ export const getThreadContext = internalQuery({
         if (tok(titles, model) && !tok(ownedLc, model))
           unfulfillable.push(model.toUpperCase());
     }
+    // Message-based not-owned scan — catch specific models the renter NAMES that
+    // we don't stock, so the draft offers the owned alternative instead of
+    // hallucinating (e.g. "we've got the Atomos Ninja V" when we own the Shogun/
+    // Shinobi). Each entry carries the alternative hint into the FACTS.
+    {
+      const renterLc = renterMsgs.slice(-3).join(" ").toLowerCase();
+      const ownedAllLc = Object.values(owned_inventory).flat().join(" ").toLowerCase();
+      const NOT_OWNED_NAMED: Array<{ match: string; label: string }> = [
+        { match: "ninja v", label: "Atomos Ninja V (recorder-monitor) — we DON'T stock it; offer our Atomos Shogun (records) or Atomos Shinobi (monitor)" },
+        { match: "atomos ninja", label: "Atomos Ninja V — we DON'T stock it; offer our Atomos Shogun / Shinobi" },
+      ];
+      for (const n of NOT_OWNED_NAMED)
+        if (renterLc.includes(n.match) && !ownedAllLc.includes(n.match))
+          unfulfillable.push(n.label);
+    }
     const unfulfillableUniq = [...new Set(unfulfillable)];
 
     // Phase 5: a gentle, money-saving bundle suggestion — ONLY early-funnel
@@ -1258,6 +1274,32 @@ export const getThreadContext = internalQuery({
       }
     }
 
+    // PLAYBOOK — the relevant DANIEL RULES / edge protocols / gear FAQs /
+    // templates + delivery framework, retrieved from the `memories` corpus by
+    // the renter's latest messages + intent + stage. The live draft never read
+    // these before (only the 37-row `rules`); this is the #1 v1→v2 gap. FACTS
+    // still come from the FactPack — this is behaviour + policy + gear knowledge.
+    let playbook: {
+      rules: string[];
+      faqs: string[];
+      templates: Array<{ title: string; content: string }>;
+      frameworks: string[];
+      intents: string[];
+    } = { rules: [], faqs: [], templates: [], frameworks: [], intents: [] };
+    try {
+      const mems = await ctx.db.query("memories").collect();
+      const renterText = renterMsgs.slice(-4).join("  ");
+      playbook = selectPlaybook({
+        memories: mems as unknown as MemoryRow[],
+        renterText,
+        stage: conversation_stage,
+        account: slug,
+        itemNames: richItems.map((i) => i.name),
+      });
+    } catch {
+      /* best-effort — the draft still works without the playbook */
+    }
+
     return {
       account_slug: slug ?? null,
       location: computeLocation(reservation, slug, await loadHubBook(ctx)),
@@ -1275,6 +1317,20 @@ export const getThreadContext = internalQuery({
       house_rules,
       hard_truths: hard_truths ?? null,
       bundle_suggestion,
+      // Product ids in play — generateDraft fetches their REAL listing facts
+      // (price + included kit + discount) to override the generic catalog.
+      listing_product_ids: [
+        ...new Set(
+          lineItems
+            .map((li) => li.product_id)
+            .filter((x): x is number => typeof x === "number"),
+        ),
+      ].slice(0, 6),
+      playbook_rules: playbook.rules,
+      playbook_faqs: playbook.faqs,
+      playbook_templates: playbook.templates,
+      playbook_frameworks: playbook.frameworks,
+      playbook_intents: playbook.intents,
       pickup_windows: pickupHours ?? null,
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,

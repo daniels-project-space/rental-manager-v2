@@ -42,6 +42,52 @@ export const list = query({
   },
 });
 
+/** Real listing facts (price + description) for a set of product ids in one
+ *  account — feeds the draft's authoritative FACTS. */
+export const factsForProducts = query({
+  args: { account_slug: v.string(), product_ids: v.array(v.number()) },
+  handler: async (ctx, { account_slug, product_ids }) => {
+    const out: Array<{
+      product_id: number;
+      name: string;
+      daily_price: number | null;
+      description: string | null;
+    }> = [];
+    for (const pid of product_ids.slice(0, 6)) {
+      const row = await ctx.db
+        .query("online_listings")
+        .withIndex("by_account_product", (q) =>
+          q.eq("account_slug", account_slug).eq("product_id", pid),
+        )
+        .unique();
+      if (row)
+        out.push({
+          product_id: pid,
+          name: row.name,
+          daily_price: row.daily_price ?? null,
+          description: row.description ?? null,
+        });
+    }
+    return out;
+  },
+});
+
+/** Lazily backfill a listing's real description (fetched from the detail
+ *  endpoint by the draft path — the rescan list endpoint omits it). */
+export const setDescription = internalMutation({
+  args: { account_slug: v.string(), product_id: v.number(), description: v.string() },
+  handler: async (ctx, { account_slug, product_id, description }) => {
+    const row = await ctx.db
+      .query("online_listings")
+      .withIndex("by_account_product", (q) =>
+        q.eq("account_slug", account_slug).eq("product_id", product_id),
+      )
+      .unique();
+    if (row) await ctx.db.patch(row._id, { description: description.slice(0, 600) });
+    return { ok: !!row };
+  },
+});
+
 /** Last-rescan metadata per account (for the Settings button caption). */
 export const syncMeta = query({
   args: {},
@@ -70,6 +116,7 @@ export const replaceForAccount = internalMutation({
         daily_price: v.optional(v.number()),
         is_published: v.boolean(),
         public_url: v.optional(v.string()),
+        description: v.optional(v.string()),
       }),
     ),
   },
@@ -89,6 +136,7 @@ export const replaceForAccount = internalMutation({
         daily_price: l.daily_price,
         is_published: l.is_published,
         public_url: l.public_url,
+        description: l.description,
         updated_at: now,
       });
     }
