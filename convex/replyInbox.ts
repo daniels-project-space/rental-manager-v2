@@ -1096,6 +1096,54 @@ export const getThreadContext = internalQuery({
             name: it.name,
             product_id: (it as { product_id?: number }).product_id,
           }));
+    // Lever 5 (grounding coverage): ~46% of inquiries arrive with only an item
+    // NAME (no product_id), so the draft got no real listing facts and had to
+    // guess. Recover the product_id by matching the name against THIS account's
+    // cached listings (deterministic token-coverage match) so those threads get
+    // real price/kit/specs too. (Daniel, 2026-07-03)
+    if (slug && lineItems.some((li) => typeof li.product_id !== "number")) {
+      const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
+      const toks = (str: string) =>
+        Array.from(
+          new Set(
+            (str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+              (t) => t.length > 1 && !STOP.has(t),
+            ),
+          ),
+        );
+      const listings = (
+        await ctx.db
+          .query("online_listings")
+          .withIndex("by_account", (q) => q.eq("account_slug", slug!))
+          .collect()
+      ).map((l) => ({ product_id: l.product_id, tset: new Set(toks(l.name)) }));
+      const bestPid = (name: string | null | undefined): number | null => {
+        if (!name) return null;
+        const q = toks(name);
+        if (q.length < 2) return null;
+        let best: number | null = null;
+        let bestScore = 0;
+        let bestSize = Infinity;
+        for (const L of listings) {
+          let hit = 0;
+          for (const t of q) if (L.tset.has(t)) hit++;
+          if (hit < 2) continue;
+          const score = hit / q.length;
+          if (score > bestScore || (score === bestScore && L.tset.size < bestSize)) {
+            best = L.product_id;
+            bestScore = score;
+            bestSize = L.tset.size;
+          }
+        }
+        return bestScore >= 0.6 ? best : null;
+      };
+      for (const li of lineItems) {
+        if (typeof li.product_id !== "number") {
+          const pid = bestPid(li.name);
+          if (typeof pid === "number") li.product_id = pid;
+        }
+      }
+    }
     try {
       // Owned inventory grouped by kind (active, real, in stock) — the source
       // for both the camera guard and offering alternatives in any category.
