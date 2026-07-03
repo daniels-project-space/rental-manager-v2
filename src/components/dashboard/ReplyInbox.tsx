@@ -579,18 +579,179 @@ function MoneyHeadline({ tile, compact = false }: { tile: ReplyTileData; compact
   );
 }
 
-function Stars({ rating, count }: { rating: number | null; count: number | null }) {
+/** Rental length in days (matches the estimate convention: same-day = 1). */
+function daysOf(t: ReplyTileData): number | null {
+  if (t.start_date && t.end_date) {
+    const s = new Date(`${t.start_date}T00:00:00`).getTime();
+    const e = new Date(`${t.end_date}T00:00:00`).getTime();
+    if (!isNaN(s) && !isNaN(e) && e >= s) return Math.max(1, Math.round((e - s) / 86400000));
+  }
+  return t.estimate_days;
+}
+/** Compact, visually distinct dates + length chip for the overlay meta row. */
+function DatePill({ tile }: { tile: ReplyTileData }) {
+  const d = daysOf(tile);
+  const start = fmtDate(tile.start_date);
+  const label = start
+    ? `${start}${tile.end_date && tile.end_date !== tile.start_date ? ` → ${fmtDate(tile.end_date)}` : ""}`
+    : d != null
+      ? `~${d} day${d === 1 ? "" : "s"}`
+      : null;
+  if (!label) return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/[0.14] border border-sky-400/30 px-1.5 py-0.5 text-[11px] font-semibold text-sky-200 whitespace-nowrap">
+      <span className="text-[10px]">📅</span>
+      <span>{label}</span>
+      {start && d != null && <span className="font-medium text-sky-300/70">· {d}d</span>}
+    </span>
+  );
+}
+/** Owner earnings only (what they pay is intentionally hidden in the overlay). */
+function EarningsChip({ tile }: { tile: ReplyTileData }) {
+  const earnings = tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp;
+  if (earnings == null) return null;
+  const isEst = tile.gross_paid_gbp == null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/[0.14] border border-emerald-400/30 px-1.5 py-0.5 text-[11.5px] font-bold text-emerald-300 tabular-nums whitespace-nowrap">
+      {fmtMoney(earnings, tile.currency)}
+      <span className="text-[8.5px] font-semibold text-emerald-300/70 uppercase tracking-wide">
+        {isEst ? "est earn" : "earn"}
+      </span>
+    </span>
+  );
+}
+
+/** Renter reviews as a proper centred overlay (portal), with physical stars. */
+function ReviewsOverlay({
+  renterName,
+  rating,
+  count,
+  reviews,
+  onClose,
+}: {
+  renterName: string;
+  rating: number | null;
+  count: number | null;
+  reviews: RenterReviewsResult | undefined;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[330] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
+      <div
+        className="w-full max-w-md max-h-[80vh] flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-3 border-b border-white/10 flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-[#f1f3f5] truncate">{renterName}</div>
+            <div className="flex items-center gap-1.5 mt-1">
+              {rating != null ? (
+                <>
+                  <StarRating rating={rating} size={14} />
+                  <span className="text-[11px] text-[#9aa0ad] tabular-nums">
+                    {rating.toFixed(1)}
+                    {count != null ? ` · ${count} review${count === 1 ? "" : "s"}` : ""}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[11px] text-[#6b7280]">no rating yet</span>
+              )}
+              {reviews?.lowCount ? (
+                <span className="text-[10px] text-red-400 font-semibold">{reviews.lowCount} under 4★</span>
+              ) : null}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#9aa0ad] hover:text-white hover:bg-white/[0.08] text-xl leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+          {reviews === undefined ? (
+            <div className="text-xs text-[#6b7280] py-3 text-center">Loading reviews…</div>
+          ) : reviews.reviews.length === 0 ? (
+            <div className="text-xs text-[#6b7280] py-3 text-center">No reviews found for this renter.</div>
+          ) : (
+            reviews.reviews.map((r) => {
+              const low = r.rating != null && r.rating < 4;
+              return (
+                <div
+                  key={r.id}
+                  className="rounded-lg px-2.5 py-2"
+                  style={{
+                    background: low ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
+                    border: low ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    {r.rating != null ? <StarRating rating={r.rating} size={11} /> : <span className="text-[11px] text-[#6b7280]">—</span>}
+                    {r.author && <span className="text-[10px] text-[#8b8fa3] truncate">{r.author}</span>}
+                    {r.created_at && (
+                      <span className="text-[10px] text-[#6b7280] ml-auto shrink-0">
+                        {new Date(r.created_at).toLocaleDateString("en-GB")}
+                      </span>
+                    )}
+                  </div>
+                  {r.text && (
+                    <div className={`text-[12px] mt-1 ${low ? "text-red-100/90" : "text-[#c5cad3]"}`}>{r.text}</div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** One star, filled 0..1 (a grey star with a coloured star clipped over it) —
+ *  gives real fractional/half stars. */
+function StarGlyph({ fill, size, color }: { fill: number; size: number; color: string }) {
+  const pct = Math.max(0, Math.min(1, fill)) * 100;
+  return (
+    <span
+      className="relative inline-block"
+      style={{ width: size, height: size, fontSize: size, lineHeight: `${size}px` }}
+    >
+      <span className="absolute inset-0" style={{ color: "#3b4150" }}>★</span>
+      <span className="absolute inset-0 overflow-hidden" style={{ width: `${pct}%`, color }}>★</span>
+    </span>
+  );
+}
+/** Physical 5-star rating with half/fractional stars. Red when < 4★. */
+function StarRating({ rating, size = 12 }: { rating: number; size?: number }) {
+  const low = rating < 4;
+  const color = low ? "#f87171" : "#f5c518";
+  return (
+    <span className="inline-flex items-center gap-px align-middle">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <StarGlyph key={i} fill={rating - i} size={size} color={color} />
+      ))}
+    </span>
+  );
+}
+function Stars({ rating, count, size = 12 }: { rating: number | null; count: number | null; size?: number }) {
   if (rating == null) return <span className="text-[11px] text-[#64748b]">no rating</span>;
-  // Flag low-rated renters (< 4★) in red everywhere this renders (card + modal).
   const low = rating < 4;
   return (
     <span
-      className={`text-xs tabular-nums whitespace-nowrap ${low ? "text-red-400 font-semibold" : "text-[#f5c518]"}`}
+      className="inline-flex items-center gap-1 whitespace-nowrap"
       title={low ? "Low-rated renter — vet their history before accepting" : undefined}
     >
-      {low ? "⚠ " : ""}★ {rating.toFixed(1)}
+      {low && <span className="text-red-400 text-[11px] leading-none">⚠</span>}
+      <StarRating rating={rating} size={size} />
       {count != null && (
-        <span className={low ? "text-red-400/70" : "text-[#64748b]"}> ({count})</span>
+        <span className={`text-[10px] ${low ? "text-red-400/70" : "text-[#64748b]"}`}>({count})</span>
       )}
     </span>
   );
@@ -1405,6 +1566,8 @@ function OrderEditor({
 
   const a = st.actions;
   const canDiscount = a.change_price || a.partial_refund;
+  const anyEditable =
+    a.add_product || a.change_price || a.change_dates || a.select_dates || a.partial_refund || st.items.some((i) => i.can_remove);
   return (
     <div className="border-b border-white/[0.07] bg-[#0d0f13]">
       {/* Collapsed summary — click to expand the editor. Keeps the chat visible. */}
@@ -1422,7 +1585,7 @@ function OrderEditor({
         )}
         {dryRun && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-semibold shrink-0">TEST</span>}
         <span className="ml-auto text-[11px] font-medium text-sky-300 shrink-0">
-          {expanded ? "Done ▴" : "✎ Edit ▾"}
+          {expanded ? "Done ▴" : anyEditable ? "✎ Edit ▾" : "View ▾"}
         </span>
       </button>
 
@@ -1453,26 +1616,32 @@ function OrderEditor({
                 </button>
                 <button onClick={() => setConfirmRemove(null)} className="text-[11px] px-1.5 py-1 rounded-lg bg-white/[0.06] text-[#8b8fa3]">✗</button>
               </div>
-            ) : (
+            ) : it.can_remove ? (
               <button
-                disabled={!it.can_remove || !!busy}
+                disabled={!!busy}
                 onClick={() => it.item_id != null && setConfirmRemove(it.item_id)}
-                title={it.can_remove ? "Remove this item from the booking" : "Can't remove the only item — add another first, or decline the booking"}
-                className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.05] text-red-300 hover:bg-red-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Remove this item from the booking"
+                className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.05] text-red-300 hover:bg-red-500/15 disabled:opacity-40"
               >
                 Remove
               </button>
-            )}
+            ) : null}
           </div>
         ))}
-        <button
-          disabled={!a.add_product || !!busy}
-          onClick={() => setShowPicker(true)}
-          title={a.add_product ? "Add a listing to this booking" : "Adding items isn't available in this booking's state"}
-          className="w-full text-[12px] font-medium px-3 py-2 rounded-xl border border-dashed border-white/15 text-[#cbd5e1] hover:bg-white/[0.05] disabled:opacity-40"
-        >
-          {busy === "add" ? "Adding…" : "＋ Add item"}
-        </button>
+        {a.add_product ? (
+          <button
+            disabled={!!busy}
+            onClick={() => setShowPicker(true)}
+            title="Add a listing to this booking"
+            className="w-full text-[12px] font-medium px-3 py-2 rounded-xl border border-dashed border-white/15 text-[#cbd5e1] hover:bg-white/[0.05] disabled:opacity-40"
+          >
+            {busy === "add" ? "Adding…" : "＋ Add item"}
+          </button>
+        ) : (
+          <div className="text-[10.5px] text-[#6b7280] px-1">
+            Items are locked — this booking can’t be changed anymore.
+          </div>
+        )}
       </div>
 
       {/* Price + dates */}
@@ -1539,7 +1708,8 @@ function OrderEditor({
         )}
         <div className="flex items-center gap-2 text-[12.5px]">
           <span className="text-[#7a8190]">Dates</span>
-          <span className="text-[#e6e9ef] font-medium">
+          <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/[0.14] border border-sky-400/30 px-2 py-0.5 text-[12px] font-semibold text-sky-100">
+            <span className="text-[10px]">📅</span>
             {prettyDay(st.dates.start)}
             {st.dates.end && st.dates.end !== st.dates.start ? ` → ${prettyDay(st.dates.end)}` : ""}
           </span>
@@ -1810,54 +1980,44 @@ export function ReplyModal({
                 ×
               </button>
             </div>
-            <div className="flex items-center gap-2 mt-1">
+            {/* One compact horizontal meta row — earnings + dates to the side,
+                not stacked, so the chat gets the room. */}
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <AccountTag slug={tile.account_slug} />
               <span
-                className="text-[10px] uppercase tracking-wide font-medium truncate"
+                className="text-[10px] uppercase tracking-wide font-medium"
                 style={{ color: tile.is_request ? "#fdba74" : "#7a8190" }}
               >
                 {statusText(tile)}
               </span>
+              <DatePill tile={tile} />
+              <EarningsChip tile={tile} />
             </div>
+            {itemLineShort(tile) && (
+              <div className="text-[11px] text-[#c5cad3] mt-1 truncate">{itemLineShort(tile)}</div>
+            )}
             {loc && (
-              <div className="mt-1.5">
+              <div className="mt-1">
                 <LocationBadge loc={loc} />
               </div>
             )}
             {tile.renter_rating != null && tile.renter_rating < 4 && (
-              <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2 py-1">
+              <div className="mt-1 text-[10.5px] text-red-300/90">
+                ⚠ Low-rated ({tile.renter_rating.toFixed(1)}★) — vet before accepting.
+              </div>
+            )}
+            {/* Availability: hidden unless it's a problem — only surface a
+                double-booking warning, never the "available" case. */}
+            {tile.availability?.status === "conflict" && (
+              <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-red-400/40 bg-red-500/[0.12] px-2 py-1.5">
                 <span className="text-red-400 text-[12px] leading-none mt-px">⚠</span>
-                <span className="text-[11px] text-red-200/90 leading-snug">
-                  Low-rated renter — {tile.renter_rating.toFixed(1)}★
-                  {tile.renter_review_count != null ? ` over ${tile.renter_review_count} reviews` : ""}. Vet before accepting.
+                <span className="text-[11px] text-red-200/95 leading-snug">
+                  Double-booking —{" "}
+                  {tile.availability.items
+                    .filter((i) => !i.available)
+                    .map((i) => `${shortListing(i.name)}: ${Math.max(0, i.free)}/${i.requested} free`)
+                    .join(" · ")}
                 </span>
-              </div>
-            )}
-            {itemLineShort(tile) && (
-              <div className="text-[11.5px] text-[#c5cad3] mt-1 truncate">{itemLineShort(tile)}</div>
-            )}
-            {tile.has_reservation && contextLine(tile) && (
-              <div className="text-[11px] text-[#7a8190] mt-0.5">{contextLine(tile)}</div>
-            )}
-            {(tile.gross_paid_gbp != null || tile.estimate_gbp != null) && (
-              <div className="mt-1.5">
-                <MoneyHeadline tile={tile} compact />
-              </div>
-            )}
-            {tile.availability && (
-              <div className="mt-1.5 flex flex-col gap-1">
-                <AvailabilityBadge a={tile.availability} />
-                {tile.availability.status === "conflict" && (
-                  <div className="text-[10.5px] text-[#f8a4a4] pl-1">
-                    {tile.availability.items
-                      .filter((i) => !i.available)
-                      .map(
-                        (i) =>
-                          `${i.name}: ${Math.max(0, i.free)} of ${i.total_units} free, you'd need ${i.requested}`,
-                      )
-                      .join(" · ")}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -1869,54 +2029,16 @@ export function ReplyModal({
           <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
         )}
 
-        {/* Renter reviews — opened by tapping the stars. Lowest-rated first; any
-            review under 4★ is highlighted with its text. */}
+        {/* Renter reviews — a proper centred overlay (portal), opened by tapping
+            the stars. Physical stars incl. half; under-4★ highlighted. */}
         {showReviews && (
-          <div className="shrink-0 border-b border-white/[0.07] bg-black/25 max-h-56 overflow-y-auto">
-            <div className="flex items-center gap-2 px-4 pt-2.5 pb-1 sticky top-0 bg-[#101216]">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa0ad]">
-                Reviews{reviews?.reviews.length ? ` (${reviews.reviews.length})` : ""}
-                {reviews?.lowCount ? <span className="text-red-400"> · {reviews.lowCount} under 4★</span> : null}
-              </span>
-              <button onClick={() => setShowReviews(false)} className="ml-auto text-[#8b8fa3] hover:text-white text-sm leading-none">×</button>
-            </div>
-            <div className="px-4 pb-3 space-y-1.5">
-              {reviews === undefined ? (
-                <div className="text-xs text-[#6b7280] py-2">Loading reviews…</div>
-              ) : reviews.reviews.length === 0 ? (
-                <div className="text-xs text-[#6b7280] py-2">No reviews found for this renter.</div>
-              ) : (
-                reviews.reviews.map((r) => {
-                  const low = r.rating != null && r.rating < 4;
-                  return (
-                    <div
-                      key={r.id}
-                      className="rounded-lg px-2.5 py-1.5"
-                      style={{
-                        background: low ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
-                        border: low ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.06)",
-                      }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[11px] font-semibold ${low ? "text-red-400" : "text-amber-300/90"}`}>
-                          {r.rating != null ? `${r.rating}★` : "—"}
-                        </span>
-                        {r.author && <span className="text-[10px] text-[#8b8fa3] truncate">{r.author}</span>}
-                        {r.created_at && (
-                          <span className="text-[10px] text-[#6b7280] ml-auto shrink-0">
-                            {new Date(r.created_at).toLocaleDateString("en-GB")}
-                          </span>
-                        )}
-                      </div>
-                      {r.text && (
-                        <div className={`text-[12px] mt-0.5 ${low ? "text-red-100/90" : "text-[#c5cad3]"}`}>{r.text}</div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          <ReviewsOverlay
+            renterName={tile.renter_name}
+            rating={tile.renter_rating}
+            count={tile.renter_review_count}
+            reviews={reviews}
+            onClose={() => setShowReviews(false)}
+          />
         )}
 
         {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
@@ -2080,7 +2202,9 @@ export function ReplyModal({
                   type="button"
                   onClick={() => pasteText(draft)}
                   title="Copy this draft into the message box"
-                  className="block w-full text-left px-3 pb-2.5 text-sm text-[#dcd6f0] hover:text-white whitespace-pre-wrap"
+                  className={`block w-full text-left px-3 pb-2.5 ${
+                    draft.length > 400 ? "text-[12px]" : draft.length > 240 ? "text-[13px]" : "text-sm"
+                  } leading-relaxed text-[#dcd6f0] hover:text-white whitespace-pre-wrap max-h-[28vh] overflow-y-auto`}
                 >
                   {draft}
                 </button>
