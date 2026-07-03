@@ -52,9 +52,17 @@ export async function queueNotificationEvents(
 ): Promise<number> {
   if (events.length === 0) return 0;
   const now = Date.now();
-  const DEDUPE_MS = 24 * 60 * 60 * 1000;
   let inserted = 0;
   for (const e of events) {
+    // Type-aware dedup. renter_message events are ALREADY gated on a genuinely
+    // new inserted message (upsertMessages only queues the latest NEW message per
+    // thread, and a re-poll re-seeing a message is skipped), so a 24h window here
+    // just silenced follow-up messages ("sometimes I get no notification for a
+    // message"). Use a tiny window for those — only to guard an overlapping
+    // re-poll double-firing the SAME message. Transition-based types
+    // (new_request / booking_confirmed) keep the 24h window so a re-poll that
+    // re-sees the same state can't double-send.
+    const dedupeMs = e.type === "renter_message" ? 30 * 1000 : 24 * 60 * 60 * 1000;
     const recent = await ctx.db
       .query("notification_events")
       .withIndex("by_thread_type", (q) =>
@@ -62,7 +70,7 @@ export async function queueNotificationEvents(
       )
       .order("desc")
       .first();
-    if (recent && now - recent.created_at < DEDUPE_MS) continue;
+    if (recent && now - recent.created_at < dedupeMs) continue;
     await ctx.db.insert("notification_events", {
       type: e.type,
       thread_id: e.thread_id,

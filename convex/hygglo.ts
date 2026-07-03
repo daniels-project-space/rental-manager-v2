@@ -1436,8 +1436,11 @@ export const listByThread = query({
     const rows = await ctx.db
       .query("hygglo_messages")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
-      .order("asc")
+      .order("desc")
       .take(50);
+    // Newest 50 (so a long thread still includes the latest message the tile
+    // previews), then back to chronological order for display.
+    rows.reverse();
     return rows.map((m) => ({
       role: m.sender === "owner" ? "owner" : "renter",
       sender_name: m.sender_name ?? m.sender,
