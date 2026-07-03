@@ -219,6 +219,71 @@ function computeProgress(
   return { pct, label, status: "active" };
 }
 
+/** Compact duration string for a countdown: "2d 3h", "3h 20m", "45m", "now". */
+function fmtCountdown(ms: number): string {
+  if (ms <= 0) return "now";
+  const totalMin = Math.floor(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+type Timeline = {
+  status: "upcoming" | "active" | "completed";
+  fillPct: number; // 0..100 bar fill
+  color: string; // bar colour
+  countdown: string;
+  soon: boolean; // < 6h to start → pulse the red bar
+};
+
+/**
+ * TIME-based rental timeline for the agenda bar (Daniel, 2026-07-03): red +
+ * countdown BEFORE the pickup time (the red fill grows as pickup approaches over
+ * a 3-day horizon, with a start line at its leading edge), then BLUE progress
+ * once it's started, green when returned. Time-based (not day-based) so the
+ * red→blue flip lands exactly on the pickup time.
+ */
+function rentalTimeline(
+  start: string | null | undefined,
+  end: string | null | undefined,
+  pickupTime: string | null,
+  returnTime: string | null,
+): Timeline {
+  if (!start) return { status: "upcoming", fillPct: 6, color: "#ef4444", countdown: "TBD", soon: false };
+  const startD = new Date(start + "T00:00:00");
+  if (pickupTime) {
+    const [h, m] = pickupTime.split(":").map(Number);
+    startD.setHours(h, m || 0, 0, 0);
+  }
+  const endD = new Date((end ?? start) + "T00:00:00");
+  if (returnTime) {
+    const [h, m] = returnTime.split(":").map(Number);
+    endD.setHours(h, m || 0, 0, 0);
+  } else {
+    endD.setHours(23, 59, 59, 999);
+  }
+  const startMs = startD.getTime();
+  const endMs = endD.getTime();
+  const now = Date.now();
+
+  if (now < startMs) {
+    const untilMs = startMs - now;
+    const untilH = untilMs / 3_600_000;
+    // Red fill grows as pickup nears (over a 72h horizon).
+    const fillPct = Math.max(6, Math.min(100, Math.round((1 - untilH / 72) * 100)));
+    return { status: "upcoming", fillPct, color: "#ef4444", countdown: `in ${fmtCountdown(untilMs)}`, soon: untilH <= 6 };
+  }
+  if (now > endMs) {
+    return { status: "completed", fillPct: 100, color: "#22c55e", countdown: "returned", soon: false };
+  }
+  const pct = endMs > startMs ? Math.min(99, Math.max(2, Math.round(((now - startMs) / (endMs - startMs)) * 100))) : 2;
+  const leftMs = endMs - now;
+  return { status: "active", fillPct: pct, color: "#3b82f6", countdown: leftMs <= 0 ? "due back" : `${fmtCountdown(leftMs)} left`, soon: false };
+}
+
 /** Split a `notes` blob into bullet lines (handles newline + "• "/"- " prefixes). */
 function splitNotes(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -722,151 +787,6 @@ function BookingCard({ chip }: { chip: ChipData }) {
   );
 }
 
-// ── Day card ─────────────────────────────────────────────────────────────────
-function DayCard({
-  day,
-  isToday,
-  isExpanded,
-  onClick,
-}: {
-  day: DayData;
-  isToday: boolean;
-  isExpanded: boolean;
-  onClick: () => void;
-}) {
-  const away = day.away ?? [];
-  const totalEvents = day.pickups.length + day.returns.length + away.length + day.holds.length;
-  const { wd, num } = dayLabelSplit(day.date);
-
-  // Per-card color dots: green = pickup, red = return, blue = away (matches v1 screenshot).
-  const dots: string[] = [];
-  if (day.pickups.length > 0) dots.push("#22c55e");
-  if (day.returns.length > 0) dots.push("#ef4444");
-  if (away.length > 0) dots.push("#3b82f6");
-  if (day.holds.length > 0) dots.push("#f59e0b");
-
-  // Ongoing (away) rentals get a thin live progress bar on the collapsed tile so
-  // active rentals are visible at a glance — not just a static blue dot. Pick the
-  // away chip returning soonest, using its effective (negotiated) dates.
-  const awayProgress = (() => {
-    if (away.length === 0) return null;
-    let best: { pct: number; status: "upcoming" | "active" | "completed" } | null = null;
-    let bestEndMs = Infinity;
-    for (const c of away) {
-      const effPickupDate = c.pickupDate ?? c.startDate ?? null;
-      const effReturnDate = c.returnDate ?? c.endDate ?? null;
-      if (!effReturnDate) continue;
-      const endMs = new Date(effReturnDate + "T23:59:59").getTime();
-      if (endMs < bestEndMs) {
-        bestEndMs = endMs;
-        const p = computeProgress(effPickupDate, effReturnDate, c.pickupTime, c.returnTime);
-        best = { pct: p.pct, status: p.status };
-      }
-    }
-    return best;
-  })();
-
-  return (
-    <button
-      onClick={onClick}
-      className="flex-shrink-0 text-left rounded-xl p-3 transition-all duration-150 select-none"
-      style={{
-        width: "120px",
-        minHeight: "140px",
-        border: "1px solid rgba(255,255,255,0.08)",
-        outline: isToday ? "2px solid #3b82f6" : undefined,
-        outlineOffset: isToday ? "-1px" : undefined,
-        boxShadow: isToday
-          ? "inset 0 0 0 2px #3b82f6, 0 0 12px rgba(59,130,246,0.4), 0 0 24px rgba(59,130,246,0.15)"
-          : isExpanded
-            ? "0 4px 16px rgba(0,0,0,0.3)"
-            : "none",
-        background: isExpanded
-          ? "rgba(59,130,246,0.07)"
-          : isToday
-            ? "rgba(59,130,246,0.05)"
-            : "rgba(14,17,28,0.35)",
-        transform: isExpanded ? "scale(1.02)" : "scale(1)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-start",
-      }}
-    >
-      {/* Weekday (small, uppercase, muted) */}
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#8b8fa3]">
-        {wd}
-      </div>
-      {/* Date number — large */}
-      <div
-        className="text-2xl font-bold mt-0.5"
-        style={{ color: isToday ? "#3b82f6" : "#e4e6eb" }}
-      >
-        {num}
-      </div>
-      {isToday && (
-        <span
-          className="text-[9px] font-bold px-1.5 py-0.5 rounded-full mt-0.5"
-          style={{ background: "rgba(59,130,246,0.2)", color: "#3b82f6" }}
-        >
-          Today
-        </span>
-      )}
-
-      {/* Color dots row */}
-      {dots.length > 0 && (
-        <div className="flex items-center gap-1 mt-2">
-          {dots.map((c, i) => (
-            <span
-              key={i}
-              className="inline-block w-2 h-2 rounded-full"
-              style={{ background: c }}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Ongoing-rental progress affordance — thin live bar for away chips so an
-          active rental reads as progress on the strip, not just a blue dot.
-          Reuses the active fill gradient + shimmer from ProgressTimeline. */}
-      {awayProgress && awayProgress.status === "active" && (
-        <div
-          className="relative h-1 w-full rounded-full mt-2 overflow-hidden"
-          style={{
-            background: "rgba(255,255,255,0.06)",
-            boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)",
-          }}
-        >
-          <div
-            className="absolute inset-y-0 left-0 rounded-full"
-            style={{
-              width: `${awayProgress.pct}%`,
-              background: "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)",
-              boxShadow: "0 0 6px rgba(59,130,246,0.5)",
-              transition: "width 800ms cubic-bezier(0.16, 1, 0.3, 1)",
-            }}
-          />
-          <div
-            className="absolute inset-y-0 left-0 rounded-full pointer-events-none"
-            style={{
-              width: `${awayProgress.pct}%`,
-              background:
-                "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 50%, transparent 100%)",
-              backgroundSize: "200% 100%",
-              animation: "rental-shimmer 2.2s linear infinite",
-              mixBlendMode: "overlay",
-            }}
-          />
-        </div>
-      )}
-
-      {/* Count number below dots */}
-      <div className="mt-auto pt-2 text-[11px] text-[#8b8fa3] font-medium">
-        {totalEvents > 0 ? totalEvents : "—"}
-      </div>
-    </button>
-  );
-}
 
 // ── Expanded drawer for a day ─────────────────────────────────────────────────
 function DayDrawer({ day }: { day: DayData }) {
@@ -969,6 +889,60 @@ function DayDrawer({ day }: { day: DayData }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
+/**
+ * Compact agenda row — one rental, ordered by pickup time within its day. Time
+ * bar is red + live countdown before pickup (start line at the leading edge),
+ * blue progress once it's started. Click opens that day's detail drawer.
+ */
+function AgendaRow({ chip, onOpen }: { chip: ChipData; onOpen: () => void }) {
+  const effPickup = chip.pickupDate ?? chip.startDate ?? null;
+  const effReturn = chip.returnDate ?? chip.endDate ?? null;
+  const tl = rentalTimeline(effPickup, effReturn, chip.pickupTime, chip.returnTime);
+  // Tick every second in the final 6h (live countdown), else every 30s.
+  useTick(tl.soon ? 1000 : 30_000, tl.status !== "completed");
+  const color = resolveColor(chip.accountColor);
+  const item = chip.items?.[0];
+  const itemName = item?.name ?? "Rental";
+  const extra = (chip.items?.length ?? 0) > 1 ? ` +${chip.items.length - 1}` : "";
+  return (
+    <button
+      onClick={onOpen}
+      className="w-full text-left flex items-center gap-2 px-1.5 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
+    >
+      <span className="w-[3px] self-stretch rounded-full flex-shrink-0" style={{ background: color }} />
+      <ItemThumb item={item ?? { itemId: null, name: "", imageUrl: null, qty: 1, resolved: false }} size={26} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[12px] font-medium text-[#e6e9ef] truncate">{chip.renterName}</span>
+          <span className="text-[11px] text-[#8b8fa3] truncate">{itemName}{extra}</span>
+          <span className="ml-auto text-[10px] font-mono text-[#9aa0ad] flex-shrink-0">{fmt12Short(chip.pickupTime)}</span>
+        </div>
+        <div className="flex items-center gap-1.5 mt-1">
+          <div className="relative flex-1 h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+            <div
+              className={`absolute inset-y-0 left-0 rounded-full ${tl.soon ? "animate-pulse" : ""}`}
+              style={{
+                width: `${tl.fillPct}%`,
+                background: tl.color,
+                boxShadow: tl.status === "active" ? `0 0 6px ${tl.color}aa` : tl.soon ? `0 0 6px ${tl.color}` : "none",
+              }}
+            />
+            {tl.status === "upcoming" && (
+              <span className="absolute rounded" style={{ left: `calc(${tl.fillPct}% - 1px)`, top: -2, bottom: -2, width: 2, background: "#fecaca" }} />
+            )}
+            {tl.status === "active" && (
+              <span className="absolute w-2 h-2 rounded-full bg-white" style={{ left: `calc(${tl.fillPct}% - 4px)`, top: -1, boxShadow: `0 0 0 2px ${tl.color}` }} />
+            )}
+          </div>
+          <span className="text-[10px] font-semibold flex-shrink-0 tabular-nums" style={{ color: tl.color }}>
+            {tl.countdown}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export function CalendarStrip() {
   const { activeAccountSlug } = useAccount();
   const today = TODAY_ISO();
@@ -1067,28 +1041,78 @@ export function CalendarStrip() {
         </button>
       </div>
 
-      {/* Strip */}
+      {/* Agenda — rentals grouped by day, ordered by pickup time, each with a
+          red countdown bar before pickup that turns blue once it's started. */}
       {data === undefined ? (
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {Array.from({ length: 7 }).map((_, i) => (
-            <SkeletonBlock key={i} className="flex-shrink-0 h-36 w-[120px]" />
+        <div className="space-y-1.5">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonBlock key={i} className="h-12 w-full rounded-lg" />
           ))}
         </div>
       ) : (
-        <div
-          className="flex gap-2 overflow-x-auto pb-1"
-          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
-        >
-          {(data as DayData[]).map((day) => (
-            <DayCard
-              key={day.date}
-              day={day}
-              isToday={day.date === today}
-              isExpanded={expandedDate === day.date}
-              onClick={() => toggleDay(day.date)}
-            />
-          ))}
-        </div>
+        (() => {
+          const groups = (data as DayData[])
+            .map((day) => {
+              const isToday = day.date === today;
+              const rentals = [...(day.pickups ?? [])];
+              // On today, also surface rentals that are already OUT (picked up on
+              // an earlier day) so "what's out now" shows with a blue bar.
+              if (isToday && day.away) {
+                const seen = new Set(rentals.map((r) => r.reservationId));
+                for (const a of day.away)
+                  if (!seen.has(a.reservationId)) {
+                    rentals.push(a);
+                    seen.add(a.reservationId);
+                  }
+              }
+              rentals.sort((a, b) =>
+                (a.pickupTime || "99:99").localeCompare(b.pickupTime || "99:99"),
+              );
+              return { day, rentals };
+            })
+            .filter((g) => g.rentals.length > 0);
+
+          if (groups.length === 0)
+            return (
+              <div className="text-xs text-[#6b7280] text-center py-6">
+                No rentals this week.
+              </div>
+            );
+
+          return (
+            <div
+              className="max-h-[26rem] overflow-y-auto pr-0.5 space-y-1.5"
+              style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
+            >
+              {groups.map(({ day, rentals }) => {
+                const { wd, num } = dayLabelSplit(day.date);
+                const isToday = day.date === today;
+                return (
+                  <div key={day.date}>
+                    <div className="flex items-center gap-2 px-1 mb-0.5">
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider ${isToday ? "text-blue-300" : "text-[#8b8fa3]"}`}
+                      >
+                        {isToday ? "Today" : `${wd} ${num}`}
+                      </span>
+                      <span className="text-[10px] text-[#5f6675] tabular-nums">
+                        {rentals.length}
+                      </span>
+                      <div className="flex-1 h-px bg-white/[0.05]" />
+                    </div>
+                    {rentals.map((chip) => (
+                      <AgendaRow
+                        key={chip.reservationId + (chip.kind ?? "")}
+                        chip={chip}
+                        onOpen={() => toggleDay(day.date)}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()
       )}
 
       {/* Inline expanded drawer — below the strip */}
