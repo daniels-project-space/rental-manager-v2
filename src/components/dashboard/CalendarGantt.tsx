@@ -463,12 +463,13 @@ interface BarProps {
   onSelect: () => void;
   liveProgress: number | null;
   today: string;       // YYYY-MM-DD (London) — for the pickup/return-today glow
+  nowMs: number;       // current instant (ticks) — glow stops once event passes
   weekStart: string;   // visible week start — gate time labels to the real day
 }
 
 // One time-accurate bar per reservation. Left stripe = account color, fill =
 // status, glow + dot = ongoing. The bar physically ends at the return time.
-function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, weekStart }: BarProps) {
+function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, nowMs, weekStart }: BarProps) {
   const { block, acc, ongoing } = row;
   // DB Cinema Web rentals read as a distinct emerald bar (not the status palette)
   // so the website channel is unmistakable in the calendar.
@@ -486,8 +487,23 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, we
   // next-upcoming pulse and the status "ongoing" glow.
   const pickupDay = block.start_date;
   const returnDay = block.return_date ?? block.end_date;
-  const pickupToday = !!pickupDay && pickupDay === today;
-  const returnToday = !!returnDay && returnDay === today;
+  // Glow only for a pickup/return that is TODAY and still AHEAD — once its
+  // moment (time, or end-of-day if no time) passes, the glow stops (Daniel).
+  const momentMs = (day: string | null | undefined, time: string | null | undefined): number | null => {
+    if (!day) return null;
+    const d = new Date(day + "T00:00:00");
+    if (time && /^\d\d:\d\d/.test(time)) {
+      const [h, m] = time.split(":").map(Number);
+      d.setHours(h, m || 0, 0, 0);
+    } else {
+      d.setHours(23, 59, 59, 999);
+    }
+    return d.getTime();
+  };
+  const pickupMs = momentMs(pickupDay, block.pickup_time);
+  const returnMs = momentMs(returnDay, block.return_time);
+  const pickupToday = pickupDay === today && pickupMs != null && pickupMs > nowMs;
+  const returnToday = returnDay === today && returnMs != null && returnMs > nowMs;
   const todayEvent = pickupToday || returnToday;
   // A time label belongs ONLY on its real pickup/return day. If that day is
   // outside the visible week, the bar is clamped to the week edge — don't paint
@@ -1268,6 +1284,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           onSelect={() => setSelectedBlock({ block: row.block, items: row.items, accent: row.acc })}
                           liveProgress={liveProgress[row.reservationId] ?? null}
                           today={today}
+                          nowMs={nowMs}
                           weekStart={weekStart}
                         />
                       </div>

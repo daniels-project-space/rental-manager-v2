@@ -176,8 +176,6 @@ function computeProgress(
   returnTime: string | null,
 ): { pct: number; label: string; status: "upcoming" | "active" | "completed" } {
   if (!start || !end) return { pct: 0, label: "", status: "upcoming" };
-  // Day-string status — mirrors backend isOngoing / isUpcoming against London.
-  const today = TODAY_ISO();
   const startD = new Date(start + "T00:00:00");
   if (pickupTime) {
     const [h, m] = pickupTime.split(":").map(Number);
@@ -193,21 +191,21 @@ function computeProgress(
   const startMs = startD.getTime();
   const endMs = endD.getTime();
   const now = Date.now();
-  if (start > today) {
-    // Upcoming: pickup day is in the future (London). Label keeps the live
-    // countdown for UX; status is now day-based so it agrees with Active.
-    const hours = Math.round((startMs - now) / 3_600_000);
-    const label = hours > 0
-      ? (hours < 24 ? `Starts in ${hours}h` : `Starts in ${Math.ceil(hours / 24)}d`)
-      : "Starting";
+  // Fully TIME-aware now (was day-based): before the pickup MOMENT = upcoming
+  // (the red lead-up), after the return MOMENT = returned (green), between = out.
+  if (now < startMs) {
+    const mins = Math.round((startMs - now) / 60000);
+    const label =
+      mins <= 0 ? "Starting"
+      : mins < 60 ? `Starts in ${mins}m`
+      : mins < 1440 ? `Starts in ${Math.round(mins / 60)}h`
+      : `Starts in ${Math.ceil(mins / 1440)}d`;
     return { pct: 0, label, status: "upcoming" };
   }
-  if (end < today) {
-    // Completed: effective return day has passed (London).
-    return { pct: 100, label: "Completed", status: "completed" };
+  if (now >= endMs) {
+    return { pct: 100, label: "Returned", status: "completed" };
   }
-  // Active: pickup day <= today <= return day. PCT stays time-interpolated and
-  // is clamped to [1,99] across the start→end instant window.
+  // Active: picked up, not yet returned. PCT is time-interpolated, clamped [1,99].
   const pct =
     endMs > startMs
       ? Math.min(99, Math.max(1, Math.round(((now - startMs) / (endMs - startMs)) * 100)))
@@ -428,27 +426,47 @@ function ProgressTimeline({
   chip: ChipData;
   progress: { pct: number; label: string; status: "upcoming" | "active" | "completed" };
 }) {
-  // Re-render once a minute while active so the marker moves.
-  useTick(60_000, progress.status === "active");
-
   const isActive = progress.status === "active";
   const isCompleted = progress.status === "completed";
   const isUpcoming = progress.status === "upcoming";
+  const isAway = (chip.kind ?? "pickup") === "away";
 
+  // RED lead-up: how close we are to the pickup MOMENT (fills over a 72h horizon).
+  const pickupMs = (() => {
+    const d0 = chip.pickupDate ?? chip.startDate;
+    if (!d0) return null;
+    const d = new Date(d0 + "T00:00:00");
+    if (chip.pickupTime && /^\d\d:\d\d/.test(chip.pickupTime)) {
+      const [h, m] = chip.pickupTime.split(":").map(Number);
+      d.setHours(h, m || 0, 0, 0);
+    }
+    return d.getTime();
+  })();
+  const untilPickupH = pickupMs != null ? (pickupMs - Date.now()) / 3_600_000 : 72;
+  const leadFill = Math.max(6, Math.min(100, Math.round((1 - untilPickupH / 72) * 100)));
+  const soon = isUpcoming && untilPickupH <= 6;
+  // Tick fast in the final stretch of a lead-up, else once a minute while live.
+  useTick(soon ? 1000 : 60_000, isActive || isUpcoming);
+
+  // Bar fill + colour by lifecycle: RED lead-up → BLUE out → GREEN returned;
+  // GREY when the item is just AWAY (out all day, no handover today).
+  const fillPct = isUpcoming ? leadFill : progress.pct;
   const fillGradient = isCompleted
     ? "linear-gradient(90deg, #16a34a 0%, #22c55e 100%)"
-    : isActive
-      ? "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)"
-      : "linear-gradient(90deg, rgba(107,114,128,0.4), rgba(107,114,128,0.4))";
-
-  const fillShadow = isActive
-    ? "0 0 10px rgba(59,130,246,0.55), inset 0 0 6px rgba(255,255,255,0.18)"
-    : isCompleted
-      ? "0 0 8px rgba(34,197,94,0.4)"
-      : "none";
-
-  const labelColor = isCompleted ? "#22c55e" : isActive ? "#60a5fa" : "#9ca3af";
-  const labelIcon = isCompleted ? "✓" : isActive ? "●" : "○";
+    : isUpcoming
+      ? "linear-gradient(90deg, #f87171 0%, #ef4444 100%)"
+      : isAway
+        ? "linear-gradient(90deg, #6b7280 0%, #9ca3af 100%)"
+        : "linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #10b981 100%)";
+  const fillShadow = isCompleted
+    ? "0 0 8px rgba(34,197,94,0.4)"
+    : isUpcoming
+      ? soon ? "0 0 8px rgba(239,68,68,0.85)" : "0 0 6px rgba(239,68,68,0.45)"
+      : isAway
+        ? "none"
+        : "0 0 10px rgba(59,130,246,0.55), inset 0 0 6px rgba(255,255,255,0.18)";
+  const labelColor = isCompleted ? "#22c55e" : isUpcoming ? "#f87171" : isAway ? "#9ca3af" : "#60a5fa";
+  const labelIcon = isCompleted ? "✓" : isUpcoming ? "⏱" : isAway ? "○" : "●";
 
   return (
     <div className="mt-2.5">
@@ -478,20 +496,20 @@ function ProgressTimeline({
       >
         {/* Filled portion */}
         <div
-          className="absolute inset-y-0 left-0 rounded-full"
+          className={`absolute inset-y-0 left-0 rounded-full ${soon ? "animate-pulse" : ""}`}
           style={{
-            width: `${progress.pct}%`,
+            width: `${fillPct}%`,
             background: fillGradient,
             boxShadow: fillShadow,
             transition: "width 800ms cubic-bezier(0.16, 1, 0.3, 1)",
           }}
         />
-        {/* Shimmer overlay for active rentals */}
-        {isActive && (
+        {/* Shimmer overlay for active (out) rentals — not for a static away bar */}
+        {isActive && !isAway && (
           <div
             className="absolute inset-y-0 left-0 rounded-full pointer-events-none"
             style={{
-              width: `${progress.pct}%`,
+              width: `${fillPct}%`,
               background:
                 "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 50%, transparent 100%)",
               backgroundSize: "200% 100%",
@@ -500,8 +518,8 @@ function ProgressTimeline({
             }}
           />
         )}
-        {/* Now marker — sits on top of bar at progress.pct */}
-        {isActive && (
+        {/* Now marker — sits on top of bar at progress.pct (active out rentals) */}
+        {isActive && !isAway && (
           <div
             className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
             style={{
@@ -620,6 +638,14 @@ function BookingCard({ chip }: { chip: ChipData }) {
   const returnLabel = fmtTimeWithDate(chip.returnTime, effReturnDate);
   const progress = computeProgress(effPickupDate, effReturnDate, chip.pickupTime, chip.returnTime);
   const noteLines = splitNotes(chip.notes);
+  // Card accent by lifecycle so the whole card reads at a glance (Daniel):
+  // RED = lead-up to pickup, BLUE = out, GREEN = returned, GREY = away all day.
+  const lifeState = kind === "away" ? "away" : progress.status;
+  const stateAccent =
+    lifeState === "completed" ? "#22c55e"
+    : lifeState === "upcoming" ? "#ef4444"
+    : lifeState === "away" ? "#9ca3af"
+    : "#3b82f6";
 
   // (Method pills rendered inline as <MethodPill /> per direction below.)
 
@@ -637,7 +663,7 @@ function BookingCard({ chip }: { chip: ChipData }) {
         background:
           "linear-gradient(135deg, rgba(20,24,40,0.65) 0%, rgba(14,17,28,0.45) 100%)",
         border: "1px solid rgba(255,255,255,0.06)",
-        borderLeft: `4px solid ${color}`,
+        borderLeft: `4px solid ${stateAccent}`,
         boxShadow:
           "0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 18px rgba(0,0,0,0.32)",
       }}
@@ -801,9 +827,6 @@ function DayCard({
   const away = day.away ?? [];
   const totalEvents = day.pickups.length + day.returns.length + away.length + day.holds.length;
   const { wd, num } = dayLabelSplit(day.date);
-  // Lead-up to the day's next pickup (red bar + live countdown on the tile).
-  const leadup = nextPickupLeadup(day.pickups);
-  useTick(leadup?.soon ? 1000 : 30_000, !!leadup);
 
   // Per-card color dots: green = pickup, red = return, blue = away (matches v1 screenshot).
   const dots: string[] = [];
@@ -911,29 +934,8 @@ function DayCard({
         </div>
       )}
 
-      {/* Lead-up to the day's next pickup — a red bar filling toward the pickup
-          time + a live countdown (Daniel, 2026-07-03). */}
-      {leadup && (
-        <div className="w-full mt-2">
-          <div
-            className="relative h-1 w-full rounded-full overflow-hidden"
-            style={{ background: "rgba(255,255,255,0.06)", boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)" }}
-          >
-            <div
-              className={`absolute inset-y-0 left-0 rounded-full ${leadup.soon ? "animate-pulse" : ""}`}
-              style={{
-                width: `${leadup.fillPct}%`,
-                background: "linear-gradient(90deg, #f87171 0%, #ef4444 100%)",
-                boxShadow: leadup.soon ? "0 0 6px rgba(239,68,68,0.8)" : "0 0 4px rgba(239,68,68,0.4)",
-                transition: "width 800ms cubic-bezier(0.16, 1, 0.3, 1)",
-              }}
-            />
-          </div>
-          <div className="text-[9px] font-semibold text-red-300/90 mt-0.5 text-center tabular-nums">
-            pickup in {leadup.countdown}
-          </div>
-        </div>
-      )}
+      {/* (Pickup lead-up red bar moved to the rental cards in the drawer, where
+          the blue progress bar lives — Daniel.) */}
 
       {/* Ongoing-rental progress affordance — thin live bar for away chips so an
           active rental reads as progress on the strip, not just a blue dot.
@@ -980,7 +982,16 @@ function DayCard({
 // ── Expanded drawer for a day ─────────────────────────────────────────────────
 function DayDrawer({ day }: { day: DayData }) {
   const away = day.away ?? [];
-  const allBookings: ChipData[] = [...day.pickups, ...day.returns, ...away];
+  // Order by the card's event time on this day: pickups by pickup time, returns
+  // by return time (untimed after timed), and away/out-all-day items last.
+  const bookingTime = (b: ChipData): string => {
+    if ((b.kind ?? "pickup") === "away") return "99:99";
+    const t = b.kind === "return" ? b.returnTime : b.pickupTime;
+    return t && /^\d\d:\d\d/.test(t) ? t : "98:00";
+  };
+  const allBookings: ChipData[] = [...day.pickups, ...day.returns, ...away].sort(
+    (a, b) => bookingTime(a).localeCompare(bookingTime(b)),
+  );
   const bookingCount = allBookings.length;
   const totalGross = allBookings.reduce((sum, b) => sum + (b.grossPaidGbp ?? 0), 0);
   const hasAny = bookingCount + day.holds.length > 0;
