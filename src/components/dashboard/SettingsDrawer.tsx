@@ -1,8 +1,19 @@
 "use client";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
 import { Drawer } from "@/components/ui/Drawer";
+
+// New convex modules — referenced by name so `next build` typechecks against the
+// committed (lagging) _generated api (same pattern as ReplyInbox's new modules).
+const listingsSyncRef = makeFunctionReference<"query">("online_listings:syncMeta");
+const rescanListingsRef = makeFunctionReference<"action">("online_listings_actions:rescan");
+const LISTING_ACCOUNTS = [
+  { slug: "leo", label: "Leo" },
+  { slug: "dbcinema", label: "DB Cinema" },
+  { slug: "diogo", label: "Diogo" },
+] as const;
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import {
   PANEL_WIDGETS,
@@ -419,6 +430,76 @@ interface Props {
   onClose: () => void;
 }
 
+/**
+ * Online-listings rescan — refresh the cached listing set the Reply-Inbox
+ * "Add items" picker searches. Run it after adding new listings on Hygglo.
+ */
+function OnlineListingsEditor() {
+  const meta = (useQuery(listingsSyncRef, {}) ?? []) as Array<{
+    account_slug: string;
+    last_rescan_at: number;
+    count: number;
+  }>;
+  const rescan = useAction(rescanListingsRef);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<Record<string, string>>({});
+
+  function ago(ts?: number): string {
+    if (!ts) return "never scanned";
+    const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const h = Math.round(mins / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  }
+
+  async function onRescan(slug: string) {
+    setBusy(slug);
+    setNote((n) => ({ ...n, [slug]: "" }));
+    try {
+      const r = (await rescan({ account_slug: slug })) as { ok: boolean; stored?: number; error?: string };
+      setNote((n) => ({ ...n, [slug]: r.ok ? `✓ ${r.stored} listings` : `✗ ${r.error ?? "failed"}` }));
+    } catch (e) {
+      setNote((n) => ({ ...n, [slug]: `✗ ${e instanceof Error ? e.message : "failed"}` }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">Online listings</label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        The searchable inventory behind the chat’s “Add item” button. Rescan an
+        account after you add new listings on Hygglo so they show up.
+      </p>
+      <div className="space-y-2">
+        {LISTING_ACCOUNTS.map((acct) => {
+          const m = meta.find((x) => x.account_slug === acct.slug);
+          return (
+            <div key={acct.slug} className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <span className="text-sm text-[#e4e6eb]">{acct.label}</span>
+                <span className="text-xs ml-2" style={{ color: "#8b8fa3" }}>
+                  {note[acct.slug] || `${m?.count ?? 0} listings · ${ago(m?.last_rescan_at)}`}
+                </span>
+              </div>
+              <button
+                disabled={busy === acct.slug}
+                onClick={() => onRescan(acct.slug)}
+                className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.06] text-[#cbd5e1] hover:bg-white/[0.12] disabled:opacity-50"
+              >
+                {busy === acct.slug ? "Scanning…" : "↻ Rescan"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsDrawer({ onClose }: Props) {
   const settings = useQuery(api.settings.get);
   const updateSettings = useMutation(api.settings.update);
@@ -622,6 +703,8 @@ export function SettingsDrawer({ onClose }: Props) {
             </button>
           </div>
         </div>
+
+        <OnlineListingsEditor />
 
         <HardTruthsEditor />
 

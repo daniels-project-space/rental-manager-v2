@@ -193,30 +193,39 @@ export async function declineOrder(args: {
 }
 
 /**
- * Change a rental's dates. The order-detail `actions` map exposes this
- * capability under the key **`changeDates`**, but the REST dispatcher's
- * accepted action verb is **`selectDates`** (verified from the 422 zod-union
- * probe: `/home/ubuntu/hygglo-probe/out/disp_real_*.json` →
- * `Expected 'selectDates' | 'createNewRequest'`). There is NO `changeDates`
- * literal on the wire. Data fields confirmed required:
- *   { rentalStartDate: string, rentalEndDate: string }   (both ISO date strings)
+ * Change a rental's dates. THE VERB IS ORDER-STATE-DRIVEN — read the order's
+ * `actions` map and pass it in:
+ *   - an ACCEPTED/paid order exposes **`changeDates`** (its `actions.changeDates`
+ *     is true, `actions.selectDates` false); the wire verb is `changeDates`.
+ *   - a pre-acceptance REQUEST exposes **`selectDates`** (owner/renter picking
+ *     the dates before approval); the wire verb is `selectDates`.
+ * Both take the SAME data `{ rentalStartDate, rentalEndDate }` in `yyyy-MM-dd`
+ * (confirmed from the prod picker: `.toString("yyyy-MM-dd")`). Verified live on
+ * order 4075255 (leo, APPROVED) → actions.changeDates=true, selectDates=false.
+ * Defaults to `changeDates` (the common owner case) when no verb is supplied.
+ *
+ * Gated by the OPERATOR gate (ALLOW_MANUAL_ORDER_ACTIONS) — same class as
+ * approve/decline: deliberate Reply-Inbox clicks only, never a cron.
  *
  * Endpoint (action-dispatcher pattern):
  *   PATCH /v4/my/orders/:id?timezone=Europe/London
- *   body: { action: "selectDates", data: { rentalStartDate, rentalEndDate } }
+ *   body: { action: <verb>, data: { rentalStartDate, rentalEndDate } }
  */
 export async function changeOrderDates(args: {
   accountSlug: string;
   hyggloOrderId: string;
   rentalStartDate: string;
   rentalEndDate: string;
+  /** "changeDates" (accepted order) | "selectDates" (request). Default changeDates. */
+  verb?: "changeDates" | "selectDates";
 }): Promise<HyggloWriteResult> {
-  if (!writesAllowed()) return skipResult();
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
   try {
     return await patchOrderAction({
       accountSlug: args.accountSlug,
       hyggloOrderId: args.hyggloOrderId,
-      action: "selectDates",
+      action: args.verb ?? "changeDates",
       data: {
         rentalStartDate: args.rentalStartDate,
         rentalEndDate: args.rentalEndDate,
@@ -241,13 +250,43 @@ export async function changeOrderPrice(args: {
   hyggloOrderId: string;
   price: number;
 }): Promise<HyggloWriteResult> {
-  if (!writesAllowed()) return skipResult();
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
   try {
     return await patchOrderAction({
       accountSlug: args.accountSlug,
       hyggloOrderId: args.hyggloOrderId,
       action: "changePrice",
       data: { price: args.price },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Apply a PARTIAL REFUND to an order (the post-payment discount path). Hygglo
+ * splits price adjustment by lifecycle: BEFORE payment you `changePrice` (set a
+ * new rental total); AFTER the renter has paid, `changePrice` is gone and
+ * `partialRefund` refunds an amount instead. Read the order's `actions` map to
+ * pick the right one (on 4075255 pre-payment: changePrice=true, partialRefund=false).
+ * Verb `partialRefund` from the prod bundle; data `{ refund: <number> }`.
+ *
+ *   PATCH /v4/my/orders/:id  body: { action: "partialRefund", data: { refund } }
+ */
+export async function partialRefundOrder(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  refund: number;
+}): Promise<HyggloWriteResult> {
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "partialRefund",
+      data: { refund: args.refund },
     });
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
@@ -272,13 +311,42 @@ export async function removeOrderItem(args: {
   hyggloOrderId: string;
   itemId: number;
 }): Promise<HyggloWriteResult> {
-  if (!writesAllowed()) return skipResult();
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
   try {
     return await patchOrderAction({
       accountSlug: args.accountSlug,
       hyggloOrderId: args.hyggloOrderId,
       action: "removeItem",
       data: { itemId: args.itemId },
+    });
+  } catch (err) {
+    return { status: "failed", error: (err as Error).message };
+  }
+}
+
+/**
+ * Add a product (listing) to an order. Verb `addProduct` from the prod bundle;
+ * data `{ productId: <catalog product id> }` — the listing's product id, NOT an
+ * order-item id (that's `removeItem`'s field). The order's `actions.addProduct`
+ * gates availability (true on 4075255). Once added the new item gets its own
+ * `itemId` (visible on the next order-detail read) which `removeItem` then uses.
+ *
+ *   PATCH /v4/my/orders/:id  body: { action: "addProduct", data: { productId } }
+ */
+export async function addOrderProduct(args: {
+  accountSlug: string;
+  hyggloOrderId: string;
+  productId: number;
+}): Promise<HyggloWriteResult> {
+  if (!manualOrderActionsAllowed())
+    return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
+  try {
+    return await patchOrderAction({
+      accountSlug: args.accountSlug,
+      hyggloOrderId: args.hyggloOrderId,
+      action: "addProduct",
+      data: { productId: args.productId },
     });
   } catch (err) {
     return { status: "failed", error: (err as Error).message };

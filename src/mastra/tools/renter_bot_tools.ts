@@ -246,7 +246,27 @@ export const getActiveVacationsTool = createTool({
 
 // ── Aggregate export ──────────────────────────────────────────
 
+// ── Tool 10: get_order_edit_state (READ-ONLY) ─────────────────
+// Live view of the booking behind a thread — current items, price, and dates —
+// so the draft can reference exactly what's on the order. READ-ONLY: order
+// edits (add/remove item, price, dates) are OPERATOR-only via the dashboard,
+// never reachable from a tool (this file's no-write contract holds).
+export const getOrderEditStateTool = createTool({
+  id: "get_order_edit_state",
+  description:
+    "Read the live booking for an order: its current items, rental price + total, and dates. Use to ground replies about what's actually on the booking. Read-only — you cannot change the order from here.",
+  inputSchema: z.object({
+    account_slug: z.string(),
+    hygglo_order_id: z.string().describe("The Hygglo order id (same as the chat thread id)."),
+  }),
+  outputSchema: z.unknown(),
+  execute: async (input) => {
+    return await convex().action(anyApi.order_edit.getOrderState, input);
+  },
+});
+
 export const RENTER_BOT_TOOLS = {
+  get_order_edit_state: getOrderEditStateTool,
   get_renter_context: getRenterContextTool,
   get_listing_context: getListingContextTool,
   lookup_pricing: lookupPricingTool,

@@ -44,6 +44,55 @@ const reviewsRefreshRef = makeFunctionReference<"action">("renter_trust:resolveF
 type RenterReview = { id: string; rating: number | null; text: string | null; author: string | null; created_at: string | null };
 type RenterReviewsResult = { reviews: RenterReview[]; lowCount: number; fetched: boolean };
 
+// Order-edit + online-listings (new convex modules) — referenced by name so
+// `next build`'s typecheck stays green against the committed (lagging) _generated
+// api, same pattern as canned_responses / renter_reviews above.
+const getOrderStateRef = makeFunctionReference<"action">("order_edit:getOrderState");
+const previewPriceRef = makeFunctionReference<"action">("order_edit:previewPrice");
+const itemUnavailRef = makeFunctionReference<"action">("order_edit:itemUnavailableDates");
+const addItemRef = makeFunctionReference<"action">("order_edit:addItem");
+const removeOrderItemRef = makeFunctionReference<"action">("order_edit:removeItem");
+const setPriceRef = makeFunctionReference<"action">("order_edit:setPrice");
+const setDatesRef = makeFunctionReference<"action">("order_edit:setDates");
+const onlineListingsRef = makeFunctionReference<"query">("online_listings:list");
+
+type OrderEditState = {
+  ok: boolean;
+  order_id: string;
+  renter_name: string | null;
+  currency: string;
+  dates: { start: string | null; end: string | null };
+  price: { order_price: number | null; total: number | null; earnings: number | null };
+  items: Array<{
+    item_id: number | null;
+    product_id: number | null;
+    name: string;
+    image: string | null;
+    thumb: string | null;
+    can_remove: boolean;
+    price_label: string | null;
+  }>;
+  actions: {
+    add_product: boolean;
+    remove_item: boolean;
+    change_price: boolean;
+    change_dates: boolean;
+    select_dates: boolean;
+    partial_refund: boolean;
+  };
+  step: string | null;
+  error?: string;
+};
+type OnlineListing = {
+  product_id: number;
+  name: string;
+  image: string | null;
+  daily_price: number | null;
+  is_published: boolean;
+  public_url: string | null;
+};
+type WriteOut = { status: "sent" | "skipped" | "failed"; reason?: string; httpStatus?: number; error?: string };
+
 interface RichItem {
   name: string;
   qty: number;
@@ -903,6 +952,547 @@ function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; o
   );
 }
 
+// ── Order editor (live add/remove items · price · dates) ──────────
+// Everything Hygglo's own owner order page does, inside the chat. Reads the
+// LIVE order (order_edit.getOrderState) so items/price/dates are always fresh;
+// writes go through the gated dispatcher (add/remove item, change price, change
+// dates). Respects Test mode (dryRun) end-to-end.
+
+const money = (n: number | null | undefined, ccy = "GBP") =>
+  n == null ? "—" : `${ccy === "GBP" ? "£" : ccy + " "}${Number.isInteger(n) ? n : n.toFixed(2)}`;
+
+/** yyyy-MM-dd for a local Date. */
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function parseYmd(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function prettyDay(s: string | null): string {
+  if (!s) return "—";
+  const d = parseYmd(s);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Searchable picker over the account's online listings → pick a product to add. */
+function AddItemPicker({
+  accountSlug,
+  onPick,
+  onClose,
+  busy,
+}: {
+  accountSlug: string;
+  onPick: (productId: number, name: string) => void;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const listings = (useQuery(onlineListingsRef, { account_slug: accountSlug }) ?? []) as OnlineListing[];
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = listings
+    .filter((l) => tokens.every((t) => l.name.toLowerCase().includes(t)))
+    .slice(0, 60);
+  return createPortal(
+    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
+      <div
+        className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-3 border-b border-white/10 flex items-center gap-2">
+          <span className="text-sm font-semibold text-[#f1f3f5]">Add an item</span>
+          <span className="text-[11px] text-[#6b7280]">{listings.length} listings</span>
+          <button onClick={onClose} className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none">×</button>
+        </div>
+        <div className="p-3 border-b border-white/[0.06]">
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search listings by name…"
+            className="w-full rounded-lg bg-black/35 border border-white/10 px-3 py-2 text-[16px] text-[#eef1f5] placeholder-[#5b6170] focus:outline-none focus:border-white/25"
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {listings.length === 0 ? (
+            <div className="text-sm text-[#6b7280] p-3">
+              No listings cached yet. Open Settings → “Online listings” and hit Rescan for {accountLabel(accountSlug)}.
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-sm text-[#6b7280] p-3">No listings match “{q}”.</div>
+          ) : (
+            filtered.map((l) => (
+              <div key={l.product_id} className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] p-2 hover:bg-white/[0.05]">
+                <Thumb src={l.image} accent={accountAccent(accountSlug)} size={40} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12.5px] text-[#e6e9ef] truncate">{l.name}</div>
+                  <div className="text-[11px] text-[#7a8190]">
+                    {l.daily_price != null ? `${money(l.daily_price)}/day` : "price n/a"}
+                    {!l.is_published && <span className="text-amber-400/80"> · unpublished</span>}
+                  </div>
+                </div>
+                <button
+                  disabled={busy}
+                  onClick={() => onPick(l.product_id, l.name)}
+                  className="shrink-0 text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** In-manager month calendar → pick a new rental date range. */
+function DateCalendar({
+  initialStart,
+  initialEnd,
+  unavailable,
+  minDays,
+  accent,
+  onApply,
+  onClose,
+  busy,
+}: {
+  initialStart: string | null;
+  initialEnd: string | null;
+  unavailable: Set<string>;
+  minDays: number;
+  accent: string;
+  onApply: (start: string, end: string) => void;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  const [start, setStart] = useState<string | null>(initialStart);
+  const [end, setEnd] = useState<string | null>(initialEnd);
+  const [cursor, setCursor] = useState<Date>(() =>
+    initialStart ? new Date(parseYmd(initialStart).getFullYear(), parseYmd(initialStart).getMonth(), 1) : new Date(),
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const today = ymd(new Date());
+  const y = cursor.getFullYear();
+  const m = cursor.getMonth();
+  const first = new Date(y, m, 1);
+  // Monday-first offset.
+  const lead = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const cells: (string | null)[] = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(ymd(new Date(y, m, d)));
+
+  function pick(day: string) {
+    if (day < today || unavailable.has(day)) return;
+    if (!start || (start && end)) {
+      setStart(day);
+      setEnd(null);
+    } else if (day < start) {
+      setStart(day);
+    } else {
+      setEnd(day);
+    }
+  }
+  const inRange = (day: string) =>
+    start && end ? day >= start && day <= end : start ? day === start : false;
+  const rangeDays = start && end ? (parseYmd(end).getTime() - parseYmd(start).getTime()) / 86400000 + 1 : start ? 1 : 0;
+  const tooShort = rangeDays > 0 && rangeDays < minDays;
+  const canApply = !!start && rangeDays >= minDays && !busy;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="p-3 border-b border-white/10 flex items-center gap-2">
+          <span className="text-sm font-semibold text-[#f1f3f5]">Change rental dates</span>
+          <button onClick={onClose} className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none">×</button>
+        </div>
+        <div className="p-3">
+          <div className="flex items-center justify-between mb-2">
+            <button onClick={() => setCursor(new Date(y, m - 1, 1))} className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-[#cbd5e1]">‹</button>
+            <span className="text-[13px] font-semibold text-[#e6e9ef]">
+              {first.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+            </span>
+            <button onClick={() => setCursor(new Date(y, m + 1, 1))} className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-[#cbd5e1]">›</button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
+              <div key={i} className="text-[10px] text-[#6b7280] py-1">{d}</div>
+            ))}
+            {cells.map((day, i) => {
+              if (!day) return <div key={i} />;
+              const disabled = day < today || unavailable.has(day);
+              const sel = inRange(day);
+              const isEdge = day === start || day === end;
+              return (
+                <button
+                  key={i}
+                  disabled={disabled}
+                  onClick={() => pick(day)}
+                  className={`h-9 rounded-lg text-[12.5px] transition-colors ${
+                    disabled
+                      ? "text-[#4b5160] line-through cursor-not-allowed"
+                      : sel
+                        ? "text-white font-semibold"
+                        : "text-[#cbd5e1] hover:bg-white/[0.08]"
+                  }`}
+                  style={sel ? { background: isEdge ? accent : `${accent}44` } : undefined}
+                >
+                  {parseYmd(day).getDate()}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 text-[12px] text-[#9aa0ad]">
+            {start ? (
+              <>
+                {prettyDay(start)}
+                {end && end !== start ? ` → ${prettyDay(end)}` : ""} · {rangeDays} day{rangeDays === 1 ? "" : "s"}
+                {tooShort && <span className="text-amber-400"> · min {minDays} days</span>}
+              </>
+            ) : (
+              "Pick a start date, then an end date."
+            )}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <button onClick={onClose} className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#8b8fa3]">Cancel</button>
+            <button
+              disabled={!canApply}
+              onClick={() => start && onApply(start, end ?? start)}
+              className="ml-auto text-[13px] font-semibold px-5 py-2 rounded-lg text-white disabled:opacity-40"
+              style={{ background: accent }}
+            >
+              {busy ? "Saving…" : "Apply dates"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function OrderEditor({
+  accountSlug,
+  orderId,
+  dryRun,
+}: {
+  accountSlug: string;
+  orderId: string;
+  dryRun: boolean;
+}) {
+  const accent = accountAccent(accountSlug);
+  const getState = useAction(getOrderStateRef);
+  const preview = useAction(previewPriceRef);
+  const getUnavail = useAction(itemUnavailRef);
+  const addItem = useAction(addItemRef);
+  const removeItem = useAction(removeOrderItemRef);
+  const setPrice = useAction(setPriceRef);
+  const setDates = useAction(setDatesRef);
+
+  const [st, setSt] = useState<OrderEditState | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceInput, setPriceInput] = useState("");
+  const [pricePreview, setPricePreview] = useState<string | null>(null);
+  const [showCal, setShowCal] = useState(false);
+  const [unavail, setUnavail] = useState<{ dates: Set<string>; minDays: number }>({ dates: new Set(), minDays: 1 });
+
+  async function refresh() {
+    try {
+      const r = (await getState({ account_slug: accountSlug, hygglo_order_id: orderId })) as OrderEditState;
+      setSt(r);
+      if (r.price.order_price != null) setPriceInput(String(r.price.order_price));
+    } catch {
+      setNote("Couldn't load the booking.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void refresh();
+  }, [accountSlug, orderId]);
+
+  function ok(r: WriteOut, verb: string): boolean {
+    if (r.status === "sent") {
+      setNote(r.reason === "DRY_RUN" ? `✓ ${verb} OK (test — nothing sent)` : `✓ ${verb} done`);
+      return true;
+    }
+    if (r.status === "skipped") setNote("Order edits disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
+    else setNote(`${verb} failed${r.httpStatus ? ` (${r.httpStatus})` : ""}: ${r.error ?? r.reason ?? "unknown"}`);
+    return false;
+  }
+
+  async function onAdd(productId: number, name: string) {
+    setBusy("add");
+    setNote(null);
+    try {
+      const r = (await addItem({ account_slug: accountSlug, hygglo_order_id: orderId, product_id: productId, dryRun })) as WriteOut;
+      if (ok(r, `Added ${name.slice(0, 30)}`)) {
+        setShowPicker(false);
+        await refresh();
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function onRemove(itemId: number, name: string) {
+    setBusy("remove");
+    setNote(null);
+    setConfirmRemove(null);
+    try {
+      const r = (await removeItem({ account_slug: accountSlug, hygglo_order_id: orderId, item_id: itemId, dryRun })) as WriteOut;
+      if (ok(r, `Removed ${name.slice(0, 30)}`)) await refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function onPreview(v: string) {
+    setPriceInput(v);
+    const n = Number(v);
+    if (!v || Number.isNaN(n) || n < 0) return setPricePreview(null);
+    try {
+      const r = (await preview({ account_slug: accountSlug, hygglo_order_id: orderId, new_order_price: n })) as {
+        ok: boolean; new_total?: number;
+      };
+      setPricePreview(r.ok && r.new_total != null ? `renter pays ${money(r.new_total, st?.currency)}` : null);
+    } catch {
+      setPricePreview(null);
+    }
+  }
+  async function onApplyPrice() {
+    const n = Number(priceInput);
+    if (Number.isNaN(n) || n < 0) return setNote("Enter a valid price.");
+    setBusy("price");
+    setNote(null);
+    try {
+      const r = (await setPrice({ account_slug: accountSlug, hygglo_order_id: orderId, order_price: n, dryRun })) as WriteOut;
+      if (ok(r, "Price changed")) {
+        setEditingPrice(false);
+        setPricePreview(null);
+        await refresh();
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function openCalendar() {
+    setBusy("cal-load");
+    try {
+      const r = (await getUnavail({ account_slug: accountSlug, hygglo_order_id: orderId })) as {
+        dates: string[]; min_rental_days: number;
+      };
+      setUnavail({ dates: new Set(r.dates), minDays: r.min_rental_days || 1 });
+    } catch {
+      setUnavail({ dates: new Set(), minDays: 1 });
+    } finally {
+      setBusy(null);
+      setShowCal(true);
+    }
+  }
+  async function onApplyDates(start: string, end: string) {
+    setBusy("dates");
+    setNote(null);
+    try {
+      const verb = st?.actions.change_dates ? "changeDates" : st?.actions.select_dates ? "selectDates" : undefined;
+      const r = (await setDates({ account_slug: accountSlug, hygglo_order_id: orderId, start, end, verb, dryRun })) as WriteOut;
+      if (ok(r, "Dates changed")) {
+        setShowCal(false);
+        await refresh();
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (loading)
+    return (
+      <div className="px-4 py-3 border-b border-white/[0.07]">
+        <SkeletonBlock className="h-16 w-full" />
+      </div>
+    );
+  if (!st || !st.ok)
+    return (
+      <div className="px-4 py-2.5 border-b border-white/[0.07] text-[12px] text-amber-400/90">
+        Couldn’t load booking items{st?.error ? ` (${st.error.slice(0, 60)})` : ""}.
+        <button onClick={() => void refresh()} className="ml-2 underline">retry</button>
+      </div>
+    );
+
+  const a = st.actions;
+  const canDiscount = a.change_price || a.partial_refund;
+  return (
+    <div className="border-b border-white/[0.07] bg-[#0d0f13]">
+      <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
+        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#7a8190]">
+          Booking · edit
+        </span>
+        {dryRun && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-semibold">TEST</span>}
+        <button onClick={() => void refresh()} title="Refresh from Hygglo" className="ml-auto text-[11px] text-[#7a8190] hover:text-white">↻</button>
+      </div>
+
+      {/* Items */}
+      <div className="px-3 pb-2 space-y-1.5">
+        {st.items.map((it) => (
+          <div key={it.item_id ?? it.name} className="flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2">
+            <Thumb src={it.image} accent={accent} size={40} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] text-[#e6e9ef] truncate">{it.name}</div>
+              {it.price_label && <div className="text-[11px] text-[#7a8190]">{it.price_label}</div>}
+            </div>
+            {confirmRemove === it.item_id ? (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  disabled={!!busy}
+                  onClick={() => it.item_id != null && onRemove(it.item_id, it.name)}
+                  className="text-[11px] px-2 py-1 rounded-lg bg-red-600 text-white disabled:opacity-50"
+                >
+                  {busy === "remove" ? "…" : "Remove"}
+                </button>
+                <button onClick={() => setConfirmRemove(null)} className="text-[11px] px-1.5 py-1 rounded-lg bg-white/[0.06] text-[#8b8fa3]">✗</button>
+              </div>
+            ) : (
+              <button
+                disabled={!it.can_remove || !!busy}
+                onClick={() => it.item_id != null && setConfirmRemove(it.item_id)}
+                title={it.can_remove ? "Remove this item from the booking" : "Can't remove the only item — add another first, or decline the booking"}
+                className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.05] text-red-300 hover:bg-red-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          disabled={!a.add_product || !!busy}
+          onClick={() => setShowPicker(true)}
+          title={a.add_product ? "Add a listing to this booking" : "Adding items isn't available in this booking's state"}
+          className="w-full text-[12px] font-medium px-3 py-2 rounded-xl border border-dashed border-white/15 text-[#cbd5e1] hover:bg-white/[0.05] disabled:opacity-40"
+        >
+          {busy === "add" ? "Adding…" : "＋ Add item"}
+        </button>
+      </div>
+
+      {/* Price + dates */}
+      <div className="px-4 pb-3 flex flex-col gap-1.5">
+        <div className="flex items-center gap-2 text-[12.5px]">
+          <span className="text-[#7a8190]">Price</span>
+          <span className="text-[#e6e9ef] font-medium">
+            {money(st.price.order_price, st.currency)} rental
+          </span>
+          <span className="text-[#6b7280]">· {money(st.price.total, st.currency)} total</span>
+          {canDiscount && (
+            <button
+              onClick={() => { setEditingPrice((s) => !s); setPricePreview(null); setPriceInput(st.price.order_price != null ? String(st.price.order_price) : ""); }}
+              title="Change the price (discount or increase)"
+              className="ml-auto text-[12px] text-sky-300 hover:text-sky-200"
+            >
+              ✎ edit
+            </button>
+          )}
+        </div>
+        {editingPrice && a.change_price && (
+          <div className="rounded-xl border border-white/10 bg-black/30 p-2.5 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-[#8b8fa3]">New rental price</span>
+              <div className="flex items-center gap-1 rounded-lg bg-black/40 border border-white/10 px-2">
+                <span className="text-[13px] text-[#9aa0ad]">£</span>
+                <input
+                  type="number"
+                  value={priceInput}
+                  onChange={(e) => void onPreview(e.target.value)}
+                  className="w-20 bg-transparent py-1.5 text-[15px] text-[#eef1f5] focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                {[-10, -5, 5].map((delta) => (
+                  <button
+                    key={delta}
+                    onClick={() => void onPreview(String(Math.max(0, Number(priceInput || st.price.order_price || 0) + delta)))}
+                    className="text-[11px] px-1.5 py-1 rounded-md bg-white/[0.06] text-[#cbd5e1] hover:bg-white/[0.12]"
+                  >
+                    {delta > 0 ? `+${delta}` : delta}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {pricePreview && <div className="text-[11px] text-sky-300/90">{pricePreview}</div>}
+            <div className="flex items-center gap-2">
+              <button onClick={() => setEditingPrice(false)} className="text-[11px] px-2.5 py-1.5 rounded-lg bg-white/[0.06] text-[#8b8fa3]">Cancel</button>
+              <button
+                disabled={busy === "price"}
+                onClick={() => void onApplyPrice()}
+                className="ml-auto text-[12px] font-semibold px-4 py-1.5 rounded-lg text-white disabled:opacity-50"
+                style={{ background: accent }}
+              >
+                {busy === "price" ? "Saving…" : "Apply price"}
+              </button>
+            </div>
+          </div>
+        )}
+        {editingPrice && !a.change_price && a.partial_refund && (
+          <div className="rounded-xl border border-white/10 bg-black/30 p-2.5 text-[11px] text-[#9aa0ad]">
+            This booking is already paid — use Hygglo’s partial-refund on the order to discount it.
+          </div>
+        )}
+        <div className="flex items-center gap-2 text-[12.5px]">
+          <span className="text-[#7a8190]">Dates</span>
+          <span className="text-[#e6e9ef] font-medium">
+            {prettyDay(st.dates.start)}
+            {st.dates.end && st.dates.end !== st.dates.start ? ` → ${prettyDay(st.dates.end)}` : ""}
+          </span>
+          {(a.change_dates || a.select_dates) && (
+            <button
+              disabled={busy === "cal-load"}
+              onClick={() => void openCalendar()}
+              title="Change the rental dates"
+              className="ml-auto text-[12px] text-sky-300 hover:text-sky-200 disabled:opacity-50"
+            >
+              📅 {busy === "cal-load" ? "…" : "change"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {note && (
+        <div className={`px-4 pb-2 text-[11px] ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
+      )}
+
+      {showPicker && (
+        <AddItemPicker accountSlug={accountSlug} busy={!!busy} onPick={onAdd} onClose={() => setShowPicker(false)} />
+      )}
+      {showCal && (
+        <DateCalendar
+          initialStart={st.dates.start}
+          initialEnd={st.dates.end}
+          unavailable={unavail.dates}
+          minDays={unavail.minDays}
+          accent={accent}
+          busy={busy === "dates"}
+          onApply={onApplyDates}
+          onClose={() => setShowCal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 // ── modal (body portal — escapes widget clipping) ─────────────────
 // Exported so the notification deep-link host can open a thread from a tapped
 // push without the Reply Inbox widget being mounted/visible.
@@ -1195,6 +1785,12 @@ export function ReplyModal({
             )}
           </div>
         </div>
+
+        {/* Order editor — live items + add/remove + price + dates (has_reservation
+            threads only; inquiries with no booking have nothing to edit). */}
+        {tile.has_reservation && tile.account_slug && (
+          <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
+        )}
 
         {/* Renter reviews — opened by tapping the stars. Lowest-rated first; any
             review under 4★ is highlighted with its text. */}

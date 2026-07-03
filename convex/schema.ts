@@ -2158,4 +2158,29 @@ export default defineSchema({
   })
     .index("by_renter", ["renter_id"])
     .index("by_renter_review", ["renter_id", "hygglo_review_id"]),
+
+  // ── Online listings cache (order-edit Add-items picker, 2026-07-03) ───────
+  // Slim mirror of an account's LIVE Hygglo listings, refreshed by the Settings
+  // "Rescan listings" button (convex/online_listings_actions.rescan). Feeds the
+  // searchable Add-items picker in the Reply-Inbox order editor. Additive: does
+  // NOT touch hygglo_products / the poll / catalog-sync.
+  online_listings: defineTable({
+    account_slug: v.string(),
+    product_id: v.number(),
+    name: v.string(),
+    image: v.optional(v.string()),
+    daily_price: v.optional(v.number()),
+    is_published: v.boolean(),
+    public_url: v.optional(v.string()),
+    updated_at: v.number(),
+  })
+    .index("by_account", ["account_slug"])
+    .index("by_account_product", ["account_slug", "product_id"]),
+
+  // Per-account rescan marker (last run + count) for the Settings caption.
+  online_listings_sync: defineTable({
+    account_slug: v.string(),
+    last_rescan_at: v.number(),
+    count: v.number(),
+  }).index("by_account", ["account_slug"]),
 });
