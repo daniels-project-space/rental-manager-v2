@@ -252,10 +252,22 @@ export async function POST(req: Request) {
       }
     }
     // Never claim an unconfirmed booking is confirmed/paid/booked — escalate.
+    // BUT "once/when your booking is confirmed" is a fine DEFERRAL, not a claim —
+    // so check the words right before the confirmation term for a conditional.
     if (obj.draft && !obj.needs_human && !bookingConfirmed) {
       const d3 = obj.draft.toLowerCase();
-      const falseConfirm =
-        /(your booking is|it'?s|it is|you'?re|you are|now) (confirmed|booked|all set|paid|locked in|reserved)|booking (is )?(confirmed|booked|secured|paid)|confirmed (and paid|for you|through|for the)|all yours|you'?re (all )?(set|booked|good to go)|paid and (confirmed|booked|reserved)|reserved for you|it'?s (all )?(booked|yours|set)/i.test(d3);
+      let falseConfirm = false;
+      const re = /(confirmed|booked|all set|locked in|reserved|paid)/g;
+      let mm: RegExpExecArray | null;
+      while ((mm = re.exec(d3)) !== null) {
+        const pre = d3.slice(Math.max(0, mm.index - 28), mm.index);
+        const asserts = /(your booking is|it'?s|it is|you'?re|you are|now|all)\s*$/.test(pre);
+        const conditional = /\b(once|when|after|as soon as|until|to|complete|lock|get|be|gets|being|makes|before)\b/.test(pre);
+        if (asserts && !conditional) {
+          falseConfirm = true;
+          break;
+        }
+      }
       if (falseConfirm) {
         obj.draft = "";
         obj.needs_human = true;
