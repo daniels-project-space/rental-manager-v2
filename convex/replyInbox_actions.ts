@@ -18,6 +18,8 @@ import { api, internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
+import { tool, stepCountIs } from "ai";
+import { z } from "zod";
 import { dnaSummary } from "./lib/renter_dna";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import {
@@ -456,6 +458,7 @@ export const generateDraft = action({
         ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
         : null,
       requestLine,
+      "TOOLS: you can call check_availability(item, horizon_days) to see if an item is actually free for the renter's dates. Whenever the renter asks if something is available/free, or you'd otherwise say it is, CALL it first and answer from the result — do NOT guess or just say 'let me check'. If the tool shows it's booked, offer the nearest free owned alternative.",
       marketingBlock,
       listingFactsBlock,
       factsBlock,
@@ -489,10 +492,37 @@ export const generateDraft = action({
     // damage-on-shipped, legal, big-£) still escalate to Sonnet when the master
     // "Escalate to Sonnet" toggle is on; everything else runs on Haiku.
     const useStrongModel = highStakes && c.escalate_to_sonnet !== false;
+    // TOOLS: give the draft a way to ACTUALLY check availability for an item and
+    // its dates, instead of guessing or hedging "let me check". The model calls
+    // it only when it needs to state availability. (Daniel — Mastra wiring)
+    const draftTools = {
+      check_availability: tool({
+        description:
+          "Check whether a specific item is free for the renter's dates. Call this BEFORE you ever say an item is available / free / booked — you do NOT otherwise know availability. Returns each matching unit's free days + upcoming confirmed bookings over the horizon.",
+        inputSchema: z.object({
+          item: z.string().describe("Item to check, e.g. 'DJI Mini 4 Pro' or 'Sony FX3'"),
+          horizon_days: z.number().optional().describe("Days ahead to check (default 21)"),
+        }),
+        execute: async ({ item, horizon_days }: { item: string; horizon_days?: number }) => {
+          try {
+            const r = await ctx.runQuery(api.calendar.getItemAvailabilityForChat, {
+              query: item,
+              horizonDays: horizon_days ?? 21,
+              accountSlug: c.account_slug ?? null,
+            });
+            return JSON.stringify(r);
+          } catch (e) {
+            return `availability check failed: ${e instanceof Error ? e.message : String(e)}`;
+          }
+        },
+      }),
+    };
     const gen = await gatedGenerateText({
       model: await getActionLlmModel(useStrongModel ? { strong: true } : { haiku: true }),
       system,
       prompt,
+      tools: draftTools,
+      stopWhen: stepCountIs(4),
       bypass: true,
       context: { source: "replyInbox.generateDraft", tag: "reply_draft" },
     });
@@ -510,8 +540,12 @@ export const generateDraft = action({
       c.status === "confirmed" ||
       c.status === "completed" ||
       c.status === "ongoing";
+    // If the model CALLED a tool (e.g. check_availability), its availability
+    // claim is real — don't let the self-check hedge a tool-verified answer.
+    const usedTools = ((gen.result as { steps?: Array<{ toolCalls?: unknown[] }> }).steps ?? [])
+      .some((st) => (st.toolCalls?.length ?? 0) > 0);
     let checkedDraft = draft;
-    if (listingFacts.length === 0 || !isBookedThread) {
+    if (!usedTools && (listingFacts.length === 0 || !isBookedThread)) {
       try {
         const groundingForCheck = [listingFactsBlock, factsBlock]
           .filter(Boolean)
