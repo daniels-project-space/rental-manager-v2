@@ -49,15 +49,21 @@ export async function POST(req: Request) {
   // these). The agent can still call check_location, search_knowledge, etc.
   let groundTruth = "";
   const marketingItems: string[] = [];
+  let bookingConfirmed = true; // stays true when we can't tell (avoid false blocks)
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
     if (lc?.found) {
+      bookingConfirmed = lc.is_confirmed === true;
       const req: string[] = [];
-      if (lc.start_date) req.push(`booking date ${lc.start_date}${lc.pickup_time ? " at " + lc.pickup_time : ""}`);
-      if (lc.gross_paid_gbp != null) req.push(`they pay £${lc.gross_paid_gbp}`);
-      if (lc.order_step) req.push(`stage ${lc.order_step}`);
+      if (lc.start_date) req.push(`dates ${lc.start_date}${lc.end_date && lc.end_date !== lc.start_date ? "–" + lc.end_date : ""}`);
+      if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
+      req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
+      if (!bookingConfirmed) {
+        groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. You MAY confirm the item is AVAILABLE and warmly invite them to complete/place the booking to lock it in — nothing beyond that.\n`;
+      }
+      groundTruth += `PICKUP & RETURN WINDOWS: only 10am–12pm OR 7–9pm (London), every day. NEVER agree to any other time — no afternoons, nothing 12–7pm or before 10am. If the renter asks for an off-window time, warmly steer them to the nearest valid window instead. Offer the morning slot first.\n`;
       for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
@@ -224,6 +230,26 @@ export async function POST(req: Request) {
       const refersCompetitor =
         /(another|other|a different|a local|somewhere else) (lender|rental|hire|shop|supplier|provider|company|store|business|renter)|search (for\b.{0,40})?(rental|elsewhere|another|online)|try (another|a different|someone else|elsewhere)|from another (lender|local|rental|hire|shop|supplier)|other (lenders|rentals|hires|providers|suppliers)|rent(al)? (it )?(from|with) (another|someone)/i.test(d2);
       if (refersCompetitor) {
+        obj.draft = "";
+        obj.needs_human = true;
+      }
+    }
+    // Never claim an unconfirmed booking is confirmed/paid/booked — escalate.
+    if (obj.draft && !obj.needs_human && !bookingConfirmed) {
+      const d3 = obj.draft.toLowerCase();
+      const falseConfirm =
+        /(your booking is|it'?s|it is|you'?re|you are|now) (confirmed|booked|all set|paid|locked in|reserved)|booking (is )?(confirmed|booked|secured|paid)|confirmed (and paid|for you|through|for the)|all yours|you'?re (all )?(set|booked|good to go)|paid and (confirmed|booked|reserved)|reserved for you|it'?s (all )?(booked|yours|set)/i.test(d3);
+      if (falseConfirm) {
+        obj.draft = "";
+        obj.needs_human = true;
+      }
+    }
+    // Never agree to an off-hours pickup/return — windows are 10–12 & 7–9pm.
+    if (obj.draft && !obj.needs_human) {
+      const d4 = obj.draft.toLowerCase();
+      const offHours =
+        /\b(this |the )?afternoon\b.{0,30}(work|fine|good|great|perfect|suit|see you|pick|collect|sounds|lovely)|(work|fine|good|great|perfect|see you|pick|collect|sounds|lovely).{0,25}\b(this |the )?afternoon\b|\b([1-6])\s?(pm|o'?clock)\b.{0,25}(work|fine|good|great|perfect|suit|see you|sounds|pick|collect|that'?s|lovely)/i.test(d4);
+      if (offHours) {
         obj.draft = "";
         obj.needs_human = true;
       }

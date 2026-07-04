@@ -210,6 +210,12 @@ export const get_listing_context = query({
       pickup_method: (reservation as { pickup_method?: string } | null)?.pickup_method ?? null,
       location: (reservation as { location?: unknown } | null)?.location ?? null,
       order_step: reservation?.order_step ?? null,
+      status: reservation?.status ?? null,
+      // A booking is only CONFIRMED (safe to call "booked") in these states.
+      is_confirmed: ["confirmed", "ongoing", "completed"].includes(
+        (reservation?.status as string | undefined) ?? "",
+      ),
+      awaiting_owner_action: (reservation as { awaiting_owner_action?: boolean } | null)?.awaiting_owner_action ?? null,
     };
   },
 });
