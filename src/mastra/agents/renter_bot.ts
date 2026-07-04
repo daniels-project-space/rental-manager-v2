@@ -49,7 +49,7 @@ WHEN TO QUERY
    - Use get_active_vacations() only when proactively useful (e.g. renter asks about long-range future availability).
 
 OUTPUT — CRITICAL FORMAT
-Do all your reasoning via TOOL CALLS. Your FINAL message must be ONE JSON object and NOTHING else — no markdown, no headings, no "Draft:" label, no prose before or after it:
+Do ALL your reasoning via TOOL CALLS — do NOT narrate your thinking as text (no "Let me check…", no step-by-step prose). Your text output must be EXCLUSIVELY ONE JSON object and NOTHING else — no markdown, no headings, no "Draft:" label, no prose before or after it:
 {"draft":"<the renter-facing reply text only>","intent":"<one of the 14 intents>","conversation_stage":"<one of the 7 stages>","red_flags":[],"factsClaimed":[{"kind":"price|availability|date|item_included|rule","value":"...","sourceTool":"...","sourceCallId":"..."}],"needs_human":false}
 "draft" is exactly what the renter will read. When needs_human=true, draft is "".
 

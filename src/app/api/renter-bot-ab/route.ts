@@ -63,7 +63,9 @@ export async function POST(req: Request) {
     // allowed providers"). The agent still runs its tool loop; its prompt asks
     // for the JSON, so we parse it from the plain text (falling back to raw).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: any = await (agent as any).generate(baseMessages);
+    const result: any = await (agent as any).generate(baseMessages, {
+      maxSteps: 10,
+    });
     const text: string = result?.text ?? "";
     let obj: RenterBotOutput | null = null;
     try {
