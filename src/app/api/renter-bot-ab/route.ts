@@ -43,10 +43,14 @@ export async function POST(req: Request) {
   let rawText = "";
   try {
     const agent = await getRenterBotAgent();
+    const todayLondon = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Europe/London",
+    });
     const baseMessages = [
       {
         role: "user" as const,
         content: [
+          `TODAY IS ${todayLondon} (Europe/London). Compute any relative dates the renter uses ("this weekend", "next Friday", "tomorrow") from TODAY — never guess a date. When you call check_availability, pass real dates derived from today.`,
           `THREAD: ${thread_id}`,
           `ACCOUNT: ${account_slug ?? ""}`,
           `LATEST INBOUND MESSAGE FROM RENTER:`,
