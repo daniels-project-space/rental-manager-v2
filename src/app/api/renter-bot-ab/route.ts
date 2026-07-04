@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     } catch {
       obj = null;
     }
-    newDraft = obj?.draft ?? text || "(empty)";
+    newDraft = obj?.draft ?? (text || "(empty)");
     newMeta = obj
       ? {
           intent: obj.intent,
