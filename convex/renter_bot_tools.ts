@@ -182,15 +182,19 @@ export const lookup_pricing = query({
       const q = toks(item_name);
       const qDigits = q.filter((t) => /^[0-9]+$/.test(t));
       let best: (typeof listings)[number] | null = null;
-      let bestScore = 0; let bestSize = Infinity;
+      let bestScore = 0; let bestPrice = Infinity;
       for (const l of listings) {
         const tset = new Set(toks(l.name));
         if (qDigits.some((d) => !tset.has(d))) continue;
         let hit = 0; for (const t of q) if (tset.has(t)) hit++;
         if (hit < 2) continue;
         const score = hit / q.length;
-        if (score > bestScore || (score === bestScore && tset.size < bestSize)) {
-          best = l; bestScore = score; bestSize = tset.size;
+        // Best token coverage; among ties prefer the CHEAPEST matching listing
+        // (the base offering, not an add-on bundle) so a generic name quotes the
+        // base rate. (Daniel)
+        const price = typeof l.daily_price === "number" ? l.daily_price : Infinity;
+        if (score > bestScore || (score === bestScore && price < bestPrice)) {
+          best = l; bestScore = score; bestPrice = price;
         }
       }
       if (best && bestScore >= 0.6 && typeof best.daily_price === "number") {
