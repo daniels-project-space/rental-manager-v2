@@ -43,6 +43,42 @@ export async function POST(req: Request) {
   }
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+
+  // PRE-FETCH the ground truth (Haiku under-calls its tools, so we hand it the
+  // requested listing + its real availability up front — it must not contradict
+  // these). The agent can still call check_location, search_knowledge, etc.
+  let groundTruth = "";
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
+    if (lc?.found) {
+      const req: string[] = [];
+      if (lc.start_date) req.push(`booking date ${lc.start_date}${lc.pickup_time ? " at " + lc.pickup_time : ""}`);
+      if (lc.gross_paid_gbp != null) req.push(`they pay £${lc.gross_paid_gbp}`);
+      if (lc.order_step) req.push(`stage ${lc.order_step}`);
+      groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string }>) {
+        groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${it.whats_included ?? "(not listed)"}\n`;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const av: any = await convex.query(api.calendar.getItemAvailabilityForChat, {
+            query: it.name ?? "",
+            horizonDays: 30,
+            accountSlug: account_slug || null,
+          });
+          const m = (av?.items ?? [])[0];
+          if (m) {
+            groundTruth += `  AVAILABILITY (${it.name}): free_today=${m.free_today}, next_free=${m.next_free_date ?? "?"}, upcoming_bookings=${(m.upcoming_bookings ?? []).length}\n`;
+          }
+        } catch { /* best-effort */ }
+      }
+      groundTruth +=
+        "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. If the booking stage is a NEW REQUEST/awaiting approval, do NOT talk as if it's already confirmed.\n";
+    }
+  } catch {
+    /* best-effort ground truth */
+  }
+
   const baseMessages = [
     {
       role: "user" as const,
@@ -50,6 +86,7 @@ export async function POST(req: Request) {
         `TODAY IS ${today} (Europe/London). Compute any relative dates the renter uses from TODAY; never guess a date.`,
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
+        groundTruth ? `\n${groundTruth}` : "",
         `LATEST INBOUND MESSAGE FROM RENTER:`,
         lastRenter,
       ].join("\n"),
