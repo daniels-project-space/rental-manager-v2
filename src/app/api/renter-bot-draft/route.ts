@@ -68,7 +68,18 @@ export async function POST(req: Request) {
           });
           const m = (av?.items ?? [])[0];
           if (m) {
-            groundTruth += `  AVAILABILITY (${it.name}): free_today=${m.free_today}, next_free=${m.next_free_date ?? "?"}, upcoming_bookings=${(m.upcoming_bookings ?? []).length}\n`;
+            const reqDate = lc.start_date as string | undefined;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const bookings = (m.upcoming_bookings ?? []) as Array<any>;
+            const conflict = reqDate
+              ? bookings.some((b) => (b.start_date ?? b.start) <= reqDate && (b.end_date ?? b.end ?? b.start_date ?? b.start) >= reqDate)
+              : false;
+            const verdict = conflict
+              ? `BOOKED on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
+              : bookings.length === 0
+                ? `FREE — no bookings at all, so it IS available for the requested date${reqDate ? " " + reqDate : ""}; you can confirm the pickup works`
+                : `no booking conflicts on ${reqDate} — available; confirm it works`;
+            groundTruth += `  AVAILABILITY (${it.name}): ${verdict}.\n`;
           }
         } catch { /* best-effort */ }
       }
