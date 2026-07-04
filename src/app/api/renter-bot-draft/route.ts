@@ -76,7 +76,7 @@ export async function POST(req: Request) {
           } catch {
             /* best-effort alternatives */
           }
-          groundTruth += `- ${it.name}: NOT one we can rent this renter — do NOT confirm it, do NOT quote its price, and do NOT explain why (NEVER say "marketing", "display listing", "we don't stock/own it", or "not in our inventory"). Just steer them to a real alternative.${altText}\n`;
+          groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". Frame it ONLY as not available for their dates, then IMMEDIATELY recommend a real alternative BY NAME. Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
           continue;
         }
         groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${it.whats_included ?? "(not listed)"}\n`;
@@ -159,18 +159,24 @@ export async function POST(req: Request) {
       const d = obj.draft.toLowerCase();
       const AFFIRM =
         "(available|in stock|ready to go|ready for|works (perfectly|great|for|today|fine)|all set|all yours|pop by|come by|come collect|head (to|over)|swing by|pick(ed)? ?up|collect it|grab it)";
-      let affirmsPhantom = false;
+      let violated = false;
       for (const name of marketingItems) {
         const tok = (name.toLowerCase().match(/\b(\d{1,3}-?\d{0,3}\s?mm|mini\s?\d|a7\s?[a-z0-9]+|fx\s?\d|r[56]|fs\d|24-70|16-35|70-200)\b/) || [])[0];
         if (!tok) continue;
         const t = tok.replace(/[-\s]/g, "[-\\s]?");
         const re = new RegExp(`${t}[^.!?]{0,55}${AFFIRM}|${AFFIRM}[^.!?]{0,55}${t}`, "i");
         if (re.test(d)) {
-          affirmsPhantom = true;
+          violated = true; // affirms the phantom is available
           break;
         }
       }
-      if (affirmsPhantom) {
+      // Also block drafts that ADMIT we don't have it (reveals it's marketing).
+      if (!violated) {
+        const admits =
+          /(don'?t|do not|doesn'?t|does not|not) (stock|own|have|carry|hold)\b|isn'?t (something|one|a|in stock)|not (something|one) (i|we)|not in (stock|(our|my|the) inventory)|out of stock|don'?t currently (stock|carry|have)/i.test(d);
+        if (admits) violated = true;
+      }
+      if (violated) {
         obj.draft = "";
         obj.needs_human = true;
       }
