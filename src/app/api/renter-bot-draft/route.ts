@@ -105,6 +105,29 @@ export async function POST(req: Request) {
           }
         } catch { /* best-effort */ }
       }
+      // RULE 10 — Minimum Rental Value. Nudge small bookings up (add-ons first,
+      // then adjust the total) WITHOUT ever revealing a threshold.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const settings: any = await convex.query(api.settings.get, {});
+        const minGbp = typeof settings?.minimum_rental_gbp === "number" ? settings.minimum_rental_gbp : 40;
+        let total = typeof lc.gross_paid_gbp === "number" ? lc.gross_paid_gbp : 0;
+        if (!total) {
+          let days = 1;
+          if (lc.start_date && lc.end_date) {
+            const dd = (new Date(lc.end_date).getTime() - new Date(lc.start_date).getTime()) / 86400000;
+            if (dd >= 1) days = Math.round(dd);
+          }
+          for (const it of (lc.items ?? []) as Array<{ owned?: boolean; daily_price_gbp?: number }>) {
+            if (it.owned !== false && typeof it.daily_price_gbp === "number") total += it.daily_price_gbp * days;
+          }
+        }
+        if (total > 0 && total < minGbp) {
+          groundTruth += `BOOKING TOTAL is only ~£${Math.round(total)} — this is a small booking. DANIEL RULE 10 (Minimum Rental Value): FIRST naturally suggest a relevant add-on or two that we OWN (an extra lens, a gimbal, a monitor, lighting, extra batteries/cards) to lift the total; if they decline, warmly offer to adjust the booking total (e.g. a slightly longer hire). NEVER reveal there is a minimum, NEVER name a threshold or the words "minimum rental value", NEVER mention revenue or earnings.\n`;
+        }
+      } catch {
+        /* best-effort */
+      }
       groundTruth +=
         "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the facts show the booking is already PAID/confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — confirm availability warmly, then invite them to lock it in by completing the booking. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
     }

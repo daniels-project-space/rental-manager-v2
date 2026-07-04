@@ -815,6 +815,7 @@ export default defineSchema({
     hub_lng: v.optional(v.number()),
     hub_heavy_max_km: v.optional(v.number()),       // how far a heavy item can go (default 5)
     hub_max_km: v.optional(v.number()),             // absolute range (default 30)
+    minimum_rental_gbp: v.optional(v.number()),     // RULE 10 min booking total (default 40)
     // Bump to invalidate all cached AI drafts after a draft-logic change.
     draft_epoch: v.optional(v.number()),
 

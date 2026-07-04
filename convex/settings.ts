@@ -36,6 +36,7 @@ export const update = mutation({
     ),
     hub_heavy_max_km: v.optional(v.number()),
     hub_max_km: v.optional(v.number()),
+    minimum_rental_gbp: v.optional(v.number()),
     draft_epoch: v.optional(v.number()),
   },
   handler: async (ctx, fields) => {
@@ -58,6 +59,7 @@ export const update = mutation({
     if (fields.availability_include_pending !== undefined)
       patch.availability_include_pending = fields.availability_include_pending;
     if (fields.pickup_hours !== undefined) patch.pickup_hours = fields.pickup_hours;
+    if (fields.minimum_rental_gbp !== undefined) patch.minimum_rental_gbp = fields.minimum_rental_gbp;
     if (fields.hub_heavy_max_km !== undefined) patch.hub_heavy_max_km = fields.hub_heavy_max_km;
     if (fields.hub_max_km !== undefined) patch.hub_max_km = fields.hub_max_km;
     if (fields.draft_epoch !== undefined) patch.draft_epoch = fields.draft_epoch;
