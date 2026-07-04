@@ -39,6 +39,8 @@ export async function POST(req: Request) {
   // NEW bot — the agentic Mastra renter bot.
   let newDraft = "";
   let newMeta: Partial<RenterBotOutput> | null = null;
+  let trace: unknown[] = [];
+  let rawText = "";
   try {
     const agent = await getRenterBotAgent();
     const baseMessages = [
@@ -67,6 +69,22 @@ export async function POST(req: Request) {
       obj = null;
     }
     newDraft = obj?.draft ?? (text || "(empty)");
+    // ── DEBUG TRACE: which tools were called + what they returned ──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    trace = ((result?.steps ?? []) as any[]).map((st) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCalls: ((st?.toolCalls ?? []) as any[]).map((tc) => ({
+        tool: tc?.toolName ?? tc?.name,
+        args: tc?.args ?? tc?.input,
+      })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolResults: ((st?.toolResults ?? []) as any[]).map((tr) => ({
+        tool: tr?.toolName ?? tr?.name,
+        result: JSON.stringify(tr?.result ?? tr?.output ?? tr).slice(0, 400),
+      })),
+      finish: st?.finishReason,
+    }));
+    rawText = text.slice(0, 600);
     newMeta = obj
       ? {
           intent: obj.intent,
@@ -78,5 +96,5 @@ export async function POST(req: Request) {
     newDraft = "ERR: " + (e instanceof Error ? e.message : String(e));
   }
 
-  return NextResponse.json({ thread_id, old: oldDraft, new: newDraft, new_meta: newMeta });
+  return NextResponse.json({ thread_id, old: oldDraft, new: newDraft, new_meta: newMeta, trace, rawText });
 }
