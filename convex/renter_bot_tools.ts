@@ -107,47 +107,84 @@ export const get_listing_context = query({
       .query("reservations")
       .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
       .first();
-    if (!reservation) {
-      return {
-        thread_id,
-        found: false as const,
-        items: [],
-        account_slug: null,
-      };
-    }
-    // Prefer hygglo_items (per-item snapshot from Hygglo, authoritative
-    // for what's actually on this booking) — falls back to items[] then
-    // expanded_items[].
-    const items =
-      (reservation.hygglo_items?.map((h) => ({
+    const conv = await ctx.db
+      .query("conversations")
+      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
+      .first();
+    const account_slug =
+      (reservation?.account_slug ?? null) ||
+      ((conv as { account_slug?: string } | null)?.account_slug ?? null);
+
+    // The items actually being requested, WITH their product_id — from the
+    // reservation (authoritative once booked) or the inquiry (before that).
+    type Line = { name: string; qty: number; product_id: number | null };
+    let lines: Line[] = [];
+    if (reservation?.hygglo_items?.length) {
+      lines = reservation.hygglo_items.map((h) => ({
         name: h.name,
         qty: h.qty ?? 1,
-        type: h.type ?? "RENTAL",
-      })) ?? null) ??
-      (reservation.items?.map((i) => ({
-        name: i.item_name,
-        qty: i.qty ?? 1,
-        type: "RENTAL",
-      })) ?? null) ??
-      [];
-    const expanded =
-      reservation.expanded_items?.map((e) => ({
-        name: e.item_name_canonical,
-        qty: e.qty,
-      })) ?? [];
+        product_id: (h as { product_id?: number }).product_id ?? null,
+      }));
+    } else if ((conv as { inquiry_items?: unknown[] } | null)?.inquiry_items?.length) {
+      lines = ((conv as { inquiry_items: Array<{ name?: string; qty?: number; product_id?: number }> }).inquiry_items).map((it) => ({
+        name: it.name ?? "",
+        qty: it.qty ?? 1,
+        product_id: it.product_id ?? null,
+      }));
+    } else if (reservation?.items?.length) {
+      lines = reservation.items.map((i) => ({ name: i.item_name, qty: i.qty ?? 1, product_id: null }));
+    }
+
+    // Enrich each REQUESTED item with its REAL per-account Hygglo listing:
+    // the daily price + the description (= what is IN the set). Keyed by
+    // product_id, so no name-guessing. This is the ground truth for what the
+    // renter is actually asking about.
+    const items: Array<Record<string, unknown>> = [];
+    for (const l of lines) {
+      let daily_price_gbp: number | null = null;
+      let whats_included: string | null = null;
+      let listing_name: string | null = null;
+      let public_url: string | null = null;
+      if (account_slug && typeof l.product_id === "number") {
+        const listing = await ctx.db
+          .query("online_listings")
+          .withIndex("by_account_product", (q) =>
+            q.eq("account_slug", account_slug).eq("product_id", l.product_id as number),
+          )
+          .first();
+        if (listing) {
+          daily_price_gbp = listing.daily_price ?? null;
+          whats_included = listing.description ?? null;
+          listing_name = listing.name ?? null;
+          public_url = listing.public_url ?? null;
+        }
+      }
+      items.push({
+        name: l.name,
+        qty: l.qty,
+        product_id: l.product_id,
+        listing_name,
+        daily_price_gbp,
+        whats_included,
+        public_url,
+      });
+    }
 
     return {
       thread_id,
-      found: true as const,
-      account_slug: reservation.account_slug ?? null,
+      found: items.length > 0,
+      is_inquiry: !reservation,
+      account_slug,
       items,
-      expanded_items: expanded,
-      start_date: reservation.start_date ?? null,
-      end_date: reservation.end_date ?? null,
-      gross_paid_gbp: reservation.gross_paid_gbp ?? null,
-      pickup_time: reservation.pickup_time ?? null,
-      return_time: reservation.return_time ?? null,
-      order_step: reservation.order_step ?? null,
+      // The request itself: dates, pickup/return time, what they pay, location.
+      start_date: reservation?.start_date ?? null,
+      end_date: reservation?.end_date ?? null,
+      pickup_time: reservation?.pickup_time ?? null,
+      return_time: reservation?.return_time ?? null,
+      gross_paid_gbp: reservation?.gross_paid_gbp ?? null,
+      pickup_method: (reservation as { pickup_method?: string } | null)?.pickup_method ?? null,
+      location: (reservation as { location?: unknown } | null)?.location ?? null,
+      order_step: reservation?.order_step ?? null,
     };
   },
 });
