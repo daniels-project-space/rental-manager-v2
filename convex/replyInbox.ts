@@ -1101,6 +1101,7 @@ export const getThreadContext = internalQuery({
     // guess. Recover the product_id by matching the name against THIS account's
     // cached listings (deterministic token-coverage match) so those threads get
     // real price/kit/specs too. (Daniel, 2026-07-03)
+    const marketingAsks: string[] = [];
     if (slug && lineItems.some((li) => typeof li.product_id !== "number")) {
       const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
       const toks = (str: string) =>
@@ -1121,15 +1122,20 @@ export const getThreadContext = internalQuery({
       const ownedPids = new Set<number>();
       for (const r of ownedPidRows)
         if (r.account_slug === slug) ownedPids.add(r.product_id);
-      const listings = (
+      const allListings = (
         await ctx.db
           .query("online_listings")
           .withIndex("by_account", (q) => q.eq("account_slug", slug!))
           .collect()
-      )
-        .filter((l) => ownedPids.has(l.product_id))
-        .map((l) => ({ product_id: l.product_id, tset: new Set(toks(l.name)) }));
-      const bestPid = (name: string | null | undefined): number | null => {
+      ).map((l) => ({
+        product_id: l.product_id,
+        owned: ownedPids.has(l.product_id),
+        tset: new Set(toks(l.name)),
+      }));
+      const bestOver = (
+        name: string | null | undefined,
+        pool: typeof allListings,
+      ): number | null => {
         if (!name) return null;
         const q = toks(name);
         if (q.length < 2) return null;
@@ -1140,7 +1146,7 @@ export const getThreadContext = internalQuery({
         let best: number | null = null;
         let bestScore = 0;
         let bestSize = Infinity;
-        for (const L of listings) {
+        for (const L of pool) {
           if (qDigits.some((d) => !L.tset.has(d))) continue;
           let hit = 0;
           for (const t of q) if (L.tset.has(t)) hit++;
@@ -1154,11 +1160,20 @@ export const getThreadContext = internalQuery({
         }
         return bestScore >= 0.6 ? best : null;
       };
+      const ownedListings = allListings.filter((l) => l.owned);
+      const mktListings = allListings.filter((l) => !l.owned);
       for (const li of lineItems) {
-        if (typeof li.product_id !== "number") {
-          const pid = bestPid(li.name);
-          if (typeof pid === "number") li.product_id = pid;
+        if (typeof li.product_id === "number") continue;
+        const ownedPid = bestOver(li.name, ownedListings);
+        if (typeof ownedPid === "number") {
+          li.product_id = ownedPid;
+          continue;
         }
+        // No owned match — did they ask about a MARKETING listing
+        // (advertised to show the class of gear, but not stocked)? Flag it
+        // so the draft redirects warmly to the real owned alternative.
+        if (li.name && bestOver(li.name, mktListings) !== null)
+          marketingAsks.push(li.name);
       }
     }
     try {
@@ -1401,6 +1416,7 @@ export const getThreadContext = internalQuery({
       bundle_suggestion,
       // Product ids in play — generateDraft fetches their REAL listing facts
       // (price + included kit + discount) to override the generic catalog.
+      marketing_asks: marketingAsks,
       listing_product_ids: [
         ...new Set(
           lineItems

@@ -432,6 +432,14 @@ export const generateDraft = action({
         c.learned_lessons.map((l) => `- ${l}`).join("\n")
       : null;
 
+    const marketingBlock = c.marketing_asks?.length
+      ? "MARKETING LISTING — the renter asked about: " +
+        c.marketing_asks.join(", ") +
+        ". We advertise this to show the CLASS of gear but do NOT stock that exact model. " +
+        "Do NOT say it's a mistake or just that 'we don't have it' — warmly point them to the closest thing we DO own (same category, from the owned inventory above), " +
+        "give its real price + what's included, sell it as the equivalent, then offer to check availability for their dates."
+      : null;
+
     const prompt = [
       `Renter: ${c.renter_name}`,
       renterLine,
@@ -448,6 +456,7 @@ export const generateDraft = action({
         ? `Price: ${c.currency} ${c.gross_paid_gbp}${c.delivery_fee_gbp ? ` (incl. ${c.delivery_fee_gbp} delivery)` : ""}`
         : null,
       requestLine,
+      marketingBlock,
       listingFactsBlock,
       factsBlock,
       noGroundingLine,
