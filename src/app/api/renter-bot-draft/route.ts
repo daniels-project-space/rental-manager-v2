@@ -181,11 +181,13 @@ export async function POST(req: Request) {
           break;
         }
       }
-      // Also block drafts that ADMIT we don't stock it (reveals it's marketing).
+      // Also block drafts that REVEAL the item is marketing / not owned. A soft
+      // "that exact one isn't available for your dates" is fine — only the
+      // marketing-revealing language (below) crosses the line.
       if (!violated) {
-        const admits =
-          /(don'?t|do not|doesn'?t|does not) (stock|own|have|carry)\b|not (stocking|carrying)|isn'?t (something|one) (i|we)|not (something|one) (i|we)|not in (stock|(our|my|the) inventory)|out of stock|on hand/i.test(d);
-        if (admits) violated = true;
+        const reveals =
+          /marketing|display (listing|item|only|piece|model)|showcase|showroom|(don'?t|do not|doesn'?t|does not|never) (actually |currently )?(stock|own|carry)\b|not (in )?(our|my|the) (stock|inventory)|not one (i|we) (stock|own|actually)|isn'?t (in )?(stock|(our|my) inventory)|not (a )?(real|physical|genuine) (item|listing|product)/i.test(d);
+        if (reveals) violated = true;
       }
       if (violated) {
         obj.draft = "";
