@@ -67,6 +67,7 @@ export async function POST(req: Request) {
             const alts: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
               account_slug: account_slug || "",
               kind: it.kind ?? undefined,
+              item_name: it.name ?? undefined,
               exclude_name: it.name ?? undefined,
             });
             const list = ((alts?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
@@ -105,7 +106,7 @@ export async function POST(req: Request) {
         } catch { /* best-effort */ }
       }
       groundTruth +=
-        "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. If the booking stage is a NEW REQUEST/awaiting approval, do NOT talk as if it's already confirmed.\n";
+        "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the facts show the booking is already PAID/confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — confirm availability warmly, then invite them to lock it in by completing the booking. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
     }
   } catch {
     /* best-effort ground truth */
@@ -190,6 +191,16 @@ export async function POST(req: Request) {
         if (reveals) violated = true;
       }
       if (violated) {
+        obj.draft = "";
+        obj.needs_human = true;
+      }
+    }
+    // Never refer a renter to a competitor / another lender — blank + escalate.
+    if (obj.draft && !obj.needs_human) {
+      const d2 = obj.draft.toLowerCase();
+      const refersCompetitor =
+        /(another|other|a different|a local|somewhere else) (lender|rental|hire|shop|supplier|provider|company|store|business|renter)|search (for\b.{0,40})?(rental|elsewhere|another|online)|try (another|a different|someone else|elsewhere)|from another (lender|local|rental|hire|shop|supplier)|other (lenders|rentals|hires|providers|suppliers)|rent(al)? (it )?(from|with) (another|someone)/i.test(d2);
+      if (refersCompetitor) {
         obj.draft = "";
         obj.needs_human = true;
       }

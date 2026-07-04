@@ -518,30 +518,47 @@ export const find_owned_alternatives = query({
     account_slug: v.string(),
     kind: v.optional(v.string()),
     lens_mount: v.optional(v.string()),
+    item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, exclude_name }) => {
-    // Accounts share Daniel's owned gear, so ownership lives on the items table
-    // (active + not marketing-only + qty>0), NOT the per-account product index
-    // (which is empty for some accounts). Works for every account.
-    const all = kind
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name }) => {
+    // Owned = active + not marketing-only + qty>0 on the SHARED items table
+    // (accounts front the same gear). If kind is given AND real, narrow by it;
+    // otherwise scan all and rank by NAME similarity to the requested item —
+    // robust when a marketing listing has kind=null.
+    const base = kind
       ? await ctx.db.query("items").withIndex("by_kind", (q) => q.eq("kind", kind)).collect()
       : await ctx.db.query("items").collect();
+    const owned = base.filter(
+      (it) => it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0,
+    );
 
-    // Price map: real Hygglo listing prices, keyed by name tokens. Owned-backed
-    // listings only (any account — the gear is shared). Lowest price wins.
-    const STOP = new Set(["the", "and", "for", "with", "plus", "set", "kit", "sony", "lens"]);
+    // Category/model-aware tokenizer: drop fillers, stem trailing plural 's'.
+    const STOP = new Set([
+      "the", "and", "for", "with", "plus", "set", "kit", "bundle", "combo",
+      "portable", "battery", "powered", "wireless", "pro", "system", "alternative",
+      "like", "or", "channel", "full", "frame", "camera", "lens",
+    ]);
+    const stem = (t: string) => (t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t);
     const toks = (str: string) =>
-      new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t)));
-    const listings = await ctx.db.query("online_listings").collect();
+      new Set(
+        (str.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+          .filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t))
+          .map(stem),
+      );
 
+    // Price via real Hygglo listing name-token match (any account — shared gear).
+    const PSTOP = new Set(["the", "and", "for", "with", "plus", "set", "kit", "sony", "lens"]);
+    const ptoks = (str: string) =>
+      new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !PSTOP.has(t)));
+    const listings = await ctx.db.query("online_listings").collect();
     const priceFor = (name: string): number | null => {
-      const q = toks(name);
+      const q = ptoks(name);
       const qDigits = [...q].filter((t) => /^[0-9]+$/.test(t) || /mm$/.test(t));
       let best: number | null = null;
       for (const l of listings) {
         if (typeof (l as { daily_price?: number }).daily_price !== "number") continue;
-        const tset = toks((l as { name?: string }).name ?? "");
+        const tset = ptoks((l as { name?: string }).name ?? "");
         if (qDigits.some((d) => !tset.has(d))) continue;
         let hit = 0;
         for (const t of q) if (tset.has(t)) hit++;
@@ -552,10 +569,29 @@ export const find_owned_alternatives = query({
       return best;
     };
 
+    // Rank by name similarity when we have the requested item's name.
+    let ranked = owned as typeof owned;
+    let matchedBy = kind ? "kind" : "all";
+    if (item_name) {
+      const q = toks(item_name);
+      const scored = owned
+        .map((it) => {
+          const tset = toks(it.name_canonical);
+          let hit = 0;
+          for (const t of q) if (tset.has(t)) hit++;
+          return { it, score: hit };
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      if (scored.length) {
+        ranked = scored.map((x) => x.it);
+        matchedBy = "name";
+      }
+    }
+
     const exclude = (exclude_name ?? "").toLowerCase().trim();
     const alternatives: Array<Record<string, unknown>> = [];
-    for (const it of all) {
-      if (it.status !== "active" || it.is_marketing_only || (it.qty ?? 0) < 1) continue;
+    for (const it of ranked) {
       if (exclude && it.name_canonical.toLowerCase() === exclude) continue;
       if (lens_mount && it.lens_mount && it.lens_mount !== lens_mount) continue;
       alternatives.push({
@@ -564,9 +600,9 @@ export const find_owned_alternatives = query({
         lens_mount: it.lens_mount ?? null,
         daily_price_gbp: priceFor(it.name_canonical),
       });
-      if (alternatives.length >= 10) break;
+      if (alternatives.length >= 8) break;
     }
     void account_slug;
-    return { kind: kind ?? null, count: alternatives.length, alternatives };
+    return { kind: kind ?? null, matched_by: matchedBy, count: alternatives.length, alternatives };
   },
 });
