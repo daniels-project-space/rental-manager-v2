@@ -48,6 +48,7 @@ export async function POST(req: Request) {
   // requested listing + its real availability up front — it must not contradict
   // these). The agent can still call check_location, search_knowledge, etc.
   let groundTruth = "";
+  const marketingItems: string[] = [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
       for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean }>) {
         if (it.owned === false) {
+          marketingItems.push(it.name ?? "that item");
           groundTruth += `- ${it.name}: ⚠️ MARKETING-ONLY LISTING — we do NOT stock this item (it's advertised but not owned). Do NOT confirm availability or a pickup for it, and do NOT quote it as if we have it. Tell the renter warmly we don't have that exact one and offer the closest thing we DO own instead.\n`;
           continue;
         }
@@ -94,10 +96,16 @@ export async function POST(req: Request) {
     /* best-effort ground truth */
   }
 
+  // Hard top-line directive when the renter is asking about gear we don't stock.
+  const marketingDirective = marketingItems.length
+    ? `🚫 CRITICAL — WE DO NOT OWN OR STOCK: ${marketingItems.join(", ")}. These are marketing-only listings (advertised to show the class of gear, not held in stock). You MUST tell the renter we don't have that exact item, and offer the closest thing we DO own. NEVER say it's available / ready / works for pickup — confirming it would send a renter to collect an item that does not exist.\n\n`
+    : "";
+
   const baseMessages = [
     {
       role: "user" as const,
       content: [
+        marketingDirective,
         `TODAY IS ${today} (Europe/London). Compute any relative dates the renter uses from TODAY; never guess a date.`,
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
@@ -127,6 +135,18 @@ export async function POST(req: Request) {
     if (!obj) {
       // Couldn't parse a decision — escalate rather than send garbage.
       return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
+    }
+    // BACKSTOP: if a marketing-only item was requested and the draft does NOT
+    // acknowledge we don't stock it, the bot is confirming a phantom item.
+    // Never send that — blank it and escalate for the operator.
+    if (marketingItems.length && obj.draft && !obj.needs_human) {
+      const d = obj.draft.toLowerCase();
+      const acknowledges =
+        /(don'?t|do not|doesn'?t|does not|no longer|not one|not something|not a) (have|stock|own|carry|hold|keep)|we don'?t (have|stock|own|carry)|not (in stock|available (from|through|with) us)|isn'?t (one|something|a lens|an item) (we|i)/i.test(d);
+      if (!acknowledges) {
+        obj.draft = "";
+        obj.needs_human = true;
+      }
     }
     return NextResponse.json({
       ok: true,
