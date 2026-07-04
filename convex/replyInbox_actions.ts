@@ -486,6 +486,35 @@ export const generateDraft = action({
       .filter((l) => l !== null)
       .join("\n");
 
+    // ── PRIMARY BRAIN: the agentic Mastra renter bot. The old single-shot draft
+    // below is now only a FALLBACK for when the Mastra path errors. (Daniel —
+    // "put the old bot down".) Set USE_MASTRA_BOT=0 to force the old bot.
+    let draft = "";
+    let mastraOk = false;
+    let usedTools = false;
+    if (process.env.USE_MASTRA_BOT !== "0") {
+      try {
+        const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
+        const resp = await fetch(`${base}/api/renter-bot-draft`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ thread_id }),
+        });
+        if (resp.ok) {
+          const j = (await resp.json()) as { draft?: string; needs_human?: boolean };
+          if (j.needs_human) return { status: "skipped" }; // bot escalated → operator writes it
+          draft = (j.draft ?? "").trim();
+          if (draft) {
+            mastraOk = true;
+            usedTools = true; // the agent grounds via its own tools — skip the self-check
+          }
+        }
+      } catch {
+        /* Mastra unreachable → fall through to the single-shot fallback */
+      }
+    }
+
+    if (!mastraOk) {
     // Haiku 4.5 is the default draft model now — much smarter than the old
     // deepseek-flash at tracking context and following the grounding, and
     // cheap/fast enough for every draft. Genuine high-stakes turns (refund,
@@ -526,9 +555,11 @@ export const generateDraft = action({
       bypass: true,
       context: { source: "replyInbox.generateDraft", tag: "reply_draft" },
     });
-    if (gen.skipped) return { status: "skipped" };
-
-    const draft = (gen.result.text ?? "").trim();
+      if (gen.skipped) return { status: "skipped" };
+      draft = (gen.result.text ?? "").trim();
+      usedTools = ((gen.result as { steps?: Array<{ toolCalls?: unknown[] }> }).steps ?? [])
+        .some((st) => (st.toolCalls?.length ?? 0) > 0);
+    }
     if (!draft) return { status: "ok", draft };
 
     // ── Grounded self-check (lever 3) ────────────────────────────
@@ -540,10 +571,8 @@ export const generateDraft = action({
       c.status === "confirmed" ||
       c.status === "completed" ||
       c.status === "ongoing";
-    // If the model CALLED a tool (e.g. check_availability), its availability
-    // claim is real — don't let the self-check hedge a tool-verified answer.
-    const usedTools = ((gen.result as { steps?: Array<{ toolCalls?: unknown[] }> }).steps ?? [])
-      .some((st) => (st.toolCalls?.length ?? 0) > 0);
+    // usedTools is set above (true for a Mastra draft, or when the fallback
+    // called a tool) — so the self-check never hedges a tool-verified answer.
     let checkedDraft = draft;
     if (!usedTools && (listingFacts.length === 0 || !isBookedThread)) {
       try {
