@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
-import {
-  getRenterBotAgent,
-  RENTER_BOT_OUTPUT_SCHEMA,
-  type RenterBotOutput,
-} from "@/mastra/agents/renter_bot";
+import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -56,15 +52,21 @@ export async function POST(req: Request) {
         ].join("\n"),
       },
     ];
+    // NOTE: NOT using structuredOutput — that forces OpenRouter's json_schema
+    // response_format, which Anthropic models on OpenRouter can't route ("no
+    // allowed providers"). The agent still runs its tool loop; its prompt asks
+    // for the JSON, so we parse it from the plain text (falling back to raw).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: any = await (agent as any).generate(baseMessages, {
-      structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
-    });
-    const obj =
-      (result?.object as RenterBotOutput | undefined) ??
-      (result?.structuredOutput as RenterBotOutput | undefined) ??
-      null;
-    newDraft = obj?.draft ?? "(no structured output)";
+    const result: any = await (agent as any).generate(baseMessages);
+    const text: string = result?.text ?? "";
+    let obj: RenterBotOutput | null = null;
+    try {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) obj = JSON.parse(m[0]) as RenterBotOutput;
+    } catch {
+      obj = null;
+    }
+    newDraft = obj?.draft ?? text || "(empty)";
     newMeta = obj
       ? {
           intent: obj.intent,
