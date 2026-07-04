@@ -1,0 +1,80 @@
+import { NextResponse } from "next/server";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../../../convex/_generated/api";
+import {
+  getRenterBotAgent,
+  RENTER_BOT_OUTPUT_SCHEMA,
+  type RenterBotOutput,
+} from "@/mastra/agents/renter_bot";
+
+export const runtime = "nodejs";
+export const maxDuration = 120;
+
+/**
+ * A/B harness — runs the SAME thread through the live single-shot bot
+ * (replyInbox_actions.generateDraft) and the agentic Mastra renter bot, and
+ * returns both drafts side by side so we can compare before retiring the old
+ * one. POST { thread_id, account_slug, message }. Diagnostic only.
+ */
+export async function POST(req: Request) {
+  let body: { thread_id?: string; account_slug?: string; message?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "bad_json" }, { status: 400 });
+  }
+  const { thread_id, account_slug, message } = body;
+  if (!thread_id) return NextResponse.json({ error: "no_thread_id" }, { status: 400 });
+
+  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
+  const convex = new ConvexHttpClient(convexUrl);
+
+  // OLD bot — the live convex draft path.
+  let oldDraft = "";
+  try {
+    const r = (await convex.action(api.replyInbox_actions.generateDraft, {
+      thread_id,
+    })) as { draft?: string } | null;
+    oldDraft = r?.draft ?? "(no draft)";
+  } catch (e) {
+    oldDraft = "ERR: " + (e instanceof Error ? e.message : String(e));
+  }
+
+  // NEW bot — the agentic Mastra renter bot.
+  let newDraft = "";
+  let newMeta: Partial<RenterBotOutput> | null = null;
+  try {
+    const agent = await getRenterBotAgent();
+    const baseMessages = [
+      {
+        role: "user" as const,
+        content: [
+          `THREAD: ${thread_id}`,
+          `ACCOUNT: ${account_slug ?? ""}`,
+          `LATEST INBOUND MESSAGE FROM RENTER:`,
+          message ?? "",
+        ].join("\n"),
+      },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await (agent as any).generate(baseMessages, {
+      structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
+    });
+    const obj =
+      (result?.object as RenterBotOutput | undefined) ??
+      (result?.structuredOutput as RenterBotOutput | undefined) ??
+      null;
+    newDraft = obj?.draft ?? "(no structured output)";
+    newMeta = obj
+      ? {
+          intent: obj.intent,
+          needs_human: obj.needs_human,
+          factsClaimed: obj.factsClaimed,
+        }
+      : null;
+  } catch (e) {
+    newDraft = "ERR: " + (e instanceof Error ? e.message : String(e));
+  }
+
+  return NextResponse.json({ thread_id, old: oldDraft, new: newDraft, new_meta: newMeta });
+}
