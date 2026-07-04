@@ -67,8 +67,14 @@ export async function POST(req: Request) {
     const text: string = result?.text ?? "";
     let obj: RenterBotOutput | null = null;
     try {
-      const m = text.match(/\{[\s\S]*\}/);
-      if (m) obj = JSON.parse(m[0]) as RenterBotOutput;
+      let jsonStr = text.trim();
+      const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fence) jsonStr = fence[1].trim();
+      const first = jsonStr.indexOf("{");
+      const last = jsonStr.lastIndexOf("}");
+      if (first >= 0 && last > first) {
+        obj = JSON.parse(jsonStr.slice(first, last + 1)) as RenterBotOutput;
+      }
     } catch {
       obj = null;
     }
