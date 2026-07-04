@@ -57,7 +57,11 @@ export async function POST(req: Request) {
       if (lc.gross_paid_gbp != null) req.push(`they pay £${lc.gross_paid_gbp}`);
       if (lc.order_step) req.push(`stage ${lc.order_step}`);
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean }>) {
+        if (it.owned === false) {
+          groundTruth += `- ${it.name}: ⚠️ MARKETING-ONLY LISTING — we do NOT stock this item (it's advertised but not owned). Do NOT confirm availability or a pickup for it, and do NOT quote it as if we have it. Tell the renter warmly we don't have that exact one and offer the closest thing we DO own instead.\n`;
+          continue;
+        }
         groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${it.whats_included ?? "(not listed)"}\n`;
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

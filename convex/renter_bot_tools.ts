@@ -146,6 +146,25 @@ export const get_listing_context = query({
       let whats_included: string | null = null;
       let listing_name: string | null = null;
       let public_url: string | null = null;
+      // OWNED check: does this listing map to an ACTIVE, non-marketing item we
+      // actually stock? A marketing-only / inactive item = we do NOT have it.
+      let owned = false;
+      if (account_slug && typeof l.product_id === "number") {
+        const prod = await ctx.db
+          .query("hygglo_products")
+          .withIndex("by_account_product", (q) =>
+            q.eq("accountSlug", account_slug).eq("productId", l.product_id as number),
+          )
+          .first();
+        const mid = (prod as { masterItemId?: unknown } | null)?.masterItemId;
+        if (mid) {
+          const it = await ctx.db.get(mid as never);
+          owned =
+            !!it &&
+            (it as { status?: string }).status === "active" &&
+            !(it as { is_marketing_only?: boolean }).is_marketing_only;
+        }
+      }
       if (account_slug && typeof l.product_id === "number") {
         const listing = await ctx.db
           .query("online_listings")
@@ -164,6 +183,7 @@ export const get_listing_context = query({
         name: l.name,
         qty: l.qty,
         product_id: l.product_id,
+        owned,
         listing_name,
         daily_price_gbp,
         whats_included,
