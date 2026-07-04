@@ -55,6 +55,9 @@ export default defineSchema({
     // Per-account PICKUP address (full street + postcode). Shared with the
     // renter only AFTER a booking is confirmed. Editable in Settings.
     pickup_address: v.optional(v.string()),
+    // Per-account pickup/return WINDOWS (London). Empty -> global default
+    // (10:00-12:00 & 19:00-21:00). Editable in Settings.
+    pickup_hours: v.optional(v.array(v.object({ start: v.string(), end: v.string() }))),
     // Post-return discount code texted to good renters (Settings drawer).
     // Interpolated into the account's return message template at return time;
     // unset -> DEFAULT_RETURN_DISCOUNTS (convex/lib/return_messages.ts).

@@ -101,6 +101,7 @@ export const listAccountHubs = query({
       hub_postcode: string | null;
       hub_label: string | null;
       pickup_address: string | null;
+      pickup_hours: { start: string; end: string }[] | null;
     }[] = [];
     for (const a of accounts) {
       if (a.slug === "dbcinema_web") continue;
@@ -115,6 +116,7 @@ export const listAccountHubs = query({
         hub_postcode: profile?.hub_postcode ?? null,
         hub_label: profile?.hub_label ?? null,
         pickup_address: profile?.pickup_address ?? null,
+        pickup_hours: profile?.pickup_hours ?? null,
       });
     }
     out.sort((x, y) => x.slug.localeCompare(y.slug));
@@ -338,5 +340,26 @@ export const setAccountPickupAddress = mutation({
     if (!profile) throw new Error(`No profile for "${account_slug}"`);
     await ctx.db.patch(profile._id, { pickup_address });
     return { ok: true, account_slug, pickup_address };
+  },
+});
+
+
+/** Set the per-account pickup/return windows (shown in Settings). */
+export const setAccountPickupHours = mutation({
+  args: {
+    account_slug: v.string(),
+    pickup_hours: v.array(v.object({ start: v.string(), end: v.string() })),
+  },
+  handler: async (ctx, { account_slug, pickup_hours }) => {
+    const accts = await ctx.db.query("accounts").collect();
+    const acct = accts.find((a) => a.slug === account_slug);
+    if (!acct) throw new Error(`No account "${account_slug}"`);
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", acct._id))
+      .first();
+    if (!profile) throw new Error(`No profile for "${account_slug}"`);
+    await ctx.db.patch(profile._id, { pickup_hours });
+    return { ok: true, account_slug, pickup_hours };
   },
 });

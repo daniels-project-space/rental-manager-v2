@@ -66,7 +66,6 @@ export async function POST(req: Request) {
           : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
         groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
-      groundTruth += `PICKUP & RETURN WINDOWS: only 10am–12pm OR 7–9pm (London), every day. NEVER agree to any other time — no afternoons, nothing 12–7pm or before 10am. If the renter asks for an off-window time, warmly steer them to the nearest valid window instead. Offer the morning slot first.\n`;
       for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
@@ -102,14 +101,35 @@ export async function POST(req: Request) {
             const reqDate = lc.start_date as string | undefined;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const bookings = (m.upcoming_bookings ?? []) as Array<any>;
-            const conflict = reqDate
-              ? bookings.some((b) => (b.start_date ?? b.start) <= reqDate && (b.end_date ?? b.end ?? b.start_date ?? b.start) >= reqDate)
-              : false;
-            const verdict = conflict
-              ? `BOOKED on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
-              : bookings.length === 0
-                ? `FREE — no bookings at all, so it IS available for the requested date${reqDate ? " " + reqDate : ""}; you can confirm the pickup works`
-                : `no booking conflicts on ${reqDate} — available; confirm it works`;
+            const addHour = (hm: string) => {
+              const [h, mn] = hm.split(":").map(Number);
+              const t = (h * 60 + (mn || 0) + 60) % (24 * 60);
+              return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+            };
+            // Bookings are {pickup:"YYYY-MM-DD HH:MM", return:"YYYY-MM-DD HH:MM"}.
+            // If one RETURNS on the requested day, the item is free 1 HOUR after
+            // that return time (turnaround buffer) — not fully booked, not free.
+            let conflict = false;
+            let turnaround: string | null = null;
+            if (reqDate) {
+              for (const b of bookings) {
+                const pDate = String(b.pickup ?? "").split(" ")[0];
+                const rParts = String(b.return ?? "").split(" ");
+                const rDate = rParts[0];
+                const rTime = rParts[1];
+                if (pDate && rDate && pDate <= reqDate && rDate >= reqDate) {
+                  if (rDate === reqDate && rTime) turnaround = addHour(rTime);
+                  else conflict = true;
+                }
+              }
+            }
+            const verdict = turnaround
+              ? `it's out on another rental that RETURNS ${reqDate} — so it's only free from ${turnaround} that day (1-hour turnaround buffer); do NOT offer it before ${turnaround}, and only inside a pickup window`
+              : conflict
+                ? `BOOKED on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
+                : bookings.length === 0
+                  ? `FREE — no bookings, available for ${reqDate ?? "the requested date"}`
+                  : `no booking conflict on ${reqDate} — available`;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict}.\n`;
           }
         } catch { /* best-effort */ }
@@ -154,6 +174,26 @@ export async function POST(req: Request) {
         ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
         : `PICKUP LOCATION for this account is "${hub.pickup_address}" — do NOT reveal it yet (booking not confirmed). Say you'll send the exact pickup address the moment the booking is confirmed. NEVER give a different or made-up address.\n`;
     }
+    // Time-aware pickup/return windows (per account) — at 4pm the morning slot
+    // is gone, so only offer windows that haven't passed today.
+    const hours = (hub?.pickup_hours && hub.pickup_hours.length
+      ? hub.pickup_hours
+      : [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }]) as Array<{ start: string; end: string }>;
+    const nowHM = new Date().toLocaleString("en-GB", {
+      timeZone: "Europe/London", hour12: false, hour: "2-digit", minute: "2-digit",
+    });
+    const toMin = (t: string) => {
+      const [h, m2] = t.split(":").map(Number);
+      return h * 60 + (m2 || 0);
+    };
+    const nowMin = toMin(nowHM);
+    const fmt = (w: { start: string; end: string }) => `${w.start}–${w.end}`;
+    const remaining = hours.filter((w) => toMin(w.end) > nowMin + 15);
+    groundTruth +=
+      `CURRENT LONDON TIME: ${nowHM}. Pickup/return windows for this account: ${hours.map(fmt).join(", ")} — NEVER agree to any time outside these. ` +
+      (remaining.length
+        ? `Windows still open TODAY: ${remaining.map(fmt).join(", ")} — offer the EARLIEST of these first; do NOT offer a window that has already passed today (e.g. don't offer a morning slot in the afternoon).`
+        : `No windows remain today — for today it's too late, offer tomorrow's first window (${fmt(hours[0])}).`) + `\n`;
   } catch {
     /* best-effort */
   }
