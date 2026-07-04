@@ -10,8 +10,9 @@
  * `reservations` without a `withIndex(...)`. The bot only ever scans
  * `reservations` filtered by `by_account_slug` or `by_hygglo_order_id`.
  */
-import { query } from "./_generated/server";
+import { query, action } from "./_generated/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 
@@ -411,5 +412,74 @@ export const get_negotiation_stance = query({
       latestMessage: latest_message,
       priorRenterMessages: renterMsgs,
     });
+  },
+});
+
+
+// ── Tool: check_location (delivery distance, db-cinema-v2 method) ──────────────
+// Geocode the renter's postcode + this account's hub via postcodes.io, haversine
+// the distance, and check it against the account's delivery range (hub_max_km).
+export const check_location = action({
+  args: { renter_postcode: v.string(), account_slug: v.string() },
+  handler: async (
+    ctx,
+    { renter_postcode, account_slug },
+  ): Promise<Record<string, unknown>> => {
+    const geocode = async (pc: string) => {
+      const clean = pc.replace(/\s+/g, "").toUpperCase();
+      if (clean.length < 5) return null;
+      try {
+        const r = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(clean)}`);
+        if (!r.ok) return null;
+        const res = ((await r.json()) as { result?: { latitude?: number; longitude?: number; admin_ward?: string; admin_district?: string } })?.result;
+        if (!res?.latitude || typeof res.longitude !== "number") return null;
+        return {
+          lat: res.latitude,
+          lng: res.longitude,
+          label: [res.admin_ward, res.admin_district].filter(Boolean).join(", "),
+        };
+      } catch {
+        return null;
+      }
+    };
+    const haversineKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+      const R = 6371;
+      const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+      const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+      const x =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    };
+
+    const hubs = (await ctx.runQuery(api.settings.listAccountHubs, {})) as Array<{
+      slug: string; hub_postcode: string | null; hub_label: string | null;
+    }>;
+    const hub = hubs.find((h) => h.slug === account_slug);
+    if (!hub?.hub_postcode) return { ok: false, reason: "No delivery hub set for this account — pickup only." };
+    const hubGeo = await geocode(hub.hub_postcode);
+    if (!hubGeo) return { ok: false, reason: "Couldn't resolve the hub location." };
+    const renterGeo = await geocode(renter_postcode);
+    if (!renterGeo) return { ok: false, reason: "That doesn't look like a full UK postcode — please re-send it." };
+
+    const km = Math.round(haversineKm(hubGeo, renterGeo) * 10) / 10;
+    const settings = (await ctx.runQuery(api.settings.get, {})) as { hub_max_km?: number; hub_heavy_max_km?: number } | null;
+    const maxKm = settings?.hub_max_km ?? 30;
+    const heavyMaxKm = settings?.hub_heavy_max_km ?? maxKm;
+    const deliverable = km <= maxKm;
+    return {
+      ok: true,
+      distance_km: km,
+      hub_label: hub.hub_label ?? hub.hub_postcode,
+      renter_area: renterGeo.label,
+      max_km: maxKm,
+      heavy_max_km: heavyMaxKm,
+      within_delivery_range: deliverable,
+      within_heavy_range: km <= heavyMaxKm,
+      non_central: km > 5, // triggers the 10% distance discount rule
+      note: deliverable
+        ? `~${km}km from our ${hub.hub_label ?? "hub"} — within delivery range (offer delivery or pickup).`
+        : `~${km}km — beyond our ${maxKm}km delivery range; offer pickup only.`,
+    };
   },
 });

@@ -266,7 +266,22 @@ export const getOrderEditStateTool = createTool({
   },
 });
 
+export const checkLocationTool = createTool({
+  id: "check_location",
+  description:
+    "Compute the DELIVERY DISTANCE from THIS account hub to the renter postcode (postcodes.io + haversine) and whether it is within our delivery range. Call whenever the renter asks about delivery / drop-off / travel, or gives a postcode or area. Returns distance_km, within_delivery_range, and non_central (for the 10% distance discount).",
+  inputSchema: z.object({
+    renter_postcode: z.string().describe("The renter UK postcode (e.g. E1 6AN)."),
+    account_slug: z.string().describe("The account_slug from get_renter_context."),
+  }),
+  outputSchema: z.unknown(),
+  execute: async (input) => {
+    return await convex().action(anyApi.renter_bot_tools.check_location, input);
+  },
+});
+
 export const RENTER_BOT_TOOLS = {
+  check_location: checkLocationTool,
   get_order_edit_state: getOrderEditStateTool,
   get_renter_context: getRenterContextTool,
   get_listing_context: getListingContextTool,
