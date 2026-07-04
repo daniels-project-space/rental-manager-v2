@@ -90,7 +90,7 @@ export const getListingContextTool = createTool({
 export const lookupPricingTool = createTool({
   id: "lookup_pricing",
   description:
-    "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Returns the REAL Hygglo listing daily rate + what is included (per account) plus the multi-day total. Pass account_slug (from get_renter_context). NEVER quote a price or kit without calling this first.",
+    "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Use this ONLY for an item that is NOT on the current request (an ALTERNATIVE you are offering because we do not own what they asked for). For items that ARE on the request, use get_listing_context daily_price_gbp + whats_included instead — do NOT call this for them. Returns the real Hygglo daily rate for the alternative (pass account_slug).",
   inputSchema: z.object({
     item_name: z.string(),
     account_slug: z.string().optional().describe("The account_slug from get_renter_context. Pass it so the price + what-is-included come from THIS account real Hygglo listing (the ground truth)."),
