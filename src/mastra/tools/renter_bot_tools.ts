@@ -280,7 +280,24 @@ export const checkLocationTool = createTool({
   },
 });
 
+export const findOwnedAlternativesTool = createTool({
+  id: "find_owned_alternatives",
+  description:
+    "List gear we ACTUALLY own and can rent right now (active, in stock), optionally filtered to a kind (lens, camera, drone, gimbal, monitor, audio, lighting, grip) and lens_mount. Use this to recommend a REAL substitute when the renter asks for something we can't rent. Returns names + real daily prices. Pass account_slug from get_renter_context.",
+  inputSchema: z.object({
+    account_slug: z.string(),
+    kind: z.string().optional().describe("camera|lens|drone|gimbal|monitor|audio|lighting|grip|..."),
+    lens_mount: z.string().optional().describe("e.g. E, RF, EF — match the renter camera mount for lenses"),
+    exclude_name: z.string().optional(),
+  }),
+  outputSchema: z.unknown(),
+  execute: async (input) => {
+    return await convex().query(anyApi.renter_bot_tools.find_owned_alternatives, input);
+  },
+});
+
 export const RENTER_BOT_TOOLS = {
+  find_owned_alternatives: findOwnedAlternativesTool,
   check_location: checkLocationTool,
   get_order_edit_state: getOrderEditStateTool,
   get_renter_context: getRenterContextTool,

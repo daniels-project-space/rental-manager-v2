@@ -58,10 +58,25 @@ export async function POST(req: Request) {
       if (lc.gross_paid_gbp != null) req.push(`they pay £${lc.gross_paid_gbp}`);
       if (lc.order_step) req.push(`stage ${lc.order_step}`);
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
-          groundTruth += `- ${it.name}: ⚠️ MARKETING-ONLY LISTING — we do NOT stock this item (it's advertised but not owned). Do NOT confirm availability or a pickup for it, and do NOT quote it as if we have it. Tell the renter warmly we don't have that exact one and offer the closest thing we DO own instead.\n`;
+          let altText = "";
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const alts: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
+              account_slug: account_slug || "",
+              kind: it.kind ?? undefined,
+              exclude_name: it.name ?? undefined,
+            });
+            const list = ((alts?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
+              .slice(0, 5)
+              .map((a) => `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`);
+            if (list.length) altText = ` Recommend ONE of these we DO own instead, by name: ${list.join("; ")}.`;
+          } catch {
+            /* best-effort alternatives */
+          }
+          groundTruth += `- ${it.name}: NOT one we can rent this renter — do NOT confirm it, do NOT quote its price, and do NOT explain why (NEVER say "marketing", "display listing", "we don't stock/own it", or "not in our inventory"). Just steer them to a real alternative.${altText}\n`;
           continue;
         }
         groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${it.whats_included ?? "(not listed)"}\n`;
@@ -96,9 +111,9 @@ export async function POST(req: Request) {
     /* best-effort ground truth */
   }
 
-  // Hard top-line directive when the renter is asking about gear we don't stock.
+  // Hard top-line directive when the renter is asking about gear we can't rent.
   const marketingDirective = marketingItems.length
-    ? `🚫 CRITICAL — WE DO NOT OWN OR STOCK: ${marketingItems.join(", ")}. These are marketing-only listings (advertised to show the class of gear, not held in stock). You MUST tell the renter we don't have that exact item, and offer the closest thing we DO own. NEVER say it's available / ready / works for pickup — confirming it would send a renter to collect an item that does not exist.\n\n`
+    ? `🚫 INTERNAL — DO NOT REVEAL: we cannot rent ${marketingItems.join(", ")} to this renter. Do NOT tell them it's "marketing-only", a "display listing", that we "don't stock/own it", or explain why — that is INTERNAL and must never be said. Simply say that exact one isn't available for their dates, and warmly recommend a real alternative we own (by name, with its price). NEVER say ${marketingItems.join(", ")} is available / ready / works for pickup.\n\n`
     : "";
 
   const baseMessages = [
@@ -136,14 +151,26 @@ export async function POST(req: Request) {
       // Couldn't parse a decision — escalate rather than send garbage.
       return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
     }
-    // BACKSTOP: if a marketing-only item was requested and the draft does NOT
-    // acknowledge we don't stock it, the bot is confirming a phantom item.
-    // Never send that — blank it and escalate for the operator.
+    // BACKSTOP: never let a draft AFFIRM a phantom item is available. If the
+    // marketing item's model token sits near availability/pickup language, the
+    // bot is confirming an item we can't rent — blank it and escalate. (We do
+    // NOT require the draft to "admit" anything — it just must not confirm it.)
     if (marketingItems.length && obj.draft && !obj.needs_human) {
       const d = obj.draft.toLowerCase();
-      const acknowledges =
-        /(don'?t|do not|doesn'?t|does not|no longer|not one|not something|not a) (have|stock|own|carry|hold|keep)|we don'?t (have|stock|own|carry)|not (in stock|available (from|through|with) us)|isn'?t (one|something|a lens|an item) (we|i)/i.test(d);
-      if (!acknowledges) {
+      const AFFIRM =
+        "(available|in stock|ready to go|ready for|works (perfectly|great|for|today|fine)|all set|all yours|pop by|come by|come collect|head (to|over)|swing by|pick(ed)? ?up|collect it|grab it)";
+      let affirmsPhantom = false;
+      for (const name of marketingItems) {
+        const tok = (name.toLowerCase().match(/\b(\d{1,3}-?\d{0,3}\s?mm|mini\s?\d|a7\s?[a-z0-9]+|fx\s?\d|r[56]|fs\d|24-70|16-35|70-200)\b/) || [])[0];
+        if (!tok) continue;
+        const t = tok.replace(/[-\s]/g, "[-\\s]?");
+        const re = new RegExp(`${t}[^.!?]{0,55}${AFFIRM}|${AFFIRM}[^.!?]{0,55}${t}`, "i");
+        if (re.test(d)) {
+          affirmsPhantom = true;
+          break;
+        }
+      }
+      if (affirmsPhantom) {
         obj.draft = "";
         obj.needs_human = true;
       }

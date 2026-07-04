@@ -149,6 +149,7 @@ export const get_listing_context = query({
       // OWNED check: does this listing map to an ACTIVE, non-marketing item we
       // actually stock? A marketing-only / inactive item = we do NOT have it.
       let owned = false;
+      let kind: string | null = null;
       if (account_slug && typeof l.product_id === "number") {
         const prod = await ctx.db
           .query("hygglo_products")
@@ -159,10 +160,12 @@ export const get_listing_context = query({
         const mid = (prod as { masterItemId?: unknown } | null)?.masterItemId;
         if (mid) {
           const it = await ctx.db.get(mid as never);
-          owned =
-            !!it &&
-            (it as { status?: string }).status === "active" &&
-            !(it as { is_marketing_only?: boolean }).is_marketing_only;
+          if (it) {
+            kind = (it as { kind?: string }).kind ?? null;
+            owned =
+              (it as { status?: string }).status === "active" &&
+              !(it as { is_marketing_only?: boolean }).is_marketing_only;
+          }
         }
       }
       if (account_slug && typeof l.product_id === "number") {
@@ -184,6 +187,7 @@ export const get_listing_context = query({
         qty: l.qty,
         product_id: l.product_id,
         owned,
+        kind,
         listing_name,
         daily_price_gbp,
         whats_included,
@@ -501,5 +505,68 @@ export const check_location = action({
         ? `~${km}km from our ${hub.hub_label ?? "hub"} — within delivery range (offer delivery or pickup).`
         : `~${km}km — beyond our ${maxKm}km delivery range; offer pickup only.`,
     };
+  },
+});
+
+
+// ── Tool: find_owned_alternatives ─────────────────────────────────────────────
+// The account's OWNED, in-stock items (active, not marketing-only) — optionally
+// filtered to one kind (lens, camera, drone...). Used to offer a REAL substitute
+// when the renter asks for something we don't stock. Works for every account.
+export const find_owned_alternatives = query({
+  args: {
+    account_slug: v.string(),
+    kind: v.optional(v.string()),
+    lens_mount: v.optional(v.string()),
+    exclude_name: v.optional(v.string()),
+  },
+  handler: async (ctx, { account_slug, kind, lens_mount, exclude_name }) => {
+    // Accounts share Daniel's owned gear, so ownership lives on the items table
+    // (active + not marketing-only + qty>0), NOT the per-account product index
+    // (which is empty for some accounts). Works for every account.
+    const all = kind
+      ? await ctx.db.query("items").withIndex("by_kind", (q) => q.eq("kind", kind)).collect()
+      : await ctx.db.query("items").collect();
+
+    // Price map: real Hygglo listing prices, keyed by name tokens. Owned-backed
+    // listings only (any account — the gear is shared). Lowest price wins.
+    const STOP = new Set(["the", "and", "for", "with", "plus", "set", "kit", "sony", "lens"]);
+    const toks = (str: string) =>
+      new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t)));
+    const listings = await ctx.db.query("online_listings").collect();
+
+    const priceFor = (name: string): number | null => {
+      const q = toks(name);
+      const qDigits = [...q].filter((t) => /^[0-9]+$/.test(t) || /mm$/.test(t));
+      let best: number | null = null;
+      for (const l of listings) {
+        if (typeof (l as { daily_price?: number }).daily_price !== "number") continue;
+        const tset = toks((l as { name?: string }).name ?? "");
+        if (qDigits.some((d) => !tset.has(d))) continue;
+        let hit = 0;
+        for (const t of q) if (tset.has(t)) hit++;
+        if (q.size === 0 || hit / q.size < 0.6) continue;
+        const price = (l as { daily_price: number }).daily_price;
+        if (best === null || price < best) best = price;
+      }
+      return best;
+    };
+
+    const exclude = (exclude_name ?? "").toLowerCase().trim();
+    const alternatives: Array<Record<string, unknown>> = [];
+    for (const it of all) {
+      if (it.status !== "active" || it.is_marketing_only || (it.qty ?? 0) < 1) continue;
+      if (exclude && it.name_canonical.toLowerCase() === exclude) continue;
+      if (lens_mount && it.lens_mount && it.lens_mount !== lens_mount) continue;
+      alternatives.push({
+        name: it.name_canonical,
+        kind: it.kind,
+        lens_mount: it.lens_mount ?? null,
+        daily_price_gbp: priceFor(it.name_canonical),
+      });
+      if (alternatives.length >= 10) break;
+    }
+    void account_slug;
+    return { kind: kind ?? null, count: alternatives.length, alternatives };
   },
 });
