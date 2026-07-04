@@ -61,7 +61,10 @@ export async function POST(req: Request) {
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
       if (!bookingConfirmed) {
-        groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. You MAY confirm the item is AVAILABLE and warmly invite them to complete/place the booking to lock it in — nothing beyond that.\n`;
+        const inviteLine = lc.is_inquiry
+          ? `This is an ENQUIRY (no booking placed yet) — just confirm the item is available and answer warmly. Do NOT tell them to "send a request" or "complete a booking" merely to get info/a quote; only talk booking if they say they're ready.`
+          : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
+        groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
       groundTruth += `PICKUP & RETURN WINDOWS: only 10am–12pm OR 7–9pm (London), every day. NEVER agree to any other time — no afternoons, nothing 12–7pm or before 10am. If the renter asks for an off-window time, warmly steer them to the nearest valid window instead. Offer the morning slot first.\n`;
       for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null }>) {
@@ -253,6 +256,22 @@ export async function POST(req: Request) {
         obj.draft = "";
         obj.needs_human = true;
       }
+    }
+    // Cosmetic cleanup: fix Diogo spelling + cap emoji overuse (DB Cinema = none).
+    if (obj.draft && !obj.needs_human) {
+      let text = obj.draft;
+      if ((account_slug || "").toLowerCase() === "diogo") {
+        text = text.replace(/\bDiego\b/g, "Diogo");
+      }
+      const maxEmoji = (account_slug || "").toLowerCase() === "dbcinema" ? 0 : 1;
+      const emojiRe = /\p{Extended_Pictographic}/gu;
+      const found = text.match(emojiRe) || [];
+      if (found.length > maxEmoji) {
+        let kept = 0;
+        text = text.replace(emojiRe, (m) => (++kept <= maxEmoji ? m : ""));
+        text = text.replace(/[ \t]{2,}/g, " ").replace(/ +\n/g, "\n");
+      }
+      obj.draft = text;
     }
     return NextResponse.json({
       ok: true,
