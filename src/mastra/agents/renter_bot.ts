@@ -19,7 +19,7 @@ import "server-only";
 
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
-import { getLlmModel } from "@/lib/llm-client";
+import { getRenterBotModel } from "@/lib/llm-client";
 import {
   RENTER_BOT_INTENTS,
   CONVERSATION_STAGES,
@@ -117,7 +117,7 @@ let _agent: Agent | null = null;
  */
 export async function getRenterBotAgent(): Promise<Agent> {
   if (_agent) return _agent;
-  const model = await getLlmModel();
+  const model = await getRenterBotModel();
   _agent = new Agent({
     id: "renter-bot-v1",
     name: "Renter Bot",

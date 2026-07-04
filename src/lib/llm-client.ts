@@ -89,6 +89,18 @@ export async function getLlmModel() {
   });
 }
 
+/** Haiku 4.5 (Anthropic — its own provider, so the deepseek provider pin does
+ *  NOT apply) for the agentic renter bot, matching the live convex draft path.
+ *  The old getLlmModel() deepseek pin currently returns "no allowed providers". */
+export async function getRenterBotModel() {
+  if (provider() === "xai") {
+    const xai = await getXai();
+    return xai(GROK_CHAT_MODEL);
+  }
+  const openrouter = await getOpenRouter();
+  return openrouter(process.env.HAIKU_MODEL ?? "anthropic/claude-haiku-4.5");
+}
+
 /**
  * Returns the resolved model id string (e.g. "deepseek/deepseek-v4-flash"
  * or "grok-4.3"). Useful for logging + the `modelId` audit field on
