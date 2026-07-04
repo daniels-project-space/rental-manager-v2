@@ -90,9 +90,10 @@ export const getListingContextTool = createTool({
 export const lookupPricingTool = createTool({
   id: "lookup_pricing",
   description:
-    "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Returns the listed daily rate, multi-day adjusted total, and whether a distance discount applies. NEVER quote a price without calling this first.",
+    "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Returns the REAL Hygglo listing daily rate + what is included (per account) plus the multi-day total. Pass account_slug (from get_renter_context). NEVER quote a price or kit without calling this first.",
   inputSchema: z.object({
     item_name: z.string(),
+    account_slug: z.string().optional().describe("The account_slug from get_renter_context. Pass it so the price + what-is-included come from THIS account real Hygglo listing (the ground truth)."),
     days: z.number().int().positive().optional().describe("Rental duration in days. Default 1."),
     listing_location_non_central: z
       .boolean()

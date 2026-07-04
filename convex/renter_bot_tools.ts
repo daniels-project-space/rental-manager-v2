@@ -157,13 +157,59 @@ export const get_listing_context = query({
 export const lookup_pricing = query({
   args: {
     item_name: v.string(),
+    account_slug: v.optional(v.string()),
     days: v.optional(v.number()),
     listing_location_non_central: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { item_name, days = 1, listing_location_non_central },
+    { item_name, account_slug, days = 1, listing_location_non_central },
   ) => {
+    // GROUND TRUTH first: the account's REAL Hygglo listing (its actual
+    // daily price + description/kit), matched by name against OWNED-backed
+    // listings. Falls back to the curated pricing_catalog below. (Daniel)
+    if (account_slug) {
+      const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
+      const toks = (str: string) =>
+        Array.from(new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+          (t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t))));
+      const idxRows = await ctx.db.query("hygglo_product_index").collect();
+      const ownedPids = new Set<number>();
+      for (const r of idxRows) if (r.account_slug === account_slug) ownedPids.add(r.product_id);
+      const listings = (await ctx.db.query("online_listings")
+        .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
+        .collect()).filter((l) => ownedPids.has(l.product_id));
+      const q = toks(item_name);
+      const qDigits = q.filter((t) => /^[0-9]+$/.test(t));
+      let best: (typeof listings)[number] | null = null;
+      let bestScore = 0; let bestSize = Infinity;
+      for (const l of listings) {
+        const tset = new Set(toks(l.name));
+        if (qDigits.some((d) => !tset.has(d))) continue;
+        let hit = 0; for (const t of q) if (tset.has(t)) hit++;
+        if (hit < 2) continue;
+        const score = hit / q.length;
+        if (score > bestScore || (score === bestScore && tset.size < bestSize)) {
+          best = l; bestScore = score; bestSize = tset.size;
+        }
+      }
+      if (best && bestScore >= 0.6 && typeof best.daily_price === "number") {
+        const dailyRate = best.daily_price;
+        const multiDayMult = days >= 30 ? 0.4 : days >= 7 ? 0.5 : days >= 3 ? 0.7 : 1.0;
+        return {
+          found: true as const,
+          source: "hygglo_listing" as const,
+          item_name,
+          matched_listing: best.name,
+          daily_rate_gbp: dailyRate,
+          days,
+          multi_day_multiplier: multiDayMult,
+          listed_total_gbp: Math.round(dailyRate * days * multiDayMult * 100) / 100,
+          included: best.description ?? null,
+          distance_discount_applies: !!listing_location_non_central,
+        };
+      }
+    }
     // Normalise: lowercase + trim. pricing_catalog stores `item_name_canonical`
     // which is usually lowercase already.
     const needle = item_name.toLowerCase().trim();
