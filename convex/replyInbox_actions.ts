@@ -493,22 +493,27 @@ export const generateDraft = action({
     if (!draft) return { status: "ok", draft };
 
     // ── Grounded self-check (lever 3) ────────────────────────────
-    // ~half of threads carry no real listing facts (audit: 54% grounded), so
-    // the model is tempted to assert a price/spec/stock it doesn't actually
-    // have. When we have NO item-level listing facts, run one cheap Haiku pass
-    // that hedges any unsupported factual claim before the operator sees it.
-    // Skipped when the thread IS grounded (the model has the facts to use).
+    // Run one cheap Haiku pass that hedges any UNSUPPORTED factual claim before
+    // the operator sees it. Runs when the thread is ungrounded (no listing facts)
+    // OR is not a confirmed booking — because those threads have NO live
+    // availability, yet the model loves to say "it's available this weekend".
+    const isBookedThread =
+      c.status === "confirmed" ||
+      c.status === "completed" ||
+      c.status === "ongoing";
     let checkedDraft = draft;
-    if (listingFacts.length === 0) {
+    if (listingFacts.length === 0 || !isBookedThread) {
       try {
-        const groundingForCheck = factsBlock ?? "";
+        const groundingForCheck = [listingFactsBlock, factsBlock]
+          .filter(Boolean)
+          .join("\n\n");
         const chk = await gatedGenerateText({
           model: await getActionLlmModel({ haiku: true }),
           system:
             "You fact-check an equipment-rental owner's reply drafts. You get the GROUNDING (the only true facts) and a DRAFT. " +
-            "Find any sentence that states a specific PRICE, a SPEC, what's INCLUDED, AVAILABILITY/dates, or that we OWN or have a specific item/accessory IN STOCK, which the grounding does NOT support. " +
-            "Rewrite ONLY those parts to hedge instead of asserting (e.g. 'let me check the exact price', 'I'd need to confirm availability', 'I'll check if we have that adapter'). " +
-            "Keep the tone and everything else word-for-word identical. If nothing is unsupported, return the draft unchanged. Output ONLY the reply text.",
+            "Find any sentence that states a specific PRICE, a SPEC, what's INCLUDED, or that we OWN / have a specific item IN STOCK, which the grounding does NOT support. " +
+            "CRITICAL — AVAILABILITY: there is NO live availability here, so the draft must NEVER say an item is 'available', 'free', or bookable for the renter's dates. ALWAYS rewrite any such claim to offer to check (e.g. 'let me check availability for those dates and confirm'). " +
+            "Rewrite ONLY the unsupported parts to hedge; keep the tone and everything else word-for-word identical. If nothing needs changing, return the draft unchanged. Output ONLY the reply text.",
           prompt:
             "GROUNDING (the only facts you may treat as true):\n" +
             (groundingForCheck ||

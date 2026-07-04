@@ -1107,24 +1107,41 @@ export const getThreadContext = internalQuery({
         Array.from(
           new Set(
             (str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-              (t) => t.length > 1 && !STOP.has(t),
+              // keep multi-char tokens AND standalone digits (model numbers
+              // like the 5 in "Mini 5" are the key discriminator)
+              (t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t),
             ),
           ),
         );
+      // Only match listings backed by OWNED inventory. A phantom / marketing
+      // listing the account advertises but does not stock (e.g. a "DJI Mini 5
+      // Pro" with no product-index entry) must NEVER be recovered as an
+      // available item, or the bot offers gear it doesn't have. (Daniel)
+      const ownedPidRows = await ctx.db.query("hygglo_product_index").collect();
+      const ownedPids = new Set<number>();
+      for (const r of ownedPidRows)
+        if (r.account_slug === slug) ownedPids.add(r.product_id);
       const listings = (
         await ctx.db
           .query("online_listings")
           .withIndex("by_account", (q) => q.eq("account_slug", slug!))
           .collect()
-      ).map((l) => ({ product_id: l.product_id, tset: new Set(toks(l.name)) }));
+      )
+        .filter((l) => ownedPids.has(l.product_id))
+        .map((l) => ({ product_id: l.product_id, tset: new Set(toks(l.name)) }));
       const bestPid = (name: string | null | undefined): number | null => {
         if (!name) return null;
         const q = toks(name);
         if (q.length < 2) return null;
+        // Model numbers are hard constraints: if the renter's item has a
+        // numeric token the listing lacks (Mini 5 vs Mini 4, 24-105 vs 24-70),
+        // it is NOT that listing, however much other wording overlaps.
+        const qDigits = q.filter((t) => /^[0-9]+$/.test(t));
         let best: number | null = null;
         let bestScore = 0;
         let bestSize = Infinity;
         for (const L of listings) {
+          if (qDigits.some((d) => !L.tset.has(d))) continue;
           let hit = 0;
           for (const t of q) if (L.tset.has(t)) hit++;
           if (hit < 2) continue;

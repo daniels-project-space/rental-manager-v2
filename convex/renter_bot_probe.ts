@@ -15,7 +15,7 @@ export const seed = internalMutation({
     thread_id: v.string(),
     account_slug: v.string(),
     stage: v.optional(v.string()),
-    items: v.array(v.object({ name: v.string(), product_id: v.number() })),
+    items: v.array(v.object({ name: v.string(), product_id: v.optional(v.number()) })),
     messages: v.array(v.object({ role: v.string(), text: v.string() })),
   },
   handler: async (ctx, { thread_id, account_slug, stage, items, messages }) => {
@@ -73,7 +73,7 @@ export const run = action({
     thread_id: v.string(),
     account_slug: v.string(),
     stage: v.optional(v.string()),
-    items: v.array(v.object({ name: v.string(), product_id: v.number() })),
+    items: v.array(v.object({ name: v.string(), product_id: v.optional(v.number()) })),
     messages: v.array(v.object({ role: v.string(), text: v.string() })),
   },
   handler: async (ctx, a): Promise<{ draft?: string; confidence?: number; flags?: unknown }> => {
