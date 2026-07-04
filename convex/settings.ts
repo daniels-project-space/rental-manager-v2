@@ -100,6 +100,7 @@ export const listAccountHubs = query({
       display_name: string;
       hub_postcode: string | null;
       hub_label: string | null;
+      pickup_address: string | null;
     }[] = [];
     for (const a of accounts) {
       if (a.slug === "dbcinema_web") continue;
@@ -113,6 +114,7 @@ export const listAccountHubs = query({
         display_name: a.display_name ?? a.slug,
         hub_postcode: profile?.hub_postcode ?? null,
         hub_label: profile?.hub_label ?? null,
+        pickup_address: profile?.pickup_address ?? null,
       });
     }
     out.sort((x, y) => x.slug.localeCompare(y.slug));
@@ -321,3 +323,20 @@ export const setReturnDiscount = mutation({
   },
 });
 
+
+/** Set (or update) the per-account PICKUP address, shown in Settings. */
+export const setAccountPickupAddress = mutation({
+  args: { account_slug: v.string(), pickup_address: v.string() },
+  handler: async (ctx, { account_slug, pickup_address }) => {
+    const accts = await ctx.db.query("accounts").collect();
+    const acct = accts.find((a) => a.slug === account_slug);
+    if (!acct) throw new Error(`No account "${account_slug}"`);
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", acct._id))
+      .first();
+    if (!profile) throw new Error(`No profile for "${account_slug}"`);
+    await ctx.db.patch(profile._id, { pickup_address });
+    return { ok: true, account_slug, pickup_address };
+  },
+});

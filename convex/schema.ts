@@ -52,6 +52,9 @@ export default defineSchema({
     hub_label: v.optional(v.string()),
     hub_lat: v.optional(v.number()),
     hub_lng: v.optional(v.number()),
+    // Per-account PICKUP address (full street + postcode). Shared with the
+    // renter only AFTER a booking is confirmed. Editable in Settings.
+    pickup_address: v.optional(v.string()),
     // Post-return discount code texted to good renters (Settings drawer).
     // Interpolated into the account's return message template at return time;
     // unset -> DEFAULT_RETURN_DISCOUNTS (convex/lib/return_messages.ts).

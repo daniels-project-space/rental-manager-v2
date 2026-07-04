@@ -144,6 +144,20 @@ export async function POST(req: Request) {
     /* best-effort ground truth */
   }
 
+  // Per-account PICKUP location — share ONLY after the booking is confirmed.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hubs: any = await convex.query(api.settings.listAccountHubs, {});
+    const hub = (hubs || []).find((h: { slug?: string }) => h.slug === account_slug);
+    if (hub?.pickup_address) {
+      groundTruth += bookingConfirmed
+        ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
+        : `PICKUP LOCATION for this account is "${hub.pickup_address}" — do NOT reveal it yet (booking not confirmed). Say you'll send the exact pickup address the moment the booking is confirmed. NEVER give a different or made-up address.\n`;
+    }
+  } catch {
+    /* best-effort */
+  }
+
   // Hard top-line directive when the renter is asking about gear we can't rent.
   const marketingDirective = marketingItems.length
     ? `🚫 INTERNAL — DO NOT REVEAL: we cannot rent ${marketingItems.join(", ")} to this renter. Do NOT tell them it's "marketing-only", a "display listing", that we "don't stock/own it", or explain why — that is INTERNAL and must never be said. Simply say that exact one isn't available for their dates, and warmly recommend a real alternative we own (by name, with its price). NEVER say ${marketingItems.join(", ")} is available / ready / works for pickup.\n\n`
