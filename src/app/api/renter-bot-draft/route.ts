@@ -161,23 +161,30 @@ export async function POST(req: Request) {
     // NOT require the draft to "admit" anything — it just must not confirm it.)
     if (marketingItems.length && obj.draft && !obj.needs_human) {
       const d = obj.draft.toLowerCase();
+      // POSITIVE availability of the phantom (near its model token) — but only
+      // when NOT negated. "the 14mm isn't available" is a correct redirect, not
+      // a confirmation, so the negation guard must exclude it.
       const AFFIRM =
-        "(available|in stock|ready to go|ready for|works (perfectly|great|for|today|fine)|all set|all yours|pop by|come by|come collect|head (to|over)|swing by|pick(ed)? ?up|collect it|grab it)";
+        /(in stock|ready to go|ready for|works (perfectly|great|for you|today|fine)|all set|all yours|pop by|come by|come collect|head (to|over)|swing by|collect (it|the)|grab it|is available|are available|it'?s available|pick (it|that|them|one) up)/;
+      const NEG =
+        /(isn'?t|is not|are not|aren'?t|not|no longer|unavailable|can'?t|cannot|won'?t|unfortunately|afraid|sadly|sorry)/;
       let violated = false;
       for (const name of marketingItems) {
-        const tok = (name.toLowerCase().match(/\b(\d{1,3}-?\d{0,3}\s?mm|mini\s?\d|a7\s?[a-z0-9]+|fx\s?\d|r[56]|fs\d|24-70|16-35|70-200)\b/) || [])[0];
+        const tokMatch = name.toLowerCase().match(/\b(\d{1,3}-?\d{0,3}\s?mm|mini\s?\d|a7\s?[a-z0-9]+|fx\s?\d|r[56]|fs\d)\b/);
+        const tok = tokMatch ? tokMatch[0] : null;
         if (!tok) continue;
-        const t = tok.replace(/[-\s]/g, "[-\\s]?");
-        const re = new RegExp(`${t}[^.!?]{0,55}${AFFIRM}|${AFFIRM}[^.!?]{0,55}${t}`, "i");
-        if (re.test(d)) {
-          violated = true; // affirms the phantom is available
+        const idx = d.indexOf(tok);
+        if (idx < 0) continue;
+        const win = d.slice(Math.max(0, idx - 45), idx + 65);
+        if (AFFIRM.test(win) && !NEG.test(win)) {
+          violated = true; // affirms the phantom is available, un-negated
           break;
         }
       }
-      // Also block drafts that ADMIT we don't have it (reveals it's marketing).
+      // Also block drafts that ADMIT we don't stock it (reveals it's marketing).
       if (!violated) {
         const admits =
-          /(don'?t|do not|doesn'?t|does not|not) (stock|own|have|carry|hold)\b|isn'?t (something|one|a|in stock)|not (something|one) (i|we)|not in (stock|(our|my|the) inventory)|out of stock|don'?t currently (stock|carry|have)/i.test(d);
+          /(don'?t|do not|doesn'?t|does not) (stock|own|have|carry)\b|not (stocking|carrying)|isn'?t (something|one) (i|we)|not (something|one) (i|we)|not in (stock|(our|my|the) inventory)|out of stock|on hand/i.test(d);
         if (admits) violated = true;
       }
       if (violated) {
