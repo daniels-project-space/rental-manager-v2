@@ -102,6 +102,20 @@ export async function getRenterBotModel() {
 }
 
 /**
+ * Stronger renter-bot model (Sonnet). Used for the hard cases where Haiku is
+ * unreliable at following nuanced rules (e.g. steering off a marketing-only
+ * item without revealing why). Falls back to Grok when AI_PROVIDER=xai.
+ */
+export async function getRenterBotModelStrong() {
+  if (provider() === "xai") {
+    const xai = await getXai();
+    return xai(GROK_CHAT_MODEL);
+  }
+  const openrouter = await getOpenRouter();
+  return openrouter(process.env.STRONG_MODEL ?? "anthropic/claude-sonnet-4.6");
+}
+
+/**
  * Returns the resolved model id string (e.g. "deepseek/deepseek-v4-flash"
  * or "grok-4.3"). Useful for logging + the `modelId` audit field on
  * persisted decisions.

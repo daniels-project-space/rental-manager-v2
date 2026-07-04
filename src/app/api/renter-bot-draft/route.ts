@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
-import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
+import { getRenterBotAgent, getRenterBotAgentStrong, type RenterBotOutput } from "@/mastra/agents/renter_bot";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -132,7 +132,11 @@ export async function POST(req: Request) {
   ];
 
   try {
-    const agent = await getRenterBotAgent();
+    // Marketing-redirect is the hard case Haiku fumbles (admits / confirms) —
+    // run it on the stronger model. Everything else stays on Haiku.
+    const agent = marketingItems.length
+      ? await getRenterBotAgentStrong()
+      : await getRenterBotAgent();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
     const text: string = result?.text ?? "";

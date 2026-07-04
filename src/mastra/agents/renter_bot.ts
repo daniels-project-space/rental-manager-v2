@@ -19,7 +19,7 @@ import "server-only";
 
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
-import { getRenterBotModel } from "@/lib/llm-client";
+import { getRenterBotModel, getRenterBotModelStrong } from "@/lib/llm-client";
 import {
   RENTER_BOT_INTENTS,
   CONVERSATION_STAGES,
@@ -137,4 +137,24 @@ export async function getRenterBotAgent(): Promise<Agent> {
     maxRetries: 1,
   });
   return _agent;
+}
+
+// Stronger (Sonnet) variant — used for the hard cases where Haiku is unreliable
+// (e.g. steering off a marketing-only item without revealing why). Same prompt
+// + tools, better instruction-following.
+let _agentStrong: Agent | null = null;
+
+export async function getRenterBotAgentStrong(): Promise<Agent> {
+  if (_agentStrong) return _agentStrong;
+  const model = await getRenterBotModelStrong();
+  _agentStrong = new Agent({
+    id: "renter-bot-strong",
+    name: "Renter Bot (strong)",
+    instructions: RENTER_BOT_SYSTEM_PROMPT,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model: model as any,
+    tools: RENTER_BOT_TOOLS,
+    maxRetries: 1,
+  });
+  return _agentStrong;
 }
