@@ -98,7 +98,7 @@ export async function getRenterBotModel() {
     return xai(GROK_CHAT_MODEL);
   }
   const openrouter = await getOpenRouter();
-  return openrouter(process.env.HAIKU_MODEL ?? "anthropic/claude-haiku-4.5");
+  return openrouter(process.env.HAIKU_MODEL ?? "google/gemini-2.5-flash");
 }
 
 /**
@@ -112,7 +112,7 @@ export async function getRenterBotModelStrong() {
     return xai(GROK_CHAT_MODEL);
   }
   const openrouter = await getOpenRouter();
-  return openrouter(process.env.STRONG_MODEL ?? "anthropic/claude-sonnet-4.6");
+  return openrouter(process.env.STRONG_MODEL ?? "google/gemini-2.5-pro");
 }
 
 /**
