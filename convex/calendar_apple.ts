@@ -8,7 +8,7 @@
  * reminders, updating/removing them when the booking changes. No OAuth exists for
  * iCloud CalDAV — it's Basic auth with the app password. DB layer: calendar_apple_db.
  */
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import crypto from "crypto";
@@ -162,7 +162,7 @@ export const connectApple = action({
         (calendar_name && calendars.find((c) => c.name.toLowerCase() === calendar_name.toLowerCase())) ||
         calendars.find((c) => /rental|rmv2|rent/i.test(c.name)) || calendars[0];
       await ctx.runMutation(internal.calendar_apple_db._saveConnection, {
-        patch: { apple_id, app_password, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", last_error: undefined, connected_at: Date.now() },
+        patch: { apple_id, app_password, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
       });
       return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
     } catch (e) {
@@ -253,6 +253,18 @@ export const unsyncReservation = action({
       removed++;
     }
     return { ok: true, removed };
+  },
+});
+
+/** Cron tick: keep the calendar in sync automatically. No-op unless connected
+ * AND auto_sync is on. Idempotent — unchanged events are skipped via ics_hash. */
+export const autoSyncTick = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ ran: boolean }> => {
+    const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
+    if (c?.status !== "connected" || !c.auto_sync) return { ran: false };
+    await ctx.runAction(api.calendar_apple.syncAllConfirmed, {});
+    return { ran: true };
   },
 });
 

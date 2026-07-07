@@ -322,4 +322,11 @@ crons.interval(
   {},
 );
 
+crons.interval(
+  "apple_calendar_auto_sync",
+  { minutes: 30 },
+  internal.calendar_apple.autoSyncTick,
+  {},
+);
+
 export default crons;
