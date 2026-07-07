@@ -1390,9 +1390,11 @@ export const getTopRentalsForItem = query({
         .collect();
     } else {
       // missed → obsolete reservations.
+      // PERF: `.filter()` is a full-table scan in Convex; the by_is_obsolete index
+      // reads only the obsolete rows (result-equivalent).
       candidates = await ctx.db
         .query("reservations")
-        .filter((q) => q.eq(q.field("is_obsolete"), true))
+        .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
         .collect();
       candidates = candidates.filter((r) => {
         const ts = r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;

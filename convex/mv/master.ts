@@ -349,14 +349,16 @@ export const refreshFast = internalAction({
     // moved to refreshSlow, which already collects a 90d reservations window +
     // denials + pricing + accounts. Prior Pass 8a kept it at 90d to feed both.
     const cutoffFast = isoDaysAgo(7);
-    const [reservationsWindow, confirmedReservations, items, renters, denials, pricing, accounts] = await Promise.all([
+    // 2026-07-07: dropped the denials/pricing/accounts collects — they were read
+    // every hour here but NONE of the fast steps (utilization, upcoming_returns,
+    // stats_drawer + due_returns are wrap-and-cache) consume them. They're still
+    // collected in refreshSlow, which is where purchase_signals/missed_revenue use
+    // them. Removes 3 full-table scans/hour for zero output change.
+    const [reservationsWindow, confirmedReservations, items, renters] = await Promise.all([
       ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoffFast }),
       ctx.runQuery(internal.mv.master.collectConfirmedReservations, {}),
       ctx.runQuery(internal.mv.master.collectItems, {}),
       ctx.runQuery(internal.mv.master.collectRenters, {}),
-      ctx.runQuery(internal.mv.master.collectDenials, {}),
-      ctx.runQuery(internal.mv.master.collectPricing, {}),
-      ctx.runQuery(internal.mv.master.collectAccounts, {}),
     ]);
 
     const results: StepResult[] = [];
