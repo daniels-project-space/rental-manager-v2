@@ -2333,6 +2333,14 @@ export function ReplyInbox() {
   const openCacheRef = useRef<ReplyTileData | null>(null);
   const [acted, setActed] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
+  // Renters with a pickup/return within ±15 min — the pinned handoff bar. Bump
+  // `_tick` each minute (via `now`) so the time-window query re-runs live.
+  const handoffs = useQuery(api.replyInbox.getImminentHandoffs, {
+    accountSlug: activeAccountSlug ?? undefined,
+    _tick: Math.floor(now / 60000),
+  }) as
+    | Array<{ thread_id: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; time: string; minutes_away: number }>
+    | undefined;
   const [mounted, setMounted] = useState(false);
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
@@ -2462,6 +2470,35 @@ export function ReplyInbox() {
           </button>
         </div>
       </div>
+
+      {/* Imminent handoffs — renters with a pickup/return within ±15 min */}
+      {handoffs && handoffs.length > 0 && (
+        <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] p-2">
+          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-300/90 mb-1.5 px-1">
+            📍 Handoff now — tap to text
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-0.5">
+            {handoffs.map((h) => (
+              <button
+                key={`${h.thread_id}-${h.kind}`}
+                onClick={() => h.thread_id && setOpenId(h.thread_id)}
+                className="shrink-0 flex items-center gap-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 px-2.5 py-1.5 text-left transition-colors"
+              >
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${h.kind === "pickup" ? "bg-emerald-500/20 text-emerald-300" : "bg-sky-500/20 text-sky-300"}`}>
+                  {h.kind === "pickup" ? "PICKUP" : "RETURN"} {h.time}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[12px] font-semibold text-[#eef1f5] truncate max-w-[9rem]">{h.renter_name}</span>
+                  <span className="block text-[10.5px] text-[#9aa0ad] truncate max-w-[9rem]">{h.items.join(", ")}</span>
+                </span>
+                <span className="text-[10px] text-amber-300/80 tabular-nums whitespace-nowrap">
+                  {h.minutes_away === 0 ? "now" : h.minutes_away > 0 ? `in ${h.minutes_away}m` : `${-h.minutes_away}m ago`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filter + sort */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">

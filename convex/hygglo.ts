@@ -232,6 +232,7 @@ export const upsertMessages = mutation({
     // implements the "tile disappears once I reply, reappears on their next
     // message" behaviour purely from data. Creates a minimal conversation row
     // for brand-new threads the conversations batch hasn't seen yet.
+    let ownerReplyDetected = false;
     for (const [threadId, latest] of latestByThread) {
       const sender: "owner" | "renter" =
         latest.sender === "owner" ? "owner" : "renter";
@@ -244,6 +245,7 @@ export const upsertMessages = mutation({
         if (!conv.last_msg_at || latest.ts >= conv.last_msg_at) {
           patch.last_msg_at = Math.max(conv.last_msg_at ?? 0, latest.ts);
           patch.last_sender = sender;
+          if (sender === "owner") ownerReplyDetected = true;
         }
         if (sender === "renter") {
           patch.last_renter_msg_at = Math.max(
@@ -287,6 +289,13 @@ export const upsertMessages = mutation({
           created_at: latest.ts,
         });
       }
+    }
+
+    // App-reply reflected immediately: if the poller saw an OWNER message
+    // (e.g. Daniel replied in the Hygglo app), refresh the reply-queue MV so
+    // the tile drops NOW, not on the 5-min cron. (Daniel 2026-07-07)
+    if (ownerReplyDetected) {
+      await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, { force: true });
     }
 
     // ── Notify on a new RENTER message ────────────────────────────────────

@@ -1778,3 +1778,60 @@ export const backfillLastSender = internalMutation({
     return { total: convos.length, processed, stamped, remaining };
   },
 });
+
+
+// ── Imminent handoffs (Quick Reply pinned bar) ───────────────────────────────
+// Reservations whose PICKUP or RETURN is within ±windowMin of NOW (London wall-
+// clock). Powers the pinned top bar in the Quick Reply widget so the renter's
+// chat is one tap away right at the handover. (Daniel 2026-07-07)
+export const getImminentHandoffs = query({
+  args: { accountSlug: v.optional(v.string()), windowMin: v.optional(v.number()), _tick: v.optional(v.number()) },
+  handler: async (ctx, { accountSlug, windowMin = 15 }) => {
+    const nowDate = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+    const nowHM = new Date().toLocaleString("en-GB", {
+      timeZone: "Europe/London", hour12: false, hour: "2-digit", minute: "2-digit",
+    });
+    const toMin = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + (m || 0);
+    };
+    const nowMin = toMin(nowHM);
+    const out: Array<{
+      thread_id: string | null; account_slug: string | null; renter_name: string;
+      items: string[]; kind: "pickup" | "return"; time: string; minutes_away: number;
+    }> = [];
+    for (const st of ["confirmed", "ongoing"]) {
+      const rows = await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (qq) => qq.eq("status", st))
+        .collect();
+      for (const r of rows) {
+        const a = r as Record<string, unknown>;
+        if (accountSlug && a.account_slug !== accountSlug) continue;
+        if (a.is_obsolete) continue;
+        const items = ((a.hygglo_items as Array<{ name: string }> | undefined) ?? [])
+          .map((h) => h.name).slice(0, 2);
+        const base = {
+          thread_id: (a.hygglo_order_id as string) ?? null,
+          account_slug: (a.account_slug as string) ?? null,
+          renter_name: (a.renter_name as string) ?? "renter",
+          items,
+        };
+        const pd = (a.pickup_date as string) ?? (a.start_date as string);
+        const pt = a.pickup_time as string | undefined;
+        if (pd === nowDate && pt) {
+          const diff = toMin(pt) - nowMin;
+          if (Math.abs(diff) <= windowMin) out.push({ ...base, kind: "pickup", time: pt, minutes_away: diff });
+        }
+        const rd = (a.return_date as string) ?? (a.end_date as string);
+        const rt = a.return_time as string | undefined;
+        if (rd === nowDate && rt) {
+          const diff = toMin(rt) - nowMin;
+          if (Math.abs(diff) <= windowMin) out.push({ ...base, kind: "return", time: rt, minutes_away: diff });
+        }
+      }
+    }
+    out.sort((x, y) => Math.abs(x.minutes_away) - Math.abs(y.minutes_away));
+    return out;
+  },
+});
