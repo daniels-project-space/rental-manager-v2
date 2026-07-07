@@ -2243,4 +2243,39 @@ export default defineSchema({
     last_rescan_at: v.number(),
     count: v.number(),
   }).index("by_account", ["account_slug"]),
+
+  // ── Apple Calendar (CalDAV / iCloud) integration ─────────────────────────
+  // Single-row connection (Daniel's iCloud). Connect once with Apple ID + an
+  // app-specific password; we discover the CalDAV calendar and push confirmed
+  // booking pickup/return times as events (with reminders), updating/removing
+  // them when bookings change.
+  calendar_connection: defineTable({
+    provider: v.string(),                       // "apple"
+    apple_id: v.optional(v.string()),
+    app_password: v.optional(v.string()),       // Apple app-specific password (sensitive)
+    principal_url: v.optional(v.string()),
+    calendar_home: v.optional(v.string()),
+    calendar_url: v.optional(v.string()),       // chosen calendar collection href (absolute)
+    calendar_name: v.optional(v.string()),
+    status: v.string(),                         // "disconnected" | "connected" | "error"
+    reminder_lead_min: v.optional(v.number()),  // VALARM lead minutes (default 60)
+    return_reminder_lead_min: v.optional(v.number()),
+    auto_sync: v.optional(v.boolean()),         // auto-push confirmed bookings
+    last_error: v.optional(v.string()),
+    last_sync_at: v.optional(v.number()),
+    connected_at: v.optional(v.number()),
+    updated_at: v.number(),
+  }),
+
+  // One row per pushed event (a booking has up to 2: pickup + return) so we can
+  // update/delete them when the booking changes.
+  calendar_event_links: defineTable({
+    thread_id: v.string(),                      // reservation hygglo_order_id
+    kind: v.string(),                           // "pickup" | "return"
+    event_uid: v.string(),
+    event_href: v.string(),                     // absolute href on the CalDAV server
+    etag: v.optional(v.string()),
+    ics_hash: v.optional(v.string()),           // skip no-op re-PUTs
+    synced_at: v.number(),
+  }).index("by_thread", ["thread_id"]).index("by_uid", ["event_uid"]),
 });
