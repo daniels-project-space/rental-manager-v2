@@ -73,6 +73,7 @@ import { refreshAll as refreshConversionFunnel } from "./conversion_funnel";
 import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_category";
 import { refreshAll as refreshWalleSignals } from "./walle_signals";
 import { refreshAll as refreshDueReturns } from "./due_returns";
+import { refreshAll as refreshAiInsights } from "./ai_insights";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -579,6 +580,14 @@ export const refreshSlow = internalAction({
     // still read ~250 rich-payload rows per re-eval × 3 widget subs.
     results.push(await safeStep(ctx, "walle_signals", async () => {
       await refreshWalleSignals(ctx);
+    }));
+
+    // 2026-07-07: wrap-and-cache getInsights (AI Investment Insights). Daily —
+    // its 30/60/90d windows barely move hour to hour, so 24h staleness is
+    // invisible, while it removes a reactive full-year fat-reservation scan that
+    // re-ran on every poller write × every open tab (~24 GB/mo).
+    results.push(await safeStep(ctx, "ai_insights", async () => {
+      await refreshAiInsights(ctx);
     }));
 
     return { batch: "slow", results };

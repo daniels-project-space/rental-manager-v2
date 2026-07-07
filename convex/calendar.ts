@@ -228,7 +228,12 @@ export const getCalendarStrip = query({
     // OPEN_INDEX_NEED: index by (start_date, end_date) range for efficient overlap scan.
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
+      // PERF: bound the scan to the padded window (was `.gte` only → read the
+      // whole forward reservation tail on every reactive re-run). The `.lte`
+      // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
+      // row set is identical; kept the filter as a cheap guard.
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", scanStart).lte("start_date", scanEnd))
       .collect();
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= scanEnd
@@ -902,7 +907,12 @@ export const getWeeklyCalendar = query({
     // Reservations starting within the (padded) week
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
+      // PERF: bound the scan to the padded window (was `.gte` only → read the
+      // whole forward reservation tail on every reactive re-run). The `.lte`
+      // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
+      // row set is identical; kept the filter as a cheap guard.
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", scanStart).lte("start_date", scanEnd))
       .collect();
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= scanEnd
@@ -1150,7 +1160,12 @@ export const getGanttWeek = query({
     // --- Reservations overlapping the (padded) week ---
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
+      // PERF: bound the scan to the padded window (was `.gte` only → read the
+      // whole forward reservation tail on every reactive re-run). The `.lte`
+      // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
+      // row set is identical; kept the filter as a cheap guard.
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", scanStart).lte("start_date", scanEnd))
       .collect();
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= scanEnd

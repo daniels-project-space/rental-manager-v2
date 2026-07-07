@@ -722,7 +722,11 @@ export default defineSchema({
     inquiry_image_url: v.optional(v.string()),
     created_at: v.number(),
   }).index("by_thread", ["thread_id"])
-    .index("by_last_sender", ["last_sender"]),
+    .index("by_last_sender", ["last_sender"])
+    // PERF: lets getReplyQueue's Pass 3 (browse-all) read only the recent
+    // window instead of `.collect()`-ing the whole conversations table on every
+    // reactive re-run. last_msg_at is non-optional so the range is exact.
+    .index("by_last_msg_at", ["last_msg_at"]),
 
   conv_extracted_facts: defineTable({
     conversation_id: v.optional(v.id("conversations")),
@@ -1140,6 +1144,31 @@ export default defineSchema({
     account: v.string(),
     generatedAt: v.number(),
     rentals: v.any(),                     // { active, ongoing, upcoming, confirmed } arrays
+  }).index("by_account", ["account"]),
+
+  // 2026-07-07 — wrap-and-cache getInsights (AI Investment Insights). The live
+  // query scanned up to a full year of fat reservation docs on every reactive
+  // re-run (poller writes every 5 min × every open tab) to produce ~5 static
+  // analytics cards. Now refreshed once daily by master.refreshSlow; the widget
+  // reads one indexed row. One row per slug; "all" = accountSlug=null.
+  mv_ai_insights: defineTable({
+    account: v.string(),
+    generatedAt: v.number(),
+    payload: v.any(),                     // the getInsights return array (5 cards)
+  }).index("by_account", ["account"]),
+
+  // 2026-07-07 — wrap-and-cache the reply-inbox queue (getReplyQueue). The live
+  // query was the single biggest Convex bandwidth drain (~399 GB/mo): it read a
+  // window of conversations + an N+1 full fat-reservation read per thread +
+  // loadAvailCtx's confirmed-reservations scan, and it re-ran on EVERY poller
+  // write (every 5 min) × every open tab. Now a 5-min cron (skip-when-clean)
+  // computes the tile list once; the widget reads a single indexed row. Reply
+  // freshness is unchanged — the poller itself only runs every 5 min. One row per
+  // key: "all" (availability_include_pending off) / "all:pending" (on).
+  mv_reply_queue: defineTable({
+    account: v.string(),                  // "all" | "all:pending"
+    generatedAt: v.number(),
+    tiles: v.any(),                       // full sorted getReplyQueue tile array (pre account-filter / limit)
   }).index("by_account", ["account"]),
 
   // Pass 9d (2026-05-25) — wrap-and-cache the getMissedAndDeniedByCategory

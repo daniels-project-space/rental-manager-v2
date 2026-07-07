@@ -352,9 +352,19 @@ export const getOutOfStockItems = query({
     // already requires start_date <= endStr, and rows with undefined start_date (excluded from
     // a lte index range) are also dropped by isConfirmedWithDates. The remaining JS filters
     // (isConfirmedWithDates, end_date >= today, account_slug) are applied verbatim afterwards.
+    // PERF: also LOWER-bound the scan. `.lte(endStr)` alone matches ALL history
+    // (every past row has start_date <= a future date) → the entire reservations
+    // table was read on every reactive re-run. The only output is currently-active/
+    // upcoming rentals (guarded by `end_date >= today` below), which cannot have
+    // started more than one rental-length ago; 400d is beyond any real Hygglo rental,
+    // so the row set is unchanged.
+    const oosLookbackDate = new Date();
+    oosLookbackDate.setDate(oosLookbackDate.getDate() - 400);
+    const oosLookbackStr = oosLookbackDate.toISOString().slice(0, 10);
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (q) => q.lte("start_date", endStr))
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", oosLookbackStr).lte("start_date", endStr))
       .collect();
     reservations = reservations.filter(
       (r) =>

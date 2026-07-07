@@ -8,8 +8,25 @@ import { effectiveDate } from "./lib/reservations/predicates";
  * actual Convex data (no LLM calls).
  */
 export const getInsights = query({
-  args: { accountSlug: v.union(v.string(), v.null()) },
-  handler: async (ctx, { accountSlug }) => {
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    // Set ONLY by mv/ai_insights.ts:refreshAll to run the live compute below
+    // instead of reading the cache (avoids a reader→MV→reader loop). Public
+    // callers leave it undefined and get the cached daily row.
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, _bypassMv }) => {
+    if (!_bypassMv) {
+      // Cached path — one indexed row written daily by master.refreshSlow.
+      // Falls through to the live compute on a cold MV (post-deploy tick).
+      const cached = await ctx.db
+        .query("mv_ai_insights")
+        .withIndex("by_account", (q) => q.eq("account", accountSlug ?? "all"))
+        .first();
+      if (cached) {
+        return cached.payload as { headline: string; body: string; kind: string }[];
+      }
+    }
     const insights: { headline: string; body: string; kind: string }[] = [];
 
     const sixtyDaysAgoStr = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);

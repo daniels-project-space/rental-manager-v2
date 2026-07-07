@@ -297,4 +297,17 @@ crons.interval(
   {},
 );
 
+// 2026-07-07 — reply-inbox queue MV refresh. Skip-when-clean: rebuilds only when
+// a conversation/message/reservation changed since the last build, so quiet and
+// overnight ticks (poller idle 23:00–07:00) are ~free. User actions
+// (dismiss/send/approve/decline) kick an immediate forced refresh from their own
+// mutations. Replaces getReplyQueue's live per-poll-write × per-tab reactive
+// assembly — the single biggest Convex DB-bandwidth drain (~399 GB/mo).
+crons.interval(
+  "refresh_reply_queue",
+  { minutes: 5 },
+  internal.mv.reply_queue.refresh,
+  {},
+);
+
 export default crons;

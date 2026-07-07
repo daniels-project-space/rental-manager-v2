@@ -16,6 +16,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { bookedUnitsOnDate } from "./lib/availability";
 import {
   reservationItemUnits,
@@ -352,9 +353,15 @@ async function loadAvailCtx(
       r.order_step !== "REVIEWED",
   );
   const pending = includePending
-    ? (await ctx.db.query("reservations").collect()).filter(
+    ? // PERF: was a whole-table `.collect()` scan every fire. by_status narrows to
+      // pending_review rows; the remaining order_step/is_obsolete filters are kept.
+      (
+        await ctx.db
+          .query("reservations")
+          .withIndex("by_status", (q) => q.eq("status", "pending_review"))
+          .collect()
+      ).filter(
         (r) =>
-          r.status === "pending_review" &&
           r.order_step === "VERIFIED" &&
           !r.is_obsolete,
       )
@@ -641,6 +648,14 @@ async function assembleTile(
   };
 }
 
+// Canonical config the reply-queue MV (mv_reply_queue) is precomputed under.
+// MUST match the ReplyInbox.tsx call site AND mv/reply_queue.ts refresher, or the
+// reader shim below won't hit the cache. limit is generous so the stored list is
+// never truncated before the reader slices to the caller's limit.
+export const REPLY_MV_WITHIN_DAYS = 5;
+export const REPLY_MV_MESSAGES_WITHIN_DAYS = 5;
+export const REPLY_MV_LIMIT = 1000;
+
 export const getReplyQueue = query({
   args: {
     accountSlug: v.optional(v.string()),
@@ -658,6 +673,9 @@ export const getReplyQueue = query({
     // Count pending (not-yet-confirmed) reservations as occupying stock in the
     // double-booking check. Omitted → reads the persisted setting.
     includePending: v.optional(v.boolean()),
+    // Set ONLY by mv/reply_queue.ts:refreshAll to run the live assembly below
+    // instead of reading the cache (avoids a reader→MV→reader loop).
+    _bypassMv: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -669,8 +687,42 @@ export const getReplyQueue = query({
       includeMessages = true,
       messagesWithinDays = 30,
       includePending,
+      _bypassMv,
     },
   ) => {
+    // ── MV fast path ────────────────────────────────────────────────────────
+    // For the canonical frontend config, read the precomputed tile list (one
+    // indexed row) instead of running the full multi-pass assembly + N+1
+    // fat-reservation reads + loadAvailCtx scan. Refreshed every ~5 min by the
+    // mv_reply_queue cron (= poller cadence, so no reply freshness is lost). A
+    // cold MV (first cron tick after deploy) falls through to the live assembly.
+    if (
+      !_bypassMv &&
+      withinDays === REPLY_MV_WITHIN_DAYS &&
+      messagesWithinDays === REPLY_MV_MESSAGES_WITHIN_DAYS &&
+      includeFinished === false &&
+      includeMessages === true
+    ) {
+      const settingsRow0 = await ctx.db.query("settings").first();
+      const incPending0 =
+        includePending ?? settingsRow0?.availability_include_pending ?? false;
+      const mvRow = await ctx.db
+        .query("mv_reply_queue")
+        .withIndex("by_account", (q) =>
+          q.eq("account", incPending0 ? "all:pending" : "all"),
+        )
+        .first();
+      if (mvRow) {
+        let tiles = mvRow.tiles as Array<
+          NonNullable<Awaited<ReturnType<typeof assembleTile>>>
+        >;
+        if (accountSlug) {
+          tiles = tiles.filter((t) => t.account_slug === accountSlug);
+        }
+        return tiles.slice(0, limit);
+      }
+    }
+
     const cutoff = Date.now() - withinDays * 86_400_000;
     const FINISHED_STATUS = new Set(["completed", "cancelled", "declined"]);
     const FINISHED_STEP = new Set([
@@ -771,7 +823,14 @@ export const getReplyQueue = query({
     // wider recency window; finished rentals still excluded unless asked.
     if (includeMessages) {
       const msgCutoff = Date.now() - messagesWithinDays * 86_400_000;
-      const allConvos = await ctx.db.query("conversations").collect();
+      // PERF: read only the recent window via the by_last_msg_at index instead of
+      // `.collect()`-ing the entire conversations table on every reactive re-run.
+      // last_msg_at is non-optional, so the per-row `recencyTs < msgCutoff` guard
+      // below (kept) is already satisfied → identical result set.
+      const allConvos = await ctx.db
+        .query("conversations")
+        .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", msgCutoff))
+        .collect();
       for (const conv of allConvos) {
         if (byThread.has(conv.thread_id)) continue;
         const recencyTs = conv.last_msg_at ?? conv.last_renter_msg_at ?? 0;
@@ -854,6 +913,12 @@ export const dismissThread = mutation({
         dismissed_at: now,
       });
     }
+    // Reflect the dismissal in the cached reply queue immediately — the 5-min
+    // cron's clean-check can't detect a dismissed_at patch (it doesn't bump
+    // last_msg_at), so kick a forced rebuild now.
+    await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, {
+      force: true,
+    });
     return { ok: true };
   },
 });
@@ -1657,6 +1722,12 @@ export const setOwnerActionState = internalMutation({
       .first();
     if (!r) return { ok: false };
     await ctx.db.patch(r._id, { can_accept, can_deny });
+    // Approve/decline change the tile's action buttons (accept→decline-only, or
+    // none) — reflect it in the cached reply queue instantly rather than waiting
+    // for the next poller cycle to re-trip the cron's clean-check.
+    await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, {
+      force: true,
+    });
     return { ok: true };
   },
 });
