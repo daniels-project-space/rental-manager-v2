@@ -152,29 +152,25 @@ export const get = query({
 export const dirtySince = query({
   args: { sinceMs: v.number() },
   handler: async (ctx, { sinceMs }): Promise<boolean> => {
-    // Only GENUINE new activity counts — a new message (conversations.last_msg_at
-    // is bumped by upsertMessages only on new messages; hygglo_messages inserts
-    // only for new message_ids) or a new reservation/request (_creationTime).
-    // We deliberately do NOT probe reservations.last_polled_at: the poller
-    // re-stamps it on EVERY reservation every 5-min cycle even when nothing
-    // changed, which tripped this "dirty" check every single cycle and forced a
-    // full reply-queue rebuild 24×/hour for no reason. Hygglo-side status changes
-    // that arrive with no new message are reconciled by the age backstop in
-    // refreshAll (rebuild at least every REPLY_QUEUE_BACKSTOP_MS) and by the
-    // dismiss/approve/decline event kicks.
-    const conv = await ctx.db
-      .query("conversations")
-      .withIndex("by_last_msg_at")
-      .order("desc")
-      .first();
-    if (conv && (conv.last_msg_at ?? 0) > sinceMs) return true;
-
+    // Detect GENUINE new activity via Convex `_creationTime` (real wall-clock,
+    // assigned on insert, never re-stamped or future-dated). We deliberately do
+    // NOT use the Hygglo-provided timestamps (conversations.last_msg_at,
+    // hygglo_messages.fetched_at) — some of those are FUTURE-dated, so a
+    // `max(...) > sinceMs` probe on them is permanently "dirty" and would never
+    // skip. And NOT reservations.last_polled_at, which the poller re-stamps every
+    // 5-min cycle even when nothing changed. Signals:
+    //   • a new renter message  → a new hygglo_messages row (deduped by
+    //     by_thread_and_message, so only genuinely-new messages insert)
+    //   • a new reservation/request → a new reservations row
+    //   • a brand-new thread    → a new conversations row
+    // Hygglo-side status changes on EXISTING rows (no new message) are reconciled
+    // by the age backstop in refreshAll + the dismiss/approve/decline event kicks.
     const msg = await ctx.db
       .query("hygglo_messages")
-      .withIndex("by_fetched")
+      .withIndex("by_creation_time")
       .order("desc")
       .first();
-    if (msg && (msg.fetched_at ?? 0) > sinceMs) return true;
+    if (msg && msg._creationTime > sinceMs) return true;
 
     const created = await ctx.db
       .query("reservations")
@@ -182,6 +178,13 @@ export const dirtySince = query({
       .order("desc")
       .first();
     if (created && created._creationTime > sinceMs) return true;
+
+    const conv = await ctx.db
+      .query("conversations")
+      .withIndex("by_creation_time")
+      .order("desc")
+      .first();
+    if (conv && conv._creationTime > sinceMs) return true;
 
     return false;
   },
