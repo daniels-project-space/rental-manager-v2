@@ -26,9 +26,12 @@ import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
  * action's `refreshAll` helper directly to avoid the extra action hop.
  */
 export const refresh = internalAction({
-  args: { force: v.optional(v.boolean()) },
-  handler: async (ctx, { force }): Promise<{ ok: true; written: number; durationMs: number; skipped?: number }> => {
-    return await refreshAll(ctx, force);
+  args: {
+    force: v.optional(v.boolean()),
+    scope: v.optional(v.union(v.literal("all"), v.literal("accounts"), v.literal("both"))),
+  },
+  handler: async (ctx, { force, scope }): Promise<{ ok: true; written: number; durationMs: number; skipped?: number }> => {
+    return await refreshAll(ctx, force, scope ?? "both");
   },
 });
 
@@ -49,12 +52,25 @@ export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
   force: boolean = false,
+  // 2026-07-07 cost split — the live compute reads ~15 tables (reservations 365d
+  // + renters + denials + ai_decision + …) and was run 5× (once per slug) EVERY
+  // hour: the dominant refresher bandwidth. Now the fast cron refreshes only the
+  // "all" default view hourly; a separate 6h cron refreshes the 4 per-account rows
+  // (drill-down views tolerate ≤6h staleness; their live-critical fields — claim
+  // stage, scanner, conflicts, insurance — are already read-time overlays).
+  scope: "all" | "accounts" | "both" = "both",
 ): Promise<{ ok: true; written: number; durationMs: number; skipped: number }> {
   const startedAt = Date.now();
-  const slugs: Array<{ key: string; arg: string | null }> = [
+  const allSlugs: Array<{ key: string; arg: string | null }> = [
     { key: ACCOUNT_ALL, arg: null },
     ...ACCOUNTS.map((s) => ({ key: s, arg: s })),
   ];
+  const slugs =
+    scope === "all"
+      ? allSlugs.filter((s) => s.key === ACCOUNT_ALL)
+      : scope === "accounts"
+        ? allSlugs.filter((s) => s.key !== ACCOUNT_ALL)
+        : allSlugs;
 
   // Read the prior generatedAt for each row. Use the lowest across accounts
   // as the staleness cutoff — if ANY account has stale data, we re-run.

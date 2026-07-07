@@ -297,6 +297,18 @@ crons.interval(
   {},
 );
 
+// 2026-07-07 — per-account stats-drawer rows refresh (the "all" default view is
+// refreshed hourly inside mv_refresh_fast). The live compute reads ~15 tables
+// (reservations 365d + renters + denials + ai_decision + …) per slug; running it
+// for all 5 slugs every hour was the dominant refresher cost. Drill-down account
+// views tolerate ≤6h staleness (live-critical fields are read-time overlays).
+crons.interval(
+  "mv_refresh_stats_accounts",
+  { hours: 6 },
+  internal.mv.stats_drawer.refresh,
+  { scope: "accounts" },
+);
+
 // 2026-07-07 — reply-inbox queue MV refresh. Skip-when-clean: rebuilds only when
 // a conversation/message/reservation changed since the last build, so quiet and
 // overnight ticks (poller idle 23:00–07:00) are ~free. User actions

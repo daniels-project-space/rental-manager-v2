@@ -387,7 +387,10 @@ export const refreshFast = internalAction({
     // inside refreshAll so quiet ticks short-circuit without running the
     // heavy live handler.
     results.push(await safeStep(ctx, "stats_drawer", async () => {
-      await refreshStatsDrawer(ctx, force ?? false);
+      // Only the "all" default view here (hourly). Per-account rows refresh on a
+      // separate 6h cron ("mv_refresh_stats_accounts") — see crons.ts. Cuts the
+      // 5×/hour full-compute (once per slug) down to 1×/hour on the hot path.
+      await refreshStatsDrawer(ctx, force ?? false, "all");
     }));
 
     // Pass 12a (2026-05-26): wrap-and-cache getDueReturns. WallESignals
