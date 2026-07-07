@@ -35,6 +35,11 @@ import {
   REPLY_MV_LIMIT,
 } from "../replyInbox";
 
+// Even with no new message, rebuild at least this often so Hygglo-side status
+// changes (renter paid → confirmed, etc.) that arrive with no chat message still
+// reconcile. Bounds the worst-case staleness of the status badge.
+const REPLY_QUEUE_BACKSTOP_MS = 30 * 60 * 1000;
+
 export const refresh = internalAction({
   // `force` bypasses skip-when-clean (used by the user-action kicks so a
   // dismissal/send is reflected even when no poller data changed).
@@ -63,11 +68,16 @@ export async function refreshAll(
     const prior = await ctx.runQuery(anyApi.mv.reply_queue.get, { account: key });
     const priorGen: number = prior?.generatedAt ?? 0;
     if (priorGen > 0) {
+      const age = startedAt - priorGen;
       const dirty: boolean = await ctx.runQuery(
         anyApi.mv.reply_queue.dirtySince,
         { sinceMs: priorGen },
       );
-      if (!dirty) {
+      // Skip only when nothing genuinely new arrived AND the cache is still fresh
+      // within the backstop window. This is what stops the every-5-min no-op
+      // rebuilds (the poller re-stamps last_polled_at constantly, but that no
+      // longer counts as dirty — see dirtySince).
+      if (!dirty && age < REPLY_QUEUE_BACKSTOP_MS) {
         return { ok: true, written: 0, skipped: 1, durationMs: Date.now() - startedAt };
       }
     }
@@ -142,6 +152,16 @@ export const get = query({
 export const dirtySince = query({
   args: { sinceMs: v.number() },
   handler: async (ctx, { sinceMs }): Promise<boolean> => {
+    // Only GENUINE new activity counts — a new message (conversations.last_msg_at
+    // is bumped by upsertMessages only on new messages; hygglo_messages inserts
+    // only for new message_ids) or a new reservation/request (_creationTime).
+    // We deliberately do NOT probe reservations.last_polled_at: the poller
+    // re-stamps it on EVERY reservation every 5-min cycle even when nothing
+    // changed, which tripped this "dirty" check every single cycle and forced a
+    // full reply-queue rebuild 24×/hour for no reason. Hygglo-side status changes
+    // that arrive with no new message are reconciled by the age backstop in
+    // refreshAll (rebuild at least every REPLY_QUEUE_BACKSTOP_MS) and by the
+    // dismiss/approve/decline event kicks.
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_last_msg_at")
@@ -155,14 +175,6 @@ export const dirtySince = query({
       .order("desc")
       .first();
     if (msg && (msg.fetched_at ?? 0) > sinceMs) return true;
-
-    const polled = await ctx.db
-      .query("reservations")
-      .withIndex("by_last_polled_at")
-      .order("desc")
-      .first();
-    const polledStamp = (polled as { last_polled_at?: number } | null)?.last_polled_at;
-    if (typeof polledStamp === "number" && polledStamp > sinceMs) return true;
 
     const created = await ctx.db
       .query("reservations")
