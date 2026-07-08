@@ -1,0 +1,49 @@
+# CI gate — catches tsc/test breakage before Vercel builds. NON-DEPLOY-GATING (pure signal).
+name: CI
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', '.serena/**']
+  pull_request:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f pnpm-lock.yaml ]; then echo "pm=pnpm" >> "$GITHUB_OUTPUT"; else echo "pm=npm" >> "$GITHUB_OUTPUT"; fi
+      - uses: pnpm/action-setup@v4
+        if: steps.pm.outputs.pm == 'pnpm'
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: ${{ steps.pm.outputs.pm }}
+      - name: Install
+        run: |
+          if [ "${{ steps.pm.outputs.pm }}" = "pnpm" ]; then
+            pnpm install --frozen-lockfile || pnpm install
+          else
+            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          fi
+      - name: Typecheck (script if defined, else tsc --noEmit)
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.typecheck?0:1)"; then
+            ${{ steps.pm.outputs.pm }} run typecheck
+          else
+            npx --yes tsc --noEmit
+          fi
+      - name: Tests (if a test script exists)
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.test?0:1)"; then
+            ${{ steps.pm.outputs.pm }} test
+          else
+            echo "no test script — skipping"
+          fi

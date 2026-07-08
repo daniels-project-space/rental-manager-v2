@@ -1968,10 +1968,13 @@ export const getStatsDrawerData = query({
     const sellCutoffStr = new Date(Date.now() - SELL_LOOKBACK_DAYS * 86400000)
       .toISOString()
       .slice(0, 10);
-    let sellReservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", sellCutoffStr))
-      .collect();
+    // Dedup (2026-07-08): sell_reco's 90d window is a strict sub-range of the 365d
+    // `allResRaw` already collected earlier in this handler. Filter in-memory instead
+    // of a second `reservations` full scan — byte-identical rows (same predicate),
+    // one fewer windowed collect per getStatsDrawerData run.
+    let sellReservations = allResRaw.filter(
+      (r) => (r.start_date as string) >= sellCutoffStr,
+    );
     if (accountSlug) {
       sellReservations = sellReservations.filter((r) => r.account_slug === accountSlug);
     }
