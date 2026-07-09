@@ -322,6 +322,20 @@ crons.interval(
   {},
 );
 
+// 2026-07-09 — calendar MV refresh. Wraps getWeeklyCalendar + getCalendarStrip
+// (default current-week / today views) which were LIVE reactive queries re-running
+// a ~750-row reservations scan on every 5-min poller write × every open dashboard
+// tab. Skip-when-clean (new reservation/hold row since last build; poller
+// re-stamps don't count) + 45-min age backstop for status/date edits. 30 min:
+// calendar tolerates staleness (rentals span days) and this keeps the refresher
+// cheaper than the per-tab reactive drain it replaces. See convex/mv/calendar.ts.
+crons.interval(
+  "refresh_calendar",
+  { minutes: 30 },
+  internal.mv.calendar.refresh,
+  {},
+);
+
 crons.interval(
   "apple_calendar_auto_sync",
   { minutes: 30 },

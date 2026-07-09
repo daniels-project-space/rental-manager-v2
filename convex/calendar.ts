@@ -209,8 +209,13 @@ export const getCalendarStrip = query({
     accountSlug: v.union(v.string(), v.null()),
     startDate: v.string(), // YYYY-MM-DD
     days: v.number(),
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, startDate, days }) => {
+  handler: async (ctx, { accountSlug, startDate, days, _bypassMv }) => {
+    // Live compute wrapped so the MV fast path can cast the v.any() payload back
+    // to its exact type (returning `any` from one branch would widen the whole
+    // query return type to `any`). Same pattern as getWeeklyCalendar.
+    const computeLive = async () => {
     const dates: string[] = [];
     for (let i = 0; i < days; i++) {
       const d = new Date(startDate);
@@ -775,6 +780,16 @@ export const getCalendarStrip = query({
 
       return { date, pickups, returns, away, holds: dayHolds };
     });
+    };
+    if (!_bypassMv) {
+      const mv = await ctx.db
+        .query("mv_calendar")
+        .withIndex("by_key", (q) => q.eq("key", `strip:${accountSlug ?? "all"}`))
+        .first();
+      if (mv && mv.anchor === startDate && mv.days === days)
+        return mv.payload as Awaited<ReturnType<typeof computeLive>>;
+    }
+    return computeLive();
   },
 });
 
@@ -890,8 +905,14 @@ export const getWeeklyCalendar = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
     weekStartDate: v.string(), // YYYY-MM-DD (Monday)
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, weekStartDate }) => {
+  handler: async (ctx, { accountSlug, weekStartDate, _bypassMv }) => {
+    // The live compute is wrapped so the MV fast path below can cast the stored
+    // (v.any()) payload back to its exact type — otherwise returning `any` from
+    // one branch widens the whole query's inferred return type to `any` and the
+    // frontend's typed `data.days.map(...)` breaks (noImplicitAny).
+    const computeLive = async () => {
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(weekStartDate);
@@ -1118,6 +1139,16 @@ export const getWeeklyCalendar = query({
           })),
       })),
     };
+    };
+    if (!_bypassMv) {
+      const mv = await ctx.db
+        .query("mv_calendar")
+        .withIndex("by_key", (q) => q.eq("key", `weekly:${accountSlug ?? "all"}`))
+        .first();
+      if (mv && mv.anchor === weekStartDate)
+        return mv.payload as Awaited<ReturnType<typeof computeLive>>;
+    }
+    return computeLive();
   },
 });
 

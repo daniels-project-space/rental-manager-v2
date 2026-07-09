@@ -1171,6 +1171,24 @@ export default defineSchema({
     tiles: v.any(),                       // full sorted getReplyQueue tile array (pre account-filter / limit)
   }).index("by_account", ["account"]),
 
+  // 2026-07-09 — wrap-and-cache the DEFAULT (current-week / today) views of
+  // getWeeklyCalendar + getCalendarStrip. Both are LIVE reactive queries that
+  // re-scanned a ~750-row `by_start_date` window on EVERY 5-min poller write ×
+  // every open dashboard tab (unbounded per-tab drain). Now a 30-min cron
+  // (skip-when-clean) computes them; the widget reads one indexed row. Only the
+  // current anchor is cached — `anchor` stores the weekStartDate (weekly) or
+  // startDate (strip) it was built for; the reader serves the row only when the
+  // requested date matches, so week-navigation + the raw-UTC chat tool fall to
+  // live (never stale). One row per key: "weekly:<slug>" / "strip:<slug>",
+  // slug ∈ { "all", ...accounts.slug }.
+  mv_calendar: defineTable({
+    key: v.string(),                      // "weekly:all" | "strip:leo" | ...
+    anchor: v.string(),                   // YYYY-MM-DD the payload was computed for
+    days: v.optional(v.number()),         // strip only (7); absent for weekly
+    generatedAt: v.number(),
+    payload: v.any(),                     // verbatim getWeeklyCalendar {days:[…]} / getCalendarStrip […]
+  }).index("by_key", ["key"]),
+
   // Pass 9d (2026-05-25) — wrap-and-cache the getMissedAndDeniedByCategory
   // handler. The live compute reads ~40MB of reservations data (full
   // obsolete scan + completed-scope collect) on every dashboard mount to
