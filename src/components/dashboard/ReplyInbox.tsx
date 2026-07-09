@@ -1800,6 +1800,19 @@ export function ReplyModal({
   const [draftFlags, setDraftFlags] = useState<DraftFlag[]>(
     tile.ai_draft_flags ?? [],
   );
+  // The list row (mv_reply_queue) no longer carries the AI draft / flags —
+  // they're modal-only, so they're stripped from the re-pushed list payload to
+  // keep it small. Hydrate them once from the full thread fetch (getThreadById →
+  // liveTile) when the modal opens. Guarded so it never clobbers an edit the
+  // user has already started typing.
+  const draftHydratedRef = useRef(false);
+  useEffect(() => {
+    if (draftHydratedRef.current || !liveTile) return;
+    draftHydratedRef.current = true;
+    setDraft(liveTile.ai_draft_text ?? "");
+    setDraftConfidence(liveTile.ai_draft_confidence ?? null);
+    setDraftFlags(liveTile.ai_draft_flags ?? []);
+  }, [liveTile]);
   const [showFlags, setShowFlags] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);

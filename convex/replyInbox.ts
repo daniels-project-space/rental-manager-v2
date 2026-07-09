@@ -656,6 +656,29 @@ export const REPLY_MV_WITHIN_DAYS = 5;
 export const REPLY_MV_MESSAGES_WITHIN_DAYS = 5;
 export const REPLY_MV_LIMIT = 1000;
 
+type ReplyTile = NonNullable<Awaited<ReturnType<typeof assembleTile>>>;
+
+/**
+ * Project a full tile to its LIST shape for mv_reply_queue. The stored row is
+ * re-pushed to every subscribed dashboard tab on every refresh, so it must carry
+ * only what the collapsed list renders. Nulls the modal-only fat fields
+ * (ai_draft_text / _confidence / _flags — the reply modal re-fetches the full
+ * thread via getThreadById on open) and trims the rich `items` array to
+ * {name, qty} (the list shows names via itemLine; the modal uses
+ * availability.items + OrderEditor's own fetch, never tile.items). Keeps the
+ * tile SHAPE identical (all keys present) so the query return type — and the
+ * frontend's typed tile access — are unchanged.
+ */
+function leanTile(t: ReplyTile): ReplyTile {
+  return {
+    ...t,
+    ai_draft_text: null,
+    ai_draft_confidence: null,
+    ai_draft_flags: null,
+    items: t.items.map((i) => ({ name: i.name, qty: i.qty })) as ReplyTile["items"],
+  };
+}
+
 export const getReplyQueue = query({
   args: {
     accountSlug: v.optional(v.string()),
@@ -877,7 +900,10 @@ export const getReplyQueue = query({
       if (aAwait) return (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
       return (b.last_msg_at ?? 0) - (a.last_msg_at ?? 0);
     });
-    return tiles.slice(0, limit);
+    // Lean the list payload before returning/storing — see leanTile. The reader
+    // MV-hit path returns already-lean stored tiles; this covers the live
+    // assembly (refresher store + cold-start fallback).
+    return tiles.slice(0, limit).map(leanTile);
   },
 });
 
