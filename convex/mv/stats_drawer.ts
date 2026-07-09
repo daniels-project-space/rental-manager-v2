@@ -169,6 +169,10 @@ export const write = internalMutation({
       .withIndex("by_account", (q) => q.eq("account", account))
       .first();
     if (existing) {
+      // Content-skip: don't re-push an identical payload to every subscribed tab.
+      if (JSON.stringify(existing.payload) === JSON.stringify(payload)) {
+        return { ok: true, skipped: true };
+      }
       await ctx.db.patch(existing._id, { payload, generatedAt });
     } else {
       await ctx.db.insert("mv_stats_drawer", { account, payload, generatedAt });
@@ -192,6 +196,10 @@ export const writeRentals = internalMutation({
       .withIndex("by_account", (q) => q.eq("account", account))
       .first();
     if (existing) {
+      // Content-skip: don't re-push identical drill-down rentals to subscribers.
+      if (JSON.stringify(existing.rentals) === JSON.stringify(rentals)) {
+        return { ok: true, skipped: true };
+      }
       await ctx.db.patch(existing._id, { rentals, generatedAt });
     } else {
       await ctx.db.insert("mv_stats_drawer_rentals", { account, rentals, generatedAt });

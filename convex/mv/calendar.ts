@@ -170,6 +170,16 @@ export const write = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", key))
       .first();
     if (existing) {
+      // Content-skip: don't re-push an unchanged calendar to subscribed tabs.
+      // (Same anchor/day + identical payload ⇒ nothing visibly changed. The
+      // 30-min cron would otherwise re-send this row every tick for free.)
+      if (
+        existing.anchor === anchor &&
+        existing.days === days &&
+        JSON.stringify(existing.payload) === JSON.stringify(payload)
+      ) {
+        return { ok: true, skipped: true };
+      }
       await ctx.db.patch(existing._id, doc);
     } else {
       await ctx.db.insert("mv_calendar", doc);

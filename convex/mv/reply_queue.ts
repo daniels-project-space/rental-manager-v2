@@ -121,6 +121,13 @@ export const write = internalMutation({
       .withIndex("by_account", (q) => q.eq("account", account))
       .first();
     if (existing) {
+      // Content-skip: a no-op patch still re-pushes the full (~200 KB) tiles row
+      // to every subscribed dashboard tab (Convex reactivity fires on any write).
+      // Only rewrite when the visible tile list actually changed. `existing` is
+      // already read for the patch-vs-insert branch, so this costs nothing extra.
+      if (JSON.stringify(existing.tiles) === JSON.stringify(tiles)) {
+        return { ok: true, skipped: true };
+      }
       await ctx.db.patch(existing._id, { tiles, generatedAt });
     } else {
       await ctx.db.insert("mv_reply_queue", { account, tiles, generatedAt });
