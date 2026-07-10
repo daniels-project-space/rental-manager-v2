@@ -1018,15 +1018,54 @@ async function upsertOrderImpl(
     // non-obsolete bucket. obsolete_reason is preserved for audit; only
     // the boolean gate flips back.
     const clearObsolete = !isObsoleteUpsert && wasObsolete;
+
+    // ── Conditional write (2026-07-10) — the dominant DB-IO fix ─────────────
+    // The poller re-runs this upsert for EVERY order every ~5-min cycle. A
+    // ctx.db.patch creates a NEW document version even when the values are
+    // identical, which invalidates every reactive dashboard query subscribed to
+    // `reservations` (getRecentActivity / getImminentHandoffs / getOutOfStockItems
+    // / weekly calendar / stats overlays) → each re-executes and re-ships its full
+    // payload to every open tab, ~288×/day. That per-cycle re-versioning of IDLE
+    // rows was the main read-bandwidth drain. Skip both patches when nothing the
+    // poller writes has changed. `last_polled_at` is intentionally NOT advanced on
+    // a skip, so its indexed max stays a true "something changed?" signal that the
+    // MV skip-probes rely on (and idle rows stop churning). image_hints is derived
+    // from items+photos (both in the hash) plus `now` (immaterial), so excluding
+    // it from the hash cannot miss a real change.
+    const hyggloItemsUpdate = buildHyggloItems(args.items);
+    const pollHashInput = JSON.stringify({
+      ...baseFields,
+      last_polled_at: undefined, // exclude the per-cycle timestamp from the hash
+      status: finalStatus,
+      ...stepPatch,
+      ...obsoleteFields,
+      ...(clearObsolete && { is_obsolete: false }),
+      hygglo_items: hyggloItemsUpdate,
+    });
+    let _h1 = 0xdeadbeef, _h2 = 0x41c6ce57;
+    for (let i = 0; i < pollHashInput.length; i++) {
+      const ch = pollHashInput.charCodeAt(i);
+      _h1 = Math.imul(_h1 ^ ch, 2654435761);
+      _h2 = Math.imul(_h2 ^ ch, 1597334677);
+    }
+    _h1 = Math.imul(_h1 ^ (_h1 >>> 16), 2246822507);
+    _h1 ^= Math.imul(_h2 ^ (_h2 >>> 13), 3266489909);
+    _h2 = Math.imul(_h2 ^ (_h2 >>> 16), 2246822507);
+    _h2 ^= Math.imul(_h1 ^ (_h1 >>> 13), 3266489909);
+    const newPollHash = (4294967296 * (2097151 & _h2) + (_h1 >>> 0)).toString(36);
+    if ((existing as { poll_hash?: string }).poll_hash === newPollHash) {
+      return { action: "skipped", bankItems: [] };
+    }
+
     await ctx.db.patch(existing._id, {
       ...baseFields,
       status: finalStatus,
       ...stepPatch,
       ...obsoleteFields,
       ...(clearObsolete && { is_obsolete: false }),
+      poll_hash: newPollHash,
     });
     const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-    const hyggloItemsUpdate = buildHyggloItems(args.items);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
     await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);
     // listing_info_pool: one-time fill at insert only — no re-derive on update.

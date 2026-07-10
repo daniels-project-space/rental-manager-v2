@@ -426,9 +426,15 @@ export default defineSchema({
     resolution_method: v.optional(v.string()),
     /** Hash of items[].map(i=>i.item_name) when resolution_at was set. Used to invalidate. */
     resolution_input_hash: v.optional(v.string()),
-    /** ms epoch — bumped by the poller on every upsert so we can detect rows
-     *  Hygglo has stopped returning (i.e. silently completed). */
+    /** ms epoch — bumped by the poller ONLY when a poll cycle actually changed
+     *  the row (see poll_hash). Idle rows keep their old stamp, so an indexed
+     *  max(last_polled_at) is a true "anything changed?" signal AND idle rows are
+     *  no longer re-versioned every cycle (was the dominant reactive DB-IO drain). */
     last_polled_at: v.optional(v.number()),
+    /** Hash of the poller write-set (all upserted fields except the last_polled_at
+     *  timestamp). The upsert skips both patches when this is unchanged, so an
+     *  idle reservation is not re-written every 5-min cycle. 2026-07-10. */
+    poll_hash: v.optional(v.string()),
     /** Last Hygglo filter the row was seen in: "pending" | "current" | "future" | "obsolete". */
     source_filter: v.optional(v.string()),
     /** Open damage/loss case — pulls the rental OUT of the Return Hub (tracked
