@@ -6,32 +6,31 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useState } from "react";
 
+// Mirrors the rows returned by api.intel.getSmartBuyRanking (was a stale shape
+// that never matched the query → the whole panel rendered £0 / blank names and
+// crashed on non-"monitor" rows).
 type Row = {
-  displayName: string;
-  matchedItemId?: string;
-  matchedItemName?: string;
-  alreadyOwned: boolean;
+  itemName: string;
   requestCount: number;
+  estDailyRateGbp: number | null;
+  estAcquisitionCostGbp: number | null;
+  estAnnualNetGbp: number;
+  firstYearROIPct: number | null;
+  recommendation: "strong-buy" | "consider" | "monitor";
   lostGbp: number;
-  estimatedAcquisitionGbp: number | null;
-  monthlyOpportunityGbp: number | null;
   paybackMonths: number | null;
-  recommendation: "buy_more" | "consider_buying" | "monitor" | "have_capacity";
-  reason: string;
 };
 
 const REC_LABEL: Record<Row["recommendation"], string> = {
-  buy_more: "Buy more",
-  consider_buying: "Consider",
+  "strong-buy": "Strong buy",
+  consider: "Consider",
   monitor: "Monitor",
-  have_capacity: "OK as-is",
 };
 
 const REC_TONE: Record<Row["recommendation"], { fg: string; bg: string }> = {
-  buy_more:        { fg: "#ef4444", bg: "rgba(239,68,68,0.16)" },
-  consider_buying: { fg: "#f59e0b", bg: "rgba(245,158,11,0.16)" },
-  monitor:         { fg: "#6ea8fe", bg: "rgba(110,168,254,0.16)" },
-  have_capacity:   { fg: "#22c55e", bg: "rgba(34,197,94,0.14)" },
+  "strong-buy": { fg: "#ef4444", bg: "rgba(239,68,68,0.16)" },
+  consider:     { fg: "#f59e0b", bg: "rgba(245,158,11,0.16)" },
+  monitor:      { fg: "#6ea8fe", bg: "rgba(110,168,254,0.16)" },
 };
 
 function fmtGbp(n: number | null): string {
@@ -98,16 +97,16 @@ export function LostRevenueBuyPanel() {
               const tone = REC_TONE[r.recommendation];
               return (
                 <div
-                  key={(r.matchedItemId ?? r.displayName) + i}
+                  key={r.itemName + i}
                   className="grid grid-cols-12 gap-2 items-center px-2.5 py-2 rounded-lg"
                   style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
                 >
                   <div className="col-span-5 min-w-0">
                     <div className="text-sm text-slate-100 truncate">
-                      {r.matchedItemName ?? r.displayName}
+                      {r.itemName}
                     </div>
                     <div className="text-[10px] text-slate-500 truncate">
-                      {r.alreadyOwned ? "in inventory" : "not owned"} · {r.requestCount} request{r.requestCount === 1 ? "" : "s"} declined
+                      not owned · {r.requestCount} request{r.requestCount === 1 ? "" : "s"} declined
                     </div>
                   </div>
                   <div className="col-span-2 text-right text-xs text-rose-300 tabular-nums">
@@ -115,7 +114,7 @@ export function LostRevenueBuyPanel() {
                     <div className="text-[10px] text-slate-500">lost</div>
                   </div>
                   <div className="col-span-2 text-right text-xs text-slate-300 tabular-nums">
-                    {fmtGbp(r.estimatedAcquisitionGbp)}
+                    {fmtGbp(r.estAcquisitionCostGbp)}
                     <div className="text-[10px] text-slate-500">to buy</div>
                   </div>
                   <div className="col-span-3 text-right">

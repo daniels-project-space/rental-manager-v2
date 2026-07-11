@@ -93,10 +93,14 @@ export function HealthScanner() {
               style={
                 data.syncStatus === "live"
                   ? { background: "rgba(34,197,94,0.15)", color: "#22c55e" }
-                  : { background: "rgba(245,158,11,0.15)", color: "#f59e0b" }
+                  : { background: "rgba(239,68,68,0.15)", color: "#ef4444" }
               }
             >
-              {data.syncStatus === "live" ? "Live" : "Read-only"}
+              {data.syncStatus === "live"
+                ? "Live"
+                : data.pollAgeMinutes != null
+                  ? `Stale ${data.pollAgeMinutes}m`
+                  : "No poll data"}
             </span>
           </div>
 

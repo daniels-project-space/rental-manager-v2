@@ -15,6 +15,7 @@ import { v } from "convex/values";
 import { query, internalMutation } from "../_generated/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { effectiveDate, isLive } from "../lib/reservations/predicates";
+import { OWNER_SHARE } from "../lib/missed_revenue";
 
 export const GRANULARITIES = ["monthly", "weekly"] as const;
 export type Granularity = (typeof GRANULARITIES)[number];
@@ -29,6 +30,7 @@ type ReservationLike = {
   start_date?: string;
   pickup_date?: string;
   gross_paid_gbp?: number;
+  net_to_owner_gbp?: number;
 };
 
 type Bucket = { period: string; revenue: number; bookings: number };
@@ -104,7 +106,10 @@ export function computeEarningsByPeriod(args: {
           ? isoMonthlyKey(dateStr)
           : isoWeeklyKey(dateStr);
         const existing = buckets.get(key) ?? { period: key, revenue: 0, bookings: 0 };
-        existing.revenue += r.gross_paid_gbp ?? 0;
+        // Earnings = owner take-home (net after ~36% platform fees), matching
+        // every other revenue widget + Daniel's "earnings = take-home" rule.
+        // Was summing GROSS, inflating the chart ~1.5x.
+        existing.revenue += r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE;
         existing.bookings += 1;
         buckets.set(key, existing);
       }

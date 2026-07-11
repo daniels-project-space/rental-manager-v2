@@ -12,7 +12,9 @@ import { api } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 
-export const STANDARD_WINDOWS = [30, 90, 365] as const;
+// Include 7 — the ConversationFunnel widget offers 7/30/90; without a cached
+// 7-day row that option fell through to a live compute on every render.
+export const STANDARD_WINDOWS = [7, 30, 90, 365] as const;
 
 export const refresh = internalAction({
   args: {},

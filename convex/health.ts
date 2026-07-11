@@ -84,8 +84,26 @@ export const getHealthReport = query({
       }
     }
 
+    // Poller freshness — the "Hygglo Sync" badge must reflect whether the poller
+    // is actually INGESTING, not whether outbound writes are enabled. Was derived
+    // from ALLOW_HYGGLO_SEND (a send-permission flag), so a dead poller still
+    // showed "Live". account_state.lastSuccessfulPollAt is stamped every real
+    // poll cycle; the freshest across all accounts tells us the poller is alive.
+    const accountStates = await ctx.db.query("account_state").collect();
+    const freshestPollAt = accountStates.reduce(
+      (mx, a) => Math.max(mx, a.lastSuccessfulPollAt ?? 0),
+      0,
+    );
+    const pollAgeMinutes =
+      freshestPollAt > 0 ? Math.floor((Date.now() - freshestPollAt) / 60000) : null;
+    const pollerLive = pollAgeMinutes !== null && pollAgeMinutes < 60;
+
     return {
-      syncStatus: settings?.ALLOW_HYGGLO_SEND ? "live" : "read_only",
+      // Poller-ingest freshness (live = a successful poll in the last hour).
+      syncStatus: pollerLive ? "live" : "stale",
+      pollAgeMinutes,
+      // Outbound-write permission, kept separate from ingest health.
+      sendMode: settings?.ALLOW_HYGGLO_SEND ? "live" : "read_only",
       readOnlyMode: settings?.read_only_mode ?? true,
       pollingIntervalMs: settings?.polling_interval_ms ?? null,
       issues,

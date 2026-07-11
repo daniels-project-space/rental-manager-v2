@@ -7,14 +7,16 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 function UtilPill({ pct }: { pct: number }) {
-  const color = pct < 0.2 ? "#ef4444" : pct < 0.4 ? "#f59e0b" : "#22c55e";
-  const bg = pct < 0.2 ? "rgba(239,68,68,0.15)" : pct < 0.4 ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)";
+  // pct is a 0–100 percentage (getSellRecommendations.utilizationPct), NOT a
+  // fraction — was scaled ×100 again (12% util rendered as "1200%", always green).
+  const color = pct < 20 ? "#ef4444" : pct < 40 ? "#f59e0b" : "#22c55e";
+  const bg = pct < 20 ? "rgba(239,68,68,0.15)" : pct < 40 ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)";
   return (
     <span
       className="text-xs px-1.5 py-0.5 rounded font-medium"
       style={{ color, background: bg }}
     >
-      {(pct * 100).toFixed(0)}%
+      {pct.toFixed(0)}%
     </span>
   );
 }

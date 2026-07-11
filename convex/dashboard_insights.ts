@@ -511,7 +511,14 @@ export const getActiveConflicts = query({
         .query("mv_walle_signals")
         .withIndex("by_account", (q) => q.eq("account", "all"))
         .first();
-      if (cached) return cached.activeConflicts;
+      // Overbooking is safety-critical, but mv_walle_signals is only refreshed
+      // DAILY (04:00 via refreshSlow) — the old unconditional `return cached`
+      // meant a conflict created at 04:05 stayed invisible in WallE for ~24h.
+      // Trust the cache only while fresh (~90 min); otherwise fall through to the
+      // bounded, indexed live compute so new conflicts surface promptly.
+      if (cached && Date.now() - cached.generatedAt < 90 * 60 * 1000) {
+        return cached.activeConflicts;
+      }
     }
     const today = todayIso();
     const lookback = isoNDaysAgoUtc(14);

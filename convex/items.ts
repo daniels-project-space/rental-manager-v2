@@ -288,37 +288,44 @@ export const getItemCycles = query({
     const activeCanonSet = new Set<string>(activeCanonicals);
     // EQ-A: load effective equivalence map (settings override → default).
     const equivMap = await loadEquivalenceMap(ctx);
-    const rentalDaysMap = new Map<string, number>();
+    // Join rentals → inventory by item_id (robust to canonical-name drift: a
+    // renamed item used to silently drop its utilization when resolved_items
+    // still carried the OLD canonical that no longer matched activeCanonSet).
+    // readResolverItems prefers expanded_items (item_id + per-unit qty) — the
+    // same primitive getSellRecommendations uses — and multiplies duration by
+    // qty so multi-unit rentals are no longer undercounted (denominator is
+    // qty*days). Falls back to the canonical→id map for older rows.
+    const canonToId = new Map<string, string>();
+    for (const i of activeItems) canonToId.set(i.name_canonical, i._id as string);
+
+    const rentalDaysById = new Map<string, number>();
     for (const r of reservations) {
-      const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
-      // EQUIVALENCE FALLBACK: when resolver yielded nothing, map listing
-      // title → owned SKU via listing_equivalence so denied/unresolved
-      // rentals still register utilization on the closest available item's
-      // circle. Direct (already-resolved) match always wins.
-      if (resolved.length === 0) {
-        const rawItems = (r as { items?: Array<{ item_name: string }> }).items ?? [];
-        const title = rawItems.map((it) => it.item_name).filter(Boolean).join(" | ");
-        if (!title) continue;
-        const eq = resolveListingToInventoryWithMap(title, null, activeCanonSet, equivMap);
-        if (eq.matchType === "equivalence" && eq.sku) {
-          rentalDaysMap.set(
-            eq.sku,
-            (rentalDaysMap.get(eq.sku) ?? 0) + (r.duration_days ?? 0),
+      const units = readResolverItems(r);
+      if (units.length > 0) {
+        for (const x of units) {
+          const id = x.item_id || canonToId.get(x.item_name_canonical);
+          if (!id) continue;
+          rentalDaysById.set(
+            id,
+            (rentalDaysById.get(id) ?? 0) + (r.duration_days ?? 0) * (x.qty ?? 1),
           );
         }
         continue;
       }
-      for (const x of resolved) {
-        if (!activeCanonSet.has(x.item_name_canonical)) continue;
-        rentalDaysMap.set(
-          x.item_name_canonical,
-          (rentalDaysMap.get(x.item_name_canonical) ?? 0) + (r.duration_days ?? 0),
-        );
+      // EQUIVALENCE FALLBACK: fully-unresolved rentals — map the listing title
+      // → owned SKU so denied/unresolved rentals still register utilization.
+      const rawItems = (r as { items?: Array<{ item_name: string }> }).items ?? [];
+      const title = rawItems.map((it) => it.item_name).filter(Boolean).join(" | ");
+      if (!title) continue;
+      const eq = resolveListingToInventoryWithMap(title, null, activeCanonSet, equivMap);
+      if (eq.matchType === "equivalence" && eq.sku) {
+        const id = canonToId.get(eq.sku);
+        if (id) rentalDaysById.set(id, (rentalDaysById.get(id) ?? 0) + (r.duration_days ?? 0));
       }
     }
 
     return activeItems.map((item) => {
-        const rentalDays = rentalDaysMap.get(item.name_canonical) ?? 0;
+        const rentalDays = rentalDaysById.get(item._id) ?? 0;
         const qty = item.qty ?? 1;
         return {
           itemId: item._id,
@@ -494,7 +501,10 @@ export const getSellRecommendations = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
     const LOOKBACK_DAYS = 90;
-    const UTIL_THRESHOLD = 0.25;
+    // utilizationPct below is a 0–100 percent, so the threshold is 25(%), NOT 0.25.
+    // Was 0.25 → `utilizationPct > 0.25` was true for any item with >0.25% util,
+    // so the low-demand filter never fired and young low-demand items were missed.
+    const UTIL_THRESHOLD = 25;
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
@@ -605,10 +615,18 @@ export const getPriceRecommendations = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
 
+    // Count bookings per CANONICAL item name. Was keyed on the RAW Hygglo
+    // item_name but looked up below by item_name_canonical → the lookup almost
+    // always returned 0, so nearly every item was told to "cut price 10%".
+    // readResolverItems resolves raw listings → canonical (bundle-expanded),
+    // exactly like getSellRecommendations. One rental counts once per item.
     const freqMap = new Map<string, number>();
     for (const r of reservations) {
-      for (const item of r.items ?? []) {
-        freqMap.set(item.item_name, (freqMap.get(item.item_name) ?? 0) + 1);
+      const seen = new Set<string>();
+      for (const x of readResolverItems(r)) {
+        if (seen.has(x.item_name_canonical)) continue;
+        seen.add(x.item_name_canonical);
+        freqMap.set(x.item_name_canonical, (freqMap.get(x.item_name_canonical) ?? 0) + 1);
       }
     }
 

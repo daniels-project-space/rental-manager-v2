@@ -289,33 +289,6 @@ export const getConversionFunnel = query({
     }
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-
-    // When account-scoped, the by_account_slug index is the tightest filter.
-    // Otherwise the by_start_date range index returns only rows on/after the
-    // cutoff (rows with undefined start_date are excluded by the index range,
-    // which is fine — the JS filter below dropped them anyway). The identical
-    // `start_date >= cutoffStr` JS filter is applied in BOTH branches so the
-    // final `recent` set matches the previous full-scan behaviour exactly.
-    let reservations;
-    if (accountSlug) {
-      reservations = await ctx.db
-        .query("reservations")
-        .withIndex("by_account_slug", (q) => q.eq("account_slug", accountSlug))
-        .collect();
-    } else {
-      reservations = await ctx.db
-        .query("reservations")
-        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-        .collect();
-    }
-    const recent = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date >= cutoffStr
-    );
-
-    const bookings = recent.filter(
-      (r) => r.status === "confirmed" || r.status === "completed"
-    ).length;
 
     // Conversations as proxy for inquiries
     let conversations = await ctx.db.query("conversations").collect();
@@ -356,10 +329,17 @@ export const getConversionFunnel = query({
     // (bookings + conversations have real dates); the denial rate is all-time.
     const recentDenials = denials.length;
 
-    // Real "responses": the inquiries where WE (owner) actually replied at least
-    // once (was a fake ). Bounded per-thread indexed
-    // lookup over just the in-window conversations.
+    // Real "responses" = inquiries where WE (owner) replied at least once, AND
+    // "bookings" = of THIS window's inquiries, how many have a confirmed/completed
+    // reservation on the same Hygglo thread. Both computed in ONE pass over the
+    // in-window conversations (bounded, indexed lookups per thread).
+    //
+    // COHORT FIX: bookings was previously counted from reservations by
+    // `start_date >= cutoff` — a DIFFERENT population/time-base than the inquiry
+    // (conversation-creation) cohort, so `bookings/inquiries` could exceed 100%.
+    // Linking booked ⊆ in-window inquiries makes conversionRate a real 0–100%.
     let responses = 0;
+    let bookings = 0;
     for (const c of windowConvs) {
       const ownerMsg = await ctx.db
         .query("hygglo_messages")
@@ -367,6 +347,11 @@ export const getConversionFunnel = query({
         .filter((q) => q.eq(q.field("sender"), "owner"))
         .first();
       if (ownerMsg) responses++;
+      const res = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", c.thread_id))
+        .first();
+      if (res && (res.status === "confirmed" || res.status === "completed")) bookings++;
     }
     const conversionRate = inquiries > 0 ? bookings / inquiries : 0;
     // denial_records can exceed tracked conversations — an auto-declined Hygglo

@@ -117,7 +117,8 @@ export const getEarningsByPeriod = query({
         key = thursday.getFullYear() + "-W" + String(weekNum).padStart(2, "0");
       }
       const existing = buckets.get(key) ?? { revenue: 0, bookings: 0 };
-      existing.revenue += r.gross_paid_gbp ?? 0;
+      // Net take-home (parity with mv/earnings_by_period + Daniel's rule); was GROSS.
+      existing.revenue += r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE;
       existing.bookings += 1;
       buckets.set(key, existing);
     }

@@ -275,6 +275,8 @@ export const getSmartBuyRanking = query({
       estAnnualNetGbp: number;
       firstYearROIPct: number | null;
       recommendation: "strong-buy" | "consider" | "monitor";
+      lostGbp: number;
+      paybackMonths: number | null;
     }> = [];
 
     for (const [key, agg] of byNorm) {
@@ -308,6 +310,14 @@ export const getSmartBuyRanking = query({
             : estAnnualNet >= 500
               ? "consider"
               : "monitor";
+      // Net lost revenue — denial_records.estimated_value is GROSS, so apply
+      // owner share (matches estAnnualNetGbp). Surfaced for LostRevenueBuyPanel.
+      const lostGbp = Math.round(agg.lostGbp * OWNER_SHARE);
+      const monthlyNet = estAnnualNet > 0 ? estAnnualNet / 12 : 0;
+      const paybackMonths =
+        estCost && estCost > 0 && monthlyNet > 0
+          ? Math.round((estCost / monthlyNet) * 10) / 10
+          : null;
       recs.push({
         itemName: agg.displayName,
         requestCount: agg.requestCount,
@@ -316,6 +326,8 @@ export const getSmartBuyRanking = query({
         estAnnualNetGbp: estAnnualNet,
         firstYearROIPct: firstYearROI,
         recommendation,
+        lostGbp,
+        paybackMonths,
       });
     }
 
