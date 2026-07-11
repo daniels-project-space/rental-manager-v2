@@ -202,7 +202,13 @@ export const extractBookingTimesTask = schedules.task({
       logger.info("[quiet-hours] skipped", { task: "extract-booking-times" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }
-    const { candidates } = await fetchBatch(10);
+    // 40 (was 10): candidate selection is now change-driven server-side
+    // (extract_booking_times_q:admin_getExtractBatchInputs only returns
+    // reservations whose transcript changed since the last extraction), so a
+    // higher cap processes ALL of them in one run without starving older
+    // bookings — while the per-row transcript-hash guard below still prevents
+    // any wasted LLM call. The query already sorts soonest-handover-first.
+    const { candidates } = await fetchBatch(40);
     if (candidates.length === 0) {
       // Queue-idle gate: no reservations need booking-time extraction.
       logger.info("queue idle, skipping run", { task: "extract-booking-times" });

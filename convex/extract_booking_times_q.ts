@@ -109,42 +109,43 @@ export const listNeedingExtraction = internalQuery({
 // Lifted to src/trigger/extract-booking-times.ts. Returns each
 // candidate reservation pre-joined with its chat thread so the Trigger
 // task makes ONE HTTP query per batch instead of N+1.
+//
+// CHANGE-DRIVEN SELECTION (2026-07-11) — fixes both a correctness bug and a
+// bandwidth drain. The old body `.collect()`-ed the ENTIRE reservations table
+// (~2.9k rows / ~5 MB) every run, then kept only the newest 10 BY CREATION
+// DATE. That (a) read a huge amount of data and (b) STARVED any reservation
+// whose transcript changed but whose creation date wasn't in the top 10 — a
+// freshly-confirmed return time on an older booking was never re-extracted
+// (observed: 35 candidates, 15 with changed transcripts, 9 starved beyond
+// rank 10; Criz rank 23 + Olivia rank 27, both with an agreed return time that
+// never reached the calendar).
+//
+// Now we drive off conversations.last_msg_at — stamped by hygglo.upsertMessages
+// on every new message and indexed (by_last_msg_at). We read ONLY threads
+// active within ACTIVE_WINDOW_DAYS (an indexed range read, not a table scan),
+// join to the reservation, and keep only those whose last message is NEWER than
+// the last extraction attempt (times_extracted_at). That is exactly the "needs
+// re-extraction" set — far fewer rows read, and no reservation can be starved.
+// Soonest-handover-first so imminent returns always win the per-run cap.
 // ───────────────────────────────────────────────────────────────────────
+
+const ACTIVE_WINDOW_DAYS = 21;
 
 export const admin_getExtractBatchInputs = query({
   args: { limit: v.number(), messages_per_thread: v.optional(v.number()) },
   handler: async (ctx, { limit, messages_per_thread }) => {
     const msgLimit = messages_per_thread ?? 20;
     const cutoffStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    const all = await ctx.db.query("reservations").collect();
+    const sinceMs = Date.now() - ACTIVE_WINDOW_DAYS * 86400000;
 
-    type Row = (typeof all)[number] & {
-      hygglo_order_id?: string;
-      start_date?: string;
-      end_date?: string;
-      items?: Array<{ item_name: string }>;
-      times_transcript_hash?: string;
-      times_extracted_at?: number;
-    };
+    // Only threads with recent chat activity — indexed range read, not a scan.
+    const convs = await ctx.db
+      .query("conversations")
+      .withIndex("by_last_msg_at", (q) => q.gt("last_msg_at", sinceMs))
+      .collect();
 
-    const candidates: Row[] = [];
-    for (const r of all as Row[]) {
-      if (!r.hygglo_order_id) continue;
-      if (r.is_obsolete) continue;
-      if (!r.start_date || !r.end_date) continue;
-      if ((r.end_date as string) < cutoffStr) continue;
-      const extractedAt = r.times_extracted_at;
-      if (extractedAt && Date.now() - extractedAt < 3600 * 1000) continue;
-      candidates.push(r);
-    }
-    candidates.sort((a, b) => (b._creationTime ?? 0) - (a._creationTime ?? 0));
-
-    const picks = candidates.slice(0, limit);
-
-    // Pull each candidate's last N messages — cheaper than N separate HTTP
-    // calls; we do it server-side in one trip via indexed reads.
     type Message = { sender: string; body_text: string; hygglo_sent_at: number | undefined };
-    const out = [] as Array<{
+    type Candidate = {
       id: string;
       hygglo_order_id: string;
       title: string;
@@ -152,29 +153,68 @@ export const admin_getExtractBatchInputs = query({
       end_date: string;
       messages: Message[];
       times_transcript_hash: string | null;
-    }>;
-    for (const r of picks) {
-      const msgs = await ctx.db
-        .query("hygglo_messages")
-        .withIndex("by_thread", (q) => q.eq("thread_id", r.hygglo_order_id as string))
-        .collect();
-      msgs.sort((a, b) => (a.hygglo_sent_at ?? a.fetched_at) - (b.hygglo_sent_at ?? b.fetched_at));
-      const tail = msgs.slice(-msgLimit).map((m) => ({
-        sender: m.sender,
-        body_text: m.body_text,
-        hygglo_sent_at: m.hygglo_sent_at,
-      }));
-      out.push({
+    };
+
+    // Join each active thread to its reservation, keep only the ones with a
+    // message newer than the last extraction attempt.
+    const picked: Array<Candidate & { _end: string; _lastMsgAt: number }> = [];
+    for (const conv of convs) {
+      const r = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", conv.thread_id))
+        .first();
+      if (!r) continue;
+      if (r.is_obsolete) continue;
+      if (!r.hygglo_order_id) continue;
+      if (!r.start_date || !r.end_date) continue;
+      if ((r.end_date as string) < cutoffStr) continue;
+      // Re-extract only when a message arrived AFTER the last extraction attempt.
+      const extractedAt = (r as { times_extracted_at?: number }).times_extracted_at ?? 0;
+      if (conv.last_msg_at <= extractedAt) continue;
+      picked.push({
         id: r._id as string,
         hygglo_order_id: r.hygglo_order_id as string,
         title: (r.items ?? []).map((i) => i.item_name).join(" + "),
         start_date: r.start_date as string,
         end_date: r.end_date as string,
-        messages: tail,
-        times_transcript_hash: r.times_transcript_hash ?? null,
+        messages: [],
+        times_transcript_hash: (r as { times_transcript_hash?: string }).times_transcript_hash ?? null,
+        _end: r.end_date as string,
+        _lastMsgAt: conv.last_msg_at,
       });
     }
-    return { candidates: out };
+
+    // Soonest handover first; tie-break by most-recently-active.
+    picked.sort((a, b) =>
+      a._end !== b._end ? (a._end < b._end ? -1 : 1) : b._lastMsgAt - a._lastMsgAt,
+    );
+    const slice = picked.slice(0, limit);
+
+    // Attach each pick's last N messages (indexed by_thread read — only for the
+    // capped slice, so message reads scale with `limit`, not the table).
+    for (const c of slice) {
+      const msgs = await ctx.db
+        .query("hygglo_messages")
+        .withIndex("by_thread", (q) => q.eq("thread_id", c.hygglo_order_id))
+        .collect();
+      msgs.sort((a, b) => (a.hygglo_sent_at ?? a.fetched_at) - (b.hygglo_sent_at ?? b.fetched_at));
+      c.messages = msgs.slice(-msgLimit).map((m) => ({
+        sender: m.sender,
+        body_text: m.body_text,
+        hygglo_sent_at: m.hygglo_sent_at,
+      }));
+    }
+
+    const candidates: Candidate[] = slice.map((c) => ({
+      id: c.id,
+      hygglo_order_id: c.hygglo_order_id,
+      title: c.title,
+      start_date: c.start_date,
+      end_date: c.end_date,
+      messages: c.messages,
+      times_transcript_hash: c.times_transcript_hash,
+    }));
+    return { candidates };
   },
 });
 
