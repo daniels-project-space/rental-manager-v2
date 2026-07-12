@@ -21,7 +21,10 @@
  *
  * FRESHNESS (calendar tolerates ≤~30-45 min staleness — rentals span days):
  *   • new confirmed booking / new hold → a new row → dirtySince trips → rebuild.
- *   • status/date edits on EXISTING rows (no new row) → covered by the age
+ *   • chat-negotiated pickup/return TIME → the extractor bumps
+ *     times_extracted_at → dirtySince trips → rebuild on the next tick (added
+ *     2026-07-12; previously waited on the backstop, so times looked stuck).
+ *   • other status edits on EXISTING rows (no new row) → covered by the age
  *     backstop. The poller re-stamps reservations.last_polled_at every cycle,
  *     but that is NOT counted as dirty (we probe Convex _creationTime only),
  *     which is what lets overnight/quiet ticks skip.
@@ -201,13 +204,16 @@ export const get = query({
 });
 
 /**
- * Skip-when-clean probe. True if a new reservation or calendar_hold row landed
- * since the MV was last built. Uses Convex `_creationTime` (real wall-clock,
- * assigned on insert, never re-stamped) — deliberately NOT
+ * Skip-when-clean probe. True if (a) a new reservation or calendar_hold row
+ * landed, or (b) a booking-time extraction patched pickup/return date+time onto
+ * an existing reservation, since the MV was last built. Uses Convex
+ * `_creationTime` (real wall-clock, assigned on insert, never re-stamped) for
+ * (a), and the `times_extracted_at` stamp for (b) — deliberately NOT
  * reservations.last_polled_at (the poller re-stamps it every 5-min cycle even
- * when nothing changed, which would keep the probe permanently dirty). Status /
- * date edits on existing rows (no new row) are handled by refreshAll's age
- * backstop, not this probe. Two indexed `.first()` reads — no table scan.
+ * when nothing changed, which would keep the probe permanently dirty). Other
+ * status edits on existing rows (no new row, no extraction) are handled by
+ * refreshAll's age backstop, not this probe. Three indexed `.first()` reads —
+ * no table scan.
  */
 export const dirtySince = query({
   args: { sinceMs: v.number() },
@@ -225,6 +231,23 @@ export const dirtySince = query({
       .order("desc")
       .first();
     if (hold && hold._creationTime > sinceMs) return true;
+
+    // Booking-time extraction (2026-07-12): the LLM extractor
+    // (extract_booking_times_q.setTimes) PATCHES pickup/return date+time onto an
+    // EXISTING reservation and bumps `times_extracted_at` — WITHOUT inserting a
+    // row or touching _creationTime, so the two probes above miss it. Absent this,
+    // a chat-negotiated pickup/return time only reached the calendar via the
+    // 45-min backstop ("times not updating"). Newest times_extracted_at = the
+    // "any extraction since?" signal; one indexed read, no scan. Mirrors
+    // mv/stats_drawer.ts hasReservationMutationsSince.
+    const extracted = await ctx.db
+      .query("reservations")
+      .withIndex("by_times_extracted_at")
+      .order("desc")
+      .first();
+    const extractedStamp = (extracted as { times_extracted_at?: number } | null)
+      ?.times_extracted_at;
+    if (typeof extractedStamp === "number" && extractedStamp > sinceMs) return true;
 
     return false;
   },
