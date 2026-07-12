@@ -77,7 +77,16 @@ export const listNeedingExtraction = internalQuery({
   args: { limit: v.number() },
   handler: async (ctx, { limit }) => {
     const cutoff = new Date(Date.now() - 86400000).toISOString().slice(0, 10); // yesterday
-    const all = await ctx.db.query("reservations").collect();
+    // 2026-07-12 cost audit: bounded scan. Candidates require end_date >=
+    // yesterday, and no real Hygglo rental spans 400 days, so rows starting
+    // earlier can never qualify (same reasoning as items.getOutOfStockItems'
+    // lower bound). Rows with undefined start_date are excluded by the index
+    // range AND were already dropped by the !r.start_date filter below.
+    const scanStart = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    const all = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) => q.gte("start_date", scanStart))
+      .collect();
 
     const candidates = all.filter((r) => {
       if (!r.hygglo_order_id) return false;

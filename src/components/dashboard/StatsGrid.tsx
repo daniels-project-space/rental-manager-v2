@@ -17,6 +17,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { api } from "../../../convex/_generated/api";
+import { makeFunctionReference } from "convex/server";
 import { useAccount } from "@/lib/account-context";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { STAT_WIDGETS, HERO_IDS, HERO_SPANS } from "@/lib/dashboard/widget-registry";
@@ -49,6 +50,19 @@ import { ItemUtilizationRanking } from "./insights/ItemUtilizationRanking";
 import { BelowMinimumCounter } from "./insights/BelowMinimumCounter";
 import { WeeklyRevenueSparkline } from "./insights/WeeklyRevenueSparkline";
 import WallE from "./WallE/WallE";
+
+// Live poller freshness (2026-07-12). getStatsDrawerData no longer overlays
+// sync_state (severed so the megaquery stops re-running for every tab on every
+// 15-min poll); the Scanner card reads this dedicated 3-doc query instead.
+// String ref because the committed _generated api types don't include the new
+// function yet — same pattern as ReplyInbox/SettingsDrawer refs.
+const scannerFreshnessRef = makeFunctionReference<"query">("dashboard:getScannerFreshness");
+type ScannerFreshness = {
+  last_scan_at: number | null;
+  last_scan_source: string | null;
+  last_run_succeeded: boolean | null;
+  rows_upserted_last: number;
+};
 
 function fmtGbp(n: number): string {
   if (n >= 1000) return "£" + (n / 1000).toFixed(1) + "k";
@@ -179,6 +193,9 @@ export function StatsGrid() {
     api.mv.stats_drawer.getRentals,
     needsRentals ? { account: activeAccountSlug ?? "all" } : "skip",
   ) as { rentals?: { active?: unknown[]; ongoing?: unknown[]; upcoming?: unknown[]; confirmed?: unknown[] } } | undefined | null;
+  // Scanner freshness pill data — live (re-reads 3 sync_state docs per poll).
+  // Falls back to the MV snapshot's scanner block until the first result lands.
+  const scannerLive = useStableQuery(scannerFreshnessRef, {}) as ScannerFreshness | undefined;
 
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
     if (!rawData) return null;
@@ -360,23 +377,28 @@ export function StatsGrid() {
           <ConfirmedDrawer data={data.confirmed as any} />
         </ExpandableStatCard>
       ),
-      scanner: (
-        <ExpandableStatCard
-          id="scanner"
-          label="Scanner"
-          value={data.scanner.last_run_succeeded ? "Active" : "Idle"}
-          valueColor="blue"
-          subtitle={
-            data.scanner.last_scan_at
-              ? `Last: ${new Date(data.scanner.last_scan_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
-              : "No scan yet"
-          }
-          isExpanded={expandedId === "scanner"}
-          onToggle={() => toggle("scanner")}
-        >
-          <ScannerDrawer data={data.scanner} />
-        </ExpandableStatCard>
-      ),
+      scanner: (() => {
+        // Prefer the live getScannerFreshness result (real seconds-ago); the
+        // MV snapshot's scanner block is only the fallback for the first render.
+        const scanner = (scannerLive ?? data.scanner) as ScannerFreshness;
+        return (
+          <ExpandableStatCard
+            id="scanner"
+            label="Scanner"
+            value={scanner.last_run_succeeded ? "Active" : "Idle"}
+            valueColor="blue"
+            subtitle={
+              scanner.last_scan_at
+                ? `Last: ${new Date(scanner.last_scan_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+                : "No scan yet"
+            }
+            isExpanded={expandedId === "scanner"}
+            onToggle={() => toggle("scanner")}
+          >
+            <ScannerDrawer data={scanner} />
+          </ExpandableStatCard>
+        );
+      })(),
       insurance: (
         <ExpandableStatCard
           id="insurance"
@@ -625,7 +647,7 @@ export function StatsGrid() {
       walle: <WallE accountSlug={activeAccountSlug} />,
       todos: <TodoWidget />,
     };
-  }, [rawData, rentalsRow, expandedId, activeAccountSlug, catVolExpanded]);
+  }, [rawData, rentalsRow, scannerLive, expandedId, activeAccountSlug, catVolExpanded]);
 
   if (!cards) return <StatsGridSkeleton />;
 

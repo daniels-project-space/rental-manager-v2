@@ -1,5 +1,22 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import {
+  SLOW_WIDGET_MAX_AGE_MS,
+  readWidgetMv,
+  widgetSlugKey,
+} from "./lib/widget_mv";
+
+/** The day-windows the TopBundles toggle exposes — cached by mv/widgets. */
+export const CANONICAL_BUNDLE_WINDOWS = [30, 90, 365] as const;
+
+export type BundleRankRow = {
+  name: string;
+  totalRevenue: number;
+  rentalCount: number;
+  totalDays: number;
+  avgValue: number;
+  items: string[];
+};
 
 /**
  * Stage 2.5: bundle definitions now read from Convex bundles + bundle_items tables.
@@ -38,8 +55,21 @@ export const getTopBundles = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
     days: v.number(),
+    _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, days }) => {
+  handler: async (ctx, { accountSlug, days, _bypassMv }) => {
+    // 2026-07-12 cost audit: MV fast path (daily refresh via mv/widgets —
+    // a rolling bundle-revenue ranking moves slowly). The live path below
+    // re-collected bundles + bundle_items + a days-window reservations scan
+    // on every poller write × open tab.
+    if (!_bypassMv && (CANONICAL_BUNDLE_WINDOWS as readonly number[]).includes(days)) {
+      const cached = await readWidgetMv(
+        ctx,
+        `bundles:${widgetSlugKey(accountSlug)}:${days}`,
+        SLOW_WIDGET_MAX_AGE_MS,
+      );
+      if (cached !== null) return cached as BundleRankRow[];
+    }
     // Load bundle definitions from Convex tables (replaces inline BUNDLE_DEFINITIONS)
     const bundleRows = await ctx.db.query("bundles").collect();
     const bundleItemRows = await ctx.db.query("bundle_items").collect();

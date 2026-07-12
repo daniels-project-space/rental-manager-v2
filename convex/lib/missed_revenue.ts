@@ -99,10 +99,43 @@ function rollup(rows: { name: string; value: number }[]): MissedItem[] {
     .sort((a, b) => b.value - a.value);
 }
 
+/**
+ * Optional pre-collected inputs (2026-07-12). getStatsDrawerData's live
+ * compute (the _bypassMv path run once per slug by mv/stats_drawer.ts)
+ * already collects these exact tables for its own cards; passing them in
+ * removes 5 duplicate collects per refreshed slug. Every field MUST be the
+ * UNFILTERED result of the stated query — this function applies its own
+ * account/date filters, so pre-scoped arrays would change results. Inputs
+ * are never mutated (all downstream use is read-only / filter-copies).
+ *
+ * NOT preloadable: the by_status "confirmed" reservations collect (see the
+ * comment at its call site), pricing_catalog (the dashboard handler never
+ * full-collects it) and the single accounts by_slug .first().
+ */
+export type MissedRevenuePreloads = {
+  /** ctx.db.query("items").collect() — full, unfiltered. */
+  items?: Doc<"items">[];
+  /** ctx.db.query("hygglo_product_index").collect() — full. */
+  productIndexRows?: Doc<"hygglo_product_index">[];
+  /** ctx.db.query("listing_resolution_override").collect() — full. */
+  overrideRows?: Doc<"listing_resolution_override">[];
+  /** ctx.db.query("denial_records").collect() — full, unfiltered. */
+  denialRows?: Doc<"denial_records">[];
+  /**
+   * reservations collected via .withIndex("by_start_date", q =>
+   * q.gte("start_date", gteStartDate)) — cross-account, unfiltered.
+   * Only used when gteStartDate <= this run's own cutoff (i.e. the passed
+   * window provably contains every row the narrower gte would return);
+   * otherwise the function falls back to its own indexed collect.
+   */
+  reservations?: { rows: Doc<"reservations">[]; gteStartDate: string };
+};
+
 export async function computeMissedRevenue(
   ctx: QueryCtx,
   accountSlug: string | null,
   days: number,
+  pre?: MissedRevenuePreloads,
 ): Promise<MissedRevenueResult> {
   const cutoffMs = Date.now() - days * DAY;
   const cutoffStr = new Date(cutoffMs).toISOString().slice(0, 10);
@@ -114,20 +147,26 @@ export async function computeMissedRevenue(
   }
 
   // ── Inventory + resolution maps ──────────────────────────────────
-  const items = await ctx.db.query("items").collect();
+  const items = pre?.items ?? (await ctx.db.query("items").collect());
   const itemById = new Map(items.map((i) => [String(i._id), i]));
   const productIndex = buildProductIndexMap(
-    (await ctx.db.query("hygglo_product_index").collect()) as Array<{
+    (pre?.productIndexRows ??
+      (await ctx.db.query("hygglo_product_index").collect())) as Array<{
       account_slug: string; product_id: number; item_id: Id<"items">;
     }>,
   );
   const overrideMap = buildOverrideMap(
-    (await ctx.db.query("listing_resolution_override").collect()) as Array<{
+    (pre?.overrideRows ??
+      (await ctx.db.query("listing_resolution_override").collect())) as Array<{
       account_slug: string; product_id: number;
       components: Array<{ item_id: Id<"items"> | string; qty: number }>;
     }>,
   );
   // Confirmed occupancy (for the fully-booked / double-booking test).
+  // Deliberately NOT preloadable from a start_date-windowed pool: confirmed
+  // rows can have start_date arbitrarily far in the past (e.g. >365d-old
+  // long bookings) yet still occupy dates inside this run's window, so only
+  // the by_status index provably returns them all.
   const confirmed = await ctx.db
     .query("reservations")
     .withIndex("by_status", (q) => q.eq("status", "confirmed"))
@@ -145,7 +184,7 @@ export async function computeMissedRevenue(
   };
 
   // ── 1. Recorded denials (explicit owner declines → real lost revenue) ──
-  let denials = await ctx.db.query("denial_records").collect();
+  let denials = pre?.denialRows ?? (await ctx.db.query("denial_records").collect());
   if (accountId) denials = denials.filter((d) => d.account_id === accountId);
   denials = denials.filter((d) => d.created_at >= cutoffMs);
   const pricing = await ctx.db.query("pricing_catalog").collect();
@@ -169,10 +208,20 @@ export async function computeMissedRevenue(
   const denialTotal = parseFloat(denialLosses.reduce((s, d) => s + d.estimatedValue, 0).toFixed(2));
 
   // ── 2. Turned-away demand, split by ownership + capacity ─────────
-  let cancelled = await ctx.db
-    .query("reservations")
-    .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-    .collect();
+  // When the caller passed a pre-collected by_start_date window that provably
+  // contains this one (same index, same gte, wider-or-equal bound), derive in
+  // memory with the identical predicate. Rows lacking start_date are excluded
+  // by the string-gte index in both cases (undefined sorts below strings),
+  // and ISO-date string comparison is identical in Convex and JS.
+  let cancelled =
+    pre?.reservations && pre.reservations.gteStartDate <= cutoffStr
+      ? pre.reservations.rows.filter(
+          (r) => typeof r.start_date === "string" && r.start_date >= cutoffStr,
+        )
+      : await ctx.db
+          .query("reservations")
+          .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+          .collect();
   if (accountSlug) cancelled = cancelled.filter((r) => r.account_slug === accountSlug);
   cancelled = cancelled.filter(
     (r) => r.is_obsolete || r.status === "cancelled" || r.status === "declined",

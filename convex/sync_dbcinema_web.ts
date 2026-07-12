@@ -27,6 +27,7 @@ import { internalAction, internalMutation } from "./_generated/server";
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { computePollHash } from "./hygglo";
 
 // Self-reference by name: this module is new and not yet in the committed
 // _generated/api type map, so the typed `internal.sync_dbcinema_web.*` would
@@ -144,6 +145,7 @@ export const upsertSiteBookingsBatch = internalMutation({
     }
 
     let upserted = 0;
+    let skipped = 0;
     let mappedUnits = 0;
     let unmappedUnits = 0;
     const incomingIds = new Set(
@@ -249,7 +251,6 @@ export const upsertSiteBookingsBatch = internalMutation({
         resolved_items,
         expanded_items,
         ...(photos_urls.length > 0 ? { photos_urls } : {}),
-        ...(image_hints.length > 0 ? { image_hints } : {}),
         ...(hygglo_items.length > 0 ? { hygglo_items } : {}),
         ...(order_step ? { order_step } : {}),
         gross_paid_gbp: gross,
@@ -262,10 +263,20 @@ export const upsertSiteBookingsBatch = internalMutation({
         is_obsolete: false,
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
-        last_polled_at: Date.now(),
       };
       if (b.pickupTime) fields.pickup_time = b.pickupTime;
       if (b.returnTime) fields.return_time = b.returnTime;
+
+      // ── Conditional write — same diff gate as hygglo.ts upsertOrderImpl ─────
+      // This cron re-upserts every booking every 30 min; a ctx.db.patch creates
+      // a NEW document version even when the values are identical, re-firing
+      // every reactive dashboard query subscribed to `reservations` (plus the
+      // forced MV rebuild below). Hash the write-set — everything above;
+      // image_hints is excluded because it's derived from items+photos (both
+      // already in the hash) plus a volatile captured_at — and skip the row
+      // entirely when unchanged. last_polled_at + poll_hash only advance when
+      // the row is new or something actually changed (2026-07-12).
+      const newPollHash = computePollHash(JSON.stringify(fields));
 
       const existing = await ctx.db
         .query("reservations")
@@ -273,9 +284,24 @@ export const upsertSiteBookingsBatch = internalMutation({
         .collect();
       const mine = existing.find((r) => r.account_slug === WEB_SLUG);
       if (mine) {
-        await ctx.db.patch(mine._id, fields);
+        if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
+          skipped++;
+          continue;
+        }
+        await ctx.db.patch(mine._id, {
+          ...fields,
+          ...(image_hints.length > 0 ? { image_hints } : {}),
+          last_polled_at: Date.now(),
+          poll_hash: newPollHash,
+        });
       } else {
-        await ctx.db.insert("reservations", { ...fields, created_at: Date.now() } as never);
+        await ctx.db.insert("reservations", {
+          ...fields,
+          ...(image_hints.length > 0 ? { image_hints } : {}),
+          last_polled_at: Date.now(),
+          poll_hash: newPollHash,
+          created_at: Date.now(),
+        } as never);
       }
       upserted++;
     }
@@ -299,6 +325,10 @@ export const upsertSiteBookingsBatch = internalMutation({
           is_obsolete: true,
           obsolete_reason: "renter_cancelled",
           last_polled_at: Date.now(),
+          // Clear the diff-gate hash: if the booking ever reappears in the paid
+          // feed byte-identical, the upsert must flip it back to confirmed, not
+          // skip it against the pre-cancellation hash.
+          poll_hash: undefined,
         });
         cancelled++;
       }
@@ -310,7 +340,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
     }
 
-    return { upserted, mapped_units: mappedUnits, unmapped_units: unmappedUnits, cancelled };
+    return { upserted, skipped, mapped_units: mappedUnits, unmapped_units: unmappedUnits, cancelled };
   },
 });
 

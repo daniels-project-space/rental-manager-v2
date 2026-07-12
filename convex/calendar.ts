@@ -266,6 +266,9 @@ export const getCalendarStrip = query({
       }
     }
     if (accountSlug) {
+      // FUTURE(perf): per-account calls could scan by_account_start instead of
+      // post-filtering the cross-account window, but that reorders the row set
+      // feeding dedup/merge — byte-identity risk, so left as-is for now.
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
     // Calendar mirrors the Active Rentals tab: only confirmed bookings with
@@ -423,41 +426,13 @@ export const getCalendarStrip = query({
       holds.push(...rangeHolds);
     }
 
-    // Item name + image lookup for holds AND for reservation image projection
-    const holdItemIds = [...new Set(holds.map((h) => h.item_id).filter(Boolean))];
-    const holdItemMap = new Map<string, string>();
-    const holdItemImageMap = new Map<string, string | null>();
-    await Promise.all(
-      holdItemIds.map(async (iid) => {
-        const item = await ctx.db.get(iid);
-        if (item) {
-          const i = item as { name_canonical?: string; name?: string; image_url?: string };
-          holdItemMap.set(iid, i.name_canonical ?? i.name ?? String(iid).slice(-6));
-          holdItemImageMap.set(iid, i.image_url ?? null);
-        }
-      })
-    );
-
-    // Renter name lookup for holds (via reservation)
-    const holdReservationIds = [...new Set(holds.map((h) => h.reservation_id).filter(Boolean) as string[])];
-    const holdRenterMap = new Map<string, string>();
-    await Promise.all(
-      holdReservationIds.map(async (rid) => {
-        const res = await ctx.db.get(rid as Parameters<typeof ctx.db.get>[0]);
-        if (res) {
-          const r = res as { renter_id?: string };
-          if (r.renter_id) {
-            const renter = await ctx.db.get(r.renter_id as Parameters<typeof ctx.db.get>[0]);
-            if (renter) holdRenterMap.set(rid, (renter as { display_name?: string }).display_name ?? "?");
-          }
-        }
-      })
-    );
-
     // ── Inventory lookup ─────────────────────────────────────────────────────
     // Load every item once so we can:
     //  1. Look up canonical name + image by Id<"items"> (when LLM resolver has run)
     //  2. Fall back to fuzzy name matching for raw Hygglo strings (resolver pending)
+    // (Moved above the hold lookups — PERF 2026-07-12: hold item names now read
+    // from this in-memory map. It was a full collect either way, so the move
+    // costs nothing.)
     type ItemDoc = {
       _id?: string;
       name_canonical?: string;
@@ -474,6 +449,63 @@ export const getCalendarStrip = query({
       if (it._id) itemById.set(it._id, it);
     }
     const sharedBlacklist = buildSharedImageBlacklist(allItemsForStrip);
+
+    // Item name lookup for holds.
+    // PERF (2026-07-12): was a ctx.db.get(item_id) per distinct hold item —
+    // but the FULL items table is already in memory above (same docs, same
+    // table), so resolve from itemById instead. A deleted item returned null
+    // from ctx.db.get and is equally absent from itemById → identical
+    // fallback to the id-suffix placeholder. (This block also built a
+    // holdItemImageMap that was never read anywhere — deleted.)
+    const holdItemMap = new Map<string, string>();
+    for (const h of holds) {
+      const iid = h.item_id;
+      if (!iid || holdItemMap.has(iid)) continue;
+      const i = itemById.get(iid);
+      if (i) holdItemMap.set(iid, i.name_canonical ?? i.name ?? String(iid).slice(-6));
+    }
+
+    // Renter name lookup for holds (via reservation).
+    // PERF (2026-07-12): this map is ONLY read behind `h.renter_name ?? ...`
+    // (renter_name is denormalized onto holds on write; see upsertHoldsBatch +
+    // backfillHoldRenterNames), so resolve it solely for holds that LACK
+    // renter_name. For those, reuse the reservation docs + renterMap already
+    // loaded above: a hold reservation present in the strip's confirmed set
+    // has its renter's display_name in renterMap (built by the very same
+    // ctx.db.get(renter) this code used to repeat — present iff the renter doc
+    // exists, value `display_name ?? "?"`, so byte-identical). Only a hold
+    // whose reservation fell outside the strip set (dedup-dropped, other
+    // account, outside window, non-confirmed) still takes the original
+    // two-level ctx.db.get fallback.
+    const reservationByIdForHolds = new Map(reservations.map((r) => [String(r._id), r]));
+    const holdReservationIds = [
+      ...new Set(
+        holds
+          .filter((h) => !h.renter_name && h.reservation_id)
+          .map((h) => h.reservation_id as string),
+      ),
+    ];
+    const holdRenterMap = new Map<string, string>();
+    await Promise.all(
+      holdReservationIds.map(async (rid) => {
+        const known = reservationByIdForHolds.get(rid);
+        if (known) {
+          if (known.renter_id) {
+            const nm = renterMap.get(known.renter_id as string);
+            if (nm !== undefined) holdRenterMap.set(rid, nm);
+          }
+          return;
+        }
+        const res = await ctx.db.get(rid as Parameters<typeof ctx.db.get>[0]);
+        if (res) {
+          const r = res as { renter_id?: string };
+          if (r.renter_id) {
+            const renter = await ctx.db.get(r.renter_id as Parameters<typeof ctx.db.get>[0]);
+            if (renter) holdRenterMap.set(rid, (renter as { display_name?: string }).display_name ?? "?");
+          }
+        }
+      })
+    );
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
     const listingImagesAllStrip = await ctx.db.query("listing_images").collect();
@@ -962,6 +994,9 @@ export const getWeeklyCalendar = query({
     }
 
     if (accountSlug) {
+      // FUTURE(perf): per-account calls could scan by_account_start instead of
+      // post-filtering the cross-account window, but that reorders the row set
+      // feeding dedup/merge — byte-identity risk, so left as-is for now.
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
     // Calendar mirrors the Active Rentals tab — confirmed bookings with
@@ -1823,9 +1858,16 @@ export const getItemAvailabilityForChat = query({
     const scanStart = shiftIsoDate(today, -CALENDAR_LOOKBACK_DAYS);
     let reservations = await ctx.db
       .query("reservations")
-      .withIndex("by_start_date", (qb) => qb.gte("start_date", scanStart))
+      // PERF (2026-07-12): upper bound pushed into the index (was `.gte` only →
+      // read the entire forward reservation tail, then JS-filtered
+      // `start_date <= lastDate`). Row-set equivalence: `.lte` reproduces the
+      // JS upper bound exactly, and rows with UNDEFINED start_date were already
+      // excluded by BOTH paths — `undefined` sorts below every string in the
+      // index, so `.gte(scanStart)` never returned them, and the old JS
+      // filter's `!== undefined` guard dropped them too.
+      .withIndex("by_start_date", (qb) =>
+        qb.gte("start_date", scanStart).lte("start_date", lastDate))
       .collect();
-    reservations = reservations.filter((r) => r.start_date !== undefined && r.start_date <= lastDate);
     if (accountSlug) reservations = reservations.filter((r) => r.account_slug === accountSlug);
     const confirmed = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),

@@ -1,10 +1,16 @@
 "use client";
 import { api } from "../../../convex/_generated/api";
+import { makeFunctionReference } from "convex/server";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { useState } from "react";
 import { SettingsDrawer } from "@/components/dashboard/SettingsDrawer";
 import { NotificationBell } from "@/components/dashboard/NotificationBell";
+
+// String ref (not api.dashboard.getScannerFreshness): the committed
+// _generated api types don't include the new function yet — same pattern
+// as ReplyInbox/SettingsDrawer refs.
+const scannerFreshnessRef = makeFunctionReference<"query">("dashboard:getScannerFreshness");
 
 const ACCOUNTS = [
   { slug: null, label: "All" },
@@ -72,12 +78,16 @@ export function HeaderBar() {
   const settings = useStableQuery(api.settings.get);
   // Per-account profile pictures (Hygglo avatars seeded into the accounts table).
   const accountsMeta = useStableQuery(api.accounts.list) as AccountMeta[] | undefined;
-  // Global freshness signal — sourced from sync_state via dashboard.getStatsDrawerData.
-  // (the Scanner card already reads the same field; this surfaces it in the header
-  // so every widget gets an at-a-glance "how live is this dashboard" cue.)
-  const stats = useStableQuery(api.dashboard.getStatsDrawerData, { accountSlug: activeAccountSlug }) as any;
+  // Global freshness signal — dedicated 3-row sync_state query. Previously read
+  // via getStatsDrawerData.scanner, which chained the megaquery subscription to
+  // sync_state (patched by the Hygglo poller every 15 min → megaquery re-ran per
+  // open tab per poll). This pill is the live consumer; the megaquery now serves
+  // its scanner fields from the MV snapshot.
+  const freshness = useStableQuery(scannerFreshnessRef, {}) as
+    | { last_scan_at: number | null }
+    | undefined;
   const STALE_THRESHOLD_MS = 60 * 60 * 1000;
-  const lastScanAt: number | null = stats?.scanner?.last_scan_at ?? null;
+  const lastScanAt: number | null = freshness?.last_scan_at ?? null;
   const staleMin = lastScanAt ? Math.round((Date.now() - lastScanAt) / 60_000) : null;
   const isStale = lastScanAt !== null && (Date.now() - lastScanAt) > STALE_THRESHOLD_MS;
   const freshnessLabel =

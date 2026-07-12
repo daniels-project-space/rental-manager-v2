@@ -280,7 +280,7 @@ export const verifyCounts = internalQuery({
   args: {},
   handler: async (ctx) => {
     const renters = await ctx.db.query("renters").collect();
-    const reservations = await ctx.db.query("reservations").collect();
+    const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — one-shot seed/dev tooling
     const holds = await ctx.db.query("calendar_holds").collect();
     const audits = await ctx.db.query("import_audit").collect();
     const settings = await ctx.db.query("settings").first();

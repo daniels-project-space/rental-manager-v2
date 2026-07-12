@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
 import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
 import { realisedMonthRevenue, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
@@ -172,9 +173,23 @@ export const getInvestmentScorecard = query({
     accountSlug: v.union(v.string(), v.null()),
     _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug }) => {
-    // Computed live (2026-06-27 rework). The cached mv_investment_scorecard
-    // carried GROSS revenue; we now sum NET, so read live for correctness.
+  handler: async (ctx, { accountSlug, _bypassMv }) => {
+    // 2026-07-12 cost audit: MV fast path RESTORED. The 2026-06-27 NET rework
+    // disconnected the reader "for correctness" but left the daily refresher
+    // running — and the refresher calls THIS handler with _bypassMv, so the
+    // cached payload has carried the current NET shape since the rework
+    // shipped. The disconnect meant every open tab re-ran a full items scan
+    // + 730d reservations scan on every poller write (~24 GB/period) while
+    // a correct daily row sat unread. Stale/missing rows fall through live.
+    if (!_bypassMv) {
+      const row = await ctx.db
+        .query("mv_investment_scorecard")
+        .withIndex("by_account", (q) => q.eq("account", accountSlug ?? "all"))
+        .first();
+      if (row && Date.now() - (row.generatedAt ?? 0) <= SLOW_WIDGET_MAX_AGE_MS) {
+        return row.payload;
+      }
+    }
     const allItems = await ctx.db.query("items").collect();
     // Only count active non-marketing items WITH known acquisition cost (null items excluded, not treated as 0)
     const itemsWithCost = allItems.filter(

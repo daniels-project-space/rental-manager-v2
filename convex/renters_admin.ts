@@ -50,7 +50,7 @@ export const profile = query({
       return { error: "ambiguous", matches: res.ambiguous.map((r) => ({ id: r._id as string, name: r.display_name })) };
     const r = res.renter;
     // recent rentals for context
-    const rentals = (await ctx.db.query("reservations").collect())
+    const rentals = (await ctx.db.query("reservations").collect()) // check-patterns:ok — rare admin lookup; matches on 3 unindexed identity fields
       .filter(
         (x) =>
           (r.hygglo_user_id && x.hygglo_user_id === r.hygglo_user_id) ||

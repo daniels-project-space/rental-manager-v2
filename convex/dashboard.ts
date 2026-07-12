@@ -367,45 +367,14 @@ export const getStatsDrawerData = query({
             conflicts: pp.conflicts.filter((c) => !dismissedNow.has(c.conflict_key)),
           };
         };
-        // Pass 13c (2026-05-26): skip the 3-row sync_state overlay when the
-        // cached scanner snapshot is < 5 min old. Was costing ~6KB × 17000
-        // reads/day = ~100MB/day in unnecessary indexed lookups. The
-        // "stale poller" warning fires at 30+ min staleness, so a 5-min
-        // freshness threshold preserves the alert behaviour while
-        // eliminating the overlay on most reads.
-        const cachedPayloadPeek = cached.payload as { scanner?: { last_scan_at?: number | null } } | null;
-        const cachedScanAt = cachedPayloadPeek?.scanner?.last_scan_at ?? null;
-        const SCANNER_OVERLAY_SKIP_MS = 5 * 60 * 1000;
-        if (cachedScanAt && Date.now() - cachedScanAt < SCANNER_OVERLAY_SKIP_MS) {
-          return applyDismissals(cached.payload);
-        }
-        // Scanner card needs real-time freshness (drives the "stale poller"
-        // warning). Overlay the cached payload with fresh sync_state reads
-        // so the widget reflects actual seconds-ago, not last-MV-refresh-ago.
-        const [pRow, bRow, cRow] = await Promise.all([
-          ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_poller")).first(),
-          ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_backup_poller")).first(),
-          ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_cron")).first(),
-        ]);
-        const candidates: Array<{ source: string; lastRunAt: number }> = [
-          pRow && { source: "hygglo_poller", lastRunAt: pRow.lastRunAt },
-          bRow && { source: "hygglo_backup_poller", lastRunAt: bRow.lastRunAt },
-          cRow && { source: "hygglo_cron", lastRunAt: cRow.lastRunAt },
-        ].filter(Boolean) as Array<{ source: string; lastRunAt: number }>;
-        const winning = candidates.length > 0
-          ? candidates.reduce((a, b) => (a.lastRunAt >= b.lastRunAt ? a : b))
-          : null;
-        const cachedPayload = cached.payload as Record<string, unknown>;
-        const cachedScanner = (cachedPayload.scanner ?? {}) as Record<string, unknown>;
-        // Match the live shape verbatim — same field names + types as the
-        // legacy compute (line ~1336 of this file).
-        const freshScanner = {
-          last_scan_at: winning?.lastRunAt ?? cachedScanner.last_scan_at ?? null,
-          last_scan_source: winning?.source ?? cachedScanner.last_scan_source ?? null,
-          last_run_succeeded: pRow?.lastRunSucceeded ?? cachedScanner.last_run_succeeded ?? null,
-          rows_upserted_last: pRow?.rowsUpserted?.reservations ?? 0,
-        };
-        return applyDismissals({ ...cachedPayload, scanner: freshScanner });
+        // Scanner freshness (2026-07-12): served from the MV snapshot verbatim
+        // (whatever the refresher stored). The previous live sync_state overlay
+        // subscribed every dashboard tab to sync_state — a table the Hygglo
+        // poller patches EVERY 15-min cycle — so this megaquery re-ran (and
+        // re-pushed its payload) per open tab per poll. Live freshness now
+        // comes from the tiny dedicated `getScannerFreshness` query below;
+        // the HeaderBar pill + Scanner card subscribe to it directly.
+        return applyDismissals(cached.payload);
       }
     }
     const today = new Date().toISOString().slice(0, 10);
@@ -568,22 +537,27 @@ export const getStatsDrawerData = query({
       ? scanCandidates.reduce((a, b) => (a.lastRunAt >= b.lastRunAt ? a : b))
       : null;
 
-    // ── COLLECT 6: insurance_claims (account-scoped) ──────────────
+    // ── COLLECT 6: insurance_claims — ONE full collect, reused twice ──
+    // Serves BOTH the account-scoped insurance card and the cross-account
+    // repair-hold map below (was two collects: indexed-scoped + full).
+    // Equivalence: withIndex("by_account", eq(slug)) returns exactly the rows
+    // where account_slug === slug, in _creationTime order within the account;
+    // filtering the full collect (also _creationTime order) by the same
+    // predicate yields the identical set in the identical relative order, and
+    // claimRows is stably re-sorted by claim_date desc right after either way.
+    const allClaimRows = await ctx.db.query("insurance_claims").collect();
     let claimRows = accountSlug
-      ? await ctx.db
-          .query("insurance_claims")
-          .withIndex("by_account", (q) => q.eq("account_slug", accountSlug))
-          .collect()
-      : await ctx.db.query("insurance_claims").collect();
+      ? allClaimRows.filter((c) => c.account_slug === accountSlug)
+      : allClaimRows;
     claimRows = claimRows.slice().sort((a, b) => (a.claim_date < b.claim_date ? 1 : a.claim_date > b.claim_date ? -1 : 0));
 
     // Units currently OUT ON REPAIR per item. A case holds stock only while
     // the gear is physically away (claimHoldsStock: quote_received /
     // in_for_repair) — a merely-logged or settling case must not shrink
     // effective qty (that produced phantom overbooking alerts).
-    // Cross-account (inventory is shared) so collect all claims.
+    // Cross-account (inventory is shared) so scan ALL claims.
     const repairByItem = new Map<string, number>();
-    for (const c of await ctx.db.query("insurance_claims").collect()) {
+    for (const c of allClaimRows) {
       if (!claimHoldsStock(c)) continue;
       for (const iid of ((c as { repair_item_ids?: string[] }).repair_item_ids ?? [])) {
         repairByItem.set(iid as string, (repairByItem.get(iid as string) ?? 0) + 1);
@@ -1790,7 +1764,22 @@ export const getStatsDrawerData = query({
     // present for the first hour after deploy.
     // 2026-06-27 overhaul: turned-away DEMAND, classified live. The old idle-
     // capacity mv_missed_revenue is retired (idle days × price wasn't real loss).
-    const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30);
+    // 2026-07-12 dedupe: pass this handler's own collects (COLLECT 1 allResRaw,
+    // COLLECT 2 allItems, COLLECT 3 denialRows, COLLECT 8 productIndexRows,
+    // COLLECT 9 overrideRows — all full/unfiltered, never mutated) so the
+    // helper skips 5 duplicate table reads. allResRaw's 365d by_start_date
+    // window is a strict superset of the helper's 30d gte on the same index;
+    // the helper re-derives its window with the identical predicate (see
+    // MissedRevenuePreloads in convex/lib/missed_revenue.ts). The confirmed
+    // by_status collect stays inside the helper — confirmed rows can start
+    // >365d ago, so allResRaw does not provably contain them.
+    const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30, {
+      items: allItems,
+      productIndexRows,
+      overrideRows,
+      denialRows,
+      reservations: { rows: allResRaw, gteStartDate: dashCutoff },
+    });
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({
@@ -1809,9 +1798,10 @@ export const getStatsDrawerData = query({
     // using ai_decision + ai_decision_audit. Replaces the previous flat
     // `monthTotal * ai_boost_rate` skim. `ai_boost_rate` setting is kept
     // for backwards-compat but NO LONGER used in the £ math here.
-    const allDecisions = (await ctx.db
-      .query("ai_decision")
-      .collect()) as unknown as AiDecisionLite[];
+    // ONE ai_decision collect — reused by the business_intel accept-rate KPI
+    // below (was a second identical full collect).
+    const allDecisionRows = await ctx.db.query("ai_decision").collect();
+    const allDecisions = allDecisionRows as unknown as AiDecisionLite[];
     const allAudits = (await ctx.db
       .query("ai_decision_audit")
       .collect()) as unknown as AiDecisionAuditLite[];
@@ -2100,9 +2090,11 @@ export const getStatsDrawerData = query({
         badge: highRisk.length >= 3 ? "watch" : "moderate",
       });
     }
-    // AI decision acceptance rate KPI
-    const totalDecisions = await ctx.db.query("ai_decision").collect()
-      .then((rows) => rows.filter((r) => (!accountSlug || r.account_slug === accountSlug)));
+    // AI decision acceptance rate KPI — reuses the ai_boost card's
+    // allDecisionRows collect (same full-table read, same filter).
+    const totalDecisions = allDecisionRows.filter(
+      (r) => (!accountSlug || r.account_slug === accountSlug),
+    );
     const acceptedCount = totalDecisions.filter((r) => r.status === "approved").length;
     const acceptRate = totalDecisions.length > 0
       ? Math.round((acceptedCount / totalDecisions.length) * 100)
@@ -2268,6 +2260,44 @@ export const getStatsDrawerData = query({
       inventory_worth,
       tax,
       business_intel,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scanner/poller freshness — the ONLY public query that reads sync_state.
+//
+// Split out of getStatsDrawerData (2026-07-12): its MV fast path used to
+// overlay 3 live sync_state reads, subscribing every dashboard tab to a table
+// the Hygglo poller patches every 15-min cycle — re-running the megaquery per
+// tab per poll. The megaquery now serves scanner fields from the MV snapshot;
+// UI bits that need live freshness (HeaderBar pill, Scanner stat card) read
+// this 3-tiny-doc query instead (re-executed per poll at negligible cost).
+//
+// Field derivation mirrors the live compute's scanner card (COLLECT 5 above):
+// last_scan_at / last_scan_source = max(lastRunAt) across primary/backup/cron;
+// last_run_succeeded + rows_upserted_last come from the primary poller row.
+export const getScannerFreshness = query({
+  args: {},
+  handler: async (ctx) => {
+    const [primaryRow, backupRow, cronRow] = await Promise.all([
+      ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_poller")).first(),
+      ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_backup_poller")).first(),
+      ctx.db.query("sync_state").withIndex("by_source", (q) => q.eq("source", "hygglo_cron")).first(),
+    ]);
+    const candidates: Array<{ source: string; lastRunAt: number }> = [
+      primaryRow && { source: "hygglo_poller", lastRunAt: primaryRow.lastRunAt },
+      backupRow && { source: "hygglo_backup_poller", lastRunAt: backupRow.lastRunAt },
+      cronRow && { source: "hygglo_cron", lastRunAt: cronRow.lastRunAt },
+    ].filter(Boolean) as Array<{ source: string; lastRunAt: number }>;
+    const winning = candidates.length > 0
+      ? candidates.reduce((a, b) => (a.lastRunAt >= b.lastRunAt ? a : b))
+      : null;
+    return {
+      last_scan_at: winning?.lastRunAt ?? null,
+      last_scan_source: winning?.source ?? null,
+      last_run_succeeded: primaryRow?.lastRunSucceeded ?? null,
+      rows_upserted_last: primaryRow?.rowsUpserted?.reservations ?? 0,
     };
   },
 });

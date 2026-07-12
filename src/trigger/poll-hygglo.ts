@@ -10,6 +10,7 @@
  */
 import { schedules, logger, tasks } from "@trigger.dev/sdk/v3";
 import { ConvexHttpClient } from "convex/browser";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
@@ -335,6 +336,18 @@ export const pollHyggloInbox = schedules.task({
       error?: string;
     }> = [];
 
+    // 2026-07-12 cost audit: items.listForReconcile is account-agnostic (full
+    // items collect) but was fetched inside the per-account reconcile block —
+    // 3 identical full-table reads per cycle. Fetch once per cycle, lazily on
+    // first reconcile use so cycles that never reach reconcile stay free.
+    let reconItemsRawShared: FunctionReturnType<typeof api.items.listForReconcile> | null = null;
+    const getReconItemsRaw = async () => {
+      if (reconItemsRawShared === null) {
+        reconItemsRawShared = await convex.query(api.items.listForReconcile, {});
+      }
+      return reconItemsRawShared;
+    };
+
     try {
       for (const account of accounts) {
         if (!account.email || !account.password) {
@@ -645,7 +658,7 @@ export const pollHyggloInbox = schedules.task({
           try {
             const [reconReservationsRaw, reconItemsRaw] = await Promise.all([
               convex.query(api.reservations.listForReconcile, { account_slug: account.slug }),
-              convex.query(api.items.listForReconcile, {}),
+              getReconItemsRaw(),
             ]);
 
             // Convex rows use optional account_slug; ReservationInput requires it — filter nulls.

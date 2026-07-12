@@ -816,13 +816,29 @@ export const getPipelineCounts = internalQuery({
  * with `withIndex("by_account_slug")` lookup and explicit projection. Was
  * the largest single Convex-bandwidth cost source (~729 MB/day) — invoked
  * every 5 min from poll-hygglo.ts × 2 accounts.
+ *
+ * 2026-07-12 cost audit: by_account_slug still read the account's ENTIRE
+ * history (years of immutable past rows, ~700 fat docs/cycle) to derive
+ * forward-looking holds (forwardCapDays=180). Holds can only come from
+ * rows whose rental window touches [today, +180d]; no real Hygglo rental
+ * runs 400 days, so rows with start_date older than 400d can produce no
+ * hold — and their stale-hold deletions (obsolete/cancelled transitions)
+ * happened in the cycles when they transitioned, on dates that are now in
+ * the past. Composite by_account_start bounds the scan to the live tail.
+ * Rows with undefined start_date are excluded by the index range; they
+ * were already useless to reconcile (computeHoldsForReservations skips
+ * date-less rows) and harmless to drop.
  */
 export const listForReconcile = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
+    const lookback = new Date();
+    lookback.setDate(lookback.getDate() - 400);
+    const lookbackStr = lookback.toISOString().slice(0, 10);
     const rows = await ctx.db
       .query("reservations")
-      .withIndex("by_account_slug", (q) => q.eq("account_slug", account_slug))
+      .withIndex("by_account_start", (q) =>
+        q.eq("account_slug", account_slug).gte("start_date", lookbackStr))
       .collect();
     return rows.map((r) => ({
       _id: r._id,

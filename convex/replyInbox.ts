@@ -318,6 +318,16 @@ type AvailCtx = {
   itemQty: Map<string, number>;
   itemName: Map<string, string>;
   includePending: boolean;
+  // PERF (2026-07-12): every reservation row the confirmed/pending collects
+  // already paid for, keyed by hygglo_order_id — built from the RAW collect
+  // results (before the order_step/is_obsolete filters) so RETURNED/obsolete
+  // rows are served too. getReplyQueue consults this before doing a per-thread
+  // by_hygglo_order_id `.first()`, killing the N+1 fat-reservation re-reads.
+  // Safe as a `.first()` substitute because hygglo_order_id is unique across
+  // reservations: both writers (hygglo.upsertOrderImpl, sync_dbcinema_web)
+  // `.first()`-then-patch on this index, and Convex mutations are serializable
+  // so no duplicate insert can race in.
+  byOrderId: Map<string, Doc<"reservations">>;
 };
 
 /** Inclusive YYYY-MM-DD list from start→end, capped to bound query cost. */
@@ -341,31 +351,37 @@ async function loadAvailCtx(
   // leaves status="confirmed" after a return, so without this a returned rental
   // kept blocking its item for the old dates (the "anamorphic shows rented but
   // it has no live booking" bug, 2026-06-27).
-  const confirmed = (
-    await ctx.db
-      .query("reservations")
-      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-      .collect()
-  ).filter(
+  const confirmedRaw = await ctx.db
+    .query("reservations")
+    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+    .collect();
+  const confirmed = confirmedRaw.filter(
     (r) =>
       !r.is_obsolete &&
       r.order_step !== "RETURNED" &&
       r.order_step !== "REVIEWED",
   );
-  const pending = includePending
-    ? // PERF: was a whole-table `.collect()` scan every fire. by_status narrows to
-      // pending_review rows; the remaining order_step/is_obsolete filters are kept.
-      (
-        await ctx.db
-          .query("reservations")
-          .withIndex("by_status", (q) => q.eq("status", "pending_review"))
-          .collect()
-      ).filter(
-        (r) =>
-          r.order_step === "VERIFIED" &&
-          !r.is_obsolete,
-      )
+  // PERF: was a whole-table `.collect()` scan every fire. by_status narrows to
+  // pending_review rows; the remaining order_step/is_obsolete filters are kept.
+  const pendingRaw = includePending
+    ? await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (q) => q.eq("status", "pending_review"))
+        .collect()
     : [];
+  const pending = pendingRaw.filter(
+    (r) => r.order_step === "VERIFIED" && !r.is_obsolete,
+  );
+  // Order-id map from the rows just read (see AvailCtx.byOrderId). Built from
+  // the RAW (pre-filter) rows. On a (theoretical) duplicate order id, keep the
+  // oldest _creationTime — exactly what `.first()` on by_hygglo_order_id returns.
+  const byOrderId = new Map<string, Doc<"reservations">>();
+  for (const r of [...confirmedRaw, ...pendingRaw]) {
+    if (!r.hygglo_order_id) continue;
+    const prev = byOrderId.get(r.hygglo_order_id);
+    if (!prev || r._creationTime < prev._creationTime)
+      byOrderId.set(r.hygglo_order_id, r);
+  }
   const [pidx, ovr, items] = await Promise.all([
     ctx.db.query("hygglo_product_index").collect(),
     ctx.db.query("listing_resolution_override").collect(),
@@ -394,6 +410,7 @@ async function loadAvailCtx(
     itemQty,
     itemName,
     includePending,
+    byOrderId,
   };
 }
 
@@ -746,7 +763,8 @@ export const getReplyQueue = query({
       }
     }
 
-    const cutoff = Date.now() - withinDays * 86_400_000;
+    const now = Date.now();
+    const cutoff = now - withinDays * 86_400_000;
     const FINISHED_STATUS = new Set(["completed", "cancelled", "declined"]);
     const FINISHED_STEP = new Set([
       "RETURNED",
@@ -768,34 +786,29 @@ export const getReplyQueue = query({
     const hub = await loadHubBook(ctx);
     const availCtx = await loadAvailCtx(ctx, incPending);
 
-    // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
-    // A renter who spoke last is waiting on me REGARDLESS of the order's
-    // lifecycle state, so we do NOT drop finished reservations here. Live
-    // inquiries land on cancelled/declined/expired Hygglo orders all the time
-    // ("super interested in renting this lens", "looking to rent Saturday") —
-    // excluding finished orders here was hiding ~88% of recent renter messages
-    // from the widget (2026-06-26). The finished-exclusion still applies to the
-    // browse-everything Pass 3 below (owner-last / no pending reply).
-    const convos = await ctx.db
+    // ── Shared reads (PERF, 2026-07-12) ─────────────────────────────────────
+    // One windowed conversations collect serves BOTH Pass 1 and Pass 3 (on the
+    // MV refresher path the two windows are the same 5 days, so this halves the
+    // conversations read; the fat unbounded by_last_sender collect is gone).
+    const msgCutoff = now - messagesWithinDays * 86_400_000;
+    const windowStart = includeMessages ? Math.min(cutoff, msgCutoff) : cutoff;
+    const windowConvos = await ctx.db
       .query("conversations")
-      .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
+      .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", windowStart))
       .collect();
-    for (const conv of convos) {
-      const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
-      if (recencyTs < cutoff) continue;
-      const reservation = await ctx.db
-        .query("reservations")
-        .withIndex("by_hygglo_order_id", (q) =>
-          q.eq("hygglo_order_id", conv.thread_id),
-        )
-        .first();
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub);
-      if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
+    // thread_id → conversation, for Pass 2's per-request lookups. thread_id is
+    // unique across conversations (every writer upserts via by_thread .first()),
+    // so a map hit returns exactly what `.first()` would; misses fall through to
+    // the indexed read. Oldest-first tie-break mirrors `.first()` regardless.
+    const convByThread = new Map<string, Doc<"conversations">>();
+    for (const c of windowConvos) {
+      const prev = convByThread.get(c.thread_id);
+      if (!prev || c._creationTime < prev._creationTime)
+        convByThread.set(c.thread_id, c);
     }
-
-    // Pass 2 — ALWAYS surface rental REQUESTs awaiting my approve/decline, even
-    // if I spoke last or it's outside the recency window. This is what makes the
-    // Approve / Decline buttons reliably reachable.
+    // Pass 2's request collects, hoisted above Pass 1 so their rows also feed
+    // the reservation cache (a REQUEST thread in Pass 1 shouldn't re-read its
+    // fat reservation doc). Pure reads — hoisting changes nothing semantically.
     const [byStep, byAction] = await Promise.all([
       ctx.db
         .query("reservations")
@@ -808,6 +821,79 @@ export const getReplyQueue = query({
         )
         .collect(),
     ]);
+    // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
+    // the request rows above — every reservation already read this execution.
+    // See AvailCtx.byOrderId for why a hit is exactly `.first()`'s answer.
+    const resByOrderId = availCtx.byOrderId;
+    for (const r of [...byStep, ...byAction]) {
+      if (!r.hygglo_order_id) continue;
+      const prev = resByOrderId.get(r.hygglo_order_id);
+      if (!prev || r._creationTime < prev._creationTime)
+        resByOrderId.set(r.hygglo_order_id, r);
+    }
+    const resFor = async (
+      threadId: string,
+    ): Promise<Doc<"reservations"> | null> => {
+      const cached = resByOrderId.get(threadId);
+      if (cached) return cached;
+      // Not in any collected status (e.g. completed/cancelled/declined orders
+      // that live inquiries land on) — one indexed read, only for these.
+      return await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) =>
+          q.eq("hygglo_order_id", threadId),
+        )
+        .first();
+    };
+
+    // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.
+    // A renter who spoke last is waiting on me REGARDLESS of the order's
+    // lifecycle state, so we do NOT drop finished reservations here. Live
+    // inquiries land on cancelled/declined/expired Hygglo orders all the time
+    // ("super interested in renting this lens", "looking to rent Saturday") —
+    // excluding finished orders here was hiding ~88% of recent renter messages
+    // from the widget (2026-06-26). The finished-exclusion still applies to the
+    // browse-everything Pass 3 below (owner-last / no pending reply).
+    //
+    // PERF (2026-07-12): this used to `.collect()` EVERY renter-last
+    // conversation ever (unbounded, fat docs carrying ai_draft_text) and drop
+    // the old ones in JS. The kept per-row filter is
+    // `(last_renter_msg_at ?? last_msg_at) >= cutoff`, and every writer keeps
+    // `last_msg_at >= last_renter_msg_at` on renter-last rows:
+    //   • hygglo.upsertMessages insert: both = latest.ts.
+    //   • hygglo.upsertMessages patch: last_sender is only (re)stamped in the
+    //     `ts >= last_msg_at` branch, which sets last_msg_at = max(prev, ts)
+    //     and last_renter_msg_at = max(prev_lrma, ts) — both ≤ the new
+    //     last_msg_at (prev_lrma ≤ prev last_msg_at inductively).
+    //   • replyInbox.backfillLastSender: last_msg_at = max(prev, ts), lrma = ts.
+    //   • renter_bot_probe: both = now. recordSentReply flips to OWNER-last,
+    //     so it never produces a renter-last row.
+    // So every row Pass 1 can keep has last_msg_at >= cutoff and is inside the
+    // by_last_msg_at window scan above — identical output, bounded reads.
+    // (Out-of-window REQUEST/awaiting-action threads were never Pass 1's job:
+    // Pass 2 surfaces those from the reservations side, unchanged. The one
+    // theoretical gap — a FUTURE-dated Hygglo renter stamp surviving across a
+    // recordSentReply — could only stretch a tile's eligibility past the window
+    // by the stamp skew, and such a tile is already dropped today by the hard
+    // last_activity_at guard below, since its genuine newest message is older
+    // than the window.)
+    const convos = windowConvos
+      .filter((c) => c.last_sender === "renter")
+      // The old by_last_sender scan iterated [last_sender, _creationTime] asc;
+      // keep that order so byThread insertion order — and therefore tie order
+      // in the final stable sort — is byte-identical.
+      .sort((a, b) => a._creationTime - b._creationTime);
+    for (const conv of convos) {
+      const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
+      if (recencyTs < cutoff) continue;
+      const reservation = await resFor(conv.thread_id);
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub);
+      if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
+    }
+
+    // Pass 2 — ALWAYS surface rental REQUESTs awaiting my approve/decline, even
+    // if I spoke last or it's outside the recency window. This is what makes the
+    // Approve / Decline buttons reliably reachable. (Collects hoisted above.)
     const seenReq = new Set<string>();
     const requests: typeof byStep = [];
     for (const r of [...byStep, ...byAction]) {
@@ -819,10 +905,12 @@ export const getReplyQueue = query({
     for (const r of requests) {
       const threadId = r.hygglo_order_id;
       if (!threadId || byThread.has(threadId)) continue;
-      const conv = await ctx.db
-        .query("conversations")
-        .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
-        .first();
+      const conv =
+        convByThread.get(threadId) ??
+        (await ctx.db
+          .query("conversations")
+          .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
+          .first());
       // Respect the recency window even for requests. A request with no activity
       // in `withinDays` (no recent message AND created long ago) is stale —
       // Hygglo requests expire, so a 10-day-old "pending" one is almost always
@@ -845,25 +933,15 @@ export const getReplyQueue = query({
     // can browse any thread — not only ones awaiting my reply. Bounded by a
     // wider recency window; finished rentals still excluded unless asked.
     if (includeMessages) {
-      const msgCutoff = Date.now() - messagesWithinDays * 86_400_000;
-      // PERF: read only the recent window via the by_last_msg_at index instead of
-      // `.collect()`-ing the entire conversations table on every reactive re-run.
+      // PERF: reuses the shared by_last_msg_at window collect above (window ⊇
+      // msgCutoff by construction; iteration order is the same index order).
       // last_msg_at is non-optional, so the per-row `recencyTs < msgCutoff` guard
-      // below (kept) is already satisfied → identical result set.
-      const allConvos = await ctx.db
-        .query("conversations")
-        .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", msgCutoff))
-        .collect();
-      for (const conv of allConvos) {
+      // below (kept) trims any wider window → identical result set.
+      for (const conv of windowConvos) {
         if (byThread.has(conv.thread_id)) continue;
         const recencyTs = conv.last_msg_at ?? conv.last_renter_msg_at ?? 0;
         if (recencyTs < msgCutoff) continue;
-        const reservation = await ctx.db
-          .query("reservations")
-          .withIndex("by_hygglo_order_id", (q) =>
-            q.eq("hygglo_order_id", conv.thread_id),
-          )
-          .first();
+        const reservation = await resFor(conv.thread_id);
         // Drop finished rentals from the wide (30-day) browse pass. Recent
         // renter-last threads on finished orders are already caught by Pass 1's
         // 5-day window; surfacing the FULL 30-day finished backlog here floods

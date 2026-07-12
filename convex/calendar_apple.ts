@@ -229,7 +229,15 @@ export const syncReservation = action({
         await ctx.runMutation(internal.calendar_apple_db._deleteEventLink, { id: l._id });
         removed++;
       }
-      await ctx.runMutation(internal.calendar_apple_db._saveConnection, { patch: { last_sync_at: Date.now(), last_error: undefined } });
+      // Stamp only when this pass actually wrote something (or a prior error
+      // needs clearing). The unconditional patch re-versioned the single
+      // calendar_connection row for EVERY confirmed thread on EVERY 30-min
+      // autoSyncTick — even fully-idle ones — re-firing every getStatus
+      // subscriber. Nothing reads last_sync_at as a must-advance heartbeat
+      // (it's only surfaced by getStatus), so an idle pass skips the patch.
+      if (synced > 0 || removed > 0 || c.last_error) {
+        await ctx.runMutation(internal.calendar_apple_db._saveConnection, { patch: { last_sync_at: Date.now(), last_error: undefined } });
+      }
       return { ok: true, synced, removed };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

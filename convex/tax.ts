@@ -14,6 +14,7 @@
 
 import { query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { SLOW_WIDGET_MAX_AGE_MS, readWidgetMv } from "./lib/widget_mv";
 import {
   effectiveDate,
   dedupByLogicalRental,
@@ -45,7 +46,7 @@ function monthKeyOf(iso: string): string {
   return iso.slice(0, 7);
 }
 
-function defaultStartYear(): number {
+export function defaultStartYear(): number {
   const now = new Date();
   const cutoff = new Date(now.getUTCFullYear(), 3, 6); // Apr 6
   return now >= cutoff ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
@@ -168,10 +169,51 @@ async function loadRenterNames(
 
 // ── Public queries ───────────────────────────────────────────────────────────
 
+type TaxBucket = {
+  grossGbp: number;
+  platformFeeGbp: number;
+  deliveryFeeGbp: number;
+  netGbp: number;
+  count: number;
+};
+
+export type TaxYearSummaryPayload = {
+  startYear: number;
+  taxYearLabel: string;
+  rangeStart: string;
+  rangeEnd: string;
+  totalTransactions: number;
+  activeMonths: number;
+  summary: Omit<TaxBucket, "count">;
+  monthly: Array<{ monthKey: string; monthLabel: string } & TaxBucket>;
+  accounts: Array<{ account: string } & TaxBucket>;
+  flags: {
+    missingFeeCount: number;
+    refundCandidateCount: number;
+    refundCandidateGbp: number;
+    vatStatus: "ok" | "approaching" | "over";
+    vatThresholdGbp: number;
+  };
+  reconciliationDriftGbp: number;
+  generatedAt: number;
+};
+
 export const getTaxYearSummary = query({
-  args: { startYear: v.optional(v.number()) },
-  handler: async (ctx, { startYear: argStart }) => {
+  args: {
+    startYear: v.optional(v.number()),
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { startYear: argStart, _bypassMv }) => {
     const startYear = argStart ?? defaultStartYear();
+    // 2026-07-12 cost audit: MV fast path. Closed tax years are immutable and
+    // the current year tolerates 24h staleness for reporting; the live path
+    // re-scanned a ~14-month reservations window on every poller write × tab.
+    // mv/widgets caches the 4 years the dashboard selector exposes; other
+    // years (none reachable from the UI) fall through to live.
+    if (!_bypassMv) {
+      const cached = await readWidgetMv(ctx, `tax:${startYear}`, SLOW_WIDGET_MAX_AGE_MS);
+      if (cached !== null) return cached as TaxYearSummaryPayload;
+    }
     const { start, end, label } = taxYearBounds(startYear);
     const { inYear, refundCandidates } = await loadReservationsForYear(ctx, startYear);
 
@@ -199,7 +241,14 @@ export const getTaxYearSummary = query({
       const d = effectiveDate(r);
       if (!d) continue;
       const mk = monthKeyOf(d);
-      const mb = monthBuckets.get(mk)!;
+      // Year-end stub: the UK tax year runs 6 Apr → 5 Apr, so effective dates
+      // on 1–5 Apr of the END year carry month key `${startYear+1}-04` — a
+      // 13th month the 12 preset buckets don't contain. `.get(mk)!` crashed
+      // the whole summary for any year with a boundary rental (latent since
+      // launch; surfaced by the 2026-07-12 mv/widgets refresher computing
+      // older years). Fold the stub into the final (March) bucket so monthly
+      // still sums to the yearly total.
+      const mb = monthBuckets.get(mk) ?? monthBuckets.get(`${startYear + 1}-03`)!;
       const acct = r.account_slug ?? "unknown";
       const ab =
         accountTotals.get(acct) ??

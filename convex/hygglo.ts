@@ -808,6 +808,28 @@ function buildNotifyEvent(
 }
 
 /**
+ * cyrb53-style 53-bit string hash → base36, shared by the poll-write-set diff
+ * gates (reservations.poll_hash): hash everything a poll cycle writes EXCEPT
+ * the volatile stamps, compare against the stored hash, and skip the patch
+ * when unchanged so idle rows aren't re-versioned every cycle. Extracted
+ * verbatim from the 2026-07-10 inline implementation below so stored hashes
+ * stay valid; also used by sync_dbcinema_web.ts.
+ */
+export function computePollHash(input: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/**
  * Core per-order upsert. Returns the per-order result PLUS the hygglo_items
  * snapshot that should be flushed into the product_id-keyed image bank.
  * Callers are responsible for invoking internal.listing_images.upsertFromHyggloItems
@@ -1042,17 +1064,7 @@ async function upsertOrderImpl(
       ...(clearObsolete && { is_obsolete: false }),
       hygglo_items: hyggloItemsUpdate,
     });
-    let _h1 = 0xdeadbeef, _h2 = 0x41c6ce57;
-    for (let i = 0; i < pollHashInput.length; i++) {
-      const ch = pollHashInput.charCodeAt(i);
-      _h1 = Math.imul(_h1 ^ ch, 2654435761);
-      _h2 = Math.imul(_h2 ^ ch, 1597334677);
-    }
-    _h1 = Math.imul(_h1 ^ (_h1 >>> 16), 2246822507);
-    _h1 ^= Math.imul(_h2 ^ (_h2 >>> 13), 3266489909);
-    _h2 = Math.imul(_h2 ^ (_h2 >>> 16), 2246822507);
-    _h2 ^= Math.imul(_h1 ^ (_h1 >>> 13), 3266489909);
-    const newPollHash = (4294967296 * (2097151 & _h2) + (_h1 >>> 0)).toString(36);
+    const newPollHash = computePollHash(pollHashInput);
     if ((existing as { poll_hash?: string }).poll_hash === newPollHash) {
       return { action: "skipped", bankItems: [] };
     }

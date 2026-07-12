@@ -258,7 +258,7 @@ export const remove = mutation({
   args: { id: v.id("insurance_claims") },
   handler: async (ctx, { id }) => {
     // Release any rentals this case pulled out of the Return Hub.
-    const linked = (await ctx.db.query("reservations").collect()).filter(
+    const linked = (await ctx.db.query("reservations").collect()).filter( // check-patterns:ok — rare operator action; case_id has no index
       (r) => (r as { case_id?: string }).case_id === (id as string),
     );
     for (const r of linked) await ctx.db.patch(r._id, { case_open: undefined, case_id: undefined });

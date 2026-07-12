@@ -182,7 +182,7 @@ export const get = query({
 export const refresh = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const reservations = await ctx.db.query("reservations").collect();
+    const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — MV builder — lifetime buckets need the full table (manual/dispatch path; daily cron uses master's shared collect)
     const rows = computeEarningsByPeriod({ reservations, generatedAt: Date.now() });
     for (const r of rows) {
       const existing = await ctx.db

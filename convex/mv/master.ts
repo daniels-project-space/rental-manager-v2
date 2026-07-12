@@ -74,6 +74,7 @@ import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_
 import { refreshAll as refreshWalleSignals } from "./walle_signals";
 import { refreshAll as refreshDueReturns } from "./due_returns";
 import { refreshAll as refreshAiInsights } from "./ai_insights";
+import { refreshFastWidgets, refreshSlowWidgets } from "./widgets";
 
 // ──────────────────────────────────────────────────────────────
 // Shared collectors — one query per underlying table per refresh.
@@ -403,6 +404,14 @@ export const refreshFast = internalAction({
       await refreshDueReturns(ctx);
     }));
 
+    // 2026-07-12 cost audit: OOS panel + Health issue scan — one shared
+    // confirmed-reservations collect computes all 5 slugs (see mv/widgets.ts).
+    // Replaces two always-live reactive queries that re-scanned per poller
+    // write × per open tab.
+    results.push(await safeStep(ctx, "widgets_fast", async () => {
+      await refreshFastWidgets(ctx);
+    }));
+
     return { batch: "fast", results };
   },
 });
@@ -593,6 +602,14 @@ export const refreshSlow = internalAction({
     // re-ran on every poller write × every open tab (~24 GB/mo).
     results.push(await safeStep(ctx, "ai_insights", async () => {
       await refreshAiInsights(ctx);
+    }));
+
+    // 2026-07-12 cost audit: sell/price recommendations, bundle rankings
+    // (30/90/365d) and tax-year summaries — wrap-and-cache of the live
+    // queries per account scope (see mv/widgets.ts). All slow-moving
+    // aggregates that were live-reactive per open tab.
+    results.push(await safeStep(ctx, "widgets_slow", async () => {
+      await refreshSlowWidgets(ctx);
     }));
 
     return { batch: "slow", results };
