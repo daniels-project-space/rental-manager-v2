@@ -1318,10 +1318,20 @@ export const upsertOrdersAsReservationsBatch = mutation({
     if (pendingChanged || anyRevenueRealized || anyRowChanged) {
       try {
         if (anyRowChanged || pendingChanged) {
-          await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, {
-            force: true,
-            scope: "all",
-          });
+          // Debounce: the poller sends several batches per cycle and each can
+          // land changes — without this guard every batch forced its own
+          // ~4.4MB "all" rebuild. One rebuild per 5 min is plenty (the cron
+          // and the next cycle's kick cover the rest).
+          const mvAll = await ctx.db
+            .query("mv_stats_drawer")
+            .withIndex("by_account", (q) => q.eq("account", "all"))
+            .first();
+          if (!mvAll || Date.now() - mvAll.generatedAt > 5 * 60 * 1000) {
+            await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, {
+              force: true,
+              scope: "all",
+            });
+          }
         }
         if (pendingChanged) {
           await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
