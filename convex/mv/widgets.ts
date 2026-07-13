@@ -221,6 +221,154 @@ export async function refreshFastWidgets(
 }
 
 // ──────────────────────────────────────────────────────────────
+// Imminent-handoffs row (5-min tier, driven by mv/reply_queue.refresh)
+// ──────────────────────────────────────────────────────────────
+//
+// replyInbox.getImminentHandoffs was polled every 60s per tab (`_tick`) and
+// each execution collected the whole confirmed set (~200KB) to find today's
+// ±15-min pickups/returns — ~226MB/day. Now: this row caches TODAY's dated+
+// timed candidates (no window filter — the reader applies windowMin and
+// computes minutes_away at read time from a ~2KB row). Rebuilt from the
+// 5-min reply-queue cron under its own cheap gates.
+
+/** Generic keyed reader (internal — public readers use lib/widget_mv.ts). */
+export const get = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    return await ctx.db
+      .query("mv_widgets")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+  },
+});
+
+const HANDOFFS_KEY = "handoffs";
+const HANDOFFS_BACKSTOP_MS = 30 * 60 * 1000;
+
+export type HandoffCandidate = {
+  thread_id: string | null;
+  account_slug: string | null;
+  renter_name: string;
+  items: string[];
+  kind: "pickup" | "return";
+  time: string;
+};
+
+/**
+ * Dirty probe for the handoffs row: any reservation genuinely changed
+ * (last_polled_at only advances on real change post-47205b6), any booking
+ * time extracted, or any new row inserted since the last build. Three
+ * indexed `.first()` reads.
+ */
+export const handoffsDirtySince = internalQuery({
+  args: { sinceMs: v.number() },
+  handler: async (ctx, { sinceMs }): Promise<boolean> => {
+    const newest = await ctx.db.query("reservations").order("desc").first();
+    if (newest && newest._creationTime > sinceMs) return true;
+    const polled = await ctx.db
+      .query("reservations")
+      .withIndex("by_last_polled_at")
+      .order("desc")
+      .first();
+    if (polled?.last_polled_at && polled.last_polled_at > sinceMs) return true;
+    const timed = await ctx.db
+      .query("reservations")
+      .withIndex("by_times_extracted_at")
+      .order("desc")
+      .first();
+    const timedAt = (timed as { times_extracted_at?: number } | null)?.times_extracted_at;
+    if (timedAt && timedAt > sinceMs) return true;
+    return false;
+  },
+});
+
+/**
+ * Today's dated+timed handover candidates across all accounts — the exact
+ * candidate derivation from replyInbox.getImminentHandoffs' live loop,
+ * minus the windowMin/minutes_away math (read-time concerns).
+ */
+export const computeHandoffCandidates = internalQuery({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{ date: string; candidates: HandoffCandidate[] }> => {
+    const nowDate = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+    const candidates: HandoffCandidate[] = [];
+    for (const st of ["confirmed", "ongoing"]) {
+      const rows = await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (qq) => qq.eq("status", st))
+        .collect();
+      for (const r of rows) {
+        const a = r as Record<string, unknown>;
+        if (a.is_obsolete) continue;
+        const items = ((a.hygglo_items as Array<{ name: string }> | undefined) ?? [])
+          .map((h) => h.name)
+          .slice(0, 2);
+        const base = {
+          thread_id: (a.hygglo_order_id as string) ?? null,
+          account_slug: (a.account_slug as string) ?? null,
+          renter_name: (a.renter_name as string) ?? "renter",
+          items,
+        };
+        const pd = (a.pickup_date as string) ?? (a.start_date as string);
+        const pt = a.pickup_time as string | undefined;
+        if (pd === nowDate && pt) candidates.push({ ...base, kind: "pickup", time: pt });
+        const rd = (a.return_date as string) ?? (a.end_date as string);
+        const rt = a.return_time as string | undefined;
+        if (rd === nowDate && rt) candidates.push({ ...base, kind: "return", time: rt });
+      }
+    }
+    return { date: nowDate, candidates };
+  },
+});
+
+/**
+ * Rebuild the 5-min operational rows (handoffs + active conflicts) when
+ * needed. Called from mv/reply_queue.refreshAll (5-min cron + user-action
+ * kicks). Gates: London date rolled over, a dirty probe hit, or the 30-min
+ * age backstop — quiet ticks cost 1 tiny row read + 3 indexed probes.
+ *
+ * Conflicts ride the same gate because overbooking conflicts change exactly
+ * when reservations change: getActiveConflicts' walle-signals cache is only
+ * refreshed DAILY, so its 90-min trust window left the WallE widget running
+ * a ~1.7MB live scan reactively on every reservation write × tab for most
+ * of the day (live usage data, 2026-07-13).
+ */
+export async function refreshHandoffsWidget(
+  ctx: ActionCtx,
+  now: number,
+): Promise<{ rebuilt: boolean }> {
+  const row = await ctx.runQuery(anyApi.mv.widgets.get, { key: HANDOFFS_KEY });
+  const nowDate = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  if (row) {
+    const age = now - (row.generatedAt ?? 0);
+    const sameDay = (row.payload as { date?: string } | null)?.date === nowDate;
+    if (sameDay && age < HANDOFFS_BACKSTOP_MS) {
+      const dirty: boolean = await ctx.runQuery(anyApi.mv.widgets.handoffsDirtySince, {
+        sinceMs: row.generatedAt ?? 0,
+      });
+      if (!dirty) return { rebuilt: false };
+    }
+  }
+  const payload = await ctx.runQuery(anyApi.mv.widgets.computeHandoffCandidates, {});
+  await ctx.runMutation(anyApi.mv.widgets.writeWidget, {
+    key: HANDOFFS_KEY,
+    payload,
+    generatedAt: now,
+  });
+  const conflicts = await ctx.runQuery(api.dashboard_insights.getActiveConflicts, {
+    _bypassMv: true,
+  });
+  await ctx.runMutation(anyApi.mv.widgets.writeWidget, {
+    key: "conflicts",
+    payload: conflicts,
+    generatedAt: now,
+  });
+  return { rebuilt: true };
+}
+
+// ──────────────────────────────────────────────────────────────
 // SLOW tier — wrap-and-cache sell / price / bundles / tax.
 // ──────────────────────────────────────────────────────────────
 

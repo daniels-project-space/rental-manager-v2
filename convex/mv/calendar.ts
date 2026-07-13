@@ -31,24 +31,41 @@
  * No forced-refresh kicks (unlike reply_queue) — the calendar has no optimistic
  * client updates and tolerates the cron lag; keeps the blast radius small.
  *
- * SELECTIVE REBUILD (2026-07-12): a rebuild used to run computeLive 10×
+ * SELECTIVE REBUILD (2026-07-12): a rebuild used to run the live compute 10×
  * (weekly+strip × all 5 slugs) whenever ANY change tripped the probe. The
  * dirty probe now also attributes the changed rows to account slugs; when ALL
- * of them belong to ONE known slug, only ["all", thatSlug] is rebuilt (4 live
- * runs instead of 10 — a single account's new booking can't change another
+ * of them belong to ONE known slug, only ["all", thatSlug] is rebuilt (4 views
+ * instead of 10 — a single account's new booking can't change another
  * account's view). Multi-account / unknown-slug dirt, the 45-min age
  * backstop, and `force` still rebuild every slug, and a meta:last_full_rebuild
  * marker guarantees a FULL rebuild at least every backstop window even under
  * a sustained single-account stream (probe-invisible edits to other accounts
  * would otherwise never reconcile).
  *
+ * ONE-EXECUTION COMPUTE (2026-07-13): every rebuilt view is now computed
+ * inside a single computeViews internalQuery (shared preloaded reads) instead
+ * of one public-query execution per view — see computeViews below. Slug
+ * selection, content-skip writes, anchors, and the meta marker are unchanged.
+ *
  * Mirrors mv/reply_queue.ts + mv/stats_drawer.ts.
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, query } from "../_generated/server";
-import { api } from "../_generated/api";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  query,
+} from "../_generated/server";
 import { anyApi } from "convex/server";
 import { londonToday } from "../lib/effectiveDates";
+import {
+  CALENDAR_FETCH_PAD_DAYS,
+  CALENDAR_LOOKBACK_DAYS,
+  computeStripLive,
+  computeWeeklyLive,
+  shiftIsoDate,
+  type CalendarComputePreload,
+} from "../calendar";
 
 const STRIP_DAYS = 7;
 
@@ -148,36 +165,39 @@ export async function refreshAll(
   const weekAnchor = getMondayOf(londonToday());
   const stripAnchor = londonToday();
 
+  // ONE query execution computes every requested {view, slug} (see
+  // computeViews below). Previously this loop ran the public queries with
+  // _bypassMv once per view per slug — up to 10 separate executions, each
+  // re-collecting the same reservations window + four full tables. Reads
+  // can't be shared across executions, so the rebuild's read cost multiplied
+  // by view×slug count; now it's paid once per rebuild.
+  const views: Array<{ key: string; payload: unknown }> = await ctx.runQuery(
+    anyApi.mv.calendar.computeViews,
+    { weekAnchor, stripAnchor, stripDays: STRIP_DAYS, slugs },
+  );
+  const payloadByKey = new Map<string, unknown>(
+    views.map((x) => [x.key, x.payload]),
+  );
+
   let written = 0;
   for (const slug of slugs) {
     const keySlug = slug ?? "all";
 
-    // Weekly — run the live handler once (bypass MV to avoid self-recursion).
-    const weekly = await ctx.runQuery(api.calendar.getWeeklyCalendar, {
-      accountSlug: slug,
-      weekStartDate: weekAnchor,
-      _bypassMv: true,
-    });
+    // Weekly.
     await ctx.runMutation(anyApi.mv.calendar.write, {
       key: `weekly:${keySlug}`,
       anchor: weekAnchor,
-      payload: weekly,
+      payload: payloadByKey.get(`weekly:${keySlug}`),
       generatedAt: startedAt,
     });
     written++;
 
     // Strip.
-    const strip = await ctx.runQuery(api.calendar.getCalendarStrip, {
-      accountSlug: slug,
-      startDate: stripAnchor,
-      days: STRIP_DAYS,
-      _bypassMv: true,
-    });
     await ctx.runMutation(anyApi.mv.calendar.write, {
       key: `strip:${keySlug}`,
       anchor: stripAnchor,
       days: STRIP_DAYS,
-      payload: strip,
+      payload: payloadByKey.get(`strip:${keySlug}`),
       generatedAt: startedAt,
     });
     written++;
@@ -209,6 +229,112 @@ export const refreshSlugs = query({
       .map((a) => a.slug)
       .filter((s): s is string => typeof s === "string" && s.length > 0);
     return [null, ...slugs];
+  },
+});
+
+/**
+ * ONE-execution rebuild compute (2026-07-13). refreshAll used to call the
+ * public calendar queries with _bypassMv once per {view, slug} — up to 10
+ * SEPARATE query executions per rebuild (selective = 4), and Convex cannot
+ * share reads across executions, so EACH one independently collected the same
+ * ~750-row reservations window + 120-day lookback + FOUR full tables
+ * (~2.6-3.4MB per execution). This internalQuery collects the UNION coverage
+ * once — one reservations by_start_date collect over
+ * [min(anchor)-120d, max(viewEnd)+7d] (contains every compute's padded window
+ * AND lookback), one calendar_holds by_date collect over
+ * [min(anchor), max(viewEnd)] (both computes read holds), one collect per
+ * shared table — then runs computeWeeklyLive/computeStripLive in-memory per
+ * {view, slug}. Total reads ~2-4MB / well under the 16k-doc query limit.
+ *
+ * Each compute independently verifies the preload's range contains its own
+ * index bounds and falls back to its own ctx.db reads otherwise, and the
+ * in-memory slices replicate index-range semantics exactly (see
+ * CalendarComputePreload in convex/calendar.ts) — so payloads are
+ * byte-identical to the old per-view executions for identical data.
+ *
+ * Returns an array (not a record) of { key: "weekly:<slug>"|"strip:<slug>",
+ * payload } so no Convex object-field-name constraints apply to the keys.
+ */
+export const computeViews = internalQuery({
+  args: {
+    weekAnchor: v.string(), // Monday YYYY-MM-DD — weekly views' weekStartDate
+    stripAnchor: v.string(), // today YYYY-MM-DD — strip views' startDate
+    stripDays: v.number(),
+    slugs: v.array(v.union(v.string(), v.null())),
+  },
+  handler: async (
+    ctx,
+    { weekAnchor, stripAnchor, stripDays, slugs },
+  ): Promise<Array<{ key: string; payload: unknown }>> => {
+    const minS = (a: string, b: string) => (a <= b ? a : b);
+    const maxS = (a: string, b: string) => (a >= b ? a : b);
+    // Union coverage across both view shapes. Weekly spans
+    // [weekAnchor, weekAnchor+6], strip [stripAnchor, stripAnchor+days-1];
+    // each compute scans its span padded ±CALENDAR_FETCH_PAD_DAYS plus a
+    // CALENDAR_LOOKBACK_DAYS lookback below the anchor — both contiguous with
+    // the window, so one [from, to] range covers every scan.
+    const weekEnd = shiftIsoDate(weekAnchor, 6);
+    const stripEnd = shiftIsoDate(stripAnchor, stripDays - 1);
+    const resFrom = minS(
+      shiftIsoDate(weekAnchor, -CALENDAR_LOOKBACK_DAYS),
+      shiftIsoDate(stripAnchor, -CALENDAR_LOOKBACK_DAYS),
+    );
+    const resTo = maxS(
+      shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS),
+      shiftIsoDate(stripEnd, CALENDAR_FETCH_PAD_DAYS),
+    );
+    // Holds are read over the UNPADDED view spans (see the computes).
+    const holdsFrom = minS(weekAnchor, stripAnchor);
+    const holdsTo = maxS(weekEnd, stripEnd);
+
+    const pre: CalendarComputePreload = {
+      reservationsWindow: {
+        from: resFrom,
+        to: resTo,
+        rows: await ctx.db
+          .query("reservations")
+          .withIndex("by_start_date", (q) =>
+            q.gte("start_date", resFrom).lte("start_date", resTo),
+          )
+          .collect(),
+      },
+      holds: {
+        from: holdsFrom,
+        to: holdsTo,
+        rows: await ctx.db
+          .query("calendar_holds")
+          .withIndex("by_date", (q) =>
+            q.gte("date", holdsFrom).lte("date", holdsTo),
+          )
+          .collect(),
+      },
+      items: await ctx.db.query("items").collect(),
+      listingImages: await ctx.db.query("listing_images").collect(),
+      productIndexRows: await ctx.db.query("hygglo_product_index").collect(),
+      overrideRows: await ctx.db.query("listing_resolution_override").collect(),
+    };
+
+    const out: Array<{ key: string; payload: unknown }> = [];
+    for (const slug of slugs) {
+      const keySlug = slug ?? "all";
+      out.push({
+        key: `weekly:${keySlug}`,
+        payload: await computeWeeklyLive(
+          ctx,
+          { accountSlug: slug, weekStartDate: weekAnchor },
+          pre,
+        ),
+      });
+      out.push({
+        key: `strip:${keySlug}`,
+        payload: await computeStripLive(
+          ctx,
+          { accountSlug: slug, startDate: stripAnchor, days: stripDays },
+          pre,
+        ),
+      });
+    }
+    return out;
   },
 });
 

@@ -29,6 +29,7 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../_generated/server";
 import { api } from "../_generated/api";
 import { anyApi } from "convex/server";
+import { refreshHandoffsWidget } from "./widgets";
 import {
   REPLY_MV_WITHIN_DAYS,
   REPLY_MV_MESSAGES_WITHIN_DAYS,
@@ -58,6 +59,14 @@ export async function refreshAll(
   force = false,
 ): Promise<{ ok: true; written: number; skipped: number; durationMs: number }> {
   const startedAt = Date.now();
+  // 2026-07-13: piggyback the imminent-handoffs widget row on this 5-min
+  // cron (own cheap gates + content-skip inside). Failure is non-fatal to
+  // the queue rebuild.
+  try {
+    await refreshHandoffsWidget(ctx, startedAt);
+  } catch (err) {
+    console.warn("[mv/reply_queue] handoffs widget refresh failed", String(err));
+  }
   const incPending: boolean = await ctx.runQuery(
     anyApi.mv.reply_queue.currentIncludePending,
     {},

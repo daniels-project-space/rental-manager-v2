@@ -139,6 +139,25 @@ export const collectAccounts = internalQuery({
 });
 
 /**
+ * Freshness sentinel for the slow batch — mv_ai_insights "all" is written by
+ * every successful refreshSlow, so its age tells us whether last night's
+ * daily run landed. Used by refreshFast's hourly self-heal (2026-07-13: the
+ * 04:00 refreshSlow failed transiently — actions are not retried — and every
+ * slow MV went stale for the day, pushing age-gated readers back to their
+ * expensive live fallbacks).
+ */
+export const slowMvFreshness = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<number | null> => {
+    const row = await ctx.db
+      .query("mv_ai_insights")
+      .withIndex("by_account", (q) => q.eq("account", "all"))
+      .first();
+    return row?.generatedAt ?? null;
+  },
+});
+
+/**
  * Last-computed timestamp (ms) of the missed/denied category MV — the marker
  * used to gate that step to once per London calendar month. Returns the
  * newest row's own `generatedAt` if present, else its `_creationTime`; null
@@ -410,6 +429,17 @@ export const refreshFast = internalAction({
     // write × per open tab.
     results.push(await safeStep(ctx, "widgets_fast", async () => {
       await refreshFastWidgets(ctx);
+    }));
+
+    // Self-heal: if last night's refreshSlow didn't land (transient failure,
+    // no action retries), kick it now rather than serving a day of stale slow
+    // MVs / expensive live fallbacks. One tiny indexed read per hour.
+    results.push(await safeStep(ctx, "slow_selfheal", async () => {
+      const slowGen = await ctx.runQuery(internal.mv.master.slowMvFreshness, {});
+      const SLOW_STALE_MS = 26 * 60 * 60 * 1000;
+      if (slowGen !== null && startedAt - slowGen > SLOW_STALE_MS) {
+        await ctx.scheduler.runAfter(0, internal.mv.master.refreshSlow, {});
+      }
     }));
 
     return { batch: "fast", results };

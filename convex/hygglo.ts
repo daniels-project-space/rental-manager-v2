@@ -1308,10 +1308,22 @@ export const upsertOrdersAsReservationsBatch = mutation({
     //  • revenue MVs: only when realised revenue actually changed (pickups) —
     //    sparse, so the daily-only staleness that hid diogo's £18 can't recur.
     const pendingChanged = anyTransitionedToObsolete || allNotify.length > 0;
-    if (pendingChanged || anyRevenueRealized) {
+    // 2026-07-13 cost audit: any real row change (not just obsolete/notify
+    // transitions) now converges the "all" stats row, because the chat
+    // surfaces read the MV instead of running the ~4.4MB live compute per
+    // message (dashboard-tools.ts fetchDrawer). Scope "all" only — the
+    // account drill-down rows are staleness-tolerant by design (6h cron)
+    // and the old force+both kick rebuilt all 5 slugs (~5× the reads).
+    const anyRowChanged = results.some((r) => r.action !== "skipped");
+    if (pendingChanged || anyRevenueRealized || anyRowChanged) {
       try {
+        if (anyRowChanged || pendingChanged) {
+          await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, {
+            force: true,
+            scope: "all",
+          });
+        }
         if (pendingChanged) {
-          await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, { force: true });
           await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
         }
         if (anyRevenueRealized) {
@@ -1322,7 +1334,11 @@ export const upsertOrdersAsReservationsBatch = mutation({
         // LIVE reservations by month, so BOTH a new confirmed booking
         // (pendingChanged) AND a pickup (anyRevenueRealized) move the current
         // bucket. Was daily-only → up to 24h stale; refresh on either change.
-        await ctx.scheduler.runAfter(0, internal.mv.earnings_by_period.refresh, {});
+        // (NOT on plain anyRowChanged — its refresher full-collects the
+        // reservations table, ~5MB, and mere field updates don't move months.)
+        if (pendingChanged || anyRevenueRealized) {
+          await ctx.scheduler.runAfter(0, internal.mv.earnings_by_period.refresh, {});
+        }
       } catch (err) {
         console.warn("[hygglo.upsertOrdersAsReservationsBatch] MV refresh schedule failed", String(err));
       }

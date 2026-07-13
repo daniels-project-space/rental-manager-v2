@@ -17,6 +17,7 @@ import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import { readWidgetMv } from "./lib/widget_mv";
 import { bookedUnitsOnDate } from "./lib/availability";
 import {
   reservationItemUnits,
@@ -1655,10 +1656,20 @@ export const threadsNeedingDraft = internalQuery({
     // order is arbitrary, which left visible threads draft-less, 2026-06-28).
     const settings = await ctx.db.query("settings").first();
     const epoch = settings?.draft_epoch ?? 0;
-    const convs = await ctx.db
-      .query("conversations")
-      .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))
-      .collect();
+    // 2026-07-13 cost audit: window the scan. Pre-gen exists to fill drafts for
+    // QUEUE tiles, and the queue only surfaces threads active within the last
+    // REPLY_MV_WITHIN_DAYS days — selecting older threads is waste by
+    // construction, and it was self-sustaining: threads where generateDraft
+    // skips/fails never get a draft written, so the unbounded by_last_sender
+    // scan re-fed the same dead threads to the 30-min cron forever (~400+
+    // wasted getThreadContext/availability runs per day, live usage data).
+    const draftWindowStart = Date.now() - REPLY_MV_WITHIN_DAYS * 86_400_000;
+    const convs = (
+      await ctx.db
+        .query("conversations")
+        .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", draftWindowStart))
+        .collect()
+    ).filter((c) => c.last_sender === "renter");
     convs.sort(
       (a, b) =>
         (b.last_renter_msg_at ?? b.last_msg_at ?? 0) -
@@ -1904,6 +1915,26 @@ export const getImminentHandoffs = query({
       thread_id: string | null; account_slug: string | null; renter_name: string;
       items: string[]; kind: "pickup" | "return"; time: string; minutes_away: number;
     }> = [];
+    // 2026-07-13 cost audit: MV fast path. This query polls every 60s per tab
+    // (`_tick`) and each execution collected the whole confirmed set (~200KB,
+    // ~226MB/day) to derive TODAY's timed handovers. The candidates (dated +
+    // timed rows, no window math) are cached in mv_widgets key "handoffs" by
+    // the 5-min reply-queue cron; minutes_away/windowMin are computed here at
+    // read time from a ~2KB row. Date-mismatch or stale row → live fallback.
+    const cachedHandoffs = (await readWidgetMv(ctx, "handoffs", 45 * 60 * 1000)) as
+      | { date?: string; candidates?: Array<{ thread_id: string | null; account_slug: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; time: string }> }
+      | null;
+    if (cachedHandoffs?.date === nowDate && Array.isArray(cachedHandoffs.candidates)) {
+      for (const c of cachedHandoffs.candidates) {
+        if (accountSlug && c.account_slug !== accountSlug) continue;
+        const diff = toMin(c.time) - nowMin;
+        if (Math.abs(diff) <= windowMin) {
+          out.push({ ...c, minutes_away: diff });
+        }
+      }
+      out.sort((x, y) => Math.abs(x.minutes_away) - Math.abs(y.minutes_away));
+      return out;
+    }
     for (const st of ["confirmed", "ongoing"]) {
       const rows = await ctx.db
         .query("reservations")

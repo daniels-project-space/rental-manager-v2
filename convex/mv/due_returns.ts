@@ -33,12 +33,25 @@ export async function refreshAll(
     { key: ACCOUNT_ALL, arg: null },
     ...ACCOUNTS.map((s) => ({ key: s, arg: s })),
   ];
+  // 2026-07-13 cost audit: ONE live "all" compute, sliced per account (was 5
+  // full live runs — ~5× the confirmed-collect + renter lookups per refresh).
+  // Safe: the live handler's accountSlug arg is used ONLY for the initial row
+  // filter (reservations.ts:111) and every row derivation keys off the row's
+  // own account; both grouping fns (groupLogicalRentals / renterPeriodGroupIds,
+  // predicates.ts) include account_slug in their bucket keys so groups never
+  // span accounts — compute(all).filter(accountSlug===slug) ≡ compute(slug),
+  // and filtering preserves the comparator order on the subset.
+  const allPayload: Array<Record<string, unknown> & { accountSlug?: string }> =
+    await ctx.runQuery(api.reservations.getDueReturns, {
+      accountSlug: null,
+      _bypassMv: true,
+    });
   let written = 0;
   for (const { key, arg } of slugs) {
-    const payload = await ctx.runQuery(
-      api.reservations.getDueReturns,
-      { accountSlug: arg, _bypassMv: true },
-    );
+    const payload =
+      arg === null
+        ? allPayload
+        : allPayload.filter((row) => row.accountSlug === arg);
     await ctx.runMutation(anyApi.mv.due_returns.write, {
       account: key,
       payload,

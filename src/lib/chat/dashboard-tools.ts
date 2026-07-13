@@ -262,18 +262,30 @@ type RentalRow = {
 };
 
 function fetchDrawer(convex: ConvexHttpClient): Promise<DrawerData> {
-  // _bypassMv:true → LIVE compute, NOT the hourly `mv_stats_drawer` cache. That
-  // cache goes stale for hours: its dirty-probe only scans the 50 most-recent
-  // reservations by future start_date, so a status change on a past/ongoing
-  // rental (ended/cancelled) never marks it dirty and the rebuild is skipped.
-  // The chat MUST reflect the live reservations table (≤5 min behind Hygglo),
-  // not an old snapshot. Chat is low-volume so the live compute cost is fine.
-  return cached("drawer:live", () =>
-    convex.query(api.dashboard.getStatsDrawerData, {
-      accountSlug: null,
-      _bypassMv: true,
-    } as { accountSlug: string | null }),
-  ) as Promise<DrawerData>;
+  // 2026-07-13 cost audit: read the MV fast path, not the live compute. The
+  // staleness rationale for _bypassMv is obsolete — the dirty-probe now
+  // catches every mutation path (by_last_polled_at + by_times_extracted_at,
+  // Pass 8b + a5d9f5c) and the poller kicks a stats refresh whenever a cycle
+  // actually changed reservations (hygglo.ts), so the cached row tracks
+  // Hygglo within a poll cycle. The live compute read ~4.4MB per chat
+  // message (60s cache) — the MV path reads a few KB. The rentals lists are
+  // split into mv_stats_drawer_rentals (Pass 10b); merge them back so the
+  // snapshot shape is unchanged. On a cold MV getStatsDrawerData itself
+  // falls back live and returns the lists inline.
+  return cached("drawer:live", async () => {
+    const [d, rentalsRow] = await Promise.all([
+      convex.query(api.dashboard.getStatsDrawerData, { accountSlug: null }),
+      convex.query(api.mv.stats_drawer.getRentals, {}),
+    ]);
+    const drawer = d as DrawerData;
+    if (drawer.ongoing?.rentals || drawer.upcoming?.rentals) return drawer; // live fallback already inline
+    const lists = (rentalsRow?.rentals ?? {}) as { ongoing?: RentalRow[]; upcoming?: RentalRow[] };
+    return {
+      ...drawer,
+      ongoing: { ...(drawer.ongoing ?? {}), rentals: lists.ongoing ?? [] },
+      upcoming: { ...(drawer.upcoming ?? {}), rentals: lists.upcoming ?? [] },
+    } as DrawerData;
+  }) as Promise<DrawerData>;
 }
 
 /**

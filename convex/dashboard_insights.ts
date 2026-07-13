@@ -3,6 +3,7 @@
 
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { readWidgetMv } from "./lib/widget_mv";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isPaid } from "./order_step_semantics";
 import {
@@ -507,15 +508,19 @@ export const getActiveConflicts = query({
   args: { _bypassMv: v.optional(v.boolean()) },
   handler: async (ctx, { _bypassMv }) => {
     if (!_bypassMv) {
+      // 2026-07-13 cost audit: primary cache is now the mv_widgets "conflicts"
+      // row, rebuilt by the 5-min reply-queue cron whenever reservations
+      // actually changed (dirty-probed) — overbooking conflicts can only move
+      // when reservations move, so this is near-live at a fraction of the old
+      // cost (the daily walle-signals row's 90-min trust window meant WallE
+      // ran the ~1.7MB live scan reactively for most of the day).
+      const widgetRow = await readWidgetMv(ctx, "conflicts", 45 * 60 * 1000);
+      if (widgetRow !== null) return widgetRow;
       const cached = await ctx.db
         .query("mv_walle_signals")
         .withIndex("by_account", (q) => q.eq("account", "all"))
         .first();
-      // Overbooking is safety-critical, but mv_walle_signals is only refreshed
-      // DAILY (04:00 via refreshSlow) — the old unconditional `return cached`
-      // meant a conflict created at 04:05 stayed invisible in WallE for ~24h.
-      // Trust the cache only while fresh (~90 min); otherwise fall through to the
-      // bounded, indexed live compute so new conflicts surface promptly.
+      // Legacy fallback while the widgets row is cold (deploy window).
       if (cached && Date.now() - cached.generatedAt < 90 * 60 * 1000) {
         return cached.activeConflicts;
       }

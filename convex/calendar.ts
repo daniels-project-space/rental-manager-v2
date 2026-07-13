@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {
@@ -46,7 +46,7 @@ function parseTime(date: string, time: string): number {
  * pad on each side guarantees the raw scan always covers the effective dates.
  * 7 days is a comfortable margin over the ±3-day tolerance.
  */
-const CALENDAR_FETCH_PAD_DAYS = 7;
+export const CALENDAR_FETCH_PAD_DAYS = 7;
 
 /**
  * Unified before-window lookback for prior reservations that started earlier but
@@ -56,14 +56,49 @@ const CALENDAR_FETCH_PAD_DAYS = 7;
  * comfortably covers the longest realistic Hygglo rentals while keeping the
  * indexed scan bounded.
  */
-const CALENDAR_LOOKBACK_DAYS = 120;
+export const CALENDAR_LOOKBACK_DAYS = 120;
 
 /** Add (or subtract) whole days to a YYYY-MM-DD string, returning YYYY-MM-DD. */
-function shiftIsoDate(ymd: string, deltaDays: number): string {
+export function shiftIsoDate(ymd: string, deltaDays: number): string {
   return new Date(Date.parse(ymd) + deltaDays * 86400000)
     .toISOString()
     .slice(0, 10);
 }
+
+/**
+ * Preloaded inputs for computeWeeklyLive / computeStripLive (2026-07-13).
+ *
+ * The MV refresher used to run the public calendar queries once per
+ * {view, slug} — up to 10 SEPARATE query executions per rebuild, each
+ * independently re-collecting the same reservations window + 120-day lookback
+ * + four full tables (~2.6-3.4MB per execution). Convex reads cannot be shared
+ * across executions, so convex/mv/calendar.ts:computeViews now collects each
+ * input ONCE and hands them to every compute via this bag.
+ *
+ * Contract per input: the preload must provably CONTAIN what the compute's own
+ * indexed query would return. Each compute verifies that (range containment on
+ * from/to) and otherwise falls back to its own ctx.db read, so a caller can
+ * never make a compute silently drop rows. Ranged preloads must be collected
+ * from the SAME index the computes use (by_start_date / by_date) so that
+ * in-memory slices preserve index order — dedup/merge output depends on row
+ * order. All docs are treated as immutable (every compute path only builds new
+ * objects), so one bag can safely feed many computes in one execution.
+ */
+export type CalendarComputePreload = {
+  /** reservations collected via by_start_date over [from, to] INCLUSIVE, in
+   *  index order (start_date asc, then _creationTime asc). Covers both the
+   *  padded window scan and the 120-day lookback scan when
+   *  from <= anchor-120d and to >= scanEnd. */
+  reservationsWindow?: { from: string; to: string; rows: Doc<"reservations">[] };
+  /** calendar_holds collected via by_date over [from, to] INCLUSIVE, in index
+   *  order (date asc, then _creationTime asc). */
+  holds?: { from: string; to: string; rows: Doc<"calendar_holds">[] };
+  /** Full-table collects (identical to the computes' own reads). */
+  items?: Doc<"items">[];
+  listingImages?: Doc<"listing_images">[];
+  productIndexRows?: Doc<"hygglo_product_index">[];
+  overrideRows?: Doc<"listing_resolution_override">[];
+};
 
 /**
  * Effective return date for a reservation: prefer AI-extracted `return_date`
@@ -201,21 +236,23 @@ function preferDeliveryMethod(
 }
 
 /**
- * W06 5-Day Calendar Strip
- * Returns reservations and holds for [startDate, startDate + days - 1]
+ * Live compute body of getCalendarStrip, extracted (2026-07-13) so the MV
+ * refresher (convex/mv/calendar.ts:computeViews) can run EVERY {view, slug}
+ * inside ONE query execution over shared preloaded inputs. Called with no
+ * `pre` (the public query path), reads and output are identical to the old
+ * inline closure. Each preloaded input is used ONLY when its coverage provably
+ * contains what this compute's own indexed query would return; otherwise the
+ * compute falls back to its original ctx.db read for that input.
  */
-export const getCalendarStrip = query({
-  args: {
-    accountSlug: v.union(v.string(), v.null()),
-    startDate: v.string(), // YYYY-MM-DD
-    days: v.number(),
-    _bypassMv: v.optional(v.boolean()),
-  },
-  handler: async (ctx, { accountSlug, startDate, days, _bypassMv }) => {
-    // Live compute wrapped so the MV fast path can cast the v.any() payload back
-    // to its exact type (returning `any` from one branch would widen the whole
-    // query return type to `any`). Same pattern as getWeeklyCalendar.
-    const computeLive = async () => {
+export async function computeStripLive(
+  ctx: QueryCtx,
+  {
+    accountSlug,
+    startDate,
+    days,
+  }: { accountSlug: string | null; startDate: string; days: number },
+  pre?: CalendarComputePreload,
+) {
     const dates: string[] = [];
     for (let i = 0; i < days; i++) {
       const d = new Date(startDate);
@@ -228,18 +265,43 @@ export const getCalendarStrip = query({
     // gets fetched, then bucketed by effective dates below (FIX 4).
     const scanStart = shiftIsoDate(startDate, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(endDate, CALENDAR_FETCH_PAD_DAYS);
+    // Unified 120-day lookback lower bound (hoisted from the W1a block below —
+    // also needed for the preload containment check).
+    const lookbackStart = shiftIsoDate(startDate, -CALENDAR_LOOKBACK_DAYS);
+    // Preloaded reservations are usable ONLY when their collected by_start_date
+    // range provably contains BOTH indexed scans below: [lookbackStart, scanEnd]
+    // ⊆ [pre.from, pre.to] (lookbackStart < scanStart < scanEnd always, so one
+    // check covers the window scan AND the lookback scan). The in-memory slices
+    // replicate index-range semantics exactly: string compare on start_date,
+    // rows with undefined start_date excluded (undefined sorts below every
+    // string, so `.gte(<string>)` never returns them), and index order is
+    // preserved (pre rows come from the same by_start_date index; filter keeps
+    // relative order).
+    const preRes =
+      pre?.reservationsWindow &&
+      pre.reservationsWindow.from <= lookbackStart &&
+      pre.reservationsWindow.to >= scanEnd
+        ? pre.reservationsWindow.rows
+        : null;
 
     // Reservations overlapping the (padded) date range
     // OPEN_INDEX_NEED: index by (start_date, end_date) range for efficient overlap scan.
-    let reservations = await ctx.db
-      .query("reservations")
-      // PERF: bound the scan to the padded window (was `.gte` only → read the
-      // whole forward reservation tail on every reactive re-run). The `.lte`
-      // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
-      // row set is identical; kept the filter as a cheap guard.
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", scanStart).lte("start_date", scanEnd))
-      .collect();
+    let reservations = preRes
+      ? preRes.filter(
+          (r) =>
+            r.start_date !== undefined &&
+            r.start_date >= scanStart &&
+            r.start_date <= scanEnd,
+        )
+      : await ctx.db
+          .query("reservations")
+          // PERF: bound the scan to the padded window (was `.gte` only → read the
+          // whole forward reservation tail on every reactive re-run). The `.lte`
+          // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
+          // row set is identical; kept the filter as a cheap guard.
+          .withIndex("by_start_date", (q) =>
+            q.gte("start_date", scanStart).lte("start_date", scanEnd))
+          .collect();
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= scanEnd
     );
@@ -250,12 +312,18 @@ export const getCalendarStrip = query({
       // window, bounded by the unified 120-day lookback (was unbounded here,
       // 90d in weekly/gantt — FIX 4 unifies them). Residual end_date>=scanStart
       // filter retained (not in index).
-      const lookbackStart = shiftIsoDate(startDate, -CALENDAR_LOOKBACK_DAYS);
-      const allRes = await ctx.db
-        .query("reservations")
-        .withIndex("by_start_date", (q) =>
-          q.gte("start_date", lookbackStart).lt("start_date", scanStart))
-        .collect();
+      const allRes = preRes
+        ? preRes.filter(
+            (r) =>
+              r.start_date !== undefined &&
+              r.start_date >= lookbackStart &&
+              r.start_date < scanStart,
+          )
+        : await ctx.db
+            .query("reservations")
+            .withIndex("by_start_date", (q) =>
+              q.gte("start_date", lookbackStart).lt("start_date", scanStart))
+            .collect();
       for (const r of allRes) {
         if (
           r.end_date !== undefined &&
@@ -407,8 +475,32 @@ export const getCalendarStrip = query({
     // Phase 7e (2026-05-24): cross-account path now uses by_date indexed
     // range scan instead of a full-table .collect(). Calendar_holds has
     // ~50-200 rows per day × N days; the window is bounded by `days` arg.
+    // Preloaded holds usable ONLY if their by_date range contains
+    // [startDate, endDate]. The in-memory slices replicate both original paths
+    // exactly: the by_date range scan (string range on date; undefined date
+    // excluded — it sorts below every string) and, for a single account, the
+    // per-day by_account_date loop (exact-date eq over the ascending `dates`
+    // array + slug eq; pre rows arrive in (date asc, _creationTime asc) order,
+    // which is precisely that loop's concatenation order).
+    const preHolds =
+      pre?.holds && pre.holds.from <= startDate && pre.holds.to >= endDate
+        ? pre.holds.rows
+        : null;
     const holds: Doc<"calendar_holds">[] = [];
-    if (accountSlug) {
+    if (preHolds) {
+      if (accountSlug) {
+        const dateSet = new Set(dates);
+        for (const h of preHolds) {
+          if (h.account_slug === accountSlug && h.date !== undefined && dateSet.has(h.date))
+            holds.push(h);
+        }
+      } else {
+        for (const h of preHolds) {
+          if (h.date !== undefined && h.date >= startDate && h.date <= endDate)
+            holds.push(h);
+        }
+      }
+    } else if (accountSlug) {
       for (const date of dates) {
         const dayHolds = await ctx.db
           .query("calendar_holds")
@@ -441,8 +533,9 @@ export const getCalendarStrip = query({
       image_url?: string;
     };
     // Load items table once (used for both name-resolution fallback AND for
-    // the shared-image blacklist guard inside the resolver).
-    const rawItemsForStrip = await ctx.db.query("items").collect();
+    // the shared-image blacklist guard inside the resolver). Preload = the
+    // identical full-table collect, same rows in the same order.
+    const rawItemsForStrip = pre?.items ?? (await ctx.db.query("items").collect());
     const allItemsForStrip: ItemDoc[] = rawItemsForStrip.map((item) => item as ItemDoc);
     const itemById = new Map<string, ItemDoc>();
     for (const it of allItemsForStrip) {
@@ -508,15 +601,20 @@ export const getCalendarStrip = query({
     );
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
-    const listingImagesAllStrip = await ctx.db.query("listing_images").collect();
+    const listingImagesAllStrip =
+      pre?.listingImages ?? (await ctx.db.query("listing_images").collect());
     const bankByProductStrip = new Map<string, string>();
     for (const li of listingImagesAllStrip) {
       bankByProductStrip.set(`${li.account_slug}#${li.product_id}`, li.image_url);
     }
     // Override-resolved items + the account's OWN listing photo (so leo/dbcinema
     // photos never mix) — mirrors getGanttWeek.
-    const productIndexStrip = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMapStrip = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const productIndexStrip = buildProductIndexMap(
+      pre?.productIndexRows ?? (await ctx.db.query("hygglo_product_index").collect()),
+    );
+    const overrideMapStrip = buildOverrideMap(
+      pre?.overrideRows ?? (await ctx.db.query("listing_resolution_override").collect()),
+    );
     const imageByResItemStrip = new Map<string, string>();
     for (const rr of reservations) {
       const acct = (rr as { account_slug?: string }).account_slug ?? "";
@@ -812,16 +910,32 @@ export const getCalendarStrip = query({
 
       return { date, pickups, returns, away, holds: dayHolds };
     });
-    };
+}
+
+/**
+ * W06 5-Day Calendar Strip
+ * Returns reservations and holds for [startDate, startDate + days - 1]
+ */
+export const getCalendarStrip = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    startDate: v.string(), // YYYY-MM-DD
+    days: v.number(),
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, startDate, days, _bypassMv }) => {
     if (!_bypassMv) {
       const mv = await ctx.db
         .query("mv_calendar")
         .withIndex("by_key", (q) => q.eq("key", `strip:${accountSlug ?? "all"}`))
         .first();
+      // Cast the stored v.any() payload back to the live compute's exact type
+      // (returning `any` from one branch would widen the whole query return
+      // type to `any`). Same pattern as getWeeklyCalendar.
       if (mv && mv.anchor === startDate && mv.days === days)
-        return mv.payload as Awaited<ReturnType<typeof computeLive>>;
+        return mv.payload as Awaited<ReturnType<typeof computeStripLive>>;
     }
-    return computeLive();
+    return computeStripLive(ctx, { accountSlug, startDate, days });
   },
 });
 
@@ -933,18 +1047,23 @@ export const getHoldsCount = query({
   },
 });
 
-export const getWeeklyCalendar = query({
-  args: {
-    accountSlug: v.union(v.string(), v.null()),
-    weekStartDate: v.string(), // YYYY-MM-DD (Monday)
-    _bypassMv: v.optional(v.boolean()),
-  },
-  handler: async (ctx, { accountSlug, weekStartDate, _bypassMv }) => {
-    // The live compute is wrapped so the MV fast path below can cast the stored
-    // (v.any()) payload back to its exact type — otherwise returning `any` from
-    // one branch widens the whole query's inferred return type to `any` and the
-    // frontend's typed `data.days.map(...)` breaks (noImplicitAny).
-    const computeLive = async () => {
+/**
+ * Live compute body of getWeeklyCalendar, extracted (2026-07-13) so the MV
+ * refresher (convex/mv/calendar.ts:computeViews) can run EVERY {view, slug}
+ * inside ONE query execution over shared preloaded inputs. Called with no
+ * `pre` (the public query path), reads and output are identical to the old
+ * inline closure. Each preloaded input is used ONLY when its coverage provably
+ * contains what this compute's own indexed query would return; otherwise the
+ * compute falls back to its original ctx.db read for that input.
+ */
+export async function computeWeeklyLive(
+  ctx: QueryCtx,
+  {
+    accountSlug,
+    weekStartDate,
+  }: { accountSlug: string | null; weekStartDate: string },
+  pre?: CalendarComputePreload,
+) {
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(weekStartDate);
@@ -956,17 +1075,42 @@ export const getWeeklyCalendar = query({
     // tolerance) are always fetched, then bucketed by effective dates (FIX 4).
     const scanStart = shiftIsoDate(weekStartDate, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
+    // Unified 120-day lookback lower bound (hoisted from below the window scan —
+    // also needed for the preload containment check).
+    const overlapStart = shiftIsoDate(weekStartDate, -CALENDAR_LOOKBACK_DAYS);
+    // Preloaded reservations are usable ONLY when their collected by_start_date
+    // range provably contains BOTH indexed scans below: [overlapStart, scanEnd]
+    // ⊆ [pre.from, pre.to] (overlapStart < scanStart < scanEnd always, so one
+    // check covers the window scan AND the lookback scan). The in-memory slices
+    // replicate index-range semantics exactly: string compare on start_date,
+    // rows with undefined start_date excluded (undefined sorts below every
+    // string, so `.gte(<string>)` never returns them), and index order is
+    // preserved (pre rows come from the same by_start_date index; filter keeps
+    // relative order).
+    const preRes =
+      pre?.reservationsWindow &&
+      pre.reservationsWindow.from <= overlapStart &&
+      pre.reservationsWindow.to >= scanEnd
+        ? pre.reservationsWindow.rows
+        : null;
 
     // Reservations starting within the (padded) week
-    let reservations = await ctx.db
-      .query("reservations")
-      // PERF: bound the scan to the padded window (was `.gte` only → read the
-      // whole forward reservation tail on every reactive re-run). The `.lte`
-      // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
-      // row set is identical; kept the filter as a cheap guard.
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", scanStart).lte("start_date", scanEnd))
-      .collect();
+    let reservations = preRes
+      ? preRes.filter(
+          (r) =>
+            r.start_date !== undefined &&
+            r.start_date >= scanStart &&
+            r.start_date <= scanEnd,
+        )
+      : await ctx.db
+          .query("reservations")
+          // PERF: bound the scan to the padded window (was `.gte` only → read the
+          // whole forward reservation tail on every reactive re-run). The `.lte`
+          // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
+          // row set is identical; kept the filter as a cheap guard.
+          .withIndex("by_start_date", (q) =>
+            q.gte("start_date", scanStart).lte("start_date", scanEnd))
+          .collect();
     reservations = reservations.filter(
       (r) => r.start_date !== undefined && r.start_date <= scanEnd
     );
@@ -974,14 +1118,21 @@ export const getWeeklyCalendar = query({
     // Also include reservations that started before weekStart but end during/after it.
     // No end_date index, so use the unified 120-day start_date lookback (FIX 4 —
     // was 90d here, unbounded in the strip). Long rentals exceeding 120 days are
-    // vanishingly rare on Hygglo; the bounded scan stays cheap.
-    const overlapStart = shiftIsoDate(weekStartDate, -CALENDAR_LOOKBACK_DAYS);
-    const priorRes = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", overlapStart).lt("start_date", scanStart),
-      )
-      .collect();
+    // vanishingly rare on Hygglo; the bounded scan stays cheap. (overlapStart is
+    // hoisted above for the preload containment check.)
+    const priorRes = preRes
+      ? preRes.filter(
+          (r) =>
+            r.start_date !== undefined &&
+            r.start_date >= overlapStart &&
+            r.start_date < scanStart,
+        )
+      : await ctx.db
+          .query("reservations")
+          .withIndex("by_start_date", (q) =>
+            q.gte("start_date", overlapStart).lt("start_date", scanStart),
+          )
+          .collect();
     for (const r of priorRes) {
       if (
         r.end_date !== undefined &&
@@ -1009,8 +1160,32 @@ export const getWeeklyCalendar = query({
 
     // Phase 7e (2026-05-24): cross-account path uses by_date indexed range
     // scan instead of full-table .collect().
+    // Preloaded holds usable ONLY if their by_date range contains
+    // [weekStartDate, weekEnd]. The in-memory slices replicate both original
+    // paths exactly: the by_date range scan (string range on date; undefined
+    // date excluded — it sorts below every string) and, for a single account,
+    // the per-day by_account_date loop (exact-date eq over the ascending
+    // `dates` array + slug eq; pre rows arrive in (date asc, _creationTime asc)
+    // order, which is precisely that loop's concatenation order).
+    const preHolds =
+      pre?.holds && pre.holds.from <= weekStartDate && pre.holds.to >= weekEnd
+        ? pre.holds.rows
+        : null;
     const holds: Doc<"calendar_holds">[] = [];
-    if (accountSlug) {
+    if (preHolds) {
+      if (accountSlug) {
+        const dateSet = new Set(dates);
+        for (const h of preHolds) {
+          if (h.account_slug === accountSlug && h.date !== undefined && dateSet.has(h.date))
+            holds.push(h);
+        }
+      } else {
+        for (const h of preHolds) {
+          if (h.date !== undefined && h.date >= weekStartDate && h.date <= weekEnd)
+            holds.push(h);
+        }
+      }
+    } else if (accountSlug) {
       for (const date of dates) {
         const dayHolds = await ctx.db
           .query("calendar_holds")
@@ -1038,11 +1213,16 @@ export const getWeeklyCalendar = query({
       }),
     );
 
-    // Items table for per-item image lookups (fuzzy by name).
-    const allItemsWeekly = await ctx.db.query("items").collect();
+    // Items table for per-item image lookups (fuzzy by name). Preloads = the
+    // identical full-table collects, same rows in the same order.
+    const allItemsWeekly = pre?.items ?? (await ctx.db.query("items").collect());
     const sharedBlacklistWeekly = buildSharedImageBlacklist(allItemsWeekly);
-    const productIndexW = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMapW = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const productIndexW = buildProductIndexMap(
+      pre?.productIndexRows ?? (await ctx.db.query("hygglo_product_index").collect()),
+    );
+    const overrideMapW = buildOverrideMap(
+      pre?.overrideRows ?? (await ctx.db.query("listing_resolution_override").collect()),
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const itemByIdW = new Map<string, any>(allItemsWeekly.map((it) => [String(it._id), it]));
     const resolvedNamesByResW = new Map<string, string[]>();
@@ -1066,7 +1246,8 @@ export const getWeeklyCalendar = query({
     };
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
-    const listingImagesAllWeekly = await ctx.db.query("listing_images").collect();
+    const listingImagesAllWeekly =
+      pre?.listingImages ?? (await ctx.db.query("listing_images").collect());
     const bankByProductWeekly = new Map<string, string>();
     for (const li of listingImagesAllWeekly) {
       bankByProductWeekly.set(`${li.account_slug}#${li.product_id}`, li.image_url);
@@ -1174,16 +1355,28 @@ export const getWeeklyCalendar = query({
           })),
       })),
     };
-    };
+}
+
+export const getWeeklyCalendar = query({
+  args: {
+    accountSlug: v.union(v.string(), v.null()),
+    weekStartDate: v.string(), // YYYY-MM-DD (Monday)
+    _bypassMv: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { accountSlug, weekStartDate, _bypassMv }) => {
     if (!_bypassMv) {
       const mv = await ctx.db
         .query("mv_calendar")
         .withIndex("by_key", (q) => q.eq("key", `weekly:${accountSlug ?? "all"}`))
         .first();
+      // Cast the stored (v.any()) payload back to the live compute's exact
+      // type — otherwise returning `any` from one branch widens the whole
+      // query's inferred return type to `any` and the frontend's typed
+      // `data.days.map(...)` breaks (noImplicitAny).
       if (mv && mv.anchor === weekStartDate)
-        return mv.payload as Awaited<ReturnType<typeof computeLive>>;
+        return mv.payload as Awaited<ReturnType<typeof computeWeeklyLive>>;
     }
-    return computeLive();
+    return computeWeeklyLive(ctx, { accountSlug, weekStartDate });
   },
 });
 
@@ -1856,18 +2049,26 @@ export const getItemAvailabilityForChat = query({
 
     // ── Confirmed reservations overlapping [today, lastDate] ──
     const scanStart = shiftIsoDate(today, -CALENDAR_LOOKBACK_DAYS);
-    let reservations = await ctx.db
-      .query("reservations")
-      // PERF (2026-07-12): upper bound pushed into the index (was `.gte` only →
-      // read the entire forward reservation tail, then JS-filtered
-      // `start_date <= lastDate`). Row-set equivalence: `.lte` reproduces the
-      // JS upper bound exactly, and rows with UNDEFINED start_date were already
-      // excluded by BOTH paths — `undefined` sorts below every string in the
-      // index, so `.gte(scanStart)` never returned them, and the old JS
-      // filter's `!== undefined` guard dropped them too.
-      .withIndex("by_start_date", (qb) =>
-        qb.gte("start_date", scanStart).lte("start_date", lastDate))
-      .collect();
+    // PERF (2026-07-13): scan by_status("confirmed") instead of the 120-day
+    // by_start_date window. The window read every status in range (~3MB of
+    // cancelled/completed history per bot-draft/chat call — the top read
+    // burner in live usage data); only isConfirmedWithDates rows survive the
+    // filter below, and isConfirmedWithDates ⇒ status === "confirmed", so
+    // the confirmed set (~0.2MB) is a strict superset of the survivors.
+    // The date bounds move in-memory with identical semantics: string
+    // compares on start_date, and rows with UNDEFINED start_date were
+    // excluded by both the old index range and these guards.
+    let reservations = (
+      await ctx.db
+        .query("reservations")
+        .withIndex("by_status", (qb) => qb.eq("status", "confirmed"))
+        .collect()
+    ).filter(
+      (r) =>
+        r.start_date !== undefined &&
+        r.start_date >= scanStart &&
+        r.start_date <= lastDate,
+    );
     if (accountSlug) reservations = reservations.filter((r) => r.account_slug === accountSlug);
     const confirmed = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
