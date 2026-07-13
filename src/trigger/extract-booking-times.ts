@@ -14,7 +14,8 @@
 import { schedules, logger } from "@trigger.dev/sdk/v3";
 import { gatedGenerateText } from "../lib/gated-generate";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
-import { getLlmModel } from "../lib/llm-client";
+import { getExtractorModel } from "../lib/llm-client";
+import { sendOperatorMessage } from "../lib/telegram";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
@@ -218,6 +219,8 @@ export const extractBookingTimesTask = schedules.task({
     let processed = 0;
     let updated = 0;
     let skipped = 0;
+    let llmErrors = 0;
+    let firstLlmError: string | null = null;
     for (const c of candidates) {
       if (c.messages.length === 0) {
         skipped++;
@@ -240,12 +243,15 @@ export const extractBookingTimesTask = schedules.task({
       let extracted: ExtractedTimes;
       try {
         const gated = await gatedGenerateText({
-          model: await getLlmModel(),
+          model: await getExtractorModel(),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
-          // 9 short lines (~150 visible tok) + reasoning model overhead.
-          // DeepSeek-v4-flash routinely uses 800-1500 reasoning tokens on this
-          // task (observed during integration testing). 1800 leaves headroom.
-          maxOutputTokens: 1800,
+          // 9 short lines (~150 visible tokens). Gemini flash doesn't burn the
+          // 800-1500 reasoning tokens DeepSeek did, so 700 is generous — and a
+          // low cap matters: OpenRouter rejects calls whose max_tokens exceed
+          // the affordable balance ("requires more credits, or fewer
+          // max_tokens"), which is exactly how extraction silently died for 2
+          // days when credits ran low (2026-07-13 Anker incident).
+          maxOutputTokens: 700,
           context: { source: "trigger:extract-booking-times", tag: "extract-booking-times" },
         });
         if (gated.skipped) {
@@ -255,6 +261,8 @@ export const extractBookingTimesTask = schedules.task({
         }
         extracted = parseResponse(gated.result.text);
       } catch (err) {
+        llmErrors++;
+        if (!firstLlmError) firstLlmError = String(err);
         logger.error("extract-booking-times: LLM failed", {
           reservation_id: c.id,
           err: String(err),
@@ -302,13 +310,30 @@ export const extractBookingTimesTask = schedules.task({
       processed++;
     }
 
+    // Systemic-failure alarm (2026-07-13): when EVERY attempted extraction
+    // dies at the LLM step (e.g. OpenRouter out of credits, provider pin
+    // rejecting), booking times silently stop flowing to the calendar — the
+    // Anker return-Monday incident went unnoticed for 2 days. Tell Daniel
+    // directly instead of only logging.
+    if (llmErrors >= 3 && updated === 0) {
+      try {
+        await sendOperatorMessage(
+          `⚠️ Booking-time extraction failing: ${llmErrors} LLM errors, 0 extracted this run.\n` +
+            `Calendar times will go stale until fixed.\nFirst error: ${String(firstLlmError).slice(0, 300)}`,
+        );
+      } catch (alertErr) {
+        logger.warn("extract-booking-times: telegram alert failed", { err: String(alertErr) });
+      }
+    }
+
     logger.info("extract-booking-times: done", {
       runId: ctx.run.id,
       processed,
       updated,
       skipped,
+      llmErrors,
       candidates: candidates.length,
     });
-    return { ok: true, processed, updated, skipped };
+    return { ok: true, processed, updated, skipped, llmErrors };
   },
 });

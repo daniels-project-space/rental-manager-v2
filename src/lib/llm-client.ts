@@ -89,6 +89,43 @@ export async function getLlmModel() {
   });
 }
 
+/**
+ * Booking-time extractor model (2026-07-13). Was getLlmModel() (DeepSeek-v4-
+ * flash, provider-pinned): the pin intermittently returns "no allowed
+ * providers", DeepSeek burns 800-1500 REASONING tokens on this 9-line task
+ * (forcing maxOutputTokens 1800), and when OpenRouter credits ran low every
+ * call threw "requires more credits, or fewer max_tokens" — booking times
+ * silently stopped extracting for 2 days (the Anker return-Monday incident).
+ * Gemini flash is unpinned, cheap, and answers in ~150 output tokens.
+ */
+export async function getExtractorModel() {
+  if (provider() === "xai") {
+    const xai = await getXai();
+    return xai(GROK_CHAT_MODEL);
+  }
+  // FREE-tier Groq FIRST (Daniel: no paid API for this). The Groq key already
+  // lives in the vault (groq/GROQ_API_KEY, rental-bot-v2 scope) and its
+  // OpenAI-compatible endpoint speaks the same wire format the OpenRouter
+  // provider emits, so no new SDK dependency. OpenRouter (paid balance) is
+  // only the fallback when the Groq key is unavailable.
+  try {
+    const groq = await getGroq();
+    return groq(process.env.EXTRACTOR_MODEL ?? "llama-3.3-70b-versatile");
+  } catch {
+    const openrouter = await getOpenRouter();
+    return openrouter("meta-llama/llama-3.3-70b-instruct");
+  }
+}
+
+let _groq: ReturnType<typeof createOpenRouter> | null = null;
+async function getGroq(): Promise<ReturnType<typeof createOpenRouter>> {
+  if (_groq) return _groq;
+  const apiKey =
+    process.env.GROQ_API_KEY ?? (await getVaultSecret("groq", "GROQ_API_KEY"));
+  _groq = createOpenRouter({ apiKey, baseURL: "https://api.groq.com/openai/v1" });
+  return _groq;
+}
+
 /** Haiku 4.5 (Anthropic — its own provider, so the deepseek provider pin does
  *  NOT apply) for the agentic renter bot, matching the live convex draft path.
  *  The old getLlmModel() deepseek pin currently returns "no allowed providers". */
