@@ -16,8 +16,9 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { readWidgetMv } from "./lib/widget_mv";
+import { exactListingProductIds } from "./lib/draft_listing_grounding";
 import { bookedUnitsOnDate } from "./lib/availability";
 import {
   reservationItemUnits,
@@ -1261,12 +1262,22 @@ export const getThreadContext = internalQuery({
     // alternative in ANY category (audio/monitor/power/light/…), not just cameras.
     const owned_inventory: Record<string, string[]> = {};
     // line items with a product_id, from reservation OR inquiry listing.
-    const lineItems: { name?: string | null; product_id?: number | null }[] =
+    const lineItems: {
+      name?: string | null;
+      product_id?: number | null;
+      product_id_exact: boolean;
+    }[] =
       reservation
-        ? (reservation.hygglo_items ?? []).map((h) => ({ name: h.name, product_id: h.product_id }))
+        ? (reservation.hygglo_items ?? []).map((h) => ({
+            name: h.name,
+            product_id: h.product_id,
+            product_id_exact: typeof h.product_id === "number",
+          }))
         : (conv?.inquiry_items ?? []).map((it) => ({
             name: it.name,
             product_id: (it as { product_id?: number }).product_id,
+            product_id_exact:
+              typeof (it as { product_id?: number }).product_id === "number",
           }));
     // Lever 5 (grounding coverage): ~46% of inquiries arrive with only an item
     // NAME (no product_id), so the draft got no real listing facts and had to
@@ -1595,13 +1606,10 @@ export const getThreadContext = internalQuery({
       // Product ids in play — generateDraft fetches their REAL listing facts
       // (price + included kit + discount) to override the generic catalog.
       marketing_asks: marketingAsks,
-      listing_product_ids: [
-        ...new Set(
-          lineItems
-            .map((li) => li.product_id)
-            .filter((x): x is number => typeof x === "number"),
-        ),
-      ].slice(0, 6),
+      // Price/kit facts require the exact listing that the renter opened. A
+      // fuzzy product recovery may help availability resolution, but a
+      // similarly named single item must never price a set/bundle.
+      listing_product_ids: exactListingProductIds(lineItems).slice(0, 6),
       playbook_rules: playbook.rules,
       playbook_faqs: playbook.faqs,
       playbook_templates: playbook.templates,
@@ -1795,20 +1803,43 @@ export const persistRenterStats = internalMutation({
 // ── Post-send bookkeeping (called by sendRenterReply action) ──────
 
 /**
- * After a reply is sent live to Hygglo, flip the conversation to owner-last so
- * the tile leaves the queue immediately, and clear any cached draft. We do NOT
- * insert a synthetic owner message — the real one lands on the next poll
- * (≤15 min), avoiding a duplicate bubble; the widget shows the just-sent text
- * optimistically in the open thread in the meantime.
+ * After a reply is accepted by Hygglo, persist an optimistic owner message and
+ * flip the conversation owner-last. The next poll replaces this synthetic row
+ * with Hygglo's authoritative message (matched by thread/body/time), so chat is
+ * reactive immediately without duplicates or client-only state.
  */
 export const recordSentReply = internalMutation({
-  args: { thread_id: v.string(), account_slug: v.optional(v.string()) },
-  handler: async (ctx, { thread_id, account_slug }) => {
+  args: {
+    thread_id: v.string(),
+    account_slug: v.optional(v.string()),
+    text: v.string(),
+    message_id: v.string(),
+  },
+  handler: async (ctx, { thread_id, account_slug, text, message_id }) => {
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
     const now = Date.now();
+    const existingMessage = await ctx.db
+      .query("hygglo_messages")
+      .withIndex("by_thread_and_message", (q) =>
+        q.eq("thread_id", thread_id).eq("message_id", message_id),
+      )
+      .first();
+    if (!existingMessage) {
+      await ctx.db.insert("hygglo_messages", {
+        account_slug: account_slug ?? conv?.account_slug ?? "unknown",
+        thread_id,
+        message_id,
+        sender: "owner",
+        sender_name: "You",
+        body_text: text,
+        hygglo_sent_at: now,
+        fetched_at: now,
+        raw: "manual_send_optimistic",
+      });
+    }
     if (conv) {
       await ctx.db.patch(conv._id, {
         last_sender: "owner",
@@ -1817,16 +1848,27 @@ export const recordSentReply = internalMutation({
         ai_draft_for_message_id: undefined,
         ai_draft_generated_at: undefined,
       });
-      return { ok: true };
+    } else {
+      // Defensive: thread with no conversation row yet — create one owner-last.
+      await ctx.db.insert("conversations", {
+        thread_id,
+        account_slug,
+        last_msg_at: now,
+        last_sender: "owner",
+        created_at: now,
+      });
     }
-    // Defensive: thread with no conversation row yet — create one owner-last.
-    await ctx.db.insert("conversations", {
-      thread_id,
-      account_slug,
-      last_msg_at: now,
-      last_sender: "owner",
-      created_at: now,
-    });
+
+    const reservation = await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
+      .first();
+    if (reservation && !reservation.is_obsolete && reservation.start_date && reservation.end_date) {
+      await ctx.scheduler.runAfter(0, api.extract_booking_times.extractForReservation, {
+        reservation_id: reservation._id,
+      });
+    }
+    await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, { force: true });
     return { ok: true };
   },
 });

@@ -19,6 +19,7 @@ import {
   orderToRenter,
   orderToMessages,
   orderToConversation,
+  orderToInquiryItems,
   deriveHyggloSystemSignal,
   parseCreatedAtLabel,
 } from "../shape";
@@ -101,6 +102,11 @@ describe("orderToReservation — parity with poll-hygglo shaping", () => {
 });
 
 describe("orderToRenter / orderToMessages / orderToConversation", () => {
+  it("preserves the exact listing product id for date-less inquiry pricing", () => {
+    const inquiry = orderToInquiryItems({ ...orderDetail, rentalPeriod: {} });
+    expect(inquiry.inquiry_items?.[0].product_id).toBe(1112143);
+  });
+
   it("extracts the renter from users.otherPart", () => {
     expect(orderToRenter(orderDetail)).toEqual({
       hygglo_user_id: "13470822",

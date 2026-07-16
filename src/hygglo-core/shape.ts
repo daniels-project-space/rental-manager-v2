@@ -327,13 +327,19 @@ export function orderToReservation(
  *
  * Mirrors the item/image extraction in `orderToReservation` (INSURANCE rows
  * filtered out; image url prefers fullSizeUrl → url) but emits the minimal
- * `{ name, qty, image_url }` shape the tile needs. `image_url` is the first
+ * `{ name, qty, product_id, image_url }` shape the tile and exact listing
+ * grounding need. `image_url` is the first
  * item image (matching `photos_urls`' item-image fallback). Returns undefined
  * for both fields when no non-insurance product item carries usable data, so
  * callers can spread the result without writing empty arrays.
  */
 export function orderToInquiryItems(detail: HyggloOrderDetail): {
-  inquiry_items?: Array<{ name: string; qty: number; image_url?: string }>;
+  inquiry_items?: Array<{
+    name: string;
+    qty: number;
+    product_id?: number;
+    image_url?: string;
+  }>;
   inquiry_image_url?: string;
 } {
   const items = (detail.items ?? [])
@@ -343,6 +349,7 @@ export function orderToInquiryItems(detail: HyggloOrderDetail): {
       return {
         name: i.name ?? "Unknown item",
         qty: typeof i.qty === "number" ? i.qty : 1,
+        ...(typeof i.productId === "number" ? { product_id: i.productId } : {}),
         ...(image_url ? { image_url } : {}),
       };
     });

@@ -376,7 +376,12 @@ export interface ConversationPayload {
   // Date-less inquiry product snapshot (renter asked "is this available?"
   // without dates → no reservation row). Lets the Reply Inbox tile show the
   // listing being asked about. Populated by corePoll via orderToInquiryItems.
-  inquiry_items?: Array<{ name: string; qty: number; image_url?: string }>;
+  inquiry_items?: Array<{
+    name: string;
+    qty: number;
+    product_id?: number;
+    image_url?: string;
+  }>;
   inquiry_image_url?: string;
 }
 

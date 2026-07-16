@@ -304,14 +304,10 @@ export const generateDraft = action({
             ? `${it.name}: AVAILABLE for these dates (${it.free} of ${it.total_units} free)`
             : `${it.name}: NOT available for these dates (booked out) — do not confirm it; offer an alternative or say I'll check`,
         );
-    // Only fall back to the generic pricing_catalog when we have NO real listing
-    // price for the items in play — otherwise it blends a wrong "£34-40" in
-    // beside the authoritative "£70" from the live listing.
-    if (!listingFacts.length && c.fact_pack?.pricing?.itemPrices?.length)
-      for (const p of c.fact_pack.pricing.itemPrices)
-        facts.push(
-          `${p.name}: daily price £${p.min}${p.max !== p.min ? `–${p.max}` : ""}`,
-        );
+    // Never use generic inventory/catalog prices for a requested listing. A
+    // set and a single item can share the same keywords but have very different
+    // prices. Without an exact product-id-backed listing fact, the draft must
+    // say it will check rather than quote a number.
     if (c.fact_pack?.specs?.length)
       for (const s of c.fact_pack.specs) facts.push(`${s.name} — ${s.text}`);
     if (c.pickup_windows?.length)
@@ -361,9 +357,9 @@ export const generateDraft = action({
     // Do we have ANY item-level grounding? If not (a bare inquiry with no
     // resolved item/availability/pricing), the draft must ASK, not assert.
     const hasItemGrounding = !!(
+      listingFacts.length ||
       c.availability?.items?.length ||
-      c.fact_pack?.specs?.length ||
-      c.fact_pack?.pricing?.itemPrices?.length
+      c.fact_pack?.specs?.length
     );
     const noGroundingLine = hasItemGrounding
       ? null
@@ -654,21 +650,19 @@ export const generateDraft = action({
           ["confirmed", "ongoing", "completed"].includes(c.status ?? "")),
       unfulfillableItems: c.unfulfillable ?? undefined,
       hasItemGrounding,
-      factPack: c.fact_pack
+      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null)
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70
             // quote as valid (the generic catalog would flag it vs its £40 range).
-            pricing: {
-              ...c.fact_pack.pricing,
-              itemPrices: [
-                ...(c.fact_pack.pricing?.itemPrices ?? []),
-                ...listingFacts
-                  .filter((f) => f.daily_price != null)
-                  .map((f) => ({ name: f.name, min: f.daily_price as number, max: f.daily_price as number })),
-              ],
-            },
-            verifiedListingItem: c.fact_pack.verifiedListingItem,
-            marketingItems: c.fact_pack.marketingItems,
+            pricing: listingFacts.some((f) => f.daily_price != null)
+              ? {
+                  itemPrices: listingFacts
+                    .filter((f) => f.daily_price != null)
+                    .map((f) => ({ name: f.name, min: f.daily_price as number, max: f.daily_price as number })),
+                }
+              : undefined,
+            verifiedListingItem: c.fact_pack?.verifiedListingItem,
+            marketingItems: c.fact_pack?.marketingItems,
           }
         : undefined,
       availability: c.availability
@@ -784,6 +778,8 @@ export const sendRenterReply = action({
       await ctx.runMutation(internal.replyInbox.recordSentReply, {
         thread_id,
         account_slug,
+        text: body,
+        message_id: `manual:${crypto.randomUUID()}`,
       });
 
       // SELF-IMPROVEMENT: on every real send, hand the sent reply + the draft

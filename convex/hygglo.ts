@@ -3,6 +3,7 @@ import type { MutationCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
+import { isMatchingOptimisticOwnerMessage } from "./lib/message_reconciliation";
 import {
   queueNotificationEvents,
   type NotifEventInput,
@@ -182,6 +183,25 @@ export const upsertMessages = mutation({
         skipped++;
         continue;
       }
+      // A manual dashboard send is inserted immediately so the chat is
+      // reactive. When Hygglo returns the authoritative copy, replace the
+      // optimistic row instead of showing/persisting a duplicate bubble.
+      let reconciledOptimistic = false;
+      if (msg.sender === "owner") {
+        const recent = await ctx.db
+          .query("hygglo_messages")
+          .withIndex("by_thread", (q) => q.eq("thread_id", msg.thread_id))
+          .order("desc")
+          .take(8);
+        const sentAt = msg.hygglo_sent_at ?? msg.fetched_at;
+        const optimistic = recent.find((row) =>
+          isMatchingOptimisticOwnerMessage(row, msg.body_text, sentAt),
+        );
+        if (optimistic) {
+          await ctx.db.delete(optimistic._id);
+          reconciledOptimistic = true;
+        }
+      }
       await ctx.db.insert("hygglo_messages", {
         account_slug,
         thread_id: msg.thread_id,
@@ -194,7 +214,9 @@ export const upsertMessages = mutation({
         raw: msg.raw,
       });
       inserted++;
-      changedThreads.add(msg.thread_id);
+      // The text was already extracted when the manual-send row was inserted;
+      // replacing its transport metadata must not spend another LLM call.
+      if (!reconciledOptimistic) changedThreads.add(msg.thread_id);
       const ts = msg.hygglo_sent_at ?? msg.fetched_at;
       const prevLatest = latestByThread.get(msg.thread_id);
       if (!prevLatest || ts >= prevLatest.ts) {
@@ -1441,6 +1463,7 @@ export const upsertConversationsBatch = mutation({
             v.object({
               name: v.string(),
               qty: v.number(),
+              product_id: v.optional(v.number()),
               image_url: v.optional(v.string()),
             })
           )

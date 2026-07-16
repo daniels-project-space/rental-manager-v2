@@ -28,12 +28,13 @@ export const getMessagesForThread = internalQuery({
     const rows = await ctx.db
       .query("hygglo_messages")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
-      .collect();
-    rows.sort((a, b) => (a.hygglo_sent_at ?? a.fetched_at) - (b.hygglo_sent_at ?? b.fetched_at));
-    return rows.slice(-limit).map((m) => ({
+      .order("desc")
+      .take(limit);
+    rows.reverse();
+    return rows.map((m) => ({
       sender: m.sender,
       body_text: m.body_text,
-      hygglo_sent_at: m.hygglo_sent_at,
+      hygglo_sent_at: m.hygglo_sent_at ?? m.fetched_at,
     }));
   },
 });
@@ -205,12 +206,13 @@ export const admin_getExtractBatchInputs = query({
       const msgs = await ctx.db
         .query("hygglo_messages")
         .withIndex("by_thread", (q) => q.eq("thread_id", c.hygglo_order_id))
-        .collect();
-      msgs.sort((a, b) => (a.hygglo_sent_at ?? a.fetched_at) - (b.hygglo_sent_at ?? b.fetched_at));
-      c.messages = msgs.slice(-msgLimit).map((m) => ({
+        .order("desc")
+        .take(msgLimit);
+      msgs.reverse();
+      c.messages = msgs.map((m) => ({
         sender: m.sender,
         body_text: m.body_text,
-        hygglo_sent_at: m.hygglo_sent_at,
+        hygglo_sent_at: m.hygglo_sent_at ?? m.fetched_at,
       }));
     }
 

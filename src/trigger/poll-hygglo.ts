@@ -203,7 +203,12 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     // Date-less inquiry product snapshot (renter asked about a listing without
     // dates → no reservation). Forwarded to upsertConversationsBatch so the
     // Reply Inbox tile can show the listing being asked about.
-    inquiry_items?: Array<{ name: string; qty: number; image_url?: string }>;
+    inquiry_items?: Array<{
+      name: string;
+      qty: number;
+      product_id?: number;
+      image_url?: string;
+    }>;
     inquiry_image_url?: string;
   }>;
   currentOrderIds: string[];

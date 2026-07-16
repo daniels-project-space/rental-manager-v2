@@ -1817,7 +1817,9 @@ export function ReplyModal({
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [sentMsgs, setSentMsgs] = useState<string[]>([]);
+  // Real sends are written into hygglo_messages by recordSentReply and arrive
+  // through the reactive `thread` query. Only dry-run messages are client-only.
+  const [dryRunSentMsgs, setDryRunSentMsgs] = useState<string[]>([]);
   const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
@@ -1901,7 +1903,7 @@ export function ReplyModal({
       const r = await sendReply({ thread_id: tile.thread_id, account_slug: tile.account_slug, text: body.trim(), dryRun });
       if (r.status === "sent") {
         // Keep the chat OPEN so you can also approve/decline or keep texting.
-        setSentMsgs((p) => [...p, body.trim()]);
+        if (r.reason === "DRY_RUN") setDryRunSentMsgs((p) => [...p, body.trim()]);
         if (clearBox) setText("");
         setNote(r.reason === "DRY_RUN" ? "✓ Reply OK (test — nothing sent)" : null);
         return true;
@@ -1986,13 +1988,18 @@ export function ReplyModal({
               </button>
               <button
                 type="button"
-                onClick={onClose}
-                // Mobile: the click sometimes never lands on the tiny X (tap
-                // delay / ghost-click). Handle touchend directly and prevent the
-                // synthetic click so it fires exactly once on tap.
-                onTouchEnd={(e) => {
-                  e.preventDefault();
+                onClick={(e) => {
+                  e.stopPropagation();
                   onClose();
+                }}
+                // Close on pointer-down for touch/pen. This fires before a
+                // mobile scroll/gesture recognizer can swallow the later click.
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  if (e.pointerType !== "mouse") {
+                    e.preventDefault();
+                    onClose();
+                  }
                 }}
                 aria-label="Close"
                 style={{ touchAction: "manipulation" }}
@@ -2093,13 +2100,13 @@ export function ReplyModal({
               );
             })
           )}
-          {sentMsgs.map((s, i) => (
-            <div key={`sent-${i}`} className="flex justify-end">
+          {dryRunSentMsgs.map((s, i) => (
+            <div key={`dry-sent-${i}`} className="flex justify-end">
               <div
                 className="max-w-[78%] rounded-2xl rounded-tr-md px-3.5 py-2.5 text-[13.5px] leading-relaxed text-[#eef1f5]"
                 style={{ background: `linear-gradient(135deg, ${accent}33, ${accent}1a)` }}
               >
-                {s} <span className="text-[10px] text-[#9aa0ad] ml-1">{dryRun ? "test ✓" : "sent ✓"}</span>
+                {s} <span className="text-[10px] text-[#9aa0ad] ml-1">test ✓</span>
               </div>
             </div>
           ))}

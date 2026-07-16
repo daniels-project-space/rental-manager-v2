@@ -16,6 +16,10 @@ import { gatedGenerateText } from "../lib/gated-generate";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 import { getExtractorModel } from "../lib/llm-client";
 import { sendOperatorMessage } from "../lib/telegram";
+import {
+  hashBookingTimeTranscript,
+  transcriptHasTimeLanguage,
+} from "../lib/booking-time-transcript";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
@@ -38,11 +42,6 @@ function dateWithinTolerance(target: string | undefined, ref: string | undefined
   const r = Date.parse(ref);
   if (Number.isNaN(t) || Number.isNaN(r)) return false;
   return Math.abs(t - r) / 86400000 <= tolDays;
-}
-
-function hashTranscript(messages: Array<{ body_text: string }>): string {
-  const last = messages.map((m) => m.body_text).join("|");
-  return `${messages.length}:${last.slice(-200)}`;
 }
 
 // Static prompt body — invariant across every call so DeepSeek's auto
@@ -154,7 +153,7 @@ async function fetchBatch(limit: number): Promise<{ candidates: Candidate[] }> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       path: "extract_booking_times_q:admin_getExtractBatchInputs",
-      args: { limit, messages_per_thread: 20 },
+      args: { limit, messages_per_thread: 32 },
       format: "json",
     }),
   });
@@ -226,8 +225,17 @@ export const extractBookingTimesTask = schedules.task({
         skipped++;
         continue;
       }
-      const newHash = hashTranscript(c.messages);
+      const newHash = hashBookingTimeTranscript(c.messages);
       if (c.times_transcript_hash === newHash) {
+        // Conversation.last_msg_at may advance from send bookkeeping even if
+        // the bounded transcript is identical. Acknowledge the check once so
+        // this row does not churn in every hourly batch forever.
+        await writeTimes({ reservation_id: c.id, transcript_hash: newHash, patch: {} });
+        skipped++;
+        continue;
+      }
+      if (!transcriptHasTimeLanguage(c.messages)) {
+        await writeTimes({ reservation_id: c.id, transcript_hash: newHash, patch: {} });
         skipped++;
         continue;
       }
@@ -272,6 +280,7 @@ export const extractBookingTimesTask = schedules.task({
 
       // Cancelled flow: persist nothing (leave existing data alone).
       if (extracted.status === "CANCELLED") {
+        await writeTimes({ reservation_id: c.id, transcript_hash: newHash, patch: {} });
         skipped++;
         continue;
       }
@@ -279,8 +288,12 @@ export const extractBookingTimesTask = schedules.task({
       const patch: ExtractedTimes = {
         pickup_time: sanitizeTime(extracted.pickup_time),
         return_time: sanitizeTime(extracted.return_time),
-        pickup_method: extracted.pickup_method,
-        return_method: extracted.return_method,
+        pickup_method: ["delivery", "collection"].includes(extracted.pickup_method ?? "")
+          ? extracted.pickup_method
+          : undefined,
+        return_method: ["delivery", "collection"].includes(extracted.return_method ?? "")
+          ? extracted.return_method
+          : undefined,
       };
       // Only persist dates that are within tolerance of the rental window.
       if (dateWithinTolerance(extracted.pickup_date, c.start_date, 3)) {

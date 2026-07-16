@@ -34,6 +34,10 @@ import { api, internal } from "./_generated/api";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { getActionLlmModel } from "./item_resolver";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
+import {
+  hashBookingTimeTranscript,
+  transcriptHasTimeLanguage,
+} from "../src/lib/booking-time-transcript";
 
 /**
  * Accept any valid HH:MM. v1's hard-slot rejection was paired with an
@@ -58,11 +62,6 @@ function dateWithinTolerance(target: string | undefined, ref: string | undefined
   const r = Date.parse(ref);
   if (Number.isNaN(t) || Number.isNaN(r)) return false;
   return Math.abs(t - r) / 86400000 <= tolDays;
-}
-
-function hashTranscript(messages: Array<{ body_text: string }>): string {
-  const last = messages.map((m) => m.body_text).join("|");
-  return `${messages.length}:${last.slice(-200)}`;
 }
 
 function buildPrompt(rentalTitle: string, startDate: string, endDate: string, transcript: string): string {
@@ -177,16 +176,15 @@ export const extractForReservation = action({
 
     const messages = await ctx.runQuery(internal.extract_booking_times_q.getMessagesForThread, {
       thread_id: r.hygglo_order_id,
-      limit: 20,
+      limit: 32,
     });
     if (messages.length === 0) return { ok: false, skipped: "no messages" };
 
-    const hash = hashTranscript(messages);
+    const hash = hashBookingTimeTranscript(messages);
     if (r.times_transcript_hash === hash) return { ok: true, skipped: "fresh" };
 
     // Pre-filter: skip if no time-content
-    const joined = messages.map((m: { body_text: string }) => m.body_text).join("\n");
-    if (!/\d{1,2}\s*(am|pm|:\d{2})|\bmorning\b|\bevening\b|\bafternoon\b|\bnoon\b/i.test(joined)) {
+    if (!transcriptHasTimeLanguage(messages)) {
       // Still mark hash so we don't re-evaluate the same content.
       await ctx.runMutation(internal.extract_booking_times_q.setTimes, {
         reservation_id, transcript_hash: hash, patch: {},
