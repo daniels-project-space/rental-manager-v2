@@ -1,5 +1,8 @@
 # pnpm 11 build-script approvals. This pnpm uses the allowBuilds map (boolean values).
 # These deps legitimately need their postinstall build scripts (native binaries, etc.).
+packages:
+  - '.'
+
 allowBuilds:
   '@depot/cli': true
   '@google/genai': true
