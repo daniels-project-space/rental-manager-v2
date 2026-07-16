@@ -15,6 +15,12 @@ export const maxDuration = 120;
  * single-shot is only a fallback if this errors.
  */
 export async function POST(req: Request) {
+  const expected = process.env.TRIGGER_SECRET_KEY;
+  const authorization = req.headers.get("authorization");
+  if (!expected || authorization !== `Bearer ${expected}`) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
   let body: { thread_id?: string };
   try {
     body = await req.json();

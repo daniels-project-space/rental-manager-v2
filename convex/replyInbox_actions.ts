@@ -495,9 +495,14 @@ export const generateDraft = action({
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
+        const apiSecret = process.env.RENTER_BOT_API_SECRET;
+        if (!apiSecret) throw new Error("RENTER_BOT_API_SECRET is not configured");
         const resp = await fetch(`${base}/api/renter-bot-draft`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiSecret}`,
+          },
           body: JSON.stringify({ thread_id }),
         });
         if (resp.ok) {
