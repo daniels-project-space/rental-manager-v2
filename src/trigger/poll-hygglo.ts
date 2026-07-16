@@ -206,8 +206,12 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     inquiry_items?: Array<{ name: string; qty: number; image_url?: string }>;
     inquiry_image_url?: string;
   }>;
+  currentOrderIds: string[];
+  presenceComplete: boolean;
+  observedAt: number;
 }> {
-  const core = await corePoll(accountSlug, { fetchedAt: Date.now() });
+  const observedAt = Date.now();
+  const core = await corePoll(accountSlug, { fetchedAt: observedAt });
 
   // B4 — surface non-fatal per-filter / per-order fetch failures that corePoll
   // counted (instead of swallowing them silently). A non-zero count means this
@@ -262,6 +266,14 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
     reservations,
     renters: core.renters,
     conversations: core.conversations,
+    currentOrderIds: reservations
+      .filter((r) => r.sourceFilter === "current")
+      .map((r) => String(r.hygglo_order_id)),
+    // A detail failure can remove a current order from `reservations`, so only
+    // publish a replacement snapshot when both stages were complete.
+    presenceComplete:
+      core.meta.list_filter_errors === 0 && core.meta.detail_fetch_errors === 0,
+    observedAt,
   };
 }
 
@@ -377,7 +389,15 @@ export const pollHyggloInbox = schedules.task({
           // everything below (B) consumes unchanged. corePoll always fetches
           // detail (no skip-detail optimization), which the production soak
           // proved acceptable.
-          const { messages, reservations, renters, conversations } =
+          const {
+            messages,
+            reservations,
+            renters,
+            conversations,
+            currentOrderIds,
+            presenceComplete,
+            observedAt,
+          } =
             await scrapeAccountViaCore(account.slug);
 
           // Upsert chat messages (batched 50)
@@ -535,6 +555,22 @@ export const pollHyggloInbox = schedules.task({
             }
           }
           totalReservationsUpserted += resInserted + resUpdated;
+
+          // Return Hub freshness is tracked separately from reservation writes.
+          // Unchanged rich reservation documents are deliberately not patched,
+          // but this one skinny row records that they are still present in the
+          // authoritative Hygglo `current` bucket.
+          if (presenceComplete) {
+            await convex.mutation(api.hygglo_presence.replaceCurrentOrders, {
+              account: account.slug,
+              orderIds: currentOrderIds,
+              observedAt,
+            });
+          } else {
+            logger.warn("[poll-hygglo] keeping prior current-order presence after partial poll", {
+              account: account.slug,
+            });
+          }
 
           // Phase 18.2 — on-demand listing resolution for newly inserted reservations.
           // Calls internal.listing_resolver.resolveListing directly instead of the

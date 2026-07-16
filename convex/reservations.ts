@@ -53,6 +53,7 @@ import { renderDiscountMessage, reviewOnlyMessageFor } from "./lib/return_messag
 import { resolveReturnDiscount } from "./lib/return_discounts";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
+import { filterByCurrentOrderPresence } from "./lib/return_presence";
 
 export const getDueReturns = query({
   args: {
@@ -65,13 +66,24 @@ export const getDueReturns = query({
     // a London return time as a UTC Date was an hour off in summer (BST). Compare
     // wall-clock strings in Europe/London instead.
     const nowLondon = new Date().toLocaleString("sv-SE", { timeZone: "Europe/London" });
+    const presenceRows = accountSlug
+      ? await ctx.db
+          .query("hygglo_current_order_presence")
+          .withIndex("by_account", (q) => q.eq("account", accountSlug))
+          .collect()
+      : await ctx.db.query("hygglo_current_order_presence").collect();
+    const newestPresenceAt = presenceRows.reduce((max, row) => Math.max(max, row.observedAt), 0);
+
     if (!_bypassMv) {
       const accountKey = accountSlug ?? "all";
       const cached = await ctx.db
         .query("mv_due_returns")
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
-      if (cached) {
+      // A newer presence snapshot can add unchanged outstanding rentals that
+      // an older MV omitted. Recompute live once; the hourly refresh then
+      // catches the MV up without leaving Return Hub stale in the meantime.
+      if (cached && cached.generatedAt >= newestPresenceAt) {
         // Read-time overlay. mv_due_returns rebuilds only HOURLY, so a rental that
         // was just marked returned (status->completed) or had a case opened lingers
         // in the cached payload until the next rebuild — that was the "Return Hub
@@ -125,17 +137,12 @@ export const getDueReturns = query({
         (!r.order_step && r.end_date !== undefined && r.end_date <= today));
     let candidates = active.filter(isOut);
 
-    // v1 completed-scan parity: only gear Hygglo STILL returns in the active poll.
-    // A silently-completed rental keeps order_step frozen at RETURNED but stops
-    // being polled (last_polled_at goes stale). Keep only the most-recent poll
-    // wave — relative to maxPolled, so it survives poller cadence/pauses AND keeps
-    // genuinely long-overdue rentals Hygglo still lists (e.g. open since March)
-    // that an absolute date cutoff would wrongly hide.
-    const polledAt = (r: { last_polled_at?: number; _creationTime?: number }) =>
-      r.last_polled_at ?? r._creationTime ?? 0;
-    const maxPolled = candidates.reduce((m, r) => Math.max(m, polledAt(r)), 0);
-    const POLL_WAVE_MS = 6 * 60 * 60 * 1000;
-    if (maxPolled > 0) candidates = candidates.filter((r) => polledAt(r) >= maxPolled - POLL_WAVE_MS);
+    // Keep only orders Hygglo still returns in its authoritative `current`
+    // bucket. Do not use last_polled_at: unchanged reservation writes are
+    // intentionally skipped for Convex cost control, so that timestamp can be
+    // old while the rental remains current. Accounts without a snapshot (for
+    // example the separate web-import account) retain their existing rows.
+    candidates = filterByCurrentOrderPresence(candidates, presenceRows);
 
     // Merge contiguous same-renter / same-item bookings into ONE logical rental,
     // exactly like the calendar + active-rentals widget. An extension (e.g. Dan

@@ -63,6 +63,7 @@ import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
 import type * as http from "../http.js";
 import type * as hygglo from "../hygglo.js";
+import type * as hygglo_presence from "../hygglo_presence.js";
 import type * as hygglo_products from "../hygglo_products.js";
 import type * as inquiry_context from "../inquiry_context.js";
 import type * as insurance_claims from "../insurance_claims.js";
@@ -106,6 +107,7 @@ import type * as lib_reservations_predicates from "../lib/reservations/predicate
 import type * as lib_reservations_views from "../lib/reservations/views.js";
 import type * as lib_return_discounts from "../lib/return_discounts.js";
 import type * as lib_return_messages from "../lib/return_messages.js";
+import type * as lib_return_presence from "../lib/return_presence.js";
 import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
@@ -261,6 +263,7 @@ declare const fullApi: ApiFromModules<{
   historical_revenue: typeof historical_revenue;
   http: typeof http;
   hygglo: typeof hygglo;
+  hygglo_presence: typeof hygglo_presence;
   hygglo_products: typeof hygglo_products;
   inquiry_context: typeof inquiry_context;
   insurance_claims: typeof insurance_claims;
@@ -304,6 +307,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reservations/views": typeof lib_reservations_views;
   "lib/return_discounts": typeof lib_return_discounts;
   "lib/return_messages": typeof lib_return_messages;
+  "lib/return_presence": typeof lib_return_presence;
   "lib/revenue_attribution": typeof lib_revenue_attribution;
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;

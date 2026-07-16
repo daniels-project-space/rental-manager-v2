@@ -1281,6 +1281,18 @@ export default defineSchema({
     payload: v.any(),                     // getDueReturns return array
   }).index("by_account", ["account"]),
 
+  // Skinny presence snapshot from the last fully-successful Hygglo poll.
+  // Reservation rows intentionally skip unchanged writes to control Convex
+  // I/O, so last_polled_at is NOT a reliable indication that an unchanged
+  // order is still in Hygglo's current bucket. One small row per account keeps
+  // that ground truth without rewriting every rich reservation every 15 min.
+  // The row itself is content-skipped when membership is unchanged.
+  hygglo_current_order_presence: defineTable({
+    account: v.string(),
+    orderIds: v.array(v.string()),
+    observedAt: v.number(),
+  }).index("by_account", ["account"]),
+
   // Phase 6c (2026-05-24) — item ROI ranking, refreshed daily by
   // master.refreshSlow. Single "all" row holding the full ranking sorted by
   // annualizedROIPct desc. ItemROIPanel + chat tool + snapshot writer
