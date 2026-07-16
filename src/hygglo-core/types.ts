@@ -139,6 +139,7 @@ export interface HyggloWriteResult {
   error?: string;
   reason?:
     | "READ_ONLY_MODE"
+    | "AUTOMATED_MESSAGE_SEND_DISABLED"
     | "RETURN_WRITES_DISABLED"
     | "MANUAL_SEND_DISABLED"
     | "MANUAL_ACTION_DISABLED";

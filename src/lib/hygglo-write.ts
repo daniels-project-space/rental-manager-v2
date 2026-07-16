@@ -40,6 +40,7 @@ export interface HyggloWriteResult {
   /** Set when status === 'skipped'. */
   reason?:
     | "READ_ONLY_MODE"
+    | "AUTOMATED_MESSAGE_SEND_DISABLED"
     | "RETURN_WRITES_DISABLED"
     | "MANUAL_SEND_DISABLED"
     | "MANUAL_ACTION_DISABLED";
@@ -371,17 +372,12 @@ export async function sendMessage(args: {
   conversationId: string;
   text: string;
 }): Promise<HyggloWriteResult> {
-  if (!writesAllowed()) return skipResult();
-  try {
-    return await patchOrderAction({
-      accountSlug: args.accountSlug,
-      hyggloOrderId: args.conversationId,
-      action: "chat",
-      data: { message: args.text },
-    });
-  } catch (err) {
-    return { status: "failed", error: (err as Error).message };
-  }
+  // Permanent product invariant: generated/automated renter messages are
+  // drafts only. There is deliberately no environment variable that can lift
+  // this guard. The only live chat path is sendManualRenterMessage below,
+  // called after the operator deliberately presses Send in Quick Reply.
+  void args;
+  return { status: "skipped", reason: "AUTOMATED_MESSAGE_SEND_DISABLED" };
 }
 
 /**

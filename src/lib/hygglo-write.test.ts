@@ -1,8 +1,8 @@
 /**
  * Phase 4 — gate-airtightness tests for the Hygglo REST write chokepoint.
  *
- * GOAL: prove that NO live PATCH can leave the process unless writes are
- * explicitly allowed, and that when they ARE allowed the wire shape (method /
+ * GOAL: prove that NO operator order-edit PATCH can leave the process unless
+ * the deliberate-action gate is explicitly allowed, and that when it is allowed the wire shape (method /
  * path / body) exactly matches the verified Hygglo dispatcher schema.
  *
  * Strategy:
@@ -13,8 +13,7 @@
  *     BEFORE a request object is ever constructed.
  *   - Action verbs are pinned to the values read out of the 422 union-probe
  *     (`/home/ubuntu/hygglo-probe/out/disp_real_*.json`):
- *       changeDates → action "selectDates" (NOT "changeDates"; that key only
- *                     exists on the order-detail `actions` capability map)
+ *       accepted-order date edit → action "changeDates"
  *       changePrice → action "changePrice"
  *       removeItem  → action "removeItem", data.itemId is a NUMBER.
  */
@@ -33,11 +32,12 @@ vi.mock("./hygglo-auth", () => ({
 }));
 
 import {
-  acceptOrder,
-  declineOrder,
+  manualApproveOrder,
+  manualDeclineOrder,
   changeOrderDates,
   changeOrderPrice,
   removeOrderItem,
+  sendMessage,
 } from "./hygglo-write";
 
 const ACCT = "leo";
@@ -61,21 +61,44 @@ function bodyOf(fetchMock: ReturnType<typeof vi.fn>, call = 0) {
 }
 
 const ORIGINAL_RO = process.env.READ_ONLY_MODE;
+const ORIGINAL_MANUAL_ACTIONS = process.env.ALLOW_MANUAL_ORDER_ACTIONS;
+const ORIGINAL_AUTO_SEND = process.env.ALLOW_HYGGLO_SEND;
 
-beforeEach(() => {
-  vi.restoreAllMocks();
-});
+beforeEach(() => { vi.restoreAllMocks(); });
 afterEach(() => {
   if (ORIGINAL_RO === undefined) delete process.env.READ_ONLY_MODE;
   else process.env.READ_ONLY_MODE = ORIGINAL_RO;
+  if (ORIGINAL_MANUAL_ACTIONS === undefined) delete process.env.ALLOW_MANUAL_ORDER_ACTIONS;
+  else process.env.ALLOW_MANUAL_ORDER_ACTIONS = ORIGINAL_MANUAL_ACTIONS;
+  if (ORIGINAL_AUTO_SEND === undefined) delete process.env.ALLOW_HYGGLO_SEND;
+  else process.env.ALLOW_HYGGLO_SEND = ORIGINAL_AUTO_SEND;
+});
+
+describe("automated renter replies are permanently draft-only", () => {
+  it("sendMessage never reaches fetch even when every legacy write gate is open", async () => {
+    delete process.env.READ_ONLY_MODE;
+    process.env.ALLOW_HYGGLO_SEND = "true";
+    const f = okFetch();
+    global.fetch = f;
+    const result = await sendMessage({
+      accountSlug: ACCT,
+      conversationId: ORDER,
+      text: "This must remain a draft",
+    });
+    expect(result).toEqual({
+      status: "skipped",
+      reason: "AUTOMATED_MESSAGE_SEND_DISABLED",
+    });
+    expect(f).not.toHaveBeenCalled();
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════
 //  (a) GATED OFF  ⇒  skipped + fetch NEVER called
 // ════════════════════════════════════════════════════════════════════════
-describe("gate airtight: READ_ONLY_MODE='true' ⇒ no fetch, skipped result", () => {
+describe("gate airtight: manual order actions disabled ⇒ no fetch", () => {
   beforeEach(() => {
-    process.env.READ_ONLY_MODE = "true";
+    process.env.ALLOW_MANUAL_ORDER_ACTIONS = "false";
   });
 
   it("changeOrderDates is skipped and never calls fetch", async () => {
@@ -87,7 +110,7 @@ describe("gate airtight: READ_ONLY_MODE='true' ⇒ no fetch, skipped result", ()
       rentalStartDate: "2026-06-10",
       rentalEndDate: "2026-06-12",
     });
-    expect(res).toEqual({ status: "skipped", reason: "READ_ONLY_MODE" });
+    expect(res).toEqual({ status: "skipped", reason: "MANUAL_ACTION_DISABLED" });
     expect(f).not.toHaveBeenCalled();
   });
 
@@ -99,7 +122,7 @@ describe("gate airtight: READ_ONLY_MODE='true' ⇒ no fetch, skipped result", ()
       hyggloOrderId: ORDER,
       price: 99,
     });
-    expect(res).toEqual({ status: "skipped", reason: "READ_ONLY_MODE" });
+    expect(res).toEqual({ status: "skipped", reason: "MANUAL_ACTION_DISABLED" });
     expect(f).not.toHaveBeenCalled();
   });
 
@@ -111,26 +134,21 @@ describe("gate airtight: READ_ONLY_MODE='true' ⇒ no fetch, skipped result", ()
       hyggloOrderId: ORDER,
       itemId: 4054569,
     });
-    expect(res).toEqual({ status: "skipped", reason: "READ_ONLY_MODE" });
+    expect(res).toEqual({ status: "skipped", reason: "MANUAL_ACTION_DISABLED" });
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("acceptOrder + declineOrder are also skipped (no fetch)", async () => {
+  it("manual approve + decline are also skipped (no fetch)", async () => {
     const f = okFetch();
     global.fetch = f;
-    const a = await acceptOrder({ accountSlug: ACCT, hyggloOrderId: ORDER });
-    const d = await declineOrder({
-      accountSlug: ACCT,
-      hyggloOrderId: ORDER,
-      reason: "no",
-    });
+    const a = await manualApproveOrder({ accountSlug: ACCT, hyggloOrderId: ORDER });
+    const d = await manualDeclineOrder({ accountSlug: ACCT, hyggloOrderId: ORDER });
     expect(a.status).toBe("skipped");
     expect(d.status).toBe("skipped");
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("UNSET READ_ONLY_MODE is NOT the trip-wire — but writesAllowed default still requires the env to be != 'true'", async () => {
-    // Sanity: with READ_ONLY_MODE explicitly 'true', no number of calls leaks.
+  it("no number of calls bypasses the dedicated operator gate", async () => {
     const f = okFetch();
     global.fetch = f;
     await changeOrderDates({ accountSlug: ACCT, hyggloOrderId: ORDER, rentalStartDate: "a", rentalEndDate: "b" });
@@ -143,12 +161,12 @@ describe("gate airtight: READ_ONLY_MODE='true' ⇒ no fetch, skipped result", ()
 // ════════════════════════════════════════════════════════════════════════
 //  (b) WRITES ALLOWED  ⇒  exact method / path / body
 // ════════════════════════════════════════════════════════════════════════
-describe("when writes allowed (READ_ONLY_MODE unset) ⇒ exact wire shape", () => {
+describe("when manual order actions are allowed ⇒ exact wire shape", () => {
   beforeEach(() => {
-    delete process.env.READ_ONLY_MODE;
+    process.env.ALLOW_MANUAL_ORDER_ACTIONS = "true";
   });
 
-  it("changeOrderDates → PATCH selectDates {rentalStartDate,rentalEndDate}", async () => {
+  it("changeOrderDates → PATCH changeDates {rentalStartDate,rentalEndDate}", async () => {
     const f = okFetch() as unknown as ReturnType<typeof vi.fn>;
     global.fetch = f as unknown as typeof fetch;
     const res = await changeOrderDates({
@@ -163,7 +181,7 @@ describe("when writes allowed (READ_ONLY_MODE unset) ⇒ exact wire shape", () =
     expect(url).toBe(EXPECTED_PATH);
     expect(init.method).toBe("PATCH");
     expect(bodyOf(f)).toEqual({
-      action: "selectDates",
+      action: "changeDates",
       data: { rentalStartDate: "2026-06-10", rentalEndDate: "2026-06-12" },
     });
     const headers = init.headers as Record<string, string>;

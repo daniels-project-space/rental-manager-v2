@@ -130,7 +130,9 @@ export const getHealthReport = query({
       syncStatus: pollerLive ? "live" : "stale",
       pollAgeMinutes,
       // Outbound-write permission, kept separate from ingest health.
-      sendMode: settings?.ALLOW_HYGGLO_SEND ? "live" : "read_only",
+      // Automated renter replies are a permanent draft-only invariant. Manual
+      // Quick Reply sending has its own deliberate-click gate and is not this.
+      sendMode: "draft_only",
       readOnlyMode: settings?.read_only_mode ?? true,
       pollingIntervalMs: settings?.polling_interval_ms ?? null,
     };

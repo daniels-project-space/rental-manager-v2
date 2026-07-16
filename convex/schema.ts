@@ -809,7 +809,7 @@ export default defineSchema({
 
   // ── Settings singleton ───────────────────────────────────────
   settings: defineTable({
-    ALLOW_HYGGLO_SEND: v.boolean(),     // MASTER SAFETY RAIL — must stay false
+    ALLOW_HYGGLO_SEND: v.boolean(),     // LEGACY SENTINEL — permanently false; automation can only draft
     read_only_mode: v.boolean(),       // Umbrella safety flag (Phase 1.B.3): blocks send + auto_accept + decline + listing modify
     polling_interval_ms: v.number(),
     escalate_to_sonnet: v.boolean(),

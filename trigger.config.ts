@@ -1,4 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
+import { additionalPackages, aptGet, syncEnvVars } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   project: "proj_cdhxwycwcjdmxnsodsmc",
@@ -17,4 +18,15 @@ export default defineConfig({
     },
   },
   dirs: ["./src/trigger"],
+  build: {
+    external: ["@openai/codex"],
+    extensions: [
+      additionalPackages({ packages: ["@openai/codex@latest"] }),
+      aptGet({ packages: ["ca-certificates"] }),
+      syncEnvVars(() => {
+        const value = process.env.CODEX_AUTH_JSON_B64;
+        return value ? { CODEX_AUTH_JSON_B64: value } : undefined;
+      }),
+    ],
+  },
 });

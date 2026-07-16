@@ -557,7 +557,12 @@ export const find_owned_alternatives = query({
     const PSTOP = new Set(["the", "and", "for", "with", "plus", "set", "kit", "sony", "lens"]);
     const ptoks = (str: string) =>
       new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !PSTOP.has(t)));
-    const listings = await ctx.db.query("online_listings").collect();
+    // Prices and wording are account-specific. Reading every account's fat
+    // listing docs both mixed brands and dominated this tool's DB bandwidth.
+    const listings = await ctx.db
+      .query("online_listings")
+      .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
+      .collect();
     const priceFor = (name: string): number | null => {
       const q = ptoks(name);
       const qDigits = [...q].filter((t) => /^[0-9]+$/.test(t) || /mm$/.test(t));

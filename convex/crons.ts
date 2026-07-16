@@ -288,14 +288,10 @@ crons.interval(
   {},
 );
 
-// Pre-generate AI drafts for awaiting-reply threads so they're ready before the
-// box is opened (on-message pre-gen only covers new messages). 2026-06-27.
-crons.interval(
-  "pregenerate_active_drafts",
-  { minutes: 30 },
-  internal.replyInbox_actions.pregenerateActiveDrafts,
-  {},
-);
+// Removed 2026-07-16: the blanket 30-minute backfill repeatedly rebuilt ~750KB
+// of context for old threads whenever the model provider was unavailable. New
+// renter messages still schedule one draft, and Quick Reply can redraft on
+// demand, so no user-facing drafting capability is lost.
 
 // 2026-07-07 — per-account stats-drawer rows refresh (the "all" default view is
 // refreshed hourly inside mv_refresh_fast). The live compute reads ~15 tables

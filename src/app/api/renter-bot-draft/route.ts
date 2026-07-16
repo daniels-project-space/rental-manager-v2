@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import { getRenterBotAgent, getRenterBotAgentStrong, type RenterBotOutput } from "@/mastra/agents/renter_bot";
+import { runs, tasks } from "@trigger.dev/sdk/v3";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -28,6 +29,7 @@ export async function POST(req: Request) {
 
   let account_slug = "";
   let lastRenter = "";
+  let recentTranscript = "";
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rc: any = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id });
@@ -35,6 +37,9 @@ export async function POST(req: Request) {
     const msgs = (rc?.last_messages ?? []) as Array<{ sender?: string; body?: string }>;
     const r = [...msgs].reverse().find((m) => m.sender === "renter");
     lastRenter = r?.body ?? "";
+    recentTranscript = msgs
+      .map((m) => `${m.sender === "renter" ? "Renter" : "Owner"}: ${m.body ?? ""}`)
+      .join("\n");
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: "context_failed", detail: e instanceof Error ? e.message : String(e) },
@@ -219,15 +224,47 @@ export async function POST(req: Request) {
   ];
 
   try {
-    // Marketing-redirect is the hard case Haiku fumbles (admits / confirms) —
-    // run it on the stronger model. Everything else stays on Haiku.
-    const agent = marketingItems.length
-      ? await getRenterBotAgentStrong()
-      : await getRenterBotAgent();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
-    const text: string = result?.text ?? "";
     let obj: RenterBotOutput | null = null;
+    // Primary path: GPT-5.6 Luna through Codex on Daniel's ChatGPT
+    // subscription. Trigger is a trusted runner; Platform API keys are blanked
+    // inside the task so this cannot silently become metered API usage.
+    try {
+      const lunaPrompt = [
+        "You draft replies for an equipment-rental owner. Return ONLY compact JSON: {\"draft\":\"...\",\"needs_human\":false}.",
+        "Write one natural, concise renter-facing reply, normally 1-3 sentences. No email filler, internal reasoning, AI mention, or markdown.",
+        "Use only supplied facts. Never invent price, availability, included gear, dates, address, policy, stock or ownership.",
+        "Never call an unconfirmed request booked/paid/confirmed. Never refer the renter to a competitor.",
+        "If the message is a complaint, damage report, cancellation, legal threat, refund dispute, or facts are insufficient, return an empty draft with needs_human true.",
+        account_slug === "dbcinema" ? "DB Cinema voice: professional, concise, no emoji." : "Voice: warm, direct, at most one emoji.",
+        `Recent conversation:\n${recentTranscript || "(none)"}`,
+        baseMessages[0].content,
+      ].join("\n\n");
+      const handle = await tasks.trigger("rental-draft-luna", { prompt: lunaPrompt });
+      const run = await runs.poll(handle.id, { pollIntervalMs: 500 });
+      if (run.isSuccess && run.output) {
+        const out = run.output as { draft?: string; needs_human?: boolean };
+        obj = {
+          draft: out.draft ?? "",
+          needs_human: out.needs_human === true,
+          intent: "GENERAL",
+          conversation_stage: "INQUIRY",
+          red_flags: [],
+          factsClaimed: [],
+        } as RenterBotOutput;
+      }
+    } catch {
+      // Preserve the existing agentic path as a resilience fallback.
+    }
+
+    if (!obj) {
+      // Marketing-redirect is the hard case the small fallback model fumbles —
+      // keep its existing stronger route when Luna is temporarily unavailable.
+      const agent = marketingItems.length
+        ? await getRenterBotAgentStrong()
+        : await getRenterBotAgent();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
+      const text: string = result?.text ?? "";
     try {
       let js = text.trim();
       const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -237,6 +274,7 @@ export async function POST(req: Request) {
       if (a >= 0 && b > a) obj = JSON.parse(js.slice(a, b + 1)) as RenterBotOutput;
     } catch {
       obj = null;
+    }
     }
     if (!obj) {
       // Couldn't parse a decision — escalate rather than send garbage.

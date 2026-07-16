@@ -5,9 +5,10 @@ interface DrawerProps {
   onClose: () => void;
   children: React.ReactNode;
   title?: string;
+  width?: string;
 }
 
-export function Drawer({ onClose, children, title }: DrawerProps) {
+export function Drawer({ onClose, children, title, width = "min(400px, 100vw)" }: DrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,7 +41,7 @@ export function Drawer({ onClose, children, title }: DrawerProps) {
         ref={panelRef}
         className="drawer-panel h-full overflow-y-auto flex flex-col"
         style={{
-          width: "min(400px, 100vw)",
+          width,
           background: "rgba(10,12,20,0.99)",
           borderLeft: "1px solid rgba(255,255,255,0.1)",
         }}

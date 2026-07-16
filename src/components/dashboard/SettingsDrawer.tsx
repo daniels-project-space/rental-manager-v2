@@ -4,6 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
 import { Drawer } from "@/components/ui/Drawer";
+import type { Id } from "../../../convex/_generated/dataModel";
 
 // New convex modules — referenced by name so `next build` typechecks against the
 // committed (lagging) _generated api (same pattern as ReplyInbox's new modules).
@@ -11,6 +12,10 @@ const listingsSyncRef = makeFunctionReference<"query">("online_listings:syncMeta
 const rescanListingsRef = makeFunctionReference<"action">("online_listings_actions:rescan");
 const lessonsListRef = makeFunctionReference<"query">("draft_learning:list");
 const lessonRemoveRef = makeFunctionReference<"mutation">("draft_learning:remove");
+const cannedListRef = makeFunctionReference<"query">("canned_responses:list");
+const cannedCreateRef = makeFunctionReference<"mutation">("canned_responses:create");
+const cannedUpdateRef = makeFunctionReference<"mutation">("canned_responses:update");
+const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remove");
 const LISTING_ACCOUNTS = [
   { slug: "leo", label: "Leo" },
   { slug: "dbcinema", label: "DB Cinema" },
@@ -432,6 +437,117 @@ interface Props {
   onClose: () => void;
 }
 
+type QuickText = {
+  _id: Id<"canned_responses">;
+  label: string;
+  symbol: string;
+  text: string;
+};
+
+/** Central editor for the three Hygglo account shortcut sets. */
+function QuickTextsEditor() {
+  const [account, setAccount] = useState<(typeof LISTING_ACCOUNTS)[number]["slug"]>("leo");
+  const rows = (useQuery(cannedListRef, { account_slug: account }) ?? []) as QuickText[];
+  const create = useMutation(cannedCreateRef);
+  const update = useMutation(cannedUpdateRef);
+  const remove = useMutation(cannedRemoveRef);
+  const [editing, setEditing] = useState<Id<"canned_responses"> | null>(null);
+  const [symbol, setSymbol] = useState("💬");
+  const [label, setLabel] = useState("");
+  const [body, setBody] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function reset() {
+    setEditing(null);
+    setSymbol("💬");
+    setLabel("");
+    setBody("");
+  }
+
+  async function save() {
+    if (!label.trim() || !body.trim()) return;
+    setSaving(true);
+    try {
+      if (editing) {
+        await update({ id: editing, symbol, label, text: body });
+      } else {
+        await create({ account_slug: account, symbol, label, text: body });
+      }
+      reset();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="py-1">
+      <div className="flex gap-1 rounded-xl bg-black/25 p-1 mb-3">
+        {LISTING_ACCOUNTS.map((a) => (
+          <button
+            key={a.slug}
+            type="button"
+            onClick={() => { setAccount(a.slug); reset(); }}
+            className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+              account === a.slug
+                ? "bg-violet-500/20 text-violet-100 ring-1 ring-violet-400/30"
+                : "text-[#8b8fa3] hover:text-[#d5d8df]"
+            }`}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        {rows.length === 0 ? (
+          <p className="text-xs text-[#6b7280] py-1">No shortcuts for this account yet.</p>
+        ) : rows.map((row) => (
+          <div key={row._id} className="flex items-start gap-2 rounded-xl border border-white/[0.08] bg-black/15 p-2.5">
+            <span className="text-lg leading-none pt-0.5">{row.symbol}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-[#e8eaf0]">{row.label}</p>
+              <p className="text-[11px] leading-snug text-[#8f96a3] line-clamp-2">{row.text}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setEditing(row._id); setSymbol(row.symbol); setLabel(row.label); setBody(row.text); }}
+              className="text-[11px] rounded-md bg-white/[0.06] px-2 py-1 text-[#cbd5e1] hover:bg-white/[0.11]"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${row.label}`}
+              onClick={() => { if (confirm(`Delete “${row.label}” for this account?`)) void remove({ id: row._id }); }}
+              className="text-sm leading-none px-1 py-1 text-[#6f7581] hover:text-rose-300"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 rounded-xl border border-violet-400/15 bg-violet-500/[0.04] p-3 space-y-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200/75">
+          {editing ? "Edit shortcut" : "New shortcut"}
+        </p>
+        <div className="flex gap-2">
+          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-14 rounded-lg px-2 py-2 text-center" style={INPUT_STYLE} aria-label="Shortcut icon" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Bank details" className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm" style={INPUT_STYLE} />
+        </div>
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} placeholder="Text pasted into Quick Reply…" className="w-full resize-y rounded-lg px-3 py-2 text-sm" style={INPUT_STYLE} />
+        <div className="flex items-center gap-2">
+          <p className="text-[10px] leading-snug text-[#737987]">Pastes into the composer. It never sends automatically.</p>
+          {editing && <button type="button" onClick={reset} className="ml-auto text-xs text-[#8b8fa3]">Cancel</button>}
+          <button type="button" disabled={saving || !label.trim() || !body.trim()} onClick={save} className={`${editing ? "" : "ml-auto "}rounded-lg bg-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-100 ring-1 ring-violet-400/25 disabled:opacity-40`}>
+            {saving ? "Saving…" : editing ? "Save" : "Add shortcut"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Online-listings rescan — refresh the cached listing set the Reply-Inbox
  * "Add items" picker searches. Run it after adding new listings on Hygglo.
@@ -638,6 +754,35 @@ function AppleCalendarSection() {
   );
 }
 
+function SettingsSection({
+  id,
+  eyebrow,
+  title,
+  description,
+  children,
+  tone = "neutral",
+}: {
+  id: string;
+  eyebrow: string;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+  tone?: "neutral" | "safe" | "violet";
+}) {
+  const accent = tone === "safe" ? "#34d399" : tone === "violet" ? "#a78bfa" : "#7f8795";
+  return (
+    <section
+      id={id}
+      className="scroll-mt-20 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_16px_45px_-35px_rgba(0,0,0,0.9)]"
+    >
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: accent }}>{eyebrow}</p>
+      <h2 className="mt-1 text-[15px] font-semibold text-[#f0f2f6]">{title}</h2>
+      {description && <p className="mt-1 text-xs leading-relaxed text-[#858c99]">{description}</p>}
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
 export function SettingsDrawer({ onClose }: Props) {
   const settings = useQuery(api.settings.get);
   const updateSettings = useMutation(api.settings.update);
@@ -685,15 +830,30 @@ export function SettingsDrawer({ onClose }: Props) {
 
   if (settings == null) {
     return (
-      <Drawer onClose={onClose} title="Settings">
+      <Drawer onClose={onClose} title="Master settings" width="min(480px, 100vw)">
         <p className="text-sm text-[#8b8fa3]">Loading...</p>
       </Drawer>
     );
   }
 
   return (
-    <Drawer onClose={onClose} title="Settings">
-      <div className="space-y-1">
+    <Drawer onClose={onClose} title="Master settings" width="min(480px, 100vw)">
+      <div className="space-y-3 pb-8">
+        <div className="rounded-2xl border border-violet-400/15 bg-gradient-to-br from-violet-500/[0.12] via-slate-500/[0.04] to-transparent p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-lg ring-1 ring-violet-400/20">⌘</div>
+            <div>
+              <p className="text-sm font-semibold text-[#f2f3f6]">Rental operations control</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-[#9299a6]">Accounts stay separate. Shared rules and safety rails live here.</p>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-1.5 overflow-x-auto pb-0.5 text-[10px] font-medium">
+            {[["#safety","Safety"],["#quick-texts","Quick texts"],["#operations","Operations"],["#intelligence","AI drafts"]].map(([href,label]) => (
+              <a key={href} href={href} className="whitespace-nowrap rounded-full border border-white/[0.08] bg-black/15 px-2.5 py-1 text-[#aeb4bf] hover:border-violet-400/30 hover:text-white">{label}</a>
+            ))}
+          </div>
+        </div>
+
         {/* Dashboard customization — entry point for widget add/remove/reorder. */}
         <div
           className="mb-4 p-3 rounded-lg"
@@ -721,44 +881,20 @@ export function SettingsDrawer({ onClose }: Props) {
           </p>
         </div>
 
-        <div
-          className="mb-4 px-3 py-2 rounded-lg text-xs"
-          style={{
-            background: "rgba(245,158,11,0.08)",
-            border: "1px solid rgba(245,158,11,0.2)",
-            color: "#f59e0b",
-          }}
-        >
-          Safety rails active — changes below affect live Hygglo writes.
-        </div>
+        <SettingsSection id="safety" eyebrow="Protected" title="Reply safety" description="AI can prepare drafts, but cannot dispatch them. A renter message only leaves after you press Send in Quick Reply." tone="safe">
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-emerald-400/15 bg-emerald-500/[0.06] px-3 py-2.5">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]" />
+            <div><p className="text-xs font-semibold text-emerald-200">Draft-only bot enforced in code</p><p className="text-[10px] text-emerald-200/60">There is no automatic-send switch.</p></div>
+          </div>
+          <LockedToggle label="Read-only mode" value={settings.read_only_mode} dangerOff warning="WARNING: Disabling read-only mode permits non-message Hygglo operations that have their own gates. AI renter replies remain permanently draft-only. Continue?" tooltip="Umbrella rail for automated Hygglo operations; manual Quick Reply uses its own deliberate-click gate" onConfirmedChange={(next) => applyField({ read_only_mode: next })} />
+        </SettingsSection>
 
-        <LockedToggle
-          label="Read-only mode"
-          value={settings.read_only_mode}
-          dangerOff
-          warning="WARNING: Disabling read-only mode allows the system to write to Hygglo. This is a safety rail. Are you sure?"
-          tooltip="Master safety rail — blocks all Hygglo writes"
-          onConfirmedChange={(next) => applyField({ read_only_mode: next })}
-        />
+        <SettingsSection id="quick-texts" eyebrow="Per account" title="Quick Reply shortcuts" description="Add delivery, pickup, bank-detail or any other reusable text. Each of the three accounts keeps its own wording." tone="violet">
+          <QuickTextsEditor />
+        </SettingsSection>
 
-        <LockedToggle
-          label="Allow Hygglo sends"
-          value={settings.ALLOW_HYGGLO_SEND}
-          dangerOn
-          warning="DANGER: Enabling Hygglo sends allows the AI to send real messages to renters on your behalf. Are you absolutely sure?"
-          tooltip="Enables AI message dispatch — EXTRA dangerous"
-          onConfirmedChange={(next) => applyField({ ALLOW_HYGGLO_SEND: next })}
-        />
-
-        <LockedToggle
-          label="Escalate to Sonnet"
-          value={settings.escalate_to_sonnet}
-          warning=""
-          tooltip="Use Sonnet model for complex AI responses"
-          onConfirmedChange={(next) => applyField({ escalate_to_sonnet: next })}
-        />
-
-        <div className="py-3">
+        <SettingsSection id="operations" eyebrow="Live operations" title="Polling, hubs & collection" description="Controls the data refresh cadence and the real-world locations and hours used by availability and drafts.">
+        <div className="py-1">
           <label className="text-sm text-[#e4e6eb] block mb-1">Polling interval</label>
           <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
             How often to poll Hygglo (minutes, 1-60)
@@ -845,12 +981,25 @@ export function SettingsDrawer({ onClose }: Props) {
         </div>
 
         <OnlineListingsEditor />
+        </SettingsSection>
 
+        <SettingsSection id="intelligence" eyebrow="Draft intelligence" title="Rental bot knowledge" description="Model routing, learned preferences and account-specific facts shape drafts only. You remain the sender." tone="violet">
+        <LockedToggle
+          label="Use stronger model for complex drafts"
+          value={settings.escalate_to_sonnet}
+          warning=""
+          tooltip="Escalates difficult cases; the Luna subscription route remains the default once deployed"
+          onConfirmedChange={(next) => applyField({ escalate_to_sonnet: next })}
+        />
         <DraftLessonsEditor />
 
         <HardTruthsEditor />
 
+        </SettingsSection>
+
+        <SettingsSection id="returns" eyebrow="After return" title="Review & discount texts" description="Per-account wording used when you deliberately finalise a return.">
         <ReturnTextsEditor />
+        </SettingsSection>
       </div>
 
       {saveError && (

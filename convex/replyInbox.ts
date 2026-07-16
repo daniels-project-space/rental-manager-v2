@@ -318,6 +318,7 @@ type AvailCtx = {
   overrideMap: OverrideMap;
   itemQty: Map<string, number>;
   itemName: Map<string, string>;
+  itemRows: Doc<"items">[];
   includePending: boolean;
   // PERF (2026-07-12): every reservation row the confirmed/pending collects
   // already paid for, keyed by hygglo_order_id — built from the RAW collect
@@ -410,6 +411,7 @@ async function loadAvailCtx(
     ),
     itemQty,
     itemName,
+    itemRows: items,
     includePending,
     byOrderId,
   };
@@ -1272,6 +1274,10 @@ export const getThreadContext = internalQuery({
     // cached listings (deterministic token-coverage match) so those threads get
     // real price/kit/specs too. (Daniel, 2026-07-03)
     const marketingAsks: string[] = [];
+    // One shared availability snapshot supplies reservations, product mappings,
+    // overrides and items for the entire draft-context build. Previously this
+    // function collected the fat product-index and items tables again below.
+    const availCtx = await loadAvailCtx(ctx, false);
     if (slug && lineItems.some((li) => typeof li.product_id !== "number")) {
       const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
       const toks = (str: string) =>
@@ -1288,10 +1294,13 @@ export const getThreadContext = internalQuery({
       // listing the account advertises but does not stock (e.g. a "DJI Mini 5
       // Pro" with no product-index entry) must NEVER be recovered as an
       // available item, or the bot offers gear it doesn't have. (Daniel)
-      const ownedPidRows = await ctx.db.query("hygglo_product_index").collect();
       const ownedPids = new Set<number>();
-      for (const r of ownedPidRows)
-        if (r.account_slug === slug) ownedPids.add(r.product_id);
+      const prefix = `${slug}#`;
+      for (const key of availCtx.productIndex.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        const pid = Number(key.slice(prefix.length));
+        if (Number.isFinite(pid)) ownedPids.add(pid);
+      }
       const allListings = (
         await ctx.db
           .query("online_listings")
@@ -1349,7 +1358,7 @@ export const getThreadContext = internalQuery({
     try {
       // Owned inventory grouped by kind (active, real, in stock) — the source
       // for both the camera guard and offering alternatives in any category.
-      const allItems = await ctx.db.query("items").collect();
+      const allItems = availCtx.itemRows;
       for (const it of allItems) {
         if (it.status !== "active" || it.is_marketing_only || (it.qty ?? 0) <= 0) continue;
         (owned_inventory[it.kind] ??= []).push(it.name_canonical);
@@ -1362,7 +1371,6 @@ export const getThreadContext = internalQuery({
       // resolver for reservations AND inquiries: override map → product index →
       // masterItemId fallback. (The old inquiry path used only masterItemId,
       // which is null for lots of real gear, so inquiries kept "not stocked".)
-      const availCtx = await loadAvailCtx(ctx, false);
       const resolvedIds: string[] = [];
       const itemNameOf = new Map<string, string>();
       if (reservation) {

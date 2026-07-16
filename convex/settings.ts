@@ -19,8 +19,9 @@ export const get = query({
 
 /**
  * Update settings fields (partial).
- * SAFETY: throws if caller attempts to set both read_only_mode=false AND ALLOW_HYGGLO_SEND=true
- * in a single mutation — the double-unlock is unconditionally rejected.
+ * SAFETY: automated renter-message sending is permanently disabled. The
+ * legacy ALLOW_HYGGLO_SEND field may only be written false so old clients can
+ * converge safely; no settings sequence can enable it.
  */
 export const update = mutation({
   args: {
@@ -40,10 +41,9 @@ export const update = mutation({
     draft_epoch: v.optional(v.number()),
   },
   handler: async (ctx, fields) => {
-    // Double-unlock guard: refuse read_only_mode=false + ALLOW_HYGGLO_SEND=true together
-    if (fields.read_only_mode === false && fields.ALLOW_HYGGLO_SEND === true) {
+    if (fields.ALLOW_HYGGLO_SEND === true) {
       throw new Error(
-        "SAFETY_RAIL: Cannot disable read_only_mode and enable ALLOW_HYGGLO_SEND in one mutation."
+        "SAFETY_RAIL: Automated renter-message sending is permanently disabled. Use Quick Reply and press Send yourself."
       );
     }
     const existing = await ctx.db.query("settings").first();
@@ -51,7 +51,7 @@ export const update = mutation({
 
     const patch: Record<string, unknown> = {};
     if (fields.read_only_mode !== undefined) patch.read_only_mode = fields.read_only_mode;
-    if (fields.ALLOW_HYGGLO_SEND !== undefined) patch.ALLOW_HYGGLO_SEND = fields.ALLOW_HYGGLO_SEND;
+    if (fields.ALLOW_HYGGLO_SEND === false) patch.ALLOW_HYGGLO_SEND = false;
     if (fields.polling_interval_ms !== undefined) patch.polling_interval_ms = fields.polling_interval_ms;
     if (fields.escalate_to_sonnet !== undefined) patch.escalate_to_sonnet = fields.escalate_to_sonnet;
     if (fields.ai_boost_rate !== undefined) patch.ai_boost_rate = fields.ai_boost_rate;
