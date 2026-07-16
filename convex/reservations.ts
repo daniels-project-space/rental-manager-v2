@@ -859,6 +859,36 @@ export const listForReconcile = query({
   },
 });
 
+/**
+ * Lean storefront availability feed. DB Cinema refreshes availability every
+ * 15 minutes, so it must not pull the 400-day reconciliation/demand window on
+ * every cycle. Demand history continues to use listForReconcile once daily.
+ */
+export const listActiveForStorefront = query({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) => {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_account_end", (q) =>
+        q.eq("account_slug", account_slug).gte("end_date", yesterday))
+      .collect();
+    return rows.map((r) => ({
+      _id: r._id,
+      hygglo_order_id: r.hygglo_order_id,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      pickup_date: r.pickup_date,
+      return_date: r.return_date,
+      order_step: r.order_step,
+      status: r.status,
+      is_obsolete: r.is_obsolete,
+      items: r.items,
+      resolved_items: (r as { resolved_items?: Array<{ item_id: string; item_name_canonical?: string; qty?: number }> }).resolved_items,
+    }));
+  },
+});
+
 // Lookup by Hygglo order ID (used by backfill scripts and reconciliation tools)
 export const getByHygglo = query({
   args: { hygglo_order_id: v.string() },

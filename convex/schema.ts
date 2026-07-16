@@ -568,7 +568,8 @@ export default defineSchema({
     // read the ENTIRE account history via by_account_slug (~700 fat rows to
     // derive forward-looking holds). Composite index lets it scope to
     // account + recent start_date in one indexed range.
-    .index("by_account_start", ["account_slug", "start_date"]),
+    .index("by_account_start", ["account_slug", "start_date"])
+    .index("by_account_end", ["account_slug", "end_date"]),
 
   // ── Layer B (2026-05-19) — qty-drift safety net ────────────────────────
   // Nightly audit (convex/audit_qty_drift.ts) detects reservations whose
