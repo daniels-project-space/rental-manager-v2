@@ -187,12 +187,19 @@ describe("deriveHyggloSystemSignal (ported verbatim)", () => {
 
 describe("parseCreatedAtLabel (ported verbatim)", () => {
   it("parses 'DD Mon, HH:MM' labels (as in the fixture)", () => {
-    const d = parseCreatedAtLabel("30 May, 14:58");
+    const d = parseCreatedAtLabel("30 May, 14:58", new Date("2026-07-16T20:00:00Z"));
     expect(d).not.toBeNull();
-    expect(d!.getMonth()).toBe(4); // May = index 4
-    expect(d!.getDate()).toBe(30);
-    expect(d!.getHours()).toBe(14);
-    expect(d!.getMinutes()).toBe(58);
+    expect(d!.toISOString()).toBe("2026-05-30T13:58:00.000Z"); // 14:58 BST
+  });
+
+  it("parses Today/Yesterday in Europe/London rather than server UTC", () => {
+    const now = new Date("2026-07-16T20:30:00Z"); // 21:30 BST
+    expect(parseCreatedAtLabel("Today 21:21", now)?.toISOString()).toBe(
+      "2026-07-16T20:21:00.000Z",
+    );
+    expect(parseCreatedAtLabel("Yesterday 10:00", now)?.toISOString()).toBe(
+      "2026-07-15T09:00:00.000Z",
+    );
   });
 
   it("returns null for an empty / unparseable label", () => {

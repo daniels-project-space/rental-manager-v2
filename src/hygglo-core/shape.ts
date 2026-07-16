@@ -52,7 +52,59 @@ export { deriveHyggloSystemSignal } from "./signals";
  * Parse Hygglo's `createdAtLabel` (e.g. "30 May, 14:58", "Yesterday 14:58",
  * "Today 09:10") into a Date. PORTED VERBATIM from poll-hygglo.ts:parseCreatedAtLabel.
  */
-export function parseCreatedAtLabel(label: string): Date | null {
+function londonParts(date: Date): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+} {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: value("hour"),
+    minute: value("minute"),
+  };
+}
+
+/** Convert a Europe/London wall clock into the correct UTC instant (DST-safe). */
+function londonWallClockToDate(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): Date {
+  const targetWallMs = Date.UTC(year, month - 1, day, hour, minute);
+  let guessMs = targetWallMs;
+  // Two passes resolve either GMT or BST without a timezone library.
+  for (let i = 0; i < 2; i++) {
+    const shown = londonParts(new Date(guessMs));
+    const shownWallMs = Date.UTC(
+      shown.year,
+      shown.month - 1,
+      shown.day,
+      shown.hour,
+      shown.minute,
+    );
+    guessMs += targetWallMs - shownWallMs;
+  }
+  return new Date(guessMs);
+}
+
+export function parseCreatedAtLabel(label: string, now = new Date()): Date | null {
   if (!label) return null;
   const months: Record<string, number> = {
     Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
@@ -64,26 +116,37 @@ export function parseCreatedAtLabel(label: string): Date | null {
   if (match) {
     const day = parseInt(match[1], 10);
     const month = months[match[2]];
-    const now = new Date();
-    const year = now.getFullYear();
+    const nowUk = londonParts(now);
+    const year = nowUk.year;
     const hours = match[3] ? parseInt(match[3], 10) : 0;
     const minutes = match[4] ? parseInt(match[4], 10) : 0;
-    const date = new Date(year, month, day, hours, minutes);
-    if (date.getTime() > now.getTime() + 86400000) date.setFullYear(year - 1);
+    let date = londonWallClockToDate(year, month + 1, day, hours, minutes);
+    if (date.getTime() > now.getTime() + 86400000)
+      date = londonWallClockToDate(year - 1, month + 1, day, hours, minutes);
     return date;
   }
   if (label.toLowerCase().startsWith("yesterday")) {
     const t = label.match(/(\d{1,2}):(\d{2})/);
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    if (t) d.setHours(parseInt(t[1], 10), parseInt(t[2], 10), 0, 0);
-    return d;
+    const uk = londonParts(now);
+    const previous = new Date(Date.UTC(uk.year, uk.month - 1, uk.day - 1));
+    return londonWallClockToDate(
+      previous.getUTCFullYear(),
+      previous.getUTCMonth() + 1,
+      previous.getUTCDate(),
+      t ? parseInt(t[1], 10) : 0,
+      t ? parseInt(t[2], 10) : 0,
+    );
   }
   if (label.toLowerCase().startsWith("today")) {
     const t = label.match(/(\d{1,2}):(\d{2})/);
-    const d = new Date();
-    if (t) d.setHours(parseInt(t[1], 10), parseInt(t[2], 10), 0, 0);
-    return d;
+    const uk = londonParts(now);
+    return londonWallClockToDate(
+      uk.year,
+      uk.month,
+      uk.day,
+      t ? parseInt(t[1], 10) : 0,
+      t ? parseInt(t[2], 10) : 0,
+    );
   }
   return null;
 }

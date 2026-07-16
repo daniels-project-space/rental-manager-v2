@@ -166,6 +166,7 @@ export const upsertMessages = mutation({
     let inserted = 0;
     let skipped = 0;
     const changedThreads = new Set<string>();
+    const timestampCorrectedThreads = new Set<string>();
     // Reply Inbox: track the newest NEW message per thread so we can stamp the
     // conversation's last_sender / last_renter_msg_at after the insert loop.
     const latestByThread = new Map<
@@ -180,6 +181,20 @@ export const upsertMessages = mutation({
         )
         .first();
       if (existing) {
+        const correctedAt = msg.hygglo_sent_at;
+        const existingAt = existing.hygglo_sent_at;
+        // Older pollers interpreted London wall time as UTC during BST. Repair
+        // only recent rows whose parsed instant changed materially; avoid a
+        // bulk historical rewrite and its reactive invalidations.
+        if (
+          correctedAt !== undefined &&
+          existingAt !== undefined &&
+          existingAt > Date.now() - 24 * 60 * 60 * 1000 &&
+          Math.abs(existingAt - correctedAt) >= 30 * 60 * 1000
+        ) {
+          await ctx.db.patch(existing._id, { hygglo_sent_at: correctedAt });
+          timestampCorrectedThreads.add(msg.thread_id);
+        }
         skipped++;
         continue;
       }
@@ -228,6 +243,27 @@ export const upsertMessages = mutation({
           body_text: msg.body_text,
         });
       }
+    }
+
+    // A future conversation stamp makes extraction think the thread changed
+    // forever. Re-anchor only corrected/future threads to their real latest
+    // message after the targeted row repairs above.
+    for (const threadId of timestampCorrectedThreads) {
+      const conv = await ctx.db
+        .query("conversations")
+        .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
+        .first();
+      if (!conv || conv.last_msg_at <= Date.now() + 5 * 60 * 1000) continue;
+      const recent = await ctx.db
+        .query("hygglo_messages")
+        .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
+        .order("desc")
+        .take(50);
+      const realLatest = recent.reduce(
+        (max, row) => Math.max(max, row.hygglo_sent_at ?? row.fetched_at),
+        0,
+      );
+      if (realLatest > 0) await ctx.db.patch(conv._id, { last_msg_at: realLatest });
     }
 
     // Schedule a booking-time extraction for each reservation whose thread
