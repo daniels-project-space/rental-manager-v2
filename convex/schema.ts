@@ -531,6 +531,9 @@ export default defineSchema({
   })
     .index("by_account", ["account_id"])
     .index("by_status", ["status"])
+    // Return Hub + close retry: completed history is large, while the pending
+    // slice is normally only a handful of rows. Never scan every completed row.
+    .index("by_status_close_pending", ["status", "platform_close_pending"])
     .index("by_renter", ["renter_id"])
     .index("by_account_slug", ["account_slug"])
     .index("by_start_date", ["start_date"])

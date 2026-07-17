@@ -35,6 +35,10 @@ type DueReturn = {
   memberIds?: Id<"reservations">[];
   memberCount?: number;
   items?: { item_id: string; name: string; qty?: number }[];
+  platformClosePending?: boolean;
+  platformCloseAttempts?: number;
+  platformCloseError?: string | null;
+  platformReturnedAt?: number | null;
 };
 
 function Thumb({ url, name, size = 36 }: { url?: string | null; name: string; size?: number }) {
@@ -110,6 +114,14 @@ type FinalizeResult = {
   closed: "sent" | "skipped" | "failed";
   reviewed: "sent" | "skipped" | "n/a";
   messaged: "sent" | "skipped" | "n/a";
+  error?: string;
+};
+
+type RetryCloseResult = {
+  ok: boolean;
+  processed: number;
+  remaining: number;
+  closed: "sent" | "skipped" | "failed";
   error?: string;
 };
 
@@ -712,7 +724,10 @@ export function ReturnHub() {
   // finalizeReturn = markReturned (CRM save, status, reactive-query refresh that
   // drops the card) PLUS the live Hygglo close + courtesy flow. Same args object.
   const finalizeReturn = useAction(api.returns_autoclose.finalizeReturn);
+  const retryPlatformClose = useAction(api.returns_autoclose.retryPlatformClose);
   const openCase = useMutation(api.insurance_claims.openCaseFromReservation);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryFeedback, setRetryFeedback] = useState<Record<string, string>>({});
 
   async function handleReturn(p: ReturnPayload): Promise<FinalizeResult> {
     if (!active) throw new Error("No active return selected");
@@ -750,8 +765,35 @@ export function ReturnHub() {
     });
   }
 
-  const overdueCount = rows?.filter((r) => r.isOverdue).length ?? 0;
-  const todayCount = rows?.filter((r) => !r.isOverdue).length ?? 0;
+  async function handleRetryClose(row: DueReturn) {
+    const key = String(row.reservationId);
+    if (retryingId) return;
+    setRetryingId(key);
+    setRetryFeedback((current) => ({ ...current, [key]: "" }));
+    try {
+      const result = (await retryPlatformClose({
+        reservationId: row.reservationId,
+        memberIds: row.memberIds && row.memberIds.length > 1 ? row.memberIds : undefined,
+      })) as RetryCloseResult;
+      setRetryFeedback((current) => ({
+        ...current,
+        [key]: result.ok
+          ? "Hygglo close completed."
+          : result.error || `${result.remaining} close step${result.remaining === 1 ? " is" : "s are"} still pending.`,
+      }));
+    } catch (error) {
+      setRetryFeedback((current) => ({
+        ...current,
+        [key]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
+  const pendingCloseCount = rows?.filter((r) => r.platformClosePending).length ?? 0;
+  const overdueCount = rows?.filter((r) => !r.platformClosePending && r.isOverdue).length ?? 0;
+  const todayCount = rows?.filter((r) => !r.platformClosePending && !r.isOverdue).length ?? 0;
 
   return (
     <>
@@ -773,7 +815,15 @@ export function ReturnHub() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3 mb-3">
               {rows.map((r) => {
                 const accColor = accountAccent(r.accountSlug);
-                const accent = r.renter?.blacklisted ? "#ef4444" : r.isOverdue ? "#f59e0b" : accColor;
+                const accent = r.platformClosePending
+                  ? "#a78bfa"
+                  : r.renter?.blacklisted
+                    ? "#ef4444"
+                    : r.isOverdue
+                      ? "#f59e0b"
+                      : accColor;
+                const retrying = retryingId === String(r.reservationId);
+                const feedback = retryFeedback[String(r.reservationId)];
                 return (
                   <div
                     key={String(r.reservationId)}
@@ -815,11 +865,17 @@ export function ReturnHub() {
                           <span
                             className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-md whitespace-nowrap flex-shrink-0 tabular-nums"
                             style={{
-                              background: r.isOverdue ? "rgba(245,158,11,0.14)" : "rgba(255,255,255,0.05)",
-                              color: r.isOverdue ? "#fbbf24" : "#9296a6",
+                              background: r.platformClosePending
+                                ? "rgba(167,139,250,0.14)"
+                                : r.isOverdue
+                                  ? "rgba(245,158,11,0.14)"
+                                  : "rgba(255,255,255,0.05)",
+                              color: r.platformClosePending ? "#c4b5fd" : r.isOverdue ? "#fbbf24" : "#9296a6",
                             }}
                           >
-                            {r.isOverdue ? "⚠ " : ""}{r.endDate}{r.returnTime ? ` · ${r.returnTime}` : ""}
+                            {r.platformClosePending
+                              ? "Hygglo close pending"
+                              : <>{r.isOverdue ? "⚠ " : ""}{r.endDate}{r.returnTime ? ` · ${r.returnTime}` : ""}</>}
                           </span>
                         </div>
                         <div className="text-[11px] text-[#9296a6] line-clamp-2 leading-snug mt-1">{r.itemNames.join(", ")}</div>
@@ -831,9 +887,35 @@ export function ReturnHub() {
                           {!!r.renter?.note_count && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ background: "rgba(255,255,255,0.05)", color: "#9296a6" }} title={r.renter?.notes ?? ""}>📝 {r.renter.note_count}</span>
                           )}
+                          {r.platformClosePending && (
+                            <span
+                              className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md"
+                              style={{ background: "rgba(167,139,250,0.14)", color: "#c4b5fd" }}
+                            >
+                              Local return saved{r.platformReturnedAt ? " · platform returned" : ""}
+                            </span>
+                          )}
                         </div>
+                        {r.platformClosePending && (feedback || r.platformCloseError) && (
+                          <p className="text-[9.5px] leading-snug mt-1.5 line-clamp-2" style={{ color: feedback?.includes("completed") ? "#34d399" : "#fbbf24" }}>
+                            {feedback || r.platformCloseError}
+                          </p>
+                        )}
                       </div>
                     </div>
+                    {r.platformClosePending ? (
+                      <div className="mt-auto rounded-b-2xl overflow-hidden" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                        <button
+                          onClick={() => void handleRetryClose(r)}
+                          disabled={retrying}
+                          className="w-full text-[11px] font-semibold py-2.5 transition-colors disabled:opacity-55 hover:bg-[rgba(167,139,250,0.1)]"
+                          style={{ color: "#c4b5fd" }}
+                          title="Resume only the idempotent Hygglo steps already staged by your return decision"
+                        >
+                          {retrying ? "Retrying Hygglo close…" : `Retry Hygglo close${r.platformCloseAttempts ? ` · attempt ${r.platformCloseAttempts + 1}` : ""}`}
+                        </button>
+                      </div>
+                    ) : (
                     <div className="grid grid-cols-2 mt-auto rounded-b-2xl overflow-hidden" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
                       <button
                         onClick={() => setActive(r)}
@@ -850,11 +932,14 @@ export function ReturnHub() {
                         Open case
                       </button>
                     </div>
+                    )}
                   </div>
                 );
               })}
             </div>
-            <p className="text-xs text-[#8b8fa3]">{todayCount} due · {overdueCount} overdue · shows only after return time · one tap closes on Hygglo + auto 5★ + code</p>
+            <p className="text-xs text-[#8b8fa3]">
+              {todayCount} due · {overdueCount} overdue{pendingCloseCount ? ` · ${pendingCloseCount} awaiting Hygglo close` : ""} · shows only after return time
+            </p>
           </>
         )}
       </Card>

@@ -53,7 +53,12 @@ import { renderDiscountMessage, reviewOnlyMessageFor } from "./lib/return_messag
 import { resolveReturnDiscount } from "./lib/return_discounts";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
-import { filterByCurrentOrderPresence } from "./lib/return_presence";
+import {
+  filterByCurrentOrderPresence,
+  isInCurrentOrderPresence,
+  isOutstandingReturnState,
+  isPlatformClosePending,
+} from "./lib/return_presence";
 
 export const getDueReturns = query({
   args: {
@@ -61,7 +66,7 @@ export const getDueReturns = query({
     _bypassMv: v.optional(v.boolean()),
   },
   handler: async (ctx, { accountSlug, _bypassMv }) => {
-    const now = Date.now();
+    const today = TODAY();
     // London wall-clock "YYYY-MM-DD HH:MM:SS". Convex runs in UTC, so comparing
     // a London return time as a UTC Date was an hour off in summer (BST). Compare
     // wall-clock strings in Europe/London instead.
@@ -73,6 +78,21 @@ export const getDueReturns = query({
           .collect()
       : await ctx.db.query("hygglo_current_order_presence").collect();
     const newestPresenceAt = presenceRows.reduce((max, row) => Math.max(max, row.observedAt), 0);
+    // This indexed slice is intentionally read on every subscription. It is
+    // normally tiny and makes a completed-but-not-closed return reactive at
+    // once, without scanning the entire completed reservation history.
+    const pendingCloseRows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status_close_pending", (q) =>
+        q.eq("status", "completed").eq("platform_close_pending", true),
+      )
+      .collect();
+    const visiblePendingCloseRows = pendingCloseRows.filter(
+      (row) =>
+        (!accountSlug || row.account_slug === accountSlug) &&
+        isOutstandingReturnState(row, today) &&
+        isInCurrentOrderPresence(row, presenceRows),
+    );
 
     if (!_bypassMv) {
       const accountKey = accountSlug ?? "all";
@@ -93,56 +113,96 @@ export const getDueReturns = query({
         // markReturned / openCase, so Convex re-runs it instantly on close instead
         // of waiting for the hourly refresh.
         const payload = (cached.payload ?? []) as Array<
-          Record<string, unknown> & { reservationId: Id<"reservations"> }
-        >;
-        const fresh: typeof payload = [];
-        for (const row of payload) {
-          const live = await ctx.db.get(row.reservationId);
-          if (!live) continue; // reservation gone
-          const r = live as { status?: string; case_open?: boolean; is_obsolete?: boolean; order_step?: string };
-          if (r.status === "completed" || r.case_open || r.is_obsolete || r.order_step === "REVIEWED") continue;
-          // Time-aware (Daniel): only surface once the calendar return MOMENT
-          // (return date + time) has elapsed, matching the live path. Uses the
-          // row own merged return date/time.
-          const retDate = row.endDate as string | undefined;
-          const retTime = row.returnTime as string | null | undefined;
-          if (retDate) {
-            const t0 = retTime && /^[0-9][0-9]:[0-9][0-9]/.test(retTime) ? retTime : "23:59";
-            if (retDate + " " + t0 + ":00" > nowLondon) continue; // not due yet (London)
+          Record<string, unknown> & {
+            reservationId: Id<"reservations">;
+            memberIds?: Id<"reservations">[];
           }
-          fresh.push(row);
+        >;
+        const representedIds = new Set<string>();
+        for (const row of payload) {
+          representedIds.add(String(row.reservationId));
+          for (const memberId of row.memberIds ?? []) representedIds.add(String(memberId));
         }
-        return fresh;
+        // A close-pending row created before the current MV was built may never
+        // have been in its payload. In that case bypass the cache and rebuild
+        // live now; otherwise the hourly MV cadence would keep hiding it.
+        const cacheMissesPendingClose = visiblePendingCloseRows.some(
+          (row) => !representedIds.has(String(row._id)),
+        );
+        if (!cacheMissesPendingClose) {
+          const fresh: typeof payload = [];
+          for (const row of payload) {
+            const ids = Array.from(new Set([row.reservationId, ...(row.memberIds ?? [])]));
+            const liveMembers = [];
+            for (const id of ids) {
+              const live = await ctx.db.get(id);
+              if (live) liveMembers.push(live);
+            }
+            const outstandingMembers = liveMembers.filter((live) => {
+              if (!isOutstandingReturnState(live, today)) return false;
+              return isPlatformClosePending(live)
+                ? isInCurrentOrderPresence(live, presenceRows)
+                : filterByCurrentOrderPresence([live], presenceRows).length > 0;
+            });
+            if (outstandingMembers.length === 0) continue;
+            // Time-aware (Daniel): only surface once the calendar return MOMENT
+            // (return date + time) has elapsed, matching the live path. Uses the
+            // row's own merged return date/time.
+            const retDate = row.endDate as string | undefined;
+            const retTime = row.returnTime as string | null | undefined;
+            if (retDate) {
+              const t0 = retTime && /^[0-9][0-9]:[0-9][0-9]/.test(retTime) ? retTime : "23:59";
+              if (retDate + " " + t0 + ":00" > nowLondon) continue; // not due yet (London)
+            }
+            const closePendingMembers = outstandingMembers.filter(isPlatformClosePending);
+            fresh.push({
+              ...row,
+              platformClosePending: closePendingMembers.length > 0,
+              platformCloseAttempts: Math.max(
+                0,
+                ...closePendingMembers.map((member) => member.auto_close_attempts ?? 0),
+              ),
+              platformCloseError:
+                closePendingMembers.find((member) => member.auto_close_last_error)
+                  ?.auto_close_last_error ?? null,
+              platformReturnedAt:
+                closePendingMembers.find((member) => member.platform_returned_at)
+                  ?.platform_returned_at ?? null,
+            });
+          }
+          return fresh;
+        }
       }
     }
-    const today = TODAY();
-    let active = await ctx.db
-      .query("reservations")
-      .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-      .collect();
-    if (accountSlug) {
-      active = active.filter((r) => r.account_slug === accountSlug);
-    }
-    type CandRow = (typeof active)[number];
+    const confirmed = accountSlug
+      ? await ctx.db
+          .query("reservations")
+          .withIndex("by_account_status", (q) =>
+            q.eq("account_slug", accountSlug).eq("status", "confirmed"),
+          )
+          .collect()
+      : await ctx.db
+          .query("reservations")
+          .withIndex("by_status", (q) => q.eq("status", "confirmed"))
+          .collect();
+    type CandRow = (typeof confirmed)[number];
 
     // Gear that is OUT per Hygglo: DELIVERED (picked up) or RETURNED (with the
     // renter, awaiting return). REVIEWED = already back. Legacy rows without an
     // order_step fall back to "end_date has passed". Obsolete excluded.
-    const isOut = (r: CandRow) =>
-      !r.is_obsolete &&
-      !(r as { case_open?: boolean }).case_open &&
-      r.order_step !== "REVIEWED" &&
-      (r.order_step === "DELIVERED" ||
-        r.order_step === "RETURNED" ||
-        (!r.order_step && r.end_date !== undefined && r.end_date <= today));
-    let candidates = active.filter(isOut);
+    const confirmedOutstanding = confirmed.filter((row) =>
+      isOutstandingReturnState(row, today),
+    );
 
     // Keep only orders Hygglo still returns in its authoritative `current`
     // bucket. Do not use last_polled_at: unchanged reservation writes are
     // intentionally skipped for Convex cost control, so that timestamp can be
     // old while the rental remains current. Accounts without a snapshot (for
     // example the separate web-import account) retain their existing rows.
-    candidates = filterByCurrentOrderPresence(candidates, presenceRows);
+    const candidates: CandRow[] = [
+      ...filterByCurrentOrderPresence(confirmedOutstanding, presenceRows),
+      ...visiblePendingCloseRows,
+    ];
 
     // Merge contiguous same-renter / same-item bookings into ONE logical rental,
     // exactly like the calendar + active-rentals widget. An extension (e.g. Dan
@@ -258,6 +318,15 @@ export const getDueReturns = query({
         orderStep: (last as { order_step?: string }).order_step ?? null,
         imageUrl,
         images,
+        platformClosePending: members.some(isPlatformClosePending),
+        platformCloseAttempts: Math.max(
+          0,
+          ...members.map((member) => member.auto_close_attempts ?? 0),
+        ),
+        platformCloseError:
+          members.find((member) => member.auto_close_last_error)?.auto_close_last_error ?? null,
+        platformReturnedAt:
+          members.find((member) => member.platform_returned_at)?.platform_returned_at ?? null,
         renter: {
           blacklisted: t.blacklisted,
           whitelisted: t.whitelisted,
@@ -593,7 +662,9 @@ export const pendingPlatformClose = query({
   handler: async (ctx) => {
     const rows = await ctx.db
       .query("reservations")
-      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .withIndex("by_status_close_pending", (q) =>
+        q.eq("status", "completed").eq("platform_close_pending", true),
+      )
       .collect();
     return rows
       .filter((r) => {
@@ -624,8 +695,36 @@ export const markPlatformClosed = mutation({
   handler: async (ctx, { reservationId }) => {
     const r = await ctx.db.get(reservationId);
     if (!r) return { ok: false as const };
-    await ctx.db.patch(reservationId, { platform_closed_at: Date.now() });
+    await ctx.db.patch(reservationId, {
+      platform_close_pending: false,
+      platform_closed_at: Date.now(),
+      auto_close_last_error: undefined,
+    });
     return { ok: true as const };
+  },
+});
+
+/**
+ * One-time normalization for rows closed before `markPlatformClosed` began
+ * clearing the pending flag. Keeping the composite true-slice small is what
+ * makes Return Hub and close retries cheap as completed history grows.
+ */
+export const normalizeClosedPlatformPending = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status_close_pending", (q) =>
+        q.eq("status", "completed").eq("platform_close_pending", true),
+      )
+      .collect();
+    let normalized = 0;
+    for (const row of rows) {
+      if (row.platform_closed_at == null) continue;
+      await ctx.db.patch(row._id, { platform_close_pending: false });
+      normalized += 1;
+    }
+    return { scanned: rows.length, normalized };
   },
 });
 
@@ -641,7 +740,9 @@ export const pendingPlatformCloseInternal = internalQuery({
   handler: async (ctx) => {
     const rows = await ctx.db
       .query("reservations")
-      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .withIndex("by_status_close_pending", (q) =>
+        q.eq("status", "completed").eq("platform_close_pending", true),
+      )
       .collect();
     const pending = rows.filter((r) => {
       const rr = r as { platform_close_pending?: boolean; platform_closed_at?: number };

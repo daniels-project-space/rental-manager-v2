@@ -473,6 +473,74 @@ export const finalizeReturn = action({
 });
 
 /**
+ * Explicit operator retry for rows that were already marked returned locally
+ * but did not finish the idempotent Hygglo workflow. Unlike `finalizeReturn`,
+ * this never re-applies the condition/renter CRM decision. It only resumes the
+ * previously staged close/review/message steps, and every platform write remains
+ * behind the existing chokepoint gates.
+ */
+export const retryPlatformClose = action({
+  args: {
+    reservationId: v.id("reservations"),
+    memberIds: v.optional(v.array(v.id("reservations"))),
+  },
+  handler: async (
+    ctx,
+    { reservationId, memberIds },
+  ): Promise<{
+    ok: boolean;
+    processed: number;
+    remaining: number;
+    closed: CloseStepResult["closed"];
+    error?: string;
+  }> => {
+    const requested = new Set(
+      [reservationId, ...(memberIds ?? [])].map((id) => String(id)),
+    );
+    const before: PendingRow[] = await ctx.runQuery(
+      internal.reservations.pendingPlatformCloseInternal,
+      {},
+    );
+    const targets = before.filter((row) => requested.has(String(row.reservationId)));
+
+    const results: CloseStepResult[] = [];
+    for (const row of targets) {
+      const green = row.return_outcome === "smooth" || row.return_outcome === "fantastic";
+      results.push(
+        await finalizeReservationClose(ctx, {
+          reservationId: String(row.reservationId),
+          green,
+        }),
+      );
+    }
+
+    const after: PendingRow[] = await ctx.runQuery(
+      internal.reservations.pendingPlatformCloseInternal,
+      {},
+    );
+    const remaining = after.filter((row) => requested.has(String(row.reservationId))).length;
+    const closed: CloseStepResult["closed"] = results.some((result) => result.closed === "failed")
+      ? "failed"
+      : results.some((result) => result.closed === "sent")
+        ? "sent"
+        : "skipped";
+    const errors = results
+      .map((result) => result.error)
+      .filter((error): error is string => !!error);
+
+    return {
+      ok: remaining === 0 && closed !== "failed",
+      processed: targets.length,
+      remaining,
+      closed,
+      ...(remaining > 0 || errors.length > 0
+        ? { error: errors.join("; ") || "Hygglo close is still pending" }
+        : {}),
+    };
+  },
+});
+
+/**
  * MANUAL backfill batch (NOT scheduled — referenced by no cron). One-time close
  * of rentals already marked returned before the 2026-06-21 rework (e.g. James
  * 3991399). Iterates the pending feed and runs the shared helper per row, with
