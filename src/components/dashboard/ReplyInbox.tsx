@@ -1053,13 +1053,13 @@ type Canned = {
   sort: number;
 };
 
-const CANNED_ACCOUNTS = ["dbcinema", "leo", "diogo", "dbcinema_web"];
+const CANNED_ACCOUNTS = ["dbcinema", "leo", "diogo"];
 
 /** Pasted into the box (not sent) when a thread has no booking request yet. */
 const ASK_REQUEST_TEXT =
   "Whenever you're ready, just send a booking request for the dates you'd like and I'll confirm availability and the price right away 👍";
 
-/** Manage overlay — see/add/edit/delete each account's saved auto-replies. */
+/** Manage overlay — see/add/edit/delete each account's saved paste-only texts. */
 function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; onClose: () => void }) {
   const [acct, setAcct] = useState<string>(accountSlug ?? CANNED_ACCOUNTS[0]);
   const list = (useQuery(cannedListRef, { account_slug: acct }) ?? []) as Canned[];
@@ -1155,7 +1155,7 @@ function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; o
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="The message to paste + send (e.g. delivery details, location, bank info)…"
+            placeholder="Text to paste into Quick Reply (delivery, location, bank info…)"
             rows={3}
             className="w-full resize-y rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-[#eef1f5] placeholder-[#6b7280]"
           />
@@ -1879,6 +1879,14 @@ export function ReplyModal({
         setDraft(r.draft);
         setDraftConfidence(r.confidence ?? null);
         setDraftFlags(r.flags ?? []);
+      } else if (r.reason === "needs_human") {
+        setNote(
+          draft.trim()
+            ? "Luna wants your judgement here, so the previous draft stayed untouched."
+            : "Luna flagged this for your judgement. Write the reply yourself.",
+        );
+      } else if (r.reason === "subscription_unavailable") {
+        setNote("Luna is temporarily unavailable. No metered fallback was used.");
       } else setNote("Draft unavailable.");
     } catch {
       setNote("Draft failed.");

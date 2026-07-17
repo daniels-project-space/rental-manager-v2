@@ -3,6 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import { getRenterBotAgent, getRenterBotAgentStrong, type RenterBotOutput } from "@/mastra/agents/renter_bot";
 import { runs, tasks } from "@trigger.dev/sdk/v3";
+import { allowsRenterBotMeteredFallback } from "@/lib/renter-bot-policy";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -231,6 +232,9 @@ export async function POST(req: Request) {
 
   try {
     let obj: RenterBotOutput | null = null;
+    const meteredFallbackAllowed = allowsRenterBotMeteredFallback(
+      process.env.RENTER_BOT_METERED_FALLBACK,
+    );
     // Primary path: GPT-5.6 Luna through Codex on Daniel's ChatGPT
     // subscription. Trigger is a trusted runner; Platform API keys are blanked
     // inside the task so this cannot silently become metered API usage.
@@ -259,12 +263,22 @@ export async function POST(req: Request) {
         } as RenterBotOutput;
       }
     } catch {
-      // Preserve the existing agentic path as a resilience fallback.
+      // The subscription lane is fail-closed by default. A separately billed
+      // Mastra/API fallback exists only as an explicit emergency override; it
+      // must never activate silently when Luna or Trigger is unavailable.
+    }
+
+    if (!obj && !meteredFallbackAllowed) {
+      return NextResponse.json(
+        { ok: false, error: "subscription_unavailable", needs_human: true },
+        { status: 503 },
+      );
     }
 
     if (!obj) {
-      // Marketing-redirect is the hard case the small fallback model fumbles —
-      // keep its existing stronger route when Luna is temporarily unavailable.
+      // Explicit emergency-only fallback. Production defaults to subscription
+      // only; enabling this separately billed route requires a deliberate env
+      // change and never changes the draft-only / manual-send safety boundary.
       const agent = marketingItems.length
         ? await getRenterBotAgentStrong()
         : await getRenterBotAgent();

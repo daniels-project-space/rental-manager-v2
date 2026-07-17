@@ -1,8 +1,8 @@
 /**
- * Canned responses (Quick Reply, 2026-06-26) — per-account saved auto-replies
+ * Canned responses (Quick Reply, 2026-06-26) — per-account saved paste-only texts
  * (delivery text, location, bank details, …). The chat renders each as a little
- * symbol button that pastes + sends the text after a confirm; the manage overlay
- * lists/edits them. All per `account_slug`.
+ * symbol button that only pastes into the composer; Daniel still presses Send.
+ * The manage overlay lists/edits them. All per `account_slug`.
  */
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";

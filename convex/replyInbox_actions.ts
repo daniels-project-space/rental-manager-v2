@@ -51,6 +51,7 @@ export const generateDraft = action({
     draft?: string;
     confidence?: number;
     flags?: DraftFlag[];
+    reason?: "needs_human" | "subscription_unavailable";
   }> => {
     // Make sure we know the inquiry's listing before drafting — pulls the order
     // detail's items onto conv.inquiry_items (no-op if cached or a reservation
@@ -501,17 +502,23 @@ export const generateDraft = action({
           },
           body: JSON.stringify({ thread_id }),
         });
-        if (resp.ok) {
-          const j = (await resp.json()) as { draft?: string; needs_human?: boolean };
-          if (j.needs_human) return { status: "skipped" }; // bot escalated → operator writes it
-          draft = (j.draft ?? "").trim();
-          if (draft) {
-            mastraOk = true;
-            usedTools = true; // the agent grounds via its own tools — skip the self-check
-          }
+        if (!resp.ok) {
+          return { status: "skipped", reason: "subscription_unavailable" };
+        }
+        const j = (await resp.json()) as { draft?: string; needs_human?: boolean };
+        if (j.needs_human) {
+          // The subscription model deliberately declined an under-grounded or
+          // consequential reply. Keep any earlier preview untouched and tell
+          // Quick Reply this needs Daniel's judgement.
+          return { status: "skipped", reason: "needs_human" };
+        }
+        draft = (j.draft ?? "").trim();
+        if (draft) {
+          mastraOk = true;
+          usedTools = true; // the agent grounds via its own tools — skip the self-check
         }
       } catch {
-        /* Mastra unreachable → fall through to the single-shot fallback */
+        return { status: "skipped", reason: "subscription_unavailable" };
       }
     }
 
