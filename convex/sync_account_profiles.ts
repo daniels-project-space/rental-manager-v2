@@ -16,10 +16,12 @@ const CLIENT_SECRET = "lQVS05DGy9SQdAEInEPqTMK3aktEfSc7iupC7BYM4JY=";
 const COUNTRY = "GB";
 
 async function getVaultSecrets(service: string): Promise<Record<string, string>> {
+  const vaultToken = process.env.VAULT_ACCESS_TOKEN;
+  if (!vaultToken) throw new Error("VAULT_ACCESS_TOKEN is not configured");
   const res = await fetch(VAULT_URL + "/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: "secrets:listByService", args: { service }, format: "json" }),
+    body: JSON.stringify({ path: "secrets:listByService", args: { service, vaultToken }, format: "json" }),
   });
   if (!res.ok) throw new Error("vault fetch failed: " + res.status);
   const data = (await res.json()) as { value?: Array<{ keyName: string; value: string }> };

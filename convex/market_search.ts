@@ -28,12 +28,14 @@ const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
 async function getSerpApiKey(): Promise<string> {
   if (process.env.SERPAPI_KEY) return process.env.SERPAPI_KEY;
+  const vaultToken = process.env.VAULT_ACCESS_TOKEN;
+  if (!vaultToken) throw new Error("VAULT_ACCESS_TOKEN is not configured");
   const res = await fetch(VAULT_URL + "/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       path: "secrets:listByService",
-      args: { service: "serpapi" },
+      args: { service: "serpapi", vaultToken },
       format: "json",
     }),
   });

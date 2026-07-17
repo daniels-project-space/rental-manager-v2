@@ -37,10 +37,12 @@ const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 async function getVaultKey(service: string, keyName: string): Promise<string> {
   const envValue = process.env[keyName];
   if (envValue) return envValue;
+  const vaultToken = process.env.VAULT_ACCESS_TOKEN;
+  if (!vaultToken) throw new Error("VAULT_ACCESS_TOKEN is not configured");
   const res = await fetch(VAULT_URL + "/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: "secrets:listByService", args: { service }, format: "json" }),
+    body: JSON.stringify({ path: "secrets:listByService", args: { service, vaultToken }, format: "json" }),
   });
   if (!res.ok) throw new Error("vault fetch failed: " + res.status);
   const data = (await res.json()) as { value?: Array<{ keyName: string; value: string }> };

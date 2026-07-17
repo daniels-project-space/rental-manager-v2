@@ -32,17 +32,15 @@ let credsPromise: Promise<R2Creds> | null = null;
 let clientPromise: Promise<S3Client> | null = null;
 
 async function loadCredsFromVault(): Promise<R2Creds> {
-  // Uses the public `/api/query` endpoint (no auth) — same pattern as
-  // src/trigger/poll-hygglo.ts. The previous `/api/run/secrets/listByService`
-  // path required PROJECT_HUB_VAULT_KEY which is not set in prod Convex env,
-  // causing "vault r2: 400" errors from convex/snapshot_jobs.ts.
+  const vaultToken = process.env.VAULT_ACCESS_TOKEN;
+  if (!vaultToken) throw new Error("VAULT_ACCESS_TOKEN is not configured");
   // Service is "cloudflare" (not "cloudflare-r2") per project-hub vault.
   const res = await fetch(`${VAULT_URL}/api/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       path: "secrets:listByService",
-      args: { service: "cloudflare" },
+      args: { service: "cloudflare", vaultToken },
       format: "json",
     }),
   });
