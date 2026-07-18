@@ -57,7 +57,7 @@ export function isOutsidePollActiveWindow(now: Date = new Date()): boolean {
  * The normal 15-minute cadence remains limited to 08:00–23:00 London, but a
  * complete overnight blackout can hide a late-paid, next-morning rental from
  * both Active Rentals and the calendar until 08:00. Outside the active window
- * we therefore keep one top-of-hour safety poll. This adds only eight reads per
+ * we therefore keep one top-of-hour safety poll. This adds only nine reads per
  * night while bounding overnight staleness to one hour instead of nine.
  *
  * Manual invocations always run: an operator-triggered repair must not turn
