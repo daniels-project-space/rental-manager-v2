@@ -14,7 +14,7 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
-import { isOutsidePollActiveWindow } from "../lib/quiet-hours";
+import { shouldRunHyggloPoll } from "../lib/quiet-hours";
 // Phase 2 (corePoll cutover complete) — the pure hygglo-core poll assembler is
 // now the SOLE fetch+shape path. It produces the `{ messages, reservations,
 // renters, conversations }` payload arrays consumed by downstream (B) — Convex
@@ -292,8 +292,16 @@ export const pollHyggloInbox = schedules.task({
   cron: "*/15 * * * *",
   maxDuration: 120,
   retry: { maxAttempts: 2 },
-  run: async () => {
-    if (isOutsidePollActiveWindow()) {
+  run: async (payload) => {
+    // Declarative schedule payloads carry type="DECLARATIVE". A manual task
+    // trigger has no such marker and must always perform a real poll so an
+    // operator-triggered repair cannot silently become a heartbeat-only no-op.
+    const isScheduledRun =
+      typeof payload === "object" &&
+      payload !== null &&
+      "type" in payload &&
+      (payload as { type?: string }).type === "DECLARATIVE";
+    if (!shouldRunHyggloPoll(new Date(), !isScheduledRun)) {
       // Heartbeat: keep dashboard "fresh" indicator alive outside the active window.
       try {
         const hbConvex = new ConvexHttpClient(CONVEX_URL);
@@ -305,7 +313,10 @@ export const pollHyggloInbox = schedules.task({
       } catch (err) {
         console.warn("[poll-hygglo] heartbeat write failed:", err);
       }
-      logger.info("[poll-active-window] skipped", { task: "poll-hygglo-inbox" });
+      logger.info("[poll-active-window] skipped", {
+        task: "poll-hygglo-inbox",
+        overnight_mode: "hourly",
+      });
       return { skipped: true, reason: "outside_poll_active_window" };
     }
     const runStart = Date.now();
@@ -625,6 +636,32 @@ export const pollHyggloInbox = schedules.task({
                   });
                 }
               }
+            }
+
+            // The listing resolver above owns the reusable per-listing audit
+            // record. Availability, conflicts, calendar search and inventory
+            // holds consume reservations.resolved_items / expanded_items,
+            // which are written by resolve-items. A May refactor replaced the
+            // old event trigger with listing_resolver only, leaving new
+            // reservations unresolved until the small hourly backlog sweep.
+            // Restore the targeted event-driven write so both representations
+            // are populated within the same poll cycle.
+            try {
+              const handle = await tasks.trigger(
+                "resolve-items",
+                { ids: newlyInserted.map((entry) => entry.reservation_id) },
+              );
+              logger.info("[poll-hygglo] resolve-items enqueued", {
+                account: account.slug,
+                count: newlyInserted.length,
+                run_id: handle.id,
+              });
+            } catch (resolveItemsErr) {
+              logger.warn("[poll-hygglo] resolve-items enqueue failed", {
+                account: account.slug,
+                count: newlyInserted.length,
+                err: String(resolveItemsErr),
+              });
             }
           }
 

@@ -15,7 +15,7 @@ export type OverrideMap = Map<string, Array<{ item_id: string; qty: number }>>;
 /** "2x Sony FX3 …" / "2 x …" → 2 ; otherwise 1 (clamped 1..20). */
 export function parseLeadingQty(name?: string): number {
   if (!name) return 1;
-  const m = name.match(/^\s*(\d{1,2})\s*[x×]\b/i);
+  const m = name.match(/^\s*(\d{1,2})\s*(?:x\b|×)/i);
   if (m) {
     const n = parseInt(m[1], 10);
     if (n >= 1 && n <= 20) return n;

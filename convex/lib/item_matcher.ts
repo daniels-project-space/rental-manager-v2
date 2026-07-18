@@ -20,6 +20,8 @@ export const ALIASES: Record<string, string> = {
   // Brand/product abbreviations — Hygglo titles use long forms, inventory uses short
   gmaster: 'gm',
   'g master': 'gm',
+  cannon: 'canon',
+  fx3: 'fx 3',
   'cinema camera': 'camera',
   'full frame': 'ff',
   monolight: 'light',
@@ -37,6 +39,8 @@ export const ALIASES: Record<string, string> = {
   // DZO aliases
   dzofilm: 'dzo',
   'dzo film': 'dzo',
+  // Common Hygglo typo for the Mackie Thump Go model.
+  'thumb go': 'thump go',
   // DJ controller aliases
   'xdj rx2': 'rx2',
   'xdj rx3': 'rx3',
@@ -53,6 +57,10 @@ export const ALIASES: Record<string, string> = {
 export function normalizeItemName(input: string): string {
   let result = input
     .toLowerCase()
+    // Preserve both ends of focal ranges before the generic hyphen cleanup.
+    // `24-70 mm` must carry 24mm+70mm tokens so it cannot fuzzy-match a 90mm
+    // prime merely because both strings also contain Sony/GM/f2.8.
+    .replace(/(\d+)\s*-\s*(\d+)\s*mm\b/g, '$1mm $2mm')
     // Replace hyphens with spaces BEFORE stripping special chars (so "g-master" → "g master" → alias match)
     .replace(/-/g, ' ')
     .replace(/[^a-z0-9\s]/g, '')

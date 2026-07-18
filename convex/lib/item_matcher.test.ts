@@ -62,6 +62,46 @@ describe('findBestMatch', () => {
     const m = findBestMatch('Sony G Master 24-70mm f2.8 lens', MASTER_INVENTORY_KEYS);
     expect(m).toBe('Sony GM 24-70mm f2.8');
   });
+
+  it('matches the live TTArtisan 11mm listing to the owned Sony fisheye', () => {
+    const m = findBestMatch(
+      'TTArtisan Sony 11mm f/2.8 Fisheye / Ultra Wide Lens (Like Samyang / Laowa) – E-Mount Lens for Video & Photography',
+      MASTER_INVENTORY_KEYS,
+    );
+    expect(m).toBe('Sony 11mm f2.8 fisheye');
+  });
+
+  it('matches the Hygglo Thumb Go typo to the owned Mackie Thump Go', () => {
+    const m = findBestMatch(
+      'Mackie Thumb Go Portable Speakers | Battery Powered / Bluetooth / TWS / Events',
+      ['MACKIE Thump Go speaker'],
+    );
+    expect(m).toBe('MACKIE Thump Go speaker');
+  });
+
+  it('normalises cannon and blocks a Canon 16-35 listing from Sony inventory', () => {
+    const m = findBestMatch(
+      'Cannon 16-35mm f2.8 USM L II Lens | EF Mount / Full-Frame',
+      ['Canon EF 16-35mm f2.8', 'Sony GM 16-35mm f2.8'],
+    );
+    expect(m).toBe('Canon EF 16-35mm f2.8');
+  });
+
+  it('keeps spaced focal ranges distinct from a 90mm prime', () => {
+    const m = findBestMatch(
+      'Sony 24-70 mm f2.8 gmaster zoom lens',
+      ['Sony GM 24-70mm f2.8', 'Sony GM 90mm f2.8'],
+    );
+    expect(m).toBe('Sony GM 24-70mm f2.8');
+  });
+
+  it('matches the spaced FX 3 spelling with its leading quantity', () => {
+    const m = findBestMatch(
+      '2x Sony FX 3 full frame mirrorless cinema camera set',
+      ['Sony FX3'],
+    );
+    expect(m).toBe('Sony FX3');
+  });
 });
 
 describe('detectBrandMismatch', () => {

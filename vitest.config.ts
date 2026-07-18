@@ -36,6 +36,8 @@ export default defineConfig({
       "src/lib/hygglo-write.test.ts",
       "src/lib/renter-bot-policy.test.ts",
       "src/lib/booking-time-transcript.test.ts",
+      "src/lib/item-resolution.test.ts",
+      "src/lib/quiet-hours.test.ts",
       "src/trigger/hygglo-ui-action.gate.test.ts",
       "src/hygglo-core/__tests__/competitor-aggregate.test.ts",
       "src/hygglo-core/__tests__/shape.test.ts",

@@ -8,6 +8,7 @@ import { v } from "convex/values";
 import { internalQuery, internalMutation, mutation, query } from "./_generated/server";
 // Phase W3b — dual-write to reservation_vision side table.
 import { mirrorResolvedItemsToVisionTable } from "./reservation_vision";
+import { titleHash } from "./listing_cache";
 
 export const getReservationForResolve = internalQuery({
   args: { reservation_id: v.id("reservations") },
@@ -256,7 +257,9 @@ export const admin_getResolverBatchInputs = query({
       items?: Item[];
       notes?: string | null;
       resolution_input_hash?: string;
+      resolution_method?: string;
       resolved_items?: unknown;
+      hygglo_order_id?: string;
     };
     const need: Array<{
       id: string;
@@ -278,14 +281,27 @@ export const admin_getResolverBatchInputs = query({
         ? (r.items as Item[])
         : [{ item_name: (notes as string).trim() }];
       const currentHash = items.map((i) => i.item_name).sort().join("|");
-      if (r.resolved_items !== undefined && r.resolution_input_hash === currentHash) continue;
+      // Partial deterministic writes protect availability during an LLM outage
+      // but must remain eligible for later enrichment.
+      if (
+        r.resolved_items !== undefined &&
+        r.resolution_input_hash === currentHash &&
+        r.resolution_method !== "deterministic_partial"
+      ) continue;
       need.push({
         id: r._id as string,
         items,
         notes: notes ?? null,
         photos_urls: ((r as { photos_urls?: string[] }).photos_urls ?? []),
         account_slug: ((r as { account_slug?: string | null }).account_slug ?? null),
-        hygglo_listing_id: ((r as { hygglo_listing_id?: string | null }).hygglo_listing_id ?? null),
+        // Current poller rows do not persist a separate hygglo_listing_id. The
+        // order id is the stable key used by poll-hygglo's listing resolver, so
+        // use it as the primary cache identity instead of silently disabling
+        // every by-listing lookup for modern reservations.
+        hygglo_listing_id:
+          ((r as { hygglo_listing_id?: string | null }).hygglo_listing_id ??
+            r.hygglo_order_id ??
+            null),
       });
       if (need.length >= limit) break;
     }
@@ -326,10 +342,43 @@ export const admin_getResolverBatchInputs = query({
       };
     });
 
+    // Phase 18.3 — prefetch the existing title-hash cache in the same bundled
+    // query. Modern reservations have historically had hygglo_listing_id=null,
+    // so the Trigger worker's by-listing-only cache path missed hundreds of
+    // known-good prior resolutions and fell through to the LLM. Indexed reads
+    // are bounded by the resolver batch size (15). Empty historical results are
+    // omitted so an old failed attempt never counts as a successful cache hit.
+    const cacheEntries = await Promise.all(
+      sliced.map(async (r) => {
+        const hash = titleHash(r.items);
+        const row = await ctx.db
+          .query("listing_resolutions")
+          .withIndex("by_title_hash", (q) => q.eq("title_hash", hash))
+          .first();
+        if (
+          !row ||
+          row.resolved_items.length === 0 ||
+          row.resolution_method === "deterministic_partial"
+        ) return null;
+        return [
+          hash,
+          {
+            resolved_items: row.resolved_items,
+            expanded_items: row.expanded_items,
+            resolution_method: row.resolution_method,
+          },
+        ] as const;
+      }),
+    );
+    const cache_by_title_hash = Object.fromEntries(
+      cacheEntries.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+    );
+
     return {
       unresolved: sliced,
       inventory,
       bundles,
+      cache_by_title_hash,
     };
   },
 });

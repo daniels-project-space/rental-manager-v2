@@ -27,6 +27,12 @@ import { gatedGenerateObject } from "../lib/gated-generate";
 import { z } from "zod";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 import { getLlmModel } from "../lib/llm-client";
+import {
+  isLikelyMultiItemListing,
+  listingResolutionSegments,
+} from "../lib/item-resolution";
+import { findBestMatch } from "../../convex/lib/item_matcher";
+import { parseLeadingQty } from "../../convex/lib/reservations/itemUnits";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
@@ -60,6 +66,11 @@ interface BatchInputs {
   }>;
   inventory: InventoryItem[];
   bundles: Bundle[];
+  cache_by_title_hash?: Record<string, {
+    resolved_items: ResolutionResult["resolved_items"];
+    expanded_items: ResolutionResult["expanded_items"];
+    resolution_method: string;
+  }>;
 }
 
 interface ResolutionResult {
@@ -194,8 +205,6 @@ function filterInventoryByCategory(inv: InventoryItem[], title: string): Invento
 }
 
 // ── Phase 15.1: trigram pre-rank ──────────────────────────────
-const KIT_RE = /[+&]|\b(kit|bundle|combo|set)\b|×\s*\d|\b\d+x\b/i;
-
 function trigrams(s: string): Set<string> {
   const t = s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
   const out = new Set<string>();
@@ -280,15 +289,19 @@ export const resolveItemsTask = schedules.task({ // check-patterns:ok — maxDur
   cron: "0 * * * *",
   maxDuration: 180,
   run: async (payload, { ctx }) => {
-    if (isWithinUkQuietHours()) {
+    // Targeted calls are emitted by poll-hygglo for a reservation that just
+    // landed. They are part of ingestion correctness (calendar search,
+    // availability and conflict holds), not a background backfill, so do not
+    // defer them for up to 6.5 hours during the LLM quiet window.
+    const p = payload as unknown as { ids?: string[]; limit?: number } | undefined;
+    const targetIds = p?.ids;
+    if (isWithinUkQuietHours() && !(targetIds && targetIds.length > 0)) {
       logger.info("[quiet-hours] skipped", { task: "resolve-items" });
       return { skipped: true, reason: "uk_quiet_hours" };
     }
     // Accept BOTH shapes:
     //   • cron / scan-all: payload is the schedules SDK envelope, no `ids`/`limit`.
     //   • on-demand: `tasks.trigger("resolve-items", { ids: [...] })` from poll-hygglo.
-    const p = payload as unknown as { ids?: string[]; limit?: number } | undefined;
-    const targetIds = p?.ids;
     const limit = p?.limit ?? 15;
     return await runBatch(ctx.run.id, false, { ids: targetIds, limit });
   },
@@ -332,15 +345,11 @@ async function runBatch(
   // duplicate hits for kit listings co-booked by the same group.
   const inBatchByListing = new Map<string, ResolutionResult>();
   const inBatchByHash = new Map<string, ResolutionResult>();
+  const inventoryById = new Map(batch.inventory.map((item) => [item._id, item]));
 
   for (const r of batch.unresolved) {
-    // For caching and KIT detection we still build a combined display string,
-    // but resolution is now done per-listing so that N duplicate Hygglo listings
-    // of the same SKU produce qty:N (not collapsed to qty:1 by LLM dedup).
-    const combinedTitle = r.items
-      .map((i) => (i.qty && i.qty > 1 ? `${i.qty}× ${i.item_name}` : i.item_name))
-      .join("\n");
     const newHash = inputHash(r.items);
+    const titleHash = titleHashOf(r.items);
 
     // In-batch listing-id dedup.
     const listingKey =
@@ -364,12 +373,59 @@ async function runBatch(
       continue;
     }
 
+    // Title-hash fallback is the durable cache used by historical/current
+    // reservations that share the same Hygglo listing text. The old Trigger
+    // port only attempted a by-listing lookup, but modern rows carried a null
+    // hygglo_listing_id, making the 500+ known resolutions unreachable. The
+    // bundled Convex query now prefetches those hits. Rehydrate names from the
+    // current active inventory snapshot so stale display text can never leak
+    // back into reservations, and discard deleted/inactive item ids.
+    const titleCached = batch.cache_by_title_hash?.[titleHash];
+    if (titleCached) {
+      const resolvedItems = titleCached.resolved_items.flatMap((item) => {
+        const current = inventoryById.get(item.item_id);
+        return current
+          ? [{
+              ...item,
+              item_name_canonical: current.name_canonical,
+              qty: item.qty ?? 1,
+            }]
+          : [];
+      });
+      if (resolvedItems.length > 0) {
+        const expandedItems = titleCached.expanded_items.flatMap((item) => {
+          const current = inventoryById.get(item.item_id);
+          return current
+            ? [{ ...item, item_name_canonical: current.name_canonical }]
+            : [];
+        });
+        const hit: ResolutionResult = {
+          reservation_id: r.id,
+          resolved_items: resolvedItems,
+          expanded_items: expandedItems.length > 0
+            ? expandedItems
+            : resolvedItems.map((item) => ({
+                item_id: item.item_id,
+                item_name_canonical: item.item_name_canonical,
+                qty: item.qty ?? 1,
+              })),
+          method: `cache:${titleCached.resolution_method}`,
+          input_hash: newHash,
+        };
+        results.push(hit);
+        if (listingKey) inBatchByListing.set(listingKey, hit);
+        inBatchByHash.set(newHash, hit);
+        cacheHits++;
+        continue;
+      }
+    }
+
     // Phase 15.1: persistent cache lookup keyed by (account_slug, hygglo_listing_id).
     // Cache stores the FINAL per-reservation resolution result, so per-listing
     // resolution upstream is invisible at this layer — cache key unchanged.
     if (r.account_slug && r.hygglo_listing_id) {
       const cached = await lookupCache(r.account_slug, r.hygglo_listing_id);
-      if (cached) {
+      if (cached && cached.resolution_method !== "deterministic_partial") {
         const hit: ResolutionResult = {
           reservation_id: r.id,
           resolved_items: cached.resolved_items,
@@ -399,11 +455,14 @@ async function runBatch(
     }>> = [];
 
     let llmFailedAnyListing = false;
+    let usedDeterministicMatch = false;
+    let usedLlmMatch = false;
+    let usedPartialFallback = false;
     for (const listing of r.items) {
       const oneTitle = listing.qty && listing.qty > 1
         ? `${listing.qty}× ${listing.item_name}`
         : listing.item_name;
-      const isKit = KIT_RE.test(oneTitle);
+      const isKit = isLikelyMultiItemListing(oneTitle);
 
       let resolvedOne: Array<{
         item_id: string;
@@ -412,7 +471,53 @@ async function runBatch(
         qty: number;
       }> = [];
 
+      // Resolve obvious inventory phrases before touching the LLM. Kits are
+      // split only on explicit component separators; comparison-only models
+      // are removed by listingResolutionSegments. Kits still call the LLM to
+      // fill any gaps, but these deterministic matches provide a safe partial
+      // availability fallback when the provider is unavailable.
+      const deterministicById = new Map<string, {
+        item_id: string;
+        item_name_canonical: string;
+        confidence: number;
+        qty: number;
+      }>();
+      const matchPhrases = listingResolutionSegments(oneTitle).filter(
+        (phrase, index) =>
+          index === 0 ||
+          primaryBrand(phrase) !== null ||
+          /(?:^|\s)\d+\s*(?:x\b|×)|\b(?:[a-z]+\d+[a-z0-9]*|\d+(?:-\d+)?\s*mm)\b/i.test(phrase),
+      );
+      for (const phrase of matchPhrases) {
+        const deterministicName = findBestMatch(
+          phrase,
+          batch.inventory.map((item) => item.name_canonical),
+        );
+        const deterministicItem = deterministicName
+          ? batch.inventory.find((item) => item.name_canonical === deterministicName)
+          : undefined;
+        if (deterministicItem) {
+          const candidate = {
+            item_id: deterministicItem._id,
+            item_name_canonical: deterministicItem.name_canonical,
+            confidence: 1,
+            qty: listing.qty ?? parseLeadingQty(phrase),
+          };
+          const prior = deterministicById.get(candidate.item_id);
+          if (!prior || candidate.qty > prior.qty) {
+            deterministicById.set(candidate.item_id, candidate);
+          }
+          usedDeterministicMatch = true;
+        }
+      }
+      resolvedOne = Array.from(deterministicById.values());
+      if (!isKit && resolvedOne.length > 0) {
+        perListingResolved.push(resolvedOne);
+        continue;
+      }
+
       try {
+        usedLlmMatch = true;
         const gated = await gatedGenerateObject({
           model: await getLlmModel(),
           schema: RESOLUTION_SCHEMA,
@@ -435,8 +540,13 @@ async function runBatch(
         });
         if (gated.skipped) {
           logger.info("[quiet-hours] gated skip", { task: "resolve-items", reservation_id: r.id });
+          if (resolvedOne.length > 0) {
+            perListingResolved.push(resolvedOne);
+            usedPartialFallback = true;
+            continue;
+          }
           llmFailedAnyListing = true;
-          break;
+          continue;
         }
         const result = gated.result;
         const validIds = new Set(batch.inventory.map((i) => i._id));
@@ -463,7 +573,13 @@ async function runBatch(
           });
         // Collapse duplicates WITHIN this single listing only (LLM "2x ITEM"
         // → two qty:1 quirk). Cross-listing summation happens later via addExp.
-        resolvedOne = mergeDuplicateItems(rawItems).map((x) => ({
+        const llmItems = mergeDuplicateItems(rawItems).map((x) => ({
+          item_id: x.item_id,
+          item_name_canonical: x.item_name_canonical,
+          confidence: x.confidence ?? 0,
+          qty: x.qty ?? 1,
+        }));
+        resolvedOne = mergeDuplicateItems([...resolvedOne, ...llmItems]).map((x) => ({
           item_id: x.item_id,
           item_name_canonical: x.item_name_canonical,
           confidence: x.confidence ?? 0,
@@ -484,12 +600,23 @@ async function runBatch(
         }
       } catch (err) {
         logger.error("resolve-items: LLM failed", { reservation_id: r.id, err: String(err) });
+        if (resolvedOne.length > 0) {
+          perListingResolved.push(resolvedOne);
+          usedPartialFallback = true;
+          continue;
+        }
         llmFailedAnyListing = true;
-        break;
+        continue;
       }
       perListingResolved.push(resolvedOne);
     }
-    if (llmFailedAnyListing) continue;
+    if (llmFailedAnyListing) {
+      if (perListingResolved.some((items) => items.length > 0)) {
+        usedPartialFallback = true;
+      } else {
+        continue;
+      }
+    }
 
     // Flat-merge across listings — addExp sums same-item_id qty automatically.
     // Then mergeDuplicateItems on the resolved_items[] view (keeping max conf).
@@ -532,11 +659,16 @@ async function runBatch(
     }
     const resolved = Array.from(resolvedSum.values());
 
+    const resolutionMethod = usedPartialFallback
+      ? "deterministic_partial"
+      : usedDeterministicMatch
+        ? (usedLlmMatch ? "hybrid" : "deterministic")
+        : "llm";
     const llmResult: ResolutionResult = {
       reservation_id: r.id,
       resolved_items: resolved,
       expanded_items: expanded,
-      method: "llm",
+      method: resolutionMethod,
       input_hash: newHash,
     };
     results.push(llmResult);
@@ -552,7 +684,7 @@ async function runBatch(
         sample_title: r.items[0]?.item_name?.slice(0, 200) ?? "",
         resolved_items: resolved,
         expanded_items: expanded,
-        resolution_method: "llm",
+        resolution_method: resolutionMethod,
       });
     } catch (err) {
       logger.warn("resolve-items: cache write failed", { reservation_id: r.id, err: String(err) });

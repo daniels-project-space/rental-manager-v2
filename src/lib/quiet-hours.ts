@@ -50,3 +50,24 @@ export function isOutsidePollActiveWindow(now: Date = new Date()): boolean {
   const endMin   = Number(process.env.POLL_ACTIVE_END_MIN   ?? 23 * 60); // 23:00
   return mins < startMin || mins >= endMin; // outside 08:00–23:00 → skip poll
 }
+
+/**
+ * Decide whether the Hygglo poller should do a real fetch on this invocation.
+ *
+ * The normal 15-minute cadence remains limited to 08:00–23:00 London, but a
+ * complete overnight blackout can hide a late-paid, next-morning rental from
+ * both Active Rentals and the calendar until 08:00. Outside the active window
+ * we therefore keep one top-of-hour safety poll. This adds only eight reads per
+ * night while bounding overnight staleness to one hour instead of nine.
+ *
+ * Manual invocations always run: an operator-triggered repair must not turn
+ * into a successful no-op merely because it was launched outside office hours.
+ */
+export function shouldRunHyggloPoll(
+  now: Date = new Date(),
+  manual = false,
+): boolean {
+  if (manual) return true;
+  if (!isOutsidePollActiveWindow(now)) return true;
+  return londonMinutesSinceMidnight(now) % 60 === 0;
+}
