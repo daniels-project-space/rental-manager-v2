@@ -39,7 +39,18 @@ export const _getReservationForCal = internalQuery({
     const all = await ctx.db.query("reservations").withIndex("by_account_status", (q) => q.eq("account_slug", r.account_slug ?? "").eq("status", "confirmed")).collect();
     const targetKey = productKey(r);
     const same = all.filter((x: any) => !x.is_obsolete && productKey(x) === targetKey && (x.renter_id ? x.renter_id === r.renter_id : x.renter_name === r.renter_name));
-    const members = same.filter((x: any) => (x.start_date ?? "") <= (r.end_date ?? "") && (x.end_date ?? "") >= (r.start_date ?? ""));
+    const shiftDay = (date: string | undefined, days: number) => {
+      if (!date) return "";
+      const value = new Date(`${date}T00:00:00Z`);
+      value.setUTCDate(value.getUTCDate() + days);
+      return value.toISOString().slice(0, 10);
+    };
+    // Treat same-day and next-day re-bookings as one extension chain. Hygglo
+    // creates a separate order starting the day after the prior raw end date.
+    const members = same.filter((x: any) =>
+      (x.start_date ?? "") <= shiftDay(r.end_date, 1) &&
+      (x.end_date ?? "") >= shiftDay(r.start_date, -1),
+    );
     members.sort((x: any, y: any) => String(x.pickup_date ?? x.start_date).localeCompare(String(y.pickup_date ?? y.start_date)));
     const first: any = members[0] ?? r;
     const latest: any = members.reduce((best: any, x: any) => {
