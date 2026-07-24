@@ -114,6 +114,21 @@ export type CalendarComputePreload = {
 const effectiveReturnDate = displayReturnDate;
 
 /**
+ * Order two grouped reservations by their actual return moment. Hygglo records
+ * an extension as a separate order, and a same-day extension can share the
+ * original order's return date while moving only the time (e.g. 12:00 →
+ * 20:30). Comparing dates alone silently kept the older return time.
+ */
+function compareReturnMoment(
+  a: { return_date?: string; end_date?: string; return_time?: string },
+  b: { return_date?: string; end_date?: string; return_time?: string },
+): number {
+  const dateDiff = displayReturnDate(a).localeCompare(displayReturnDate(b));
+  if (dateDiff !== 0) return dateDiff;
+  return (a.return_time ?? "").localeCompare(b.return_time ?? "");
+}
+
+/**
  * 2-tier item name resolver.
  * Tier 1: exact canonical match (case-insensitive)
  * Tier 2: exact alias match (case-insensitive)
@@ -367,7 +382,7 @@ export async function computeStripLive(
         .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)));
       const startM = sorted[0];
       let endM = sorted[0];
-      for (const m of sorted) if (displayReturnDate(m) > displayReturnDate(endM)) endM = m;
+      for (const m of sorted) if (compareReturnMoment(m, endM) > 0) endM = m;
       const grossSum = members.reduce(
         (s, m) => s + ((m as { gross_paid_gbp?: number | null }).gross_paid_gbp ?? 0),
         0,
@@ -414,14 +429,14 @@ export async function computeStripLive(
         .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)));
       const startM = sorted[0];
       let endM = sorted[0];
-      for (const m of sorted) if (displayReturnDate(m) > displayReturnDate(endM)) endM = m;
+      for (const m of sorted) if (compareReturnMoment(m, endM) > 0) endM = m;
       // Confirmed handover times can live on a member other than the span
       // start/end (a grouped booking where only one order carries the negotiated
       // time). Take the earliest CONFIRMED pickup + latest CONFIRMED return so
       // the booking shows real times rather than defaulting to a member's null.
       const byReturnDesc = members
         .slice()
-        .sort((a, b) => displayReturnDate(b).localeCompare(displayReturnDate(a)));
+        .sort((a, b) => compareReturnMoment(b, a));
       const pickTime = sorted.find((m) => m.pickup_time)?.pickup_time ?? startM.pickup_time;
       const retTime = byReturnDesc.find((m) => m.return_time)?.return_time ?? endM.return_time;
       // Delivery wins so a planned delivery never gets hidden by a collection
