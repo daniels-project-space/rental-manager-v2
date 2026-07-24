@@ -211,9 +211,9 @@ export const extractForReservation = action({
         // differ depending on which path happened to run first.
         model: await getActionLlmModel({ calendarExtraction: true }),
         prompt,
-        // Reasoning model overhead — observed 800-1500 reasoning tokens
-        // on this task; 1800 leaves headroom.
-        maxOutputTokens: 1800,
+        // Nine short structured lines; Grok Fast reasoning is disabled for
+        // this extraction, so keeping this cap tight controls cost.
+        maxOutputTokens: 700,
         context: { source: "convex:extract_booking_times", tag: "extract-booking-times" },
       });
       if (gated.skipped) return { ok: true, skipped: "uk_quiet_hours" };
