@@ -683,13 +683,10 @@ function DraftLessonsEditor() {
 
 function AppleCalendarSection() {
   const status = useQuery(api.calendar_apple_db.getStatus);
-  const connect = useAction(api.calendar_apple.connectApple);
+  const connectFromVault = useAction(api.calendar_apple.connectFromVault);
   const syncAll = useAction(api.calendar_apple.syncAllConfirmed);
   const disconnectCal = useAction(api.calendar_apple.disconnect);
   const updateCal = useMutation(api.calendar_apple_db.updateCalendarSettings);
-  const [showForm, setShowForm] = useState(false);
-  const [appleId, setAppleId] = useState("");
-  const [appPw, setAppPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   if (!status) return null;
@@ -730,25 +727,16 @@ function AppleCalendarSection() {
           </div>
           {msg ? <div className="text-xs text-[#8b8fa3]">{msg}</div> : null}
         </div>
-      ) : showForm ? (
-        <div className="space-y-2">
-          <input placeholder="Apple ID (email)" value={appleId} onChange={(e) => setAppleId(e.target.value)} className="w-full text-sm rounded-lg px-3 py-2" style={INPUT_STYLE} />
-          <input placeholder="App-specific password (xxxx-xxxx-xxxx-xxxx)" value={appPw} onChange={(e) => setAppPw(e.target.value)} className="w-full text-sm rounded-lg px-3 py-2" style={INPUT_STYLE} />
-          <p className="text-[11px] text-[#8b8fa3]">
-            Generate at appleid.apple.com → Sign-In &amp; Security → App-Specific Passwords. Used only to write calendar events.
-          </p>
-          <div className="flex gap-2">
-            <button
-              disabled={busy || !appleId || !appPw}
-              onClick={async () => { setBusy(true); setMsg(null); const r = await connect({ apple_id: appleId.trim(), app_password: appPw.trim() }); setBusy(false); if (r.ok) { setShowForm(false); setAppPw(""); setMsg(`Connected to "${r.chosen}".`); } else { setMsg(r.error ?? "Connection failed"); } }}
-              className={`${BTN} bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/25 disabled:opacity-50`}
-            >{busy ? "Connecting…" : "Connect"}</button>
-            <button onClick={() => { setShowForm(false); setMsg(null); }} className={`${BTN} bg-white/[0.06] text-[#9ca3af] hover:bg-white/[0.1]`}>Cancel</button>
-          </div>
-          {msg ? <div className="text-xs text-red-300">{msg}</div> : null}
-        </div>
       ) : (
-        <button onClick={() => setShowForm(true)} className={`${BTN} bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/25`}>Connect Apple Calendar</button>
+        <div className="space-y-2">
+          <p className="text-[11px] text-[#8b8fa3]">Apple credentials are held in the server vault and never entered into this dashboard.</p>
+          <button
+            disabled={busy}
+            onClick={async () => { setBusy(true); setMsg(null); const r = await connectFromVault({}); setBusy(false); setMsg(r.ok ? `Connected to "${r.chosen}".` : (r.error ?? "Connection failed")); }}
+            className={`${BTN} bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/25 disabled:opacity-50`}
+          >{busy ? "Connecting…" : "Connect Apple Calendar"}</button>
+          {msg ? <div className={`text-xs ${msg.startsWith("Connected") ? "text-emerald-300" : "text-red-300"}`}>{msg}</div> : null}
+        </div>
       )}
     </div>
   );

@@ -14,6 +14,29 @@ import { api, internal } from "./_generated/api";
 import crypto from "crypto";
 
 const ICLOUD_ROOT = "https://caldav.icloud.com";
+const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
+const APPLE_VAULT_SERVICE = "apple_calendar";
+
+async function getVaultAppleCredentials(): Promise<{ appleId: string; appPassword: string }> {
+  const vaultToken = process.env.VAULT_ACCESS_TOKEN;
+  if (!vaultToken) throw new Error("VAULT_ACCESS_TOKEN is not configured");
+  const response = await fetch(`${VAULT_URL}/api/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: "secrets:listByService",
+      args: { service: APPLE_VAULT_SERVICE, vaultToken },
+      format: "json",
+    }),
+  });
+  if (!response.ok) throw new Error(`Apple vault fetch failed: ${response.status}`);
+  const data = (await response.json()) as { value?: Array<{ keyName: string; value: string }> };
+  const read = (keyName: string) => data.value?.find((row) => row.keyName === keyName)?.value;
+  const appleId = read("APPLE_ID");
+  const appPassword = read("APPLE_APP_PASSWORD");
+  if (!appleId || !appPassword) throw new Error("Apple Calendar credentials are missing from the vault");
+  return { appleId, appPassword };
+}
 
 type ResForCal = {
   thread_id: string; account_slug: string | null; renter_name: string; items: string[];
@@ -162,7 +185,9 @@ export const connectApple = action({
         (calendar_name && calendars.find((c) => c.name.toLowerCase() === calendar_name.toLowerCase())) ||
         calendars.find((c) => /rental|rmv2|rent/i.test(c.name)) || calendars[0];
       await ctx.runMutation(internal.calendar_apple_db._saveConnection, {
-        patch: { apple_id, app_password, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
+        // The supplied password is used only for this connection check. Syncs
+        // always load their credential from the shared vault, never this table.
+        patch: { apple_id, app_password: undefined, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
       });
       return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
     } catch (e) {
@@ -173,12 +198,39 @@ export const connectApple = action({
   },
 });
 
+/** Connect using the server-side Apple credentials stored in the shared vault. */
+export const connectFromVault = action({
+  args: { calendar_name: v.optional(v.string()) },
+  handler: async (ctx, { calendar_name }): Promise<{ ok: boolean; calendars?: string[]; chosen?: string; error?: string }> => {
+    try {
+      const { appleId, appPassword } = await getVaultAppleCredentials();
+      const { principalUrl, home, calendars } = await discover(appleId, appPassword);
+      if (!calendars.length) throw new Error("No writable calendars found on this iCloud account");
+      const pick =
+        (calendar_name && calendars.find((c) => c.name.toLowerCase() === calendar_name.toLowerCase())) ||
+        calendars.find((c) => /rental|rmv2|rent/i.test(c.name)) || calendars[0];
+      await ctx.runMutation(internal.calendar_apple_db._saveConnection, {
+        patch: { apple_id: appleId, app_password: undefined, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
+      });
+      return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await ctx.runMutation(internal.calendar_apple_db._saveConnection, { patch: { status: "error", last_error: msg } });
+      return { ok: false, error: msg };
+    }
+  },
+});
+
 export const testConnection = action({
   args: {},
   handler: async (ctx): Promise<{ ok: boolean; error?: string }> => {
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
-    if (!c?.apple_id || !c.app_password) return { ok: false, error: "not connected" };
-    try { await discover(c.apple_id, c.app_password); return { ok: true }; }
+    if (!c?.apple_id) return { ok: false, error: "not connected" };
+    try {
+      const { appleId, appPassword } = await getVaultAppleCredentials();
+      await discover(appleId, appPassword);
+      return { ok: true };
+    }
     catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
   },
 });
@@ -196,8 +248,11 @@ export const syncReservation = action({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }): Promise<{ ok: boolean; synced?: number; removed?: number; error?: string }> => {
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
-    if (c?.status !== "connected" || !c.apple_id || !c.app_password || !c.calendar_url) return { ok: false, error: "not connected" };
-    const auth = basicAuth(c.apple_id, c.app_password);
+    if (c?.status !== "connected" || !c.apple_id || !c.calendar_url) return { ok: false, error: "not connected" };
+    let credentials: { appleId: string; appPassword: string };
+    try { credentials = await getVaultAppleCredentials(); }
+    catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    const auth = basicAuth(credentials.appleId, credentials.appPassword);
     const base = c.calendar_url.endsWith("/") ? c.calendar_url : c.calendar_url + "/";
     const lead = c.reminder_lead_min ?? 60;
     const retLead = c.return_reminder_lead_min ?? lead;
@@ -251,8 +306,11 @@ export const unsyncReservation = action({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }): Promise<{ ok: boolean; removed: number }> => {
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
-    if (c?.status !== "connected" || !c.apple_id || !c.app_password) return { ok: false, removed: 0 };
-    const auth = basicAuth(c.apple_id, c.app_password);
+    if (c?.status !== "connected" || !c.apple_id) return { ok: false, removed: 0 };
+    let credentials: { appleId: string; appPassword: string };
+    try { credentials = await getVaultAppleCredentials(); }
+    catch { return { ok: false, removed: 0 }; }
+    const auth = basicAuth(credentials.appleId, credentials.appPassword);
     const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinks, { thread_id });
     let removed = 0;
     for (const l of links) {
