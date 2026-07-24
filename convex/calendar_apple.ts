@@ -297,7 +297,13 @@ export const syncReservation = action({
         // rendering so an unchanged event does not get PUT again on every cron.
         const hash = sha(buildVCalendar(buildVEvent(e, 0)));
         const prior = linkByUid.get(e.uid);
-        if (prior?.ics_hash === hash) continue;
+        // A route can change (e.g. an old DB Cinema event was written into Leo
+        // Rentals). A matching payload hash is not enough: migrate it to the
+        // correct account calendar before treating it as a no-op.
+        if (prior?.ics_hash === hash && prior.event_href.startsWith(base)) continue;
+        if (prior && !prior.event_href.startsWith(base)) {
+          await deleteEvent(prior.event_href, auth);
+        }
         const href = base + encodeURIComponent(e.uid) + ".ics";
         const etag = await putEvent(href, auth, ics);
         await ctx.runMutation(internal.calendar_apple_db._saveEventLink, { thread_id: r?.thread_id ?? thread_id, kind, event_uid: e.uid, event_href: href, etag: etag ?? undefined, ics_hash: hash });
