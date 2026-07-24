@@ -80,7 +80,7 @@ function fold(line: string): string {
   while (rest.length) { out += "\r\n " + rest.slice(0, 73); rest = rest.slice(73); }
   return out;
 }
-type CalEvent = { uid: string; startMs: number; endMs: number; summary: string; description?: string; location?: string; alarmMin?: number };
+type CalEvent = { uid: string; startMs: number; endMs: number; summary: string; description?: string; location?: string; alarmMins?: number[] };
 function buildVEvent(e: CalEvent, dtstampMs: number): string {
   const lines = [
     "BEGIN:VEVENT", `UID:${e.uid}`, `DTSTAMP:${icsUtc(dtstampMs)}`,
@@ -89,8 +89,8 @@ function buildVEvent(e: CalEvent, dtstampMs: number): string {
   if (e.location) lines.push(fold(`LOCATION:${icsEscape(e.location)}`));
   if (e.description) lines.push(fold(`DESCRIPTION:${icsEscape(e.description)}`));
   lines.push("SEQUENCE:0", "STATUS:CONFIRMED", "TRANSP:OPAQUE");
-  if (e.alarmMin && e.alarmMin > 0) {
-    lines.push("BEGIN:VALARM", "ACTION:DISPLAY", fold(`DESCRIPTION:${icsEscape(e.summary)}`), `TRIGGER:-PT${Math.round(e.alarmMin)}M`, "END:VALARM");
+  for (const minutes of e.alarmMins ?? []) {
+    if (minutes > 0) lines.push("BEGIN:VALARM", "ACTION:DISPLAY", fold(`DESCRIPTION:${icsEscape(e.summary)}`), `TRIGGER:-PT${Math.round(minutes)}M`, "END:VALARM");
   }
   lines.push("END:VEVENT");
   return lines.join("\r\n");
@@ -107,18 +107,18 @@ function eventsForReservation(r: ResForCal, leadMin: number, returnLeadMin: numb
     const start = londonToUtcMs(r.pickup_date, r.pickup_time);
     out.push({
       uid: `rmv2-${r.thread_id}-pickup@rmv2`, startMs: start, endMs: start + 30 * 60000,
-      summary: `📷 Pickup — ${r.renter_name} (${label})`,
-      description: `Rental pickup for ${r.renter_name}. Items: ${label}. Thread ${r.thread_id}.`,
-      location: r.pickup_address ?? undefined, alarmMin: leadMin,
+      summary: `📷 Pickup — ${label}`,
+      description: `Rental pickup. Items: ${label}.`,
+      location: r.pickup_address ?? undefined, alarmMins: [60, 30],
     });
   }
   if (r.return_date && r.return_time) {
     const start = londonToUtcMs(r.return_date, r.return_time);
     out.push({
       uid: `rmv2-${r.thread_id}-return@rmv2`, startMs: start, endMs: start + 30 * 60000,
-      summary: `↩️ Return — ${r.renter_name} (${label})`,
-      description: `Rental return from ${r.renter_name}. Items: ${label}. Thread ${r.thread_id}.`,
-      location: r.pickup_address ?? undefined, alarmMin: returnLeadMin,
+      summary: `↩️ Drop off — ${label}`,
+      description: `Rental drop off. Items: ${label}.`,
+      location: r.pickup_address ?? undefined, alarmMins: [60, 30],
     });
   }
   return out;
