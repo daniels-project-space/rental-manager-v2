@@ -6,26 +6,18 @@
  *          x-ai/grok-4.3 — $0.112/$0.224 per 1M tok vs $1.25/$2.50).
  *          Strong on JSON / structured outputs, 1M context.
  *
- * Rollback: set AI_PROVIDER=xai in the Vercel env (or per-task env in
- *           Trigger.dev). No code change required — every call site
- *           uses getLlmModel() which routes by env.
+ * All rental-manager background work uses the OpenRouter key from the
+ * project-hub Convex vault. This prevents a per-deployment override from
+ * sending one account or widget down a different provider/billing lane.
  *
- * Keys: read from process.env first, then the project-hub Convex vault
+ * Keys: read from the project-hub Convex vault
  *       (see C:\Users\danie\.claude\projects\C--Users-danie\memory\reference_secrets_vault.md
  *       for the curl pattern). Lazy-singleton cached per process.
  */
-import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { DEEPSEEK_MODEL, GROK_CHAT_MODEL } from "./ai-models";
-
-type Provider = "xai" | "openrouter";
+import { DEEPSEEK_MODEL } from "./ai-models";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
-
-function provider(): Provider {
-  const raw = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase();
-  return raw === "xai" ? "xai" : "openrouter";
-}
 
 async function getVaultSecret(service: string, keyName: string): Promise<string> {
   const vaultToken = process.env.VAULT_ACCESS_TOKEN;
@@ -48,25 +40,14 @@ async function getVaultSecret(service: string, keyName: string): Promise<string>
 }
 
 // Lazy singletons per provider — built on first call.
-let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
 let _vaultOpenrouter: ReturnType<typeof createOpenRouter> | null = null;
-let _xai: ReturnType<typeof createXai> | null = null;
 
-async function getOpenRouter(opts?: { vaultOnly?: boolean }): Promise<ReturnType<typeof createOpenRouter>> {
-  if (opts?.vaultOnly) {
-    if (_vaultOpenrouter) return _vaultOpenrouter;
-    _vaultOpenrouter = createOpenRouter({
-      apiKey: await getVaultSecret("openrouter", "OPENROUTER_API_KEY"),
-    });
-    return _vaultOpenrouter;
-  }
-  if (_openrouter) return _openrouter;
-  // The rental bot and automated extraction lanes must use the shared vault
-  // credential, never a developer-local OpenRouter key.
-  const apiKey = process.env.OPENROUTER_API_KEY ??
-    (await getVaultSecret("openrouter", "OPENROUTER_API_KEY"));
-  _openrouter = createOpenRouter({ apiKey });
-  return _openrouter;
+async function getOpenRouter(): Promise<ReturnType<typeof createOpenRouter>> {
+  if (_vaultOpenrouter) return _vaultOpenrouter;
+  _vaultOpenrouter = createOpenRouter({
+    apiKey: await getVaultSecret("openrouter", "OPENROUTER_API_KEY"),
+  });
+  return _vaultOpenrouter;
 }
 
 /** Pin OpenRouter to providers that don't aggressively fp8/fp4 quantize.
@@ -75,25 +56,11 @@ async function getOpenRouter(opts?: { vaultOnly?: boolean }): Promise<ReturnType
  *  Alibaba + DeepSeek own infra are stable. */
 const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
 
-async function getXai(): Promise<ReturnType<typeof createXai>> {
-  if (_xai) return _xai;
-  const apiKey =
-    process.env.XAI_API_KEY ?? (await getVaultSecret("xai", "XAI_API_KEY"));
-  _xai = createXai({ apiKey });
-  return _xai;
-}
-
 /**
  * Returns a ready-to-use AI SDK model handle. Pass directly to
  * `generateText({ model: ... })` or `generateObject({ model: ... })`.
- *
- * Picks provider + model id from AI_PROVIDER env var.
  */
 export async function getLlmModel() {
-  if (provider() === "xai") {
-    const xai = await getXai();
-    return xai(GROK_CHAT_MODEL);
-  }
   const openrouter = await getOpenRouter();
   return openrouter(DEEPSEEK_MODEL, {
     extraBody: { provider: PROVIDER_PIN },
@@ -106,7 +73,7 @@ export async function getLlmModel() {
  * calendar reads, holds, refreshes, and syncs are deterministic code.
  */
 export async function getExtractorModel() {
-  const openrouter = await getOpenRouter({ vaultOnly: true });
+  const openrouter = await getOpenRouter();
   return openrouter(DEEPSEEK_MODEL, {
     extraBody: { provider: PROVIDER_PIN },
   });
@@ -116,15 +83,18 @@ export async function getExtractorModel() {
  * credential. This deliberately ignores AI_PROVIDER so a legacy xAI setting
  * cannot route Quick Reply away from the low-cost shared account. */
 export async function getRenterBotModel() {
-  const openrouter = await getOpenRouter({ vaultOnly: true });
+  const openrouter = await getOpenRouter();
   return openrouter("anthropic/claude-haiku-4.5");
 }
 
+/** Vault-backed model accessor for server-only dashboard widget routes. */
+export async function getVaultOpenRouterModel(modelId: string) {
+  return (await getOpenRouter())(modelId);
+}
+
 /**
- * Returns the resolved model id string (e.g. "deepseek/deepseek-v4-flash"
- * or "grok-4.3"). Useful for logging + the `modelId` audit field on
- * persisted decisions.
+ * Returns the DeepSeek model id used by scheduled/background tasks.
  */
 export function getLlmModelId(): string {
-  return provider() === "xai" ? GROK_CHAT_MODEL : DEEPSEEK_MODEL;
+  return DEEPSEEK_MODEL;
 }
