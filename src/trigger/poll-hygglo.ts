@@ -28,6 +28,10 @@ const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 // Wrong fallback caused poll writes to hit exciting-lion-29 while the dashboard
 // read from hearty-oyster-600 — renter_name/order_step/photos_urls never landed.
 const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
+// A paused account is retried periodically instead of being left permanently
+// inert after a transient Hygglo/Vault/network failure. A successful retry
+// resets it to active through account_state.upsert().
+const PAUSED_ACCOUNT_RETRY_MS = 60 * 60 * 1000;
 
 // ── Vault helper ──────────────────────────────────────────────
 
@@ -389,12 +393,21 @@ export const pollHyggloInbox = schedules.task({
         // ── Paused-mode guard ──────────────────────────────────
         try {
           const accountState = await convex.query(api.account_state.get, { account: account.slug });
-          if (accountState?.mode === "paused") {
+          const pausedRecently =
+            accountState?.mode === "paused" &&
+            Date.now() - (accountState.modeChangedAt ?? 0) < PAUSED_ACCOUNT_RETRY_MS;
+          if (pausedRecently && isScheduledRun) {
             console.warn(
-              `[poll-hygglo] Account ${account.slug} is paused (consecutiveFailures=${accountState.consecutiveFailures}); skipping poll`
+              `[poll-hygglo] Account ${account.slug} is paused (consecutiveFailures=${accountState.consecutiveFailures}); skipping until retry cooldown ends`,
             );
             results.push({ slug: account.slug, ok: true, messages: 0, inserted: 0 });
             continue;
+          }
+          if (accountState?.mode === "paused") {
+            logger.info("[poll-hygglo] retrying paused account after cooldown", {
+              account: account.slug,
+              consecutiveFailures: accountState.consecutiveFailures,
+            });
           }
         } catch (stateErr) {
           console.error(`[poll-hygglo] Failed to fetch account_state for ${account.slug}:`, stateErr);
