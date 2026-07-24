@@ -47,6 +47,7 @@ type ResForCal = {
   thread_id: string; account_slug: string | null; renter_name: string; items: string[];
   status: string; pickup_date: string | null; pickup_time: string | null;
   return_date: string | null; return_time: string | null; pickup_address: string | null;
+  member_thread_ids?: string[];
 };
 
 // ── iCalendar (.ics) + Europe/London wall-clock → UTC ────────────────────────
@@ -280,7 +281,7 @@ export const syncReservation = action({
     const base = calendarUrl.endsWith("/") ? calendarUrl : calendarUrl + "/";
     const lead = c.reminder_lead_min ?? 60;
     const retLead = c.return_reminder_lead_min ?? lead;
-    const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinks, { thread_id });
+    const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinksForThreads, { thread_ids: r?.member_thread_ids ?? [thread_id] });
     const linkByUid = new Map(links.map((l) => [l.event_uid, l]));
 
     const finished = !r || ["cancelled", "declined", "completed"].includes(r.status);
@@ -299,7 +300,7 @@ export const syncReservation = action({
         if (prior?.ics_hash === hash) continue;
         const href = base + encodeURIComponent(e.uid) + ".ics";
         const etag = await putEvent(href, auth, ics);
-        await ctx.runMutation(internal.calendar_apple_db._saveEventLink, { thread_id, kind, event_uid: e.uid, event_href: href, etag: etag ?? undefined, ics_hash: hash });
+        await ctx.runMutation(internal.calendar_apple_db._saveEventLink, { thread_id: r?.thread_id ?? thread_id, kind, event_uid: e.uid, event_href: href, etag: etag ?? undefined, ics_hash: hash });
         synced++;
       }
       for (const l of links) {
