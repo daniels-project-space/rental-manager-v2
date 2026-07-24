@@ -2326,6 +2326,15 @@ export default defineSchema({
     updated_at: v.number(),
   }),
 
+  // Account-specific iCloud targets. Calendar colors are owned by iCloud, so
+  // routing a booking to its designated calendar preserves the user's color.
+  calendar_account_routes: defineTable({
+    account_slug: v.string(),
+    calendar_name: v.string(),
+    calendar_url: v.string(),
+    updated_at: v.number(),
+  }).index("by_account", ["account_slug"]),
+
   // One row per pushed event (a booking has up to 2: pickup + return) so we can
   // update/delete them when the booking changes.
   calendar_event_links: defineTable({

@@ -71,6 +71,24 @@ export const _getEventLinks = internalQuery({
     await ctx.db.query("calendar_event_links").withIndex("by_thread", (q) => q.eq("thread_id", thread_id)).collect(),
 });
 
+export const _getAccountRoute = internalQuery({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) =>
+    await ctx.db.query("calendar_account_routes").withIndex("by_account", (q) => q.eq("account_slug", account_slug)).first(),
+});
+
+export const _saveAccountRoutes = internalMutation({
+  args: { routes: v.array(v.object({ account_slug: v.string(), calendar_name: v.string(), calendar_url: v.string() })) },
+  handler: async (ctx, { routes }) => {
+    for (const route of routes) {
+      const existing = await ctx.db.query("calendar_account_routes").withIndex("by_account", (q) => q.eq("account_slug", route.account_slug)).first();
+      const patch = { ...route, updated_at: Date.now() };
+      if (existing) await ctx.db.patch(existing._id, patch);
+      else await ctx.db.insert("calendar_account_routes", patch);
+    }
+  },
+});
+
 export const _saveEventLink = internalMutation({
   args: { thread_id: v.string(), kind: v.string(), event_uid: v.string(), event_href: v.string(), etag: v.optional(v.string()), ics_hash: v.string() },
   handler: async (ctx, a) => {

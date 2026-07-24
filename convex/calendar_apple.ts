@@ -16,6 +16,11 @@ import crypto from "crypto";
 const ICLOUD_ROOT = "https://caldav.icloud.com";
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const APPLE_VAULT_SERVICE = "apple_calendar";
+const ACCOUNT_CALENDAR_NAMES: Record<string, string> = {
+  leo: "Leo Rentals",
+  diogo: "Arbeit",
+  dbcinema: "DB Cinema Rentals",
+};
 
 async function getVaultAppleCredentials(): Promise<{ appleId: string; appPassword: string }> {
   const vaultToken = process.env.VAULT_ACCESS_TOKEN;
@@ -189,6 +194,13 @@ export const connectApple = action({
         // always load their credential from the shared vault, never this table.
         patch: { apple_id, app_password: undefined, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
       });
+      const routes = Object.entries(ACCOUNT_CALENDAR_NAMES)
+        .map(([account_slug, calendar_name]) => {
+          const calendar = calendars.find((entry) => entry.name.toLowerCase() === calendar_name.toLowerCase());
+          return calendar ? { account_slug, calendar_name: calendar.name, calendar_url: calendar.href } : null;
+        })
+        .filter((route): route is { account_slug: string; calendar_name: string; calendar_url: string } => route !== null);
+      await ctx.runMutation(internal.calendar_apple_db._saveAccountRoutes, { routes });
       return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -253,11 +265,14 @@ export const syncReservation = action({
     try { credentials = await getVaultAppleCredentials(); }
     catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
     const auth = basicAuth(credentials.appleId, credentials.appPassword);
-    const base = c.calendar_url.endsWith("/") ? c.calendar_url : c.calendar_url + "/";
+    const r = (await ctx.runQuery(internal.calendar_apple_db._getReservationForCal, { thread_id })) as ResForCal | null;
+    const route = r?.account_slug
+      ? await ctx.runQuery(internal.calendar_apple_db._getAccountRoute, { account_slug: r.account_slug })
+      : null;
+    const calendarUrl = route?.calendar_url ?? c.calendar_url;
+    const base = calendarUrl.endsWith("/") ? calendarUrl : calendarUrl + "/";
     const lead = c.reminder_lead_min ?? 60;
     const retLead = c.return_reminder_lead_min ?? lead;
-
-    const r = (await ctx.runQuery(internal.calendar_apple_db._getReservationForCal, { thread_id })) as ResForCal | null;
     const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinks, { thread_id });
     const linkByUid = new Map(links.map((l) => [l.event_uid, l]));
 
