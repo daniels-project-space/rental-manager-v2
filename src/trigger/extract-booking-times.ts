@@ -195,7 +195,9 @@ async function writeTimes(args: {
 
 export const extractBookingTimesTask = schedules.task({
   id: "extract-booking-times",
-  cron: "0 * * * *", // hourly (was: */30)
+  // New messages trigger extraction immediately; this is only a recovery
+  // sweep for quiet-hours skips or failed targeted runs.
+  cron: "0 */4 * * *", // every 4 hours
   maxDuration: 240,
   run: async (_payload, { ctx }) => {
     if (isWithinUkQuietHours()) {

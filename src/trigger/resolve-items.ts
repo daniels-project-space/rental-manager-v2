@@ -285,8 +285,9 @@ export const resolveItemsTask = schedules.task({ // check-patterns:ok — maxDur
   // Phase 18.2 — cron loosened 15m → 60m. New-listing latency is now covered by
   // on-demand triggers from poll-hygglo (which fires `tasks.trigger("resolve-items",
   // { ids:[...] })` immediately after inserting a fresh reservation), so the cron
-  // only has to mop up retries + backfills.
-  cron: "0 * * * *",
+  // only has to mop up retries + backfills. Six-hourly keeps that recovery
+  // path without paying for mostly-idle hourly Trigger runs.
+  cron: "0 */6 * * *",
   maxDuration: 180,
   run: async (payload, { ctx }) => {
     // Targeted calls are emitted by poll-hygglo for a reservation that just
