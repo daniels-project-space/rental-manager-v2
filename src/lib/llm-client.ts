@@ -69,7 +69,7 @@ export async function getLlmModel() {
 
 /**
  * Booking-time extraction is the sole calendar-adjacent LLM task. It uses the
- * OpenRouter vault credential and Grok 4 Fast with reasoning disabled; all
+ * OpenRouter vault credential and Grok 4.3 with reasoning disabled; all
  * ordinary calendar reads, holds, refreshes, and syncs are deterministic code.
  */
 export async function getExtractorModel() {

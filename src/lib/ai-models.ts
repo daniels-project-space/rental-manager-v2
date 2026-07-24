@@ -23,12 +23,12 @@ export const DEEPSEEK_MODEL: string =
 
 /**
  * Chat-time extraction feeds the rental calendar, so it is deliberately
- * separate from the general background model. Grok 4 Fast is inexpensive for
- * this narrow extraction task and follows conversational time changes more
- * reliably than the DeepSeek lane. It is always called through OpenRouter.
+ * separate from the general background model. Grok 4.3 follows conversational
+ * time changes more reliably than the DeepSeek lane. It is always called
+ * through OpenRouter and is capped to a short structured response.
  */
 export const CALENDAR_EXTRACTION_MODEL: string =
-  process.env.CALENDAR_EXTRACTION_MODEL ?? "x-ai/grok-4-fast";
+  process.env.CALENDAR_EXTRACTION_MODEL ?? "x-ai/grok-4.3";
 
 /**
  * Model for the accuracy-critical CONVERSATIONAL surfaces — the AI-assistant

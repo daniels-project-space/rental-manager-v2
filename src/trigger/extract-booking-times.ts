@@ -2,7 +2,7 @@
  * extract-booking-times — Trigger.dev port of the Convex booking-time
  * extractor action.
  *
- * Reads each candidate reservation's last 20 chat messages, asks Grok Fast
+ * Reads each candidate reservation's last 20 chat messages, asks Grok 4.3
  * for the FINAL AGREED pickup/return times, persists via mutation.
  * Idempotent via transcript hash.
  *
@@ -255,7 +255,7 @@ export const extractBookingTimesTask = schedules.task({
         const gated = await gatedGenerateText({
           model: await getExtractorModel(),
           prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
-          // 9 short lines (~150 visible tokens). Grok Fast is called with
+          // 9 short lines (~150 visible tokens). Grok 4.3 is called with
           // reasoning disabled, so 700 is generous — and a low cap matters:
           // OpenRouter rejects calls whose max_tokens exceed
           // the affordable balance ("requires more credits, or fewer

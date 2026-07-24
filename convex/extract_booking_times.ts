@@ -206,7 +206,7 @@ export const extractForReservation = action({
     let response: { text: string };
     try {
       const gated = await gatedGenerateText({
-        // Immediate, message-triggered extraction must use the same Grok Fast
+        // Immediate, message-triggered extraction must use the same Grok 4.3
         // lane as the Trigger recovery batch; otherwise calendar times could
         // differ depending on which path happened to run first.
         model: await getActionLlmModel({ calendarExtraction: true }),

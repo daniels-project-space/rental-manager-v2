@@ -50,7 +50,7 @@ async function getVaultKey(service: string, keyName: string): Promise<string> {
 }
 
 // Convex-side LLM provider selector. Every account uses the vault-backed
-// OpenRouter lane: DeepSeek for background resolution, Grok Fast for calendar
+// OpenRouter lane: DeepSeek for background resolution, Grok 4.3 for calendar
 // time extraction, and Haiku for drafts.
 //
 // IMPORTANT — Convex actions can't cross-import from src/, so this helper is
@@ -85,10 +85,10 @@ export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boole
     return _openrouter(process.env.HAIKU_MODEL ?? "anthropic/claude-haiku-4.5");
   }
   // Calendar times are negotiated conversationally and are displayed as
-  // operational facts, so keep this narrow task on the more reliable Grok
-  // Fast lane. It remains vault-backed OpenRouter, not a direct xAI key.
+  // operational facts, so keep this narrow task on the more reliable Grok 4.3
+  // lane. It remains vault-backed OpenRouter, not a direct xAI key.
   if (opts?.calendarExtraction) {
-    return _openrouter(process.env.CALENDAR_EXTRACTION_MODEL ?? "x-ai/grok-4-fast", {
+    return _openrouter(process.env.CALENDAR_EXTRACTION_MODEL ?? "x-ai/grok-4.3", {
       extraBody: { reasoning: { enabled: false } },
     });
   }
