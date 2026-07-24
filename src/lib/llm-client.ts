@@ -15,7 +15,7 @@
  *       for the curl pattern). Lazy-singleton cached per process.
  */
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { DEEPSEEK_MODEL } from "./ai-models";
+import { CALENDAR_EXTRACTION_MODEL, DEEPSEEK_MODEL } from "./ai-models";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 
@@ -69,13 +69,15 @@ export async function getLlmModel() {
 
 /**
  * Booking-time extraction is the sole calendar-adjacent LLM task. It uses the
- * OpenRouter vault credential and the cheap DeepSeek model; all ordinary
- * calendar reads, holds, refreshes, and syncs are deterministic code.
+ * OpenRouter vault credential and Grok 4 Fast with reasoning disabled; all
+ * ordinary calendar reads, holds, refreshes, and syncs are deterministic code.
  */
 export async function getExtractorModel() {
   const openrouter = await getOpenRouter();
-  return openrouter(DEEPSEEK_MODEL, {
-    extraBody: { provider: PROVIDER_PIN },
+  return openrouter(CALENDAR_EXTRACTION_MODEL, {
+    // The output is nine short, schema-like lines. Extra reasoning adds cost
+    // and latency without improving the calendar write.
+    extraBody: { reasoning: { enabled: false } },
   });
 }
 

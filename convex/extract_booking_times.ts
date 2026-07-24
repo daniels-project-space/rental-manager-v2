@@ -206,7 +206,10 @@ export const extractForReservation = action({
     let response: { text: string };
     try {
       const gated = await gatedGenerateText({
-        model: await getActionLlmModel(),
+        // Immediate, message-triggered extraction must use the same Grok Fast
+        // lane as the Trigger recovery batch; otherwise calendar times could
+        // differ depending on which path happened to run first.
+        model: await getActionLlmModel({ calendarExtraction: true }),
         prompt,
         // Reasoning model overhead — observed 800-1500 reasoning tokens
         // on this task; 1800 leaves headroom.
