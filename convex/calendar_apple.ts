@@ -270,7 +270,9 @@ export const syncReservation = action({
       for (const e of events) {
         const kind = e.uid.includes("-return@") ? "return" : "pickup";
         const ics = buildVCalendar(buildVEvent(e, Date.now()));
-        const hash = sha(ics);
+        // DTSTAMP changes on every sync by definition. Hash only a stable
+        // rendering so an unchanged event does not get PUT again on every cron.
+        const hash = sha(buildVCalendar(buildVEvent(e, 0)));
         const prior = linkByUid.get(e.uid);
         if (prior?.ics_hash === hash) continue;
         const href = base + encodeURIComponent(e.uid) + ".ics";

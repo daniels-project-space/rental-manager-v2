@@ -287,7 +287,7 @@ export const resolveItemsTask = schedules.task({ // check-patterns:ok — maxDur
   // { ids:[...] })` immediately after inserting a fresh reservation), so the cron
   // only has to mop up retries + backfills. Six-hourly keeps that recovery
   // path without paying for mostly-idle hourly Trigger runs.
-  cron: "0 */6 * * *",
+  cron: "0 */12 * * *",
   maxDuration: 180,
   run: async (payload, { ctx }) => {
     // Targeted calls are emitted by poll-hygglo for a reservation that just
