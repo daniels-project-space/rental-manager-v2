@@ -224,6 +224,13 @@ export const connectFromVault = action({
       await ctx.runMutation(internal.calendar_apple_db._saveConnection, {
         patch: { apple_id: appleId, app_password: undefined, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
       });
+      const routes = Object.entries(ACCOUNT_CALENDAR_NAMES)
+        .map(([account_slug, calendar_name]) => {
+          const calendar = calendars.find((entry) => entry.name.toLowerCase() === calendar_name.toLowerCase());
+          return calendar ? { account_slug, calendar_name: calendar.name, calendar_url: calendar.href } : null;
+        })
+        .filter((route): route is { account_slug: string; calendar_name: string; calendar_url: string } => route !== null);
+      await ctx.runMutation(internal.calendar_apple_db._saveAccountRoutes, { routes });
       return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
