@@ -49,12 +49,21 @@ async function getVaultSecret(service: string, keyName: string): Promise<string>
 
 // Lazy singletons per provider — built on first call.
 let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
+let _vaultOpenrouter: ReturnType<typeof createOpenRouter> | null = null;
 let _xai: ReturnType<typeof createXai> | null = null;
 
-async function getOpenRouter(): Promise<ReturnType<typeof createOpenRouter>> {
+async function getOpenRouter(opts?: { vaultOnly?: boolean }): Promise<ReturnType<typeof createOpenRouter>> {
+  if (opts?.vaultOnly) {
+    if (_vaultOpenrouter) return _vaultOpenrouter;
+    _vaultOpenrouter = createOpenRouter({
+      apiKey: await getVaultSecret("openrouter", "OPENROUTER_API_KEY"),
+    });
+    return _vaultOpenrouter;
+  }
   if (_openrouter) return _openrouter;
-  const apiKey =
-    process.env.OPENROUTER_API_KEY ??
+  // The rental bot and automated extraction lanes must use the shared vault
+  // credential, never a developer-local OpenRouter key.
+  const apiKey = process.env.OPENROUTER_API_KEY ??
     (await getVaultSecret("openrouter", "OPENROUTER_API_KEY"));
   _openrouter = createOpenRouter({ apiKey });
   return _openrouter;
@@ -92,66 +101,23 @@ export async function getLlmModel() {
 }
 
 /**
- * Booking-time extractor model (2026-07-13). Was getLlmModel() (DeepSeek-v4-
- * flash, provider-pinned): the pin intermittently returns "no allowed
- * providers", DeepSeek burns 800-1500 REASONING tokens on this 9-line task
- * (forcing maxOutputTokens 1800), and when OpenRouter credits ran low every
- * call threw "requires more credits, or fewer max_tokens" — booking times
- * silently stopped extracting for 2 days (the Anker return-Monday incident).
- * Gemini flash is unpinned, cheap, and answers in ~150 output tokens.
+ * Booking-time extraction is the sole calendar-adjacent LLM task. It uses the
+ * OpenRouter vault credential and the cheap DeepSeek model; all ordinary
+ * calendar reads, holds, refreshes, and syncs are deterministic code.
  */
 export async function getExtractorModel() {
-  if (provider() === "xai") {
-    const xai = await getXai();
-    return xai(GROK_CHAT_MODEL);
-  }
-  // FREE-tier Groq FIRST (Daniel: no paid API for this). The Groq key already
-  // lives in the vault (groq/GROQ_API_KEY, rental-bot-v2 scope) and its
-  // OpenAI-compatible endpoint speaks the same wire format the OpenRouter
-  // provider emits, so no new SDK dependency. OpenRouter (paid balance) is
-  // only the fallback when the Groq key is unavailable.
-  try {
-    const groq = await getGroq();
-    return groq(process.env.EXTRACTOR_MODEL ?? "llama-3.3-70b-versatile");
-  } catch {
-    const openrouter = await getOpenRouter();
-    return openrouter("meta-llama/llama-3.3-70b-instruct");
-  }
+  const openrouter = await getOpenRouter({ vaultOnly: true });
+  return openrouter(DEEPSEEK_MODEL, {
+    extraBody: { provider: PROVIDER_PIN },
+  });
 }
 
-let _groq: ReturnType<typeof createOpenRouter> | null = null;
-async function getGroq(): Promise<ReturnType<typeof createOpenRouter>> {
-  if (_groq) return _groq;
-  const apiKey =
-    process.env.GROQ_API_KEY ?? (await getVaultSecret("groq", "GROQ_API_KEY"));
-  _groq = createOpenRouter({ apiKey, baseURL: "https://api.groq.com/openai/v1" });
-  return _groq;
-}
-
-/** Haiku 4.5 (Anthropic — its own provider, so the deepseek provider pin does
- *  NOT apply) for the agentic renter bot, matching the live convex draft path.
- *  The old getLlmModel() deepseek pin currently returns "no allowed providers". */
+/** On-demand renter drafts always use OpenRouter's Haiku lane and the vault
+ * credential. This deliberately ignores AI_PROVIDER so a legacy xAI setting
+ * cannot route Quick Reply away from the low-cost shared account. */
 export async function getRenterBotModel() {
-  if (provider() === "xai") {
-    const xai = await getXai();
-    return xai(GROK_CHAT_MODEL);
-  }
-  const openrouter = await getOpenRouter();
-  return openrouter(process.env.HAIKU_MODEL ?? "google/gemini-2.5-flash");
-}
-
-/**
- * Stronger renter-bot model (Sonnet). Used for the hard cases where Haiku is
- * unreliable at following nuanced rules (e.g. steering off a marketing-only
- * item without revealing why). Falls back to Grok when AI_PROVIDER=xai.
- */
-export async function getRenterBotModelStrong() {
-  if (provider() === "xai") {
-    const xai = await getXai();
-    return xai(GROK_CHAT_MODEL);
-  }
-  const openrouter = await getOpenRouter();
-  return openrouter(process.env.STRONG_MODEL ?? "google/gemini-2.5-pro");
+  const openrouter = await getOpenRouter({ vaultOnly: true });
+  return openrouter("anthropic/claude-haiku-4.5");
 }
 
 /**

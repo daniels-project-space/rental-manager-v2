@@ -984,13 +984,7 @@ export function SettingsDrawer({ onClose }: Props) {
         </SettingsSection>
 
         <SettingsSection id="intelligence" eyebrow="Draft intelligence" title="Rental bot knowledge" description="Model routing, learned preferences and account-specific facts shape drafts only. You remain the sender." tone="violet">
-        <LockedToggle
-          label="Use stronger model for complex drafts"
-          value={settings.escalate_to_sonnet}
-          warning=""
-          tooltip="Escalates difficult cases; the Luna subscription route remains the default once deployed"
-          onConfirmedChange={(next) => applyField({ escalate_to_sonnet: next })}
-        />
+        <p className="text-xs text-violet-200/70">Quick Reply drafts are generated only when requested, using the OpenRouter Haiku model.</p>
         <DraftLessonsEditor />
 
         <HardTruthsEditor />

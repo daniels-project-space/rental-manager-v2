@@ -1855,21 +1855,6 @@ export function ReplyModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Auto-draft an AI reply ON OPEN — into the SEPARATE draft box, never the
-  // compose box and never sent. Only when the renter is the one waiting and
-  // there's no draft yet. You tap the draft to copy it across if you want it.
-  const autoDraftedRef = useRef(false);
-  useEffect(() => {
-    if (autoDraftedRef.current) return;
-    // Regenerate if there's no draft OR the cached one is stale (older draft
-    // logic) — so a fix reaches whatever thread you open without a manual flush.
-    if (draft.trim() && !tile.ai_draft_stale) return;
-    if (!awaitingMe(tile)) return;
-    autoDraftedRef.current = true;
-    void onGenerate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   async function onGenerate() {
     setDrafting(true);
     setNote(null);
@@ -1882,11 +1867,11 @@ export function ReplyModal({
       } else if (r.reason === "needs_human") {
         setNote(
           draft.trim()
-            ? "Luna wants your judgement here, so the previous draft stayed untouched."
-            : "Luna flagged this for your judgement. Write the reply yourself.",
+            ? "The draft assistant wants your judgement here, so the previous draft stayed untouched."
+            : "The draft assistant flagged this for your judgement. Write the reply yourself.",
         );
       } else if (r.reason === "subscription_unavailable") {
-        setNote("Luna is temporarily unavailable. No metered fallback was used.");
+        setNote("The draft assistant is temporarily unavailable.");
       } else setNote("Draft unavailable.");
     } catch {
       setNote("Draft failed.");
