@@ -233,8 +233,8 @@ export function orderToConversation(
   const orderMessages = orderToMessages(detail, fetchedAt);
   if (orderMessages.length === 0) return null;
   const timestamps = orderMessages
-    .map((m) => m.hygglo_sent_at ?? fetchedAt)
-    .filter((t) => t > 0);
+    .map((m) => m.hygglo_sent_at)
+    .filter((t): t is number => typeof t === "number" && t > 0);
   const lastMsgAt = timestamps.length > 0 ? Math.max(...timestamps) : fetchedAt;
   const firstMsgAt = timestamps.length > 0 ? Math.min(...timestamps) : fetchedAt;
   return {

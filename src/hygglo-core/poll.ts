@@ -157,7 +157,97 @@ export interface CorePollResult {
     /** B4 — count of per-order `getOrder(id)` detail GETs that threw (non-fatal,
      *  skipped). >0 means some listed orders were not refreshed this cycle. */
     detail_fetch_errors: number;
+    mode: CorePollMode;
+    orders_selected: number;
   };
+}
+
+export type CorePollMode = "full" | "operational";
+
+const DEFAULT_OPERATIONAL_WINDOW_MS = 48 * 60 * 60 * 1000;
+const DEFAULT_OPERATIONAL_MAX_ORDERS = 24;
+const UNKNOWN_ACTIVITY_PER_FILTER = 2;
+const OPERATIONAL_MESSAGES_PER_ORDER = 8;
+
+/** Hygglo has returned this field as epoch seconds, epoch milliseconds and ISO. */
+export function parseLatestActivityMs(value: number | string | undefined): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+type ListedOrder = {
+  id: number;
+  sourceFilter: string;
+  latest_activity?: number | string;
+};
+
+/**
+ * Keep quick refreshes bounded while never depending on one timestamp format.
+ * Fresh activity is the primary signal; a tiny per-filter fallback protects
+ * new/changed rows when Hygglo omits or changes latest_activity.
+ */
+export function selectOperationalOrders(
+  orders: ListedOrder[],
+  fetchedAt: number,
+  windowMs = DEFAULT_OPERATIONAL_WINDOW_MS,
+  maxOrders = DEFAULT_OPERATIONAL_MAX_ORDERS,
+): ListedOrder[] {
+  const cutoff = fetchedAt - windowMs;
+  const unknownByFilter = new Map<string, number>();
+  const eligible = orders.filter((order) => {
+      const activity = parseLatestActivityMs(order.latest_activity);
+      if (activity !== null) return activity >= cutoff;
+      const used = unknownByFilter.get(order.sourceFilter) ?? 0;
+      if (used >= UNKNOWN_ACTIVITY_PER_FILTER) return false;
+      unknownByFilter.set(order.sourceFilter, used + 1);
+      return true;
+    });
+
+  // listOrders is grouped by filter. A simple slice lets a busy pending bucket
+  // consume the whole cap and starve a fresh reply/payment in current/future.
+  // Round-robin the already activity-sorted buckets for consistent coverage.
+  const buckets = new Map<string, ListedOrder[]>();
+  for (const order of eligible) {
+    const bucket = buckets.get(order.sourceFilter) ?? [];
+    bucket.push(order);
+    buckets.set(order.sourceFilter, bucket);
+  }
+  const selected: ListedOrder[] = [];
+  const cap = Math.max(0, maxOrders);
+  for (let index = 0; selected.length < cap; index++) {
+    let added = false;
+    for (const bucket of buckets.values()) {
+      const order = bucket[index];
+      if (!order) continue;
+      selected.push(order);
+      added = true;
+      if (selected.length >= cap) break;
+    }
+    if (!added) break;
+  }
+  return selected;
+}
+
+export function selectOperationalMessages(
+  messages: MessagePayload[],
+  maxMessages = OPERATIONAL_MESSAGES_PER_ORDER,
+): MessagePayload[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((a, b) => {
+      // Missing timestamps are retained first: a newly introduced Hygglo label
+      // format must not make a fresh reply invisible.
+      if (a.message.hygglo_sent_at === undefined && b.message.hygglo_sent_at !== undefined) return -1;
+      if (a.message.hygglo_sent_at !== undefined && b.message.hygglo_sent_at === undefined) return 1;
+      return (b.message.hygglo_sent_at ?? 0) - (a.message.hygglo_sent_at ?? 0) || b.index - a.index;
+    })
+    .slice(0, Math.max(0, maxMessages))
+    .map(({ message }) => message);
 }
 
 // ── corePoll ─────────────────────────────────────────────────────────────
@@ -189,11 +279,18 @@ export interface CorePollResult {
  */
 export async function corePoll(
   accountInput: HyggloAccount | string,
-  opts: { fetchedAt?: number; core?: HyggloCore } = {},
+  opts: {
+    fetchedAt?: number;
+    core?: HyggloCore;
+    mode?: CorePollMode;
+    operationalWindowMs?: number;
+    operationalMaxOrders?: number;
+  } = {},
 ): Promise<CorePollResult> {
   const core = opts.core ?? createHyggloCore(accountInput);
   const account_slug = core.account.slug;
   const fetchedAt = opts.fetchedAt ?? Date.now();
+  const mode = opts.mode ?? "full";
 
   // B4 — per-order/per-filter failures are non-fatal (a flaky filter or a
   // single bad detail GET must not abort the whole account), but they must NOT
@@ -235,6 +332,15 @@ export async function corePoll(
     }
   }
 
+  const selectedOrders = mode === "operational"
+    ? selectOperationalOrders(
+        uniqueOrders,
+        fetchedAt,
+        opts.operationalWindowMs,
+        opts.operationalMaxOrders,
+      )
+    : uniqueOrders;
+
   const reservations: ReservationUpsertArgs[] = [];
   const renterMap = new Map<string, RenterPayload>();
   const conversations: ConversationPayload[] = [];
@@ -242,7 +348,7 @@ export async function corePoll(
   let ordersWithDetail = 0;
 
   // 2-4. Per-order detail fetch → mappers → batch-level field append.
-  for (const order of uniqueOrders) {
+  for (const order of selectedOrders) {
     let detail: HyggloOrderDetail;
     try {
       detail = await core.getOrder(order.id);
@@ -266,7 +372,12 @@ export async function corePoll(
     if (!renterMap.has(renterKey)) renterMap.set(renterKey, renter);
 
     // ── messages + conversation ──
-    messages.push(...orderToMessages(detail, fetchedAt));
+    const orderMessages = orderToMessages(detail, fetchedAt);
+    messages.push(...(
+      mode === "operational"
+        ? selectOperationalMessages(orderMessages)
+        : orderMessages
+    ));
     const conversation = orderToConversation(detail, fetchedAt);
     if (conversation) conversations.push(conversation);
 
@@ -361,6 +472,8 @@ export async function corePoll(
       fetched_at: fetchedAt,
       list_filter_errors: listFilterErrors,
       detail_fetch_errors: detailFetchErrors,
+      mode,
+      orders_selected: selectedOrders.length,
     },
   };
 }

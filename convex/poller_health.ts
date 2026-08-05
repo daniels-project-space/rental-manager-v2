@@ -7,16 +7,17 @@
  * Returns ONLY aggregate freshness counters — never account names — so it is
  * safe to call from unauthenticated probes.
  *
- * "Stale" = any account with `mode === "active"` whose `lastSuccessfulPollAt`
- * is older than 30 minutes. `quiet` and `paused` accounts are intentionally
- * excluded (off-cadence / known-bad).
+ * "Stale" = any active or paused account whose `lastSuccessfulPollAt` is
+ * older than 30 minutes. A paused account is included so the recovery lane can
+ * retry it; `quiet` remains intentionally excluded as off-cadence.
  *
  * ── Wave 4 — Staleness alarm cron ────────────────────────────────────
- * `runStalenessCheck` (internalAction) runs every 10 min (see crons.ts).
+ * `runStalenessCheck` (internalAction) runs every 20 min (see crons.ts).
  * For each `active` account whose lastSuccessfulPollAt is > 30 min old:
  *   1. Skip if same account was alerted within the last 60 min (dedup).
  *   2. Send Telegram alert via convex/lib/telegram_convex.ts.
- *   3. Invoke `internal.backup_poll.runBackupPoll` to auto-heal.
+ *   3. Enqueue the existing authenticated Vercel/Trigger poll endpoint to
+ *      auto-heal the scheduler without an LLM.
  *   4. Insert a row into `poller_alerts`.
  *
  * Test helpers (`test_setStaleAccount`, `test_clearAlertsForAccount`) are
@@ -38,7 +39,7 @@ export const checkPollerHealth = query({
     const accounts = await ctx.db.query("account_state").collect();
     const now = Date.now();
     const stale = accounts.filter(
-      (a) => a.mode === "active" && now - (a.lastSuccessfulPollAt ?? 0) > STALE_MS,
+      (a) => (a.mode === "active" || a.mode === "paused") && now - (a.lastSuccessfulPollAt ?? 0) > STALE_MS,
     );
     return {
       ok: stale.length === 0,
@@ -50,7 +51,7 @@ export const checkPollerHealth = query({
 
 // ── Wave 4 — Internal helpers for the staleness check ────────────────
 
-/** Returns active accounts whose lastSuccessfulPollAt is older than 30 min. */
+/** Returns recoverable stale accounts whose last successful poll is older than 30 min. */
 export const listStaleAccounts = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -58,7 +59,7 @@ export const listStaleAccounts = internalQuery({
     const now = Date.now();
     return accounts
       .filter(
-        (a) => a.mode === "active" && now - (a.lastSuccessfulPollAt ?? 0) > STALE_MS,
+        (a) => (a.mode === "active" || a.mode === "paused") && now - (a.lastSuccessfulPollAt ?? 0) > STALE_MS,
       )
       .map((a) => ({
         account: a.account,
@@ -113,7 +114,32 @@ interface StalenessReport {
     staleMinutes: number;
     deduped: boolean;
     telegramOk?: boolean;
+    recoveryOk?: boolean;
   }>;
+}
+
+/**
+ * Ask Vercel to enqueue an immediate Trigger poll. This is deliberately a
+ * plain authenticated HTTP call: polling is read-only API I/O, not an AI task.
+ * The URL and shared secret are Convex deployment secrets so neither reaches
+ * the browser or source control.
+ */
+async function enqueueRecoveryPoll(): Promise<{ ok: boolean; detail?: string }> {
+  const url = process.env.POLL_TRIGGER_URL;
+  const secret = process.env.POLL_TRIGGER_SECRET;
+  if (!url || !secret) {
+    return { ok: false, detail: "POLL_TRIGGER_URL or POLL_TRIGGER_SECRET is not configured" };
+  }
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+    });
+    if (!response.ok) return { ok: false, detail: `poll endpoint returned ${response.status}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, detail: String(err).slice(0, 240) };
+  }
 }
 
 // Active polling window in London local time, expressed as minutes-since-
@@ -189,17 +215,19 @@ export const runStalenessCheck = internalAction({
 
     if (toAlert.length === 0) return report;
 
-    // Auto-heal removed 2026-05-24 (phase 7c) along with backup_poll.ts
-    // (was disabled 2026-05-20 due to data-stripping bug; never re-enabled).
-    // Stale-poll alerting via Telegram still fires below.
-    report.autoHealInvoked = false;
+    // Trigger schedules can silently stop firing. A stale signal therefore
+    // invokes the existing manual poll endpoint once per alert batch. This
+    // does not scrape or call an LLM inside Convex; it only enqueues the normal
+    // read-only poll task.
+    const recovery = await enqueueRecoveryPoll();
+    report.autoHealInvoked = recovery.ok;
 
     for (const s of toAlert) {
       const text =
         `*Hygglo poller stale*\n` +
         `Account: \`${s.account}\`\n` +
         `Last poll: ${s.staleMinutes} min ago\n` +
-        `Auto-heal: disabled (primary-poller-only mode)`;
+        `Auto-heal: ${recovery.ok ? "immediate poll enqueued" : `failed (${recovery.detail ?? "unknown"})`}`;
       const tg = await sendTelegram(text);
       report.alerted += 1;
       report.perAccount.push({
@@ -207,13 +235,14 @@ export const runStalenessCheck = internalAction({
         staleMinutes: s.staleMinutes,
         deduped: false,
         telegramOk: tg.ok,
+        recoveryOk: recovery.ok,
       });
       await ctx.runMutation(internal.poller_health.recordAlert, {
         account_slug: s.account,
         sent_at: now,
         stale_minutes: s.staleMinutes,
-        auto_heal_attempted: false,
-        auto_heal_ok: false,
+        auto_heal_attempted: true,
+        auto_heal_ok: recovery.ok,
         telegram_ok: tg.ok,
       });
     }

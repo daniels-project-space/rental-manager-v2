@@ -5,6 +5,12 @@ import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
 import { isMatchingOptimisticOwnerMessage } from "./lib/message_reconciliation";
 import {
+  bookingBecameConfirmed,
+  buildConfirmedBookingNotificationCopy,
+  formatNotificationAmounts,
+  isGenuinelyConfirmedBooking,
+} from "./lib/notification_events";
+import {
   queueNotificationEvents,
   type NotifEventInput,
   type NotifType,
@@ -47,12 +53,23 @@ export { PAID_ORDER_STEPS } from "./order_step_semantics";
  * filters) all assume active-step semantics. For "have they reached step X?"
  * questions, look at step-priority predecessors of order_step.
  */
-function extractActiveOrderStep(order: any): string | null | undefined {
-  const steps = order?.steps ?? order?.detail?.steps ?? order?._detail?.steps;
+function extractActiveOrderStep(order: unknown): string | null | undefined {
+  const record = typeof order === "object" && order !== null
+    ? order as {
+        steps?: unknown;
+        detail?: { steps?: unknown };
+        _detail?: { steps?: unknown };
+      }
+    : {};
+  const steps = record.steps ?? record.detail?.steps ?? record._detail?.steps;
   if (!Array.isArray(steps)) return null;
-  const active = steps.find((s: any) => s?.active === true);
+  const active = steps.find((step) =>
+    typeof step === "object" &&
+    step !== null &&
+    (step as Record<string, unknown>).active === true,
+  ) as Record<string, unknown> | undefined;
   if (!active) return null;
-  const key: string = active?.key;
+  const key = typeof active.key === "string" ? active.key : "";
   if (!VALID_ORDER_STEPS.has(key)) {
     console.warn(`[hygglo] Unrecognised order_step key: "${key}" — storing undefined`);
     return undefined;
@@ -138,20 +155,6 @@ function deriveStatusFromStep(
 }
 
 // ── Mutations ─────────────────────────────────────────────────
-
-/**
- * A renter message that's just a polite closer ("thanks", "ok", "no worries") —
- * no reply needed, so we skip pre-generating an AI draft for it. Conservative:
- * only matches obvious closers / very short fragments so real questions still
- * get a draft.
- */
-function isCloserMessage(body?: string): boolean {
-  const t = (body ?? "").trim().toLowerCase().replace(/[!.…\s]+$/g, "");
-  if (t.length < 4) return true;
-  return /^(thanks|thank you|thank u|thx|ty|cheers|no worries|no problem|np|ok|okay|kk|great|perfect|awesome|brilliant|lovely|got it|sounds good|will do|see you|see ya|noted|understood|👍|🙏|❤️|😊)\b/.test(
-    t,
-  );
-}
 
 /**
  * Public mutation called by Trigger.dev via ConvexHttpClient.
@@ -372,19 +375,9 @@ export const upsertMessages = mutation({
         .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId))
         .first();
 
-      // Pre-generate the AI draft the MOMENT a renter message lands, so it's
-      // already waiting when I open the thread (no on-open spinner). This only
-      // STORES a draft (setDraft) — it never sends anything. Skip obvious
-      // closers ("thanks", "ok") so we don't burn a generation on a dead thread.
-      if (!isCloserMessage(latest.body_text)) {
-        try {
-          await ctx.scheduler.runAfter(0, api.replyInbox_actions.generateDraft, {
-            thread_id: threadId,
-          });
-        } catch (err) {
-          console.warn("[hygglo.upsertMessages] draft pre-gen schedule failed", String(err));
-        }
-      }
+      // Do not generate an AI reply when a renter message arrives. Drafting is
+      // deliberately on-demand from Quick Reply, so ordinary polling, calendar
+      // updates, and inbox traffic never consume an LLM call.
 
       // NB: we used to `continue` here when the order was awaiting_owner_action,
       // assuming new_request covered it — but new_request fires only ONCE on the
@@ -804,6 +797,29 @@ function summarizeNotifyItems(items: UpsertOrderArgs["items"]): string {
   return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
 }
 
+async function resolveNotifyShortItem(
+  ctx: MutationCtx,
+  args: UpsertOrderArgs,
+): Promise<string> {
+  const rawTitle = (args.items ?? []).find((item) => item.item_name.trim())?.item_name.trim();
+  if (!rawTitle) return "Rental";
+  const cached = await ctx.db
+    .query("listing_short_names")
+    .withIndex("by_account_raw_title", (q) =>
+      q.eq("account_slug", args.account_slug).eq("raw_title", rawTitle),
+    )
+    .first();
+  if (cached?.short_name?.trim()) return cached.short_name.trim();
+  return rawTitle
+    .split("|")[0]
+    .replace(/\([^)]*\)/g, " ")
+    .split("+")[0]
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trimEnd();
+}
+
 const NOTIFY_ACCOUNT_LABELS: Record<string, string> = {
   dbcinema: "DB Cinema",
   leo: "Leo",
@@ -838,29 +854,47 @@ function compactDateRange(start?: string, end?: string): string {
  * (which account it's for, at a glance) and the body is a compact, useful
  * single line: renter · items · dates · £value · pickup.
  */
-function buildNotifyEvent(
+async function buildNotifyEvent(
+  ctx: MutationCtx,
   args: UpsertOrderArgs,
   type: NotifType,
-): NotifEventInput {
+): Promise<NotifEventInput> {
   const renter = args.renter_name?.trim() || "A renter";
-  const items = summarizeNotifyItems(args.items);
-  const dates = compactDateRange(args.start_date, args.end_date);
-  const priceN = args.gross_paid_gbp ?? args.net_to_owner_gbp;
-  const price =
-    typeof priceN === "number" && priceN > 0 ? `£${Math.round(priceN)}` : "";
-  const pickup =
-    args.pickup_method && args.pickup_method !== "unknown"
-      ? args.pickup_method.charAt(0).toUpperCase() + args.pickup_method.slice(1)
-      : "";
   const acct = args.account_slug;
   const url = `/?thread=${encodeURIComponent(args.hygglo_order_id)}${
     acct ? `&account=${encodeURIComponent(acct)}` : ""
   }`;
+  if (type === "booking_confirmed") {
+    const copy = buildConfirmedBookingNotificationCopy({
+      renterName: renter,
+      itemName: await resolveNotifyShortItem(ctx, args),
+      gross: args.gross_paid_gbp,
+      net: args.net_to_owner_gbp,
+      currency: args.currency ?? "GBP",
+    });
+    return {
+      type,
+      thread_id: args.hygglo_order_id,
+      account_slug: acct,
+      title: copy.title,
+      body: copy.body,
+      url,
+    };
+  }
+
+  const items = summarizeNotifyItems(args.items);
+  const dates = compactDateRange(args.start_date, args.end_date);
+  const price = formatNotificationAmounts(
+    args.gross_paid_gbp,
+    args.net_to_owner_gbp,
+    args.currency ?? "GBP",
+  );
+  const pickup =
+    args.pickup_method && args.pickup_method !== "unknown"
+      ? args.pickup_method.charAt(0).toUpperCase() + args.pickup_method.slice(1)
+      : "";
   const label = notifyAccountLabel(acct);
-  const title =
-    type === "booking_confirmed"
-      ? `🎉 Booking confirmed · ${label}`
-      : `🔔 New request · ${label}`;
+  const title = `🔔 New request · ${label}`;
   const body = [renter, items, dates, price, pickup].filter(Boolean).join(" · ");
   return { type, thread_id: args.hygglo_order_id, account_slug: acct, title, body, url };
 }
@@ -1177,17 +1211,24 @@ async function upsertOrderImpl(
     }
     // Push notifications (2026-06-23): fire on genuine TRANSITIONS only so a
     // re-poll of an unchanged order never re-notifies.
-    //  • booking_confirmed ("wohoo") — status crossed INTO "confirmed".
+    //  • booking_confirmed ("wohoo") — active order step crossed the genuine
+    //    paid+verified threshold. Hygglo's broad current bucket maps to
+    //    status=confirmed before this point, so status alone misses the event.
     //  • new_request — Hygglo's actions map newly offers accept/deny.
     const notifyUpdate: NotifEventInput[] = [];
-    if (existing.status !== "confirmed" && finalStatus === "confirmed") {
-      notifyUpdate.push(buildNotifyEvent(args, "booking_confirmed"));
+    if (bookingBecameConfirmed({
+      previousStep: storedStep,
+      previousStatus: existing.status,
+      incomingStep,
+      incomingStatus: finalStatus,
+    })) {
+      notifyUpdate.push(await buildNotifyEvent(ctx, args, "booking_confirmed"));
     }
     if (
       args.awaiting_owner_action === true &&
       existing.awaiting_owner_action !== true
     ) {
-      notifyUpdate.push(buildNotifyEvent(args, "new_request"));
+      notifyUpdate.push(await buildNotifyEvent(ctx, args, "new_request"));
     }
     return {
       action: "updated",
@@ -1257,16 +1298,16 @@ async function upsertOrderImpl(
   // path above.
   const notifyInsert: NotifEventInput[] = [];
   if (args.awaiting_owner_action === true) {
-    notifyInsert.push(buildNotifyEvent(args, "new_request"));
+    notifyInsert.push(await buildNotifyEvent(ctx, args, "new_request"));
   } else if (
-    incomingStatus === "confirmed" &&
+    isGenuinelyConfirmedBooking(incomingStep, incomingStatus) &&
     typeof args.start_date === "string" &&
-    args.start_date >= new Date().toISOString().slice(0, 10)
+    args.start_date >= new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" })
   ) {
     // "wohoo" for a booking first SEEN already-confirmed (a fast request->confirm
     // that happened between polls). Guarded to current/upcoming rentals so a
     // first-time account sync of historical confirmed bookings can't flood.
-    notifyInsert.push(buildNotifyEvent(args, "booking_confirmed"));
+    notifyInsert.push(await buildNotifyEvent(ctx, args, "booking_confirmed"));
   }
   return {
     action: "inserted",
@@ -1536,8 +1577,11 @@ export const upsertConversationsBatch = mutation({
         // an earlier message poll before this field existed). Only write when
         // the poll carries one; never clear an existing snapshot.
         if (c.inquiry_items && c.inquiry_items.length > 0) {
-          patch.inquiry_items = c.inquiry_items;
-          if (c.inquiry_image_url) patch.inquiry_image_url = c.inquiry_image_url;
+          const itemsChanged = JSON.stringify(existing.inquiry_items ?? []) !== JSON.stringify(c.inquiry_items);
+          if (itemsChanged) patch.inquiry_items = c.inquiry_items;
+          if (c.inquiry_image_url && c.inquiry_image_url !== existing.inquiry_image_url) {
+            patch.inquiry_image_url = c.inquiry_image_url;
+          }
         }
         if (Object.keys(patch).length > 0) await ctx.db.patch(existing._id, patch);
         skipped++;

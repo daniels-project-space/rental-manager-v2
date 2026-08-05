@@ -126,7 +126,7 @@ export const canonicalizeDenialsTask = schedules.task({
   id: "canonicalize-denials",
   // Reverted 2026-05-24 hourly → daily 04:30 UTC. Denials are historical
   // events; canonicalisation lag of <24h is fine and saves 23/24 fires/day.
-  cron: "30 4 * * *",
+  cron: "30 4 * * 0",
   // One Grok call per run — bounded LLM cost.
   maxDuration: 120,
   run: async (_payload, { ctx }) => {

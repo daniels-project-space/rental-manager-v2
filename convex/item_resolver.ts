@@ -26,7 +26,6 @@ import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
-import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
 import { titleHash, primaryBrand, brandMismatch } from "./listing_cache";
@@ -50,16 +49,15 @@ async function getVaultKey(service: string, keyName: string): Promise<string> {
   throw new Error(keyName + " not found in vault service=" + service);
 }
 
-// Convex-side LLM provider selector. Default: OpenRouter → DeepSeek-v4-flash
-// ($0.112 / $0.224 per 1M tok). Set AI_PROVIDER=xai for the grok-4.3 fallback
-// path ($1.25 / $2.50). Built lazily so module loads without env access.
+// Convex-side LLM provider selector. Every account uses the vault-backed
+// OpenRouter lane: DeepSeek for background resolution, Grok 4.3 for calendar
+// time extraction, and Haiku for drafts.
 //
 // IMPORTANT — Convex actions can't cross-import from src/, so this helper is
 // the single source of truth on the Convex side. denial_resolver,
 // extract_booking_times, and listing_resolver all import this re-export.
 // Keys come from the project-hub vault (service "openrouter" or "xai")
 // with process.env as the override; no Vercel/Trigger.dev env required.
-let _xai: ReturnType<typeof createXai> | null = null;
 let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
 
 /** Pin OpenRouter routing to providers that emit clean output. Observed
@@ -67,15 +65,7 @@ let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
  *  are stable. */
 const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
 
-export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boolean }) {
-  const useXai = (process.env.AI_PROVIDER ?? "openrouter").toLowerCase() === "xai";
-  if (useXai) {
-    if (!_xai) {
-      const key = await getVaultKey("xai", "XAI_API_KEY");
-      _xai = createXai({ apiKey: key });
-    }
-    return _xai(process.env.GROK_CHAT_MODEL ?? "grok-4.3");
-  }
+export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boolean; calendarExtraction?: boolean }) {
   if (!_openrouter) {
     const key = await getVaultKey("openrouter", "OPENROUTER_API_KEY");
     _openrouter = createOpenRouter({ apiKey: key });
@@ -93,6 +83,14 @@ export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boole
   // Anthropic is its own provider, so no deepseek provider pin.
   if (opts?.haiku) {
     return _openrouter(process.env.HAIKU_MODEL ?? "anthropic/claude-haiku-4.5");
+  }
+  // Calendar times are negotiated conversationally and are displayed as
+  // operational facts, so keep this narrow task on the more reliable Grok 4.3
+  // lane. It remains vault-backed OpenRouter, not a direct xAI key.
+  if (opts?.calendarExtraction) {
+    return _openrouter(process.env.CALENDAR_EXTRACTION_MODEL ?? "x-ai/grok-4.3", {
+      extraBody: { reasoning: { enabled: false } },
+    });
   }
   return _openrouter(process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash", {
     extraBody: { provider: PROVIDER_PIN },

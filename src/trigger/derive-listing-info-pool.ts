@@ -645,8 +645,8 @@ export const deriveListingInfoPoolTask = schedules.task({
   // 48 runs/day with 95%+ idle (queue empty). New-listing latency is
   // handled by poll-hygglo's on-demand trigger (`deriveListingInfoPoolOn
   // DemandTask`) so the cron is only a backstop for forceReDerive +
-  // listings the on-demand path missed. Daily cadence is plenty.
-  cron: "20 4 * * *",
+  // listings the on-demand path missed. A weekly backstop is sufficient.
+  cron: "20 4 * * 0",
   maxDuration: 240,
   run: async (payload, { ctx }) => {
     if (isWithinUkQuietHours()) {

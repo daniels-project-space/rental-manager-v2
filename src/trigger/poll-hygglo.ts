@@ -1,7 +1,7 @@
 /**
  * poll-hygglo-inbox — Phase 6.1
  *
- * Runs every 5 minutes. Pulls Hygglo credentials from the project-hub vault,
+ * Runs every 2 minutes. Pulls Hygglo credentials from the project-hub vault,
  * authenticates to the Hygglo REST API (read-only) for each account,
  * extracts chat messages from active orders, and upserts into Convex.
  * Phase 6.1: also populates renters + conversations tables.
@@ -14,20 +14,24 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
-import { shouldRunHyggloPoll } from "../lib/quiet-hours";
+import { HYGGLO_POLL_CRON, hyggloPollMode } from "../lib/quiet-hours";
 // Phase 2 (corePoll cutover complete) — the pure hygglo-core poll assembler is
 // now the SOLE fetch+shape path. It produces the `{ messages, reservations,
 // renters, conversations }` payload arrays consumed by downstream (B) — Convex
 // upserts, holds reconcile, sync_state, listing resolution. The legacy inline
 // `scrapeAccount` scraper and its `use_core_poll` feature flag were removed
 // after corePoll was validated in production (Phase 2 cleanup).
-import { corePoll } from "../hygglo-core/poll";
+import { corePoll, type CorePollMode } from "../hygglo-core/poll";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 // Fallback URL must match v2's active deployment (see .env.local NEXT_PUBLIC_CONVEX_URL).
 // Wrong fallback caused poll writes to hit exciting-lion-29 while the dashboard
 // read from hearty-oyster-600 — renter_name/order_step/photos_urls never landed.
 const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
+// A paused account is retried periodically instead of being left permanently
+// inert after a transient Hygglo/Vault/network failure. A successful retry
+// resets it to active through account_state.upsert().
+const PAUSED_ACCOUNT_RETRY_MS = 60 * 60 * 1000;
 
 // ── Vault helper ──────────────────────────────────────────────
 
@@ -184,7 +188,7 @@ type OrderReservationPayload = {
 // never a money field) is undefined because corePoll strips `order` off the
 // hot path. This only affects brand-new-listing enrichment, not
 // reservation/revenue data.
-async function scrapeAccountViaCore(accountSlug: string): Promise<{
+async function scrapeAccountViaCore(accountSlug: string, mode: CorePollMode): Promise<{
   messages: Array<{
     thread_id: string;
     message_id: string;
@@ -218,7 +222,7 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
   observedAt: number;
 }> {
   const observedAt = Date.now();
-  const core = await corePoll(accountSlug, { fetchedAt: observedAt });
+  const core = await corePoll(accountSlug, { fetchedAt: observedAt, mode });
 
   // B4 — surface non-fatal per-filter / per-order fetch failures that corePoll
   // counted (instead of swallowing them silently). A non-zero count means this
@@ -289,7 +293,7 @@ async function scrapeAccountViaCore(accountSlug: string): Promise<{
 // build-stamp 2026-06-23T00:45Z — awaiting_owner_action batch-path fix (b68f826)
 export const pollHyggloInbox = schedules.task({
   id: "poll-hygglo-inbox",
-  cron: "*/15 * * * *",
+  cron: HYGGLO_POLL_CRON,
   maxDuration: 120,
   retry: { maxAttempts: 2 },
   run: async (payload) => {
@@ -301,24 +305,15 @@ export const pollHyggloInbox = schedules.task({
       payload !== null &&
       "type" in payload &&
       (payload as { type?: string }).type === "DECLARATIVE";
-    if (!shouldRunHyggloPoll(new Date(), !isScheduledRun)) {
-      // Heartbeat: keep dashboard "fresh" indicator alive outside the active window.
-      try {
-        const hbConvex = new ConvexHttpClient(CONVEX_URL);
-        await hbConvex.mutation(api.sync_state.recordSyncRun, {
-          source: "hygglo_poller",
-          succeeded: true,
-          kind: "heartbeat",
-        });
-      } catch (err) {
-        console.warn("[poll-hygglo] heartbeat write failed:", err);
-      }
+    const pollMode = hyggloPollMode(new Date(), !isScheduledRun);
+    if (pollMode === "skip") {
       logger.info("[poll-active-window] skipped", {
         task: "poll-hygglo-inbox",
         overnight_mode: "hourly",
       });
       return { skipped: true, reason: "outside_poll_active_window" };
     }
+    const isFullPoll = pollMode === "full";
     const runStart = Date.now();
     let runSucceeded = false;
     let runError: string | undefined;
@@ -354,7 +349,7 @@ export const pollHyggloInbox = schedules.task({
     // Phase 2 cleanup — corePoll is now the sole fetch+shape engine. The
     // `use_core_poll` feature flag and the legacy inline scraper were removed
     // after corePoll was validated in production.
-    console.log("[poll-hygglo] poll engine: core-poll");
+    console.log(`[poll-hygglo] poll engine: core-poll (${pollMode})`);
 
     const results: Array<{
       slug: string;
@@ -389,12 +384,21 @@ export const pollHyggloInbox = schedules.task({
         // ── Paused-mode guard ──────────────────────────────────
         try {
           const accountState = await convex.query(api.account_state.get, { account: account.slug });
-          if (accountState?.mode === "paused") {
+          const pausedRecently =
+            accountState?.mode === "paused" &&
+            Date.now() - (accountState.modeChangedAt ?? 0) < PAUSED_ACCOUNT_RETRY_MS;
+          if (pausedRecently && isScheduledRun) {
             console.warn(
-              `[poll-hygglo] Account ${account.slug} is paused (consecutiveFailures=${accountState.consecutiveFailures}); skipping poll`
+              `[poll-hygglo] Account ${account.slug} is paused (consecutiveFailures=${accountState.consecutiveFailures}); skipping until retry cooldown ends`,
             );
             results.push({ slug: account.slug, ok: true, messages: 0, inserted: 0 });
             continue;
+          }
+          if (accountState?.mode === "paused") {
+            logger.info("[poll-hygglo] retrying paused account after cooldown", {
+              account: account.slug,
+              consecutiveFailures: accountState.consecutiveFailures,
+            });
           }
         } catch (stateErr) {
           console.error(`[poll-hygglo] Failed to fetch account_state for ${account.slug}:`, stateErr);
@@ -416,7 +420,7 @@ export const pollHyggloInbox = schedules.task({
             presenceComplete,
             observedAt,
           } =
-            await scrapeAccountViaCore(account.slug);
+            await scrapeAccountViaCore(account.slug, pollMode);
 
           // Upsert chat messages (batched 50)
           let totalInserted = 0;
@@ -578,13 +582,13 @@ export const pollHyggloInbox = schedules.task({
           // Unchanged rich reservation documents are deliberately not patched,
           // but this one skinny row records that they are still present in the
           // authoritative Hygglo `current` bucket.
-          if (presenceComplete) {
+          if (isFullPoll && presenceComplete) {
             await convex.mutation(api.hygglo_presence.replaceCurrentOrders, {
               account: account.slug,
               orderIds: currentOrderIds,
               observedAt,
             });
-          } else {
+          } else if (isFullPoll) {
             logger.warn("[poll-hygglo] keeping prior current-order presence after partial poll", {
               account: account.slug,
             });
@@ -593,7 +597,7 @@ export const pollHyggloInbox = schedules.task({
           // Phase 18.2 — on-demand listing resolution for newly inserted reservations.
           // Calls internal.listing_resolver.resolveListing directly instead of the
           // old vision pipeline. On error, writes an "unresolved" row so audit can retry.
-          if (newlyInserted.length > 0) {
+          if (isFullPoll && newlyInserted.length > 0) {
             for (const entry of newlyInserted) {
               try {
                 const result = await convex.action(api.listing_resolver.resolveListingPublic, {
@@ -670,7 +674,7 @@ export const pollHyggloInbox = schedules.task({
           // — we don't await the run, just the enqueue. The Convex
           // mutation that used to do this in-line was deleted (LLM work
           // belongs on Trigger, per CLAUDE.md).
-          if (infoPoolTargets.size > 0) {
+          if (isFullPoll && infoPoolTargets.size > 0) {
             try {
               const handle = await tasks.trigger<typeof deriveListingInfoPoolOnDemandTask>(
                 "derive-listing-info-pool-on-demand",
@@ -728,14 +732,16 @@ export const pollHyggloInbox = schedules.task({
           });
 
           // ── account_state: success ────────────────────────────
-          try {
-            await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: true });
-          } catch (asErr) {
-            console.error(`[poll-hygglo] account_state.upsert (success) failed for ${account.slug}:`, asErr);
+          if (isFullPoll) {
+            try {
+              await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: true });
+            } catch (asErr) {
+              console.error(`[poll-hygglo] account_state.upsert (success) failed for ${account.slug}:`, asErr);
+            }
           }
 
           // ── Hold reconciliation (Wave 2 T5) ──────────────────
-          try {
+          if (isFullPoll) try {
             const [reconReservationsRaw, reconItemsRaw] = await Promise.all([
               convex.query(api.reservations.listForReconcile, { account_slug: account.slug }),
               getReconItemsRaw(),
@@ -824,10 +830,12 @@ export const pollHyggloInbox = schedules.task({
           results.push({ slug: account.slug, ok: false, error: msg });
 
           // ── account_state: failure ────────────────────────────
-          try {
-            await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: false, errorMessage: msg });
-          } catch (asErr) {
-            console.error(`[poll-hygglo] account_state.upsert (failure) failed for ${account.slug}:`, asErr);
+          if (isFullPoll) {
+            try {
+              await convex.mutation(api.account_state.upsert, { account: account.slug, succeeded: false, errorMessage: msg });
+            } catch (asErr) {
+              console.error(`[poll-hygglo] account_state.upsert (failure) failed for ${account.slug}:`, asErr);
+            }
           }
         }
       }
@@ -838,7 +846,7 @@ export const pollHyggloInbox = schedules.task({
       console.error(`[poll-hygglo] Fatal error: ${runError}`);
     } finally {
       const durationMs = Date.now() - runStart;
-      try {
+      if (isFullPoll) try {
         await convex.mutation(api.sync_state.recordSyncRun, {
           source: "hygglo_poller",
           succeeded: runSucceeded,
@@ -858,6 +866,6 @@ export const pollHyggloInbox = schedules.task({
 
     const totalInserted = results.reduce((s, r) => s + (r.inserted ?? 0), 0);
     console.log(`[poll-hygglo] Done. Total new messages inserted: ${totalInserted}`);
-    return { results, totalInserted, ts: Date.now() };
+    return { results, totalInserted, mode: pollMode, ts: Date.now() };
   },
 });

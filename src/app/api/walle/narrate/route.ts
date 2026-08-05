@@ -20,7 +20,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { getVaultOpenRouterModel } from "@/lib/llm-client";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import {
@@ -104,13 +104,13 @@ export async function POST(req: Request) {
   }
 
   // ── Model ─────────────────────────────────────────────────────────
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
+  const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
+  let model;
+  try {
+    model = await getVaultOpenRouterModel(modelId);
+  } catch {
     return NextResponse.json({ line: null, reason: "error" }, { status: 200 });
   }
-  const openrouter = createOpenRouter({ apiKey });
-  const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
-  const model = openrouter(modelId);
 
   const system = buildWalleNarrationPrompt(snapshotLine, mode);
 

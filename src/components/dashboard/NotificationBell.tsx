@@ -44,16 +44,35 @@ type PushState =
   | "denied"
   | "enabled";
 
+type PushMode = "all" | "money_only";
+const PUSH_MODE_STORAGE_KEY = "rental-manager:push-mode";
+
+function storedPushMode(): PushMode | undefined {
+  if (typeof window === "undefined") return undefined;
+  const value = window.localStorage.getItem(PUSH_MODE_STORAGE_KEY);
+  return value === "all" || value === "money_only" ? value : undefined;
+}
+
+function rememberPushMode(mode: PushMode) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(PUSH_MODE_STORAGE_KEY, mode);
+  }
+}
+
 export function NotificationBell() {
   const router = useRouter();
   const vapidKey = useQuery(api.notifications.getVapidPublicKey);
   const recent = useQuery(api.notifications.listRecent, { limit: 20 });
   const save = useMutation(api.notifications.savePushSubscription);
+  const setSubscriptionMode = useMutation(api.notifications.setPushSubscriptionMode);
   const markAllRead = useMutation(api.notifications.markAllRead);
   const sendTest = useMutation(api.notifications.sendTestNotification);
 
   const [open, setOpen] = useState(false);
   const [pushState, setPushState] = useState<PushState>("loading");
+  const [pushEndpoint, setPushEndpoint] = useState<string | null>(null);
+  const [pushMode, setPushMode] = useState<PushMode>("all");
+  const [modeBusy, setModeBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -74,14 +93,19 @@ export function NotificationBell() {
       // iPhone in a Safari tab/bookmark can't do web push until the site is
       // added to the Home Screen (Apple restriction) — guide there instead of
       // a dead "unsupported".
-      setPushState(isIOS && !isStandalone ? "ios-install" : "unsupported");
+      queueMicrotask(() =>
+        setPushState(isIOS && !isStandalone ? "ios-install" : "unsupported"),
+      );
       return;
     }
     navigator.serviceWorker
       .register("/sw.js")
       .then(async (reg) => {
         const sub = await reg.pushManager.getSubscription();
-        if (sub) setPushState("enabled");
+        if (sub) {
+          setPushEndpoint(sub.endpoint);
+          setPushState("enabled");
+        }
         else setPushState(Notification.permission === "denied" ? "denied" : "default");
       })
       .catch(() =>
@@ -117,13 +141,19 @@ export function NotificationBell() {
         }
         if (cancelled) return;
         const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
-        await save({
+        const result = await save({
           endpoint: sub.endpoint,
           p256dh: json.keys?.p256dh ?? "",
           auth: json.keys?.auth ?? "",
+          mode: storedPushMode(),
           user_agent: navigator.userAgent,
         });
-        if (!cancelled) setPushState("enabled");
+        if (!cancelled) {
+          setPushEndpoint(sub.endpoint);
+          setPushMode(result.mode);
+          rememberPushMode(result.mode);
+          setPushState("enabled");
+        }
       } catch {
         /* best-effort keep-alive; the manual Enable button is the fallback */
       }
@@ -164,17 +194,36 @@ export function NotificationBell() {
         });
       }
       const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
-      await save({
+      const result = await save({
         endpoint: sub.endpoint,
         p256dh: json.keys?.p256dh ?? "",
         auth: json.keys?.auth ?? "",
+        mode: storedPushMode(),
         user_agent: navigator.userAgent,
       });
+      setPushEndpoint(sub.endpoint);
+      setPushMode(result.mode);
+      rememberPushMode(result.mode);
       setPushState("enabled");
     } catch (e) {
       setErr((e as Error).message || "Could not enable notifications.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function changePushMode(next: PushMode) {
+    if (!pushEndpoint || next === pushMode) return;
+    setErr(null);
+    setModeBusy(true);
+    try {
+      const result = await setSubscriptionMode({ endpoint: pushEndpoint, mode: next });
+      setPushMode(result.mode);
+      rememberPushMode(result.mode);
+    } catch (e) {
+      setErr((e as Error).message || "Could not update this device's notification mode.");
+    } finally {
+      setModeBusy(false);
     }
   }
 
@@ -283,16 +332,53 @@ export function NotificationBell() {
             </div>
           )}
           {pushState === "enabled" && (
-            <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
-              <span className="text-[11px] text-emerald-400">
-                ✓ Phone notifications on
-              </span>
-              <button
-                onClick={() => sendTest({}).catch(() => {})}
-                className="text-[10px] text-[#9aa0ad] hover:text-[#e4e6eb] underline-offset-2 hover:underline"
-              >
-                Send test
-              </button>
+            <div className="px-3 py-2.5 border-b border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-emerald-400">
+                  ✓ Phone notifications on
+                </span>
+                <button
+                  onClick={() => sendTest({}).catch(() => {})}
+                  className="text-[10px] text-[#9aa0ad] hover:text-[#e4e6eb] underline-offset-2 hover:underline"
+                >
+                  Send money test
+                </button>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.12em] text-[#6b7280] mb-1.5">
+                  This device
+                </p>
+                <div className="grid grid-cols-2 gap-1 rounded-lg bg-white/[0.04] p-1">
+                  {([
+                    ["all", "All updates"],
+                    ["money_only", "Money only"],
+                  ] as const).map(([mode, label]) => {
+                    const selected = pushMode === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        aria-pressed={selected}
+                        disabled={modeBusy}
+                        onClick={() => void changePushMode(mode)}
+                        className="rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors disabled:opacity-50"
+                        style={{
+                          color: selected
+                            ? mode === "money_only" ? "#fbbf24" : "#e4e6eb"
+                            : "#7a8190",
+                          background: selected ? "rgba(255,255,255,0.09)" : "transparent",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[9px] text-[#6b7280] mt-1.5 leading-snug">
+                  Money only sends confirmed-rental “Wohooo” earnings alerts. Other devices keep their own setting, so Leo can stay on All updates.
+                </p>
+                {err && <p className="text-[10px] text-red-400 mt-1">{err}</p>}
+              </div>
             </div>
           )}
 

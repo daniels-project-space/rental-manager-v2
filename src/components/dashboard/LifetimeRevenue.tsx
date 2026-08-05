@@ -4,6 +4,10 @@ import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import {
+  calculateLeoTakeoverPerformance,
+  LEO_TAKEOVER_MONTH,
+} from "@/lib/revenue/leo-takeover";
 import { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
@@ -52,17 +56,6 @@ function fmtMonth(yyyyMM: string): string {
   const NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const parts = yyyyMM.split("-");
   return NAMES[parseInt(parts[1]) - 1] + " " + parts[0].slice(2);
-}
-
-function tooltipFmt(value: ValueType, name: NameType): [string, string] {
-  const v = typeof value === "number" ? value : 0;
-  const series = SERIES.find((s) => s.key === name);
-  const label =
-    name === "cumulative" ? "Cumulative" :
-    name === "forecastLine" ? "Forecast" :
-    name === "predictedRemainder" ? "Predicted remainder" :
-    series?.label ?? String(name);
-  return ["£" + v.toFixed(2), label];
 }
 
 // Series counted toward "how much of the predicted total is already realised".
@@ -120,18 +113,14 @@ export function LifetimeRevenue() {
   const showCurrentMonthPrediction = todayDayOfMonth >= 7 && expectedMonthlyTarget > 0;
   const rawCurrentMonth = (raw as { currentMonth?: string } | undefined)?.currentMonth;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawData = raw?.months.map((row: any) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fc = raw.forecast.find((f: any) => f.month === row.month);
-    const r = row as unknown as Record<string, number | undefined>;
+  const rawData = useMemo(() => raw?.months.map((row: RawRow) => {
+    const fc = raw.forecast.find((forecast: RawRow) => forecast.month === row.month);
+    const r = { ...row } as Record<string, number | undefined>;
     // Pre-AI months: zero out aiBoost client-side so no green sliver renders
     // for months earlier than settings.ai_active_from. String compare on YYYY-MM
     // is sound since the format is fixed-width.
-    if (row.month < aiActiveFrom) {
-      r.aiBoost = 0;
-    }
-    const realised = ACTUAL_KEYS.reduce((sum, k) => sum + (r[k] ?? 0), 0);
+    if (row.month < aiActiveFrom) r.aiBoost = 0;
+    const realised = ACTUAL_KEYS.reduce((sum, key) => sum + (r[key] ?? 0), 0);
     // For the CURRENT month, use the Expected Monthly target (dashboard.ts) so the
     // ghost bar and the target marker reference the same number. For other future
     // months, fall back to the lifetime forecast.
@@ -144,12 +133,19 @@ export function LifetimeRevenue() {
       predictedRemainder = Math.max(0, fc.value - realised);
     }
     return {
-      ...row,
-      label: fmtMonth(row.month),
+      ...r,
+      month: String(row.month),
+      label: fmtMonth(String(row.month)),
       forecastLine: fc ? fc.value : null,
       predictedRemainder,
     };
-  }) ?? [];
+  }) ?? [], [
+    aiActiveFrom,
+    expectedMonthlyTarget,
+    raw,
+    rawCurrentMonth,
+    showCurrentMonthPrediction,
+  ]);
 
   const seriesTotals = useMemo(() => {
     const out: Record<string, number> = {};
@@ -174,8 +170,8 @@ export function LifetimeRevenue() {
   // curve reacts to legend toggles (server-side row.cumulative is the full
   // lifetime running sum and doesn't know about client-side hidden state).
   const data = useMemo(() => {
-    let running = 0;
-    return rawData.map((row) => {
+    type ChartRow = (typeof rawData)[number] & { cumulative?: number };
+    return rawData.reduce<ChartRow[]>((rows, row) => {
       const r = row as unknown as Record<string, number | undefined>;
       const out: Record<string, unknown> = { ...row };
       for (const s of SERIES) {
@@ -185,15 +181,25 @@ export function LifetimeRevenue() {
       for (const k of ACTUAL_KEYS) {
         if (!hidden[k]) monthSum += r[k] ?? 0;
       }
-      running += monthSum;
-      out.cumulative = running;
-      return out as typeof row;
-    });
+      const previous = rows.length > 0
+        ? Number(rows[rows.length - 1].cumulative ?? 0)
+        : 0;
+      out.cumulative = previous + monthSum;
+      return [...rows, out as ChartRow];
+    }, []);
   }, [rawData, hidden]);
 
   // Stats bar reacts to legend toggles: filter ACTUAL_KEYS by visibility,
   // then recompute totals/avg/best/weakest/boost from the visible-only sums.
-  const { totalRevenue, avgMonthly, strongest, weakest, boostPct, sumAiBoostGbp } = useMemo(() => {
+  const {
+    totalRevenue,
+    avgMonthly,
+    strongest,
+    weakest,
+    boostPct,
+    sumAiBoostGbp,
+    leoTakeover,
+  } = useMemo(() => {
     const visibleActualKeys = ACTUAL_KEYS.filter((k) => !hidden[k]);
     const months = raw?.months ?? [];
     const perMonth = months.map((row) => {
@@ -248,6 +254,10 @@ export function LifetimeRevenue() {
       weakest: worst,
       boostPct: boost,
       sumAiBoostGbp,
+      leoTakeover: calculateLeoTakeoverPerformance(
+        perMonth.map((month) => ({ month: month.month, revenue: month.sum })),
+        currentMonthKey,
+      ),
     };
   }, [raw, hidden, aiActiveFrom]);
 
@@ -259,6 +269,8 @@ export function LifetimeRevenue() {
   // positive delta even with nothing hidden.
   const lifetimeActualsTotal = ACTUAL_KEYS.reduce((a, k) => a + (seriesTotals[k] ?? 0), 0);
   const hiddenDelta = Math.max(0, lifetimeActualsTotal - totalRevenue);
+  const hasLeoTakeoverBoundary = data.some((row) => row.month === LEO_TAKEOVER_MONTH) &&
+    data.some((row) => row.month < LEO_TAKEOVER_MONTH);
   return (
     <>
       <Card className="relative overflow-hidden min-h-[460px]">
@@ -278,6 +290,29 @@ export function LifetimeRevenue() {
               )}
             </span>
             <span>Avg/mo: <b style={{ color: "#e4e6eb" }}>{"£"}{avgMonthly.toLocaleString("en-GB")}</b></span>
+            {leoTakeover.afterMonths > 0 && (
+              <span
+                title={`After Leo uses only ${LEO_TAKEOVER_MONTH} onward (${leoTakeover.afterMonths} calendar month${leoTakeover.afterMonths === 1 ? "" : "s"}); the comparison uses the preceding ${leoTakeover.beforeMonths} calendar months. Zero-revenue months count. The current partial month is included.`}
+              >
+                After Leo: <b style={{ color: "#fb923c" }}>£{leoTakeover.afterAverage.toLocaleString("en-GB")}/mo</b>
+                {leoTakeover.beforeMonths > 0 && (
+                  <span className="ml-1 text-[#8b8fa3]">
+                    vs £{leoTakeover.beforeAverage.toLocaleString("en-GB")}
+                    {leoTakeover.deltaPct !== null && (
+                      <b
+                        className="ml-1"
+                        style={{ color: leoTakeover.deltaPct >= 0 ? "#22c55e" : "#f59e0b" }}
+                      >
+                        ({leoTakeover.deltaPct >= 0 ? "+" : ""}{leoTakeover.deltaPct}%)
+                      </b>
+                    )}
+                  </span>
+                )}
+                {leoTakeover.includesPartialCurrentMonth && (
+                  <span className="ml-1 text-[9px] text-[#6b7280]">so far</span>
+                )}
+              </span>
+            )}
             {strongest && (
               <span>Best: <b style={{ color: "#22c55e" }}>{fmtMonth(strongest.month)} {"£"}{strongest.revenue.toLocaleString("en-GB", { maximumFractionDigits: 0 })}</b></span>
             )}
@@ -609,6 +644,24 @@ export function LifetimeRevenue() {
                   );
                 }}
               />
+              {hasLeoTakeoverBoundary && (
+                <ReferenceLine
+                  yAxisId="right"
+                  x={fmtMonth(LEO_TAKEOVER_MONTH)}
+                  position="start"
+                  stroke="#f97316"
+                  strokeWidth={1.5}
+                  strokeDasharray="2 5"
+                  strokeOpacity={0.65}
+                  label={{
+                    value: "after Leo takeover",
+                    position: "top",
+                    fill: "#fb923c",
+                    fontSize: 9,
+                    opacity: 0.58,
+                  }}
+                />
+              )}
               {/* Stacked bars — bottom to top per SERIES order. Only segments that can
                   cap the stack (aiBoost / damage / booked / pending / predictedRemainder)
                   get a rounded top, matching V1's borderRadius:3 selection.

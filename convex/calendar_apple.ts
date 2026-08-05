@@ -14,11 +14,40 @@ import { api, internal } from "./_generated/api";
 import crypto from "crypto";
 
 const ICLOUD_ROOT = "https://caldav.icloud.com";
+const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
+const APPLE_VAULT_SERVICE = "apple_calendar";
+const ACCOUNT_CALENDAR_NAMES: Record<string, string> = {
+  leo: "Leo Rentals",
+  diogo: "Arbeit",
+  dbcinema: "DB Cinema Rentals",
+};
+
+async function getVaultAppleCredentials(): Promise<{ appleId: string; appPassword: string }> {
+  const vaultToken = process.env.VAULT_ACCESS_TOKEN;
+  if (!vaultToken) throw new Error("VAULT_ACCESS_TOKEN is not configured");
+  const response = await fetch(`${VAULT_URL}/api/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: "secrets:listByService",
+      args: { service: APPLE_VAULT_SERVICE, vaultToken },
+      format: "json",
+    }),
+  });
+  if (!response.ok) throw new Error(`Apple vault fetch failed: ${response.status}`);
+  const data = (await response.json()) as { value?: Array<{ keyName: string; value: string }> };
+  const read = (keyName: string) => data.value?.find((row) => row.keyName === keyName)?.value;
+  const appleId = read("APPLE_ID");
+  const appPassword = read("APPLE_APP_PASSWORD");
+  if (!appleId || !appPassword) throw new Error("Apple Calendar credentials are missing from the vault");
+  return { appleId, appPassword };
+}
 
 type ResForCal = {
   thread_id: string; account_slug: string | null; renter_name: string; items: string[];
   status: string; pickup_date: string | null; pickup_time: string | null;
   return_date: string | null; return_time: string | null; pickup_address: string | null;
+  member_thread_ids?: string[];
 };
 
 // ── iCalendar (.ics) + Europe/London wall-clock → UTC ────────────────────────
@@ -51,7 +80,7 @@ function fold(line: string): string {
   while (rest.length) { out += "\r\n " + rest.slice(0, 73); rest = rest.slice(73); }
   return out;
 }
-type CalEvent = { uid: string; startMs: number; endMs: number; summary: string; description?: string; location?: string; alarmMin?: number };
+type CalEvent = { uid: string; startMs: number; endMs: number; summary: string; description?: string; location?: string; alarmMins?: number[] };
 function buildVEvent(e: CalEvent, dtstampMs: number): string {
   const lines = [
     "BEGIN:VEVENT", `UID:${e.uid}`, `DTSTAMP:${icsUtc(dtstampMs)}`,
@@ -60,8 +89,8 @@ function buildVEvent(e: CalEvent, dtstampMs: number): string {
   if (e.location) lines.push(fold(`LOCATION:${icsEscape(e.location)}`));
   if (e.description) lines.push(fold(`DESCRIPTION:${icsEscape(e.description)}`));
   lines.push("SEQUENCE:0", "STATUS:CONFIRMED", "TRANSP:OPAQUE");
-  if (e.alarmMin && e.alarmMin > 0) {
-    lines.push("BEGIN:VALARM", "ACTION:DISPLAY", fold(`DESCRIPTION:${icsEscape(e.summary)}`), `TRIGGER:-PT${Math.round(e.alarmMin)}M`, "END:VALARM");
+  for (const minutes of e.alarmMins ?? []) {
+    if (minutes > 0) lines.push("BEGIN:VALARM", "ACTION:DISPLAY", fold(`DESCRIPTION:${icsEscape(e.summary)}`), `TRIGGER:-PT${Math.round(minutes)}M`, "END:VALARM");
   }
   lines.push("END:VEVENT");
   return lines.join("\r\n");
@@ -78,18 +107,18 @@ function eventsForReservation(r: ResForCal, leadMin: number, returnLeadMin: numb
     const start = londonToUtcMs(r.pickup_date, r.pickup_time);
     out.push({
       uid: `rmv2-${r.thread_id}-pickup@rmv2`, startMs: start, endMs: start + 30 * 60000,
-      summary: `📷 Pickup — ${r.renter_name} (${label})`,
-      description: `Rental pickup for ${r.renter_name}. Items: ${label}. Thread ${r.thread_id}.`,
-      location: r.pickup_address ?? undefined, alarmMin: leadMin,
+      summary: `📷 Pickup — ${label}`,
+      description: `Rental pickup. Items: ${label}.`,
+      location: r.pickup_address ?? undefined, alarmMins: [60, 30],
     });
   }
   if (r.return_date && r.return_time) {
     const start = londonToUtcMs(r.return_date, r.return_time);
     out.push({
       uid: `rmv2-${r.thread_id}-return@rmv2`, startMs: start, endMs: start + 30 * 60000,
-      summary: `↩️ Return — ${r.renter_name} (${label})`,
-      description: `Rental return from ${r.renter_name}. Items: ${label}. Thread ${r.thread_id}.`,
-      location: r.pickup_address ?? undefined, alarmMin: returnLeadMin,
+      summary: `↩️ Drop off — ${label}`,
+      description: `Rental drop off. Items: ${label}.`,
+      location: r.pickup_address ?? undefined, alarmMins: [60, 30],
     });
   }
   return out;
@@ -162,8 +191,17 @@ export const connectApple = action({
         (calendar_name && calendars.find((c) => c.name.toLowerCase() === calendar_name.toLowerCase())) ||
         calendars.find((c) => /rental|rmv2|rent/i.test(c.name)) || calendars[0];
       await ctx.runMutation(internal.calendar_apple_db._saveConnection, {
-        patch: { apple_id, app_password, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
+        // The supplied password is used only for this connection check. Syncs
+        // always load their credential from the shared vault, never this table.
+        patch: { apple_id, app_password: undefined, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
       });
+      const routes = Object.entries(ACCOUNT_CALENDAR_NAMES)
+        .map(([account_slug, calendar_name]) => {
+          const calendar = calendars.find((entry) => entry.name.toLowerCase() === calendar_name.toLowerCase());
+          return calendar ? { account_slug, calendar_name: calendar.name, calendar_url: calendar.href } : null;
+        })
+        .filter((route): route is { account_slug: string; calendar_name: string; calendar_url: string } => route !== null);
+      await ctx.runMutation(internal.calendar_apple_db._saveAccountRoutes, { routes });
       return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -173,12 +211,46 @@ export const connectApple = action({
   },
 });
 
+/** Connect using the server-side Apple credentials stored in the shared vault. */
+export const connectFromVault = action({
+  args: { calendar_name: v.optional(v.string()) },
+  handler: async (ctx, { calendar_name }): Promise<{ ok: boolean; calendars?: string[]; chosen?: string; error?: string }> => {
+    try {
+      const { appleId, appPassword } = await getVaultAppleCredentials();
+      const { principalUrl, home, calendars } = await discover(appleId, appPassword);
+      if (!calendars.length) throw new Error("No writable calendars found on this iCloud account");
+      const pick =
+        (calendar_name && calendars.find((c) => c.name.toLowerCase() === calendar_name.toLowerCase())) ||
+        calendars.find((c) => /rental|rmv2|rent/i.test(c.name)) || calendars[0];
+      await ctx.runMutation(internal.calendar_apple_db._saveConnection, {
+        patch: { apple_id: appleId, app_password: undefined, principal_url: principalUrl, calendar_home: home, calendar_url: pick.href, calendar_name: pick.name, status: "connected", auto_sync: true, last_error: undefined, connected_at: Date.now() },
+      });
+      const routes = Object.entries(ACCOUNT_CALENDAR_NAMES)
+        .map(([account_slug, calendar_name]) => {
+          const calendar = calendars.find((entry) => entry.name.toLowerCase() === calendar_name.toLowerCase());
+          return calendar ? { account_slug, calendar_name: calendar.name, calendar_url: calendar.href } : null;
+        })
+        .filter((route): route is { account_slug: string; calendar_name: string; calendar_url: string } => route !== null);
+      await ctx.runMutation(internal.calendar_apple_db._saveAccountRoutes, { routes });
+      return { ok: true, calendars: calendars.map((c) => c.name), chosen: pick.name };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await ctx.runMutation(internal.calendar_apple_db._saveConnection, { patch: { status: "error", last_error: msg } });
+      return { ok: false, error: msg };
+    }
+  },
+});
+
 export const testConnection = action({
   args: {},
   handler: async (ctx): Promise<{ ok: boolean; error?: string }> => {
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
-    if (!c?.apple_id || !c.app_password) return { ok: false, error: "not connected" };
-    try { await discover(c.apple_id, c.app_password); return { ok: true }; }
+    if (!c?.apple_id) return { ok: false, error: "not connected" };
+    try {
+      const { appleId, appPassword } = await getVaultAppleCredentials();
+      await discover(appleId, appPassword);
+      return { ok: true };
+    }
     catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
   },
 });
@@ -196,14 +268,20 @@ export const syncReservation = action({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }): Promise<{ ok: boolean; synced?: number; removed?: number; error?: string }> => {
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
-    if (c?.status !== "connected" || !c.apple_id || !c.app_password || !c.calendar_url) return { ok: false, error: "not connected" };
-    const auth = basicAuth(c.apple_id, c.app_password);
-    const base = c.calendar_url.endsWith("/") ? c.calendar_url : c.calendar_url + "/";
+    if (c?.status !== "connected" || !c.apple_id || !c.calendar_url) return { ok: false, error: "not connected" };
+    let credentials: { appleId: string; appPassword: string };
+    try { credentials = await getVaultAppleCredentials(); }
+    catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    const auth = basicAuth(credentials.appleId, credentials.appPassword);
+    const r = (await ctx.runQuery(internal.calendar_apple_db._getReservationForCal, { thread_id })) as ResForCal | null;
+    const route = r?.account_slug
+      ? await ctx.runQuery(internal.calendar_apple_db._getAccountRoute, { account_slug: r.account_slug })
+      : null;
+    const calendarUrl = route?.calendar_url ?? c.calendar_url;
+    const base = calendarUrl.endsWith("/") ? calendarUrl : calendarUrl + "/";
     const lead = c.reminder_lead_min ?? 60;
     const retLead = c.return_reminder_lead_min ?? lead;
-
-    const r = (await ctx.runQuery(internal.calendar_apple_db._getReservationForCal, { thread_id })) as ResForCal | null;
-    const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinks, { thread_id });
+    const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinksForThreads, { thread_ids: r?.member_thread_ids ?? [thread_id] });
     const linkByUid = new Map(links.map((l) => [l.event_uid, l]));
 
     const finished = !r || ["cancelled", "declined", "completed"].includes(r.status);
@@ -215,12 +293,20 @@ export const syncReservation = action({
       for (const e of events) {
         const kind = e.uid.includes("-return@") ? "return" : "pickup";
         const ics = buildVCalendar(buildVEvent(e, Date.now()));
-        const hash = sha(ics);
+        // DTSTAMP changes on every sync by definition. Hash only a stable
+        // rendering so an unchanged event does not get PUT again on every cron.
+        const hash = sha(buildVCalendar(buildVEvent(e, 0)));
         const prior = linkByUid.get(e.uid);
-        if (prior?.ics_hash === hash) continue;
+        // A route can change (e.g. an old DB Cinema event was written into Leo
+        // Rentals). A matching payload hash is not enough: migrate it to the
+        // correct account calendar before treating it as a no-op.
+        if (prior?.ics_hash === hash && prior.event_href.startsWith(base)) continue;
+        if (prior && !prior.event_href.startsWith(base)) {
+          await deleteEvent(prior.event_href, auth);
+        }
         const href = base + encodeURIComponent(e.uid) + ".ics";
         const etag = await putEvent(href, auth, ics);
-        await ctx.runMutation(internal.calendar_apple_db._saveEventLink, { thread_id, kind, event_uid: e.uid, event_href: href, etag: etag ?? undefined, ics_hash: hash });
+        await ctx.runMutation(internal.calendar_apple_db._saveEventLink, { thread_id: r?.thread_id ?? thread_id, kind, event_uid: e.uid, event_href: href, etag: etag ?? undefined, ics_hash: hash });
         synced++;
       }
       for (const l of links) {
@@ -251,8 +337,11 @@ export const unsyncReservation = action({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }): Promise<{ ok: boolean; removed: number }> => {
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
-    if (c?.status !== "connected" || !c.apple_id || !c.app_password) return { ok: false, removed: 0 };
-    const auth = basicAuth(c.apple_id, c.app_password);
+    if (c?.status !== "connected" || !c.apple_id) return { ok: false, removed: 0 };
+    let credentials: { appleId: string; appPassword: string };
+    try { credentials = await getVaultAppleCredentials(); }
+    catch { return { ok: false, removed: 0 }; }
+    const auth = basicAuth(credentials.appleId, credentials.appPassword);
     const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinks, { thread_id });
     let removed = 0;
     for (const l of links) {

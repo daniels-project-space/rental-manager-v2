@@ -26,7 +26,7 @@ import {
   createUIMessageStreamResponse,
   type ModelMessage,
 } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { getVaultOpenRouterModel } from "@/lib/llm-client";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
@@ -136,14 +136,7 @@ export async function POST(req: Request) {
   // the AI-assistant widget. (Narration bubbles still use the snapshot — they
   // run tool-less generateText and have no other source.)
 
-  // ── Model (lazy provider, no vault fallback here; route runs on Vercel) ──
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { ok: false, error: "missing_openrouter_key" },
-      { status: 500 }
-    );
-  }
+  // ── Model (shared vault-backed OpenRouter lane) ────────────────────────
 
   // Last user content (drives intent routing + persistence).
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
@@ -165,9 +158,13 @@ export async function POST(req: Request) {
     AVAILABILITY_INTENT.test(lastUserContent) ||
     INVENTORY_INTENT.test(lastUserContent);
 
-  const openrouter = createOpenRouter({ apiKey });
   const modelId = needsSmart ? CHAT_MODEL_SMART : CHAT_MODEL;
-  const model = openrouter(modelId);
+  let model;
+  try {
+    model = await getVaultOpenRouterModel(modelId);
+  } catch {
+    return NextResponse.json({ ok: false, error: "missing_openrouter_vault_key" }, { status: 500 });
+  }
 
   // v1-style compute-then-phrase: inject the LIVE dashboard snapshot (trusted
   // headline numbers) AND the master inventory index (so existence questions

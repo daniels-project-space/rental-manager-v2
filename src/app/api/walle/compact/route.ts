@@ -15,7 +15,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { getVaultOpenRouterModel } from "@/lib/llm-client";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_COMPACT_SYSTEM } from "../../../../mastra/agents/walle";
@@ -74,7 +74,6 @@ export async function POST(req: Request) {
 
   // ── Try LLM digest first ──
   let summary = "";
-  const apiKey = process.env.OPENROUTER_API_KEY;
   const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-chat";
   const trace = traceWalle({
     name: "walle_compact",
@@ -82,10 +81,8 @@ export async function POST(req: Request) {
     sessionId,
     metadata: { model: modelId, messageCount: messages.length },
   });
-  if (apiKey) {
-    try {
-      const openrouter = createOpenRouter({ apiKey });
-      const model = openrouter(modelId);
+  try {
+      const model = await getVaultOpenRouterModel(modelId);
 
       const transcript = messages
         .filter((m) => m.role === "user" || m.role === "assistant")
@@ -113,9 +110,8 @@ export async function POST(req: Request) {
         },
       });
       summary = text?.trim() ?? "";
-    } catch {
-      // fall through to naive fallback
-    }
+  } catch {
+    // fall through to naive fallback
   }
   try {
     await trace.flush();

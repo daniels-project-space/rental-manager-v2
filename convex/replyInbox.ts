@@ -15,6 +15,7 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { filterImminentHandoffs, type ImminentHandoffCandidate } from "./lib/imminent_handoffs";
 import type { Doc, Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
 import { readWidgetMv } from "./lib/widget_mv";
@@ -1951,20 +1952,12 @@ export const backfillLastSender = internalMutation({
 // chat is one tap away right at the handover. (Daniel 2026-07-07)
 export const getImminentHandoffs = query({
   args: { accountSlug: v.optional(v.string()), windowMin: v.optional(v.number()), _tick: v.optional(v.number()) },
-  handler: async (ctx, { accountSlug, windowMin = 15 }) => {
+  handler: async (ctx, { accountSlug, windowMin = 60 }) => {
     const nowDate = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
     const nowHM = new Date().toLocaleString("en-GB", {
       timeZone: "Europe/London", hour12: false, hour: "2-digit", minute: "2-digit",
     });
-    const toMin = (t: string) => {
-      const [h, m] = t.split(":").map(Number);
-      return h * 60 + (m || 0);
-    };
-    const nowMin = toMin(nowHM);
-    const out: Array<{
-      thread_id: string | null; account_slug: string | null; renter_name: string;
-      items: string[]; kind: "pickup" | "return"; time: string; minutes_away: number;
-    }> = [];
+    const candidates: ImminentHandoffCandidate[] = [];
     // 2026-07-13 cost audit: MV fast path. This query polls every 60s per tab
     // (`_tick`) and each execution collected the whole confirmed set (~200KB,
     // ~226MB/day) to derive TODAY's timed handovers. The candidates (dated +
@@ -1972,18 +1965,12 @@ export const getImminentHandoffs = query({
     // the 5-min reply-queue cron; minutes_away/windowMin are computed here at
     // read time from a ~2KB row. Date-mismatch or stale row → live fallback.
     const cachedHandoffs = (await readWidgetMv(ctx, "handoffs", 45 * 60 * 1000)) as
-      | { date?: string; candidates?: Array<{ thread_id: string | null; account_slug: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; time: string }> }
+      | { date?: string; candidates?: ImminentHandoffCandidate[] }
       | null;
     if (cachedHandoffs?.date === nowDate && Array.isArray(cachedHandoffs.candidates)) {
-      for (const c of cachedHandoffs.candidates) {
-        if (accountSlug && c.account_slug !== accountSlug) continue;
-        const diff = toMin(c.time) - nowMin;
-        if (Math.abs(diff) <= windowMin) {
-          out.push({ ...c, minutes_away: diff });
-        }
-      }
-      out.sort((x, y) => Math.abs(x.minutes_away) - Math.abs(y.minutes_away));
-      return out;
+      return filterImminentHandoffs(
+        cachedHandoffs.candidates, nowDate, nowHM, windowMin, accountSlug,
+      );
     }
     for (const st of ["confirmed", "ongoing"]) {
       const rows = await ctx.db
@@ -1992,7 +1979,6 @@ export const getImminentHandoffs = query({
         .collect();
       for (const r of rows) {
         const a = r as Record<string, unknown>;
-        if (accountSlug && a.account_slug !== accountSlug) continue;
         if (a.is_obsolete) continue;
         const items = ((a.hygglo_items as Array<{ name: string }> | undefined) ?? [])
           .map((h) => h.name).slice(0, 2);
@@ -2004,19 +1990,12 @@ export const getImminentHandoffs = query({
         };
         const pd = (a.pickup_date as string) ?? (a.start_date as string);
         const pt = a.pickup_time as string | undefined;
-        if (pd === nowDate && pt) {
-          const diff = toMin(pt) - nowMin;
-          if (Math.abs(diff) <= windowMin) out.push({ ...base, kind: "pickup", time: pt, minutes_away: diff });
-        }
+        if (pd && pt) candidates.push({ ...base, kind: "pickup", date: pd, time: pt });
         const rd = (a.return_date as string) ?? (a.end_date as string);
         const rt = a.return_time as string | undefined;
-        if (rd === nowDate && rt) {
-          const diff = toMin(rt) - nowMin;
-          if (Math.abs(diff) <= windowMin) out.push({ ...base, kind: "return", time: rt, minutes_away: diff });
-        }
+        if (rd && rt) candidates.push({ ...base, kind: "return", date: rd, time: rt });
       }
     }
-    out.sort((x, y) => Math.abs(x.minutes_away) - Math.abs(y.minutes_away));
-    return out;
+    return filterImminentHandoffs(candidates, nowDate, nowHM, windowMin, accountSlug);
   },
 });

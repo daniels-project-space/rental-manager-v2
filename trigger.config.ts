@@ -1,5 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
-import { additionalPackages, aptGet, syncEnvVars } from "@trigger.dev/build/extensions/core";
+import { aptGet, syncEnvVars } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   project: "proj_cdhxwycwcjdmxnsodsmc",
@@ -19,13 +19,11 @@ export default defineConfig({
   },
   dirs: ["./src/trigger"],
   build: {
-    external: ["@openai/codex"],
     extensions: [
-      additionalPackages({ packages: ["@openai/codex@latest"] }),
       aptGet({ packages: ["ca-certificates"] }),
       syncEnvVars(() => {
         const values = Object.fromEntries(
-          ["CODEX_AUTH_JSON_B64", "VAULT_ACCESS_TOKEN"]
+          ["VAULT_ACCESS_TOKEN"]
             .map((key) => [key, process.env[key]])
             .filter((entry): entry is [string, string] => Boolean(entry[1])),
         );

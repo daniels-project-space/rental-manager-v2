@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
-import { getRenterBotAgent, getRenterBotAgentStrong, type RenterBotOutput } from "@/mastra/agents/renter_bot";
-import { runs, tasks } from "@trigger.dev/sdk/v3";
-import { allowsRenterBotMeteredFallback } from "@/lib/renter-bot-policy";
+import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -232,56 +230,10 @@ export async function POST(req: Request) {
 
   try {
     let obj: RenterBotOutput | null = null;
-    const meteredFallbackAllowed = allowsRenterBotMeteredFallback(
-      process.env.RENTER_BOT_METERED_FALLBACK,
-    );
-    // Primary path: GPT-5.6 Luna through Codex on Daniel's ChatGPT
-    // subscription. Trigger is a trusted runner; Platform API keys are blanked
-    // inside the task so this cannot silently become metered API usage.
-    try {
-      const lunaPrompt = [
-        "You draft replies for an equipment-rental owner. Return ONLY compact JSON: {\"draft\":\"...\",\"needs_human\":false}.",
-        "Write one natural, concise renter-facing reply, normally 1-3 sentences. No email filler, internal reasoning, AI mention, or markdown.",
-        "Use only supplied facts. Never invent price, availability, included gear, dates, address, policy, stock or ownership.",
-        "Never call an unconfirmed request booked/paid/confirmed. Never refer the renter to a competitor.",
-        "If the message is a complaint, damage report, cancellation, legal threat, refund dispute, or facts are insufficient, return an empty draft with needs_human true.",
-        account_slug === "dbcinema" ? "DB Cinema voice: professional, concise, no emoji." : "Voice: warm, direct, at most one emoji.",
-        `Recent conversation:\n${recentTranscript || "(none)"}`,
-        baseMessages[0].content,
-      ].join("\n\n");
-      const handle = await tasks.trigger("rental-draft-luna", { prompt: lunaPrompt });
-      const run = await runs.poll(handle.id, { pollIntervalMs: 500 });
-      if (run.isSuccess && run.output) {
-        const out = run.output as { draft?: string; needs_human?: boolean };
-        obj = {
-          draft: out.draft ?? "",
-          needs_human: out.needs_human === true,
-          intent: "GENERAL",
-          conversation_stage: "INQUIRY",
-          red_flags: [],
-          factsClaimed: [],
-        } as RenterBotOutput;
-      }
-    } catch {
-      // The subscription lane is fail-closed by default. A separately billed
-      // Mastra/API fallback exists only as an explicit emergency override; it
-      // must never activate silently when Luna or Trigger is unavailable.
-    }
-
-    if (!obj && !meteredFallbackAllowed) {
-      return NextResponse.json(
-        { ok: false, error: "subscription_unavailable", needs_human: true },
-        { status: 503 },
-      );
-    }
-
+    // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
+    // subscription lane and no automatic stronger-model route.
     if (!obj) {
-      // Explicit emergency-only fallback. Production defaults to subscription
-      // only; enabling this separately billed route requires a deliberate env
-      // change and never changes the draft-only / manual-send safety boundary.
-      const agent = marketingItems.length
-        ? await getRenterBotAgentStrong()
-        : await getRenterBotAgent();
+      const agent = await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
       const text: string = result?.text ?? "";

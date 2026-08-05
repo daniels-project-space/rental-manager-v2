@@ -33,7 +33,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { streamText, stepCountIs, type ModelMessage } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { getVaultOpenRouterModel } from "@/lib/llm-client";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import {
@@ -129,13 +129,6 @@ export async function POST(req: Request) {
     }
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { ok: false, error: "missing_openrouter_key" },
-      { status: 500 },
-    );
-  }
   // Intent routing: compatibility/optics, availability, and inventory/spec turns
   // go to Sonnet (Haiku answered these from memory — the "everything he says is
   // wrong" set); existence/analytical/availability turns force a grounded tool
@@ -150,9 +143,13 @@ export async function POST(req: Request) {
     isCompat;
   const needsSmart = isCompat || isAvailability || isInventory;
 
-  const openrouter = createOpenRouter({ apiKey });
   const modelId = needsSmart ? CHAT_MODEL_SMART : CHAT_MODEL;
-  const model = openrouter(modelId);
+  let model;
+  try {
+    model = await getVaultOpenRouterModel(modelId);
+  } catch {
+    return NextResponse.json({ ok: false, error: "missing_openrouter_vault_key" }, { status: 500 });
+  }
   const tools = convexClient ? buildDashboardTools(convexClient) : undefined;
   // v1-style compute-then-phrase: live dashboard snapshot (trusted headline
   // numbers) + master inventory index (so existence questions aren't denied).

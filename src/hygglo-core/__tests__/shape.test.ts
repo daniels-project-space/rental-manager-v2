@@ -162,6 +162,23 @@ fixtureDescribe("orderToRenter / orderToMessages / orderToConversation", () => {
   });
 });
 
+describe("orderToConversation timestamp stability", () => {
+  it("does not make an old thread look newly active when one activity label is missing", () => {
+    const detail: HyggloOrderDetail = {
+      id: 4116374,
+      users: { otherPart: { name: "Test Renter", id: 1 } },
+      activities: [
+        { key: "dated", createdAtLabel: "1 Aug, 10:00", chatMessage: { byMe: false, text: { content: "Pickup at 7pm" } } },
+        { key: "undated", chatMessage: { byMe: true, text: { content: "Confirmed" } } },
+      ],
+    };
+    const conversation = orderToConversation(detail, FETCHED_AT);
+    expect(conversation).not.toBeNull();
+    expect(conversation!.last_msg_at).not.toBe(FETCHED_AT);
+    expect(conversation!.last_msg_at).toBe(conversation!.created_at);
+  });
+});
+
 describe("deriveHyggloSystemSignal (ported verbatim)", () => {
   fixtureIt("returns 'approved' for the fixture (carries a 'borrower should pay' event, no later obsolete)", () => {
     // order 3980371 is a paid active rental — the activities include the
