@@ -19,4 +19,11 @@ describe("booking time transcript fingerprint", () => {
     expect(transcriptHasTimeLanguage([{ sender: "owner", body_text: "half past seven" }])).toBe(true);
     expect(transcriptHasTimeLanguage([{ sender: "owner", body_text: "thanks" }])).toBe(false);
   });
+
+  it("recognises context-bound whole hours without matching quantities or dates", () => {
+    expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "Could I collect around 7?" }])).toBe(true);
+    expect(transcriptHasTimeLanguage([{ sender: "owner", body_text: "Return by 6 please" }])).toBe(true);
+    expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "I need 7 batteries for 2 days" }])).toBe(false);
+    expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "The booking starts on 7 August" }])).toBe(false);
+  });
 });

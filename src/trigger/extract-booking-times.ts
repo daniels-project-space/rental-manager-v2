@@ -20,115 +20,16 @@ import {
   hashBookingTimeTranscript,
   transcriptHasTimeLanguage,
 } from "../lib/booking-time-transcript";
+import {
+  buildBookingTimePrompt as buildPrompt,
+  dateWithinTolerance,
+  parseBookingTimeResponse as parseResponse,
+  sanitizeTime,
+  type ExtractedBookingTimes as ExtractedTimes,
+} from "../lib/booking-time-extraction";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
-// ── Helpers (ported from convex/extract_booking_times.ts) ──────────────
-
-function sanitizeTime(t: string | undefined): string | undefined {
-  if (!t) return undefined;
-  const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
-  if (!m) return undefined;
-  const h = parseInt(m[1], 10);
-  const mi = parseInt(m[2], 10);
-  if (h < 0 || h > 23 || mi < 0 || mi > 59) return undefined;
-  return `${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}`;
-}
-
-function dateWithinTolerance(target: string | undefined, ref: string | undefined, tolDays = 3): boolean {
-  if (!target || !ref) return false;
-  const t = Date.parse(target);
-  const r = Date.parse(ref);
-  if (Number.isNaN(t) || Number.isNaN(r)) return false;
-  return Math.abs(t - r) / 86400000 <= tolDays;
-}
-
-// Static prompt body — invariant across every call so DeepSeek's auto
-// prefix cache hits the whole instruction block. Variable bits (current
-// time, dates, equipment, transcript) are appended in buildPrompt below.
-const TIMES_INSTRUCTIONS = `You are extracting the FINAL AGREED pickup and return times from a rental equipment chat.
-
-INSTRUCTIONS:
-- Find the LAST pickup and return times that were AGREED or CONFIRMED by both parties.
-- If the renter changed times during the conversation, use the MOST RECENT agreed time.
-- Renters often change their mind, negotiate, or give vague times — only use the FINAL agreed version.
-- If the renter said a time and the bot confirmed/acknowledged it, that counts as agreed.
-- Pickup and return are SEPARATE events — extract each independently from the conversation.
-- If only one time was mentioned for "collection" or "pickup and return", use it for both.
-- Convert vague times: "morning" = 10:00, "evening" = 19:00, "noon" = 12:00.
-- If AM/PM is missing, infer from context (rental pickups are usually daytime: 8-11 = AM, 12-21 = as-is).
-- Times like "7pm" = 19:00, "10am" = 10:00, "6.30" with PM context = 18:30.
-- If no times were discussed at all, output NONE for both.
-- IMPORTANT: Do NOT confuse arrival ETAs ("I'll be there at 20:32") with the AGREED pickup/return time slot.
-- If the renter corrected themselves (e.g., first said 11am then 8pm), use the LAST corrected time.
-
-CRITICAL — DATES:
-- The rental period spans the provided start_date to end_date, but pickup/return dates may DIFFER.
-- Pickup can be the EVENING BEFORE the rental starts.
-- Return can be the MORNING AFTER the rental ends.
-- Determine the actual date from context.
-- If no specific date context, default pickup to start_date and return to end_date. NEVER output NONE for dates.
-
-DELIVERY METHOD DETECTION:
-- ONLY mark as DELIVERY if the courier was ACTUALLY BOOKED/CONFIRMED.
-- If delivery was discussed but NOT confirmed, output COLLECTION.
-- If delivery was never discussed, output UNKNOWN.
-
-Respond ONLY with these nine lines:
-PICKUP_TIME: HH:MM or NONE
-PICKUP_DATE: YYYY-MM-DD (default to start_date if unknown — NEVER output NONE)
-PICKUP_METHOD: DELIVERY or COLLECTION or UNKNOWN
-RETURN_TIME: HH:MM or NONE
-RETURN_DATE: YYYY-MM-DD (default to end_date if unknown — NEVER output NONE)
-RETURN_METHOD: DELIVERY or COLLECTION or UNKNOWN
-STATUS: ACTIVE or CANCELLED
-CONFIDENCE: HIGH or LOW
-NOTES: <any relevant context>`;
-
-function buildPrompt(rentalTitle: string, startDate: string, endDate: string, transcript: string): string {
-  const now = new Date().toISOString().replace("T", " ").substring(0, 16);
-  // Static instructions FIRST (cache prefix); variable context LAST.
-  return `${TIMES_INSTRUCTIONS}
-
-Current date/time: ${now} UTC
-Equipment: ${rentalTitle}
-Rental period: ${startDate} to ${endDate}
-
-=== CONVERSATION ===
-${transcript}
-=== END ===`;
-}
-
-interface ExtractedTimes {
-  pickup_time?: string;
-  return_time?: string;
-  pickup_date?: string;
-  return_date?: string;
-  pickup_method?: string;
-  return_method?: string;
-  status?: "ACTIVE" | "CANCELLED";
-  confidence?: "HIGH" | "LOW";
-  notes?: string;
-}
-
-function parseResponse(raw: string): ExtractedTimes {
-  const pick = (re: RegExp): string | undefined => {
-    const m = re.exec(raw);
-    return m ? m[1].trim() : undefined;
-  };
-  return {
-    pickup_time: pick(/PICKUP_TIME:\s*(\d{1,2}:\d{2})/),
-    return_time: pick(/RETURN_TIME:\s*(\d{1,2}:\d{2})/),
-    pickup_date: pick(/PICKUP_DATE:\s*(\d{4}-\d{2}-\d{2})/),
-    return_date: pick(/RETURN_DATE:\s*(\d{4}-\d{2}-\d{2})/),
-    pickup_method: pick(/PICKUP_METHOD:\s*(DELIVERY|COLLECTION|UNKNOWN)/i)?.toLowerCase(),
-    return_method: pick(/RETURN_METHOD:\s*(DELIVERY|COLLECTION|UNKNOWN)/i)?.toLowerCase(),
-    status: pick(/STATUS:\s*(ACTIVE|CANCELLED)/i)?.toUpperCase() as "ACTIVE" | "CANCELLED" | undefined,
-    confidence: pick(/CONFIDENCE:\s*(HIGH|LOW)/i)?.toUpperCase() as "HIGH" | "LOW" | undefined,
-    notes: pick(/NOTES:\s*(.+)/i),
-  };
-}
 
 // ── Convex HTTP plumbing ───────────────────────────────────────────────
 

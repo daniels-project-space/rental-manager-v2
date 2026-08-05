@@ -28,6 +28,7 @@ import { api } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { infoPoolEnabledAccounts } from "../lib/feature_flags_helper";
+import { nearbyCalendarDates, type ImminentHandoffCandidate } from "../lib/imminent_handoffs";
 import {
   OOS_CANONICAL_LOOKAHEAD_DAYS,
   type OosPanelRow,
@@ -245,14 +246,7 @@ export const get = internalQuery({
 const HANDOFFS_KEY = "handoffs";
 const HANDOFFS_BACKSTOP_MS = 30 * 60 * 1000;
 
-export type HandoffCandidate = {
-  thread_id: string | null;
-  account_slug: string | null;
-  renter_name: string;
-  items: string[];
-  kind: "pickup" | "return";
-  time: string;
-};
+export type HandoffCandidate = ImminentHandoffCandidate;
 
 /**
  * Dirty probe for the handoffs row: any reservation genuinely changed
@@ -283,7 +277,7 @@ export const handoffsDirtySince = internalQuery({
 });
 
 /**
- * Today's dated+timed handover candidates across all accounts — the exact
+ * Yesterday/today/tomorrow dated+timed handover candidates across all accounts — the exact
  * candidate derivation from replyInbox.getImminentHandoffs' live loop,
  * minus the windowMin/minutes_away math (read-time concerns).
  */
@@ -293,6 +287,7 @@ export const computeHandoffCandidates = internalQuery({
     ctx,
   ): Promise<{ date: string; candidates: HandoffCandidate[] }> => {
     const nowDate = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+    const relevantDates = nearbyCalendarDates(nowDate);
     const candidates: HandoffCandidate[] = [];
     for (const st of ["confirmed", "ongoing"]) {
       const rows = await ctx.db
@@ -313,10 +308,10 @@ export const computeHandoffCandidates = internalQuery({
         };
         const pd = (a.pickup_date as string) ?? (a.start_date as string);
         const pt = a.pickup_time as string | undefined;
-        if (pd === nowDate && pt) candidates.push({ ...base, kind: "pickup", time: pt });
+        if (pd && relevantDates.has(pd) && pt) candidates.push({ ...base, kind: "pickup", date: pd, time: pt });
         const rd = (a.return_date as string) ?? (a.end_date as string);
         const rt = a.return_time as string | undefined;
-        if (rd === nowDate && rt) candidates.push({ ...base, kind: "return", time: rt });
+        if (rd && relevantDates.has(rd) && rt) candidates.push({ ...base, kind: "return", date: rd, time: rt });
       }
     }
     return { date: nowDate, candidates };

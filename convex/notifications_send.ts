@@ -7,8 +7,8 @@
  *   1. Web Push — to every opted-in browser/PWA subscription (the dashboard
  *      bell). Dead endpoints (404/410) are pruned.
  *   2. Telegram — to Daniel (TELEGRAM_CHAT_ID_DANIEL) with an "Open chat →"
- *      deep-link button. Always-on fallback so notifications work even before
- *      the PWA is installed (iOS web push needs the home-screen PWA).
+ *      deep-link button. Defaults to money-only so Daniel receives the Wohooo
+ *      earnings alert while Leo's browser/PWA can remain on all updates.
  *
  * Both carry the same deep link (`/?thread=<id>&account=<slug>`) so a tap lands
  * on the rental-manager chat thread, ready to reply.
@@ -16,6 +16,10 @@
 import webpush from "web-push";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import {
+  subscriptionReceivesNotification,
+  telegramNotificationMode,
+} from "./lib/notification_events";
 
 const BASE_URL =
   process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -85,12 +89,24 @@ export const dispatchPending = internalAction({
     if (!vapidOk) console.warn("[notifications] VAPID keys missing — web push disabled");
     const deadEndpoints = new Set<string>();
     let pushed = 0;
-    const outcomes: { id: (typeof events)[number]["_id"]; push_ok: number; telegram_ok: boolean }[] = [];
+    const outcomes: Array<{
+      id: (typeof events)[number]["_id"];
+      push_ok: number;
+      push_eligible: number;
+      push_suppressed: number;
+      telegram_ok: boolean;
+      telegram_eligible: boolean;
+      telegram_suppressed: boolean;
+    }> = [];
 
     for (const e of events) {
       const absUrl = `${BASE_URL}${e.url}`;
       let eventPushed = 0;
-      // 1) Web push to all subscriptions.
+      const eligibleSubs = subs.filter((s) =>
+        subscriptionReceivesNotification(s.mode, e.type),
+      );
+      const pushSuppressed = subs.length - eligibleSubs.length;
+      // 1) Web push to subscriptions whose per-device mode accepts this event.
       if (vapidOk) {
         const payload = JSON.stringify({
           title: e.title,
@@ -101,7 +117,7 @@ export const dispatchPending = internalAction({
           badge: "/icons/notif-badge.png",
         });
         await Promise.all(
-          subs.map(async (s) => {
+          eligibleSubs.map(async (s) => {
             try {
               await webpush.sendNotification(
                 { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
@@ -124,29 +140,52 @@ export const dispatchPending = internalAction({
           }),
         );
       }
-      // 2) Telegram — the always-on fallback. Enabled unless explicitly turned
-      //    off (NOTIF_TELEGRAM=0). Was opt-in from 2026-06-24 ("web push works
-      //    on the phone") — then the Apple push endpoints went stale and every
-      //    channel silently failed; bookings ("wohoo") stopped notifying.
+      // 2) Telegram — Daniel's reliable fallback. It defaults to money-only;
+      //    NOTIF_TELEGRAM_MODE=all opts it back into request/message alerts.
+      //    NOTIF_TELEGRAM=0 disables the channel entirely.
       let telegramOk = false;
-      if (process.env.NOTIF_TELEGRAM !== "0") {
+      const telegramEnabled = process.env.NOTIF_TELEGRAM !== "0";
+      const telegramEligible = telegramEnabled && subscriptionReceivesNotification(
+        telegramNotificationMode(process.env.NOTIF_TELEGRAM_MODE),
+        e.type,
+      );
+      const telegramSuppressed = telegramEnabled && !telegramEligible;
+      if (telegramEligible) {
         telegramOk = await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
       }
-      if (eventPushed === 0 && !telegramOk) {
+      const eligibleChannels = eligibleSubs.length + (telegramEligible ? 1 : 0);
+      const suppressedChannels = pushSuppressed + (telegramSuppressed ? 1 : 0);
+      const intentionallySuppressed = eligibleChannels === 0 && suppressedChannels > 0;
+      if (eventPushed === 0 && !telegramOk && !intentionallySuppressed) {
         console.warn(`[notifications] event ${String(e._id)} (${e.type}) reached NO channel — check subscriptions/Telegram env`);
       }
-      outcomes.push({ id: e._id, push_ok: eventPushed, telegram_ok: telegramOk });
+      outcomes.push({
+        id: e._id,
+        push_ok: eventPushed,
+        push_eligible: eligibleSubs.length,
+        push_suppressed: pushSuppressed,
+        telegram_ok: telegramOk,
+        telegram_eligible: telegramEligible,
+        telegram_suppressed: telegramSuppressed,
+      });
     }
 
-    await ctx.runMutation(internal.notifications.markDelivered, {
+    const delivery = await ctx.runMutation(internal.notifications.markDelivered, {
       ids: events.map((e) => e._id),
       outcomes,
     });
+    if (delivery.retryable > 0 && delivery.retryAfterMs !== undefined) {
+      await ctx.scheduler.runAfter(
+        delivery.retryAfterMs,
+        internal.notifications_send.dispatchPending,
+        {},
+      );
+    }
     if (deadEndpoints.size > 0) {
       await ctx.runMutation(internal.notifications.pruneSubscriptions, {
         endpoints: [...deadEndpoints],
       });
     }
-    return { delivered: events.length, pushed, pruned: deadEndpoints.size };
+    return { delivered: delivery.delivered, pushed, pruned: deadEndpoints.size };
   },
 });

@@ -1593,6 +1593,7 @@ export default defineSchema({
     updated_at: v.number(),
   })
     .index("by_account_product", ["account_slug", "product_id"])
+    .index("by_account_raw_title", ["account_slug", "raw_title"])
     .index("by_account", ["account_slug"]),
 
   // ── Phase Listing-Pool: per-(account, product) info pool (2026-05-24) ────
@@ -2191,6 +2192,10 @@ export default defineSchema({
     endpoint: v.string(),
     p256dh: v.string(),                      // client public key (base64url)
     auth: v.string(),                        // client auth secret (base64url)
+    mode: v.optional(v.union(
+      v.literal("all"),
+      v.literal("money_only"),
+    )),                                      // per-device; missing = all
     user_agent: v.optional(v.string()),
     created_at: v.number(),
     last_seen_at: v.number(),
@@ -2220,7 +2225,14 @@ export default defineSchema({
     // push_ok 0 / telegram_ok false" = the silent-death mode where every
     // channel failed and nobody noticed (how the wohoo went missing).
     push_ok: v.optional(v.number()),
+    push_eligible: v.optional(v.number()),
+    push_suppressed: v.optional(v.number()),
     telegram_ok: v.optional(v.boolean()),
+    telegram_eligible: v.optional(v.boolean()),
+    telegram_suppressed: v.optional(v.boolean()),
+    delivery_attempts: v.optional(v.number()),
+    last_attempt_at: v.optional(v.number()),
+    delivery_exhausted_at: v.optional(v.number()),
   })
     .index("by_created", ["created_at"])
     .index("by_delivered", ["delivered_at"])

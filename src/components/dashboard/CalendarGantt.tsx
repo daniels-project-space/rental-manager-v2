@@ -3,6 +3,13 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import {
+  calendarBarGeometry as barGeom,
+  DAY_MS,
+  DAY_WINDOW_END_MIN,
+  DAY_WINDOW_START_MIN,
+  timeFrac,
+} from "../../lib/calendar-bar-geometry";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,13 +183,9 @@ function accountColor(ac: "blue" | "purple" | "orange" | "emerald"): string {
 // ---------------------------------------------------------------------------
 
 // ── Geometry — time-accurate bars + reservation grouping ───────────────────
-const DAY_MS = 86400000;
-
 /** Fraction of a day (0..1) for a "HH:MM[:SS]" time, or `fallback` if absent. */
 // The expanded calendar compresses each day column to BUSINESS HOURS — 9am to
 // 10pm — so bar positions reflect the working day instead of a mostly-empty 24h.
-const DAY_WINDOW_START_MIN = 9 * 60; // 09:00
-const DAY_WINDOW_END_MIN = 22 * 60; // 22:00
 
 // A few faint dotted vertical guides per day column so you can read roughly what
 // time of day a bar sits at (within the 9am–10pm window).
@@ -192,50 +195,6 @@ const TIME_GRIDLINES: Array<{ t: string; label: string }> = [
   { t: "18:00", label: "6" },
   { t: "21:00", label: "9" },
 ];
-
-/** Fraction (0..1) of a "HH:MM" time within the 9am–10pm window, clamped to the
- *  window edges; `fallback` when no time (0 = window start, 1 = window end). */
-function timeFrac(t: string | null, fallback: number): number {
-  if (!t) return fallback;
-  const m = t.match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return fallback;
-  const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-  return Math.max(
-    0,
-    Math.min(1, (mins - DAY_WINDOW_START_MIN) / (DAY_WINDOW_END_MIN - DAY_WINDOW_START_MIN)),
-  );
-}
-
-interface BarGeom { left: number; width: number; }
-
-/** Pixel geometry for a reservation bar, positioned to the actual pickup time
- *  on the start day and the actual return time on the return day (sub-day
- *  precision). null if the rental doesn't intersect the visible week. */
-function barGeom(
-  block: Block,
-  weekStart: string,
-  xAt: (dayFloat: number) => number,
-): BarGeom | null {
-  if (!block.start_date) return null;
-  const effReturn = block.return_date ?? block.end_date;
-  if (!effReturn) return null;
-  const weekStartMs = isoToDate(weekStart).getTime();
-  const weekEndMs = weekStartMs + 7 * DAY_MS;
-  // Time-accurate bars: positioned to the actual pickup time on the start day and
-  // the return time on the return day (sub-day precision via the 9am–10pm
-  // business-hours window) so the bar's placement MATCHES the booked times.
-  // Interior away-days are spanned fully — the bar is one continuous rect.
-  const startMs = isoToDate(block.start_date).getTime() + timeFrac(block.pickup_time, 0) * DAY_MS;
-  // No return time → end of day so the bar still covers the return day.
-  const endMs = isoToDate(effReturn).getTime() + timeFrac(block.return_time, 1) * DAY_MS;
-  if (endMs <= weekStartMs || startMs >= weekEndMs) return null;
-  const startDays = Math.max(0, (startMs - weekStartMs) / DAY_MS);
-  const endDays = Math.min(7, (endMs - weekStartMs) / DAY_MS);
-  // xAt() converts a fractional day index → pixel x, honoring the (possibly
-  // wider) today column so bars stay aligned to the day-column grid.
-  const left = xAt(startDays);
-  return { left, width: Math.max(xAt(endDays) - left, 8) };
-}
 
 // order_step = ACTIVE (next-to-do) step — see src/lib/order_step_semantics.ts.
 function orderStepLabel(step: string | null): string {
@@ -482,7 +441,16 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, no
   const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);
   const pickup = block.pickup_time ? block.pickup_time.slice(0, 5) : null;
   const ret = block.return_time ? block.return_time.slice(0, 5) : null;
-  const showTimes = row.width > 70;
+  const showTimes = row.width >= 140;
+  const compactTime = row.width < 140
+    ? pickup && ret
+      ? `${pickup}–${ret}`
+      : pickup
+        ? `↑${pickup}`
+        : ret
+          ? `${ret}↓`
+          : null
+    : null;
   // Pickup or return happening TODAY → cyan glow, distinct from the amber
   // next-upcoming pulse and the status "ongoing" glow.
   const pickupDay = block.start_date;
@@ -550,6 +518,14 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, no
           ⛓{row.memberCount}
         </span>
       )}
+      {compactTime && (
+        <span
+          className="text-[10.5px] font-mono font-semibold truncate flex-1 text-center tabular-nums"
+          style={{ color: ss.text }}
+        >
+          {compactTime}
+        </span>
+      )}
       {/* Pickup time pinned to the START of the bar — only on the pickup day */}
       {showTimes && pickup && pickupInWeek && (
         <span
@@ -565,7 +541,7 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, no
           ↑{pickup}
         </span>
       )}
-      <span
+      {!compactTime && <span
         className="text-[11px] font-semibold truncate flex-1 leading-none text-center"
         style={{
           color: ss.text,
@@ -575,7 +551,7 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, no
         }}
       >
         {renterLabel}
-      </span>
+      </span>}
       {/* No confirmed pickup/return times yet — say so instead of an empty bar */}
       {showTimes && !pickup && !ret && (
         <span

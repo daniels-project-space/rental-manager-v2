@@ -2,7 +2,7 @@
  * Compute Europe/London minutes-since-midnight for the given instant.
  * Shared internal helper — keeps quiet-hours and poll-window logic in sync.
  */
-function londonMinutesSinceMidnight(now: Date): number {
+export function londonMinutesSinceMidnight(now: Date): number {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/London",
     hour: "2-digit",
@@ -70,4 +70,29 @@ export function shouldRunHyggloPoll(
   if (manual) return true;
   if (!isOutsidePollActiveWindow(now)) return true;
   return londonMinutesSinceMidnight(now) % 60 === 0;
+}
+
+export type HyggloPollMode = "full" | "operational" | "skip";
+
+// Every two minutes for Quick Access freshness, plus the odd quarter-hours so
+// full reconciliation still runs exactly at :00, :15, :30, and :45.
+export const HYGGLO_POLL_CRON = "*/2,15,45 * * * *";
+
+/**
+ * Select the work performed by the two-minute schedule.
+ *
+ * Full inventory/presence/reconciliation work stays on the existing 15-minute
+ * cadence. Intervening runs only refresh a bounded set of recently active
+ * orders so replies and payment transitions reach Quick Access faster.
+ * Outside the active window we retain the existing hourly safety poll and make
+ * all other invocations true no-ops (including no Convex heartbeat write).
+ */
+export function hyggloPollMode(
+  now: Date = new Date(),
+  manual = false,
+): HyggloPollMode {
+  if (manual) return "full";
+  if (!shouldRunHyggloPoll(now)) return "skip";
+  if (isOutsidePollActiveWindow(now)) return "full";
+  return londonMinutesSinceMidnight(now) % 15 === 0 ? "full" : "operational";
 }

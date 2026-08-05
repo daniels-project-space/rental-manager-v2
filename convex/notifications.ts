@@ -27,9 +27,16 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import {
+  MAX_NOTIFICATION_DELIVERY_ATTEMPTS,
+  notificationAttemptDue,
+  notificationRetryDelayMs,
+} from "./lib/notification_events";
 
 export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message"] as const;
 export type NotifType = (typeof NOTIF_TYPES)[number];
+export const PUSH_NOTIFICATION_MODES = ["all", "money_only"] as const;
+export type PushNotificationMode = (typeof PUSH_NOTIFICATION_MODES)[number];
 
 export interface NotifEventInput {
   type: NotifType;
@@ -106,6 +113,7 @@ export const savePushSubscription = mutation({
     endpoint: v.string(),
     p256dh: v.string(),
     auth: v.string(),
+    mode: v.optional(v.union(v.literal("all"), v.literal("money_only"))),
     user_agent: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -115,23 +123,57 @@ export const savePushSubscription = mutation({
       .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
       .first();
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        p256dh: args.p256dh,
-        auth: args.auth,
-        user_agent: args.user_agent,
-        last_seen_at: now,
-      });
-      return { status: "updated" as const };
+      const credentialsChanged = existing.p256dh !== args.p256dh || existing.auth !== args.auth;
+      const modeChanged = args.mode !== undefined && existing.mode !== args.mode;
+      const metadataChanged = existing.user_agent !== args.user_agent || modeChanged;
+      const refreshDue = now - existing.last_seen_at >= 24 * 60 * 60 * 1000;
+      if (credentialsChanged || metadataChanged || refreshDue) {
+        await ctx.db.patch(existing._id, {
+          p256dh: args.p256dh,
+          auth: args.auth,
+          ...(args.mode !== undefined ? { mode: args.mode } : {}),
+          user_agent: args.user_agent,
+          last_seen_at: now,
+        });
+      }
+      if (credentialsChanged) {
+        await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
+      }
+      return {
+        status: credentialsChanged || metadataChanged ? "updated" as const : "unchanged" as const,
+        mode: args.mode ?? existing.mode ?? "all" as const,
+      };
     }
     await ctx.db.insert("push_subscriptions", {
       endpoint: args.endpoint,
       p256dh: args.p256dh,
       auth: args.auth,
+      mode: args.mode ?? "all",
       user_agent: args.user_agent,
       created_at: now,
       last_seen_at: now,
     });
-    return { status: "created" as const };
+    // A newly enabled toggle immediately retries any still-pending event.
+    await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
+    return { status: "created" as const, mode: args.mode ?? "all" as const };
+  },
+});
+
+export const setPushSubscriptionMode = mutation({
+  args: {
+    endpoint: v.string(),
+    mode: v.union(v.literal("all"), v.literal("money_only")),
+  },
+  handler: async (ctx, { endpoint, mode }) => {
+    const existing = await ctx.db
+      .query("push_subscriptions")
+      .withIndex("by_endpoint", (q) => q.eq("endpoint", endpoint))
+      .first();
+    if (!existing) throw new Error("Enable phone notifications on this device first.");
+    if (existing.mode !== mode) {
+      await ctx.db.patch(existing._id, { mode, last_seen_at: Date.now() });
+    }
+    return { mode };
   },
 });
 
@@ -203,10 +245,10 @@ export const sendTestNotification = mutation({
       ? `/?thread=${encodeURIComponent(pending.hygglo_order_id)}${pending.account_slug ? `&account=${encodeURIComponent(pending.account_slug)}` : ""}`
       : "/";
     await ctx.db.insert("notification_events", {
-      type: "new_request",
+      type: "booking_confirmed",
       thread_id: `test-${now}`,
-      title: "🔔 Test · taps through to a chat",
-      body: "Tap to confirm the notification opens the rental chat.",
+      title: "🎉 Money notification test",
+      body: "Your confirmed-rental alerts are working.",
       url,
       created_at: now,
     });
@@ -224,10 +266,13 @@ export const sendTestNotification = mutation({
 export const getUndelivered = internalQuery({
   args: {},
   handler: async (ctx): Promise<Doc<"notification_events">[]> => {
-    return await ctx.db
+    const now = Date.now();
+    const rows = await ctx.db
       .query("notification_events")
       .withIndex("by_delivered", (q) => q.eq("delivered_at", undefined))
-      .take(50);
+      .order("desc")
+      .take(100);
+    return rows.filter((event) => notificationAttemptDue(event, now)).slice(0, 50);
   },
 });
 
@@ -248,7 +293,11 @@ export const markDelivered = internalMutation({
         v.object({
           id: v.id("notification_events"),
           push_ok: v.number(),
+          push_eligible: v.optional(v.number()),
+          push_suppressed: v.optional(v.number()),
           telegram_ok: v.boolean(),
+          telegram_eligible: v.optional(v.boolean()),
+          telegram_suppressed: v.optional(v.boolean()),
         }),
       ),
     ),
@@ -256,13 +305,50 @@ export const markDelivered = internalMutation({
   handler: async (ctx, { ids, outcomes }) => {
     const now = Date.now();
     const byId = new Map((outcomes ?? []).map((o) => [o.id, o]));
+    let delivered = 0;
+    let retryable = 0;
+    let exhausted = 0;
+    let retryAfterMs: number | undefined;
     for (const id of ids) {
       const o = byId.get(id);
+      const existing = await ctx.db.get(id);
+      if (!existing) continue;
+      const attempts = (existing.delivery_attempts ?? 0) + 1;
+      const eligibleChannels = o
+        ? (o.push_eligible ?? 0) + (o.telegram_eligible ? 1 : 0)
+        : 0;
+      const suppressedChannels = o
+        ? (o.push_suppressed ?? 0) + (o.telegram_suppressed ? 1 : 0)
+        : 0;
+      const preferenceSuppressed = !!o &&
+        eligibleChannels === 0 &&
+        suppressedChannels > 0;
+      const succeeded = !!o && (o.push_ok > 0 || o.telegram_ok || preferenceSuppressed);
       await ctx.db.patch(id, {
-        delivered_at: now,
-        ...(o ? { push_ok: o.push_ok, telegram_ok: o.telegram_ok } : {}),
+        ...(succeeded ? { delivered_at: now } : {}),
+        delivery_attempts: attempts,
+        last_attempt_at: now,
+        ...(!succeeded && attempts >= MAX_NOTIFICATION_DELIVERY_ATTEMPTS
+          ? { delivery_exhausted_at: now }
+          : {}),
+        ...(o ? {
+          push_ok: o.push_ok,
+          push_eligible: o.push_eligible ?? 0,
+          push_suppressed: o.push_suppressed ?? 0,
+          telegram_ok: o.telegram_ok,
+          telegram_eligible: o.telegram_eligible ?? false,
+          telegram_suppressed: o.telegram_suppressed ?? false,
+        } : {}),
       });
+      if (succeeded) delivered++;
+      else if (attempts >= MAX_NOTIFICATION_DELIVERY_ATTEMPTS) exhausted++;
+      else {
+        retryable++;
+        const delay = notificationRetryDelayMs(attempts);
+        retryAfterMs = retryAfterMs === undefined ? delay : Math.min(retryAfterMs, delay);
+      }
     }
+    return { delivered, retryable, exhausted, retryAfterMs };
   },
 });
 

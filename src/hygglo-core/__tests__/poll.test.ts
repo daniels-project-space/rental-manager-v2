@@ -14,7 +14,7 @@
  * `getOrder`); the rest of HyggloCore is cast away.
  */
 import { describe, it, expect, vi } from "vitest";
-import { corePoll } from "../poll";
+import { corePoll, parseLatestActivityMs, selectOperationalMessages, selectOperationalOrders } from "../poll";
 import type { HyggloCore } from "../index";
 import type {
   HyggloOrderDetail,
@@ -188,5 +188,91 @@ describe("corePoll — B4: fetch failures are counted, not swallowed", () => {
     const result = await corePoll("test-account", { core, fetchedAt: 1 });
     expect(result.meta.list_filter_errors).toBe(0);
     expect(result.meta.detail_fetch_errors).toBe(0);
+  });
+});
+
+describe("corePoll — bounded operational refresh", () => {
+  const now = Date.parse("2026-08-05T12:00:00Z");
+
+  it("normalises real Hygglo activity formats", () => {
+    expect(parseLatestActivityMs(now)).toBe(now);
+    expect(parseLatestActivityMs(now / 1000)).toBe(now);
+    expect(parseLatestActivityMs("2026-08-05T11:58:00Z")).toBe(Date.parse("2026-08-05T11:58:00Z"));
+    expect(parseLatestActivityMs("not-a-date")).toBeNull();
+  });
+
+  it("keeps fresh replies, excludes old rows, and bounds missing-timestamp fallbacks", () => {
+    const selected = selectOperationalOrders([
+      { id: 1, sourceFilter: "pending", latest_activity: "2026-08-05T11:59:00Z" },
+      { id: 2, sourceFilter: "current", latest_activity: now / 1000 },
+      { id: 3, sourceFilter: "future", latest_activity: "2026-07-20T00:00:00Z" },
+      { id: 4, sourceFilter: "obsolete" },
+      { id: 5, sourceFilter: "obsolete", latest_activity: "unknown" },
+      { id: 6, sourceFilter: "obsolete" },
+    ], now);
+    expect(selected.map((order) => order.id)).toEqual([1, 2, 4, 5]);
+  });
+
+  it("does not let one busy order bucket starve replies in another bucket", () => {
+    const recent = "2026-08-05T11:59:00Z";
+    const pending = Array.from({ length: 30 }, (_, index) => ({
+      id: index + 1,
+      sourceFilter: "pending",
+      latest_activity: recent,
+    }));
+    const selected = selectOperationalOrders([
+      ...pending,
+      { id: 101, sourceFilter: "current", latest_activity: recent },
+      { id: 102, sourceFilter: "future", latest_activity: recent },
+      { id: 103, sourceFilter: "obsolete", latest_activity: recent },
+    ], now, undefined, 8);
+    expect(selected.map((order) => order.id)).toEqual([1, 101, 102, 103, 2, 3, 4, 5]);
+  });
+
+  it("uploads only the newest messages per hot order to bound Convex reads", () => {
+    const messages = Array.from({ length: 20 }, (_, index) => ({
+      thread_id: "4116374",
+      message_id: String(index),
+      sender: index % 2 ? "owner" : "renter",
+      body_text: `message ${index}`,
+      hygglo_sent_at: index,
+      fetched_at: now,
+    }));
+    const selected = selectOperationalMessages(messages);
+    expect(selected).toHaveLength(8);
+    expect(selected.map((message) => message.message_id)).toEqual([
+      "19", "18", "17", "16", "15", "14", "13", "12",
+    ]);
+  });
+
+  it("fetches only selected order details while preserving all four list reads", async () => {
+    const recent = "2026-08-05T11:59:00Z";
+    const core = makeMockCore({
+      ordersByFilter: {
+        pending: [
+          { id: 1, sourceFilter: "pending", latest_activity: recent },
+          { id: 2, sourceFilter: "pending", latest_activity: "2026-07-01T00:00:00Z" },
+        ],
+        current: [{ id: 3, sourceFilter: "current", latest_activity: recent }],
+      },
+      details: {
+        1: makeOrderDetail(1, "REQUEST"),
+        2: makeOrderDetail(2),
+        3: makeOrderDetail(3, "BOOKED_AFTER_VERIFIED"),
+      },
+    });
+
+    const result = await corePoll("test-account", {
+      core,
+      fetchedAt: now,
+      mode: "operational",
+    });
+
+    expect(core.listOrders).toHaveBeenCalledTimes(4);
+    expect(core.getOrder).toHaveBeenCalledTimes(2);
+    expect(core.getOrder).toHaveBeenCalledWith(1);
+    expect(core.getOrder).toHaveBeenCalledWith(3);
+    expect(result.meta).toMatchObject({ mode: "operational", orders_listed: 3, orders_selected: 2 });
+    expect(result.reservations.map((row) => row.hygglo_order_id)).toEqual(["1", "3"]);
   });
 });

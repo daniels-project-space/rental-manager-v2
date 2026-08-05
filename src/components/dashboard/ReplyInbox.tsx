@@ -1955,15 +1955,18 @@ export function ReplyModal({
       {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
           you can text AND approve/decline in one session without losing it. */}
       <div
-        className="w-full max-w-2xl h-full sm:h-auto max-h-screen sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
+        className="relative w-full max-w-2xl h-full sm:h-auto max-h-screen sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
         style={{ borderColor: `${accent}4d` }}
       >
         {/* Accent top line */}
         <div className="h-[3px] w-full" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}1a)` }} />
         {/* Context header — kept compact so the conversation gets the room. */}
         <div
-          className="px-3 py-2.5 border-b border-white/[0.07] flex gap-2.5"
-          style={{ background: `linear-gradient(180deg, ${accent}0f, transparent)` }}
+          className="relative pl-3 pr-14 py-2.5 border-b border-white/[0.07] flex gap-2.5"
+          style={{
+            background: `linear-gradient(180deg, ${accent}0f, transparent)`,
+            paddingTop: "max(0.625rem, env(safe-area-inset-top))",
+          }}
         >
           <Thumb src={tile.image_url} accent={accent} size={40} />
           <div className="flex-1 min-w-0">
@@ -1978,27 +1981,6 @@ export function ReplyModal({
                 {tile.renter_rating != null && (
                   <span className="text-[9px] text-[#6b7280]">{showReviews ? "▴" : "▾"}</span>
                 )}
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose();
-                }}
-                // Close on pointer-down for touch/pen. This fires before a
-                // mobile scroll/gesture recognizer can swallow the later click.
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  if (e.pointerType !== "mouse") {
-                    e.preventDefault();
-                    onClose();
-                  }
-                }}
-                aria-label="Close"
-                style={{ touchAction: "manipulation" }}
-                className="shrink-0 w-10 h-10 -mr-1 rounded-lg flex items-center justify-center text-[#9aa0ad] hover:text-white active:bg-white/[0.14] hover:bg-white/[0.08] text-2xl leading-none"
-              >
-                ×
               </button>
             </div>
             {/* One compact horizontal meta row — earnings + dates to the side,
@@ -2042,6 +2024,31 @@ export function ReplyModal({
               </div>
             )}
           </div>
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (e.pointerType !== "mouse") e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerUp={(e) => {
+              e.stopPropagation();
+              if (e.pointerType !== "mouse") {
+                e.preventDefault();
+                onClose();
+              }
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            aria-label="Close conversation"
+            data-testid="quick-reply-close"
+            style={{ touchAction: "none", top: "max(0.5rem, env(safe-area-inset-top))" }}
+            className="absolute right-2 z-30 w-12 h-12 rounded-xl flex items-center justify-center text-[#c4c8d0] hover:text-white active:bg-white/[0.16] hover:bg-white/[0.08] text-[30px] leading-none select-none"
+          >
+            ×
+          </button>
         </div>
 
         {/* Order editor — live items + add/remove + price + dates (has_reservation
@@ -2346,13 +2353,13 @@ export function ReplyInbox() {
   const openCacheRef = useRef<ReplyTileData | null>(null);
   const [acted, setActed] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
-  // Renters with a pickup/return within ±15 min — the pinned handoff bar. Bump
+  // Renters with a pickup/return within ±60 min — the pinned current-rental bar. Bump
   // `_tick` each minute (via `now`) so the time-window query re-runs live.
   const handoffs = useQuery(api.replyInbox.getImminentHandoffs, {
     accountSlug: activeAccountSlug ?? undefined,
     _tick: Math.floor(now / 60000),
   }) as
-    | Array<{ thread_id: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; time: string; minutes_away: number }>
+    | Array<{ thread_id: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; date: string; time: string; minutes_away: number }>
     | undefined;
   const [mounted, setMounted] = useState(false);
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
@@ -2484,16 +2491,16 @@ export function ReplyInbox() {
         </div>
       </div>
 
-      {/* Imminent handoffs — renters with a pickup/return within ±15 min */}
+      {/* Current rentals — automatic cards from one hour before through one hour after. */}
       {handoffs && handoffs.length > 0 && (
         <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] p-2">
           <div className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-300/90 mb-1.5 px-1">
-            📍 Handoff now — tap to text
+            📍 Current rentals — tap to text
           </div>
           <div className="flex gap-2 overflow-x-auto pb-0.5">
             {handoffs.map((h) => (
               <button
-                key={`${h.thread_id}-${h.kind}`}
+                key={`${h.thread_id}-${h.kind}-${h.date}-${h.time}`}
                 onClick={() => h.thread_id && setOpenId(h.thread_id)}
                 className="shrink-0 flex items-center gap-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 px-2.5 py-1.5 text-left transition-colors"
               >

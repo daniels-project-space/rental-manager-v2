@@ -23,7 +23,10 @@ export function hashBookingTimeTranscript(messages: BookingTimeMessage[]): strin
 
 export function transcriptHasTimeLanguage(messages: BookingTimeMessage[]): boolean {
   const joined = messages.map((message) => message.body_text).join("\n");
-  return /\d{1,2}\s*(?:am|pm|[.:]\d{2}|o['’]?clock)|\b(?:morning|evening|afternoon|noon|midday|midnight|half past|quarter past|quarter to)\b/i.test(
-    joined,
-  );
+  const numeric = /\d{1,2}\s*(?:am|pm|[.:]\d{2}|o['’]?clock)/i.test(joined);
+  const natural = /\b(?:morning|evening|afternoon|noon|midday|midnight|half past|quarter past|quarter to|half seven|seven thirty)\b/i.test(joined);
+  // Catch common shorthand such as "pickup around 7" without treating rental
+  // durations, quantities or dates as time language and spending an LLM call.
+  const contextualHour = /\b(?:at|around|about|by|before|after|from|pickup|collect(?:ion)?|return|drop[- ]?off)\s+(?:at\s+)?(?:[0-2]?\d)(?:\s*(?:ish))?\b/i.test(joined);
+  return numeric || natural || contextualHour;
 }
