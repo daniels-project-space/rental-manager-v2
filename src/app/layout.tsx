@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -39,11 +38,6 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <Providers>{children}</Providers>
-        <Script
-          src="https://jarvis-orcin-six.vercel.app/jarvis-embed.js?v=universal-controls-20260719-1"
-          strategy="afterInteractive"
-          data-jarvis-app="rental-manager-v2"
-        />
       </body>
     </html>
   );
