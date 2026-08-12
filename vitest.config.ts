@@ -30,6 +30,7 @@ export default defineConfig({
       "convex/lib/message_reconciliation.test.ts",
       "convex/lib/imminent_handoffs.test.ts",
       "convex/lib/notification_events.test.ts",
+      "convex/lib/telegram_convex.test.ts",
       "convex/lib/draft_listing_grounding.test.ts",
       "convex/dashboard_insights.spec.ts",
       "convex/dashboard_chat.walle.spec.ts",

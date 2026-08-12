@@ -20,6 +20,7 @@ import {
   subscriptionReceivesNotification,
   telegramNotificationMode,
 } from "./lib/notification_events";
+import { automatedTelegramAlertsEnabled } from "./lib/telegram_convex";
 
 const BASE_URL =
   process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -140,11 +141,10 @@ export const dispatchPending = internalAction({
           }),
         );
       }
-      // 2) Telegram — Daniel's reliable fallback. It defaults to money-only;
-      //    NOTIF_TELEGRAM_MODE=all opts it back into request/message alerts.
-      //    NOTIF_TELEGRAM=0 disables the channel entirely.
+      // 2) System-generated Telegram is opt-in. This preserves browser/PWA
+      //    notifications but stops unsolicited messages by default.
       let telegramOk = false;
-      const telegramEnabled = process.env.NOTIF_TELEGRAM !== "0";
+      const telegramEnabled = automatedTelegramAlertsEnabled();
       const telegramEligible = telegramEnabled && subscriptionReceivesNotification(
         telegramNotificationMode(process.env.NOTIF_TELEGRAM_MODE),
         e.type,

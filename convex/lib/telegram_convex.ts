@@ -14,8 +14,9 @@
  *   - TELEGRAM_BOT_TOKEN
  *   - TELEGRAM_CHAT_ID_DANIEL
  *
- * Returns {ok:false} (without throwing) if either env var is missing —
- * caller decides whether to log/alert via other channel.
+ * Automated sends are fail-closed. Set AUTOMATED_TELEGRAM_ALERTS=1 only for
+ * an intentional restoration of system alerts; inbound Telegram command
+ * replies use their own handler and remain user initiated.
  */
 
 export interface TelegramResult {
@@ -25,7 +26,17 @@ export interface TelegramResult {
   status?: number;
 }
 
+/** System-generated Telegram must be explicitly enabled, never default-on. */
+export function automatedTelegramAlertsEnabled(
+  configuredValue = process.env.AUTOMATED_TELEGRAM_ALERTS,
+): boolean {
+  return configuredValue === "1";
+}
+
 export async function sendTelegram(text: string): Promise<TelegramResult> {
+  if (!automatedTelegramAlertsEnabled()) {
+    return { ok: false, skipped: true, reason: "automated_alerts_disabled" };
+  }
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID_DANIEL;
   if (!token || !chatId) {
