@@ -86,6 +86,25 @@ export interface WriteResult {
   error?: string;
 }
 
+export type OneDayPricePreviewRow = {
+  listingId: number;
+  listingName: string;
+  currentPricePerDay: number | null;
+  targetPricePerDay: number | null;
+  status: "ready" | "skipped" | "conflict";
+  reason?: "missing_one_day_tier" | "duplicate_one_day_tier" | "invalid_one_day_price";
+};
+
+export type OneDayPriceAdjustmentPreview = {
+  account: string;
+  percent: number;
+  currency: "GBP";
+  readyCount: number;
+  skippedCount: number;
+  conflictCount: number;
+  rows: OneDayPricePreviewRow[];
+};
+
 /** Editable fields accepted by `editListing`. */
 export interface ListingChanges {
   name?: string;
@@ -126,6 +145,59 @@ function cleanPrices(prices?: HyggloPrice[]): HyggloPrice[] {
     out.push({ days: p.days, pricePerDay: p.pricePerDay, price: p.price });
   }
   return out;
+}
+
+function roundGbp(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Pure, read-only plan builder for a one-day-tier change. It intentionally
+ * performs no provider write: callers must persist and explicitly approve this
+ * frozen preview before any live listing is changed.
+ */
+export function buildOneDayPriceAdjustmentPreview(
+  account: string,
+  listings: HyggloListing[],
+  percent: number,
+): OneDayPriceAdjustmentPreview {
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 25) {
+    throw new Error("Price adjustment percent must be greater than 0 and no more than 25");
+  }
+  const rows = listings
+    .map((listing): OneDayPricePreviewRow => {
+      const oneDay = (listing.prices ?? []).filter((tier) => tier.days === 1);
+      const shared = {
+        listingId: listing.id,
+        listingName: listing.name?.trim() || `Listing ${listing.id}`,
+      };
+      if (oneDay.length === 0) {
+        return { ...shared, currentPricePerDay: null, targetPricePerDay: null, status: "skipped", reason: "missing_one_day_tier" };
+      }
+      if (oneDay.length !== 1) {
+        return { ...shared, currentPricePerDay: null, targetPricePerDay: null, status: "conflict", reason: "duplicate_one_day_tier" };
+      }
+      const current = oneDay[0].pricePerDay;
+      if (!Number.isFinite(current) || current <= 0) {
+        return { ...shared, currentPricePerDay: null, targetPricePerDay: null, status: "skipped", reason: "invalid_one_day_price" };
+      }
+      return {
+        ...shared,
+        currentPricePerDay: roundGbp(current),
+        targetPricePerDay: roundGbp(current * (1 + percent / 100)),
+        status: "ready",
+      };
+    })
+    .sort((a, b) => a.listingName.localeCompare(b.listingName) || a.listingId - b.listingId);
+  return {
+    account,
+    percent,
+    currency: "GBP",
+    readyCount: rows.filter((row) => row.status === "ready").length,
+    skippedCount: rows.filter((row) => row.status === "skipped").length,
+    conflictCount: rows.filter((row) => row.status === "conflict").length,
+    rows,
+  };
 }
 
 function isAiFail(body: string): boolean {
