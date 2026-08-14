@@ -172,7 +172,6 @@ export const listAccountHubs = query({
       hub_label: string | null;
       pickup_address: string | null;
       pickup_hours: { start: string; end: string }[] | null;
-      payment_info_text: string | null;
     }[] = [];
     for (const a of accounts) {
       if (a.slug === "dbcinema_web") continue;
@@ -188,7 +187,6 @@ export const listAccountHubs = query({
         hub_label: profile?.hub_label ?? null,
         pickup_address: profile?.pickup_address ?? null,
         pickup_hours: profile?.pickup_hours ?? null,
-        payment_info_text: profile?.payment_info_text ?? null,
       });
     }
     out.sort((x, y) => x.slug.localeCompare(y.slug));
@@ -308,6 +306,75 @@ export const setAccountHardTruths = mutation({
       await ctx.db.insert("account_profiles", {
         account_id,
         hard_truths,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    return { ok: true };
+  },
+});
+
+// ── Per-account AI persona / greeting / signoff wording ───────────────────
+// account_profiles.persona_prompt is consumed by replyInbox.ts (grounded
+// drafting voice); greeting_template/signoff_template are reserved fields on
+// the same profile row. All three had zero Settings UI and no dedicated
+// mutation — added so an operator can actually set them, mirroring the
+// hard_truths list+save pattern above.
+
+/** All draft accounts (excludes the dbcinema_web storefront) + their persona wording. */
+export const listAccountPersonaSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    const accounts = await ctx.db.query("accounts").collect();
+    const out: {
+      account_id: Id<"accounts">;
+      slug: string;
+      display_name: string;
+      persona_prompt: string;
+      greeting_template: string;
+      signoff_template: string;
+    }[] = [];
+    for (const a of accounts) {
+      if (a.slug === "dbcinema_web") continue; // storefront, not a draft account
+      const profile = await ctx.db
+        .query("account_profiles")
+        .withIndex("by_account", (q) => q.eq("account_id", a._id))
+        .first();
+      out.push({
+        account_id: a._id,
+        slug: a.slug,
+        display_name: a.display_name ?? a.slug,
+        persona_prompt: profile?.persona_prompt ?? "",
+        greeting_template: profile?.greeting_template ?? "",
+        signoff_template: profile?.signoff_template ?? "",
+      });
+    }
+    out.sort((x, y) => x.slug.localeCompare(y.slug));
+    return out;
+  },
+});
+
+export const setAccountPersonaSettings = mutation({
+  args: {
+    account_id: v.id("accounts"),
+    persona_prompt: v.string(),
+    greeting_template: v.string(),
+    signoff_template: v.string(),
+  },
+  handler: async (ctx, { account_id, persona_prompt, greeting_template, signoff_template }) => {
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", account_id))
+      .first();
+    const now = Date.now();
+    if (profile) {
+      await ctx.db.patch(profile._id, { persona_prompt, greeting_template, signoff_template, updated_at: now });
+    } else {
+      await ctx.db.insert("account_profiles", {
+        account_id,
+        persona_prompt,
+        greeting_template,
+        signoff_template,
         created_at: now,
         updated_at: now,
       });
@@ -517,24 +584,6 @@ export const setAccountPickupAddress = mutation({
     if (!profile) throw new Error(`No profile for "${account_slug}"`);
     await ctx.db.patch(profile._id, { pickup_address });
     return { ok: true, account_slug, pickup_address };
-  },
-});
-
-
-/** Set (or update) the per-account PAYMENT info text, shown in Settings. */
-export const setAccountPaymentInfo = mutation({
-  args: { account_slug: v.string(), payment_info_text: v.string() },
-  handler: async (ctx, { account_slug, payment_info_text }) => {
-    const accts = await ctx.db.query("accounts").collect();
-    const acct = accts.find((a) => a.slug === account_slug);
-    if (!acct) throw new Error(`No account "${account_slug}"`);
-    const profile = await ctx.db
-      .query("account_profiles")
-      .withIndex("by_account", (q) => q.eq("account_id", acct._id))
-      .first();
-    if (!profile) throw new Error(`No profile for "${account_slug}"`);
-    await ctx.db.patch(profile._id, { payment_info_text });
-    return { ok: true, account_slug, payment_info_text };
   },
 });
 

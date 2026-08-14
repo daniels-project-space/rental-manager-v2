@@ -203,9 +203,6 @@ export async function POST(req: Request) {
         ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
         : `PICKUP LOCATION for this account is "${hub.pickup_address}" — do NOT reveal it yet (booking not confirmed). Say you'll send the exact pickup address the moment the booking is confirmed. NEVER give a different or made-up address.\n`;
     }
-    if (hub?.payment_info_text) {
-      groundTruth += `PAYMENT INFO for this account: ${hub.payment_info_text}\n`;
-    }
     // Time-aware pickup/return windows (per account) — at 4pm the morning slot
     // is gone, so only offer windows that haven't passed today.
     const hours = (hub?.pickup_hours && hub.pickup_hours.length

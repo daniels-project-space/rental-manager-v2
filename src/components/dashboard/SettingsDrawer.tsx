@@ -17,6 +17,8 @@ const cannedUpdateRef = makeFunctionReference<"mutation">("canned_responses:upda
 const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remove");
 const accountCommunicationListRef = makeFunctionReference<"query">("settings:listAccountCommunication");
 const accountCommunicationSaveRef = makeFunctionReference<"mutation">("settings:setAccountCommunication");
+const accountPersonaListRef = makeFunctionReference<"query">("settings:listAccountPersonaSettings");
+const accountPersonaSaveRef = makeFunctionReference<"mutation">("settings:setAccountPersonaSettings");
 const LISTING_ACCOUNTS = [
   { slug: "leo", label: "Leo" },
   { slug: "dbcinema", label: "DB Cinema" },
@@ -165,6 +167,131 @@ function HardTruthsEditor() {
                 className="w-full resize-y rounded-lg px-2.5 py-2 text-[13px]"
                 style={INPUT_STYLE}
               />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+type PersonaSettings = {
+  account_id: Id<"accounts">;
+  slug: string;
+  display_name: string;
+  persona_prompt: string;
+  greeting_template: string;
+  signoff_template: string;
+};
+
+function PersonaFieldsEditor() {
+  const accounts = (useQuery(accountPersonaListRef, {}) ?? []) as PersonaSettings[];
+  const save = useMutation(accountPersonaSaveRef);
+  const [drafts, setDrafts] = useState<
+    Record<string, { persona_prompt: string; greeting_template: string; signoff_template: string }>
+  >({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  if (!accounts.length) return null;
+  return (
+    <div className="py-3">
+      <label className="text-sm text-[#e4e6eb] block mb-1">AI persona, greeting &amp; signoff</label>
+      <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
+        Persona prompt shapes the voice used when drafting replies (Reply Inbox drafting).
+        Greeting / signoff templates are optional bookend wording. Never shown to renters
+        unless the AI actually uses them in a draft.
+      </p>
+      <div className="space-y-4">
+        {accounts.map((a) => {
+          const id = String(a.account_id);
+          const clean = {
+            persona_prompt: a.persona_prompt,
+            greeting_template: a.greeting_template,
+            signoff_template: a.signoff_template,
+          };
+          const value = drafts[id] ?? clean;
+          const dirty = JSON.stringify(value) !== JSON.stringify(clean);
+          return (
+            <div key={id} className="rounded-xl border border-white/[0.08] bg-black/15 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-[#cbd5e1]">{a.display_name}</span>
+                {dirty ? (
+                  <button
+                    disabled={savingId === id}
+                    onClick={async () => {
+                      setSavingId(id);
+                      setSavedId(null);
+                      try {
+                        await save({ account_id: a.account_id, ...value });
+                        setDrafts((d) => {
+                          const next = { ...d };
+                          delete next[id];
+                          return next;
+                        });
+                        setSavedId(id);
+                      } finally {
+                        setSavingId(null);
+                      }
+                    }}
+                    className="text-[11px] px-2 py-0.5 rounded-md bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 disabled:opacity-50"
+                  >
+                    {savingId === id ? "Saving…" : "Save"}
+                  </button>
+                ) : savedId === id ? (
+                  <span className="text-[11px] text-green-400">Saved</span>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <label htmlFor={`persona-prompt-${id}`} className="text-[11px] text-[#8f96a3] block mb-1">
+                    Persona prompt
+                  </label>
+                  <textarea
+                    id={`persona-prompt-${id}`}
+                    value={value.persona_prompt}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [id]: { ...value, persona_prompt: e.target.value } }))
+                    }
+                    rows={3}
+                    placeholder="e.g. Friendly, concise, no emoji, always confirm dates before price…"
+                    className="w-full resize-y rounded-lg px-2.5 py-2 text-[13px]"
+                    style={INPUT_STYLE}
+                  />
+                </div>
+                <div>
+                  <label htmlFor={`greeting-template-${id}`} className="text-[11px] text-[#8f96a3] block mb-1">
+                    Greeting template
+                  </label>
+                  <textarea
+                    id={`greeting-template-${id}`}
+                    value={value.greeting_template}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [id]: { ...value, greeting_template: e.target.value } }))
+                    }
+                    rows={2}
+                    placeholder="Optional opening line template…"
+                    className="w-full resize-y rounded-lg px-2.5 py-2 text-[13px]"
+                    style={INPUT_STYLE}
+                  />
+                </div>
+                <div>
+                  <label htmlFor={`signoff-template-${id}`} className="text-[11px] text-[#8f96a3] block mb-1">
+                    Signoff template
+                  </label>
+                  <textarea
+                    id={`signoff-template-${id}`}
+                    value={value.signoff_template}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [id]: { ...value, signoff_template: e.target.value } }))
+                    }
+                    rows={2}
+                    placeholder="Optional closing line template…"
+                    className="w-full resize-y rounded-lg px-2.5 py-2 text-[13px]"
+                    style={INPUT_STYLE}
+                  />
+                </div>
+              </div>
             </div>
           );
         })}
@@ -1255,6 +1382,8 @@ export function SettingsWorkspace({ onBack }: SettingsWorkspaceProps) {
         <DraftLessonsEditor />
 
         <HardTruthsEditor />
+
+        <PersonaFieldsEditor />
 
         </SettingsSection>
 
