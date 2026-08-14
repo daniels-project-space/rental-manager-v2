@@ -3,7 +3,6 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
-import { Drawer } from "@/components/ui/Drawer";
 import type { Id } from "../../../convex/_generated/dataModel";
 
 // New convex modules — referenced by name so `next build` typechecks against the
@@ -16,6 +15,8 @@ const cannedListRef = makeFunctionReference<"query">("canned_responses:list");
 const cannedCreateRef = makeFunctionReference<"mutation">("canned_responses:create");
 const cannedUpdateRef = makeFunctionReference<"mutation">("canned_responses:update");
 const cannedRemoveRef = makeFunctionReference<"mutation">("canned_responses:remove");
+const accountCommunicationListRef = makeFunctionReference<"query">("settings:listAccountCommunication");
+const accountCommunicationSaveRef = makeFunctionReference<"mutation">("settings:setAccountCommunication");
 const LISTING_ACCOUNTS = [
   { slug: "leo", label: "Leo" },
   { slug: "dbcinema", label: "DB Cinema" },
@@ -167,6 +168,235 @@ function HardTruthsEditor() {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+type DraftTextBlocks = {
+  opening: string;
+  availability: string;
+  location: string;
+  pickup_time: string;
+  payment: string;
+};
+
+type AccountCommunication = {
+  account_id: Id<"accounts">;
+  slug: string;
+  display_name: string;
+  pickup_address: string;
+  pickup_hours: Array<{ start: string; end: string }>;
+  draft_text_blocks: DraftTextBlocks;
+};
+
+type CommunicationDraft = Pick<
+  AccountCommunication,
+  "pickup_address" | "pickup_hours" | "draft_text_blocks"
+>;
+
+const DRAFT_TEXT_FIELDS: Array<{
+  key: keyof DraftTextBlocks;
+  label: string;
+  hint: string;
+}> = [
+  { key: "opening", label: "Opening / greeting", hint: "How a new renter enquiry should begin." },
+  { key: "availability", label: "Availability / booking", hint: "How to explain availability and the next booking step." },
+  { key: "location", label: "Location", hint: "Collection-location wording. Exact addresses stay hidden until confirmation." },
+  { key: "pickup_time", label: "Pickup / return timing", hint: "How to offer the account's collection windows." },
+  { key: "payment", label: "Payment", hint: "Payment, deposit or booking-completion wording." },
+];
+
+function makeCommunicationDraft(account: AccountCommunication): CommunicationDraft {
+  return {
+    pickup_address: account.pickup_address,
+    pickup_hours: account.pickup_hours.map((window) => ({ ...window })),
+    draft_text_blocks: { ...account.draft_text_blocks },
+  };
+}
+
+/**
+ * One clear source of truth for the per-account facts and wording that shape
+ * automatic renter drafts. It deliberately keeps each account isolated: no
+ * Leo text can spill into Diogo or DB Cinema.
+ */
+function AccountCommunicationEditor() {
+  const accounts = (useQuery(accountCommunicationListRef, {}) ?? []) as AccountCommunication[];
+  const save = useMutation(accountCommunicationSaveRef);
+  const [activeSlug, setActiveSlug] = useState("leo");
+  const [drafts, setDrafts] = useState<Record<string, CommunicationDraft>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const active = accounts.find((account) => account.slug === activeSlug) ?? accounts[0];
+  if (!active) return null;
+  const draft = drafts[active.slug] ?? makeCommunicationDraft(active);
+  const clean = makeCommunicationDraft(active);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(clean);
+
+  function update(next: CommunicationDraft) {
+    setSaved(null);
+    setDrafts((previous) => ({ ...previous, [active.slug]: next }));
+  }
+
+  async function saveActive() {
+    setSaving(true);
+    setSaved(null);
+    setError(null);
+    try {
+      await save({
+        account_id: active.account_id,
+        pickup_address: draft.pickup_address,
+        pickup_hours: draft.pickup_hours,
+        draft_text_blocks: draft.draft_text_blocks,
+      });
+      setDrafts((previous) => {
+        const next = { ...previous };
+        delete next[active.slug];
+        return next;
+      });
+      setSaved(active.slug);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this account's draft controls.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 overflow-x-auto rounded-xl bg-black/25 p-1" role="tablist" aria-label="Rental account">
+        {accounts.map((account) => {
+          const selected = active.slug === account.slug;
+          return (
+            <button
+              key={account.slug}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => { setActiveSlug(account.slug); setError(null); setSaved(null); }}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                selected
+                  ? "bg-violet-500/20 text-violet-100 ring-1 ring-violet-400/30"
+                  : "text-[#8b8fa3] hover:text-[#d5d8df]"
+              }`}
+            >
+              {account.display_name}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        <div className="rounded-xl border border-white/[0.08] bg-black/15 p-3">
+          <label htmlFor={`pickup-address-${active.slug}`} className="block text-xs font-semibold text-[#e8eaf0]">
+            Confirmed-booking pickup address
+          </label>
+          <p className="mt-1 text-[11px] leading-snug text-[#8f96a3]">Never revealed before the booking is confirmed.</p>
+          <textarea
+            id={`pickup-address-${active.slug}`}
+            aria-label={`${active.display_name} confirmed-booking pickup address`}
+            value={draft.pickup_address}
+            onChange={(event) => update({ ...draft, pickup_address: event.target.value })}
+            rows={3}
+            placeholder="Full collection address, postcode and arrival note"
+            className="mt-2 w-full resize-y rounded-lg px-3 py-2 text-sm"
+            style={INPUT_STYLE}
+          />
+        </div>
+
+        <div className="rounded-xl border border-white/[0.08] bg-black/15 p-3">
+          <p className="text-xs font-semibold text-[#e8eaf0]">Pickup / return windows</p>
+          <p className="mt-1 text-[11px] leading-snug text-[#8f96a3]">Europe/London. These override the shared fallback for {active.display_name}.</p>
+          <div className="mt-2 space-y-2">
+            {draft.pickup_hours.length === 0 ? <p className="text-[11px] text-[#8f96a3]">Using the shared fallback windows.</p> : null}
+            {draft.pickup_hours.map((window, index) => (
+              <div key={`${index}-${window.start}-${window.end}`} className="flex items-center gap-2">
+                <input
+                  type="time"
+                  aria-label={`${active.display_name} pickup window ${index + 1} start`}
+                  value={window.start}
+                  onChange={(event) => update({
+                    ...draft,
+                    pickup_hours: draft.pickup_hours.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, start: event.target.value } : item,
+                    ),
+                  })}
+                  className="rounded-lg px-2 py-1.5 text-sm"
+                  style={INPUT_STYLE}
+                />
+                <span className="text-xs text-[#8b8fa3]">to</span>
+                <input
+                  type="time"
+                  aria-label={`${active.display_name} pickup window ${index + 1} end`}
+                  value={window.end}
+                  onChange={(event) => update({
+                    ...draft,
+                    pickup_hours: draft.pickup_hours.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, end: event.target.value } : item,
+                    ),
+                  })}
+                  className="rounded-lg px-2 py-1.5 text-sm"
+                  style={INPUT_STYLE}
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove ${active.display_name} pickup window ${index + 1}`}
+                  onClick={() => update({ ...draft, pickup_hours: draft.pickup_hours.filter((_, itemIndex) => itemIndex !== index) })}
+                  className="ml-auto rounded-md px-2 py-1 text-sm text-[#8b8fa3] hover:bg-rose-500/10 hover:text-rose-300"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => update({ ...draft, pickup_hours: [...draft.pickup_hours, { start: "10:00", end: "12:00" }] })}
+              className="rounded-lg bg-white/[0.06] px-2.5 py-1.5 text-xs text-[#cbd5e1] hover:bg-white/[0.12]"
+            >
+              + Add window
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {DRAFT_TEXT_FIELDS.map((field) => (
+          <div key={field.key} className="rounded-xl border border-white/[0.08] bg-black/15 p-3">
+            <label htmlFor={`draft-text-${active.slug}-${field.key}`} className="block text-xs font-semibold text-[#e8eaf0]">
+              {field.label}
+            </label>
+            <p className="mt-1 text-[11px] leading-snug text-[#8f96a3]">{field.hint}</p>
+            <textarea
+              id={`draft-text-${active.slug}-${field.key}`}
+              aria-label={`${active.display_name} ${field.label} automatic draft wording`}
+              value={draft.draft_text_blocks[field.key]}
+              onChange={(event) => update({
+                ...draft,
+                draft_text_blocks: { ...draft.draft_text_blocks, [field.key]: event.target.value },
+              })}
+              rows={4}
+              placeholder={`Optional ${field.label.toLowerCase()} wording…`}
+              className="mt-2 w-full resize-y rounded-lg px-3 py-2 text-sm"
+              style={INPUT_STYLE}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-violet-400/15 bg-violet-500/[0.05] px-3 py-2.5">
+        <p className="mr-auto text-[11px] leading-snug text-violet-100/70">Saving refreshes any cached draft before it can be reused.</p>
+        {error ? <span className="text-xs text-rose-300" role="alert">{error}</span> : null}
+        {saved === active.slug ? <span className="text-xs text-emerald-300" aria-live="polite">Saved</span> : null}
+        <button
+          type="button"
+          disabled={saving || !dirty}
+          onClick={() => void saveActive()}
+          className="rounded-lg bg-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-100 ring-1 ring-violet-400/25 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save account controls"}
+        </button>
       </div>
     </div>
   );
@@ -433,8 +663,8 @@ function HubEditor() {
   );
 }
 
-interface Props {
-  onClose: () => void;
+interface SettingsWorkspaceProps {
+  onBack: () => void;
 }
 
 type QuickText = {
@@ -771,7 +1001,7 @@ function SettingsSection({
   );
 }
 
-export function SettingsDrawer({ onClose }: Props) {
+export function SettingsWorkspace({ onBack }: SettingsWorkspaceProps) {
   const settings = useQuery(api.settings.get);
   const updateSettings = useMutation(api.settings.update);
   const [pollingInput, setPollingInput] = useState("");
@@ -789,7 +1019,7 @@ export function SettingsDrawer({ onClose }: Props) {
 
   function handleEditDashboard() {
     if (!editMode) toggleEditMode();
-    onClose();
+    onBack();
   }
 
   async function applyField(fields: Parameters<typeof updateSettings>[0]) {
@@ -804,29 +1034,71 @@ export function SettingsDrawer({ onClose }: Props) {
     }
   }
 
-  const polling = settings?.polling_interval_ms ?? 300000;
+  const polling = Math.max(settings?.polling_interval_ms ?? 300000, 120000);
   const displayPolling =
-    pollingInput !== "" ? pollingInput : String(Math.round(polling / 60000));
+    pollingInput !== "" ? pollingInput : String(Math.max(2, Math.round(polling / 60000)));
 
   async function handlePollingBlur() {
     const mins = parseInt(pollingInput || String(Math.round(polling / 60000)));
     if (isNaN(mins)) return;
-    const ms = Math.max(60000, Math.min(3600000, mins * 60000));
+    const ms = Math.max(120000, Math.min(3600000, mins * 60000));
     await applyField({ polling_interval_ms: ms });
     setPollingInput("");
   }
 
   if (settings == null) {
     return (
-      <Drawer onClose={onClose} title="Master settings" width="min(480px, 100vw)">
-        <p className="text-sm text-[#8b8fa3]">Loading...</p>
-      </Drawer>
+      <div className="min-h-[100dvh] bg-[#070910] text-[#e4e6eb]">
+        <header className="border-b border-white/[0.08] bg-[#0a0c14]/95 px-4 py-3 backdrop-blur md:px-6">
+          <button type="button" onClick={onBack} className="rounded-lg px-2 py-1 text-sm text-[#cbd5e1] hover:bg-white/[0.06]">
+            ← Back to dashboard
+          </button>
+        </header>
+        <p className="mx-auto max-w-7xl px-4 py-8 text-sm text-[#8b8fa3] md:px-6">Loading settings…</p>
+      </div>
     );
   }
 
   return (
-    <Drawer onClose={onClose} title="Master settings" width="min(480px, 100vw)">
-      <div className="space-y-3 pb-8">
+    <div className="settings-workspace-enter min-h-[100dvh] bg-[#070910] text-[#e4e6eb]">
+      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-[#0a0c14]/95 px-4 py-3 backdrop-blur md:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium text-[#d9dce4] transition hover:bg-white/[0.06]"
+          >
+            <span aria-hidden="true">←</span> Back to dashboard
+          </button>
+          <div className="text-right">
+            <p className="text-sm font-semibold text-[#f2f3f6]">Rental operations</p>
+            <p className="text-[11px] text-[#858c99]">Settings workspace</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 md:px-6 lg:grid-cols-[210px_minmax(0,1fr)] lg:py-7">
+        <aside className="lg:sticky lg:top-20 lg:h-fit">
+          <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto rounded-2xl border border-white/[0.08] bg-white/[0.025] p-2 lg:flex-col lg:overflow-visible">
+            {[
+              ["#safety", "Safety"],
+              ["#communication", "Account communication"],
+              ["#quick-texts", "Quick texts"],
+              ["#operations", "Operations"],
+              ["#intelligence", "AI drafts"],
+              ["#returns", "Returns"],
+            ].map(([href, label]) => (
+              <a key={href} href={href} className="shrink-0 rounded-xl px-3 py-2 text-xs font-medium text-[#9aa0ad] transition hover:bg-violet-500/10 hover:text-violet-100">
+                {label}
+              </a>
+            ))}
+          </nav>
+          <p className="mt-3 hidden px-2 text-[11px] leading-relaxed text-[#6f7581] lg:block">
+            Changes save to the live account configuration. Renter messages remain draft-only.
+          </p>
+        </aside>
+
+        <main className="min-w-0 space-y-4 pb-10">
         <div className="rounded-2xl border border-violet-400/15 bg-gradient-to-br from-violet-500/[0.12] via-slate-500/[0.04] to-transparent p-4">
           <div className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-lg ring-1 ring-violet-400/20">⌘</div>
@@ -869,6 +1141,7 @@ export function SettingsDrawer({ onClose }: Props) {
           </p>
         </div>
 
+        <div className="grid gap-4 xl:grid-cols-2">
         <SettingsSection id="safety" eyebrow="Protected" title="Reply safety" description="AI can prepare drafts, but cannot dispatch them. A renter message only leaves after you press Send in Quick Reply." tone="safe">
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-emerald-400/15 bg-emerald-500/[0.06] px-3 py-2.5">
             <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]" />
@@ -881,16 +1154,22 @@ export function SettingsDrawer({ onClose }: Props) {
           <QuickTextsEditor />
         </SettingsSection>
 
+        <div className="xl:col-span-2">
+          <SettingsSection id="communication" eyebrow="Per account" title="Automatic-draft communication" description="Control the exact operational wording Wall‑E and Quick Reply drafts use for each account. These blocks are separate from manual shortcuts and never send on their own." tone="violet">
+            <AccountCommunicationEditor />
+          </SettingsSection>
+        </div>
+
         <SettingsSection id="operations" eyebrow="Live operations" title="Polling, hubs & collection" description="Controls the data refresh cadence and the real-world locations and hours used by availability and drafts.">
         <div className="py-1">
           <label className="text-sm text-[#e4e6eb] block mb-1">Polling interval</label>
           <p className="text-xs mb-2" style={{ color: "#8b8fa3" }}>
-            How often to poll Hygglo (minutes, 1-60)
+            Effective Hygglo polling cadence (minutes, 2-60). Trigger checks every two minutes and skips work until this interval has elapsed.
           </p>
           <div className="flex items-center gap-2">
             <input
               type="number"
-              min={1}
+              min={2}
               max={60}
               step={1}
               value={displayPolling}
@@ -982,7 +1261,7 @@ export function SettingsDrawer({ onClose }: Props) {
         <SettingsSection id="returns" eyebrow="After return" title="Review & discount texts" description="Per-account wording used when you deliberately finalise a return.">
         <ReturnTextsEditor />
         </SettingsSection>
-      </div>
+        </div>
 
       {saveError && (
         <p className="mt-3 text-xs" style={{ color: "#ef4444" }}>{saveError}</p>
@@ -990,6 +1269,8 @@ export function SettingsDrawer({ onClose }: Props) {
       {saveOk && (
         <p className="mt-3 text-xs" style={{ color: "#22c55e" }}>Saved.</p>
       )}
-    </Drawer>
+        </main>
+      </div>
+    </div>
   );
 }

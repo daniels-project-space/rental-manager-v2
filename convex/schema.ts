@@ -45,6 +45,16 @@ export default defineSchema({
     // prompt (recency bias) — e.g. included-free accessories, battery families,
     // "suggest only gear we own". Account-specific. See generateDraft.
     hard_truths: v.optional(v.string()),
+    // Explicit, per-account wording blocks for automatic renter drafts. These
+    // are deliberately structured rather than a loose text blob so an operator
+    // can control location, collection-time and payment wording independently.
+    draft_text_blocks: v.optional(v.object({
+      opening: v.string(),
+      availability: v.string(),
+      location: v.string(),
+      pickup_time: v.string(),
+      payment: v.string(),
+    })),
     // Per-account main rental hub (where THIS account's gear lives). Confirmed
     // via postcodes.io. Tile distance + the too-heavy tag measure from here.
     // (The heavy/max-km ranges stay global in `settings`.)
