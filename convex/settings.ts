@@ -172,6 +172,7 @@ export const listAccountHubs = query({
       hub_label: string | null;
       pickup_address: string | null;
       pickup_hours: { start: string; end: string }[] | null;
+      payment_info_text: string | null;
     }[] = [];
     for (const a of accounts) {
       if (a.slug === "dbcinema_web") continue;
@@ -187,6 +188,7 @@ export const listAccountHubs = query({
         hub_label: profile?.hub_label ?? null,
         pickup_address: profile?.pickup_address ?? null,
         pickup_hours: profile?.pickup_hours ?? null,
+        payment_info_text: profile?.payment_info_text ?? null,
       });
     }
     out.sort((x, y) => x.slug.localeCompare(y.slug));
@@ -515,6 +517,24 @@ export const setAccountPickupAddress = mutation({
     if (!profile) throw new Error(`No profile for "${account_slug}"`);
     await ctx.db.patch(profile._id, { pickup_address });
     return { ok: true, account_slug, pickup_address };
+  },
+});
+
+
+/** Set (or update) the per-account PAYMENT info text, shown in Settings. */
+export const setAccountPaymentInfo = mutation({
+  args: { account_slug: v.string(), payment_info_text: v.string() },
+  handler: async (ctx, { account_slug, payment_info_text }) => {
+    const accts = await ctx.db.query("accounts").collect();
+    const acct = accts.find((a) => a.slug === account_slug);
+    if (!acct) throw new Error(`No account "${account_slug}"`);
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", acct._id))
+      .first();
+    if (!profile) throw new Error(`No profile for "${account_slug}"`);
+    await ctx.db.patch(profile._id, { payment_info_text });
+    return { ok: true, account_slug, payment_info_text };
   },
 });
 
