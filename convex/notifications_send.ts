@@ -82,7 +82,13 @@ async function sendTelegramWithButton(
 export const dispatchPending = internalAction({
   args: {},
   handler: async (ctx): Promise<{ delivered: number; pushed: number; pruned: number }> => {
-    const events = await ctx.runQuery(internal.notifications.getUndelivered, {});
+    // Claim BEFORE sending. dispatchPending is scheduled from several places
+    // (queueNotificationEvents, savePushSubscription, sendTestNotification, and
+    // its own retry reschedule), so overlapping runs are normal. Claiming inside
+    // one serializable mutation is what stops two of them sending the same
+    // event — the previous "query undelivered → send → mark delivered" order
+    // left the row visibly undelivered for the whole duration of the sends.
+    const events = await ctx.runMutation(internal.notifications.claimPending, {});
     if (events.length === 0) return { delivered: 0, pushed: 0, pruned: 0 };
 
     const subs = await ctx.runQuery(internal.notifications.getSubscriptions, {});
@@ -100,74 +106,95 @@ export const dispatchPending = internalAction({
       telegram_suppressed: boolean;
     }> = [];
 
-    for (const e of events) {
-      const absUrl = `${BASE_URL}${e.url}`;
-      let eventPushed = 0;
-      const eligibleSubs = subs.filter((s) =>
-        subscriptionReceivesNotification(s.mode, e.type),
-      );
-      const pushSuppressed = subs.length - eligibleSubs.length;
-      // 1) Web push to subscriptions whose per-device mode accepts this event.
-      if (vapidOk) {
-        const payload = JSON.stringify({
-          title: e.title,
-          body: e.body,
-          url: e.url, // relative — SW resolves against the PWA origin
-          tag: `${e.type}:${e.thread_id}`,
-          icon: accountIcon(e.account_slug), // per-account Aputure (recoloured)
-          badge: "/icons/notif-badge.png",
-        });
-        await Promise.all(
-          eligibleSubs.map(async (s) => {
-            try {
-              await webpush.sendNotification(
-                { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-                payload,
-              );
-              pushed++;
-              eventPushed++;
-            } catch (err) {
-              const code = (err as { statusCode?: number })?.statusCode;
-              if (code === 404 || code === 410) deadEndpoints.add(s.endpoint);
-              // Every failure is LOGGED: silent non-404 failures (403 expired
-              // Apple tokens, 400 VAPID mismatch…) are how the "wohoo" died
-              // without anyone noticing — delivered_at was set regardless.
-              console.warn(
-                "[notifications] web push failed",
-                code ?? String(err).slice(0, 120),
-                s.endpoint.slice(0, 60),
-              );
-            }
-          }),
+    try {
+      for (const e of events) {
+        const absUrl = `${BASE_URL}${e.url}`;
+        let eventPushed = 0;
+        const eligibleSubs = subs.filter((s) =>
+          subscriptionReceivesNotification(s.mode, e.type),
         );
+        const pushSuppressed = subs.length - eligibleSubs.length;
+        // 1) Web push to subscriptions whose per-device mode accepts this event.
+        if (vapidOk) {
+          const payload = JSON.stringify({
+            title: e.title,
+            body: e.body,
+            url: e.url, // relative — SW resolves against the PWA origin
+            tag: `${e.type}:${e.thread_id}`,
+            icon: accountIcon(e.account_slug), // per-account Aputure (recoloured)
+            badge: "/icons/notif-badge.png",
+          });
+          await Promise.all(
+            eligibleSubs.map(async (s) => {
+              try {
+                await webpush.sendNotification(
+                  { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+                  payload,
+                );
+                pushed++;
+                eventPushed++;
+              } catch (err) {
+                const code = (err as { statusCode?: number })?.statusCode;
+                if (code === 404 || code === 410) deadEndpoints.add(s.endpoint);
+                // Every failure is LOGGED: silent non-404 failures (403 expired
+                // Apple tokens, 400 VAPID mismatch…) are how the "wohoo" died
+                // without anyone noticing — delivered_at was set regardless.
+                console.warn(
+                  "[notifications] web push failed",
+                  code ?? String(err).slice(0, 120),
+                  s.endpoint.slice(0, 60),
+                );
+              }
+            }),
+          );
+        }
+        // 2) System-generated Telegram is opt-in. This preserves browser/PWA
+        //    notifications but stops unsolicited messages by default.
+        let telegramOk = false;
+        const telegramEnabled = automatedTelegramAlertsEnabled();
+        const telegramEligible = telegramEnabled && subscriptionReceivesNotification(
+          telegramNotificationMode(process.env.NOTIF_TELEGRAM_MODE),
+          e.type,
+        );
+        const telegramSuppressed = telegramEnabled && !telegramEligible;
+        if (telegramEligible) {
+          telegramOk = await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
+        }
+        const eligibleChannels = eligibleSubs.length + (telegramEligible ? 1 : 0);
+        const suppressedChannels = pushSuppressed + (telegramSuppressed ? 1 : 0);
+        const intentionallySuppressed = eligibleChannels === 0 && suppressedChannels > 0;
+        if (eventPushed === 0 && !telegramOk && !intentionallySuppressed) {
+          console.warn(`[notifications] event ${String(e._id)} (${e.type}) reached NO channel — check subscriptions/Telegram env`);
+        }
+        outcomes.push({
+          id: e._id,
+          push_ok: eventPushed,
+          push_eligible: eligibleSubs.length,
+          push_suppressed: pushSuppressed,
+          telegram_ok: telegramOk,
+          telegram_eligible: telegramEligible,
+          telegram_suppressed: telegramSuppressed,
+        });
       }
-      // 2) System-generated Telegram is opt-in. This preserves browser/PWA
-      //    notifications but stops unsolicited messages by default.
-      let telegramOk = false;
-      const telegramEnabled = automatedTelegramAlertsEnabled();
-      const telegramEligible = telegramEnabled && subscriptionReceivesNotification(
-        telegramNotificationMode(process.env.NOTIF_TELEGRAM_MODE),
-        e.type,
-      );
-      const telegramSuppressed = telegramEnabled && !telegramEligible;
-      if (telegramEligible) {
-        telegramOk = await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
+    } catch (err) {
+      // Unexpected throw mid-batch. Events already in `outcomes` were really
+      // attempted, so record them normally (that also clears their claim).
+      // The rest were claimed but never touched — hand them straight back so a
+      // later dispatcher retries them instead of waiting out the stale window.
+      const attempted = new Set<string>(outcomes.map((o) => String(o.id)));
+      const untouched = events.filter((e) => !attempted.has(String(e._id)));
+      if (outcomes.length > 0) {
+        await ctx.runMutation(internal.notifications.markDelivered, {
+          ids: outcomes.map((o) => o.id),
+          outcomes,
+        });
       }
-      const eligibleChannels = eligibleSubs.length + (telegramEligible ? 1 : 0);
-      const suppressedChannels = pushSuppressed + (telegramSuppressed ? 1 : 0);
-      const intentionallySuppressed = eligibleChannels === 0 && suppressedChannels > 0;
-      if (eventPushed === 0 && !telegramOk && !intentionallySuppressed) {
-        console.warn(`[notifications] event ${String(e._id)} (${e.type}) reached NO channel — check subscriptions/Telegram env`);
+      if (untouched.length > 0) {
+        await ctx.runMutation(internal.notifications.releaseClaims, {
+          ids: untouched.map((e) => e._id),
+        });
       }
-      outcomes.push({
-        id: e._id,
-        push_ok: eventPushed,
-        push_eligible: eligibleSubs.length,
-        push_suppressed: pushSuppressed,
-        telegram_ok: telegramOk,
-        telegram_eligible: telegramEligible,
-        telegram_suppressed: telegramSuppressed,
-      });
+      throw err;
     }
 
     const delivery = await ctx.runMutation(internal.notifications.markDelivered, {

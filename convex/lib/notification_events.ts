@@ -109,6 +109,42 @@ export function notificationRetryDelayMs(completedAttempts: number): number {
   return completedAttempts <= 1 ? 5 * 60 * 1000 : 30 * 60 * 1000;
 }
 
+/**
+ * How long a dispatch claim stays valid before another dispatcher may steal it.
+ *
+ * A claim is normally released within seconds (markDelivered clears it, and the
+ * dispatcher releases it explicitly if the send loop throws). The ONLY way a
+ * claim outlives its dispatcher is a hard crash / action timeout mid-flight, so
+ * this threshold only governs that rare recovery path.
+ *
+ * Deliberately generous (5 min, matching the first retry backoff): the failure
+ * we are fixing is DUPLICATE sends, so re-claiming too eagerly re-creates the
+ * exact bug, while re-claiming too late merely delays an already-crashed event.
+ * A normal dispatch (a handful of web-push posts + one Telegram fetch) finishes
+ * in seconds, so 5 min cannot overlap a still-live dispatcher in practice.
+ */
+export const NOTIFICATION_CLAIM_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Whether an event may be claimed for sending right now.
+ *
+ * "Claimed" means some dispatchPending invocation has taken exclusive
+ * responsibility for delivering this event. Claim + read happen inside a single
+ * Convex mutation, which is a serializable transaction, so two overlapping
+ * dispatchers cannot both observe an unclaimed row and both proceed to send.
+ */
+export function notificationClaimAvailable(
+  event: {
+    delivered_at?: number;
+    dispatch_claimed_at?: number;
+  },
+  now: number,
+): boolean {
+  if (event.delivered_at !== undefined) return false;
+  if (event.dispatch_claimed_at === undefined) return true;
+  return now - event.dispatch_claimed_at >= NOTIFICATION_CLAIM_STALE_MS;
+}
+
 export function notificationAttemptDue(
   event: {
     delivery_attempts?: number;

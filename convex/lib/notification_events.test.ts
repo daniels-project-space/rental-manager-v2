@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  NOTIFICATION_CLAIM_STALE_MS,
   bookingBecameConfirmed,
   buildConfirmedBookingNotificationCopy,
   formatNotificationAmounts,
   notificationAttemptDue,
+  notificationClaimAvailable,
   notificationRetryDelayMs,
   subscriptionReceivesNotification,
   telegramNotificationMode,
@@ -108,5 +110,62 @@ describe("bounded notification delivery retries", () => {
 
   it("stops after three failed attempts", () => {
     expect(notificationAttemptDue({ delivery_attempts: 3, last_attempt_at: now - 60 * 60 * 1000 }, now)).toBe(false);
+  });
+});
+
+describe("dispatch claim (duplicate-send guard)", () => {
+  const now = Date.parse("2026-08-14T12:00:00Z");
+
+  it("lets a fresh, unclaimed event be claimed", () => {
+    expect(notificationClaimAvailable({}, now)).toBe(true);
+  });
+
+  /**
+   * The actual race: two dispatchPending runs overlap on one row. Convex
+   * mutations are serializable, so the second one always reads the first one's
+   * write — modelled here as claim-then-re-check on the same row.
+   */
+  it("refuses a second claim while the first dispatcher is still sending", () => {
+    const event: { delivered_at?: number; dispatch_claimed_at?: number } = {};
+
+    // Dispatcher A wins the claim.
+    expect(notificationClaimAvailable(event, now)).toBe(true);
+    event.dispatch_claimed_at = now;
+
+    // Dispatcher B runs 1ms later, mid-send, and must NOT re-send.
+    expect(notificationClaimAvailable(event, now + 1)).toBe(false);
+    // Still held moments before the staleness window closes.
+    expect(
+      notificationClaimAvailable(event, now + NOTIFICATION_CLAIM_STALE_MS - 1),
+    ).toBe(false);
+  });
+
+  it("reclaims a stale claim left behind by a crashed dispatcher", () => {
+    expect(
+      notificationClaimAvailable(
+        { dispatch_claimed_at: now - NOTIFICATION_CLAIM_STALE_MS },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("never re-sends an event that already delivered", () => {
+    expect(notificationClaimAvailable({ delivered_at: now - 1 }, now)).toBe(false);
+    // Even once its claim looks stale.
+    expect(
+      notificationClaimAvailable(
+        { delivered_at: now - 1, dispatch_claimed_at: now - 10 * 60 * 1000 },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("gives a released claim straight back to the next dispatcher", () => {
+    // markDelivered clears dispatch_claimed_at on a failed send, so the retry
+    // ladder in notificationAttemptDue stays in control of when it goes again.
+    const afterFailedSend = { dispatch_claimed_at: undefined, delivery_attempts: 1, last_attempt_at: now };
+    expect(notificationClaimAvailable(afterFailedSend, now)).toBe(true);
+    expect(notificationAttemptDue(afterFailedSend, now)).toBe(false);
+    expect(notificationAttemptDue(afterFailedSend, now + 5 * 60 * 1000)).toBe(true);
   });
 });

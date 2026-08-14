@@ -8,7 +8,14 @@
  *   poller upsert detects a transition (new confirmed booking / new request)
  *     → queueNotificationEvents() inserts a `notification_events` row (deduped)
  *       and schedules internal.notifications_send.dispatchPending
- *         → web-push to every subscription + Telegram to Daniel, marks delivered.
+ *         → claimPending() atomically claims the pending rows
+ *           → web-push to every subscription + Telegram to Daniel, marks delivered.
+ *
+ * TWO independent guards, easy to confuse:
+ *   1. queueNotificationEvents' (thread_id, type) window — stops duplicate
+ *      EVENTS being inserted when a re-poll re-sees the same transition.
+ *   2. claimPending's `dispatch_claimed_at` — stops duplicate SENDS of one
+ *      already-inserted event when two dispatchPending runs overlap.
  *
  * The dashboard bell calls getVapidPublicKey + savePushSubscription to opt in,
  * and listRecent / markAllRead to render the dropdown + unread badge.
@@ -30,6 +37,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import {
   MAX_NOTIFICATION_DELIVERY_ATTEMPTS,
   notificationAttemptDue,
+  notificationClaimAvailable,
   notificationRetryDelayMs,
 } from "./lib/notification_events";
 
@@ -263,16 +271,68 @@ export const sendTestNotification = mutation({
 
 // ── Internal helpers for the "use node" dispatcher ────────────────────
 
-export const getUndelivered = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<Doc<"notification_events">[]> => {
+/**
+ * Atomically claim the events THIS dispatcher is allowed to send (2026-08-14).
+ *
+ * Replaces the old `getUndelivered` internalQuery, which was the duplicate-send
+ * bug: dispatchPending is scheduled from four independent call sites (queue,
+ * savePushSubscription x2, sendTestNotification) plus its own retry reschedule,
+ * so overlapping invocations are routine — three Hygglo accounts are polled
+ * sequentially every ~2 min. The old sequence was
+ *   query undelivered → (network: web-push + Telegram) → markDelivered,
+ * so `delivered_at` was only written AFTER the sends. Two dispatchers reading
+ * during that window both saw the row as undelivered and both sent it.
+ *
+ * A Convex mutation is a serializable transaction: read-and-patch here commit
+ * together, and a conflicting concurrent mutation is retried against the new
+ * state. So exactly one invocation can transition a row from unclaimed to
+ * claimed; the loser sees `dispatch_claimed_at` set and skips the row.
+ *
+ * Returns only the rows this caller actually won.
+ */
+export const claimPending = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (
+    ctx,
+    { limit = 50 },
+  ): Promise<Doc<"notification_events">[]> => {
     const now = Date.now();
     const rows = await ctx.db
       .query("notification_events")
       .withIndex("by_delivered", (q) => q.eq("delivered_at", undefined))
       .order("desc")
       .take(100);
-    return rows.filter((event) => notificationAttemptDue(event, now)).slice(0, 50);
+    const claimed: Doc<"notification_events">[] = [];
+    for (const event of rows) {
+      if (claimed.length >= limit) break;
+      // Retry/exhaustion gating is unchanged — an event that is backing off or
+      // has burned its attempts is not claimable in the first place.
+      if (!notificationAttemptDue(event, now)) continue;
+      if (!notificationClaimAvailable(event, now)) continue;
+      await ctx.db.patch(event._id, { dispatch_claimed_at: now });
+      claimed.push({ ...event, dispatch_claimed_at: now });
+    }
+    return claimed;
+  },
+});
+
+/**
+ * Release claims without recording a delivery attempt. Used when the dispatcher
+ * throws mid-flight: the events must go back in the pool for a later run rather
+ * than sit claimed until the staleness window expires. Deliberately does NOT
+ * touch delivery_attempts — nothing was concluded about deliverability.
+ */
+export const releaseClaims = internalMutation({
+  args: { ids: v.array(v.id("notification_events")) },
+  handler: async (ctx, { ids }) => {
+    let released = 0;
+    for (const id of ids) {
+      const existing = await ctx.db.get(id);
+      if (!existing || existing.dispatch_claimed_at === undefined) continue;
+      await ctx.db.patch(id, { dispatch_claimed_at: undefined });
+      released++;
+    }
+    return { released };
   },
 });
 
@@ -326,6 +386,11 @@ export const markDelivered = internalMutation({
       const succeeded = !!o && (o.push_ok > 0 || o.telegram_ok || preferenceSuppressed);
       await ctx.db.patch(id, {
         ...(succeeded ? { delivered_at: now } : {}),
+        // Always release the claim. On success delivered_at makes the row
+        // unclaimable anyway; on failure the event must be freely re-claimable
+        // by the next dispatcher once notificationAttemptDue() lets it retry,
+        // otherwise 58cd554's retry/exhaustion ladder would stall.
+        dispatch_claimed_at: undefined,
         delivery_attempts: attempts,
         last_attempt_at: now,
         ...(!succeeded && attempts >= MAX_NOTIFICATION_DELIVERY_ATTEMPTS

@@ -2233,6 +2233,12 @@ export default defineSchema({
     delivery_attempts: v.optional(v.number()),
     last_attempt_at: v.optional(v.number()),
     delivery_exhausted_at: v.optional(v.number()),
+    // Dispatch claim (2026-08-14): set by notifications.claimPending inside a
+    // single serializable mutation so two overlapping dispatchPending actions
+    // cannot both pick up the same still-undelivered row and both send it.
+    // Cleared by markDelivered / releaseClaims; a claim older than
+    // NOTIFICATION_CLAIM_STALE_MS is treated as abandoned and re-claimable.
+    dispatch_claimed_at: v.optional(v.number()),
   })
     .index("by_created", ["created_at"])
     .index("by_delivered", ["delivered_at"])
