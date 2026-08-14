@@ -15,15 +15,45 @@
  *   from the same live data with the same discipline — and stops the surfaces
  *   diverging again.
  *
- * TOOL CONTRACT: every tool here is READ-ONLY (Convex `query` only — never
- * `mutation`/`action` that writes). Adding a write tool requires explicit
- * Daniel approval. Reviewers: reject PRs that introduce mutations here.
+ * TOOL CONTRACT (updated 2026-08-14). Tools here fall into exactly three tiers
+ * and NOTHING may be added outside them without explicit Daniel approval —
+ * reviewers: reject PRs that widen this.
+ *
+ *   TIER 1 — READ-ONLY. Convex `query` only. Everything named `query_*`,
+ *     `read_settings`, and `preview_listing_price_change`. No side effects.
+ *
+ *   TIER 2 — SAFE CONFIG WRITE. `change_settings` only. Its Zod schema is a
+ *     CLOSED allowlist of operationally-safe fields and its `execute` filters
+ *     against a second hard-coded allowlist, so the model cannot reach
+ *     `read_only_mode`, `ALLOW_HYGGLO_SEND`, `minimum_rental_gbp`,
+ *     `ai_boost_rate` or `ai_active_from` even if it emits them. Prompt text
+ *     is NOT the guard here; the schema is.
+ *
+ *   TIER 3 — REAL-MONEY WRITE, TWO-PHASE. `propose_price_change` (mints a
+ *     single-use, 15-minute token; changes nothing) and `execute_price_change`
+ *     (spends it). These edit LIVE marketplace prices, so the design is: the
+ *     model can only ever propose; a human must read the diff and say yes in
+ *     chat; only then can the second tool run, and only with the token the
+ *     proposal minted. Server-side, `convex/listing_price_admin.ts` still has
+ *     the final word — single-use token + TTL + account/percent match + a
+ *     per-listing live drift check + the default-OFF env gate
+ *     ALLOW_LISTING_PRICE_WRITES. The tool descriptions below are the FIRST
+ *     line of defence, not the only one, and must stay blunt about it.
+ *
+ * Any OTHER external listing, payment or renter-message write stays out of
+ * this registry entirely.
  */
 import { tool, type Tool } from "ai";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { api } from "../../../convex/_generated/api";
+import {
+  buildOneDayPriceAdjustmentPreview,
+  listingClient,
+  listMine,
+  MAX_ABS_PRICE_PERCENT,
+} from "@/lib/hygglo/listings";
 
 // The income-pie functions are recent additions that the committed
 // `convex/_generated/api` lags behind (the perf-passes work keeps it stale), so
@@ -93,9 +123,18 @@ Drill-down tools:
   query_compatibility    — gear-fit questions ("will an EF lens fit the BMPCC", "is X compatible with Y", mount/adapter/battery/card questions); returns the OWNED item's mount + compatible lenses/batteries/cards AND any matching gear FAQ from the knowledge base.
   query_rental_history   — historical / past completed rentals aggregated per item (net earnings, rent days, utilization) plus a recent rentals list and totals; call for any question about rental history, past/previous rentals, earnings over time, all-time per-item earnings, or "what did I rent in <period>".
   read_settings          — the rental manager's current master settings (pickup/collection hours, poll interval, delivery radius, toggles)
-  change_settings        — CHANGE a master setting the operator asks for (pickup hours, poll interval, delivery radius, escalate-to-sonnet, count-pending toggle, AI boost). NOT the read-only-mode or Hygglo-send safety rails — for those tell them to use the Settings screen.
+  change_settings        — CHANGE a master setting the operator asks for (pickup hours, poll interval, delivery radius, escalate-to-sonnet, count-pending toggle). NOT the read-only-mode or Hygglo-send safety rails, NOT the minimum rental price, NOT the AI-boost attribution fields — for those tell them to use the Settings screen.
+  preview_listing_price_change — read LIVE Hygglo listing prices and build an account-scoped one-day-price preview. Read-only; NEVER writes a listing and mints no approval.
+  propose_price_change   — STEP 1 of a real price change: shows the exact old→new diff and mints a single-use 15-minute confirmation token. CHANGES NOTHING.
+  execute_price_change   — STEP 2: actually rewrites the LIVE marketplace prices. Only after the human has SEEN the propose_price_change diff and said yes IN THIS CONVERSATION.
 
-SETTINGS — when the operator asks to change a master setting (e.g. "set pickup hours to 10-12 and 7-9", "poll every 5 minutes", "raise the delivery radius to 25km", "count pending bookings in availability"), call change_settings with the fields to change and confirm what you changed. When adding to a list like pickup hours, call read_settings first and send the full new list. Never change the read-only-mode or Hygglo-send safety rails from chat.
+SETTINGS — when the operator asks to change a master setting (e.g. "set pickup hours to 10-12 and 7-9", "poll every 5 minutes", "raise the delivery radius to 25km", "count pending bookings in availability"), call change_settings with the fields to change and confirm what you changed. When adding to a list like pickup hours, call read_settings first and send the full new list. Never change the read-only-mode or Hygglo-send safety rails from chat, and never touch the minimum rental price or the AI-boost attribution rate — those are Settings-screen only and the tool will reject them.
+
+LISTING PRICES — THIS IS REAL MONEY ON A LIVE MARKETPLACE. Follow this sequence exactly; there are no shortcuts.
+  1. The operator asks for a price change. You call propose_price_change with the account they NAMED (never inferred) and the percent. Nothing has changed at this point.
+  2. You SHOW them the returned diff — how many listings, the old→new prices, what got skipped and why — and you ASK them, in plain words, to confirm. Then you STOP and wait for their reply.
+  3. ONLY IF they reply with an unambiguous yes to THAT diff do you call execute_price_change, passing the token from step 1 verbatim.
+Never call execute_price_change in the same turn as propose_price_change. Never call it because the operator's original request sounded decisive ("just put all prices up 10%") — a request is NOT a confirmation; a confirmation is them saying yes AFTER seeing the numbers. Never call it off a yes to some earlier, different question, off a token from an earlier conversation, or off a token you did not receive from propose_price_change in this conversation. If they change the percent or the account, that voids the old proposal — go back to step 1 and propose again. If you are not certain they approved THIS EXACT diff, do not execute: ask again. Until execute_price_change returns, say plainly that nothing has changed yet; never imply a preview or a proposal moved a real price.
 
 INVENTORY & COMPATIBILITY — read before answering "do we have…", "is it an X or a Y", "what cameras/lenses do we own", or any gear-fit / mount / adapter / lens-compatibility question.
 The INVENTORY INDEX below the snapshot (when present) is the COMPLETE master inventory — every item Daniel owns, active and non-marketing. NEVER claim he owns something that is not in that index, and NEVER tell him he doesn't own something that IS in it. Each lens line carries a focus tag ("AF" = autofocus, "manual focus") — use it directly for autofocus / manual-focus questions; if a line has no focus tag, call query_inventory and read its focus field + spec_description rather than guessing. For exact specs (focal length, aperture, sensor, weight, autofocus system, what card it takes, what's INCLUDED in the rental bundle), quantity, the master-vs-marketing distinction, or to resolve a fuzzy name, call query_inventory and answer ONLY from its returned spec_description / specs_long / focus / compatibility.included_with_rental — never recall an item's specs from memory. What "comes with" / is "included" in a rental is EXACTLY compatibility.included_with_rental and nothing else — never infer that an adapter, lens or accessory ships with an item because it appears in a compatible-with list. If a listed-compatible lens needs a mount adapter, only say the adapter is included when it is actually in included_with_rental (or owned as its own inventory row); otherwise say the adapter would be needed. For any gear-fit / mount / lens-compatibility question call query_compatibility and answer from the owned item's real mount + compatibility data and the returned FAQ; do not reason about optics from memory. If neither the index nor the tool shows the item, say it's not in the inventory rather than inventing it. Camera/lens optics facts (crop factor, vignetting, mount adapting) are easy to get backwards — if a tool/FAQ doesn't cover it and you are not certain, say so plainly instead of guessing.
@@ -176,6 +215,87 @@ async function cached<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
     for (const [k] of oldest) TOOL_CACHE.delete(k);
   }
   return fresh;
+}
+
+// ── Listing-price change plumbing (Tier 3) ──────────────────────────────────
+
+/** Mirrors ALLOWED_ACCOUNTS in convex/listing_price_admin.ts + hygglo/listings.ts. */
+const PRICE_ACCOUNTS = ["leo", "dbcinema", "diogo"] as const;
+
+/**
+ * The percent bound the WRITE path enforces (`MAX_ABS_PERCENT` in
+ * `convex/listing_price_admin.ts`, re-exported through hygglo/listings.ts so
+ * one constant drives the schema, the preview and the executor). Negatives are
+ * legitimate price CUTS; zero is meaningless and rejected.
+ */
+const percentChangeSchema = z
+  .number()
+  .refine((n) => Number.isFinite(n) && n !== 0, {
+    message: "percent_change must be a non-zero number",
+  })
+  .refine((n) => Math.abs(n) <= MAX_ABS_PRICE_PERCENT, {
+    message: `percent_change must be within ±${MAX_ABS_PRICE_PERCENT}%`,
+  });
+
+/** How many per-listing rows we spell out before switching to a summary. */
+const PRICE_ROW_DETAIL_CAP = 40;
+
+type DiffRow = { listing_id: number; name?: string; old_price: number; new_price: number };
+type DiffSkipped = { listing_id: number; name?: string; reason: string };
+
+/**
+ * Render the diff for a HUMAN to read in chat. `leo` alone has 250+ listings,
+ * so dumping every row would swamp the model's context and bury the numbers
+ * that matter. Show the headline aggregates always, spell out every row up to
+ * PRICE_ROW_DETAIL_CAP, and beyond that show the biggest movers plus an
+ * explicit "N more" so the model can never present a truncated list as the
+ * whole picture.
+ */
+function summariseDiff(rows: DiffRow[], skipped: DiffSkipped[]) {
+  const deltas = rows.map((r) => r.new_price - r.old_price);
+  const totalDelta = deltas.reduce((s, d) => s + d, 0);
+  const money = (n: number) => Math.round(n * 100) / 100;
+  const line = (r: DiffRow) =>
+    `#${r.listing_id} ${r.name ?? "(unnamed)"}: £${money(r.old_price)} → £${money(r.new_price)}`;
+
+  const truncated = rows.length > PRICE_ROW_DETAIL_CAP;
+  const shown = truncated
+    ? [...rows]
+        .sort((a, b) => Math.abs(b.new_price - b.old_price) - Math.abs(a.new_price - a.old_price))
+        .slice(0, PRICE_ROW_DETAIL_CAP)
+    : rows;
+
+  // Skipped rows are the "why isn't every listing in here" answer — group them
+  // so the model reports a cause, not just a count.
+  const byReason = new Map<string, DiffSkipped[]>();
+  for (const s of skipped) {
+    if (!byReason.has(s.reason)) byReason.set(s.reason, []);
+    byReason.get(s.reason)!.push(s);
+  }
+
+  return {
+    listings_affected: rows.length,
+    total_daily_price_delta_gbp: money(totalDelta),
+    smallest_change_gbp: deltas.length ? money(Math.min(...deltas)) : 0,
+    largest_change_gbp: deltas.length ? money(Math.max(...deltas)) : 0,
+    changes: shown.map(line),
+    changes_note: truncated
+      ? `Showing the ${PRICE_ROW_DETAIL_CAP} biggest movers of ${rows.length} affected listings — ALL ${rows.length} would change, not just these. Say so when you report this.`
+      : undefined,
+    skipped_count: skipped.length,
+    skipped_by_reason: [...byReason.entries()].map(([reason, items]) => ({
+      reason,
+      count: items.length,
+      examples: items.slice(0, 5).map((s) => `#${s.listing_id} ${s.name ?? "(unnamed)"}`),
+    })),
+    skipped_note: skipped.length
+      ? "Skipped listings keep their current price — they have no usable single 1-day price tier, so guessing one would be a made-up price."
+      : undefined,
+  };
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /**
@@ -426,36 +546,313 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     }),
     change_settings: tool({
       description:
-        "Change the rental manager's MASTER SETTINGS when the operator asks (e.g. 'set pickup hours to 10-12 and " +
-        "7-9', 'poll every 5 minutes', 'raise the delivery radius to 25km', 'count pending in availability'). You " +
-        "CAN set: pickup_hours, polling_interval_ms, escalate_to_sonnet, availability_include_pending, hub_max_km, " +
-        "hub_heavy_max_km, ai_boost_rate, ai_active_from. You CANNOT change the read-only-mode or Hygglo-send " +
-        "safety rails from chat — if asked, tell the operator to use the Settings screen for those. When editing " +
-        "part of a list (e.g. ADDING one pickup window), call read_settings first and send the full new list. " +
-        "Confirm the change back to the operator in plain language.",
-      inputSchema: z.object({
-        pickup_hours: z
-          .array(z.object({ start: z.string(), end: z.string() }))
-          .optional()
-          .describe("Full replacement list of pickup/collection windows, London time, 24h HH:MM."),
-        polling_interval_ms: z.number().optional().describe("Poll interval in ms (60000-3600000)."),
-        escalate_to_sonnet: z.boolean().optional(),
-        availability_include_pending: z.boolean().optional(),
-        hub_max_km: z.number().optional().describe("Max delivery radius, km."),
-        hub_heavy_max_km: z.number().optional().describe("Max delivery radius for heavy items, km."),
-        ai_boost_rate: z.number().optional(),
-        ai_active_from: z.string().optional().describe("HH:MM the AI becomes active."),
-      }),
+        "Change the rental manager's OPERATIONAL MASTER SETTINGS when the operator asks (e.g. 'set pickup hours to " +
+        "10-12 and 7-9', 'poll every 5 minutes', 'raise the delivery radius to 25km', 'count pending in " +
+        "availability'). The COMPLETE set you can set is: pickup_hours, polling_interval_ms, escalate_to_sonnet, " +
+        "availability_include_pending, hub_max_km, hub_heavy_max_km. Nothing else is reachable from chat — the " +
+        "read-only-mode and Hygglo-send safety rails, the minimum rental price, and the AI-boost attribution " +
+        "fields (ai_boost_rate / ai_active_from) are all REJECTED by this tool, not merely discouraged. If the " +
+        "operator asks for one of those, say it's Settings-screen only and do not attempt it. When editing part " +
+        "of a list (e.g. ADDING one pickup window), call read_settings first and send the full new list. Confirm " +
+        "the change back to the operator in plain language.",
+      // CLOSED ALLOWLIST. `settings:update` also accepts read_only_mode,
+      // ALLOW_HYGGLO_SEND, minimum_rental_gbp, ai_boost_rate, ai_active_from
+      // and draft_epoch — none of which an LLM may reach:
+      //   - read_only_mode / ALLOW_HYGGLO_SEND are the production safety rails.
+      //   - minimum_rental_gbp is a real-money pricing floor.
+      //   - ai_boost_rate / ai_active_from drive the LifetimeRevenue AI-boost
+      //     attribution, i.e. the £ figures Daniel reads off the dashboard.
+      //     Letting the assistant tune the number that credits the assistant is
+      //     an obvious integrity hole. (They were previously in this schema —
+      //     and ai_active_from was documented WRONG, as "HH:MM", when the code
+      //     reads it as a YYYY-MM month cutoff, so a well-meaning write would
+      //     have corrupted the lifetime revenue split. Removed 2026-08-14.)
+      //   - draft_epoch is an internal cache-busting counter.
+      // `.strict()` makes an unexpected key a validation ERROR rather than a
+      // silent strip, so a model probing for `read_only_mode` fails loudly.
+      inputSchema: z
+        .object({
+          pickup_hours: z
+            .array(z.object({ start: z.string(), end: z.string() }))
+            .optional()
+            .describe("Full replacement list of pickup/collection windows, London time, 24h HH:MM."),
+          polling_interval_ms: z
+            .number()
+            .int()
+            .min(120_000)
+            .max(3_600_000)
+            .optional()
+            .describe("Poll interval in ms. Must be 120000 (2 min) to 3600000 (1 hour)."),
+          escalate_to_sonnet: z.boolean().optional(),
+          availability_include_pending: z.boolean().optional(),
+          hub_max_km: z.number().min(0).max(500).optional().describe("Max delivery radius, km."),
+          hub_heavy_max_km: z
+            .number()
+            .min(0)
+            .max(500)
+            .optional()
+            .describe("Max delivery radius for heavy items, km."),
+        })
+        .strict(),
       execute: async (input) => {
+        // Second, independent gate. The Zod schema above should already make
+        // anything else impossible, but this tool is the only mutation in the
+        // registry, so the key set that reaches Convex is pinned here too —
+        // a future schema edit cannot silently widen what gets forwarded.
+        const ALLOWED_SETTINGS_FIELDS = [
+          "pickup_hours",
+          "polling_interval_ms",
+          "escalate_to_sonnet",
+          "availability_include_pending",
+          "hub_max_km",
+          "hub_heavy_max_km",
+        ] as const;
+        const allowed = new Set<string>(ALLOWED_SETTINGS_FIELDS);
+
+        const entries = Object.entries(input as Record<string, unknown>);
+        const rejected = entries.filter(([k, v]) => v !== undefined && !allowed.has(k)).map(([k]) => k);
+        if (rejected.length > 0) {
+          return (
+            `Refused: ${rejected.join(", ")} cannot be changed from chat. ` +
+            `Tell the operator to use the Settings screen for those.`
+          );
+        }
+
         const fields = Object.fromEntries(
-          Object.entries(input).filter(([, v]) => v !== undefined),
+          entries.filter(([k, v]) => v !== undefined && allowed.has(k)),
         );
         if (Object.keys(fields).length === 0) return "No settings were provided to change.";
         try {
           await convex.mutation(settingsUpdateRef, fields);
           return `Done — updated: ${Object.keys(fields).join(", ")}.`;
         } catch (e) {
-          return `Couldn't update settings: ${e instanceof Error ? e.message : String(e)}`;
+          return `Couldn't update settings: ${errMsg(e)}`;
+        }
+      },
+    }),
+    preview_listing_price_change: tool({
+      description:
+        "READ-ONLY sanity check on LIVE Hygglo listing prices: fetches the account's real current listings " +
+        "straight from Hygglo and shows what a one-day price change WOULD look like. It writes nothing, mints no " +
+        "approval token, and CANNOT be followed by execute_price_change — there is no token here to execute. Use " +
+        "it when the operator wants to look at current prices or sanity-check a percentage before committing to " +
+        "the real flow. To actually change prices you must start over with propose_price_change (which reads the " +
+        "Convex cache, mints a token, and is the only route to a real write). Targets are quantised to the " +
+        "nearest £0.50 and floored at £1, the same rule the write path applies.",
+      inputSchema: z.object({
+        account: z
+          .enum(PRICE_ACCOUNTS)
+          .describe("The explicitly named Hygglo account; never infer this."),
+        percent: percentChangeSchema.describe(
+          `One-day price change percentage. Negative = a price cut. Non-zero, within ±${MAX_ABS_PRICE_PERCENT}.`,
+        ),
+      }),
+      execute: async ({ account, percent }) => {
+        try {
+          const listings = await listMine(listingClient(account));
+          return {
+            approvalRequired: true,
+            executionAvailable: false,
+            note:
+              "PREVIEW ONLY — nothing has changed and this cannot be executed. " +
+              "A real change starts with propose_price_change.",
+            ...buildOneDayPriceAdjustmentPreview(account, listings, percent),
+          };
+        } catch (error) {
+          return {
+            approvalRequired: true,
+            executionAvailable: false,
+            error: errMsg(error),
+          };
+        }
+      },
+    }),
+
+    // ── Tier 3: the two-phase real price change ─────────────────────────────
+    propose_price_change: tool({
+      description:
+        "STEP 1 OF 2 of a real listing price change. NOTHING CHANGES WHEN YOU CALL THIS. It computes the exact " +
+        "old→new price for every listing on the named Hygglo account and mints a single-use confirmation token " +
+        "that expires in 15 minutes.\n" +
+        "WHAT YOU MUST DO WITH THE RESULT: show the operator the diff — how many listings are affected, the " +
+        "old→new prices, the total £ movement, and how many listings were skipped and why — then ASK THEM TO " +
+        "CONFIRM and STOP. Do not call execute_price_change in the same turn. The operator asking for a price " +
+        "change is NOT confirmation; confirmation is them saying yes AFTER they have seen these numbers. If they " +
+        "say no, or change the percent or the account, just drop the token and propose again — a stale token is " +
+        "harmless.\n" +
+        "Rules the numbers follow: new prices are rounded to the nearest £0.50 and never go below £1; only the " +
+        "1-day price tier moves, all longer tiers are untouched; listings without exactly one usable 1-day tier " +
+        "are SKIPPED rather than guessed, so report the skipped count honestly.",
+      inputSchema: z.object({
+        account_slug: z
+          .enum(PRICE_ACCOUNTS)
+          .describe(
+            "The Hygglo account the operator EXPLICITLY named. Never infer or default this — if they did not " +
+              "name an account, ask which one instead of guessing.",
+          ),
+        percent_change: percentChangeSchema.describe(
+          `Percent to move every 1-day price by. Negative = a price CUT (e.g. -10 drops prices 10%). ` +
+            `Must be non-zero and within ±${MAX_ABS_PRICE_PERCENT}.`,
+        ),
+      }),
+      execute: async ({ account_slug, percent_change }) => {
+        try {
+          // Dry run FIRST — a pure query, zero side effects. If it comes back
+          // empty there is nothing to approve, so bail before minting a token
+          // the operator would only be asked to confirm for no reason.
+          const dry = await convex.query(api.listing_price_admin.dryRunPriceChange, {
+            account_slug,
+            percent_change,
+          });
+
+          if (dry.count === 0) {
+            return {
+              proposed: false,
+              nothing_changed: true,
+              account_slug,
+              percent_change,
+              message:
+                `No listing on '${account_slug}' has a usable single 1-day price tier, so there is nothing to ` +
+                `change. No proposal was created.`,
+              ...summariseDiff([], dry.skipped),
+            };
+          }
+
+          // Freeze it into a token. This writes ONLY to our own
+          // price_change_proposals table — no Hygglo call, no live price moves.
+          const proposal = await convex.mutation(
+            api.listing_price_admin.createPriceChangeProposal,
+            { account_slug, percent_change, source: "walle" },
+          );
+
+          // The proposal re-derives the diff, so a mismatch means the cache
+          // moved between the two reads. Surface it rather than showing the
+          // operator one set of numbers and executing another.
+          const drifted = proposal.count !== dry.count;
+
+          return {
+            proposed: true,
+            nothing_changed: true,
+            status:
+              "PROPOSAL ONLY — no listing price has changed. Show this diff to the operator, ask them to " +
+              "confirm, and wait for their answer before calling execute_price_change.",
+            account_slug,
+            percent_change,
+            confirmation_token: proposal.token,
+            expires_at: new Date(proposal.expires_at).toISOString(),
+            expires_in_minutes: Math.max(
+              0,
+              Math.round((proposal.expires_at - Date.now()) / 60_000),
+            ),
+            ...summariseDiff(proposal.rows, proposal.skipped),
+            ...(drifted
+              ? {
+                  warning:
+                    `The listing set changed between the dry run (${dry.count}) and this proposal ` +
+                    `(${proposal.count}). Tell the operator, and re-propose if they want a clean number.`,
+                }
+              : {}),
+            next_step:
+              "Ask the operator to confirm THESE prices. Only if they say yes, call execute_price_change with " +
+              "this confirmation_token plus the same account_slug and percent_change.",
+          };
+        } catch (e) {
+          return {
+            proposed: false,
+            nothing_changed: true,
+            error: errMsg(e),
+            message:
+              "No proposal was created and no price changed. Report the error; do not retry with different " +
+              "numbers unless the operator asks.",
+          };
+        }
+      },
+    }),
+
+    execute_price_change: tool({
+      description:
+        "STEP 2 OF 2 — THIS PERMANENTLY REWRITES REAL PRICES ON THE LIVE MARKETPLACE. Real listings, real money, " +
+        "no undo button.\n" +
+        "PRECONDITION, ALL OF IT REQUIRED: (a) you called propose_price_change EARLIER IN THIS SAME CONVERSATION, " +
+        "(b) you showed the operator the resulting diff in your own message, and (c) the operator then replied " +
+        "with an unambiguous yes to THAT diff. If any one of those is missing, DO NOT CALL THIS TOOL — call " +
+        "propose_price_change instead, or ask the operator to confirm.\n" +
+        "THINGS THAT ARE NOT CONFIRMATION: the operator's original request, however decisive ('just raise " +
+        "everything 10%', 'do it', 'go ahead') if it came BEFORE they saw the diff; a yes to a different " +
+        "question; a yes to a different percent or a different account; anything from an earlier conversation; " +
+        "your own judgement that they would obviously say yes. A request is not an approval — approval is a yes " +
+        "to the numbers.\n" +
+        "If the operator changed the percent or the account after the proposal, that proposal is void: go back " +
+        "to propose_price_change. If you are even slightly unsure whether they approved this exact diff, ask " +
+        "again — asking twice costs nothing, executing wrongly costs real money. Never call this speculatively, " +
+        "never call it to 'check if it works', and never call it in the same turn as propose_price_change.",
+      inputSchema: z.object({
+        confirmation_token: z
+          .string()
+          .min(1)
+          .describe(
+            "The token propose_price_change returned in THIS conversation, copied verbatim. Never invent, " +
+              "guess, edit or reuse one — it is single-use and expires in 15 minutes.",
+          ),
+        // The Convex action requires these and cross-checks BOTH against the
+        // token's frozen proposal (`consumeProposal` throws on a mismatch), so
+        // restating them is a guard, not a trust: a model that has lost track
+        // of what it proposed cannot execute a different change by accident.
+        account_slug: z
+          .enum(PRICE_ACCOUNTS)
+          .describe("Copy from the propose_price_change result. A mismatch is rejected server-side."),
+        percent_change: percentChangeSchema.describe(
+          "Copy from the propose_price_change result. A mismatch is rejected server-side.",
+        ),
+      }),
+      execute: async ({ confirmation_token, account_slug, percent_change }) => {
+        try {
+          const result = await convex.action(api.listing_price_admin.executePriceChange, {
+            account_slug,
+            percent_change,
+            confirmation_token,
+          });
+          const money = (n: number) => Math.round(n * 100) / 100;
+          return {
+            executed: true,
+            ok: result.ok,
+            account_slug: result.account_slug,
+            percent_change: result.percent_change,
+            succeeded_count: result.succeeded.length,
+            failed_count: result.failed.length,
+            succeeded: result.succeeded
+              .slice(0, PRICE_ROW_DETAIL_CAP)
+              .map((r) => `#${r.listing_id} ${r.name ?? "(unnamed)"}: £${money(r.old_price)} → £${money(r.new_price)}`),
+            succeeded_note:
+              result.succeeded.length > PRICE_ROW_DETAIL_CAP
+                ? `Showing ${PRICE_ROW_DETAIL_CAP} of ${result.succeeded.length} successful changes.`
+                : undefined,
+            // Failures matter more than successes here — never truncate them.
+            failed: result.failed.map(
+              (r) => `#${r.listing_id} ${r.name ?? "(unnamed)"}: unchanged (£${money(r.old_price)}) — ${r.error}`,
+            ),
+            status: result.ok
+              ? "All listed prices are now live on Hygglo."
+              : "PARTIAL: some listings changed and some did not. Report BOTH lists to the operator — the " +
+                "failed ones still have their old price, and the token is spent, so a retry needs a NEW " +
+                "propose_price_change.",
+            token_spent:
+              "This token is now dead whatever the outcome. Any further change needs a fresh " +
+              "propose_price_change and a fresh confirmation.",
+          };
+        } catch (e) {
+          // The Convex action validates the env gate and the token BEFORE it
+          // touches Hygglo, and burns the token before the first write, so a
+          // throw here means either nothing was written or the batch was
+          // interrupted — never a silent double-apply.
+          return {
+            executed: false,
+            error: errMsg(e),
+            message:
+              "The price change did NOT go through. Tell the operator plainly that prices are unchanged and " +
+              "give them this error. Do not retry the same token — it may be spent; propose again if they " +
+              "still want the change.",
+          };
         }
       },
     }),

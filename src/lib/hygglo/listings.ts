@@ -152,17 +152,51 @@ function roundGbp(value: number): number {
 }
 
 /**
+ * Bounds + rounding for a one-day price adjustment.
+ *
+ * DELIBERATE DUPLICATION of `convex/listing_price_admin.ts` (`MAX_ABS_PERCENT`,
+ * `MIN_PRICE`, `roundPrice`). That module is the SOURCE OF TRUTH because it is
+ * the only code path that actually writes a live listing; this preview must
+ * quote the numbers that path would produce, or it is lying to the operator.
+ *
+ * The two cannot share a module: `listing_price_admin.ts` lives in the Convex
+ * runtime and imports `./_generated/server`, while this file is Next-oriented
+ * (@/hygglo-core + aws-sdk, `server-only` route) and is explicitly kept OUT of
+ * Convex's dependency graph — see the note at the top of
+ * `convex/listing_price_admin.ts` and `convex/online_listings_actions.ts`.
+ * Importing either direction would drag one runtime's deps into the other.
+ *
+ * KEEP IN SYNC: if `roundPrice` / `MAX_ABS_PERCENT` / `MIN_PRICE` change in
+ * `convex/listing_price_admin.ts`, change them here too. `listings.test.ts`
+ * pins the shared cases.
+ */
+export const MAX_ABS_PRICE_PERCENT = 50;
+export const MIN_ONE_DAY_PRICE_GBP = 1;
+
+/** Nearest £0.50, floored at £1 — mirrors `listing_price_admin.roundPrice`. */
+function roundOneDayPrice(value: number): number {
+  return Math.max(MIN_ONE_DAY_PRICE_GBP, Math.round(value * 2) / 2);
+}
+
+/**
  * Pure, read-only plan builder for a one-day-tier change. It intentionally
  * performs no provider write: callers must persist and explicitly approve this
  * frozen preview before any live listing is changed.
+ *
+ * Negative percentages (price cuts) are allowed, matching the write path.
  */
 export function buildOneDayPriceAdjustmentPreview(
   account: string,
   listings: HyggloListing[],
   percent: number,
 ): OneDayPriceAdjustmentPreview {
-  if (!Number.isFinite(percent) || percent <= 0 || percent > 25) {
-    throw new Error("Price adjustment percent must be greater than 0 and no more than 25");
+  if (!Number.isFinite(percent) || percent === 0) {
+    throw new Error("Price adjustment percent must be a non-zero finite number");
+  }
+  if (Math.abs(percent) > MAX_ABS_PRICE_PERCENT) {
+    throw new Error(
+      `Price adjustment percent must be within ±${MAX_ABS_PRICE_PERCENT}%`,
+    );
   }
   const rows = listings
     .map((listing): OneDayPricePreviewRow => {
@@ -183,8 +217,12 @@ export function buildOneDayPriceAdjustmentPreview(
       }
       return {
         ...shared,
+        // `current` is the real observed price — reported as-is (2dp display),
+        // exactly like `old_price` in the Convex diff. Only the TARGET is
+        // quantised, and only once, on the final number, so errors never
+        // compound.
         currentPricePerDay: roundGbp(current),
-        targetPricePerDay: roundGbp(current * (1 + percent / 100)),
+        targetPricePerDay: roundOneDayPrice(current * (1 + percent / 100)),
         status: "ready",
       };
     })
