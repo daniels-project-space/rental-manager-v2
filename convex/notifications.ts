@@ -130,6 +130,24 @@ export const savePushSubscription = mutation({
       .query("push_subscriptions")
       .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
       .first();
+
+    // Single-user dashboard: only one subscription is ever meant to be active
+    // at a time (Daniel, 2026-08-14 — "only one path can be active at a
+    // time"). Browsers/OSes (notably iOS Safari) periodically rotate the push
+    // endpoint for the same device without the old one being cleanly torn
+    // down, so `by_endpoint` alone let stale rows pile up indefinitely — and
+    // dispatchPending sends to every row it finds, so an old registration
+    // that's still technically deliverable produced a real duplicate push
+    // for the same event, independent of the dispatch-race bug fixed in
+    // 9aa4816. Prune every OTHER row on every save/refresh so at most one can
+    // ever receive a push.
+    const others = await ctx.db.query("push_subscriptions").collect();
+    for (const row of others) {
+      if (row.endpoint !== args.endpoint) {
+        await ctx.db.delete(row._id);
+      }
+    }
+
     if (existing) {
       const credentialsChanged = existing.p256dh !== args.p256dh || existing.auth !== args.auth;
       const modeChanged = args.mode !== undefined && existing.mode !== args.mode;
