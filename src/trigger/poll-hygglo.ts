@@ -32,6 +32,8 @@ const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.c
 // inert after a transient Hygglo/Vault/network failure. A successful retry
 // resets it to active through account_state.upsert().
 const PAUSED_ACCOUNT_RETRY_MS = 60 * 60 * 1000;
+const MIN_EFFECTIVE_POLL_INTERVAL_MS = 2 * 60 * 1000;
+const MAX_EFFECTIVE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 
 // ── Vault helper ──────────────────────────────────────────────
 
@@ -313,6 +315,48 @@ export const pollHyggloInbox = schedules.task({
       });
       return { skipped: true, reason: "outside_poll_active_window" };
     }
+
+    // Trigger wakes this task on a fixed two-minute heartbeat. The master
+    // setting controls the EFFECTIVE cadence: scheduled runs stay cheap until
+    // the selected interval has elapsed, while a deliberate manual run always
+    // executes immediately. Check before vault access / Hygglo auth so a
+    // skipped tick costs only two small Convex reads.
+    const convex = new ConvexHttpClient(CONVEX_URL);
+    let effectiveIntervalMs = MIN_EFFECTIVE_POLL_INTERVAL_MS;
+    try {
+      const [settings, previous] = await Promise.all([
+        convex.query(api.settings.get, {}),
+        convex.query(api.sync_state.get, { source: "hygglo_poller" }),
+      ]);
+      const configured = Number(settings?.polling_interval_ms);
+      if (Number.isFinite(configured)) {
+        effectiveIntervalMs = Math.min(
+          MAX_EFFECTIVE_POLL_INTERVAL_MS,
+          Math.max(MIN_EFFECTIVE_POLL_INTERVAL_MS, Math.round(configured)),
+        );
+      }
+      const previousLastRunAt = previous?.lastRunAt ?? null;
+      const elapsedMs = previousLastRunAt !== null ? Date.now() - previousLastRunAt : null;
+      if (isScheduledRun && elapsedMs !== null && elapsedMs < effectiveIntervalMs) {
+        logger.info("[poll-hygglo] skipped by configured interval", {
+          configured_interval_ms: effectiveIntervalMs,
+          elapsed_ms: elapsedMs,
+        });
+        return {
+          skipped: true,
+          reason: "configured_interval_not_elapsed",
+          effectiveIntervalMs,
+          nextEligibleAt: previousLastRunAt! + effectiveIntervalMs,
+        };
+      }
+    } catch (error) {
+      // Freshness/config reads are a cost optimization, never a reason to lose
+      // the poller. If Convex is temporarily unavailable the scheduled run
+      // continues at its two-minute safety cadence.
+      logger.warn("[poll-hygglo] interval gate unavailable; continuing", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     const isFullPoll = pollMode === "full";
     const runStart = Date.now();
     let runSucceeded = false;
@@ -343,8 +387,6 @@ export const pollHyggloInbox = schedules.task({
         password: hyggloSecrets["HYGGLO_DIOGO_PASSWORD"] ?? "",
       },
     ];
-
-    const convex = new ConvexHttpClient(CONVEX_URL);
 
     // Phase 2 cleanup — corePoll is now the sole fetch+shape engine. The
     // `use_core_poll` feature flag and the legacy inline scraper were removed
