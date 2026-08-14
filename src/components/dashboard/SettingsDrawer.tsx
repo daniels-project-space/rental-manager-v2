@@ -1,9 +1,13 @@
 "use client";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Id } from "../../../convex/_generated/dataModel";
+// Type-only (fully erased at emit) — `listing_price_admin` IS present in the
+// committed `_generated/api`, so its functions are reached through `api.` and
+// need no makeFunctionReference escape hatch.
+import type { ExecuteSummary, PriceDiff } from "../../../convex/listing_price_admin";
 
 // New convex modules — referenced by name so `next build` typechecks against the
 // committed (lagging) _generated api (same pattern as ReplyInbox's new modules).
@@ -1099,6 +1103,391 @@ function AppleCalendarSection() {
   );
 }
 
+// ── Bulk listing-price adjustment ────────────────────────────────────────────
+
+/** £ with pennies only when they carry information. */
+function gbp(n: number): string {
+  return `£${n.toFixed(2).replace(/\.00$/, "")}`;
+}
+
+/** Signed £, for deltas. Uses a real minus sign to match the −10% button. */
+function signedGbp(n: number): string {
+  return `${n < 0 ? "−" : "+"}${gbp(Math.abs(n))}`;
+}
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * One staged run. Only ever one at a time across every account — a second bulk
+ * price rewrite must not be startable while one is mid-flight.
+ */
+type PriceFlow =
+  | { kind: "idle" }
+  | { kind: "previewing"; slug: string; percent: number }
+  | { kind: "confirm"; slug: string; percent: number; diff: PriceDiff }
+  | { kind: "applying"; slug: string; percent: number; diff: PriceDiff }
+  | { kind: "done"; slug: string; percent: number; summary: ExecuteSummary }
+  | { kind: "failed"; slug: string; percent: number; phase: "preview" | "apply"; message: string };
+
+/**
+ * Bulk one-day price adjustment across every listing on a Hygglo account.
+ *
+ * This is the only control in the dashboard that rewrites LIVE marketplace
+ * prices, so it runs as a staged flow in the same shape as ReturnHub's confirm
+ * step: a button press only ever fetches numbers, those numbers are shown, and
+ * a second explicit click is what commits.
+ *
+ * The preview deliberately uses `dryRunPriceChange` (a pure query, zero side
+ * effects) rather than minting a proposal up front. Two reasons: pressing +10%
+ * then changing your mind writes nothing at all, and the proposal's 15-minute
+ * token is minted seconds before it is spent rather than while the operator
+ * reads the diff — so a slow read can't strand the run on an expired token.
+ *
+ * Nothing rendered here is trusted by the write path: `executePriceChange`
+ * re-derives the diff server-side and drift-checks every listing's live price
+ * before touching it. These numbers are for the human, not for the server.
+ */
+function ListingPriceEditor() {
+  const convex = useConvex();
+  const createProposal = useMutation(api.listing_price_admin.createPriceChangeProposal);
+  const executeChange = useAction(api.listing_price_admin.executePriceChange);
+  const [flow, setFlow] = useState<PriceFlow>({ kind: "idle" });
+  // Hard single-submit latch. The buttons are disabled too, but a ref closes
+  // the window where two clicks land before React has re-rendered.
+  const inFlight = useRef(false);
+
+  function labelFor(slug: string): string {
+    return LISTING_ACCOUNTS.find((a) => a.slug === slug)?.label ?? slug;
+  }
+
+  /** Step 1 — read-only. Safe to run as often as you like. */
+  async function preview(slug: string, percent: number) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setFlow({ kind: "previewing", slug, percent });
+    try {
+      const diff = await convex.query(api.listing_price_admin.dryRunPriceChange, {
+        account_slug: slug,
+        percent_change: percent,
+      });
+      setFlow({ kind: "confirm", slug, percent, diff });
+    } catch (e) {
+      setFlow({ kind: "failed", slug, percent, phase: "preview", message: errText(e) });
+    } finally {
+      inFlight.current = false;
+    }
+  }
+
+  /** Step 2 — the real write. Only reachable from the confirm view. */
+  async function apply() {
+    if (flow.kind !== "confirm" || inFlight.current) return;
+    const { slug, percent, diff } = flow;
+    inFlight.current = true;
+    setFlow({ kind: "applying", slug, percent, diff });
+    try {
+      const proposal = await createProposal({
+        account_slug: slug,
+        percent_change: percent,
+        source: "settings_dashboard",
+      });
+      const summary = await executeChange({
+        account_slug: slug,
+        percent_change: percent,
+        confirmation_token: proposal.token,
+      });
+      setFlow({ kind: "done", slug, percent, summary });
+    } catch (e) {
+      // No auto-retry: re-running blind could double-apply. The failure view
+      // routes back to a fresh dry run so the operator re-reads real numbers.
+      setFlow({ kind: "failed", slug, percent, phase: "apply", message: errText(e) });
+    } finally {
+      inFlight.current = false;
+    }
+  }
+
+  const PCT = [10, -10] as const;
+
+  // ── idle: the account grid ────────────────────────────────────────────────
+  if (flow.kind === "idle") {
+    return (
+      <div className="py-1">
+        <p className="text-xs mb-3" style={{ color: "#8b8fa3" }}>
+          Shifts the <b>one-day</b> price of every listing on an account, rounded to the
+          nearest £0.50 and never below £1. Listings without a single clean one-day tier
+          are skipped, never guessed. You always see the numbers before anything is applied.
+        </p>
+        <div className="space-y-2">
+          {LISTING_ACCOUNTS.map((acct) => (
+            <div
+              key={acct.slug}
+              className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-black/15 p-2.5"
+            >
+              <span className="flex-1 min-w-0 text-sm text-[#e8eaf0]">{acct.label}</span>
+              {PCT.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => void preview(acct.slug, p)}
+                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 transition-colors ${
+                    p > 0
+                      ? "bg-emerald-500/10 text-emerald-300 ring-emerald-400/25 hover:bg-emerald-500/20"
+                      : "bg-rose-500/10 text-rose-300 ring-rose-400/25 hover:bg-rose-500/20"
+                  }`}
+                >
+                  {p > 0 ? `+${p}%` : `−${Math.abs(p)}%`}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const pctLabel = flow.percent > 0 ? `+${flow.percent}%` : `−${Math.abs(flow.percent)}%`;
+  const acctLabel = labelFor(flow.slug);
+
+  // ── previewing ────────────────────────────────────────────────────────────
+  if (flow.kind === "previewing") {
+    return (
+      <div className="py-4 text-center">
+        <p className="text-sm text-[#cbd5e1]">
+          Working out what {pctLabel} would do to {acctLabel}&apos;s listings…
+        </p>
+      </div>
+    );
+  }
+
+  // ── failed (either phase) ─────────────────────────────────────────────────
+  if (flow.kind === "failed") {
+    return (
+      <div className="py-2">
+        <div
+          className="rounded-xl px-3 py-2.5 text-xs leading-snug"
+          style={{ background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}
+          role="alert"
+        >
+          <p className="font-semibold">
+            {flow.phase === "preview"
+              ? `Couldn't price up ${pctLabel} for ${acctLabel}.`
+              : `The ${pctLabel} run on ${acctLabel} stopped with an error.`}
+          </p>
+          <p className="mt-1 opacity-90">{flow.message}</p>
+          {flow.phase === "apply" && (
+            <p className="mt-1.5 opacity-80">
+              Re-run the preview to see the live prices as they stand now before trying again —
+              don&apos;t assume the batch did or didn&apos;t land. Every attempt is in the
+              <code className="mx-1 rounded bg-black/30 px-1">price_change_audit</code> table.
+            </p>
+          )}
+        </div>
+        <div className="mt-2.5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setFlow({ kind: "idle" })}
+            className="rounded-lg px-3 py-1.5 text-xs text-[#8b8fa3] transition-colors hover:text-[#e4e6eb]"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={() => void preview(flow.slug, flow.percent)}
+            className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-[#cbd5e1] hover:bg-white/[0.12]"
+          >
+            Try again — fresh preview
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── done ──────────────────────────────────────────────────────────────────
+  if (flow.kind === "done") {
+    const { succeeded, failed } = flow.summary;
+    // 27 identical "stale listing id" lines help nobody — collapse by message.
+    const byError = new Map<string, number[]>();
+    for (const f of failed) {
+      const ids = byError.get(f.error) ?? [];
+      ids.push(f.listing_id);
+      byError.set(f.error, ids);
+    }
+    return (
+      <div className="py-2">
+        <div
+          className="rounded-xl px-3 py-2.5"
+          style={
+            failed.length === 0
+              ? { background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)" }
+              : { background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)" }
+          }
+        >
+          <p className="text-sm font-semibold" style={{ color: failed.length === 0 ? "#34d399" : "#fbbf24" }}>
+            {failed.length === 0 ? "✓ " : "⚠ "}
+            {pctLabel} applied to {succeeded.length} of {succeeded.length + failed.length} {acctLabel} listings
+          </p>
+          {failed.length > 0 && (
+            <div className="mt-2 space-y-1">
+              <p className="text-[11px] font-semibold text-[#e8eaf0]">{failed.length} failed:</p>
+              {Array.from(byError.entries()).map(([message, ids]) => (
+                <p key={message} className="text-[11px] leading-snug text-[#c7ccd6]">
+                  <span className="font-semibold">{ids.length}×</span> {message}
+                  <span className="text-[#7f8795]">
+                    {" "}
+                    ({ids.slice(0, 4).join(", ")}
+                    {ids.length > 4 ? `, +${ids.length - 4} more` : ""})
+                  </span>
+                </p>
+              ))}
+              <p className="text-[11px] leading-snug text-[#8f96a3]">
+                Failures are per-listing and isolated — the successful listings above are
+                already live. Nothing needs undoing for the ones that failed.
+              </p>
+            </div>
+          )}
+          <p className="mt-2 text-[11px] leading-snug text-[#8f96a3]">
+            Every attempt, success or failure, is recorded in the
+            <code className="mx-1 rounded bg-black/30 px-1">price_change_audit</code> Convex table
+            (indexed by account and by time). The cached catalogue still holds the old prices until
+            the next catalog sync — run another adjustment only after it has caught up, or the
+            live-price drift check will refuse the lot.
+          </p>
+        </div>
+        <div className="mt-2.5 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setFlow({ kind: "idle" })}
+            className="rounded-lg bg-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-100 ring-1 ring-violet-400/25"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── confirm / applying (share the diff panel) ─────────────────────────────
+  const { diff } = flow;
+  const applying = flow.kind === "applying";
+  const delta = diff.rows.reduce((sum, r) => sum + (r.new_price - r.old_price), 0);
+  const examples = diff.rows.slice(0, 5);
+  const nothingToDo = diff.count === 0;
+
+  return (
+    <div className="py-2">
+      <h3 className="text-sm font-semibold text-[#e8eaf0]">
+        Apply {pctLabel} to {acctLabel}?
+      </h3>
+
+      <div
+        className="mt-2 rounded-xl px-3 py-2.5 text-xs leading-snug"
+        style={{ background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}
+      >
+        This rewrites <b>live prices on Hygglo</b> for real renters. It is not a
+        simulation and <b>there is no undo</b> — reversing it means running the
+        opposite adjustment, which will not land back on the same numbers because
+        of rounding.
+      </div>
+
+      {nothingToDo ? (
+        <p className="mt-2.5 text-xs text-[#fbbf24]">
+          No listing on {acctLabel} has a usable one-day price tier, so there is nothing to change.
+        </p>
+      ) : (
+        <>
+          <div className="mt-2.5 grid grid-cols-3 gap-2">
+            {[
+              ["Listings", String(diff.count)],
+              ["Change", pctLabel],
+              ["One-day total", signedGbp(delta)],
+            ].map(([k, val]) => (
+              <div key={k} className="rounded-xl border border-white/[0.08] bg-black/15 px-2.5 py-2">
+                <p className="text-[10px] uppercase tracking-[0.12em] text-[#7f8795]">{k}</p>
+                <p className="mt-0.5 text-sm font-semibold text-[#f0f2f6]">{val}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2.5 rounded-xl border border-white/[0.08] bg-black/15 p-2.5">
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#7f8795]">
+              Examples
+            </p>
+            <div className="space-y-1">
+              {examples.map((r) => (
+                <div key={r.listing_id} className="flex items-baseline gap-2 text-[11px]">
+                  <span className="min-w-0 flex-1 truncate text-[#c7ccd6]">
+                    {r.name ?? `Listing ${r.listing_id}`}
+                  </span>
+                  <span className="shrink-0 font-mono text-[#8f96a3]">{gbp(r.old_price)}</span>
+                  <span className="shrink-0 text-[#5f6673]">→</span>
+                  <span
+                    className="shrink-0 font-mono font-semibold"
+                    style={{ color: r.new_price >= r.old_price ? "#34d399" : "#fb7185" }}
+                  >
+                    {gbp(r.new_price)}
+                  </span>
+                </div>
+              ))}
+              {diff.count > examples.length && (
+                <p className="pt-0.5 text-[11px] text-[#7f8795]">
+                  + {diff.count - examples.length} more listing
+                  {diff.count - examples.length === 1 ? "" : "s"}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {diff.skipped.length > 0 && (
+            <p className="mt-2 text-[11px] leading-snug text-[#fbbf24]">
+              {diff.skipped.length} listing{diff.skipped.length === 1 ? "" : "s"} will be skipped
+              (no single clean one-day price tier) and left exactly as {diff.skipped.length === 1 ? "it is" : "they are"}.
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="mt-3 flex items-center justify-end gap-2">
+        {applying && (
+          <p className="mr-auto text-[11px] leading-snug text-[#8f96a3]">
+            Writing to Hygglo one listing at a time — this can take a few minutes for a
+            large catalogue. Leave this open.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => setFlow({ kind: "idle" })}
+          disabled={applying}
+          className="rounded-lg px-3 py-1.5 text-xs text-[#8b8fa3] transition-colors hover:text-[#e4e6eb] disabled:opacity-40"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => void apply()}
+          disabled={applying || nothingToDo}
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60"
+          style={{
+            background: "rgba(239,68,68,0.16)",
+            color: "#fca5a5",
+            border: "1px solid rgba(239,68,68,0.45)",
+          }}
+        >
+          {applying && (
+            <span
+              className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+              aria-hidden
+            />
+          )}
+          {applying
+            ? `Applying ${pctLabel} to ${diff.count} listings…`
+            : `Apply ${pctLabel} to ${diff.count} listing${diff.count === 1 ? "" : "s"}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SettingsSection({
   id,
   eyebrow,
@@ -1212,6 +1601,7 @@ export function SettingsWorkspace({ onBack }: SettingsWorkspaceProps) {
               ["#communication", "Account communication"],
               ["#quick-texts", "Quick texts"],
               ["#operations", "Operations"],
+              ["#pricing", "Listing prices"],
               ["#intelligence", "AI drafts"],
               ["#returns", "Returns"],
             ].map(([href, label]) => (
@@ -1376,6 +1766,17 @@ export function SettingsWorkspace({ onBack }: SettingsWorkspaceProps) {
 
         <OnlineListingsEditor />
         </SettingsSection>
+
+        <div className="xl:col-span-2">
+          <SettingsSection
+            id="pricing"
+            eyebrow="Real money · live marketplace"
+            title="Bulk listing prices"
+            description="Move an account's one-day rental price across its whole catalogue. Every press shows you the exact diff first; only a second, explicit confirmation writes to Hygglo. There is no undo."
+          >
+            <ListingPriceEditor />
+          </SettingsSection>
+        </div>
 
         <SettingsSection id="intelligence" eyebrow="Draft intelligence" title="Rental bot knowledge" description="Model routing, learned preferences and account-specific facts shape drafts only. You remain the sender." tone="violet">
         <p className="text-xs text-violet-200/70">Quick Reply drafts are generated only when requested, using the OpenRouter Haiku model.</p>
