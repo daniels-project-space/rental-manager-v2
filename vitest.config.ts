@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath, URL } from "node:url";
 
 /**
  * Minimal vitest config — Wave 1 unit tests only.
@@ -11,6 +12,11 @@ import { defineConfig } from "vitest/config";
  * vitest 1.x can't evaluate. Unit tests don't touch CSS, so we short-circuit.
  */
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   css: { postcss: { plugins: [] } },
   test: {
     environment: "node",
@@ -37,6 +43,8 @@ export default defineConfig({
       "src/lib/dashboard/edit-mode-context.spec.ts",
       "src/trigger/catalog-sync.map.test.ts",
       "src/lib/hygglo-write.test.ts",
+      "src/lib/hygglo/listings.test.ts",
+      "src/lib/chat/dashboard-tools.schema.test.ts",
       "src/lib/renter-bot-policy.test.ts",
       "src/lib/booking-time-transcript.test.ts",
       "src/lib/booking-time-extraction.test.ts",

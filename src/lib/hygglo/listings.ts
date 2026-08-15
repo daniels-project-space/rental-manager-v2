@@ -86,6 +86,25 @@ export interface WriteResult {
   error?: string;
 }
 
+export type OneDayPricePreviewRow = {
+  listingId: number;
+  listingName: string;
+  currentPricePerDay: number | null;
+  targetPricePerDay: number | null;
+  status: "ready" | "skipped" | "conflict";
+  reason?: "missing_one_day_tier" | "duplicate_one_day_tier" | "invalid_one_day_price";
+};
+
+export type OneDayPriceAdjustmentPreview = {
+  account: string;
+  percent: number;
+  currency: "GBP";
+  readyCount: number;
+  skippedCount: number;
+  conflictCount: number;
+  rows: OneDayPricePreviewRow[];
+};
+
 /** Editable fields accepted by `editListing`. */
 export interface ListingChanges {
   name?: string;
@@ -126,6 +145,97 @@ function cleanPrices(prices?: HyggloPrice[]): HyggloPrice[] {
     out.push({ days: p.days, pricePerDay: p.pricePerDay, price: p.price });
   }
   return out;
+}
+
+function roundGbp(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Bounds + rounding for a one-day price adjustment.
+ *
+ * DELIBERATE DUPLICATION of `convex/listing_price_admin.ts` (`MAX_ABS_PERCENT`,
+ * `MIN_PRICE`, `roundPrice`). That module is the SOURCE OF TRUTH because it is
+ * the only code path that actually writes a live listing; this preview must
+ * quote the numbers that path would produce, or it is lying to the operator.
+ *
+ * The two cannot share a module: `listing_price_admin.ts` lives in the Convex
+ * runtime and imports `./_generated/server`, while this file is Next-oriented
+ * (@/hygglo-core + aws-sdk, `server-only` route) and is explicitly kept OUT of
+ * Convex's dependency graph — see the note at the top of
+ * `convex/listing_price_admin.ts` and `convex/online_listings_actions.ts`.
+ * Importing either direction would drag one runtime's deps into the other.
+ *
+ * KEEP IN SYNC: if `roundPrice` / `MAX_ABS_PERCENT` / `MIN_PRICE` change in
+ * `convex/listing_price_admin.ts`, change them here too. `listings.test.ts`
+ * pins the shared cases.
+ */
+export const MAX_ABS_PRICE_PERCENT = 50;
+export const MIN_ONE_DAY_PRICE_GBP = 1;
+
+/** Nearest £0.50, floored at £1 — mirrors `listing_price_admin.roundPrice`. */
+function roundOneDayPrice(value: number): number {
+  return Math.max(MIN_ONE_DAY_PRICE_GBP, Math.round(value * 2) / 2);
+}
+
+/**
+ * Pure, read-only plan builder for a one-day-tier change. It intentionally
+ * performs no provider write: callers must persist and explicitly approve this
+ * frozen preview before any live listing is changed.
+ *
+ * Negative percentages (price cuts) are allowed, matching the write path.
+ */
+export function buildOneDayPriceAdjustmentPreview(
+  account: string,
+  listings: HyggloListing[],
+  percent: number,
+): OneDayPriceAdjustmentPreview {
+  if (!Number.isFinite(percent) || percent === 0) {
+    throw new Error("Price adjustment percent must be a non-zero finite number");
+  }
+  if (Math.abs(percent) > MAX_ABS_PRICE_PERCENT) {
+    throw new Error(
+      `Price adjustment percent must be within ±${MAX_ABS_PRICE_PERCENT}%`,
+    );
+  }
+  const rows = listings
+    .map((listing): OneDayPricePreviewRow => {
+      const oneDay = (listing.prices ?? []).filter((tier) => tier.days === 1);
+      const shared = {
+        listingId: listing.id,
+        listingName: listing.name?.trim() || `Listing ${listing.id}`,
+      };
+      if (oneDay.length === 0) {
+        return { ...shared, currentPricePerDay: null, targetPricePerDay: null, status: "skipped", reason: "missing_one_day_tier" };
+      }
+      if (oneDay.length !== 1) {
+        return { ...shared, currentPricePerDay: null, targetPricePerDay: null, status: "conflict", reason: "duplicate_one_day_tier" };
+      }
+      const current = oneDay[0].pricePerDay;
+      if (!Number.isFinite(current) || current <= 0) {
+        return { ...shared, currentPricePerDay: null, targetPricePerDay: null, status: "skipped", reason: "invalid_one_day_price" };
+      }
+      return {
+        ...shared,
+        // `current` is the real observed price — reported as-is (2dp display),
+        // exactly like `old_price` in the Convex diff. Only the TARGET is
+        // quantised, and only once, on the final number, so errors never
+        // compound.
+        currentPricePerDay: roundGbp(current),
+        targetPricePerDay: roundOneDayPrice(current * (1 + percent / 100)),
+        status: "ready",
+      };
+    })
+    .sort((a, b) => a.listingName.localeCompare(b.listingName) || a.listingId - b.listingId);
+  return {
+    account,
+    percent,
+    currency: "GBP",
+    readyCount: rows.filter((row) => row.status === "ready").length,
+    skippedCount: rows.filter((row) => row.status === "skipped").length,
+    conflictCount: rows.filter((row) => row.status === "conflict").length,
+    rows,
+  };
 }
 
 function isAiFail(body: string): boolean {

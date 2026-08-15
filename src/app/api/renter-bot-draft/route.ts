@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
+
+const accountCommunicationRef = makeFunctionReference<"query">(
+  "settings:listAccountCommunication",
+);
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -177,8 +182,22 @@ export async function POST(req: Request) {
   // Per-account PICKUP location — share ONLY after the booking is confirmed.
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hubs: any = await convex.query(api.settings.listAccountHubs, {});
+    const [hubs, communications] = await Promise.all([
+      convex.query(api.settings.listAccountHubs, {}),
+      convex.query(accountCommunicationRef, {}),
+    ]);
     const hub = (hubs || []).find((h: { slug?: string }) => h.slug === account_slug);
+    const communication = (communications || []).find(
+      (row: { slug?: string }) => row.slug === account_slug,
+    ) as {
+      draft_text_blocks?: {
+        opening?: string;
+        availability?: string;
+        location?: string;
+        pickup_time?: string;
+        payment?: string;
+      };
+    } | undefined;
     if (hub?.pickup_address) {
       groundTruth += bookingConfirmed
         ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
@@ -204,6 +223,25 @@ export async function POST(req: Request) {
       (remaining.length
         ? `Windows still open TODAY: ${remaining.map(fmt).join(", ")} — offer the EARLIEST of these first; do NOT offer a window that has already passed today (e.g. don't offer a morning slot in the afternoon).`
         : `No windows remain today — for today it's too late, offer tomorrow's first window (${fmt(hours[0])}).`) + `\n`;
+    const blocks = communication?.draft_text_blocks;
+    const controlledWording = blocks
+      ? [
+          ["Opening / greeting", blocks.opening],
+          ["Availability / booking", blocks.availability],
+          ["Location", blocks.location],
+          ["Pickup / return time", blocks.pickup_time],
+          ["Payment", blocks.payment],
+        ]
+          .filter(([, text]) => typeof text === "string" && text.trim().length > 0)
+          .map(([label, text]) => `- ${label}: ${text}`)
+          .join("\n")
+      : "";
+    if (controlledWording) {
+      groundTruth +=
+        "OPERATOR-CONTROLLED DRAFT WORDING — use the relevant block when the renter asks about that topic. Preserve operational facts exactly, adapt only grammar, and never reveal the pickup address before a booking is confirmed:\n" +
+        controlledWording +
+        "\n";
+    }
   } catch {
     /* best-effort */
   }

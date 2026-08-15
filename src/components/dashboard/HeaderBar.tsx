@@ -3,8 +3,7 @@ import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
-import { useState } from "react";
-import { SettingsDrawer } from "@/components/dashboard/SettingsDrawer";
+import { useRouter } from "next/navigation";
 import { NotificationBell } from "@/components/dashboard/NotificationBell";
 
 // String ref (not api.dashboard.getScannerFreshness): the committed
@@ -74,6 +73,7 @@ function AllAvatars({ metas }: { metas: AccountMeta[] | undefined }) {
 }
 
 export function HeaderBar() {
+  const router = useRouter();
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const settings = useStableQuery(api.settings.get);
   // Per-account profile pictures (Hygglo avatars seeded into the accounts table).
@@ -101,11 +101,8 @@ export function HeaderBar() {
     staleMin <= 10  ? "#22c55e" :
     staleMin <= 30  ? "#f59e0b" :
                       "#ef4444";
-  const [showSettings, setShowSettings] = useState(false);
-
   return (
-    <>
-      <header
+    <header
         className="sticky top-0 z-40 flex items-center justify-between px-4 md:px-6 h-14 border-b"
         style={{
           background: "rgba(7,9,16,0.92)",
@@ -177,8 +174,9 @@ export function HeaderBar() {
           )}
           <NotificationBell />
           <button
-            onClick={() => setShowSettings(true)}
-            className="text-[#8b8fa3] hover:text-[#e4e6eb] transition-colors text-base"
+            type="button"
+            onClick={() => router.push("/settings")}
+            className="rounded-md px-1.5 py-1 text-[#8b8fa3] transition-colors hover:bg-white/[0.06] hover:text-[#e4e6eb]"
             aria-label="Settings"
             title="Settings"
           >
@@ -186,10 +184,5 @@ export function HeaderBar() {
           </button>
         </div>
       </header>
-
-      {showSettings && (
-        <SettingsDrawer onClose={() => setShowSettings(false)} />
-      )}
-    </>
   );
 }
