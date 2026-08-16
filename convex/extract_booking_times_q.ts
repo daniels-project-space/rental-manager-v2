@@ -5,6 +5,7 @@
 
 import { v } from "convex/values";
 import { internalQuery, internalMutation, query, mutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 export const getReservationForExtract = internalQuery({
   args: { reservation_id: v.id("reservations") },
@@ -58,6 +59,28 @@ export const setTimes = internalMutation({
       times_transcript_hash: transcript_hash,
       times_extracted_at: Date.now(),
     });
+    // Calendar fast-path (2026-08-16): the calendar MV (convex/mv/calendar.ts)
+    // otherwise only rebuilds on its 30-min cron / 45-min backstop, so a
+    // same-day time correction could take up to 30-45 min to show up on the
+    // calendar/overlays. Its own dirtySince probe already does a CHEAP
+    // selective rebuild (one account's 4 views, not all 10) whenever it sees
+    // times_extracted_at move — this just triggers that check immediately
+    // instead of waiting for the next tick, reusing the existing logic as-is.
+    //
+    // Narrowly gated to an actual time/date change, NOT every call — this
+    // mutation is ALSO invoked with an empty patch just to bump
+    // times_extracted_at and stop a re-poll from re-checking unchanged
+    // content forever (see callers), which must NOT itself trigger a rebuild
+    // or this fast-path would fire on every no-op poll, not just genuine
+    // changes.
+    const changedTimeOrDate =
+      patch.pickup_time !== undefined ||
+      patch.return_time !== undefined ||
+      patch.pickup_date !== undefined ||
+      patch.return_date !== undefined;
+    if (changedTimeOrDate) {
+      await ctx.scheduler.runAfter(0, internal.mv.calendar.refresh, {});
+    }
     return { ok: true };
   },
 });
@@ -248,6 +271,28 @@ export const admin_setExtractedTimes = mutation({
       times_transcript_hash: transcript_hash,
       times_extracted_at: Date.now(),
     });
+    // Calendar fast-path (2026-08-16): the calendar MV (convex/mv/calendar.ts)
+    // otherwise only rebuilds on its 30-min cron / 45-min backstop, so a
+    // same-day time correction could take up to 30-45 min to show up on the
+    // calendar/overlays. Its own dirtySince probe already does a CHEAP
+    // selective rebuild (one account's 4 views, not all 10) whenever it sees
+    // times_extracted_at move — this just triggers that check immediately
+    // instead of waiting for the next tick, reusing the existing logic as-is.
+    //
+    // Narrowly gated to an actual time/date change, NOT every call — this
+    // mutation is ALSO invoked with an empty patch just to bump
+    // times_extracted_at and stop a re-poll from re-checking unchanged
+    // content forever (see callers), which must NOT itself trigger a rebuild
+    // or this fast-path would fire on every no-op poll, not just genuine
+    // changes.
+    const changedTimeOrDate =
+      patch.pickup_time !== undefined ||
+      patch.return_time !== undefined ||
+      patch.pickup_date !== undefined ||
+      patch.return_date !== undefined;
+    if (changedTimeOrDate) {
+      await ctx.scheduler.runAfter(0, internal.mv.calendar.refresh, {});
+    }
     return { ok: true };
   },
 });

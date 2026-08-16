@@ -1175,6 +1175,17 @@ async function upsertOrderImpl(
       return { action: "skipped", bankItems: [] };
     }
 
+    // Calendar fast-path (2026-08-16): a MANUAL date change (OrderEditor's
+    // "Change dates" pushes to Hygglo via order_edit:setDates, which does NOT
+    // touch this table directly — it only reaches `reservations` on the NEXT
+    // poll, right here) previously waited on the calendar MV's own 30-min
+    // cron / 45-min backstop on top of that poll delay. Compare against the
+    // PRE-patch stored dates and trigger the same selective rebuild the
+    // LLM-extraction fast-path uses (see extract_booking_times_q.ts:setTimes)
+    // the moment a real change lands, instead of waiting for the next tick.
+    const datesChanged =
+      existing.start_date !== args.start_date || existing.end_date !== args.end_date;
+
     await ctx.db.patch(existing._id, {
       ...baseFields,
       status: finalStatus,
@@ -1183,6 +1194,9 @@ async function upsertOrderImpl(
       ...(clearObsolete && { is_obsolete: false }),
       poll_hash: newPollHash,
     });
+    if (datesChanged) {
+      await ctx.scheduler.runAfter(0, internal.mv.calendar.refresh, {});
+    }
     const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
     await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);

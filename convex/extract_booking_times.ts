@@ -31,7 +31,7 @@
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { gatedGenerateText } from "./lib/gatedGenerate";
+import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { getActionLlmModel } from "./item_resolver";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
 import {
@@ -39,11 +39,11 @@ import {
   transcriptHasTimeLanguage,
 } from "../src/lib/booking-time-transcript";
 import {
-  buildBookingTimePrompt as buildPrompt,
+  BookingTimeSchema,
+  buildBookingTimeMessages,
   dateWithinTolerance,
-  parseBookingTimeResponse as parseResponse,
   sanitizeTime,
-  type ExtractedBookingTimes as ExtractedTimes,
+  type ExtractedBookingTimes,
 } from "../src/lib/booking-time-extraction";
 
 /**
@@ -56,7 +56,7 @@ export const extractForReservation = action({
     ok: boolean;
     skipped?: string;
     confidence?: string;
-    extracted?: ExtractedTimes;
+    extracted?: ExtractedBookingTimes;
   }> => {
     if (isWithinUkQuietHours()) {
       console.log("[quiet-hours] skip extractForReservation", reservation_id);
@@ -94,32 +94,34 @@ export const extractForReservation = action({
       .join("\n");
 
     const itemTitle = (r.items ?? []).map((i: { item_name: string }) => i.item_name).join(" + ") || "rental";
-    const prompt = buildPrompt(itemTitle.slice(0, 120), r.start_date, r.end_date, transcript);
+    const { system, user } = buildBookingTimeMessages(itemTitle.slice(0, 120), r.start_date, r.end_date, transcript);
 
-    let response: { text: string };
+    let ext: ExtractedBookingTimes;
     try {
-      const gated = await gatedGenerateText({
+      const gated = await gatedGenerateObject({
         // Immediate, message-triggered extraction must use the same Grok 4.3
         // lane as the Trigger recovery batch; otherwise calendar times could
         // differ depending on which path happened to run first.
         model: await getActionLlmModel({ calendarExtraction: true }),
-        prompt,
-        // Nine short structured lines; Grok Fast reasoning is disabled for
+        schema: BookingTimeSchema,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        // Nine short structured fields; Grok Fast reasoning is disabled for
         // this extraction, so keeping this cap tight controls cost.
         maxOutputTokens: 700,
         context: { source: "convex:extract_booking_times", tag: "extract-booking-times" },
       });
       if (gated.skipped) return { ok: true, skipped: "uk_quiet_hours" };
-      response = gated.result;
+      ext = gated.result.object;
     } catch (err) {
       console.error("[extract_booking_times] LLM call failed:", err);
       return { ok: false, skipped: "llm error" };
     }
 
-    const ext = parseResponse(response.text);
-
     // Cancellation: do not persist new times, but log.
-    if (ext.status === "CANCELLED") {
+    if (ext.status === "cancelled") {
       console.warn(`[extract_booking_times] CANCELLED detected for ${reservation_id}: ${ext.notes ?? ""}`);
       await ctx.runMutation(internal.extract_booking_times_q.setTimes, {
         reservation_id, transcript_hash: hash, patch: {},

@@ -12,7 +12,7 @@
  * (`booking_time_extractor batch` in convex/crons.ts).
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
-import { gatedGenerateText } from "../lib/gated-generate";
+import { gatedGenerateObject } from "../lib/gated-generate";
 import { isWithinUkQuietHours } from "../lib/quiet-hours";
 import { getExtractorModel } from "../lib/llm-client";
 import { sendOperatorMessage } from "../lib/telegram";
@@ -21,11 +21,11 @@ import {
   transcriptHasTimeLanguage,
 } from "../lib/booking-time-transcript";
 import {
-  buildBookingTimePrompt as buildPrompt,
+  BookingTimeSchema,
+  buildBookingTimeMessages,
   dateWithinTolerance,
-  parseBookingTimeResponse as parseResponse,
   sanitizeTime,
-  type ExtractedBookingTimes as ExtractedTimes,
+  type ExtractedBookingTimes,
 } from "../lib/booking-time-extraction";
 
 const CONVEX_URL =
@@ -151,12 +151,17 @@ export const extractBookingTimesTask = schedules.task({
         })
         .join("\n");
 
-      let extracted: ExtractedTimes;
+      let extracted: ExtractedBookingTimes;
       try {
-        const gated = await gatedGenerateText({
+        const { system, user } = buildBookingTimeMessages(c.title, c.start_date, c.end_date, transcript);
+        const gated = await gatedGenerateObject({
           model: await getExtractorModel(),
-          prompt: buildPrompt(c.title, c.start_date, c.end_date, transcript),
-          // 9 short lines (~150 visible tokens). Grok 4.3 is called with
+          schema: BookingTimeSchema,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          // Nine short fields (~150 visible tokens). Grok 4.3 is called with
           // reasoning disabled, so 700 is generous — and a low cap matters:
           // OpenRouter rejects calls whose max_tokens exceed
           // the affordable balance ("requires more credits, or fewer
@@ -170,7 +175,7 @@ export const extractBookingTimesTask = schedules.task({
           skipped++;
           continue;
         }
-        extracted = parseResponse(gated.result.text);
+        extracted = gated.result.object;
       } catch (err) {
         llmErrors++;
         if (!firstLlmError) firstLlmError = String(err);
@@ -182,19 +187,19 @@ export const extractBookingTimesTask = schedules.task({
       }
 
       // Cancelled flow: persist nothing (leave existing data alone).
-      if (extracted.status === "CANCELLED") {
+      if (extracted.status === "cancelled") {
         await writeTimes({ reservation_id: c.id, transcript_hash: newHash, patch: {} });
         skipped++;
         continue;
       }
 
-      const patch: ExtractedTimes = {
+      const patch: Parameters<typeof writeTimes>[0]["patch"] = {
         pickup_time: sanitizeTime(extracted.pickup_time),
         return_time: sanitizeTime(extracted.return_time),
-        pickup_method: ["delivery", "collection"].includes(extracted.pickup_method ?? "")
+        pickup_method: ["delivery", "collection"].includes(extracted.pickup_method)
           ? extracted.pickup_method
           : undefined,
-        return_method: ["delivery", "collection"].includes(extracted.return_method ?? "")
+        return_method: ["delivery", "collection"].includes(extracted.return_method)
           ? extracted.return_method
           : undefined,
       };

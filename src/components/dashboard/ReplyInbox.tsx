@@ -204,7 +204,20 @@ function fmtMsgTime(ts: number | string | null | undefined): string {
  * too heavy / out of range for that location.
  */
 /** In-app map overlay — keyless Google embed (streets + stations) + external link. */
-function MapOverlay({ loc, onClose }: { loc: TileLocation; onClose: () => void }) {
+function MapOverlay({
+  loc,
+  onClose,
+  confined,
+}: {
+  loc: TileLocation;
+  onClose: () => void;
+  /** True when rendered inside ReplyModal's own body panel (position:
+   *  relative) — confines to that panel instead of the viewport, so it can't
+   *  cover the modal's header/close button. False/default (e.g. from a
+   *  standalone LocationBadge on a ReplyCard tile, with no modal to confine
+   *  to) keeps the original full-viewport overlay. */
+  confined?: boolean;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -213,11 +226,11 @@ function MapOverlay({ loc, onClose }: { loc: TileLocation; onClose: () => void }
   const title = [loc.street, loc.zip].filter(Boolean).join(", ") || loc.label || "Location";
   return (
     <div
-      className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 p-3"
+      className={`${confined ? "absolute z-[40] overflow-y-auto" : "fixed z-[400]"} inset-0 flex items-center justify-center bg-black/70 p-3`}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-2xl overflow-hidden bg-[#13151a] border border-white/10 shadow-2xl"
+        className={`w-full max-w-2xl rounded-2xl overflow-hidden bg-[#13151a] border border-white/10 shadow-2xl ${confined ? "max-h-full my-auto" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.07]">
@@ -248,7 +261,9 @@ function MapOverlay({ loc, onClose }: { loc: TileLocation; onClose: () => void }
           <iframe
             title="Pickup location map"
             src={loc.map_embed_url}
-            className="w-full h-[60vh] border-0"
+            // 60vh assumes viewport-relative sizing; confined to the modal's
+            // own (shorter) body panel, that could overflow it — cap smaller.
+            className={confined ? "w-full h-[36vh] border-0" : "w-full h-[60vh] border-0"}
             loading="lazy"
             referrerPolicy="no-referrer-when-downgrade"
           />
@@ -262,7 +277,21 @@ function MapOverlay({ loc, onClose }: { loc: TileLocation; onClose: () => void }
   );
 }
 
-function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean }) {
+function LocationBadge({
+  loc,
+  compact,
+  onOpenMap,
+}: {
+  loc: TileLocation;
+  compact?: boolean;
+  /** Controlled mode: when provided, a click delegates to the caller instead
+   *  of managing (and rendering) its own MapOverlay. ReplyModal uses this so
+   *  the map opens as an in-shell panel it owns, rather than an independent
+   *  viewport overlay that could cover the modal's own header. Every other
+   *  caller (e.g. a ReplyCard tile, with no modal to confine to) omits this
+   *  and keeps the original self-contained behaviour. */
+  onOpenMap?: () => void;
+}) {
   const [showMap, setShowMap] = useState(false);
   const tag = loc.out_of_range
     ? { text: "Out of range", cls: "bg-rose-500/20 text-rose-300" }
@@ -275,7 +304,8 @@ function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean 
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          setShowMap(true);
+          if (onOpenMap) onOpenMap();
+          else setShowMap(true);
         }}
         title={`${loc.street ? loc.street + ", " : ""}${loc.zip ?? ""} — view map`}
         className="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200 hover:underline max-w-full"
@@ -294,7 +324,7 @@ function LocationBadge({ loc, compact }: { loc: TileLocation; compact?: boolean 
           ⚠ {tag.text}
         </span>
       )}
-      {showMap && <MapOverlay loc={loc} onClose={() => setShowMap(false)} />}
+      {!onOpenMap && showMap && <MapOverlay loc={loc} onClose={() => setShowMap(false)} />}
     </div>
   );
 }
@@ -630,10 +660,14 @@ function ReviewsOverlay({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return createPortal(
-    <div className="fixed inset-0 z-[330] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
+  // Confined to ReplyModal's own body panel (that wrapper is `position:
+  // relative`) instead of portaled to document.body — so this never covers
+  // the modal's header/close button the way a viewport-fixed overlay would.
+  // Single caller (ReplyModal), so no other usage depends on the old portal.
+  return (
+    <div className="absolute inset-0 z-[40] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
       <div
-        className="w-full max-w-md max-h-[80vh] flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden"
+        className="w-full max-w-md max-h-full flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-3 border-b border-white/10 flex items-start gap-2">
@@ -699,8 +733,7 @@ function ReviewsOverlay({
           )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 
@@ -963,7 +996,7 @@ function ReplyCard({
         <div className="text-[11px] text-[#7a8190]">{contextLine(tile)}</div>
       )}
       {tile.preview && (
-        <div className="text-[12px] text-[#8b92a0] line-clamp-2">“{tile.preview}”</div>
+        <div className="text-[12px] leading-[1.45] text-[#a3aab8] line-clamp-2">“{tile.preview}”</div>
       )}
       {tile.location && <LocationBadge loc={tile.location} compact />}
       {(tile.net_to_owner_gbp != null || tile.estimate_earnings_gbp != null) && (
@@ -1224,10 +1257,13 @@ function AddItemPicker({
   const filtered = listings
     .filter((l) => tokens.every((t) => l.name.toLowerCase().includes(t)))
     .slice(0, 60);
-  return createPortal(
-    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
+  // Confined to ReplyModal's own body panel — see ReviewsOverlay for why
+  // (not portaled, so it can't cover the modal's header). Single caller
+  // (OrderEditor, itself only rendered inside ReplyModal).
+  return (
+    <div className="absolute inset-0 z-[40] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
       <div
-        className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-full flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-3 border-b border-white/10 flex items-center gap-2">
@@ -1274,8 +1310,7 @@ function AddItemPicker({
           )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 
@@ -1337,9 +1372,11 @@ function DateCalendar({
   const tooShort = rangeDays > 0 && rangeDays < minDays;
   const canApply = !!start && rangeDays >= minDays && !busy;
 
-  return createPortal(
-    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+  // Confined to ReplyModal's own body panel — see ReviewsOverlay for why.
+  // Single caller (OrderEditor, itself only rendered inside ReplyModal).
+  return (
+    <div className="absolute inset-0 z-[40] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden my-auto" onClick={(e) => e.stopPropagation()}>
         <div className="p-3 border-b border-white/10 flex items-center gap-2">
           <span className="text-sm font-semibold text-[#f1f3f5]">Change rental dates</span>
           <button onClick={onClose} className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none">×</button>
@@ -1404,8 +1441,7 @@ function DateCalendar({
           </div>
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 
@@ -1825,6 +1861,10 @@ export function ReplyModal({
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
   // Renter reviews — fetched live from Hygglo on first star-click, then cached.
   const [showReviews, setShowReviews] = useState(false);
+  // Map — owned here (not by LocationBadge) so it renders as a confined panel
+  // in this modal's own body wrapper instead of LocationBadge's default
+  // full-viewport overlay. See LocationBadge's onOpenMap prop.
+  const [showMap, setShowMap] = useState(false);
   const reviews = useQuery(
     reviewsGetRef,
     showReviews ? { thread_id: tile.thread_id } : "skip",
@@ -2001,7 +2041,7 @@ export function ReplyModal({
             )}
             {loc && (
               <div className="mt-1">
-                <LocationBadge loc={loc} />
+                <LocationBadge loc={loc} onOpenMap={() => setShowMap(true)} />
               </div>
             )}
             {tile.renter_rating != null && tile.renter_rating < 4 && (
@@ -2051,23 +2091,42 @@ export function ReplyModal({
           </button>
         </div>
 
-        {/* Order editor — live items + add/remove + price + dates (has_reservation
-            threads only; inquiries with no booking have nothing to edit). */}
-        {tile.has_reservation && tile.account_slug && (
-          <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
-        )}
+        {/* Body panel (2026-08-16) — everything below the header lives inside
+            this ONE `position: relative` wrapper, so it is the containing
+            block for Reviews/Map/Add-Item/Change-Dates. Those used to be
+            independent `fixed inset-0` viewport overlays (some via their own
+            createPortal straight to document.body) stacked at z-320/330/400,
+            ABOVE the modal's own z-200/300 — so whichever was open painted
+            over the ENTIRE screen, header and close button included, with no
+            way back to the chat except closing the whole modal. Confined here
+            (`absolute inset-0` + z-40, see each component), they can only ever
+            cover this body panel — the header above it, and the fact that
+            this is still "the chat with renter X", stays on screen always. */}
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          {/* Order editor — live items + add/remove + price + dates (has_reservation
+              threads only; inquiries with no booking have nothing to edit). */}
+          {tile.has_reservation && tile.account_slug && (
+            <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
+          )}
 
-        {/* Renter reviews — a proper centred overlay (portal), opened by tapping
-            the stars. Physical stars incl. half; under-4★ highlighted. */}
-        {showReviews && (
-          <ReviewsOverlay
-            renterName={tile.renter_name}
-            rating={tile.renter_rating}
-            count={tile.renter_review_count}
-            reviews={reviews}
-            onClose={() => setShowReviews(false)}
-          />
-        )}
+          {/* Renter reviews — confined panel, opened by tapping the stars.
+              Physical stars incl. half; under-4★ highlighted. */}
+          {showReviews && (
+            <ReviewsOverlay
+              renterName={tile.renter_name}
+              rating={tile.renter_rating}
+              count={tile.renter_review_count}
+              reviews={reviews}
+              onClose={() => setShowReviews(false)}
+            />
+          )}
+
+          {/* Map — confined panel, opened via the header's LocationBadge
+              (controlled mode: onOpenMap, so it doesn't open its own
+              viewport overlay). */}
+          {showMap && loc && (
+            <MapOverlay loc={loc} onClose={() => setShowMap(false)} confined />
+          )}
 
         {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
             (with Send) is ALWAYS visible, never clipped off-screen on mobile. */}
@@ -2321,6 +2380,7 @@ export function ReplyModal({
             <div className={`text-xs ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
           )}
         </div>
+        </div>
       </div>
     </div>,
     document.body,
@@ -2437,6 +2497,13 @@ export function ReplyInbox() {
         @keyframes rgGlow { 0%,100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 18px -4px var(--u); } }
         @keyframes rgBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.3; } }
         @keyframes rgMoney { 0%,100% { box-shadow: 0 0 18px -8px rgba(251,191,36,0.55); } 50% { box-shadow: 0 0 30px -4px rgba(251,191,36,0.95); } }
+        /* Imminent handoff cards (±60min pickup/return) — a slow, gentle
+           breathing glow, deliberately calmer than rgBlink's hard 1s blink
+           (that one means "overdue/urgent"; this one means "happening soon"). */
+        @keyframes rgHandoffPulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(251,146,60,0), inset 0 1px 0 rgba(255,255,255,0.05); border-color: rgba(251,146,60,0.25); }
+          50% { box-shadow: 0 0 22px -3px rgba(251,146,60,0.65), inset 0 1px 0 rgba(255,255,255,0.05); border-color: rgba(251,146,60,0.55); }
+        }
       `}</style>
       {/* Header — aperture mark + title + request pill + controls */}
       <div className="flex items-center gap-3 mb-4">
@@ -2502,7 +2569,11 @@ export function ReplyInbox() {
               <button
                 key={`${h.thread_id}-${h.kind}-${h.date}-${h.time}`}
                 onClick={() => h.thread_id && setOpenId(h.thread_id)}
-                className="shrink-0 flex items-center gap-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 px-2.5 py-1.5 text-left transition-colors"
+                // Every card here is already ±60min of its pickup/return (the
+                // query only returns imminent handoffs), so the slow orange
+                // pulse applies unconditionally to the whole list.
+                className="shrink-0 flex items-center gap-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border px-2.5 py-1.5 text-left transition-colors"
+                style={{ animation: "rgHandoffPulse 2.8s ease-in-out infinite" }}
               >
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${h.kind === "pickup" ? "bg-emerald-500/20 text-emerald-300" : "bg-sky-500/20 text-sky-300"}`}>
                   {h.kind === "pickup" ? "PICKUP" : "RETURN"} {h.time}
