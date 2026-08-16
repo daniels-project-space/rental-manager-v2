@@ -204,9 +204,30 @@ export async function POST(req: Request) {
             }
           },
         });
+        // `textStream` does NOT throw when the provider rejects the call — the
+        // error lands on the stream's error channel and iteration just ends, so
+        // a 401/402 from OpenRouter was indistinguishable from a deliberate
+        // empty answer (this is how an unpaid account silently muted the whole
+        // assistant on 2026-08-16). Count deltas and treat zero as a failure.
+        let deltas = 0;
         for await (const delta of result.textStream) {
+          if (!delta) continue;
+          deltas++;
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ text: delta })}\n\n`),
+          );
+        }
+        if (deltas === 0) {
+          console.error(
+            `[api/chat] model ${modelId} produced no output — check OpenRouter credits/key (see /api/walle/health)`,
+          );
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                error:
+                  "The assistant could not reach its language model. Check OpenRouter credits/key — GET /api/walle/health for the exact error.",
+              })}\n\n`,
+            ),
           );
         }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));

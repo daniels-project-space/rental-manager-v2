@@ -39,21 +39,44 @@ export const CALENDAR_EXTRACTION_MODEL: string =
  * reliable tool-caller — while the cheap single-shot text gens (joke / narrate
  * / compact) stay on DEEPSEEK_MODEL. A distinct env var (NOT DEEPSEEK_MODEL,
  * which is already pinned on Vercel) so this default actually applies in prod.
- * Haiku 4.5 on OpenRouter ≈ $1 / $5 per 1M tok (in/out); volume is Daniel-only.
+ * 2026-08-16: primary lane moved to Gemini 3.7 Flash on cost — $0.375 / $1.875
+ * per 1M tok (in/out) vs Haiku 4.5's $1 / $5 and Sonnet 4.6's $3 / $15, i.e.
+ * ~62% and ~87% cheaper. The Claude pair is retained below as the FALLBACK lane
+ * (see CHAT_MODEL_FALLBACK) so a Gemini outage can't mute WallE, and so the
+ * known-good tool-caller is one env var away if grounding ever regresses.
  */
 export const CHAT_MODEL: string =
-  process.env.CHAT_MODEL ?? "anthropic/claude-haiku-4.5";
+  process.env.CHAT_MODEL ?? "google/gemini-3.7-flash";
 
 /**
  * Smarter chat model for REASONING-HEAVY chat turns — gear compatibility /
  * optics questions where Haiku confabulated (e.g. inverting the APS-C vs
  * full-frame vignetting fact, 2026-06-02). The chat routes pick this over
  * CHAT_MODEL when a compatibility/optics intent is detected; plain existence
- * and metric turns stay on cheap Haiku. Sonnet 4.6 on OpenRouter; volume is
- * Daniel-only so the cost delta is negligible. Env-overridable per deployment.
+ * and metric turns stay on the cheap lane. Now the same Gemini 3.7 Flash: it
+ * already undercuts the OLD cheap lane (Haiku) on price, so there is no saving
+ * left to win by splitting, and one model means one grounding behaviour to
+ * reason about. Env-overridable per deployment if the two need to diverge.
  */
 export const CHAT_MODEL_SMART: string =
-  process.env.CHAT_MODEL_SMART ?? "anthropic/claude-sonnet-4.6";
+  process.env.CHAT_MODEL_SMART ?? "google/gemini-3.7-flash";
+
+/**
+ * Fallback lane, used ONLY when the primary model yields an error or an empty
+ * reply. This is the pre-2026-08-16 primary (Claude), kept because it is the
+ * proven grounded tool-caller for these routes.
+ *
+ * Why a fallback exists at all: on 2026-08-16 the shared OpenRouter account ran
+ * out of credit and EVERY WallE surface went silently blank — the provider
+ * error never reached the user or the logs. Cost is not the reason to have one
+ * model; availability is.
+ */
+export const CHAT_MODEL_FALLBACK: string =
+  process.env.CHAT_MODEL_FALLBACK ?? "anthropic/claude-haiku-4.5";
+
+/** Fallback for the reasoning-heavy lane. See CHAT_MODEL_FALLBACK. */
+export const CHAT_MODEL_SMART_FALLBACK: string =
+  process.env.CHAT_MODEL_SMART_FALLBACK ?? "anthropic/claude-sonnet-4.6";
 
 /** xAI direct Grok chat model — used when AI_PROVIDER=xai. */
 export const GROK_CHAT_MODEL: string =

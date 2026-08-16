@@ -53,6 +53,7 @@ export default defineConfig({
       "src/lib/revenue/leo-takeover.test.ts",
       "src/lib/item-resolution.test.ts",
       "src/lib/quiet-hours.test.ts",
+      "src/lib/ai-models.chat-lanes.test.ts",
       "src/trigger/hygglo-ui-action.gate.test.ts",
       "src/hygglo-core/__tests__/competitor-aggregate.test.ts",
       "src/hygglo-core/__tests__/shape.test.ts",

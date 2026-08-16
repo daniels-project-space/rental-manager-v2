@@ -39,7 +39,12 @@ import {
   buildInventoryIndex,
   buildLiveSnapshot,
 } from "../../../../lib/chat/dashboard-tools";
-import { CHAT_MODEL, CHAT_MODEL_SMART } from "../../../../lib/ai-models";
+import {
+  CHAT_MODEL,
+  CHAT_MODEL_SMART,
+  CHAT_MODEL_FALLBACK,
+  CHAT_MODEL_SMART_FALLBACK,
+} from "../../../../lib/ai-models";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
 export const runtime = "nodejs";
@@ -240,10 +245,78 @@ export async function POST(req: Request) {
   const uiStream = createUIMessageStream({
     execute: async ({ writer }) => {
       writer.write({ type: "text-start", id: "0" });
-      for await (const delta of result.textStream) {
-        assistantText += delta;
-        writer.write({ type: "text-delta", id: "0", delta });
+
+      // Drain a model's textStream into the UI stream. Returns the delta count
+      // so the caller can detect the SILENT-FAILURE case: Mastra/AI-SDK do NOT
+      // throw out of `textStream` when the provider rejects the call — the
+      // error goes to the stream's error channel and iteration simply ends. So
+      // a 401/402/429 from OpenRouter looked identical to "the model chose to
+      // say nothing": text-start, text-end, zero deltas, HTTP 200. That is how
+      // an out-of-credit account silently muted every WallE surface on
+      // 2026-08-16 with nothing in the logs. Zero deltas is now a FAILURE.
+      const drain = async (stream: AsyncIterable<string>): Promise<number> => {
+        let deltas = 0;
+        for await (const delta of stream) {
+          if (!delta) continue;
+          deltas++;
+          assistantText += delta;
+          writer.write({ type: "text-delta", id: "0", delta });
+        }
+        return deltas;
+      };
+
+      let deltas = 0;
+      let primaryErr: unknown = null;
+      try {
+        deltas = await drain(result.textStream);
+      } catch (err) {
+        primaryErr = err;
       }
+
+      if (deltas === 0) {
+        console.error(
+          `[walle/chat] primary model ${modelId} produced no output`,
+          primaryErr instanceof Error ? primaryErr.stack : primaryErr,
+        );
+        // Availability fallback: a different model, so a single provider lane
+        // being down/unpaid cannot take WallE offline.
+        const fallbackId = needsSmart
+          ? CHAT_MODEL_SMART_FALLBACK
+          : CHAT_MODEL_FALLBACK;
+        try {
+          const fbModel = await getVaultOpenRouterModel(fallbackId);
+          const fbAgent = buildWalleChatAgent({
+            instructions: system,
+            model: fbModel,
+            tools,
+          });
+          const fbResult = await fbAgent.stream(modelMessages, {
+            maxSteps: 4,
+            modelSettings: { maxOutputTokens: 1800 },
+            toolChoice: "auto",
+          });
+          deltas = await drain(fbResult.textStream);
+          if (deltas > 0) {
+            console.warn(
+              `[walle/chat] served via fallback ${fallbackId} (primary ${modelId} was empty)`,
+            );
+          }
+        } catch (fbErr) {
+          console.error(
+            `[walle/chat] fallback ${fallbackId} also failed:`,
+            fbErr instanceof Error ? fbErr.stack : fbErr,
+          );
+        }
+      }
+
+      if (deltas === 0) {
+        // Never end on an empty bubble: say so, in the chat, where Daniel is.
+        const msg =
+          "WallE can't reach its language model right now — both the primary and fallback lanes failed. Check OpenRouter credits/key, then GET /api/walle/health for the exact error.";
+        assistantText = msg;
+        writer.write({ type: "text-delta", id: "0", delta: msg });
+      }
+
       writer.write({ type: "text-end", id: "0" });
     },
     onError: (err) => {
