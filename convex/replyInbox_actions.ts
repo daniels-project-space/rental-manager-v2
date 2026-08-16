@@ -404,6 +404,18 @@ export const generateDraft = action({
     const hardTruthsBlock = c.hard_truths
       ? `HARD TRUTHS (read these last, they override anything above):\n${c.hard_truths}`
       : null;
+    const controlledDraftTextBlock = c.draft_text_blocks
+      ? [
+          ["Opening / greeting", c.draft_text_blocks.opening],
+          ["Availability / booking", c.draft_text_blocks.availability],
+          ["Location", c.draft_text_blocks.location],
+          ["Pickup / return time", c.draft_text_blocks.pickup_time],
+          ["Payment", c.draft_text_blocks.payment],
+        ]
+          .filter(([, text]) => typeof text === "string" && text.trim().length > 0)
+          .map(([label, text]) => `- ${label}: ${text}`)
+          .join("\n")
+      : "";
 
     // PLAYBOOK — the relevant DANIEL RULES / edge protocols / gear FAQs +
     // delivery framework + suggested templates retrieved for THIS message (the
@@ -477,6 +489,9 @@ export const generateDraft = action({
       "",
       templatesBlock,
       lessonsBlock,
+      controlledDraftTextBlock
+        ? `OPERATOR-CONTROLLED DRAFT WORDING — use the relevant block when this renter asks about that topic. Preserve operational facts exactly, adapt only grammar to the conversation, and never reveal a pickup address before the booking is confirmed:\n${controlledDraftTextBlock}`
+        : null,
       hardTruthsBlock,
       "Draft my reply to the renter's most recent message:",
     ]

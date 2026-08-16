@@ -1101,8 +1101,16 @@ export const getThreadContext = internalQuery({
     let response_style: unknown;
     let business_hours: unknown;
     let hard_truths: string | undefined;
+    let profile: Doc<"account_profiles"> | null = null;
+    let draft_text_blocks: {
+      opening: string;
+      availability: string;
+      location: string;
+      pickup_time: string;
+      payment: string;
+    } | undefined;
     if (accountId) {
-      const profile = await ctx.db
+      profile = await ctx.db
         .query("account_profiles")
         .withIndex("by_account", (q) => q.eq("account_id", accountId!))
         .first();
@@ -1113,6 +1121,18 @@ export const getThreadContext = internalQuery({
       response_style = profile?.response_style;
       business_hours = profile?.business_hours;
       hard_truths = profile?.hard_truths;
+      const blocks = (profile as {
+        draft_text_blocks?: Partial<typeof draft_text_blocks>;
+      } | null)?.draft_text_blocks;
+      if (blocks) {
+        draft_text_blocks = {
+          opening: typeof blocks.opening === "string" ? blocks.opening : "",
+          availability: typeof blocks.availability === "string" ? blocks.availability : "",
+          location: typeof blocks.location === "string" ? blocks.location : "",
+          pickup_time: typeof blocks.pickup_time === "string" ? blocks.pickup_time : "",
+          payment: typeof blocks.payment === "string" ? blocks.payment : "",
+        };
+      }
     }
 
     // Phase 5: house rules from the dedicated `rules` table (enabled, this
@@ -1135,11 +1155,15 @@ export const getThreadContext = internalQuery({
       .slice(0, 60)
       .map((r) => r.rule_body);
 
-    // Pickup/collection windows are owner-editable in Settings (singleton) and
-    // take precedence over any account-profile hours — this is what stops the AI
-    // confirming out-of-hours pickups (e.g. 8am).
+    // Per-account pickup/collection windows are owner-editable in Settings and
+    // take precedence over the global fallback. This keeps Diogo's wording and
+    // availability independent from Leo/DB Cinema while still giving a safe
+    // shared default to accounts that have not been configured yet.
     const settingsRow = await ctx.db.query("settings").first();
-    const pickupHours = settingsRow?.pickup_hours;
+    const pickupHours =
+      profile?.pickup_hours && profile.pickup_hours.length
+        ? profile.pickup_hours
+        : settingsRow?.pickup_hours;
     const businessHoursText =
       pickupHours && pickupHours.length
         ? `Pickup/collection windows (Europe/London): ${pickupHours.map((h) => `${h.start}–${h.end}`).join(", ")}. Only confirm times inside these windows.`
@@ -1603,6 +1627,7 @@ export const getThreadContext = internalQuery({
       unfulfillable: unfulfillableUniq,
       house_rules,
       hard_truths: hard_truths ?? null,
+      draft_text_blocks: draft_text_blocks ?? null,
       bundle_suggestion,
       // Product ids in play — generateDraft fetches their REAL listing facts
       // (price + included kit + discount) to override the generic catalog.

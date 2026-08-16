@@ -81,6 +81,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
+  { id: "channel_response_rates", label: "Channel Response Rate" },
   { id: "todos",           label: "To-Do" },
   { id: "walle",           label: "WallE" },
   { id: "active",          label: "Active" },
@@ -122,6 +123,7 @@ export const HERO_SPANS: Record<string, { col: number; row: number }> = {
 // the single source of truth for the historical "hero" treatment so StatsGrid
 // can fall back to it when an id is not in HERO_SPANS.
 export const HERO_IDS: ReadonlySet<string> = new Set([
+  "channel_response_rates",
   "active",
   "weekly_calendar",
   "ongoing",

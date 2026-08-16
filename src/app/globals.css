@@ -317,3 +317,17 @@
 .gantt-today-glow {
   animation: gantt-today-glow 1.8s ease-in-out infinite;
 }
+@keyframes settings-workspace-enter {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.settings-workspace-enter {
+  animation: settings-workspace-enter 180ms ease-out both;
+}

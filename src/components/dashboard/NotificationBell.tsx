@@ -44,13 +44,14 @@ type PushState =
   | "denied"
   | "enabled";
 
-type PushMode = "all" | "money_only";
+type PushMode = "all" | "money_only" | "my_share";
+const PUSH_MODES: readonly PushMode[] = ["all", "money_only", "my_share"];
 const PUSH_MODE_STORAGE_KEY = "rental-manager:push-mode";
 
 function storedPushMode(): PushMode | undefined {
   if (typeof window === "undefined") return undefined;
   const value = window.localStorage.getItem(PUSH_MODE_STORAGE_KEY);
-  return value === "all" || value === "money_only" ? value : undefined;
+  return PUSH_MODES.includes(value as PushMode) ? (value as PushMode) : undefined;
 }
 
 function rememberPushMode(mode: PushMode) {
@@ -62,7 +63,6 @@ function rememberPushMode(mode: PushMode) {
 export function NotificationBell() {
   const router = useRouter();
   const vapidKey = useQuery(api.notifications.getVapidPublicKey);
-  const recent = useQuery(api.notifications.listRecent, { limit: 20 });
   const save = useMutation(api.notifications.savePushSubscription);
   const setSubscriptionMode = useMutation(api.notifications.setPushSubscriptionMode);
   const markAllRead = useMutation(api.notifications.markAllRead);
@@ -73,6 +73,10 @@ export function NotificationBell() {
   const [pushEndpoint, setPushEndpoint] = useState<string | null>(null);
   const [pushMode, setPushMode] = useState<PushMode>("all");
   const [modeBusy, setModeBusy] = useState(false);
+  // Declared after pushMode: the device mode is an argument, so the listed
+  // amounts match what this device is pushed — "My 50%" halves the bell list
+  // too, not just the notification itself.
+  const recent = useQuery(api.notifications.listRecent, { limit: 20, mode: pushMode });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -348,10 +352,11 @@ export function NotificationBell() {
                 <p className="text-[10px] uppercase tracking-[0.12em] text-[#6b7280] mb-1.5">
                   This device
                 </p>
-                <div className="grid grid-cols-2 gap-1 rounded-lg bg-white/[0.04] p-1">
+                <div className="grid grid-cols-3 gap-1 rounded-lg bg-white/[0.04] p-1">
                   {([
                     ["all", "All updates"],
                     ["money_only", "Money only"],
+                    ["my_share", "My 50%"],
                   ] as const).map(([mode, label]) => {
                     const selected = pushMode === mode;
                     return (
@@ -364,7 +369,11 @@ export function NotificationBell() {
                         className="rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors disabled:opacity-50"
                         style={{
                           color: selected
-                            ? mode === "money_only" ? "#fbbf24" : "#e4e6eb"
+                            ? mode === "money_only"
+                              ? "#fbbf24"
+                              : mode === "my_share"
+                                ? "#34d399"
+                                : "#e4e6eb"
                             : "#7a8190",
                           background: selected ? "rgba(255,255,255,0.09)" : "transparent",
                         }}
@@ -375,7 +384,7 @@ export function NotificationBell() {
                   })}
                 </div>
                 <p className="text-[9px] text-[#6b7280] mt-1.5 leading-snug">
-                  Money only sends confirmed-rental “Wohooo” earnings alerts. Other devices keep their own setting, so Leo can stay on All updates.
+                  Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% sends the same alerts showing half the earnings — your share. Other devices keep their own setting, so Leo can stay on All updates.
                 </p>
                 {err && <p className="text-[10px] text-red-400 mt-1">{err}</p>}
               </div>

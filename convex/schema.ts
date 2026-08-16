@@ -751,7 +751,10 @@ export default defineSchema({
     // PERF: lets getReplyQueue's Pass 3 (browse-all) read only the recent
     // window instead of `.collect()`-ing the whole conversations table on every
     // reactive re-run. last_msg_at is non-optional so the range is exact.
-    .index("by_last_msg_at", ["last_msg_at"]),
+    .index("by_last_msg_at", ["last_msg_at"])
+    // Channel response-rate snapshots use the actual inquiry cohort, rather
+    // than the last activity time (which is changed by an owner reply).
+    .index("by_created_at", ["created_at"]),
 
   conv_extracted_facts: defineTable({
     conversation_id: v.optional(v.id("conversations")),
@@ -902,6 +905,9 @@ export default defineSchema({
     raw: v.optional(v.string()),
   }).index("by_account", ["account_slug"])
     .index("by_thread", ["thread_id"])
+    // Lets the twice-daily response-rate snapshot answer "did the owner ever
+    // reply to this inquiry?" with one bounded index read per recent thread.
+    .index("by_thread_sender", ["thread_id", "sender"])
     .index("by_thread_and_message", ["thread_id", "message_id"])
     .index("by_fetched", ["fetched_at"]),
 
@@ -1170,6 +1176,23 @@ export default defineSchema({
     generatedAt: v.number(),
     rentals: v.any(),                     // { active, ongoing, upcoming, confirmed } arrays
   }).index("by_account", ["account"]),
+
+  // Twice-daily official Hygglo profile response-rate snapshot. One global row
+  // keeps the top dashboard card a small, cheap subscription.
+  mv_channel_response_rates: defineTable({
+    key: v.string(), // singleton key: "all"
+    generatedAt: v.number(),
+    // Legacy snapshots carried a local 30-day cohort and counts. Keep those
+    // fields optional until the first official-profile refresh replaces them.
+    windowDays: v.optional(v.number()),
+    channels: v.array(v.object({
+      slug: v.string(),
+      inquiries: v.optional(v.number()),
+      responses: v.optional(v.number()),
+      rate: v.union(v.number(), v.null()),
+      source: v.optional(v.union(v.literal("hygglo_profile"), v.literal("not_available"))),
+    })),
+  }).index("by_key", ["key"]),
 
   // 2026-07-07 — wrap-and-cache getInsights (AI Investment Insights). The live
   // query scanned up to a full year of fat reservation docs on every reactive
@@ -2205,6 +2228,7 @@ export default defineSchema({
     mode: v.optional(v.union(
       v.literal("all"),
       v.literal("money_only"),
+      v.literal("my_share"),                 // money, shown as Daniel's 50% cut
     )),                                      // per-device; missing = all
     user_agent: v.optional(v.string()),
     created_at: v.number(),
@@ -2228,6 +2252,18 @@ export default defineSchema({
     body: v.string(),
     url: v.string(),                         // e.g. "/?thread=<id>&account=<slug>"
     created_at: v.number(),
+    // Raw ingredients for the confirmed-booking copy (2026-08-16). `title`/`body`
+    // above stay the full-amount rendering (back-compat + the fallback for rows
+    // written before this field existed); these let the dispatcher and the bell
+    // re-render the SAME event per device mode — notably `my_share`, which shows
+    // half the owner earnings. Only populated for booking_confirmed.
+    copy_data: v.optional(v.object({
+      renter_name: v.optional(v.string()),
+      item_name: v.optional(v.string()),
+      gross: v.optional(v.number()),
+      net: v.optional(v.number()),
+      currency: v.optional(v.string()),
+    })),
     delivered_at: v.optional(v.number()),    // set once web-push/Telegram fired
     read_at: v.optional(v.number()),         // set when operator opens the bell
     // Dispatch outcome (2026-07-03): how many web-push endpoints actually

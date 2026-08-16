@@ -49,6 +49,7 @@ import { CapacityGapAlert } from "./insights/CapacityGapAlert";
 import { ItemUtilizationRanking } from "./insights/ItemUtilizationRanking";
 import { BelowMinimumCounter } from "./insights/BelowMinimumCounter";
 import { WeeklyRevenueSparkline } from "./insights/WeeklyRevenueSparkline";
+import { ChannelResponseRateCard } from "./ChannelResponseRateCard";
 import WallE from "./WallE/WallE";
 
 // Live poller freshness (2026-07-12). getStatsDrawerData no longer overlays
@@ -224,6 +225,7 @@ export function StatsGrid() {
       setExpandedId((prev) => (prev === id ? null : id));
 
     return {
+      channel_response_rates: <ChannelResponseRateCard />,
       active: (
         <ExpandableStatCard
           id="active"

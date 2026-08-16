@@ -865,12 +865,25 @@ async function buildNotifyEvent(
     acct ? `&account=${encodeURIComponent(acct)}` : ""
   }`;
   if (type === "booking_confirmed") {
-    const copy = buildConfirmedBookingNotificationCopy({
-      renterName: renter,
-      itemName: await resolveNotifyShortItem(ctx, args),
+    const itemName = await resolveNotifyShortItem(ctx, args);
+    const currency = args.currency ?? "GBP";
+    // Stored title/body are the full-amount rendering. `copy_data` carries the
+    // raw ingredients so the dispatcher/bell can re-render this same event at
+    // 50% for devices on the "my_share" mode without touching stored revenue.
+    const copyData = {
+      renter_name: renter,
+      item_name: itemName,
       gross: args.gross_paid_gbp,
       net: args.net_to_owner_gbp,
-      currency: args.currency ?? "GBP",
+      currency,
+    };
+    const copy = buildConfirmedBookingNotificationCopy({
+      renterName: renter,
+      itemName,
+      accountSlug: acct,
+      gross: args.gross_paid_gbp,
+      net: args.net_to_owner_gbp,
+      currency,
     });
     return {
       type,
@@ -879,6 +892,7 @@ async function buildNotifyEvent(
       title: copy.title,
       body: copy.body,
       url,
+      copy_data: copyData,
     };
   }
 

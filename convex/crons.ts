@@ -30,6 +30,9 @@ const crons = cronJobs();
 const syncDbcinemaWebRef = makeFunctionReference<"action">(
   "sync_dbcinema_web:syncDbcinemaWeb",
 );
+const channelResponseRatesRefreshRef = makeFunctionReference<"action">(
+  "channel_response_rates:refresh",
+);
 
 // Phase 18.2 — MV cron consolidation.
 // Was: 6 separate cron entries each running a per-MV `refresh` mutation
@@ -303,6 +306,23 @@ crons.interval(
   { hours: 6 },
   internal.mv.stats_drawer.refresh,
   { scope: "accounts" },
+);
+
+// Channel response-rate speedometer: fixed twice-daily snapshots. This is
+// deliberately independent from the hourly stats megaquery, so it never turns
+// a cheap card subscription into a live conversation/message scan. UTC is
+// shown in the card footer, avoiding a misleading fixed London time at DST.
+crons.daily(
+  "refresh_channel_response_rates_morning",
+  { hourUTC: 8, minuteUTC: 0 },
+  channelResponseRatesRefreshRef,
+  {},
+);
+crons.daily(
+  "refresh_channel_response_rates_evening",
+  { hourUTC: 20, minuteUTC: 0 },
+  channelResponseRatesRefreshRef,
+  {},
 );
 
 // 2026-07-07 — reply-inbox queue MV refresh. Skip-when-clean: rebuilds only when

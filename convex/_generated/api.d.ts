@@ -38,6 +38,7 @@ import type * as calendar from "../calendar.js";
 import type * as calendar_apple from "../calendar_apple.js";
 import type * as calendar_apple_db from "../calendar_apple_db.js";
 import type * as canned_responses from "../canned_responses.js";
+import type * as channel_response_rates from "../channel_response_rates.js";
 import type * as competitor_intel from "../competitor_intel.js";
 import type * as conflict_dismissals from "../conflict_dismissals.js";
 import type * as crons from "../crons.js";
@@ -243,6 +244,7 @@ declare const fullApi: ApiFromModules<{
   calendar_apple: typeof calendar_apple;
   calendar_apple_db: typeof calendar_apple_db;
   canned_responses: typeof canned_responses;
+  channel_response_rates: typeof channel_response_rates;
   competitor_intel: typeof competitor_intel;
   conflict_dismissals: typeof conflict_dismissals;
   crons: typeof crons;

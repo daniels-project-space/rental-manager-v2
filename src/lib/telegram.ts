@@ -67,16 +67,34 @@ async function getCredentials(): Promise<{ token: string; chatId: string }> {
 
 export interface TelegramSendResult {
   ok: boolean;
+  skipped?: boolean;
   message_id?: string;
   chat_id?: string;
   error?: string;
 }
 
 /**
+ * System-generated Telegram must be explicitly enabled, never default-on.
+ * Mirrors `convex/lib/telegram_convex.ts` so both runtimes share one switch.
+ */
+export function automatedTelegramAlertsEnabled(
+  configuredValue = process.env.AUTOMATED_TELEGRAM_ALERTS,
+): boolean {
+  return configuredValue === "1";
+}
+
+/**
  * Send a plain-text Telegram message to Daniel's operator chat. Uses HTML
  * parse mode for light formatting (bold renter name, italic intent label).
+ *
+ * Fail-closed: returns `{ ok: false, skipped: true }` unless
+ * AUTOMATED_TELEGRAM_ALERTS=1. Callers should treat `skipped` as a no-op,
+ * not a delivery failure.
  */
 export async function sendOperatorMessage(text: string): Promise<TelegramSendResult> {
+  if (!automatedTelegramAlertsEnabled()) {
+    return { ok: false, skipped: true, error: "automated_alerts_disabled" };
+  }
   try {
     const { token, chatId } = await getCredentials();
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

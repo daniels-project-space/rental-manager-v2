@@ -19,6 +19,8 @@ import { internal } from "./_generated/api";
 import {
   subscriptionReceivesNotification,
   telegramNotificationMode,
+  buildConfirmedBookingNotificationCopy,
+  type PushNotificationMode,
 } from "./lib/notification_events";
 import { automatedTelegramAlertsEnabled } from "./lib/telegram_convex";
 
@@ -37,6 +39,42 @@ const NOTIF_ICON: Record<string, string> = {
 };
 function accountIcon(slug?: string | null): string {
   return (slug && NOTIF_ICON[slug]) || "/icons/notif-aputure.png";
+}
+
+/**
+ * Copy for one event as a given mode should see it.
+ *
+ * The stored `title`/`body` are the full-amount rendering. When the event
+ * carries `copy_data` we re-render from the raw amounts instead, so a device on
+ * `my_share` gets half the owner earnings. Events without `copy_data` (rows
+ * written before 2026-08-16, plus new_request/renter_message) fall back to the
+ * stored strings unchanged.
+ */
+function renderEventCopy(
+  e: {
+    title: string;
+    body: string;
+    account_slug?: string;
+    copy_data?: {
+      renter_name?: string;
+      item_name?: string;
+      gross?: number;
+      net?: number;
+      currency?: string;
+    };
+  },
+  mode: PushNotificationMode | undefined,
+): { title: string; body: string } {
+  if (!e.copy_data) return { title: e.title, body: e.body };
+  return buildConfirmedBookingNotificationCopy({
+    renterName: e.copy_data.renter_name,
+    itemName: e.copy_data.item_name,
+    accountSlug: e.account_slug,
+    gross: e.copy_data.gross,
+    net: e.copy_data.net,
+    currency: e.copy_data.currency,
+    mode,
+  });
 }
 
 function configureVapid(): boolean {
@@ -116,20 +154,22 @@ export const dispatchPending = internalAction({
         const pushSuppressed = subs.length - eligibleSubs.length;
         // 1) Web push to subscriptions whose per-device mode accepts this event.
         if (vapidOk) {
-          const payload = JSON.stringify({
-            title: e.title,
-            body: e.body,
-            url: e.url, // relative — SW resolves against the PWA origin
-            tag: `${e.type}:${e.thread_id}`,
-            icon: accountIcon(e.account_slug), // per-account Aputure (recoloured)
-            badge: "/icons/notif-badge.png",
-          });
           await Promise.all(
             eligibleSubs.map(async (s) => {
               try {
+                // Payload is per-subscription: a device on "my_share" sees half
+                // the owner earnings, everyone else sees the full amount.
+                const copy = renderEventCopy(e, s.mode);
                 await webpush.sendNotification(
                   { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-                  payload,
+                  JSON.stringify({
+                    title: copy.title,
+                    body: copy.body,
+                    url: e.url, // relative — SW resolves against the PWA origin
+                    tag: `${e.type}:${e.thread_id}`,
+                    icon: accountIcon(e.account_slug), // per-account Aputure (recoloured)
+                    badge: "/icons/notif-badge.png",
+                  }),
                 );
                 pushed++;
                 eventPushed++;
@@ -158,7 +198,14 @@ export const dispatchPending = internalAction({
         );
         const telegramSuppressed = telegramEnabled && !telegramEligible;
         if (telegramEligible) {
-          telegramOk = await sendTelegramWithButton(`${e.title}\n${e.body}`, absUrl);
+          const tgCopy = renderEventCopy(
+            e,
+            telegramNotificationMode(process.env.NOTIF_TELEGRAM_MODE),
+          );
+          telegramOk = await sendTelegramWithButton(
+            `${tgCopy.title}\n${tgCopy.body}`,
+            absUrl,
+          );
         }
         const eligibleChannels = eligibleSubs.length + (telegramEligible ? 1 : 0);
         const suppressedChannels = pushSuppressed + (telegramSuppressed ? 1 : 0);

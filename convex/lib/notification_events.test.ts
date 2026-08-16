@@ -46,35 +46,85 @@ describe("confirmed booking notification transitions", () => {
       .toBe("£37.50 paid · £24 earnings");
   });
 
-  it("uses only first name, short item, and exact owner earnings for wohoo copy", () => {
+  it("uses only first name, short item, one-word account, and exact owner earnings", () => {
     expect(buildConfirmedBookingNotificationCopy({
       renterName: "Samantha Jones",
       itemName: "Sony FX3",
+      accountSlug: "diogo",
       gross: 37.5,
       net: 24,
       currency: "GBP",
     })).toEqual({
-      title: "🎉 Wohooo! £24 made",
-      body: "Samantha · Sony FX3",
+      title: "🎉 Wohoo, you made £24!",
+      body: "Sony FX3 on Diogo · Samantha",
     });
   });
 
-  it("falls back to gross when owner earnings are unavailable", () => {
+  it("renders the DB Cinema account as the one-word 'Daniel'", () => {
+    expect(buildConfirmedBookingNotificationCopy({
+      renterName: "Ana",
+      itemName: "Aputure 600D",
+      accountSlug: "dbcinema",
+      net: 40,
+    }).body).toBe("Aputure 600D on Daniel · Ana");
+    expect(buildConfirmedBookingNotificationCopy({
+      renterName: "Ana",
+      itemName: "Aputure 600D",
+      accountSlug: "leo",
+      net: 40,
+    }).body).toBe("Aputure 600D on Leo · Ana");
+  });
+
+  it("omits the account clause entirely when the slug is missing", () => {
+    expect(buildConfirmedBookingNotificationCopy({
+      renterName: "Ana Silva",
+      itemName: "Sony FX3",
+      net: 40,
+    }).body).toBe("Sony FX3 · Ana");
+  });
+
+  it("halves the owner earnings for my_share and leaves other modes untouched", () => {
+    const base = {
+      renterName: "Samantha Jones",
+      itemName: "Sony FX3",
+      accountSlug: "diogo",
+      net: 24,
+      currency: "GBP",
+    };
+    expect(buildConfirmedBookingNotificationCopy({ ...base, mode: "my_share" }).title)
+      .toBe("🎉 Wohoo, you made £12!");
+    expect(buildConfirmedBookingNotificationCopy({ ...base, mode: "money_only" }).title)
+      .toBe("🎉 Wohoo, you made £24!");
+    expect(buildConfirmedBookingNotificationCopy({ ...base, mode: "all" }).title)
+      .toBe("🎉 Wohoo, you made £24!");
+    // Odd amounts pick up pennies rather than rounding the half away.
+    expect(buildConfirmedBookingNotificationCopy({ ...base, net: 37.5, mode: "my_share" }).title)
+      .toBe("🎉 Wohoo, you made £18.75!");
+  });
+
+  it("halves the gross fallback too when owner earnings are unavailable", () => {
     expect(buildConfirmedBookingNotificationCopy({
       renterName: "Leo Adams",
       itemName: "Aputure 600D",
       gross: 35.75,
-    }).title).toBe("🎉 Wohooo! £35.75 made");
+    }).title).toBe("🎉 Wohoo, you made £35.75!");
+    expect(buildConfirmedBookingNotificationCopy({
+      renterName: "Leo Adams",
+      itemName: "Aputure 600D",
+      gross: 35.75,
+      mode: "my_share",
+    }).title).toBe("🎉 Wohoo, you made £17.88!");
   });
 
   it("strips bundle detail and clips a long listing at a word boundary", () => {
     expect(buildConfirmedBookingNotificationCopy({
       renterName: "Sam Green",
       itemName: "Sony FX3 Full Frame Cinema Camera (body only) | 4K filming bundle + batteries",
+      accountSlug: "leo",
       net: 88.4,
     })).toEqual({
-      title: "🎉 Wohooo! £88.40 made",
-      body: "Sam · Sony FX3 Full Frame Cinema Camera",
+      title: "🎉 Wohoo, you made £88.40!",
+      body: "Sony FX3 Full Frame Cinema Camera on Leo · Sam",
     });
   });
 });
@@ -91,10 +141,17 @@ describe("per-device notification modes", () => {
     expect(subscriptionReceivesNotification("money_only", "renter_message")).toBe(false);
   });
 
-  it("defaults Daniel's Telegram fallback to money-only with an explicit all override", () => {
+  it("suppresses non-money events for my_share exactly like money_only", () => {
+    expect(subscriptionReceivesNotification("my_share", "booking_confirmed")).toBe(true);
+    expect(subscriptionReceivesNotification("my_share", "new_request")).toBe(false);
+    expect(subscriptionReceivesNotification("my_share", "renter_message")).toBe(false);
+  });
+
+  it("defaults Daniel's Telegram fallback to money-only with explicit overrides", () => {
     expect(telegramNotificationMode(undefined)).toBe("money_only");
     expect(telegramNotificationMode("money_only")).toBe("money_only");
     expect(telegramNotificationMode("all")).toBe("all");
+    expect(telegramNotificationMode("my_share")).toBe("my_share");
   });
 });
 

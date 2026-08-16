@@ -39,12 +39,20 @@ import {
   notificationAttemptDue,
   notificationClaimAvailable,
   notificationRetryDelayMs,
+  buildConfirmedBookingNotificationCopy,
 } from "./lib/notification_events";
 
 export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message"] as const;
 export type NotifType = (typeof NOTIF_TYPES)[number];
-export const PUSH_NOTIFICATION_MODES = ["all", "money_only"] as const;
+export const PUSH_NOTIFICATION_MODES = ["all", "money_only", "my_share"] as const;
 export type PushNotificationMode = (typeof PUSH_NOTIFICATION_MODES)[number];
+
+/** Convex validator for the per-device mode — one source of truth for args. */
+const pushModeValidator = v.union(
+  v.literal("all"),
+  v.literal("money_only"),
+  v.literal("my_share"),
+);
 
 export interface NotifEventInput {
   type: NotifType;
@@ -53,6 +61,14 @@ export interface NotifEventInput {
   title: string;
   body: string;
   url: string;
+  /** Raw copy ingredients — lets the bell/dispatcher re-render per device mode. */
+  copy_data?: {
+    renter_name?: string;
+    item_name?: string;
+    gross?: number;
+    net?: number;
+    currency?: string;
+  };
 }
 
 /**
@@ -93,6 +109,7 @@ export async function queueNotificationEvents(
       title: e.title,
       body: e.body,
       url: e.url,
+      copy_data: e.copy_data,
       created_at: now,
     });
     inserted++;
@@ -121,7 +138,7 @@ export const savePushSubscription = mutation({
     endpoint: v.string(),
     p256dh: v.string(),
     auth: v.string(),
-    mode: v.optional(v.union(v.literal("all"), v.literal("money_only"))),
+    mode: v.optional(pushModeValidator),
     user_agent: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -188,7 +205,7 @@ export const savePushSubscription = mutation({
 export const setPushSubscriptionMode = mutation({
   args: {
     endpoint: v.string(),
-    mode: v.union(v.literal("all"), v.literal("money_only")),
+    mode: pushModeValidator,
   },
   handler: async (ctx, { endpoint, mode }) => {
     const existing = await ctx.db
@@ -218,13 +235,33 @@ export const removePushSubscription = mutation({
 // ── Bell: recent notifications + unread badge ─────────────────────────
 
 export const listRecent = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit = 20 }) => {
-    const events = await ctx.db
+  args: { limit: v.optional(v.number()), mode: v.optional(pushModeValidator) },
+  handler: async (ctx, { limit = 20, mode }) => {
+    const rows = await ctx.db
       .query("notification_events")
       .withIndex("by_created")
       .order("desc")
       .take(limit);
+    // Re-render money copy for the mode this device is on, so the bell list
+    // never disagrees with the push it just received (notably "my_share",
+    // which shows 50%). Rows without copy_data (pre-2026-08-16, and the
+    // non-booking types) keep their stored title/body verbatim.
+    const events = rows.map((e) =>
+      e.copy_data
+        ? {
+            ...e,
+            ...buildConfirmedBookingNotificationCopy({
+              renterName: e.copy_data.renter_name,
+              itemName: e.copy_data.item_name,
+              accountSlug: e.account_slug,
+              gross: e.copy_data.gross,
+              net: e.copy_data.net,
+              currency: e.copy_data.currency,
+              mode,
+            }),
+          }
+        : e,
+    );
     const unread = events.filter((e) => e.read_at === undefined).length;
     return { events, unread };
   },
