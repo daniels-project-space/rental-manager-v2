@@ -55,7 +55,12 @@ async function probe(lane: string, modelId: string): Promise<LaneResult> {
     const { text } = await generateText({
       model,
       prompt: "Reply with the single word: ok",
-      maxOutputTokens: 8,
+      // Must be generous enough for a REASONING model. Gemini 3.x thinks before
+      // it speaks and spends output budget on thinking tokens, so a tight cap
+      // (this was 8) returns an empty completion and the lane looks dead when
+      // it is fine — a false alarm that would send Daniel chasing credits for
+      // nothing. Keep it well above the thinking budget for a one-word answer.
+      maxOutputTokens: 512,
     });
     const reply = (text ?? "").trim();
     return {
