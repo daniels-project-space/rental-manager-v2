@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { isPaid } from "./order_step_semantics";
 import { isPendingVerification, netOf, type ReservationRow } from "./lib/reservations/predicates";
@@ -390,17 +390,23 @@ export const appendTurn = mutation({
 });
 
 /**
- * compactSession — Phase 5 trigger. Collapses all non-compacted turns
- * for a session into a single assistant "summary" turn, deletes the
- * originals, and stamps the summary's metadata with compactedAt.
- * Caller supplies the pre-generated summary string (built by the chat
- * route from the turns themselves; no LLM call inside Convex).
+ * compactSession — writes a single assistant "summary" turn for a session and
+ * stamps the summarised turns with `compactedAt`.
+ *
+ * NO LONGER DELETES THE ORIGINALS (2026-08-16). It used to, and the widget
+ * fired it on every unmount, so simply navigating away shredded the
+ * conversation and replaced it with "Previous session: N messages." Daniel
+ * asked for the chat to survive a day, so retention is now handled by age
+ * (see `pruneOldTurns`, 24h) rather than by destroying turns the moment a
+ * session ends. `delete_originals` is opt-in for a deliberate caller; nothing
+ * passes it today.
  */
 export const compactSession = mutation({
   args: {
     thread_id: v.optional(v.string()),
     session_id: v.string(),
     summary: v.string(),
+    delete_originals: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const thread_id = args.thread_id ?? "walle";
@@ -426,8 +432,92 @@ export const compactSession = mutation({
       metadata: JSON.stringify({ sessionId: args.session_id, compactedAt: now, summary: true }),
       created_at: now,
     });
-    await Promise.all(targets.map((t) => ctx.db.delete(t._id)));
-    return { compacted: targets.length };
+    if (args.delete_originals) {
+      await Promise.all(targets.map((t) => ctx.db.delete(t._id)));
+    } else {
+      // Mark as summarised but KEEP the text — this is what makes the
+      // conversation still be there when Daniel comes back.
+      await Promise.all(
+        targets.map((t) =>
+          ctx.db.patch(t._id, {
+            metadata: JSON.stringify({ sessionId: args.session_id, compactedAt: now }),
+          }),
+        ),
+      );
+    }
+    return { compacted: targets.length, deleted: args.delete_originals === true };
+  },
+});
+
+/** How long WallE keeps a conversation before it is swept. */
+export const WALLE_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Turns for the WallE widget to re-hydrate with on mount, newest-window-first.
+ *
+ * Returns the last `WALLE_RETENTION_MS` of real turns (oldest → newest, the
+ * order the chat renders in). Auto-generated "Previous session: N messages."
+ * summary rows are excluded — they are bookkeeping, not conversation, and
+ * showing them was half of why the chat looked wiped.
+ */
+export const getRecentTurns = query({
+  args: {
+    thread_id: v.optional(v.string()),
+    within_ms: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const thread_id = args.thread_id ?? "walle";
+    const cutoff = Date.now() - (args.within_ms ?? WALLE_RETENTION_MS);
+    const limit = args.limit ?? 200;
+    // Bounded by the index, so this never scans the whole thread.
+    const rows = await ctx.db
+      .query("dashboard_chat_messages")
+      .withIndex("by_thread_and_time", (q) =>
+        q.eq("thread_id", thread_id).gt("created_at", cutoff),
+      )
+      .order("desc")
+      .take(limit);
+    const isSummary = (metadata?: string) => {
+      if (!metadata) return false;
+      try {
+        return (JSON.parse(metadata) as { summary?: boolean }).summary === true;
+      } catch {
+        return false;
+      }
+    };
+    return rows
+      .filter((r) => !isSummary(r.metadata))
+      .map((r) => ({
+        id: r._id,
+        role: r.role,
+        content: r.content,
+        created_at: r.created_at,
+      }))
+      .reverse();
+  },
+});
+
+/**
+ * Age-based retention sweep (daily cron). Deletes WallE turns older than
+ * `WALLE_RETENTION_MS`, which is what keeps "preserve for a day" from becoming
+ * "grow forever" — this table is written on every single chat turn.
+ */
+export const pruneOldTurns = internalMutation({
+  args: { thread_id: v.optional(v.string()), older_than_ms: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const thread_id = args.thread_id ?? "walle";
+    const cutoff = Date.now() - (args.older_than_ms ?? WALLE_RETENTION_MS);
+    // Index-bounded to the expired range; batched so one sweep can't blow the
+    // per-mutation limits if the widget ever gets chatty.
+    const stale = await ctx.db
+      .query("dashboard_chat_messages")
+      .withIndex("by_thread_and_time", (q) =>
+        q.eq("thread_id", thread_id).lt("created_at", cutoff),
+      )
+      .take(500);
+    await Promise.all(stale.map((r) => ctx.db.delete(r._id)));
+    return { deleted: stale.length };
   },
 });
 

@@ -325,6 +325,18 @@ crons.daily(
   {},
 );
 
+// WallE chat retention. The widget used to shred the conversation on every
+// unmount; it now keeps a rolling 24h so the dashboard can be closed and
+// reopened without losing the thread. This sweep is what bounds that —
+// dashboard_chat_messages takes two rows per chat turn, so with the destructive
+// compaction gone the table would otherwise only ever grow.
+crons.daily(
+  "prune_walle_chat_turns",
+  { hourUTC: 4, minuteUTC: 20 },
+  internal.dashboard_chat.pruneOldTurns,
+  {},
+);
+
 // 2026-07-07 — reply-inbox queue MV refresh. Skip-when-clean: rebuilds only when
 // a conversation/message/reservation changed since the last build, so quiet and
 // overnight ticks (poller idle 23:00–07:00) are ~free. User actions

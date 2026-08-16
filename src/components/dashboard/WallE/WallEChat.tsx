@@ -30,7 +30,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { ConvexHttpClient } from 'convex/browser';
+import { useQuery } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import type { WallEChatState } from './walle.types';
 import { JOKE_IDLE_AFTER_MS } from './walle.jokes';
@@ -87,6 +87,50 @@ function messageText(
     .join('');
 }
 
+/** WallE keeps a conversation for a day; both ends of that must agree. */
+const WALLE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const WALLE_SESSION_KEY = 'walle_session';
+
+function newSessionId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `walle-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Reuse the stored session id while it is under 24h old, otherwise start a new
+ * one. Keyed with its own timestamp rather than relying on the server, so the
+ * client rolls over at the same boundary the retention sweep uses.
+ */
+function loadOrCreateSessionId(): string {
+  if (typeof window === 'undefined') return newSessionId();
+  try {
+    const raw = window.localStorage.getItem(WALLE_SESSION_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { id?: string; startedAt?: number };
+      if (
+        parsed.id &&
+        typeof parsed.startedAt === 'number' &&
+        Date.now() - parsed.startedAt < WALLE_RETENTION_MS
+      ) {
+        return parsed.id;
+      }
+    }
+  } catch {
+    // corrupt entry — fall through and mint a fresh one
+  }
+  const id = newSessionId();
+  try {
+    window.localStorage.setItem(
+      WALLE_SESSION_KEY,
+      JSON.stringify({ id, startedAt: Date.now() }),
+    );
+  } catch {
+    // private mode / quota — a per-mount id still works, just won't persist
+  }
+  return id;
+}
+
 /** Tiny WallE-face avatar — appears next to older assistant messages. */
 function WallEMini() {
   return (
@@ -119,15 +163,13 @@ export default function WallEChat({
   className,
   bubbleTone = 'neutral',
 }: WallEChatProps) {
-  // Stable per-mount session id.
-  const sessionIdRef = useRef<string>('');
-  if (!sessionIdRef.current) {
-    sessionIdRef.current =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `walle-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }
-  const sessionId = sessionIdRef.current;
+  // Session id that SURVIVES a remount for 24h. It used to be minted fresh on
+  // every mount, which (together with the destructive unmount compaction) is
+  // why the conversation vanished the moment the dashboard was closed.
+  // Lazy useState, not a ref: the initializer runs exactly once and, unlike the
+  // previous `if (!ref.current)` pattern, does not read a ref during render
+  // (react-hooks/refs).
+  const [sessionId] = useState(loadOrCreateSessionId);
 
   const [input, setInput] = useState('');
   const [focused, setFocused] = useState(false);
@@ -143,7 +185,7 @@ export default function WallEChat({
     [sessionId],
   );
 
-  const { messages, sendMessage, status } = useChat({ transport });
+  const { messages, sendMessage, status, setMessages } = useChat({ transport });
   const isThinking = status === 'submitted' || status === 'streaming';
 
   // Idle-joke trigger
@@ -249,42 +291,39 @@ export default function WallEChat({
     void sendMessage({ text });
   };
 
-  // Compaction on unmount
   const messagesRef = useRef<typeof messages>(messages);
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // Re-hydrate the last 24h of conversation on mount.
+  //
+  // This replaces the old unmount handler, which POSTed the transcript to
+  // /api/walle/compact and had Convex DELETE every turn, leaving a single
+  // "Previous session: N messages." row. Closing the dashboard therefore
+  // destroyed the chat. Turns are already persisted server-side by appendTurn
+  // on each reply, so nothing needs to be written on the way out — we just read
+  // them back on the way in. Retention is now age-based (pruneOldTurns, 24h).
+  const history = useQuery(api.dashboard_chat.getRecentTurns, {
+    thread_id: 'walle',
+    within_ms: WALLE_RETENTION_MS,
+  });
+  const hydratedRef = useRef(false);
   useEffect(() => {
-    return () => {
-      const list = messagesRef.current;
-      if (!list || list.length === 0) return;
-      const transcript = list.map((m) => ({
-        role: m.role,
-        content: messageText(m.parts),
-      }));
-      const payload = JSON.stringify({ sessionId, messages: transcript });
-      fetch('/api/walle/compact', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: payload,
-        keepalive: true,
-      }).catch(() => {
-        const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-        if (!convexUrl) return;
-        try {
-          const client = new ConvexHttpClient(convexUrl);
-          void client.mutation(api.dashboard_chat.compactSession, {
-            thread_id: 'walle',
-            session_id: sessionId,
-            summary: `Previous session: ${list.length} messages.`,
-          });
-        } catch {
-          // best-effort
-        }
-      });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (hydratedRef.current) return;
+    if (!history) return; // still loading
+    hydratedRef.current = true;
+    if (history.length === 0) return;
+    // Don't clobber a turn the user managed to send before hydration landed.
+    if (messagesRef.current.length > 0) return;
+    setMessages(
+      history.map((m) => ({
+        id: String(m.id),
+        role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+        parts: [{ type: 'text' as const, text: m.content }],
+      })),
+    );
+  }, [history, setMessages]);
 
   // ── Build the unified visible list ─────────────────────────────────
   type Visible = {
