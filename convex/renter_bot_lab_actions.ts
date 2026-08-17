@@ -125,6 +125,8 @@ export const startLiveSession = action({
     items: v.optional(v.array(v.string())),
     priceGbp: v.optional(v.number()),
     dates: v.optional(v.string()),
+    startDate: v.optional(v.string()),
+    endDate: v.optional(v.string()),
     location: v.optional(v.string()),
   },
   handler: async (
@@ -136,6 +138,8 @@ export const startLiveSession = action({
       items: string[];
       priceGbp?: number;
       dates?: string;
+      startDate?: string;
+      endDate?: string;
       location?: string;
     };
   }> => {
@@ -143,6 +147,8 @@ export const startLiveSession = action({
     let itemNames = args.items ?? [];
     let priceGbp = args.priceGbp;
     let dates = args.dates;
+    let startDate = args.startDate;
+    let endDate = args.endDate;
     let location = args.location;
     let messages: { role: string; text: string }[] = [];
 
@@ -155,6 +161,8 @@ export const startLiveSession = action({
         itemNames = fixture.seed_context?.items ?? [];
         priceGbp = fixture.seed_context?.price_gbp;
         dates = fixture.seed_context?.dates;
+        startDate = fixture.seed_context?.start_date;
+        endDate = fixture.seed_context?.end_date;
         location = fixture.seed_context?.location;
         messages = fixture.messages.map((m) => ({ role: m.role, text: m.text }));
       }
@@ -168,7 +176,7 @@ export const startLiveSession = action({
     });
     return {
       threadId,
-      context: { items: itemNames, priceGbp, dates, location },
+      context: { items: itemNames, priceGbp, dates, startDate, endDate, location },
     };
   },
 });

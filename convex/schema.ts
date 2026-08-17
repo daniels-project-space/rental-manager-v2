@@ -2481,7 +2481,9 @@ export default defineSchema({
       location: v.optional(v.string()),
       items: v.optional(v.array(v.string())),
       price_gbp: v.optional(v.number()),
-      dates: v.optional(v.string()), // free-text rental period, e.g. "Aug 20-22"
+      dates: v.optional(v.string()), // display string, e.g. "Aug 20-22"
+      start_date: v.optional(v.string()), // ISO YYYY-MM-DD, for real date-picker init
+      end_date: v.optional(v.string()),   // ISO YYYY-MM-DD
     })),
     // "owner" matches Hygglo/orderToMessages semantics (what our account said) —
     // for imported fixtures this is the real historical reply, not necessarily

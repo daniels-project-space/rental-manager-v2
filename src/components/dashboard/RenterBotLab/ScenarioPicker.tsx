@@ -18,7 +18,8 @@ function scenarioLabel(scenario_type: string): string {
 export interface CustomScenarioInput {
   items: string[];
   priceGbp?: number;
-  dates?: string;
+  startDate?: string;
+  endDate?: string;
   location?: string;
 }
 
@@ -84,9 +85,12 @@ export function ScenarioPicker({
 }) {
   const [accountSlug, setAccountSlug] = useState(ACCOUNTS[0].slug);
   const [fixtureId, setFixtureId] = useState<string>("");
+  const inThreeDays = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+  const inFiveDays = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
   const [customItems, setCustomItems] = useState("");
   const [customPrice, setCustomPrice] = useState("");
-  const [customDates, setCustomDates] = useState("");
+  const [customStartDate, setCustomStartDate] = useState(inThreeDays);
+  const [customEndDate, setCustomEndDate] = useState(inFiveDays);
   const [customLocation, setCustomLocation] = useState("");
 
   const list = fixtures ?? [];
@@ -119,7 +123,8 @@ export function ScenarioPicker({
         .map((s) => s.trim())
         .filter(Boolean),
       priceGbp: customPrice ? Number(customPrice) : undefined,
-      dates: customDates || undefined,
+      startDate: customStartDate || undefined,
+      endDate: customEndDate || undefined,
       location: customLocation || undefined,
     });
   }
@@ -194,13 +199,29 @@ export function ScenarioPicker({
             inputMode="decimal"
             className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
           />
-          <input
-            value={customDates}
-            onChange={(e) => setCustomDates(e.target.value)}
-            disabled={disabled}
-            placeholder="Time period, e.g. Aug 20-22 (optional)"
-            className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
-          />
+          <div className="flex gap-2">
+            <label className="flex-1 text-[11px] text-[#8b8fa3]">
+              Pickup
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                disabled={disabled}
+                className="mt-0.5 w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
+              />
+            </label>
+            <label className="flex-1 text-[11px] text-[#8b8fa3]">
+              Return
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                disabled={disabled}
+                min={customStartDate}
+                className="mt-0.5 w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
+              />
+            </label>
+          </div>
           <input
             value={customLocation}
             onChange={(e) => setCustomLocation(e.target.value)}

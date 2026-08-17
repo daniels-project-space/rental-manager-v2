@@ -317,12 +317,24 @@ const V1_TEMPLATES: Template[] = [
   },
 ];
 
-function formatDateRange(startOffsetDays: number, spanDays: number, now: number): string {
+function isoDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function computeDateRange(
+  startOffsetDays: number,
+  spanDays: number,
+  now: number,
+): { display: string; startIso: string; endIso: string } {
   const fmt = (ms: number) =>
     new Date(ms).toLocaleDateString("en-GB", { month: "short", day: "numeric" });
   const start = now + startOffsetDays * 86_400_000;
   const end = start + Math.max(0, spanDays - 1) * 86_400_000;
-  return spanDays <= 1 ? fmt(start) : `${fmt(start)}-${fmt(end)}`;
+  return {
+    display: spanDays <= 1 ? fmt(start) : `${fmt(start)}-${fmt(end)}`,
+    startIso: isoDate(start),
+    endIso: isoDate(end),
+  };
 }
 
 export const seedV1Scenarios = internalMutation({
@@ -336,7 +348,7 @@ export const seedV1Scenarios = internalMutation({
       const tpl = V1_TEMPLATES[i];
       const accountSlug = ACCOUNTS[i % ACCOUNTS.length];
       const name = `v1_${tpl.scenario_type}_${accountSlug}`;
-      const dates = formatDateRange(tpl.startOffsetDays, tpl.spanDays, now);
+      const range = computeDateRange(tpl.startOffsetDays, tpl.spanDays, now);
 
       // Real price from the actual pricing catalog — not invented. Left
       // undefined (not faked) if this item has no pricing_catalog row.
@@ -353,7 +365,9 @@ export const seedV1Scenarios = internalMutation({
         seed_context: {
           items: [tpl.item],
           price_gbp: pricing?.daily_price_min,
-          dates,
+          dates: range.display,
+          start_date: range.startIso,
+          end_date: range.endIso,
         },
         messages: tpl.renterLines.map((text, idx) => ({
           role: "renter" as const,

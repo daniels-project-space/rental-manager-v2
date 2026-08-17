@@ -33,7 +33,8 @@ export function RenterBotLabWorkspace() {
       fixtureId: fixtureId as never, // Convex Id<> branding; picker only ever passes a real fixture _id
       items: custom?.items,
       priceGbp: custom?.priceGbp,
-      dates: custom?.dates,
+      startDate: custom?.startDate,
+      endDate: custom?.endDate,
       location: custom?.location,
     });
     setSession({

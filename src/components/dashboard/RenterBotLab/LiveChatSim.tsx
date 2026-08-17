@@ -8,6 +8,8 @@ export interface SessionContext {
   items: string[];
   priceGbp?: number;
   dates?: string;
+  startDate?: string;
+  endDate?: string;
   location?: string;
 }
 
@@ -18,63 +20,156 @@ interface ChatTurn {
   runId?: string;
 }
 
-// Real image + real price for the primary item, joined from the actual
-// catalog (renter_bot_lab_actions.getItemContext) — not fabricated.
-function ItemCard({ itemName }: { itemName: string }) {
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+function overlapsBooking(
+  selStart: string,
+  selEnd: string,
+  booking: { pickup: string; return: string },
+): boolean {
+  const bStart = booking.pickup.slice(0, 10);
+  const bEnd = booking.return.slice(0, 10);
+  return bStart <= selEnd && bEnd >= selStart;
+}
+
+// Simulated listing card: real image, real price/specs, and a real editable
+// date-range picker checked against the SAME live booking data the bot's own
+// check_availability tool reads — not a mock (Daniel, 2026-08-17).
+function RentalListingCard({
+  itemName,
+  initialStartDate,
+  initialEndDate,
+}: {
+  itemName: string;
+  initialStartDate?: string;
+  initialEndDate?: string;
+}) {
+  const [startDate, setStartDate] = useState(initialStartDate || todayIso());
+  const [endDate, setEndDate] = useState(
+    initialEndDate || initialStartDate || todayIso(),
+  );
+
   const itemCtx = useQuery(api.renter_bot_lab_actions.getItemContext, {
     itemName,
   });
+  // Wide horizon so upcoming_bookings covers whatever range gets picked.
   const avail = useQuery(api.calendar.getItemAvailabilityForChat, {
     query: itemName,
-    horizonDays: 21,
+    horizonDays: 60,
     accountSlug: null,
   });
   const match = avail?.items?.[0];
 
+  const conflicts = (match?.upcoming_bookings ?? []).filter((b) =>
+    overlapsBooking(startDate, endDate, b),
+  );
+  const rangeValid = startDate && endDate && endDate >= startDate;
+  const rangeFree = rangeValid && match?.owned && conflicts.length === 0;
+
   return (
-    <div className="flex gap-3 border-b border-white/10 bg-black/20 p-3">
-      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-white/[0.06]">
-        {itemCtx?.image_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={itemCtx.image_url}
-            alt={itemCtx.name}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-[10px] text-[#8b8fa3]">
-            {itemCtx === undefined ? "…" : "no image"}
-          </div>
-        )}
-      </div>
-      <div className="flex-1 space-y-0.5 text-xs">
-        <p className="text-sm font-medium text-[#e4e6eb]">
-          {itemCtx?.name ?? itemName}
-          {itemCtx && !itemCtx.found && (
-            <span className="ml-1.5 text-amber-400">(not found in real catalog)</span>
+    <div className="border-b border-white/10 bg-black/20">
+      <div className="flex gap-4 p-4">
+        <div className="h-32 w-32 shrink-0 overflow-hidden rounded-md bg-white/[0.06]">
+          {itemCtx?.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={itemCtx.image_url}
+              alt={itemCtx.name}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[11px] text-[#8b8fa3]">
+              {itemCtx === undefined ? "…" : "no image"}
+            </div>
           )}
-        </p>
-        <p className="text-[#8b8fa3]">
-          {itemCtx?.daily_price_min != null
-            ? `£${itemCtx.daily_price_min}${
-                itemCtx.daily_price_max && itemCtx.daily_price_max !== itemCtx.daily_price_min
-                  ? `–£${itemCtx.daily_price_max}`
-                  : ""
-              }/day (real pricing_catalog rate)`
-            : "no real price on file"}
-        </p>
-        <p className="text-[#8b8fa3]">
-          {avail === undefined
-            ? "checking live availability…"
-            : match
-              ? match.owned
-                ? match.free_today
-                  ? `Live: free today (${match.free_units_today}/${match.qty} units)`
-                  : `Live: booked — next free ${match.next_free_date ?? "unknown"}`
-                : "Live: marketing-only listing, no owned stock"
-              : "Live: no calendar match for this name"}
-        </p>
+        </div>
+
+        <div className="flex-1 space-y-1.5">
+          <p className="text-base font-semibold text-[#e4e6eb]">
+            {itemCtx?.name ?? itemName}
+            {itemCtx && !itemCtx.found && (
+              <span className="ml-1.5 text-xs font-normal text-amber-400">
+                (not found in real catalog)
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-[#8b8fa3]">
+            {itemCtx?.kind ? `${itemCtx.kind} · ` : ""}
+            {itemCtx?.daily_price_min != null
+              ? `£${itemCtx.daily_price_min}${
+                  itemCtx.daily_price_max &&
+                  itemCtx.daily_price_max !== itemCtx.daily_price_min
+                    ? `–£${itemCtx.daily_price_max}`
+                    : ""
+                }/day`
+              : "no real price on file"}
+            {" · real pricing_catalog + items rate"}
+          </p>
+
+          <div className="flex items-end gap-2 pt-1">
+            <label className="text-[11px] text-[#8b8fa3]">
+              Pickup
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="mt-0.5 block rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs text-[#e4e6eb]"
+              />
+            </label>
+            <label className="text-[11px] text-[#8b8fa3]">
+              Return
+              <input
+                type="date"
+                value={endDate}
+                min={startDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="mt-0.5 block rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs text-[#e4e6eb]"
+              />
+            </label>
+            <span
+              className={`mb-0.5 rounded-full px-2 py-1 text-[11px] font-medium ${
+                avail === undefined
+                  ? "bg-white/10 text-[#8b8fa3]"
+                  : rangeFree
+                    ? "bg-emerald-500/15 text-emerald-400"
+                    : "bg-red-500/15 text-red-400"
+              }`}
+            >
+              {avail === undefined
+                ? "checking…"
+                : !match
+                  ? "no calendar match"
+                  : !match.owned
+                    ? "marketing-only, no stock"
+                    : rangeFree
+                      ? "Free for these dates"
+                      : "Conflicts with a real booking"}
+            </span>
+          </div>
+        </div>
       </div>
+
+      {conflicts.length > 0 && (
+        <div className="border-t border-white/10 px-4 py-2">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8b8fa3]">
+            Currently rented out (real bookings, this is why it&apos;s not free)
+          </p>
+          {conflicts.map((b, i) => (
+            // Renter name deliberately not shown — this page has no access
+            // gate (removed per Daniel, 2026-08-17), and a real customer's
+            // name isn't needed to test availability behavior.
+            <p key={i} className="text-xs text-[#e4e6eb]">
+              Existing booking: {b.pickup} → {b.return}
+              {b.account ? ` (${b.account})` : ""}
+            </p>
+          ))}
+        </div>
+      )}
+      {match?.owned && match.next_free_date && !rangeFree && conflicts.length === 0 && (
+        <div className="border-t border-white/10 px-4 py-2 text-xs text-[#8b8fa3]">
+          Next confirmed-free date on file: {match.next_free_date}
+        </div>
+      )}
     </div>
   );
 }
@@ -90,18 +185,24 @@ function ContextBanner({ context }: { context: SessionContext }) {
   );
   return (
     <div>
-      {context.items[0] && <ItemCard itemName={context.items[0]} />}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-3 sm:grid-cols-4">
+      {context.items[0] && (
+        <RentalListingCard
+          itemName={context.items[0]}
+          initialStartDate={context.startDate}
+          initialEndDate={context.endDate}
+        />
+      )}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-2 sm:grid-cols-4">
         {row(
-          "Items",
+          "All items",
           context.items.length ? context.items.join(", ") : "not set",
         )}
+        {row("Scenario dates", context.dates || "not set")}
+        {row("Location", context.location || "not set")}
         {row(
           "Seed price",
           context.priceGbp != null ? `£${context.priceGbp}/day` : "not set",
         )}
-        {row("Dates", context.dates || "not set")}
-        {row("Location", context.location || "not set")}
       </div>
     </div>
   );
