@@ -79,3 +79,36 @@ describe("guardDraft — LOCATION_ASK_FOR_DISCOUNT", () => {
     expect(flag).toBeUndefined();
   });
 });
+
+describe("guardDraft — PRICE_HALLUCINATION addon-band scoping", () => {
+  const priceOpts = {
+    history: [],
+    lastRenterMessage: "hi just want the fx3 for a single day, whats the cheapest that can be",
+    factPack: {
+      pricing: {
+        itemPrices: [{ name: "Sony FX3", min: 30, max: 30 }],
+      },
+    },
+  };
+
+  it("flags a wrong daily-rate quote even though it falls in the old blanket 5-15 addon band", () => {
+    // Real bug (2026-08-17): the 5-15 "small addon" tolerance band was
+    // unconditional, so it silently validated ANY stated price in that
+    // range regardless of whether it had anything to do with the real
+    // item price (here a real £30/day item quoted at a wildly wrong £10,
+    // nowhere near the legitimate +/-10% tolerance around 30).
+    const draft = "Hey! The daily rate for the Sony FX3 is £10.";
+    const result = guardDraft(draft, priceOpts);
+    const flag = result.flags.find((f) => f.type === "PRICE_HALLUCINATION");
+    expect(flag).toBeDefined();
+    expect(flag?.severity).toBe("critical");
+  });
+
+  it("does not false-positive on a genuine small-addon price in the same band", () => {
+    const draft =
+      "The Sony FX3 is £30/day. An extra battery is £8 if you'd like a spare.";
+    const result = guardDraft(draft, priceOpts);
+    const flag = result.flags.find((f) => f.type === "PRICE_HALLUCINATION");
+    expect(flag).toBeUndefined();
+  });
+});

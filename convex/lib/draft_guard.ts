@@ -766,7 +766,14 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
         for (let v = 10; v <= 100; v++) valid.add(v);
       if (/\b(deposit|security|hold)\b/.test(ctxText))
         for (let v = 50; v <= 500; v += 10) valid.add(v);
-      for (let v = 5; v <= 15; v++) valid.add(v); // small included-extra add-ons
+      // Same "only widen with real evidence" rule as delivery/deposit above.
+      // Found live via the Lab (2026-08-17): this band was unconditional, so
+      // it silently validated a wrong £15 daily-rate quote for a real £17/day
+      // item purely because 15 falls in 5-15 — the exact "catch-all hides a
+      // wrong daily-rate quote" bug the comment above already warns about,
+      // just reintroduced one line down.
+      if (/\b(extra|additional|spare|another|second|swap|replace(?:ment)?)\b.*\b(battery|batteries|card|mount|cable|adapter|filter)\b/.test(ctxText))
+        for (let v = 5; v <= 15; v++) valid.add(v);
       const wrong = stated.filter((p) => p >= 5 && !valid.has(Math.round(p)));
       if (wrong.length) {
         const known = factPack.pricing.itemPrices
