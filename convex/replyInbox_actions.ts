@@ -358,6 +358,10 @@ export const generateDraft = action({
 
     // Do we have ANY item-level grounding? If not (a bare inquiry with no
     // resolved item/availability/pricing), the draft must ASK, not assert.
+    // Computed here (before the Mastra call below) purely for the FALLBACK
+    // prompt's noGroundingLine — freshInquiryItems isn't known yet at this
+    // point. The guardDraft call much further down uses
+    // hasItemGrounding || freshInquiryItems.length instead, once that's set.
     const hasItemGrounding = !!(
       listingFacts.length ||
       c.availability?.items?.length ||
@@ -505,6 +509,16 @@ export const generateDraft = action({
     let draft = "";
     let mastraOk = false;
     let usedTools = false;
+    // Fresh-inquiry items route.ts resolved from the renter's own message
+    // (real name + real price, no linked reservation needed) — see below,
+    // this is what actually closes the grounding gap; the groundTruth TEXT
+    // route.ts injects into the agent's prompt has NO effect on
+    // hasItemGrounding/guardDraft's factPack, which only look at fields on
+    // the conversation document. Confirmed live: even after the prompt-level
+    // fix shipped, a correctly-answerable fresh inquiry still hard-escalated
+    // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
+    // still empty.
+    let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -525,6 +539,7 @@ export const generateDraft = action({
           draft?: string;
           needs_human?: boolean;
           usedTools?: boolean;
+          resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
         };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
@@ -547,6 +562,7 @@ export const generateDraft = action({
           // (run the self-check) if it's ever missing, since "unknown"
           // should never be treated the same as "verified".
           usedTools = j.usedTools === true;
+          freshInquiryItems = j.resolvedItems ?? [];
         }
       } catch {
         return { status: "skipped", reason: "subscription_unavailable" };
@@ -687,28 +703,46 @@ export const generateDraft = action({
         ].includes(c.order_step ?? "") ||
           ["confirmed", "ongoing", "completed"].includes(c.status ?? "")),
       unfulfillableItems: c.unfulfillable ?? undefined,
-      hasItemGrounding,
-      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null)
+      // Folds in freshInquiryItems (route.ts-resolved real facts for a
+      // renter's first message, before any order exists) alongside the
+      // order-linked signals above — see freshInquiryItems' own comment for
+      // why this can't just be done at hasItemGrounding's declaration.
+      hasItemGrounding: hasItemGrounding || freshInquiryItems.length > 0,
+      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70
             // quote as valid (the generic catalog would flag it vs its £40 range).
-            pricing: listingFacts.some((f) => f.daily_price != null)
+            pricing: listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length
               ? {
-                  itemPrices: listingFacts
-                    .filter((f) => f.daily_price != null)
-                    .map((f) => ({ name: f.name, min: f.daily_price as number, max: f.daily_price as number })),
+                  itemPrices: [
+                    ...listingFacts
+                      .filter((f) => f.daily_price != null)
+                      .map((f) => ({ name: f.name, min: f.daily_price as number, max: f.daily_price as number })),
+                    ...freshInquiryItems
+                      .filter((f) => f.dailyRateGbp != null)
+                      .map((f) => ({ name: f.name, min: f.dailyRateGbp as number, max: f.dailyRateGbp as number })),
+                  ],
                 }
               : undefined,
             verifiedListingItem: c.fact_pack?.verifiedListingItem,
             marketingItems: c.fact_pack?.marketingItems,
           }
         : undefined,
-      availability: c.availability
+      availability: c.availability || freshInquiryItems.length
         ? {
-            items: c.availability.items.map((it) => ({
-              name: it.name,
-              available: it.available,
-            })),
+            items: [
+              ...(c.availability?.items ?? []).map((it) => ({
+                name: it.name,
+                available: it.available,
+              })),
+              // freshInquiryItems only ever contains items route.ts already
+              // confirmed owned/not-marketing-only (see its own filter) — the
+              // renter's ACTUAL requested dates are compared by the agent
+              // itself against the booking-dates line in groundTruth, not
+              // here; this just tells guardDraft "this item is real and
+              // resolvable", not "free for any date".
+              ...freshInquiryItems.map((it) => ({ name: it.name, available: true })),
+            ],
           }
         : undefined,
     });
@@ -740,7 +774,15 @@ export const generateDraft = action({
       (f) => f.action === "flagged" && f.severity === "critical",
     );
     if (unresolvedCriticalFlags.length > 0) {
-      return { status: "skipped", reason: "needs_human" };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return {
+        status: "skipped",
+        reason: "needs_human",
+        // TEMP DEBUG — investigating why escalation persisted after the
+        // fresh-inquiry groundTruth extension shipped. Remove once resolved.
+        debugDraft: checkedDraft,
+        debugFlags: unresolvedCriticalFlags,
+      } as any;
     }
 
     const finalDraft = guard.text.trim() || checkedDraft;

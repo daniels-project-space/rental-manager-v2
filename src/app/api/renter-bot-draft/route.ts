@@ -97,6 +97,15 @@ export async function POST(req: Request) {
   let groundTruth = "";
   const marketingItems: string[] = [];
   let bookingConfirmed = true; // stays true when we can't tell (avoid false blocks)
+  // Structured echo of whatever real facts made it into groundTruth above,
+  // for the ORDER-linked path and the fresh-inquiry path below alike.
+  // replyInbox_actions.ts's hasItemGrounding / guardDraft's factPack only
+  // look at fields on the conversation DOCUMENT (c.fact_pack, c.availability)
+  // — text injected into THIS prompt has zero effect on that separate check,
+  // so a correctly-grounded draft was still getting hard-escalated as
+  // "UNGROUNDED_PRICE"/"UNGROUNDED_AVAILABILITY" after the groundTruth
+  // extension shipped. Returning this lets the caller fold it in.
+  const resolvedItems: Array<{ name: string; dailyRateGbp?: number }> = [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
@@ -272,6 +281,7 @@ export async function POST(req: Request) {
               continue;
             }
             let priceLine = "";
+            let dailyRateGbp: number | undefined;
             try {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const pricing: any = await convex.query(api.renter_bot_tools.lookup_pricing, {
@@ -279,11 +289,13 @@ export async function POST(req: Request) {
                 account_slug: account_slug || undefined,
               });
               if (pricing?.found && typeof pricing.daily_rate_gbp === "number") {
-                priceLine = ` £${pricing.daily_rate_gbp}/day.`;
+                dailyRateGbp = pricing.daily_rate_gbp;
+                priceLine = ` £${dailyRateGbp}/day.`;
               }
             } catch {
               /* best-effort */
             }
+            resolvedItems.push({ name: m.name, dailyRateGbp });
             // upcoming_bookings carries a real OTHER renter's name — never put
             // that in a prompt that drafts a reply to THIS renter. Dates only.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -538,6 +550,7 @@ export async function POST(req: Request) {
       intent: obj.intent ?? null,
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
+      resolvedItems,
     });
   } catch (e) {
     return NextResponse.json(
