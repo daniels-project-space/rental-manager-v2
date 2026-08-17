@@ -435,13 +435,14 @@ export async function POST(req: Request) {
     // renter's very first "is X available" message, before any order exists)
     // this tool-call signal is the ONLY grounding check available.
     let usedTools = false;
+    let text = "";
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
     // subscription lane and no automatic stronger-model route.
     if (!obj) {
       const agent = await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
-      const text: string = result?.text ?? "";
+      text = result?.text ?? "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       usedTools = ((result?.steps ?? []) as any[]).some(
         (st) => (st?.toolCalls?.length ?? 0) > 0,
@@ -459,7 +460,15 @@ export async function POST(req: Request) {
     }
     if (!obj) {
       // Couldn't parse a decision — escalate rather than send garbage.
-      return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
+      // TEMP DEBUG (2026-08-17): investigating a suspected post-Gemini-swap
+      // JSON-parse-failure regression. Remove debugRawText before commit.
+      return NextResponse.json({
+        ok: true,
+        draft: "",
+        needs_human: true,
+        factsClaimed: [],
+        debugRawText: (typeof text === "string" ? text : "").slice(0, 2000),
+      });
     }
 
     // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling
