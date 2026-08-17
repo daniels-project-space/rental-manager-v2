@@ -199,7 +199,12 @@ export const sendTestMessage = action({
   handler: async (
     ctx,
     args,
-  ): Promise<{ draft: string; overall_status: string; runId: string }> => {
+  ): Promise<{
+    draft: string;
+    overall_status: string;
+    runId: string;
+    productionGuardFlags: unknown;
+  }> => {
     if (!args.threadId.startsWith(PREFIX)) {
       throw new Error("sendTestMessage only accepts a Lab/probe thread_id");
     }
@@ -252,7 +257,16 @@ export const sendTestMessage = action({
       },
     );
 
-    return { draft: draftText, overall_status: rubric.overall_status, runId };
+    // Surfaces the REAL production guardDraft() flags (draft_guard.ts) --
+    // e.g. UNGROUNDED_UNAVAILABILITY -- not persisted, diagnostic only, so
+    // Daniel/I can see directly whether the actual production safety net
+    // caught something, not just this harness's own rubric.
+    return {
+      draft: draftText,
+      overall_status: rubric.overall_status,
+      runId,
+      productionGuardFlags: draftResult.flags ?? [],
+    };
   },
 });
 

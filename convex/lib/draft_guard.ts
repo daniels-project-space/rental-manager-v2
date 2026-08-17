@@ -461,6 +461,22 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
         "Asserts availability/stock with no item grounding — should ask which item + say I'll check",
         "flagged",
       );
+    // Symmetric counterpart (2026-08-17, real bug: bot confidently told a
+    // renter Sony A7 V "isn't available" for dates it was actually free for
+    // — check_availability was never called this turn, but the confident
+    // NEGATIVE claim wasn't caught because only the positive case was
+    // guarded here). A false "no" costs a real booking just as much as a
+    // false "yes" costs a false promise — both need grounding to assert.
+    const assertsUnavail =
+      /\b(not available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available)|don'?t have (?:that|it|one)|can'?t get (?:that|it|one))\b/i.test(
+        text,
+      );
+    if (assertsUnavail)
+      push(
+        "UNGROUNDED_UNAVAILABILITY",
+        "Asserts UNavailability with no item grounding (never called check_availability this turn) — should say I'll check, not guess",
+        "flagged",
+      );
     if (/£\s?\d/.test(text))
       push(
         "UNGROUNDED_PRICE",
