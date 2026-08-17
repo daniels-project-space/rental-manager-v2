@@ -8,6 +8,38 @@ const accountCommunicationRef = makeFunctionReference<"query">(
   "settings:listAccountCommunication",
 );
 
+// Conversational/date/question filler — NOT item-name content. Strips a free-
+// text renter message down to whatever's left, for feeding
+// calendar.getItemAvailabilityForChat's fuzzy matcher a focused candidate
+// instead of the whole sentence. Live-tested: passing the raw message "Hey is
+// the Sony A7 V available 25th to 27th August?" matched "Sony 11mm f2.8
+// fisheye" (wrong item) — noise tokens (question/date words) apparently
+// out-scored the real item's own tokens. A stopword-filtered "sony a7 v"
+// resolved correctly. Not exhaustive — a genuine miss just leaves groundTruth
+// empty (same as today), so err on the side of stripping too much.
+const ITEM_QUERY_STOPWORDS = new Set([
+  "a","an","the","is","are","was","were","be","been","being","i","im","you","your","my","me","we","our","us",
+  "he","she","it","they","them","their","this","that","these","those","and","or","but","if","then","so",
+  "to","of","for","with","without","on","in","at","by","from","as","up","out","over","under","again",
+  "not","no","yes","do","does","did","can","could","would","should","will","shall","may","might","must",
+  "hi","hey","hello","thanks","thank","please","pls","just","really","also","still","yet","already","ok","okay",
+  "available","availability","free","freely","book","booking","bookings","rent","rental","rentals","hire","hiring",
+  "get","getting","need","needing","want","wanting","looking","check","checking","confirm","confirming",
+  "today","tomorrow","tonight","yesterday","week","weekend","weekday","month","year","day","days","date","dates",
+  "time","times","morning","afternoon","evening","night","next","last","this","upcoming",
+  "monday","tuesday","wednesday","thursday","friday","saturday","sunday",
+  "jan","january","feb","february","mar","march","apr","april","jun","june","jul","july",
+  "aug","august","sep","sept","september","oct","october","nov","november","dec","december",
+  "what","when","where","who","why","how","which","one","some","any","anything","something","else",
+]);
+function extractItemQuery(message: string): string {
+  const tokens = (message.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    // strip a bare ordinal suffix stuck to a date number, e.g. "25th" -> "25"
+    .map((t) => t.replace(/^(\d+)(st|nd|rd|th)$/, "$1"))
+    .filter((t) => t.length > 0 && !ITEM_QUERY_STOPWORDS.has(t));
+  return tokens.join(" ");
+}
+
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
@@ -189,13 +221,31 @@ export async function POST(req: Request) {
       // fuzzy/alias matcher — same one the calendar UI and the Lab use) and
       // hand the agent real rolling-calendar + real price up front.
       try {
+        const itemQuery = extractItemQuery(lastRenter);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const av: any = await convex.query(api.calendar.getItemAvailabilityForChat, {
-          query: lastRenter,
-          horizonDays: 30,
-          accountSlug: account_slug || null,
-        });
-        const matches = ((av?.items ?? []) as Array<{
+        const av: any = itemQuery
+          ? await convex.query(api.calendar.getItemAvailabilityForChat, {
+              query: itemQuery,
+              horizonDays: 30,
+              accountSlug: account_slug || null,
+            })
+          : null;
+        // Two live-caught false-match modes on a stopword-filtered query, both
+        // guarded against below:
+        // 1. A generic/no-signal query (e.g. pure logistics chatter, no item
+        //    named) can tie dozens of items at the same low score — the
+        //    matcher returns them all. match_count this high means "no real
+        //    signal", not "the renter meant ~30 items" — don't use any of it.
+        // 2. A single confident-LOOKING match can still be wrong: the
+        //    matcher's haystack includes kind/aliases, not just the visible
+        //    name, so pure filler tokens (no real item mentioned at all) can
+        //    score >=2 against something's kind/alias by chance (caught one
+        //    live: unrelated chatter matched "Smoke machine fogger"). Cross-
+        //    check that the matched item's own NAME contains at least one
+        //    extracted token before trusting it.
+        const queryTokens = itemQuery.split(" ").filter((t) => t.length >= 3);
+        const tooGeneric = (av?.match_count ?? 0) > 5;
+        type AvItem = {
           name?: string;
           owned?: boolean;
           is_marketing_only?: boolean;
@@ -203,7 +253,16 @@ export async function POST(req: Request) {
           free_whole_horizon?: boolean | null;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           upcoming_bookings?: Array<any>;
-        }>).slice(0, 3); // cap — a vague query can match several items; don't dump the whole catalog
+        };
+        const matches: AvItem[] = tooGeneric
+          ? []
+          : ((av?.items ?? []) as AvItem[])
+              .filter(
+                (m) =>
+                  m.name &&
+                  queryTokens.some((t) => m.name!.toLowerCase().includes(t)),
+              )
+              .slice(0, 3); // cap — a vague query can still match a couple items; don't dump the whole catalog
         if (matches.length) {
           groundTruth += "REQUESTED ITEM(S) — resolved from the renter's own message, real live data:\n";
           for (const m of matches) {
