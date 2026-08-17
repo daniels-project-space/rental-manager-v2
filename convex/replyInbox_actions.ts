@@ -519,8 +519,6 @@ export const generateDraft = action({
     // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
     // still empty.
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let debugRouteInfo: any = null; // TEMP DEBUG — remove once resolved
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -542,14 +540,6 @@ export const generateDraft = action({
           needs_human?: boolean;
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
-          // TEMP DEBUG fields from route.ts — remove once resolved
-          debugGroundTruth?: string;
-          debugLastRenter?: string;
-        };
-        debugRouteInfo = {
-          debugGroundTruth: j.debugGroundTruth,
-          debugLastRenter: j.debugLastRenter,
-          resolvedItemsFromRoute: j.resolvedItems,
         };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
@@ -784,18 +774,7 @@ export const generateDraft = action({
       (f) => f.action === "flagged" && f.severity === "critical",
     );
     if (unresolvedCriticalFlags.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return {
-        status: "skipped",
-        reason: "needs_human",
-        // TEMP DEBUG — investigating why escalation persisted after the
-        // fresh-inquiry groundTruth extension shipped. Remove once resolved.
-        debugDraft: checkedDraft,
-        debugFlags: unresolvedCriticalFlags,
-        debugFreshInquiryItems: freshInquiryItems,
-        debugMastraOk: mastraOk,
-        debugRouteInfo,
-      } as any;
+      return { status: "skipped", reason: "needs_human" };
     }
 
     const finalDraft = guard.text.trim() || checkedDraft;
