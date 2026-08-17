@@ -441,7 +441,22 @@ export async function POST(req: Request) {
     if (!obj) {
       const agent = await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
+      const result: any = await (agent as any).generate(baseMessages, {
+        maxSteps: 10,
+        // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
+        // Flash (a reasoning model — thinks before it speaks, same behavior
+        // documented in /api/walle/health) was returning a completely EMPTY
+        // result.text on some real calls, presumably burning the default
+        // output budget on internal reasoning/tool-call bookkeeping before
+        // it ever got to the final JSON. That parsed as "no decision" and
+        // auto-escalated via the (!obj) branch below — a silent, structural
+        // regression from the Haiku->Gemini swap, not a model judgment call.
+        // Confirmed via debugRawText: multiple real calls returned "" (empty
+        // string), not malformed JSON. 4096 is well above a one-word reply's
+        // "512 was enough" baseline from the WallE health probe, sized for
+        // this agent's actual multi-field structured JSON output.
+        modelSettings: { maxOutputTokens: 4096 },
+      });
       text = result?.text ?? "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       usedTools = ((result?.steps ?? []) as any[]).some(
@@ -510,7 +525,10 @@ export async function POST(req: Request) {
           ];
           const retryAgent = await getRenterBotAgent(); // lazy singleton — cheap to re-fetch
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await (retryAgent as any).generate(retryMessages, { maxSteps: 6 });
+          const retryResult: any = await (retryAgent as any).generate(retryMessages, {
+            maxSteps: 6,
+            modelSettings: { maxOutputTokens: 4096 },
+          });
           const retryText: string = retryResult?.text ?? "";
           const retryUsedTools = ((retryResult?.steps ?? []) as any[]).some(
             (st) => (st?.toolCalls?.length ?? 0) > 0,
