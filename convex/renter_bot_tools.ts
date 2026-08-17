@@ -381,7 +381,16 @@ export const check_availability = query({
       status: string;
     }> = [];
     for (const r of candidates) {
-      if (account_slug && r.account_slug !== account_slug) continue;
+      // account_slug intentionally NOT used to filter conflicts. DANIEL RULE 2
+      // — Cross-Account Stock (knowledge base, priority 10): "Items are
+      // listed multiple times across accounts BUT share the same physical
+      // pool... only the master inventory checklist (cross-account) matters."
+      // Filtering conflicts down to the asking thread's own account would
+      // hide a real booking made under a sibling account for the same
+      // physical item — false "available" on shared stock, exactly what this
+      // rule forbids. Kept as an accepted param (agent still passes it) only
+      // in case a future caller needs it for something other than gating
+      // conflicts — do not reintroduce filtering here.
       if (!r.start_date || !r.end_date) continue;
       if (r.is_obsolete) continue;
       if (r.status === "cancelled" || r.status === "declined") continue;

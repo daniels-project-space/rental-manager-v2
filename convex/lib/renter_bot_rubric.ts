@@ -20,10 +20,29 @@ import {
 } from "./renter_bot_filters_supplemental";
 import { scoreTone } from "./renter_bot_tone_scorer";
 
+export interface ProductionFlag {
+  type: string;
+  action: string;
+  detail: string;
+  severity: string;
+}
+
 export interface RubricInput {
   accountSlug: string;
   draftText: string;
   factsClaimed?: FactClaim[];
+  // The REAL guardDraft() (convex/lib/draft_guard.ts) output for this draft,
+  // from generateDraft's own return value. Added 2026-08-17 after finding
+  // this harness's own checks (below) were validated against
+  // renter_bot_filters.ts -- which has ZERO callers anywhere in the
+  // production codebase. That file is dead code. draft_guard.ts is what
+  // actually runs. When present, these real flags are surfaced directly
+  // (see "production_guard:*" categories) rather than only relying on this
+  // file's own regex reimplementations, which don't necessarily match what
+  // guardDraft actually checks for (confirmed different: e.g. guardDraft's
+  // UPSELL_PATTERNS are stage-gated and narrower than this file's
+  // UPSELL_LANGUAGE list).
+  productionFlags?: ProductionFlag[];
 }
 
 export type RubricStatus = "pass" | "fail" | "flag" | "n_a";
@@ -237,6 +256,41 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     add("format_integrity", "flag", "Draft is unusually long for a texting-style reply.", evidenceFor(allViolations, "TOO_LONG"));
   } else {
     add("format_integrity", "pass", "Draft is non-empty, reasonably sized, no format leakage detected.");
+  }
+
+  // ── Real production guard flags (draft_guard.ts, via generateDraft's own
+  // return value) — the actual safety net, surfaced directly rather than
+  // only through this file's own regex reimplementations above. ──
+  const productionFlags = input.productionFlags ?? [];
+  if (productionFlags.length === 0) {
+    add(
+      "production_guard",
+      "n_a",
+      "No productionFlags passed in for this run — caller didn't forward generateDraft's real guard output.",
+    );
+  } else {
+    for (const f of productionFlags) {
+      // action="flagged" means guardDraft detected the issue but left the text
+      // alone (ReplyInbox.tsx shows these as "⚠ to review" for Daniel to catch
+      // manually before sending) — the delivered draft may still contain it, so
+      // severe ones are real rubric failures. action="stripped"/"rewritten"
+      // means the guard already corrected the text before it could be
+      // delivered — still worth surfacing as a raw-model-quality signal, but
+      // it isn't a defect in the actual delivered draft, so cap it at "flag".
+      const corrected = f.action === "stripped" || f.action === "rewritten";
+      const status: RubricStatus = corrected
+        ? f.severity === "critical" || f.severity === "high"
+          ? "flag"
+          : "pass"
+        : f.severity === "critical" || f.severity === "high"
+          ? "fail"
+          : "flag";
+      add(
+        `production_guard:${f.type}`,
+        status,
+        `[REAL guardDraft flag, action=${f.action}, severity=${f.severity}, ${corrected ? "auto-corrected before delivery" : "UNRESOLVED — relies on Daniel catching it manually"}] ${f.detail}`,
+      );
+    }
   }
 
   const overall_status: RubricOutput["overall_status"] = results.some(

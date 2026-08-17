@@ -268,6 +268,16 @@ export async function POST(req: Request) {
 
   try {
     let obj: RenterBotOutput | null = null;
+    // Real tool-call trace (same shape used in renter-bot-ab/route.ts's debug
+    // trace) — replyInbox_actions.ts uses this to decide whether its
+    // "grounded self-check" hedge pass can be skipped. Previously that
+    // caller hardcoded usedTools=true for every successful Mastra draft on
+    // the assumption "the agent grounds via its own tools", which is not
+    // guaranteed — Haiku is documented to under-call tools. When groundTruth
+    // above is empty (no linked reservation yet — the common case for a
+    // renter's very first "is X available" message, before any order exists)
+    // this tool-call signal is the ONLY grounding check available.
+    let usedTools = false;
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
     // subscription lane and no automatic stronger-model route.
     if (!obj) {
@@ -275,6 +285,10 @@ export async function POST(req: Request) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result: any = await (agent as any).generate(baseMessages, { maxSteps: 10 });
       const text: string = result?.text ?? "";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      usedTools = ((result?.steps ?? []) as any[]).some(
+        (st) => (st?.toolCalls?.length ?? 0) > 0,
+      );
     try {
       let js = text.trim();
       const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -393,6 +407,7 @@ export async function POST(req: Request) {
       needs_human: !!obj.needs_human,
       intent: obj.intent ?? null,
       factsClaimed: obj.factsClaimed ?? [],
+      usedTools,
     });
   } catch (e) {
     return NextResponse.json(

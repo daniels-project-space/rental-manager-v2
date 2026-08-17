@@ -2084,7 +2084,18 @@ export const getItemAvailabilityForChat = query({
         r.start_date >= scanStart &&
         r.start_date <= lastDate,
     );
-    if (accountSlug) reservations = reservations.filter((r) => r.account_slug === accountSlug);
+    // accountSlug intentionally NOT used to filter reservations. DANIEL RULE 2
+    // — Cross-Account Stock (priority 10): "Items are listed multiple times
+    // across accounts BUT share the same physical pool... only the master
+    // inventory checklist (cross-account) matters." Both real callers
+    // (replyInbox_actions.ts generateDraft, /api/renter-bot-draft) always
+    // pass their own thread's accountSlug, so this filter ran on every draft
+    // and silently hid confirmed bookings made under a sibling account for
+    // the same shared physical item — false "available" on shared stock.
+    // The canonical-item resolution below (productIndex/overrideMap →
+    // matchedById) already collapses cross-account listings to one physical
+    // item correctly; do not reintroduce an account filter on top of it.
+    void accountSlug;
     const confirmed = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
     ) as typeof reservations;

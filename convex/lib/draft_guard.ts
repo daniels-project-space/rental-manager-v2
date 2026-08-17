@@ -242,13 +242,20 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
 
   // 1d. FIRST-PERSON SINGULAR: we/our → I/my — REWRITE
   if (opts.firstPerson && /\b(we|our)\b/i.test(text)) {
-    text = text.replace(/\bwe'?ve\b/gi, "I've");
+    // NOTE (2026-08-17, real bug found via the Lab): the apostrophe MUST be
+    // required here, not optional. `\bwe'?re\b` also matches the plain word
+    // "were" (we+re with no apostrophe), and `\bwe'?ll\b` also matches
+    // "well" (we+ll) -- both real, common English words. With `'?` this
+    // rewrite was silently corrupting text: "goes really well" became
+    // "goes really I'll", and any past-tense "were" became "I'm". Reproduced
+    // live: a real draft shipped with exactly this corruption.
+    text = text.replace(/\bwe've\b/gi, "I've");
     text = text.replace(
-      /\bwe'?re (separate|different|independent|distinct|two|not the same|not related)\b/gi,
+      /\bwe're (separate|different|independent|distinct|two|not the same|not related)\b/gi,
       "they're $1",
     );
-    text = text.replace(/\bwe'?re\b/gi, "I'm");
-    text = text.replace(/\bwe'?ll\b/gi, "I'll");
+    text = text.replace(/\bwe're\b/gi, "I'm");
+    text = text.replace(/\bwe'll\b/gi, "I'll");
     text = text.replace(
       /\bwe (have|can|do|offer|provide|also|stock|carry|include|don'?t|did|are|get|will|should|could|would|need)\b/gi,
       "I $1",
@@ -991,6 +998,17 @@ const UPSELL_PATTERNS: PatternRule[] = [
   { pattern: /\bthat way I can (?:suggest|recommend|help|advise)\b/i, label: "that-way-upsell" },
   { pattern: /\bneed (?:any(?:thing)?|gear|equipment|accessories) (?:else|alongside|to go with|with (?:it|that|the))\b/i, label: "need-anything-else" },
   { pattern: /\bcan (?:recommend|suggest) (?:the best|the right|some|any) (?:gear|equipment|kit|setup)\b/i, label: "recommend-gear" },
+  // 2026-08-17: added after a live reproduction where "Since you're grabbing
+  // just the camera, would a gimbal or an extra fast lens be useful for what
+  // you're working on?" survived every existing pattern above — a real
+  // renter-facing upsell that guardDraft never saw, on an EQUIPMENT_QUESTION-
+  // adjacent reply that had no upsell restriction at all (see CONTRACTS).
+  { pattern: /\bwould\s+(?:a|an|some|that|those|these)\b[^.?!]{0,40}\b(?:be useful|be helpful|help(?: (?:you|with))?|come in handy)\b/i, label: "would-x-be-useful" },
+  { pattern: /\bwould you (?:like|want|need)\s+(?:a|an|some|any)\b/i, label: "would-you-like-a" },
+  { pattern: /\binterested in adding\b/i, label: "interested-in-adding" },
+  { pattern: /\bwant me to (?:add|throw in|include|bundle|chuck in)\b/i, label: "want-me-to-add" },
+  { pattern: /\bshould I (?:add|include|throw in|chuck in)\b/i, label: "should-i-add" },
+  { pattern: /\b(?:can|shall) I (?:add|include|throw in)\b[^.?!]{0,30}\bfor you\b/i, label: "shall-i-add-for-you" },
 ];
 
 const QUESTION_PATTERNS: PatternRule[] = [
@@ -1009,8 +1027,31 @@ interface Contract {
 const CONTRACTS: Partial<Record<DraftIntent, Contract>> = {
   GOODBYE: { maxLength: 150, mustNot: [...UPSELL_PATTERNS, ...QUESTION_PATTERNS] },
   ACKNOWLEDGMENT: { maxLength: 200, mustNot: [...UPSELL_PATTERNS] },
-  GREETING: { maxLength: 350, mustNot: [{ pattern: /£\d+[\s\S]*£\d+[\s\S]*£\d+/, label: "price-dump-on-greeting" }] },
+  // 2026-08-17: GREETING previously had no upsell restriction at all, even
+  // though the system prompt bans upsell language unconditionally, no stage
+  // exception mentioned. Reproduced live: two separate first-contact replies
+  // (classified GREETING) both upsold ("pair it with a lens", "you might
+  // want to...") completely unflagged. GREETING is the MOST common stage for
+  // a first "is X available" message, so this was the widest-open gap.
+  GREETING: {
+    maxLength: 350,
+    mustNot: [
+      { pattern: /£\d+[\s\S]*£\d+[\s\S]*£\d+/, label: "price-dump-on-greeting" },
+      ...UPSELL_PATTERNS,
+    ],
+  },
   LOGISTICS: { maxLength: 300, mustNot: [...UPSELL_PATTERNS, ...QUESTION_PATTERNS] },
+  // 2026-08-17 (reverted same day): briefly added UPSELL_PATTERNS to
+  // PRICING_INQUIRY/EQUIPMENT_QUESTION/GENERAL on the assumption upsell was
+  // unconditionally banned. Checked the live `rules` table — it isn't: the
+  // seeded "Upsell Opportunities" rule (priority 7) explicitly directs
+  // item-specific upsells (BMPCC→Canon 24-105mm, Sony→24-70mm GM, interview
+  // shoots→mics+lights, etc.) "Natural, not pushy. Only when renter is
+  // clearly interested." A renter asking a priced/equipment/general question
+  // has already shown that interest — these are exactly the stages the rule
+  // wants upselling to happen in, not stages to block it in. Reverted.
+  // GREETING/ACKNOWLEDGMENT/GOODBYE/COMPLAINT stay restricted: none of those
+  // represent "renter clearly interested in add-ons" yet.
   PRICING_INQUIRY: { must: [{ pattern: /£\d+/, label: "price-figure" }], mustNot: [] },
   COMPLAINT: { mustNot: [...UPSELL_PATTERNS] },
   NEGOTIATION: { mustNot: [...UPSELL_PATTERNS.filter((p) => p.label !== "upsell-language"), ...QUESTION_PATTERNS] },

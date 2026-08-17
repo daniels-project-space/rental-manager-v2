@@ -235,6 +235,7 @@ export const sendTestMessage = action({
       accountSlug: args.accountSlug,
       draftText,
       factsClaimed,
+      productionFlags: draftResult.flags,
     });
 
     const runId: string = await ctx.runMutation(

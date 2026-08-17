@@ -169,6 +169,7 @@ export const runFixture = action({
         accountSlug: fixture.account_slug,
         draftText,
         factsClaimed,
+        productionFlags: draftResult.flags,
       });
       overallStatus = rubric.overall_status;
 
@@ -263,5 +264,147 @@ export const runToCleanStreak = action({
     }
     await ctx.runMutation(api.renter_bot_probe.cleanup, {});
     return { streakAchieved: streak, attempts, lastRunId };
+  },
+});
+
+// ── Multi-turn scenario runner ──────────────────────────────────
+//
+// runFixture seeds an entire conversation as pre-scripted history in one
+// shot and scores a single final reply. That's fine for single-shot
+// fixtures, but it can't check whether behavior stays correct as a
+// conversation naturally progresses (each bot reply generated for real, in
+// context, including on top of its own prior real replies) — which is what
+// "multi-stage" testing needs: does the bot upsell only once interest is
+// established, does it stay consistent turn-to-turn, does availability
+// hold up once the renter starts negotiating dates, etc.
+//
+// One scenario = one probe thread, walked turn-by-turn through the REAL
+// generateDraft pipeline. Scoped to a single scenario (not a whole suite)
+// to stay well under Convex's action time limit — drive the full suite by
+// calling this once per scenario from outside (see scripts/renter-bot-scenarios).
+export const runMultiTurnScenario = action({
+  args: {
+    scenarioId: v.string(),
+    accountSlug: v.string(),
+    items: v.array(
+      v.object({ name: v.string(), product_id: v.optional(v.number()) }),
+    ),
+    turns: v.array(v.string()),
+    runBatchId: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    scenarioId: string;
+    threadId: string;
+    turnResults: Array<{
+      turn: number;
+      renter_message: string;
+      draft: string;
+      overall_status: string;
+      escalated: boolean;
+      escalation_reason?: string;
+      rubric_results: unknown[];
+      productionFlags: unknown[];
+      runId?: string;
+    }>;
+  }> => {
+    const threadId = `${PREFIX}mt-${args.scenarioId}-${Date.now()}`;
+    await ctx.runMutation(internal.renter_bot_probe.seed, {
+      thread_id: threadId,
+      account_slug: args.accountSlug,
+      items: args.items,
+      messages: [],
+    });
+
+    const turnResults: Array<{
+      turn: number;
+      renter_message: string;
+      draft: string;
+      overall_status: string;
+      escalated: boolean;
+      escalation_reason?: string;
+      rubric_results: unknown[];
+      productionFlags: unknown[];
+      runId?: string;
+    }> = [];
+
+    for (let i = 0; i < args.turns.length; i++) {
+      const text = args.turns[i];
+      await ctx.runMutation(internal.renter_bot_lab_actions.appendRenterMessage, {
+        thread_id: threadId,
+        account_slug: args.accountSlug,
+        text,
+      });
+
+      const draftResult = await ctx.runAction(api.replyInbox_actions.generateDraft, {
+        thread_id: threadId,
+      });
+      const startedAt = Date.now();
+
+      if (draftResult.status === "skipped") {
+        turnResults.push({
+          turn: i,
+          renter_message: text,
+          draft: "",
+          overall_status: "escalated",
+          escalated: true,
+          escalation_reason: draftResult.reason,
+          rubric_results: [],
+          productionFlags: [],
+        });
+        continue;
+      }
+
+      const draftRow = await ctx.runQuery(internal.renter_bot_harness.getDraftByThread, {
+        thread_id: threadId,
+      });
+      const draftText = draftResult.draft ?? draftRow?.draft_text ?? "";
+      const factsClaimed = (draftRow?.facts_claimed ?? []).map((f) => ({
+        kind: f.kind,
+        value: f.value,
+        verified: f.verified,
+      }));
+
+      const rubric = scoreDraft({
+        accountSlug: args.accountSlug,
+        draftText,
+        factsClaimed,
+        productionFlags: draftResult.flags,
+      });
+
+      const runId = await ctx.runMutation(internal.renter_bot_harness.insertRun, {
+        session_thread_id: threadId,
+        run_batch_id: args.runBatchId,
+        account_slug: args.accountSlug,
+        draft_text: draftText,
+        draft_intent: draftRow?.draft_intent,
+        draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
+        facts_claimed: draftRow?.facts_claimed,
+        model_id: draftRow?.model_id ?? "unknown",
+        filter_violations: rubric.filter_violation_categories,
+        rubric_results: rubric.results,
+        overall_status: rubric.overall_status,
+        triggered_by: "harness_batch",
+        run_at: startedAt,
+        duration_ms: Date.now() - startedAt,
+        cost_usd: draftRow?.cost_usd,
+      });
+
+      turnResults.push({
+        turn: i,
+        renter_message: text,
+        draft: draftText,
+        overall_status: rubric.overall_status,
+        escalated: false,
+        rubric_results: rubric.results,
+        productionFlags: draftResult.flags ?? [],
+        runId,
+      });
+    }
+
+    await ctx.runMutation(api.renter_bot_probe.cleanup, {});
+    return { scenarioId: args.scenarioId, threadId, turnResults };
   },
 });

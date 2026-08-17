@@ -520,7 +520,11 @@ export const generateDraft = action({
         if (!resp.ok) {
           return { status: "skipped", reason: "subscription_unavailable" };
         }
-        const j = (await resp.json()) as { draft?: string; needs_human?: boolean };
+        const j = (await resp.json()) as {
+          draft?: string;
+          needs_human?: boolean;
+          usedTools?: boolean;
+        };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
           // consequential reply. Keep any earlier preview untouched and tell
@@ -530,7 +534,18 @@ export const generateDraft = action({
         draft = (j.draft ?? "").trim();
         if (draft) {
           mastraOk = true;
-          usedTools = true; // the agent grounds via its own tools — skip the self-check
+          // Was previously hardcoded true ("the agent grounds via its own
+          // tools — skip the self-check") regardless of whether the agent
+          // actually called anything. Confirmed live: a bare first-contact
+          // availability question (no linked reservation yet, so the
+          // pre-fetched groundTruth block above is empty) got a fabricated
+          // "not available" + a fabricated substitute + a fabricated price —
+          // all UNRESOLVED guardDraft flags — because the self-check that
+          // exists specifically to catch this never ran. route.ts now
+          // returns the real per-request tool-call trace; default to false
+          // (run the self-check) if it's ever missing, since "unknown"
+          // should never be treated the same as "verified".
+          usedTools = j.usedTools === true;
         }
       } catch {
         return { status: "skipped", reason: "subscription_unavailable" };
