@@ -69,6 +69,7 @@ import type * as hygglo_products from "../hygglo_products.js";
 import type * as inquiry_context from "../inquiry_context.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as intel from "../intel.js";
+import type * as investigate_price_drift from "../investigate_price_drift.js";
 import type * as item_resolver from "../item_resolver.js";
 import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
@@ -283,6 +284,7 @@ declare const fullApi: ApiFromModules<{
   inquiry_context: typeof inquiry_context;
   insurance_claims: typeof insurance_claims;
   intel: typeof intel;
+  investigate_price_drift: typeof investigate_price_drift;
   item_resolver: typeof item_resolver;
   item_resolver_queries: typeof item_resolver_queries;
   items: typeof items;

@@ -43,7 +43,17 @@ export const list = query({
 });
 
 /** Real listing facts (price + description) for a set of product ids in one
- *  account — feeds the draft's authoritative FACTS. */
+ *  account — feeds the draft's authoritative FACTS.
+ *
+ * Price comes from `hygglo_products.prices` (the daily-synced catalog cache),
+ * NOT from this table's own `daily_price` column. `online_listings.daily_price`
+ * is only ever refreshed by a manual "Rescan listings" click (see file header)
+ * and was found live-stale by ~6 weeks against a real price change (2026-08-17
+ * audit: online_listings said £15/day for a listing hygglo_products — synced
+ * that same day — correctly showed £17/day, post a documented 2026-08-14 bulk
+ * price edit). Description/name still come from here since hygglo_products
+ * doesn't carry the listing description. Falls back to the cached daily_price
+ * only if hygglo_products has no row/price for that product. */
 export const factsForProducts = query({
   args: { account_slug: v.string(), product_ids: v.array(v.number()) },
   handler: async (ctx, { account_slug, product_ids }) => {
@@ -60,12 +70,20 @@ export const factsForProducts = query({
           q.eq("account_slug", account_slug).eq("product_id", pid),
         )
         .unique();
-      if (row)
+      const hp = await ctx.db
+        .query("hygglo_products")
+        .withIndex("by_account_product", (q) =>
+          q.eq("accountSlug", account_slug).eq("productId", pid),
+        )
+        .unique();
+      const freshOneDayPrice =
+        hp?.prices?.find((p) => p.days === 1)?.pricePerDay ?? null;
+      if (row || hp)
         out.push({
           product_id: pid,
-          name: row.name,
-          daily_price: row.daily_price ?? null,
-          description: row.description ?? null,
+          name: row?.name ?? hp?.name ?? "",
+          daily_price: freshOneDayPrice ?? row?.daily_price ?? null,
+          description: row?.description ?? null,
         });
     }
     return out;

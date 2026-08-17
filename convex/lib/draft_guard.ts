@@ -95,6 +95,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   UNFULFILLABLE_BOOKING: "critical",
   UNGROUNDED_AVAILABILITY: "critical",
   UNGROUNDED_PRICE: "critical",
+  VERIFICATION_CIRCUMVENTION: "critical",
   UNGROUNDED_SPEC: "high",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
@@ -286,6 +287,37 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       cot.details[0] ?? "Stripped leaked reasoning",
       "stripped",
     );
+  }
+
+  // 1f. VERIFICATION-CIRCUMVENTION ADVICE — STRIP
+  // Found live via the Lab (2026-08-17): asked how Hygglo's ID verification
+  // works, the bot correctly deferred to Hygglo support, then ALSO added
+  // "if you know someone with a verified account, they can place the request
+  // mentioning it's for you, sometimes that sidesteps the hold" — coaching
+  // the renter to book under someone else's verified identity. Not grounded
+  // in any real rule/FAQ; real liability exposure (identity/fraud, TOS,
+  // insurance) for the host account. No existing filter caught it. Strip the
+  // whole offending sentence rather than just flag — this class of advice
+  // must never reach the owner as something to "catch on review".
+  const VERIFICATION_CIRCUMVENTION_PATTERNS: RegExp[] = [
+    /\bsomeone(?:\s+else)? (?:you know )?with a verified account\b/i,
+    /\b(?:use|borrow) (?:someone else'?s|another(?:'s)?|a friend'?s|a family member'?s) (?:verified )?account\b/i,
+    /\b(?:sidesteps?|bypass(?:es)?|gets? around|skips?|avoids?|circumvents?|works? around)\s+(?:the\s+)?(?:verification|id\s*check|identity\s*check|the\s*hold)\b/i,
+    /\bplace (?:the |your )?(?:request|order|booking) (?:mentioning|saying) it'?s for you\b/i,
+  ];
+  if (VERIFICATION_CIRCUMVENTION_PATTERNS.some((p) => p.test(text))) {
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    const kept = sentences.filter(
+      (s) => !VERIFICATION_CIRCUMVENTION_PATTERNS.some((p) => p.test(s)),
+    );
+    if (kept.length !== sentences.length) {
+      text = kept.join(" ").trim();
+      push(
+        "VERIFICATION_CIRCUMVENTION",
+        "Stripped advice to circumvent Hygglo identity verification (e.g. using someone else's verified account)",
+        "stripped",
+      );
+    }
   }
 
   // 2. PLATFORM NAME LEAK — REWRITE

@@ -38,6 +38,7 @@ export default defineConfig({
       "convex/lib/notification_events.test.ts",
       "convex/lib/telegram_convex.test.ts",
       "convex/lib/draft_listing_grounding.test.ts",
+      "convex/lib/draft_guard.test.ts",
       "convex/lib/channel_response_rates.test.ts",
       "convex/dashboard_insights.spec.ts",
       "convex/dashboard_chat.walle.spec.ts",
