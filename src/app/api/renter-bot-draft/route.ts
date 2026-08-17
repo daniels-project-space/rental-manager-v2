@@ -436,6 +436,8 @@ export async function POST(req: Request) {
     // this tool-call signal is the ONLY grounding check available.
     let usedTools = false;
     let text = "";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let debugToolCalls: any[] = [];
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
     // subscription lane and no automatic stronger-model route.
     if (!obj) {
@@ -459,8 +461,14 @@ export async function POST(req: Request) {
       });
       text = result?.text ?? "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      usedTools = ((result?.steps ?? []) as any[]).some(
-        (st) => (st?.toolCalls?.length ?? 0) > 0,
+      const stepsArr = (result?.steps ?? []) as any[];
+      usedTools = stepsArr.some((st) => (st?.toolCalls?.length ?? 0) > 0);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      debugToolCalls = stepsArr.flatMap((st) =>
+        ((st?.toolCalls ?? []) as any[]).map((tc) => ({
+          name: tc?.toolName ?? tc?.name ?? null,
+          args: tc?.args ?? null,
+        })),
       );
     try {
       let js = text.trim();
@@ -675,6 +683,7 @@ export async function POST(req: Request) {
       usedTools,
       resolvedItems,
       debugSecondChance,
+      debugToolCalls,
     });
   } catch (e) {
     return NextResponse.json(
