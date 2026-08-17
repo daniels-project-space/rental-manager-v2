@@ -174,6 +174,77 @@ export async function POST(req: Request) {
       }
       groundTruth +=
         "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the facts show the booking is already PAID/confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — confirm availability warmly, then invite them to lock it in by completing the booking. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
+    } else {
+      // FRESH INQUIRY — no linked reservation yet (the common case for a
+      // renter's very first "is X available" message, before any order
+      // exists). Without this, groundTruth stays empty and the agent's only
+      // grounding option is calling check_availability itself — which,
+      // live-reproduced repeatedly, it does not reliably do, producing a
+      // confidently fabricated "not available" + wrong substitute + wrong
+      // price (now caught by the hard escalation backstop in
+      // replyInbox_actions.ts, but that just means EVERY fresh inquiry
+      // escalates to Daniel instead of drafting). Mirror the order-linked
+      // block above: resolve the item(s) the renter is actually asking about
+      // from their own message text (getItemAvailabilityForChat's existing
+      // fuzzy/alias matcher — same one the calendar UI and the Lab use) and
+      // hand the agent real rolling-calendar + real price up front.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const av: any = await convex.query(api.calendar.getItemAvailabilityForChat, {
+          query: lastRenter,
+          horizonDays: 30,
+          accountSlug: account_slug || null,
+        });
+        const matches = ((av?.items ?? []) as Array<{
+          name?: string;
+          owned?: boolean;
+          is_marketing_only?: boolean;
+          next_free_date?: string | null;
+          free_whole_horizon?: boolean | null;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          upcoming_bookings?: Array<any>;
+        }>).slice(0, 3); // cap — a vague query can match several items; don't dump the whole catalog
+        if (matches.length) {
+          groundTruth += "REQUESTED ITEM(S) — resolved from the renter's own message, real live data:\n";
+          for (const m of matches) {
+            if (!m.name) continue;
+            if (m.owned === false || m.is_marketing_only) {
+              groundTruth += `- ${m.name}: we CANNOT rent this to the renter (marketing-only / not owned). Do NOT confirm or quote it, and NEVER say why. Frame it ONLY as not available for their dates, then recommend a real alternative if you know one.\n`;
+              continue;
+            }
+            let priceLine = "";
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const pricing: any = await convex.query(api.renter_bot_tools.lookup_pricing, {
+                item_name: m.name,
+                account_slug: account_slug || undefined,
+              });
+              if (pricing?.found && typeof pricing.daily_rate_gbp === "number") {
+                priceLine = ` £${pricing.daily_rate_gbp}/day.`;
+              }
+            } catch {
+              /* best-effort */
+            }
+            // upcoming_bookings carries a real OTHER renter's name — never put
+            // that in a prompt that drafts a reply to THIS renter. Dates only.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const bookingDates = (m.upcoming_bookings ?? [])
+              .slice(0, 5)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              .map((b: any) => `${String(b.pickup ?? "").split(" ")[0]}→${String(b.return ?? "").split(" ")[0]}`);
+            const verdict = m.free_whole_horizon
+              ? "FREE for the next 30 days — no bookings in that window"
+              : bookingDates.length
+                ? `has existing bookings on: ${bookingDates.join(", ")} (dates outside this list are free within the next 30 days)`
+                : `next confirmed-free date: ${m.next_free_date ?? "unknown — treat as unconfirmed, offer to check exact dates"}`;
+            groundTruth += `- ${m.name}: ${verdict}.${priceLine}\n`;
+          }
+          groundTruth +=
+            "Compare the renter's requested dates against the booking list above yourself (you know today's date). Use ONLY this data for availability/price on these item(s) — do NOT call check_availability again for the same item, and do NOT state a price that isn't given above.\n";
+        }
+      } catch {
+        /* best-effort — if this fails, groundTruth just stays empty as before */
+      }
     }
   } catch {
     /* best-effort ground truth */
