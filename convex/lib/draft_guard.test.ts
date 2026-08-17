@@ -112,3 +112,41 @@ describe("guardDraft — PRICE_HALLUCINATION addon-band scoping", () => {
     expect(flag).toBeUndefined();
   });
 });
+
+describe("guardDraft — FALSE_ACTION_CLAIM future-conditional exclusion", () => {
+  // Real bug (2026-08-17): a real, correct draft that deferred the pickup
+  // address with the system prompt's OWN recommended phrasing ("I'll send
+  // the exact address the moment the booking is confirmed") tripped this
+  // check as if it were falsely claiming the booking IS confirmed right
+  // now — which then tripped generateDraft's hard-escalation backstop,
+  // forcing an unnecessary escalation on an otherwise good answer.
+  const opts = {
+    history: [],
+    lastRenterMessage: "can my flatmate pick up the gopro for me instead since I'm stuck at work",
+    ownerApproved: false,
+  };
+
+  it("does not flag a future-conditional deferral of the pickup address", () => {
+    const draft =
+      "Your flatmate can pick it up for you with the booking reference and forwarded confirmation. " +
+      "I'll send the exact address the moment the booking is confirmed.";
+    const result = guardDraft(draft, opts);
+    const flag = result.flags.find((f) => f.type === "FALSE_ACTION_CLAIM");
+    expect(flag).toBeUndefined();
+  });
+
+  it("still flags a genuine present-tense false confirmation claim", () => {
+    const draft = "Great news, your booking is confirmed! See you at pickup.";
+    const result = guardDraft(draft, opts);
+    const flag = result.flags.find((f) => f.type === "FALSE_ACTION_CLAIM");
+    expect(flag).toBeDefined();
+    expect(flag?.severity).toBe("critical");
+  });
+
+  it("does not flag when the booking genuinely is approved", () => {
+    const draft = "Great news, your booking is confirmed! See you at pickup.";
+    const result = guardDraft(draft, { ...opts, ownerApproved: true });
+    const flag = result.flags.find((f) => f.type === "FALSE_ACTION_CLAIM");
+    expect(flag).toBeUndefined();
+  });
+});

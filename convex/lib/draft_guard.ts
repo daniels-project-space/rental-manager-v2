@@ -920,10 +920,19 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       "flagged",
     );
   // Passive "your booking is approved" — fine when it actually is; flag only when
-  // it isn't approved yet.
+  // it isn't approved yet. Must NOT fire on a future-conditional reference like
+  // "I'll send the address the moment the booking is confirmed" — that's a
+  // correct, present-tense-free deferral (and the EXACT phrasing the system
+  // prompt itself tells the model to use for pickup-location disclosure, see
+  // "PICKUP LOCATION" in renter_bot.ts). Found live via the Lab (2026-08-17):
+  // this false positive was tripping the hard-escalation backstop on an
+  // otherwise-correct draft, forcing an unnecessary escalation.
   else if (
     !opts.ownerApproved &&
     /\b(?:your |the |it'?s )?(?:booking|request|order)?\s*(?:is |has been |'?s )?(?:approved|accepted|confirmed)\b/i.test(
+      text,
+    ) &&
+    !/\b(?:the moment|once|when|as soon as|the second)\s+(?:your |the |it'?s )?(?:booking|request|order)?\s*(?:is |has been |'?s )?(?:approved|accepted|confirmed)\b/i.test(
       text,
     )
   )
