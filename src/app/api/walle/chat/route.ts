@@ -11,11 +11,15 @@
  *      tool call; analytical questions force `toolChoice:'required'` on step 0
  *      (see prepareStep) so the model can't skip the tool and confabulate.
  *   2. Streams the LLM response via OpenRouter → CHAT_MODEL (google/gemini-3.7-flash,
- *      CHAT_MODEL_SMART for compat/optics intents — same model currently), falling
- *      back to CHAT_MODEL_FALLBACK (Claude Haiku 4.5) / CHAT_MODEL_SMART_FALLBACK
- *      (Claude Sonnet 4.6) if the primary lane errors. See /api/walle/health for a
- *      live per-lane probe. The shared read-only Convex query tools are available
- *      (max 4 hops) on whichever lane answers.
+ *      CHAT_MODEL_SMART for compat/optics intents — same model currently). The
+ *      plain lane is Gemini-only (Daniel, 2026-08-17: no Haiku fallback) — a
+ *      primary failure surfaces as a real error instead of a silent Haiku
+ *      switch. The smart lane still falls back to CHAT_MODEL_SMART_FALLBACK
+ *      (Claude Sonnet 4.6) if Gemini errors — that decision was scoped to
+ *      Haiku specifically, so compat/availability/inventory questions keep a
+ *      non-Gemini safety net. See /api/walle/health for a live per-lane
+ *      probe. The shared read-only Convex query tools are available (max 4
+ *      hops) on whichever lane answers.
  *   3. On completion, persists the last user turn + the full assistant text
  *      through Convex `dashboard_chat:appendTurn`.
  *
@@ -46,7 +50,6 @@ import {
 import {
   CHAT_MODEL,
   CHAT_MODEL_SMART,
-  CHAT_MODEL_FALLBACK,
   CHAT_MODEL_SMART_FALLBACK,
 } from "../../../../lib/ai-models";
 import { traceWalle } from "../../../../lib/walle/langfuse";
@@ -282,34 +285,39 @@ export async function POST(req: Request) {
           `[walle/chat] primary model ${modelId} produced no output`,
           primaryErr instanceof Error ? primaryErr.stack : primaryErr,
         );
-        // Availability fallback: a different model, so a single provider lane
-        // being down/unpaid cannot take WallE offline.
-        const fallbackId = needsSmart
-          ? CHAT_MODEL_SMART_FALLBACK
-          : CHAT_MODEL_FALLBACK;
-        try {
-          const fbModel = await getVaultOpenRouterModel(fallbackId);
-          const fbAgent = buildWalleChatAgent({
-            instructions: system,
-            model: fbModel,
-            tools,
-          });
-          const fbResult = await fbAgent.stream(modelMessages, {
-            maxSteps: 4,
-            modelSettings: { maxOutputTokens: 1800 },
-            toolChoice: "auto",
-          });
-          deltas = await drain(fbResult.textStream);
-          if (deltas > 0) {
-            console.warn(
-              `[walle/chat] served via fallback ${fallbackId} (primary ${modelId} was empty)`,
+        // Daniel, 2026-08-17: no Haiku fallback, Gemini-only for the plain
+        // lane -- a primary failure now surfaces as a real, visible error
+        // (see the deltas===0 block below) instead of being silently
+        // masked by an automatic switch to Claude Haiku 4.5. The smart
+        // lane's Sonnet fallback is untouched (that decision was scoped to
+        // Haiku specifically) -- compat/availability/inventory questions
+        // still have a non-Gemini safety net.
+        if (needsSmart) {
+          const fallbackId = CHAT_MODEL_SMART_FALLBACK;
+          try {
+            const fbModel = await getVaultOpenRouterModel(fallbackId);
+            const fbAgent = buildWalleChatAgent({
+              instructions: system,
+              model: fbModel,
+              tools,
+            });
+            const fbResult = await fbAgent.stream(modelMessages, {
+              maxSteps: 4,
+              modelSettings: { maxOutputTokens: 1800 },
+              toolChoice: "auto",
+            });
+            deltas = await drain(fbResult.textStream);
+            if (deltas > 0) {
+              console.warn(
+                `[walle/chat] served via fallback ${fallbackId} (primary ${modelId} was empty)`,
+              );
+            }
+          } catch (fbErr) {
+            console.error(
+              `[walle/chat] fallback ${fallbackId} also failed:`,
+              fbErr instanceof Error ? fbErr.stack : fbErr,
             );
           }
-        } catch (fbErr) {
-          console.error(
-            `[walle/chat] fallback ${fallbackId} also failed:`,
-            fbErr instanceof Error ? fbErr.stack : fbErr,
-          );
         }
       }
 

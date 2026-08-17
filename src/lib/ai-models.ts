@@ -41,9 +41,12 @@ export const CALENDAR_EXTRACTION_MODEL: string =
  * which is already pinned on Vercel) so this default actually applies in prod.
  * 2026-08-16: primary lane moved to Gemini 3.7 Flash on cost — $0.375 / $1.875
  * per 1M tok (in/out) vs Haiku 4.5's $1 / $5 and Sonnet 4.6's $3 / $15, i.e.
- * ~62% and ~87% cheaper. The Claude pair is retained below as the FALLBACK lane
- * (see CHAT_MODEL_FALLBACK) so a Gemini outage can't mute WallE, and so the
- * known-good tool-caller is one env var away if grounding ever regresses.
+ * ~62% and ~87% cheaper.
+ * 2026-08-17 (Daniel): removed the Haiku fallback for this plain lane — no
+ * Haiku calls anywhere. A primary failure now surfaces as a real, visible
+ * error (see /api/walle/chat, /api/walle/health) instead of a silent switch
+ * to Claude. The smart lane's Sonnet fallback (CHAT_MODEL_SMART_FALLBACK)
+ * is untouched — that decision was scoped to Haiku specifically.
  */
 export const CHAT_MODEL: string =
   process.env.CHAT_MODEL ?? "google/gemini-3.7-flash";
@@ -62,19 +65,18 @@ export const CHAT_MODEL_SMART: string =
   process.env.CHAT_MODEL_SMART ?? "google/gemini-3.7-flash";
 
 /**
- * Fallback lane, used ONLY when the primary model yields an error or an empty
- * reply. This is the pre-2026-08-16 primary (Claude), kept because it is the
- * proven grounded tool-caller for these routes.
+ * Fallback for the reasoning-heavy (compat/availability/inventory) lane only,
+ * used when CHAT_MODEL_SMART yields an error or an empty reply. This is the
+ * pre-2026-08-16 smart-lane primary (Claude Sonnet 4.6), kept because it is
+ * the proven grounded tool-caller for these routes, and because Daniel's
+ * 2026-08-17 "no Haiku" decision was scoped to Haiku specifically — Sonnet
+ * isn't Haiku.
  *
- * Why a fallback exists at all: on 2026-08-16 the shared OpenRouter account ran
- * out of credit and EVERY WallE surface went silently blank — the provider
- * error never reached the user or the logs. Cost is not the reason to have one
- * model; availability is.
+ * The plain lane's old Haiku fallback (CHAT_MODEL_FALLBACK) was removed the
+ * same day: no Haiku calls anywhere, even as a dormant safety net. See
+ * /api/walle/chat for why a fallback existed at all (2026-08-16 OpenRouter
+ * outage caused every WallE surface to go silently blank).
  */
-export const CHAT_MODEL_FALLBACK: string =
-  process.env.CHAT_MODEL_FALLBACK ?? "anthropic/claude-haiku-4.5";
-
-/** Fallback for the reasoning-heavy lane. See CHAT_MODEL_FALLBACK. */
 export const CHAT_MODEL_SMART_FALLBACK: string =
   process.env.CHAT_MODEL_SMART_FALLBACK ?? "anthropic/claude-sonnet-4.6";
 
