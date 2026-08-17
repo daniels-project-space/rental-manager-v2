@@ -5,12 +5,25 @@
  * will swap to embeddings while keeping this signature.
  *
  * Ranking:
- *   1. priority desc  (rule priority 10 > 9 > ... ; memory priority 10 > 9 > ...)
- *   2. relevance desc (token-hit count)
+ *   1. relevance desc (token-hit count)
+ *   2. priority desc  (rule priority 10 > 9 > ... ; memory priority 10 > 9 > ...)
  *
  * Token rule: lowercase the haystack + needle, split on whitespace, ignore
  * tokens shorter than 3 characters. Substring containment, not prefix —
  * "delivery" matches "deliver" too.
+ *
+ * 2026-08-17: was priority-desc-first. With ~100 operational rules seeded
+ * at priority 10 and FAQs/templates at 6-7, that meant a rule with a couple
+ * of incidental word overlaps (common tokens like "the"/"sent"/"accept" are
+ * unfiltered substrings, not word-boundary matches) permanently outranked
+ * an FAQ that was a near-total keyword match for the question. Confirmed
+ * live: "FAQ: Reservation Hold" (relevance 6 — the single highest score
+ * across all 83 matches for "is my slot held in the meantime") ranked 74th
+ * of 83 because its priority (6) sat behind 73 priority-10 rules with
+ * relevance as low as 2. The bot's real search_knowledge tool call (limit
+ * 3-5) never saw it and escalated a fully FAQ-answerable question. Priority
+ * now only breaks ties among equally-relevant hits, which is what it reads
+ * as doing anyway.
  */
 
 export type KnowledgeHit = {
@@ -112,6 +125,6 @@ export function rankKnowledge(
     });
   }
 
-  hits.sort((a, b) => b.priority - a.priority || b.relevance - a.relevance);
+  hits.sort((a, b) => b.relevance - a.relevance || b.priority - a.priority);
   return hits.slice(0, limit);
 }
