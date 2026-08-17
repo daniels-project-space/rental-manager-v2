@@ -4,6 +4,13 @@ import { useState } from "react";
 import { useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 
+export interface SessionContext {
+  items: string[];
+  priceGbp?: number;
+  dates?: string;
+  location?: string;
+}
+
 interface ChatTurn {
   role: "renter" | "bot";
   text: string;
@@ -11,10 +18,35 @@ interface ChatTurn {
   runId?: string;
 }
 
+function ContextBanner({ context }: { context: SessionContext }) {
+  const row = (label: string, value: string) => (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-[11px] uppercase tracking-wide text-[#8b8fa3]">
+        {label}
+      </span>
+      <span className="text-sm text-[#e4e6eb]">{value}</span>
+    </div>
+  );
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-3 sm:grid-cols-4">
+      {row(
+        "Items",
+        context.items.length ? context.items.join(", ") : "not set",
+      )}
+      {row(
+        "Price",
+        context.priceGbp != null ? `£${context.priceGbp}/day` : "not set",
+      )}
+      {row("Dates", context.dates || "not set")}
+      {row("Location", context.location || "not set")}
+    </div>
+  );
+}
+
 export function LiveChatSim({
   session,
 }: {
-  session: { threadId: string; accountSlug: string };
+  session: { threadId: string; accountSlug: string; context: SessionContext };
 }) {
   const sendTestMessage = useAction(api.renter_bot_lab_actions.sendTestMessage);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -66,11 +98,13 @@ export function LiveChatSim({
 
   return (
     <div className="flex h-[560px] flex-col rounded-lg border border-white/10 bg-white/[0.03]">
+      <ContextBanner context={session.context} />
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {turns.length === 0 && (
           <p className="text-sm text-[#8b8fa3]">
             Type as a renter below. Every reply is the real production draft
-            pipeline — nothing here is sent anywhere.
+            pipeline — nothing here is sent anywhere. The bar above shows
+            exactly what context the AI actually has for this conversation.
           </p>
         )}
         {turns.map((t, i) => (

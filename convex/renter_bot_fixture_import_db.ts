@@ -24,6 +24,7 @@ export const insertFixture = internalMutation({
         location: v.optional(v.string()),
         items: v.optional(v.array(v.string())),
         price_gbp: v.optional(v.number()),
+        dates: v.optional(v.string()),
       }),
     ),
     messages: v.array(

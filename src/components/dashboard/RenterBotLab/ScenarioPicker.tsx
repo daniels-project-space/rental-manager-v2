@@ -10,10 +10,58 @@ export interface FixtureOption {
   description?: string;
 }
 
+export interface CustomScenarioInput {
+  items: string[];
+  priceGbp?: number;
+  dates?: string;
+  location?: string;
+}
+
+// dbcinema_web intentionally NOT first/default (Daniel, 2026-08-17).
 const ACCOUNTS = [
-  { slug: "dbcinema_web", label: "Daniel (DB Cinema)" },
   { slug: "leo", label: "Leo" },
   { slug: "diogo", label: "Diogo" },
+  { slug: "dbcinema_web", label: "Daniel (DB Cinema)" },
+];
+
+// Groups the ported V1 scenario_types into categories instead of one flat,
+// unordered list (Daniel, 2026-08-17). Anything with a scenario_type not
+// listed here still shows up, under "Other".
+const SCENARIO_CATEGORIES: { label: string; types: string[] }[] = [
+  {
+    label: "Booking & Availability",
+    types: [
+      "availability_check",
+      "same_day_rental",
+      "pickup_times",
+      "delivery_inquiry",
+    ],
+  },
+  {
+    label: "Pricing & Negotiation",
+    types: ["price_negotiation", "student_budget", "accessory_upsell"],
+  },
+  {
+    label: "Item & Project Questions",
+    types: [
+      "technical_questions",
+      "multi_item",
+      "commercial_production",
+      "weekend_warrior",
+    ],
+  },
+  {
+    label: "Changes & Problems",
+    types: ["cancel_reschedule", "late_return", "damage_insurance", "complaint"],
+  },
+  {
+    label: "Rule & Security Probes",
+    types: ["scam_probe", "info_probe", "cross_account"],
+  },
+  {
+    label: "Other",
+    types: ["returning_renter", "vague_inquiry"],
+  },
 ];
 
 export function ScenarioPicker({
@@ -23,13 +71,53 @@ export function ScenarioPicker({
 }: {
   fixtures: FixtureOption[] | undefined;
   disabled: boolean;
-  startSession: (accountSlug: string, fixtureId?: string) => void;
+  startSession: (
+    accountSlug: string,
+    fixtureId?: string,
+    custom?: CustomScenarioInput,
+  ) => void;
 }) {
   const [accountSlug, setAccountSlug] = useState(ACCOUNTS[0].slug);
   const [fixtureId, setFixtureId] = useState<string>("");
-  const [customLocation, setCustomLocation] = useState("");
   const [customItems, setCustomItems] = useState("");
   const [customPrice, setCustomPrice] = useState("");
+  const [customDates, setCustomDates] = useState("");
+  const [customLocation, setCustomLocation] = useState("");
+
+  const list = fixtures ?? [];
+  const byType = new Map<string, FixtureOption[]>();
+  for (const f of list) {
+    const arr = byType.get(f.scenario_type) ?? [];
+    arr.push(f);
+    byType.set(f.scenario_type, arr);
+  }
+  const knownTypes = new Set(SCENARIO_CATEGORIES.flatMap((c) => c.types));
+  const groups = [
+    ...SCENARIO_CATEGORIES.map((cat) => ({
+      label: cat.label,
+      options: cat.types.flatMap((t) => byType.get(t) ?? []),
+    })),
+    {
+      label: "Other",
+      options: list.filter((f) => !knownTypes.has(f.scenario_type)),
+    },
+  ].filter((g) => g.options.length > 0);
+
+  function handleStart() {
+    if (fixtureId) {
+      startSession(accountSlug, fixtureId);
+      return;
+    }
+    startSession(accountSlug, undefined, {
+      items: customItems
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      priceGbp: customPrice ? Number(customPrice) : undefined,
+      dates: customDates || undefined,
+      location: customLocation || undefined,
+    });
+  }
 
   return (
     <div className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
@@ -62,10 +150,14 @@ export function ScenarioPicker({
           className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
         >
           <option value="">— Custom scenario (below) —</option>
-          {(fixtures ?? []).map((f) => (
-            <option key={f._id} value={f._id}>
-              {f.scenario_type} · {f.account_slug}
-            </option>
+          {groups.map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.options.map((f) => (
+                <option key={f._id} value={f._id}>
+                  {f.scenario_type} · {f.account_slug}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         {!fixtures && (
@@ -79,13 +171,6 @@ export function ScenarioPicker({
             Custom scenario base info
           </p>
           <input
-            value={customLocation}
-            onChange={(e) => setCustomLocation(e.target.value)}
-            disabled={disabled}
-            placeholder="Location (e.g. Trafalgar Square)"
-            className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
-          />
-          <input
             value={customItems}
             onChange={(e) => setCustomItems(e.target.value)}
             disabled={disabled}
@@ -96,24 +181,34 @@ export function ScenarioPicker({
             value={customPrice}
             onChange={(e) => setCustomPrice(e.target.value)}
             disabled={disabled}
-            placeholder="Price £ (optional)"
+            placeholder="Price £/day (optional)"
+            inputMode="decimal"
+            className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
+          />
+          <input
+            value={customDates}
+            onChange={(e) => setCustomDates(e.target.value)}
+            disabled={disabled}
+            placeholder="Time period, e.g. Aug 20-22 (optional)"
+            className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
+          />
+          <input
+            value={customLocation}
+            onChange={(e) => setCustomLocation(e.target.value)}
+            disabled={disabled}
+            placeholder="Location (optional)"
             className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
           />
         </div>
       )}
 
       <button
-        onClick={() => startSession(accountSlug, fixtureId || undefined)}
+        onClick={handleStart}
         disabled={disabled}
         className="w-full rounded-md bg-emerald-500/20 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/30 disabled:opacity-50"
       >
         Start test conversation
       </button>
-      <p className="text-[11px] leading-snug text-[#8b8fa3]">
-        Note: custom location/price aren&apos;t wired into the seeded
-        conversation context yet — this build only threads through the
-        items list. Location/price context is a follow-up.
-      </p>
     </div>
   );
 }

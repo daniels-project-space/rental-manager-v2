@@ -4,13 +4,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import { ScenarioPicker } from "./ScenarioPicker";
-import { LiveChatSim } from "./LiveChatSim";
+import { ScenarioPicker, type CustomScenarioInput } from "./ScenarioPicker";
+import { LiveChatSim, type SessionContext } from "./LiveChatSim";
 import { RunResultsPanel } from "./RunResultsPanel";
 
 interface Session {
   threadId: string;
   accountSlug: string;
+  context: SessionContext;
 }
 
 export function RenterBotLabWorkspace() {
@@ -22,12 +23,24 @@ export function RenterBotLabWorkspace() {
   const startLiveSession = useAction(api.renter_bot_lab_actions.startLiveSession);
   const endLiveSession = useAction(api.renter_bot_lab_actions.endLiveSession);
 
-  async function handleStart(accountSlug: string, fixtureId?: string) {
-    const { threadId } = await startLiveSession({
+  async function handleStart(
+    accountSlug: string,
+    fixtureId?: string,
+    custom?: CustomScenarioInput,
+  ) {
+    const result = await startLiveSession({
       accountSlug,
       fixtureId: fixtureId as never, // Convex Id<> branding; picker only ever passes a real fixture _id
+      items: custom?.items,
+      priceGbp: custom?.priceGbp,
+      dates: custom?.dates,
+      location: custom?.location,
     });
-    setSession({ threadId, accountSlug });
+    setSession({
+      threadId: result.threadId,
+      accountSlug,
+      context: result.context,
+    });
   }
 
   async function handleEnd() {

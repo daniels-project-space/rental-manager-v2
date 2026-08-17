@@ -89,10 +89,27 @@ export const startLiveSession = action({
     accountSlug: v.string(),
     fixtureId: v.optional(v.id("renter_bot_fixtures")),
     items: v.optional(v.array(v.string())),
+    priceGbp: v.optional(v.number()),
+    dates: v.optional(v.string()),
+    location: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ threadId: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    threadId: string;
+    context: {
+      items: string[];
+      priceGbp?: number;
+      dates?: string;
+      location?: string;
+    };
+  }> => {
     const threadId = `${PREFIX}lab-${Date.now()}`;
-    let items = (args.items ?? []).map((name) => ({ name }));
+    let itemNames = args.items ?? [];
+    let priceGbp = args.priceGbp;
+    let dates = args.dates;
+    let location = args.location;
     let messages: { role: string; text: string }[] = [];
 
     if (args.fixtureId) {
@@ -101,7 +118,10 @@ export const startLiveSession = action({
         { fixtureId: args.fixtureId },
       );
       if (fixture) {
-        items = (fixture.seed_context?.items ?? []).map((name) => ({ name }));
+        itemNames = fixture.seed_context?.items ?? [];
+        priceGbp = fixture.seed_context?.price_gbp;
+        dates = fixture.seed_context?.dates;
+        location = fixture.seed_context?.location;
         messages = fixture.messages.map((m) => ({ role: m.role, text: m.text }));
       }
     }
@@ -109,10 +129,13 @@ export const startLiveSession = action({
     await ctx.runMutation(internal.renter_bot_probe.seed, {
       thread_id: threadId,
       account_slug: args.accountSlug,
-      items,
+      items: itemNames.map((name) => ({ name })),
       messages,
     });
-    return { threadId };
+    return {
+      threadId,
+      context: { items: itemNames, priceGbp, dates, location },
+    };
   },
 });
 
