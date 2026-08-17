@@ -3,6 +3,10 @@ import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
+import {
+  OUT_OF_SCOPE_INTENTS,
+  type RenterBotIntent,
+} from "@/../convex/lib/renter_bot_intents";
 
 const accountCommunicationRef = makeFunctionReference<"query">(
   "settings:listAccountCommunication",
@@ -126,20 +130,31 @@ export async function POST(req: Request) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const alts: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
-              account_slug: account_slug || "",
-              kind: it.kind ?? undefined,
-              item_name: it.name ?? undefined,
-              exclude_name: it.name ?? undefined,
-            });
-            const list = ((alts?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
-              .slice(0, 5)
-              .map((a) => `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`);
-            if (list.length) altText = ` Recommend ONE of these we DO own instead, by name: ${list.join("; ")}.`;
-          } catch {
-            /* best-effort alternatives */
+          // Real bug (2026-08-17): the Mastra TOOL now requires `kind` so the
+          // agent can never omit it (see renter_bot_tools.ts), but THIS is a
+          // direct server-side query call that bypasses that Zod validation.
+          // Without kind, the underlying query falls back to weak name-token
+          // similarity, which can rank a wrong-category item near the top (a
+          // lens sharing only "Sony" with an unavailable camera, in the case
+          // that surfaced this). Skip the substitute entirely rather than
+          // risk offering the wrong kind of gear — no suggestion is safer
+          // than a nonsensical one.
+          if (it.kind) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const alts: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
+                account_slug: account_slug || "",
+                kind: it.kind,
+                item_name: it.name ?? undefined,
+                exclude_name: it.name ?? undefined,
+              });
+              const list = ((alts?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
+                .slice(0, 5)
+                .map((a) => `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`);
+              if (list.length) altText = ` Recommend ONE of these we DO own instead, by name: ${list.join("; ")}.`;
+            } catch {
+              /* best-effort alternatives */
+            }
           }
           groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". Frame it ONLY as not available for their dates, then IMMEDIATELY recommend a real alternative BY NAME. Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
           continue;
@@ -446,6 +461,72 @@ export async function POST(req: Request) {
       // Couldn't parse a decision — escalate rather than send garbage.
       return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
     }
+
+    // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling
+    // a tool, and this isn't a genuinely urgent intent, give it one grounded
+    // retry before accepting the escalation. Real, repeatedly confirmed
+    // finding: the agent sometimes sets needs_human=true on topic-based
+    // caution (third-party access, international travel, lens compatibility)
+    // without calling search_knowledge at all, even though a documented
+    // answer exists — verified by calling this same route directly, which
+    // DID call the tool and answered correctly. A system-prompt clarification
+    // alone didn't move this (re-tested 8 fresh runs post-deploy, 7/8 still
+    // escalated). This gives the agent the SAME real grounding a successful
+    // run gets, explicitly — but it keeps full discretion: the note tells it
+    // to still escalate if the match isn't actually relevant. Fails safe:
+    // any error here, or a retry that itself still can't produce an answer,
+    // leaves the original escalation untouched.
+    if (
+      obj.needs_human === true &&
+      !usedTools &&
+      !OUT_OF_SCOPE_INTENTS.has(obj.intent as RenterBotIntent)
+    ) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hits: any = await convex.query(api.knowledge.search, {
+          query: lastRenter,
+          limit: 3,
+        });
+        const top = Array.isArray(hits) ? hits[0] : null;
+        // relevance is a token-hit count (see convex/lib/knowledge_search.ts)
+        // — require at least 2 matching tokens so a single generic word
+        // doesn't count as "found something relevant".
+        if (top && typeof top.relevance === "number" && top.relevance >= 2) {
+          const retryMessages = [
+            ...baseMessages,
+            {
+              role: "user" as const,
+              content: `[SYSTEM NOTE: you set needs_human=true without calling search_knowledge this turn. It found this potentially relevant match — "${top.title}": "${top.content}". If this genuinely answers the renter's question, use it (cite it in factsClaimed with sourceTool "search_knowledge") and set needs_human=false. If it does not actually answer what they asked, you may still set needs_human=true.]`,
+            },
+          ];
+          const retryAgent = await getRenterBotAgent(); // lazy singleton — cheap to re-fetch
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const retryResult: any = await (retryAgent as any).generate(retryMessages, { maxSteps: 6 });
+          const retryText: string = retryResult?.text ?? "";
+          const retryUsedTools = ((retryResult?.steps ?? []) as any[]).some(
+            (st) => (st?.toolCalls?.length ?? 0) > 0,
+          );
+          let retryObj: RenterBotOutput | null = null;
+          try {
+            let js = retryText.trim();
+            const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
+            if (fence) js = fence[1].trim();
+            const a = js.indexOf("{");
+            const b = js.lastIndexOf("}");
+            if (a >= 0 && b > a) retryObj = JSON.parse(js.slice(a, b + 1)) as RenterBotOutput;
+          } catch {
+            retryObj = null;
+          }
+          if (retryObj && (retryObj.draft || retryObj.needs_human === false)) {
+            obj = retryObj;
+            usedTools = retryUsedTools;
+          }
+        }
+      } catch {
+        /* best-effort — keep the original escalation on any failure */
+      }
+    }
+
     // BACKSTOP: never let a draft AFFIRM a phantom item is available. If the
     // marketing item's model token sits near availability/pickup language, the
     // bot is confirming an item we can't rent — blank it and escalate. (We do
