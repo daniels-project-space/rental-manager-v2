@@ -51,6 +51,7 @@ export const generateDraft = action({
     draft?: string;
     confidence?: number;
     flags?: DraftFlag[];
+    usedTools?: boolean;
     reason?: "needs_human" | "subscription_unavailable";
   }> => {
     // Make sure we know the inquiry's listing before drafting — pulls the order
@@ -711,6 +712,37 @@ export const generateDraft = action({
           }
         : undefined,
     });
+    // Hard backstop for ANY unresolved critical-severity guardDraft flag.
+    // Live-reproduced repeatedly on a bare first-contact "is X available":
+    // UNGROUNDED_AVAILABILITY + UNGROUNDED_PRICE (confident "not available" +
+    // fabricated substitute + fabricated price), then on a second, different
+    // item PRICE_HALLUCINATION alone (a confidently stated £73.50 vs the real
+    // catalog's £145 — the availability claim wasn't even flagged that time).
+    // Started this backstop scoped to just those first two flag types; the
+    // PRICE_HALLUCINATION case proved that was whack-a-mole — every critical
+    // type (FALSE_ACTION_CLAIM, PREMATURE_CONFIRMATION,
+    // MARKETING_ITEM_AVAILABLE, EQUIPMENT_SUBSTITUTION, FABRICATED_QUOTE,
+    // UNFULFILLABLE_BOOKING, etc. — see SEVERITY map) represents the same
+    // class of confidently-wrong claim, which is exactly why the codebase's
+    // own taxonomy already marks them "critical" rather than high/medium/low.
+    // usedTools/the self-check above are too coarse to prevent this reliably
+    // (a tool call happening somewhere in the turn doesn't mean THIS claim
+    // was verified — confirmed live: usedTools=true on a run that still
+    // fabricated both availability and price). guardDraft's own per-flag
+    // detection has been 100% precise across every reproduction so far, it
+    // just doesn't act on "flagged" (review-only, per ReplyInbox.tsx's
+    // "Never blocks — informs" design) — and a small amber "⚠ N to review"
+    // is too easy to miss for a claim this consequential (lost booking, or a
+    // promise Daniel can't keep). So: any unresolved critical flag escalates
+    // instead of drafting. A genuine "let me check and get back to you" is
+    // always safe; a confident fabrication is not.
+    const unresolvedCriticalFlags = guard.flags.filter(
+      (f) => f.action === "flagged" && f.severity === "critical",
+    );
+    if (unresolvedCriticalFlags.length > 0) {
+      return { status: "skipped", reason: "needs_human" };
+    }
+
     const finalDraft = guard.text.trim() || checkedDraft;
 
     await ctx.runMutation(internal.replyInbox.setDraft, {
@@ -737,6 +769,7 @@ export const generateDraft = action({
       draft: finalDraft,
       confidence: guard.confidence,
       flags: guard.flags,
+      usedTools, // diagnostic: did the agent actually call a grounding tool this turn
     };
   },
 });
