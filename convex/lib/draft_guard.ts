@@ -96,6 +96,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   UNGROUNDED_AVAILABILITY: "critical",
   UNGROUNDED_PRICE: "critical",
   VERIFICATION_CIRCUMVENTION: "critical",
+  LOCATION_ASK_FOR_DISCOUNT: "high",
   UNGROUNDED_SPEC: "high",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
@@ -591,6 +592,52 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
         text = cleaned.join(" ").trim();
         push("PROACTIVE_DELIVERY", "Stripped unprompted delivery offer", "stripped");
       }
+    }
+  }
+
+  // 10b. LOCATION ASK FOR DISCOUNT PURPOSES — STRIP
+  // Found live via the Lab (2026-08-17): asked about a non-central-area
+  // discount, the draft replied "I'd need to know your postcode... What's
+  // your area?" — DANIEL RULE 7 (distance discount = LISTING_LOCATION only)
+  // is explicit: "NEVER ask renter location". Renter-location questions are
+  // legitimate for a DELIVERY quote (a different rule requires the postcode
+  // there), so this only fires when the draft ties the location-ask to a
+  // discount/benefit in the same breath — a bare delivery-postcode ask is
+  // untouched.
+  if (/\b(discounts?|% off|percent off|reduced rates?|special rates?|better rates?|benefits?)\b/i.test(text)) {
+    // Only the direct interrogative form — a declarative mention like "I'd
+    // need your postcode to work that out" in an earlier sentence is left
+    // alone; stripping every "postcode" mention would also gut the sentence
+    // (still fine to flag) but the sentence-level strip below needs a
+    // reliably isolatable offending sentence, not the whole reply.
+    const locationAsk =
+      /\b(?:what'?s your (?:postcode|post ?code|area|location)|where are you (?:based|located)\b|which area (?:are you|you'?re) in\b)/i;
+    if (locationAsk.test(text)) {
+      const sentences = text.split(/(?<=[.!?])\s+/);
+      const cleaned = sentences.filter((s) => !locationAsk.test(s));
+      if (cleaned.length > 0 && cleaned.length < sentences.length) {
+        text = cleaned.join(" ").trim();
+        push(
+          "LOCATION_ASK_FOR_DISCOUNT",
+          "Stripped renter-location question tied to a discount/benefit (DANIEL RULE 7: distance discount is listing-location only, never ask the renter's location)",
+          "stripped",
+        );
+      }
+    } else if (
+      /\b(?:need(?:ed)? to know|need|require|could you (?:tell me|share|send)(?: me)?|let me know|if you (?:tell|give) me)\s+your\s+(?:postcode|post ?code|area|location)\b/i.test(
+        text,
+      )
+    ) {
+      // Same violation, phrased as a statement rather than a question (e.g.
+      // "...but I'd need to know your postcode to see if you'd qualify").
+      // Usually entangled in the same sentence as the (legitimate) discount
+      // explanation, so not safely strippable without mangling the grammar —
+      // flag for Daniel to edit rather than guess at a rewrite.
+      push(
+        "LOCATION_ASK_FOR_DISCOUNT",
+        "Draft ties a discount/benefit to needing the renter's postcode/area (DANIEL RULE 7: distance discount is listing-location only, never ask the renter's location) — phrased as a statement, left in for manual edit",
+        "flagged",
+      );
     }
   }
 

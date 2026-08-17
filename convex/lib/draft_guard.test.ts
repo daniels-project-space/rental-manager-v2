@@ -34,3 +34,48 @@ describe("guardDraft — VERIFICATION_CIRCUMVENTION", () => {
     expect(flag).toBeUndefined();
   });
 });
+
+describe("guardDraft — LOCATION_ASK_FOR_DISCOUNT", () => {
+  const discountOpts = {
+    history: [],
+    lastRenterMessage:
+      "do you give any discount for renters outside central london, and if so how much exactly",
+  };
+
+  it("strips a renter-location question tied to a discount", () => {
+    const draft =
+      "I do offer benefits for renters outside central London, but I'd need to know your postcode to look into exactly what that means for your rental. " +
+      "What's your area?";
+    const result = guardDraft(draft, discountOpts);
+    expect(result.text).not.toMatch(/what'?s your area/i);
+    const flag = result.flags.find((f) => f.type === "LOCATION_ASK_FOR_DISCOUNT");
+    expect(flag).toBeDefined();
+    expect(flag?.action).toBe("stripped");
+    // The discount acknowledgement itself is legitimate and must survive.
+    expect(result.text).toMatch(/benefits/i);
+  });
+
+  it("flags (without mangling) a declarative postcode-for-discount statement", () => {
+    const draft =
+      "I do offer location-based discounts that are automatically applied at checkout, depending on pickup location, but I'd need to know your postcode to see if you'd qualify. " +
+      "Happy to check once you've got your dates locked in.";
+    const result = guardDraft(draft, discountOpts);
+    const flag = result.flags.find((f) => f.type === "LOCATION_ASK_FOR_DISCOUNT");
+    expect(flag).toBeDefined();
+    expect(flag?.action).toBe("flagged");
+    // Flag-only: text is untouched, not mangled.
+    expect(result.text).toContain("I'd need to know your postcode");
+  });
+
+  it("does not false-positive on a delivery-postcode ask with no discount mention", () => {
+    const draft =
+      "Happy to look into delivery for you. Could you send me the postcode you'd like it delivered to? " +
+      "I'll quote based on distance and gear size.";
+    const result = guardDraft(draft, {
+      history: [],
+      lastRenterMessage: "can you deliver this to me, I don't have a car",
+    });
+    const flag = result.flags.find((f) => f.type === "LOCATION_ASK_FOR_DISCOUNT");
+    expect(flag).toBeUndefined();
+  });
+});
