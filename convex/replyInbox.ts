@@ -18,6 +18,7 @@ import { v } from "convex/values";
 import { filterImminentHandoffs, type ImminentHandoffCandidate } from "./lib/imminent_handoffs";
 import type { Doc, Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
+import { PREFIX as PROBE_THREAD_PREFIX } from "./renter_bot_probe";
 import { readWidgetMv } from "./lib/widget_mv";
 import { exactListingProductIds } from "./lib/draft_listing_grounding";
 import { bookedUnitsOnDate } from "./lib/availability";
@@ -797,10 +798,12 @@ export const getReplyQueue = query({
     // conversations read; the fat unbounded by_last_sender collect is gone).
     const msgCutoff = now - messagesWithinDays * 86_400_000;
     const windowStart = includeMessages ? Math.min(cutoff, msgCutoff) : cutoff;
-    const windowConvos = await ctx.db
-      .query("conversations")
-      .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", windowStart))
-      .collect();
+    const windowConvos = (
+      await ctx.db
+        .query("conversations")
+        .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", windowStart))
+        .collect()
+    ).filter((c) => !c.thread_id.startsWith(PROBE_THREAD_PREFIX));
     // thread_id → conversation, for Pass 2's per-request lookups. thread_id is
     // unique across conversations (every writer upserts via by_thread .first()),
     // so a map hit returns exactly what `.first()` would; misses fall through to
@@ -1711,7 +1714,9 @@ export const threadsNeedingDraft = internalQuery({
         .query("conversations")
         .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", draftWindowStart))
         .collect()
-    ).filter((c) => c.last_sender === "renter");
+    ).filter(
+      (c) => c.last_sender === "renter" && !c.thread_id.startsWith(PROBE_THREAD_PREFIX),
+    );
     convs.sort(
       (a, b) =>
         (b.last_renter_msg_at ?? b.last_msg_at ?? 0) -

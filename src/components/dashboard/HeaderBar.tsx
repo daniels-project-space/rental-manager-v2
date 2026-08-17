@@ -175,6 +175,15 @@ export function HeaderBar() {
           <NotificationBell />
           <button
             type="button"
+            onClick={() => router.push("/renter-bot-lab")}
+            className="rounded-md px-1.5 py-1 text-[#8b8fa3] transition-colors hover:bg-white/[0.06] hover:text-[#e4e6eb]"
+            aria-label="Renter Bot Lab"
+            title="Renter Bot Lab (test-only, never sends to a real renter)"
+          >
+            🧪
+          </button>
+          <button
+            type="button"
             onClick={() => router.push("/settings")}
             className="rounded-md px-1.5 py-1 text-[#8b8fa3] transition-colors hover:bg-white/[0.06] hover:text-[#e4e6eb]"
             aria-label="Settings"

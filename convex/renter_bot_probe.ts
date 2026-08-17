@@ -8,7 +8,9 @@ import { action, internalMutation, mutation } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 
-const PREFIX = "__probe__";
+// Exported so other modules (e.g. replyInbox.ts's getReplyQueue) can exclude
+// probe/fixture threads from real UI surfaces without duplicating the string.
+export const PREFIX = "__probe__";
 
 export const seed = internalMutation({
   args: {
@@ -121,6 +123,14 @@ export const cleanup = mutation({
         .withIndex("by_thread", (q) => q.eq("thread_id", c.thread_id))
         .collect())
         await ctx.db.delete(m._id);
+      // generateDraft caches its output in renter_bot_drafts (keyed by
+      // thread_id) — that must be swept too, or a probe run leaves a
+      // phantom draft behind after its conversation/messages are gone.
+      for (const d of await ctx.db
+        .query("renter_bot_drafts")
+        .withIndex("by_thread", (q) => q.eq("thread_id", c.thread_id))
+        .collect())
+        await ctx.db.delete(d._id);
       await ctx.db.delete(c._id);
       n++;
     }

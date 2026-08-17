@@ -2461,4 +2461,97 @@ export default defineSchema({
     .index("by_account", ["account_slug"])
     .index("by_listing", ["listing_id"])
     .index("by_changed_at", ["changed_at"]),
+
+  // ── Renter-bot test lab: persisted fixtures ───────────────────────────
+  // A fixture is a seeded conversation scenario — either ported from V1's
+  // scenario templates or imported read-only from a real historical Hygglo
+  // order — used to replay against the REAL draft pipeline (generateDraft /
+  // renter_bot.ts). This table has no relationship to any Hygglo write path.
+  renter_bot_fixtures: defineTable({
+    name: v.string(),                          // human-readable label
+    account_slug: v.string(),                  // daniel | leo | diogo
+    scenario_type: v.string(),                 // e.g. "info_probe", "price_negotiation", "damage_report" — mirrors V1's 20 templates
+    source: v.union(
+      v.literal("v1_scenario_port"),
+      v.literal("hygglo_import"),
+      v.literal("manual"),
+    ),
+    hygglo_order_id: v.optional(v.string()),    // set when source="hygglo_import"; used to dedup re-imports
+    seed_context: v.optional(v.object({
+      location: v.optional(v.string()),
+      items: v.optional(v.array(v.string())),
+      price_gbp: v.optional(v.number()),
+    })),
+    // "owner" matches Hygglo/orderToMessages semantics (what our account said) —
+    // for imported fixtures this is the real historical reply, not necessarily
+    // bot-generated; the harness only ever feeds the "renter" side back in.
+    messages: v.array(v.object({
+      role: v.union(v.literal("renter"), v.literal("owner")),
+      text: v.string(),
+      at: v.number(),
+    })),
+    description: v.optional(v.string()),        // what this fixture is meant to probe
+    active: v.boolean(),                        // included in default batch runs
+    created_at: v.number(),
+    created_by: v.string(),                     // "import" | "v1_port" | "daniel_manual"
+  })
+    .index("by_account", ["account_slug"])
+    .index("by_scenario_type", ["scenario_type"])
+    .index("by_source", ["source"])
+    .index("by_hygglo_order_id", ["hygglo_order_id"])
+    .index("by_active", ["active"]),
+
+  // ── Renter-bot test lab: harness run results ──────────────────────────
+  // One row per (fixture × run). Records the REAL generateDraft output for
+  // that fixture plus rubric scoring. Never a live send — no relationship to
+  // renter_bot_drafts or any Hygglo write path.
+  renter_bot_harness_runs: defineTable({
+    // Optional: Lab UI live/freeform sessions (triggered_by="lab_ui_manual")
+    // aren't always tied to a persisted fixture.
+    fixture_id: v.optional(v.id("renter_bot_fixtures")),
+    session_thread_id: v.optional(v.string()),    // set for live Lab sessions instead of fixture_id
+    run_batch_id: v.optional(v.string()),        // groups fixtures run together in one batch invocation
+    account_slug: v.string(),
+    draft_text: v.string(),
+    draft_intent: v.optional(v.string()),
+    draft_confidence: v.optional(v.number()),
+    facts_claimed: v.optional(v.array(v.object({
+      kind: v.string(),
+      value: v.string(),
+      sourceTool: v.string(),
+      sourceCallId: v.string(),
+      verified: v.boolean(),
+    }))),
+    model_id: v.string(),
+    filter_violations: v.array(v.string()),      // names of any renter_bot_filters / supplemental checks that tripped
+    rubric_results: v.array(v.object({
+      category: v.string(),                      // one of Daniel's policy categories
+      status: v.union(
+        v.literal("pass"),
+        v.literal("fail"),
+        v.literal("flag"),
+        v.literal("n_a"),
+      ),
+      detail: v.string(),
+      evidence: v.optional(v.string()),
+    })),
+    overall_status: v.union(
+      v.literal("pass"),
+      v.literal("fail"),
+      v.literal("flag"),
+    ),
+    triggered_by: v.union(
+      v.literal("harness_batch"),
+      v.literal("lab_ui_manual"),
+    ),
+    run_at: v.number(),
+    duration_ms: v.optional(v.number()),
+    cost_usd: v.optional(v.number()),
+  })
+    .index("by_fixture", ["fixture_id"])
+    .index("by_session_thread", ["session_thread_id"])
+    .index("by_run_batch", ["run_batch_id"])
+    .index("by_account", ["account_slug"])
+    .index("by_overall_status", ["overall_status"])
+    .index("by_run_at", ["run_at"]),
 });

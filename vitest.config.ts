@@ -47,6 +47,7 @@ export default defineConfig({
       "src/lib/hygglo/listings.test.ts",
       "src/lib/chat/dashboard-tools.schema.test.ts",
       "src/lib/renter-bot-policy.test.ts",
+      "convex/lib/renter_bot_rubric.test.ts",
       "src/lib/booking-time-transcript.test.ts",
       "src/lib/booking-time-extraction.test.ts",
       "src/lib/calendar-bar-geometry.test.ts",
