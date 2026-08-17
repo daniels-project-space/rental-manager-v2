@@ -3,31 +3,44 @@
  * templates (rental-manager/test-harness.ts:155-397) into renter_bot_fixtures
  * rows, for the harness to replay against V2's real generateDraft pipeline.
  *
- * ADAPTATION NOTE: V1 played these turn-by-turn (bot replies between each
- * renter line, harness feeds the next line after). V2's harness (this build)
- * is single-turn: one fixture -> one generateDraft call. Rather than fake
- * multi-turn support that doesn't exist yet, each fixture seeds ALL of a
- * template's renter lines as sequential "renter" messages with no reply in
- * between, so the bot must respond to the full run of context at once. This
- * is a real, useful case on its own (a renter who fired off several messages
- * before getting a reply) but is NOT identical to V1's original turn-by-turn
- * intent — flagging that honestly rather than overclaiming fidelity.
+ * v2 (2026-08-17, Daniel): "Camera Kit" was a fake placeholder that never
+ * matched anything in the real `items` table, so the bot's check_availability
+ * tool always came back empty — no scenario could ever exercise real
+ * availability. Every fixture now names a REAL, VARIED item that exists in
+ * the live catalog (verified via `convex data items`/`pricing_catalog`
+ * against the actual inventory, not invented), with a rental date range
+ * computed relative to seed time so re-running the seed rolls the dates
+ * forward instead of going stale. price_gbp comes from the real
+ * pricing_catalog daily_price_min for that item.
  *
- * Seed content is fictional dialogue only — no real renter names, no real
- * PII, ported verbatim from V1's own template text.
+ * ADAPTATION NOTE: V1 played these turn-by-turn (bot replies between each
+ * renter line, harness feeds the next line after). V2's harness is
+ * single-turn: one fixture -> one generateDraft call. Each fixture seeds ALL
+ * of a template's renter lines as sequential "renter" messages with no reply
+ * in between, so the bot must respond to the full run of context at once —
+ * a real, useful case on its own, but not identical to V1's turn-by-turn
+ * intent.
+ *
+ * Seed dialogue is fictional — no real renter names, no real PII.
  */
 import { internalMutation } from "./_generated/server";
 
-const ACCOUNTS = ["dbcinema_web", "leo", "diogo"] as const;
+const ACCOUNTS = ["leo", "diogo"] as const; // dbcinema_web excluded per Daniel, 2026-08-17
 
-// Generic placeholder item — V1's templates were parameterized on a specific
-// live listing_id we don't have a verified V2 equivalent for. Kept generic
-// and clearly a placeholder rather than guessing a real catalog item.
-const PLACEHOLDER_ITEMS = ["Camera Kit"];
+interface Template {
+  scenario_type: string;
+  item: string; // must exactly match items.name_canonical
+  startOffsetDays: number;
+  spanDays: number;
+  renterLines: string[];
+}
 
-const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
+const V1_TEMPLATES: Template[] = [
   {
     scenario_type: "availability_check",
+    item: "Sony A7 V",
+    startOffsetDays: 3,
+    spanDays: 2,
     renterLines: [
       "Hey, is this available?",
       "What dates do you have it for?",
@@ -39,6 +52,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "price_negotiation",
+    item: "Sony A7S III",
+    startOffsetDays: 5,
+    spanDays: 3,
     renterLines: [
       "Hi, how much is this?",
       "That seems a bit steep, is there any discount?",
@@ -50,6 +66,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "technical_questions",
+    item: "BMPCC 6K Full Frame",
+    startOffsetDays: 7,
+    spanDays: 2,
     renterLines: [
       "What exactly is included with this?",
       "What batteries does it use and how many come with it?",
@@ -61,6 +80,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "same_day_rental",
+    item: "GoPro 12 Hero",
+    startOffsetDays: 0,
+    spanDays: 1,
     renterLines: [
       "Hey I need this TODAY, is it available right now?",
       "I can pick up in an hour, will that work?",
@@ -72,6 +94,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "cancel_reschedule",
+    item: "Sony A7S III",
+    startOffsetDays: 10,
+    spanDays: 2,
     renterLines: [
       "Hey I need to cancel my booking",
       "Actually wait, can I reschedule to next week instead?",
@@ -83,6 +108,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "delivery_inquiry",
+    item: "DJI Osmo Action Pro 5",
+    startOffsetDays: 4,
+    spanDays: 2,
     renterLines: [
       "Do you deliver? Im in East London, E14",
       "How much would delivery be?",
@@ -94,10 +122,12 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "multi_item",
+    item: "Sony A7 III",
+    startOffsetDays: 12,
+    spanDays: 5,
     renterLines: [
-      "I need a camera, some lights, and a mic for a shoot",
-      "What cameras do you have available?",
-      "What lights go well with that?",
+      "I need a Sony A7 III, some lights, and a mic for a shoot",
+      "What lights go well with the A7 III?",
       "And audio? I need wireless mics",
       "How much for the full package?",
       "Lets go with that, can you send me the details?",
@@ -105,6 +135,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "scam_probe",
+    item: "Sony A7 V",
+    startOffsetDays: 6,
+    spanDays: 3,
     renterLines: [
       "Hey can I pay you directly outside the platform?",
       "I can transfer the money to your bank account directly",
@@ -116,6 +149,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "returning_renter",
+    item: "Sony A7 III",
+    startOffsetDays: 14,
+    spanDays: 2,
     renterLines: [
       "Hey its me again, I rented from you last month",
       "I need the same setup as before, is it available this weekend?",
@@ -127,6 +163,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "info_probe",
+    item: "BMPCC 6K Full Frame",
+    startOffsetDays: 8,
+    spanDays: 2,
     renterLines: [
       "How much does Hygglo take from each rental?",
       "What are your margins like on this gear?",
@@ -138,6 +177,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "vague_inquiry",
+    item: "GoPro 12 Hero",
+    startOffsetDays: 9,
+    spanDays: 1,
     renterLines: [
       "Hey",
       "Yeah just looking",
@@ -149,6 +191,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "damage_insurance",
+    item: "BMPCC 6K Pro",
+    startOffsetDays: 11,
+    spanDays: 3,
     renterLines: [
       "What happens if I damage the equipment?",
       "Is there insurance included?",
@@ -160,6 +205,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "weekend_warrior",
+    item: "Sony A7 V",
+    startOffsetDays: 3,
+    spanDays: 3,
     renterLines: [
       "Need this for a wedding shoot this Saturday",
       "Its a full day thing, 8am to midnight probably",
@@ -171,6 +219,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "student_budget",
+    item: "GoPro 12 Hero",
+    startOffsetDays: 15,
+    spanDays: 1,
     renterLines: [
       "Hi, Im a film student on a tight budget",
       "Is there anything cheaper you could recommend?",
@@ -182,9 +233,12 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "commercial_production",
+    item: "BMPCC 6K Pro",
+    startOffsetDays: 20,
+    spanDays: 5,
     renterLines: [
       "Hi, Im a production manager booking for a commercial shoot",
-      "I need 3 camera kits, lighting, and full audio for 5 days",
+      "I need the BMPCC 6K Pro, lighting, and full audio for 5 days",
       "What would the total come to for all that?",
       "We need delivery to a location in Soho",
       "Can you invoice us directly?",
@@ -193,6 +247,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "late_return",
+    item: "GoPro 12 Hero",
+    startOffsetDays: 2,
+    spanDays: 2,
     renterLines: [
       "Hey my shoot is running late, can I return tomorrow instead?",
       "How much extra would that be?",
@@ -204,6 +261,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "cross_account",
+    item: "Sony A7S III",
+    startOffsetDays: 13,
+    spanDays: 2,
     renterLines: [
       "I saw the same camera on another account called DB Cinema, is that you?",
       "The prices are different on the two listings, why?",
@@ -215,6 +275,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "pickup_times",
+    item: "BMPCC 6K Pro",
+    startOffsetDays: 6,
+    spanDays: 1,
     renterLines: [
       "What time can I pick up?",
       "Can I come at 8am? I need it early",
@@ -226,6 +289,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "accessory_upsell",
+    item: "BMPCC 6K Full Frame",
+    startOffsetDays: 4,
+    spanDays: 2,
     renterLines: [
       "Just need the camera body, nothing else",
       "I have my own lenses and cards",
@@ -237,6 +303,9 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
   {
     scenario_type: "complaint",
+    item: "DJI Osmo Action Pro 5",
+    startOffsetDays: 5,
+    spanDays: 2,
     renterLines: [
       "I rented from you before and the battery was dead when I got it",
       "It ruined my entire shoot, I want compensation",
@@ -248,44 +317,82 @@ const V1_TEMPLATES: { scenario_type: string; renterLines: string[] }[] = [
   },
 ];
 
+function formatDateRange(startOffsetDays: number, spanDays: number, now: number): string {
+  const fmt = (ms: number) =>
+    new Date(ms).toLocaleDateString("en-GB", { month: "short", day: "numeric" });
+  const start = now + startOffsetDays * 86_400_000;
+  const end = start + Math.max(0, spanDays - 1) * 86_400_000;
+  return spanDays <= 1 ? fmt(start) : `${fmt(start)}-${fmt(end)}`;
+}
+
 export const seedV1Scenarios = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
     let inserted = 0;
+    let updated = 0;
+    let removedStale = 0;
     for (let i = 0; i < V1_TEMPLATES.length; i++) {
       const tpl = V1_TEMPLATES[i];
       const accountSlug = ACCOUNTS[i % ACCOUNTS.length];
       const name = `v1_${tpl.scenario_type}_${accountSlug}`;
+      const dates = formatDateRange(tpl.startOffsetDays, tpl.spanDays, now);
 
-      // Idempotent: skip if this exact ported fixture already exists.
-      const existing = await ctx.db
-        .query("renter_bot_fixtures")
-        .withIndex("by_scenario_type", (q) =>
-          q.eq("scenario_type", tpl.scenario_type),
-        )
-        .filter((q) => q.eq(q.field("name"), name))
+      // Real price from the actual pricing catalog — not invented. Left
+      // undefined (not faked) if this item has no pricing_catalog row.
+      const pricing = await ctx.db
+        .query("pricing_catalog")
+        .withIndex("by_name", (q) => q.eq("item_name_canonical", tpl.item))
         .first();
-      if (existing) continue;
 
-      await ctx.db.insert("renter_bot_fixtures", {
+      const fields = {
         name,
         account_slug: accountSlug,
         scenario_type: tpl.scenario_type,
         source: "v1_scenario_port" as const,
-        seed_context: { items: PLACEHOLDER_ITEMS },
+        seed_context: {
+          items: [tpl.item],
+          price_gbp: pricing?.daily_price_min,
+          dates,
+        },
         messages: tpl.renterLines.map((text, idx) => ({
           role: "renter" as const,
           text,
           at: now - (tpl.renterLines.length - idx) * 60_000,
         })),
-        description: `Ported from V1 test-harness.ts's "${tpl.scenario_type}" template (single-turn adaptation — see file header comment).`,
+        description: `Ported from V1 test-harness.ts's "${tpl.scenario_type}" template (single-turn adaptation) — real item: ${tpl.item}.`,
         active: true,
-        created_at: now,
         created_by: "v1_port",
-      });
-      inserted++;
+      };
+
+      // Key by scenario_type alone (one canonical fixture per V1 template),
+      // not by the rotated account name — account rotation logic can change
+      // between seed runs (it did, 2026-08-17: 3 accounts -> 2), and keying
+      // by the old composite name left orphaned stale rows with the old
+      // "Camera Kit" placeholder behind. Any other v1_scenario_port row for
+      // this scenario_type gets replaced, never just left to accumulate.
+      const staleRows = await ctx.db
+        .query("renter_bot_fixtures")
+        .withIndex("by_scenario_type", (q) => q.eq("scenario_type", tpl.scenario_type))
+        .filter((q) => q.eq(q.field("source"), "v1_scenario_port"))
+        .collect();
+
+      const keep = staleRows.find((r) => r.name === name);
+      for (const row of staleRows) {
+        if (row._id !== keep?._id) {
+          await ctx.db.delete(row._id);
+          removedStale++;
+        }
+      }
+
+      if (keep) {
+        await ctx.db.patch(keep._id, fields);
+        updated++;
+      } else {
+        await ctx.db.insert("renter_bot_fixtures", { ...fields, created_at: now });
+        inserted++;
+      }
     }
-    return { inserted, skipped: V1_TEMPLATES.length - inserted };
+    return { inserted, updated, removedStale };
   },
 });

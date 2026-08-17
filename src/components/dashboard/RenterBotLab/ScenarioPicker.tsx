@@ -8,6 +8,11 @@ export interface FixtureOption {
   account_slug: string;
   scenario_type: string;
   description?: string;
+  seed_context?: { items?: string[]; price_gbp?: number; dates?: string };
+}
+
+function scenarioLabel(scenario_type: string): string {
+  return scenario_type.replace(/_/g, " ");
 }
 
 export interface CustomScenarioInput {
@@ -17,11 +22,11 @@ export interface CustomScenarioInput {
   location?: string;
 }
 
-// dbcinema_web intentionally NOT first/default (Daniel, 2026-08-17).
+// dbcinema_web excluded entirely per Daniel, 2026-08-17 ("not include DB
+// cinema web" — not just reorder, actually leave it out of the list).
 const ACCOUNTS = [
   { slug: "leo", label: "Leo" },
   { slug: "diogo", label: "Diogo" },
-  { slug: "dbcinema_web", label: "Daniel (DB Cinema)" },
 ];
 
 // Groups the ported V1 scenario_types into categories instead of one flat,
@@ -152,11 +157,15 @@ export function ScenarioPicker({
           <option value="">— Custom scenario (below) —</option>
           {groups.map((g) => (
             <optgroup key={g.label} label={g.label}>
-              {g.options.map((f) => (
-                <option key={f._id} value={f._id}>
-                  {f.scenario_type} · {f.account_slug}
-                </option>
-              ))}
+              {g.options.map((f) => {
+                const item = f.seed_context?.items?.[0];
+                return (
+                  <option key={f._id} value={f._id}>
+                    {scenarioLabel(f.scenario_type)}
+                    {item ? ` — ${item}` : ""} ({f.account_slug})
+                  </option>
+                );
+              })}
             </optgroup>
           ))}
         </select>

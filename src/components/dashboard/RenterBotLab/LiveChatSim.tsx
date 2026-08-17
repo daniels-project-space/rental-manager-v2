@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 
 export interface SessionContext {
@@ -18,6 +18,67 @@ interface ChatTurn {
   runId?: string;
 }
 
+// Real image + real price for the primary item, joined from the actual
+// catalog (renter_bot_lab_actions.getItemContext) — not fabricated.
+function ItemCard({ itemName }: { itemName: string }) {
+  const itemCtx = useQuery(api.renter_bot_lab_actions.getItemContext, {
+    itemName,
+  });
+  const avail = useQuery(api.calendar.getItemAvailabilityForChat, {
+    query: itemName,
+    horizonDays: 21,
+    accountSlug: null,
+  });
+  const match = avail?.items?.[0];
+
+  return (
+    <div className="flex gap-3 border-b border-white/10 bg-black/20 p-3">
+      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-white/[0.06]">
+        {itemCtx?.image_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={itemCtx.image_url}
+            alt={itemCtx.name}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-[10px] text-[#8b8fa3]">
+            {itemCtx === undefined ? "…" : "no image"}
+          </div>
+        )}
+      </div>
+      <div className="flex-1 space-y-0.5 text-xs">
+        <p className="text-sm font-medium text-[#e4e6eb]">
+          {itemCtx?.name ?? itemName}
+          {itemCtx && !itemCtx.found && (
+            <span className="ml-1.5 text-amber-400">(not found in real catalog)</span>
+          )}
+        </p>
+        <p className="text-[#8b8fa3]">
+          {itemCtx?.daily_price_min != null
+            ? `£${itemCtx.daily_price_min}${
+                itemCtx.daily_price_max && itemCtx.daily_price_max !== itemCtx.daily_price_min
+                  ? `–£${itemCtx.daily_price_max}`
+                  : ""
+              }/day (real pricing_catalog rate)`
+            : "no real price on file"}
+        </p>
+        <p className="text-[#8b8fa3]">
+          {avail === undefined
+            ? "checking live availability…"
+            : match
+              ? match.owned
+                ? match.free_today
+                  ? `Live: free today (${match.free_units_today}/${match.qty} units)`
+                  : `Live: booked — next free ${match.next_free_date ?? "unknown"}`
+                : "Live: marketing-only listing, no owned stock"
+              : "Live: no calendar match for this name"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function ContextBanner({ context }: { context: SessionContext }) {
   const row = (label: string, value: string) => (
     <div className="flex items-baseline gap-1.5">
@@ -28,17 +89,20 @@ function ContextBanner({ context }: { context: SessionContext }) {
     </div>
   );
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-3 sm:grid-cols-4">
-      {row(
-        "Items",
-        context.items.length ? context.items.join(", ") : "not set",
-      )}
-      {row(
-        "Price",
-        context.priceGbp != null ? `£${context.priceGbp}/day` : "not set",
-      )}
-      {row("Dates", context.dates || "not set")}
-      {row("Location", context.location || "not set")}
+    <div>
+      {context.items[0] && <ItemCard itemName={context.items[0]} />}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-3 sm:grid-cols-4">
+        {row(
+          "Items",
+          context.items.length ? context.items.join(", ") : "not set",
+        )}
+        {row(
+          "Seed price",
+          context.priceGbp != null ? `£${context.priceGbp}/day` : "not set",
+        )}
+        {row("Dates", context.dates || "not set")}
+        {row("Location", context.location || "not set")}
+      </div>
     </div>
   );
 }

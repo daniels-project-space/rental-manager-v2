@@ -21,15 +21,49 @@ export const listFixtures = query({
   args: {},
   handler: async (ctx) => {
     const fixtures = await ctx.db.query("renter_bot_fixtures").collect();
-    return fixtures.map((f) => ({
-      _id: f._id,
-      name: f.name,
-      account_slug: f.account_slug,
-      scenario_type: f.scenario_type,
-      description: f.description,
-    }));
+    // dbcinema_web excluded from the Lab entirely per Daniel, 2026-08-17 —
+    // filtered here (not just client-side) so it can never leak back in
+    // regardless of what seeds/imports a fixture with that account_slug.
+    return fixtures
+      .filter((f) => f.account_slug !== "dbcinema_web")
+      .map((f) => ({
+        _id: f._id,
+        name: f.name,
+        account_slug: f.account_slug,
+        scenario_type: f.scenario_type,
+        description: f.description,
+        seed_context: f.seed_context,
+      }));
   },
 });
+
+
+// Real catalog lookup — image + price for one item, joined from the actual
+// items/pricing_catalog tables (never invented). Read-only. Used by the Lab
+// UI's context banner so Daniel can see exactly what grounding is real.
+export const getItemContext = query({
+  args: { itemName: v.string() },
+  handler: async (ctx, { itemName }) => {
+    const item = await ctx.db
+      .query("items")
+      .withIndex("by_canonical_name", (q) => q.eq("name_canonical", itemName))
+      .first();
+    const pricing = item
+      ? await ctx.db
+          .query("pricing_catalog")
+          .withIndex("by_name", (q) => q.eq("item_name_canonical", item.name_canonical))
+          .first()
+      : null;
+    return {
+      found: !!item,
+      name: item?.name_canonical ?? itemName,
+      image_url: item?.image_url,
+      kind: item?.kind,
+      daily_price_min: pricing?.daily_price_min,
+      daily_price_max: pricing?.daily_price_max,
+    };
+  },
+})
 
 export const recentRuns = query({
   args: { limit: v.optional(v.number()) },
