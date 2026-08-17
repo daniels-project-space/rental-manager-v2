@@ -170,6 +170,65 @@ function RentalListingCard({
           Next confirmed-free date on file: {match.next_free_date}
         </div>
       )}
+
+      {itemCtx?.found && (
+        <details className="border-t border-white/10 px-4 py-2 text-xs">
+          <summary className="cursor-pointer text-[#8b8fa3]">
+            Full listing info (real catalog data)
+          </summary>
+          <div className="mt-2 space-y-1.5 text-[#e4e6eb]">
+            {itemCtx.notes && <p>{itemCtx.notes}</p>}
+            {itemCtx.qty != null && (
+              <p className="text-[#8b8fa3]">
+                Stock: {itemCtx.qty} {itemCtx.unit_kind ?? "unit"}
+                {itemCtx.qty === 1 ? "" : "s"}
+              </p>
+            )}
+            {!!itemCtx.included_with_rental?.length && (
+              <p>
+                <span className="text-[#8b8fa3]">Included: </span>
+                {itemCtx.included_with_rental.join(", ")}
+              </p>
+            )}
+            {!!itemCtx.compatible_lenses?.length && (
+              <p>
+                <span className="text-[#8b8fa3]">Compatible lenses: </span>
+                {itemCtx.compatible_lenses.join(", ")}
+              </p>
+            )}
+            {!!itemCtx.compatible_batteries?.length && (
+              <p>
+                <span className="text-[#8b8fa3]">Batteries: </span>
+                {itemCtx.compatible_batteries.join(", ")}
+              </p>
+            )}
+            {!!itemCtx.compatible_cards?.length && (
+              <p>
+                <span className="text-[#8b8fa3]">Cards: </span>
+                {itemCtx.compatible_cards.join(", ")}
+              </p>
+            )}
+            {!!itemCtx.compatible_accessories?.length && (
+              <p>
+                <span className="text-[#8b8fa3]">Accessories: </span>
+                {itemCtx.compatible_accessories.join(", ")}
+              </p>
+            )}
+            {itemCtx.delivery_notes && (
+              <p>
+                <span className="text-[#8b8fa3]">Delivery: </span>
+                {itemCtx.delivery_notes}
+              </p>
+            )}
+            {itemCtx.cancellation_policy && (
+              <p>
+                <span className="text-[#8b8fa3]">Pricing / cancellation notes: </span>
+                {itemCtx.cancellation_policy}
+              </p>
+            )}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
