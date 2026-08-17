@@ -63,6 +63,54 @@ describe('findBestMatch', () => {
     expect(m).toBe('Sony GM 24-70mm f2.8');
   });
 
+  // Regression: real Hygglo listing title, live-confirmed to be mapping 12
+  // of 15 real "Sony A7 V" listings (across 3 accounts) to the unrelated
+  // "Sony A7 II" masterItemId — different battery, different card slots,
+  // £700 vs the real £2800 replacement cost. Root cause was
+  // scoreCandidate's A7-designator check: it matched the bare "a7" token
+  // and returned "" before ever looking at the following "v"/"ii"/"iii"
+  // token, so every A7 generation collapsed to the same "" designator and
+  // the conflict check that's supposed to keep them apart never fired.
+  //
+  // findBestMatch (above) has an earlier "contains match" shortcut that
+  // happens to catch these specific strings before scoreCandidate ever
+  // runs — masking the bug. The real catalog-sync pipeline
+  // (src/trigger/catalog-sync.map.ts matchProduct) calls
+  // findBestMatchWithScore, which has no such shortcut and goes straight
+  // through scoreCandidateWithAliases/scoreCandidate — so that's what
+  // these regression tests exercise.
+  it('matches a real Sony A7 V listing to Sony A7 V, not the unrelated Sony A7 II', () => {
+    const m = findBestMatchWithScore(
+      'Sony A7 V Full-Frame Mirrorless Camera | Alpha 7 V / a7v / 4K Hybrid Photo Video Camera / a7 5',
+      MASTER_INVENTORY_KEYS,
+    );
+    expect(m?.name).toBe('Sony A7 V');
+  });
+
+  it('matches a real Sony A7 V + lens bundle listing to Sony A7 V, not Sony A7 II', () => {
+    const m = findBestMatchWithScore(
+      'Sony A7 V Camera 4K + 24-70mm GM Lens | Sony a7V / a7 V / a7v / Alpha 7 V / 24-70 GM / G Master / Full-Frame Mirrorless / 4K Video Camera',
+      MASTER_INVENTORY_KEYS,
+    );
+    expect(m?.name).toBe('Sony A7 V');
+  });
+
+  it('matches a Sony A7 II listing to Sony A7 II, not Sony A7 V (reverse direction)', () => {
+    const m = findBestMatchWithScore(
+      'Sony A7 II Full-Frame Mirrorless Camera Body',
+      MASTER_INVENTORY_KEYS,
+    );
+    expect(m?.name).toBe('Sony A7 II');
+  });
+
+  it('matches a Sony A7 III listing to Sony A7 III, not Sony A7 V or Sony A7 II', () => {
+    const m = findBestMatchWithScore(
+      'Sony A7 III Full-Frame Mirrorless Camera Body 4K',
+      MASTER_INVENTORY_KEYS,
+    );
+    expect(m?.name).toBe('Sony A7 III');
+  });
+
   it('matches the live TTArtisan 11mm listing to the owned Sony fisheye', () => {
     const m = findBestMatch(
       'TTArtisan Sony 11mm f/2.8 Fisheye / Ultra Wide Lens (Like Samyang / Laowa) – E-Mount Lens for Video & Photography',

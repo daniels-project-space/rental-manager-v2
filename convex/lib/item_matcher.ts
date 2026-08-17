@@ -461,16 +461,27 @@ function scoreCandidate(
     if (commonTokens.length >= 2 && !inputVariants.some(v => itemVariants.includes(v))) return null;
   }
 
-  // A7-designator conflict
+  // A7-designator conflict. Sony A7 bodies are distinguished either by a
+  // letter glued straight onto "a7" (a7s/a7r/a7c) or a separate generation
+  // token after a bare "a7" (a7 v / a7 ii / a7 iii / a7 iv — the alias table
+  // normalizes "a7v"/"a75"/"alpha 7 v" to "a7 v", and "A7 II"/"A7 III" are
+  // already two tokens in the source text). Matches against the JOINED
+  // string, not token-by-token, so the designator can span either shape.
+  // BUG FIXED 2026-08-17: the old per-token loop matched the bare "a7"
+  // token itself first (no end-anchor, no lookahead at the next token) and
+  // returned "" the instant it saw "a7" — before ever checking what
+  // followed. Every "a7 <generation>" listing (V, II, III, IV) produced the
+  // same "" designator, so this conflict check never actually fired, and
+  // the fuzzy matcher confused Sony A7 V listings with the unrelated older
+  // Sony A7 II record purely on overall token overlap. Confirmed live: 12
+  // of 15 real "Sony A7 V" Hygglo listings had been mapped to the wrong
+  // masterItemId as a result (wrong battery type, wrong card slots, £700
+  // vs the real £2800 replacement cost).
   const getA7Designator = (tokens: string[]): string | null => {
-    for (const t of tokens) {
-      const variants = getTokenVariants(t);
-      for (const v of variants) {
-        const m = v.match(/^a7([src]?)/);
-        if (m) return m[1];
-      }
-    }
-    return null;
+    const joined = tokens.join(' ');
+    const m = joined.match(/\ba7\s?(iv|iii|ii|s|r|c|v)?\b/);
+    if (!m) return null;
+    return m[1] ?? '';
   };
   const inputA7Des = getA7Designator(inputTokens);
   const itemA7Des = getA7Designator(itemTokens);
