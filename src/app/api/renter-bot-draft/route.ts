@@ -436,8 +436,6 @@ export async function POST(req: Request) {
     // this tool-call signal is the ONLY grounding check available.
     let usedTools = false;
     let text = "";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let debugToolCalls: any[] = [];
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
     // subscription lane and no automatic stronger-model route.
     if (!obj) {
@@ -461,10 +459,9 @@ export async function POST(req: Request) {
       });
       text = result?.text ?? "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stepsArr = (result?.steps ?? []) as any[];
-      usedTools = stepsArr.some((st) => (st?.toolCalls?.length ?? 0) > 0);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      debugToolCalls = stepsArr.flatMap((st) => (st?.toolCalls ?? []) as any[]);
+      usedTools = ((result?.steps ?? []) as any[]).some(
+        (st) => (st?.toolCalls?.length ?? 0) > 0,
+      );
     try {
       let js = text.trim();
       const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -478,9 +475,8 @@ export async function POST(req: Request) {
     }
     if (!obj) {
       // Couldn't parse a decision — escalate rather than send garbage.
-      return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [], debugFirstPassEmpty: true, debugRawTextLen: text.length });
+      return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
     }
-    let debugSecondChance: unknown = null;
 
     // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling
     // a tool, and this isn't a genuinely urgent intent, give it one grounded
@@ -496,15 +492,6 @@ export async function POST(req: Request) {
     // to still escalate if the match isn't actually relevant. Fails safe:
     // any error here, or a retry that itself still can't produce an answer,
     // leaves the original escalation untouched.
-    debugSecondChance = {
-      gatePassed:
-        obj.needs_human === true &&
-        !usedTools &&
-        !OUT_OF_SCOPE_INTENTS.has(obj.intent as RenterBotIntent),
-      needsHuman: obj.needs_human,
-      usedTools,
-      intent: obj.intent ?? null,
-    };
     if (
       obj.needs_human === true &&
       !usedTools &&
@@ -517,9 +504,6 @@ export async function POST(req: Request) {
           limit: 3,
         });
         const top = Array.isArray(hits) ? hits[0] : null;
-        (debugSecondChance as Record<string, unknown>).topHit = top
-          ? { title: top.title, relevance: top.relevance }
-          : null;
         // relevance is a token-hit count (see convex/lib/knowledge_search.ts)
         // — require at least 2 matching tokens so a single generic word
         // doesn't count as "found something relevant".
@@ -552,22 +536,12 @@ export async function POST(req: Request) {
           } catch {
             retryObj = null;
           }
-          (debugSecondChance as Record<string, unknown>).retryOutcome = {
-            retryTextLen: retryText.length,
-            retryParsed: !!retryObj,
-            retryNeedsHuman: retryObj?.needs_human ?? null,
-            retryHasDraft: !!retryObj?.draft,
-            retryUsedTools,
-            applied: !!(retryObj && (retryObj.draft || retryObj.needs_human === false)),
-          };
           if (retryObj && (retryObj.draft || retryObj.needs_human === false)) {
             obj = retryObj;
             usedTools = retryUsedTools;
           }
         }
-      } catch (e) {
-        (debugSecondChance as Record<string, unknown>).retryError =
-          e instanceof Error ? e.message : String(e);
+      } catch {
         /* best-effort — keep the original escalation on any failure */
       }
     }
@@ -677,8 +651,6 @@ export async function POST(req: Request) {
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
       resolvedItems,
-      debugSecondChance,
-      debugToolCalls,
     });
   } catch (e) {
     return NextResponse.json(
