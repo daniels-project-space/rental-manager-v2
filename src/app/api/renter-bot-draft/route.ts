@@ -475,15 +475,7 @@ export async function POST(req: Request) {
     }
     if (!obj) {
       // Couldn't parse a decision — escalate rather than send garbage.
-      // TEMP DEBUG (2026-08-17): investigating a suspected post-Gemini-swap
-      // JSON-parse-failure regression. Remove debugRawText before commit.
-      return NextResponse.json({
-        ok: true,
-        draft: "",
-        needs_human: true,
-        factsClaimed: [],
-        debugRawText: (typeof text === "string" ? text : "").slice(0, 2000),
-      });
+      return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
     }
 
     // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling
