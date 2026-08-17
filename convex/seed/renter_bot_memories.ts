@@ -303,7 +303,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     "BMPCC bodies are best on a cage with side handle for handheld work. Cage included with listing.",
     tags: ["faq", "bmpcc", "rig"], priority: 6 },
   { scope: "faq", title: "FAQ: Blazar Remus Anamorphic Lenses", content:
-    "1.5x squeeze. Manual focus only. Sony E mount native. Adapt-able to L / EF via separate adapter (not included).",
+    "1.5x squeeze. Manual focus only. PL mount native — requires an adapter for all our cameras (none of our bodies are natively PL). Adapter not included.",
     tags: ["faq", "anamorphic", "lens"], priority: 6 },
   { scope: "faq", title: "FAQ: Light Stands", content:
     "C-stand for any large light or modifier. Standard light stands included with smaller LEDs.",
