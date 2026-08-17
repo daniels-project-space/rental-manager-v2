@@ -1,17 +1,14 @@
-import { hasLabAccess } from "@/lib/test-lab-gate";
-import { LabGateForm } from "@/components/dashboard/RenterBotLab/LabGateForm";
 import { RenterBotLabWorkspace } from "@/components/dashboard/RenterBotLab/RenterBotLabWorkspace";
 
 /**
  * Renter Bot Lab — internal-only test surface. Talks to the REAL
  * generateDraft pipeline via convex/renter_bot_lab_actions.ts, never to a
- * real renter (see docs/renter-bot-policy.md for the send-path guarantees).
+ * real renter (see docs/renter-bot-policy.md for the send-path guarantees —
+ * that's enforced structurally, independent of anything on this page).
  *
- * NOT YET LINKED from HeaderBar — reachable only by direct URL + the gate
- * below, pending Daniel's decision on the actual Vercel-side perimeter.
+ * No passphrase gate (removed per Daniel, 2026-08-17) — reachable by anyone
+ * with the URL. Nothing here can reach a real renter regardless.
  */
-export default async function RenterBotLabPage() {
-  const granted = await hasLabAccess();
-  if (!granted) return <LabGateForm />;
+export default function RenterBotLabPage() {
   return <RenterBotLabWorkspace />;
 }

@@ -1,17 +1,21 @@
-# Renter Bot Lab — deploy checklist (do this only when Daniel says go)
+# Renter Bot Lab — deploy checklist (historical record; the deploy below already happened 2026-08-17)
 
 Everything below is additive/inert until run. Nothing in this feature can
 send to a real renter regardless of deploy state — see
 docs/renter-bot-policy.md's "Send-path safety" section.
 
-## 1. Before pushing
+**Status update, 2026-08-17:** the passphrase gate (`test-lab-gate.ts`,
+`LabGateForm`, `/api/renter-bot-lab-auth`) was removed at Daniel's request —
+`/renter-bot-lab` is now reachable by anyone with the URL, no login. The
+`RENTER_BOT_LAB_SECRET` Vercel env var is orphaned (no longer read by any
+code) — harmless to leave, safe to delete whenever convenient. This does not
+change the send-path safety guarantee, which was never gated by this and is
+enforced structurally instead (see docs/renter-bot-policy.md).
 
-- [ ] Daniel has confirmed the real Vercel-side access perimeter for
-      `/renter-bot-lab` (no in-app auth exists anywhere else in this repo —
-      confirm what actually protects the deployed app today).
-- [ ] Set `RENTER_BOT_LAB_SECRET` (a real passphrase, not committed anywhere)
-      in Vercel's env config. Without it, `hasLabAccess()` fails closed —
-      the page is unusable, not "open by default."
+## 1. Before pushing (historical — already done)
+
+- [x] Convex schema/functions deployed to `hearty-oyster-600`.
+- [x] ~~Passphrase gate~~ — removed, no longer applicable.
 
 ## 2. Push
 
@@ -38,14 +42,12 @@ Via the Convex dashboard or CLI, NOT the Lab UI yet:
    but worth eyeballing the first time).
 4. Run `renter_bot_harness:runBatch` (no args = all active fixtures).
 
-## 4. Only then
+## 4. Only then (also done)
 
-- Open `/renter-bot-lab` directly (not yet linked from anywhere) and confirm
-  the passphrase gate works.
+- [x] Opened `/renter-bot-lab` — no gate now, loads straight to the workspace.
 - Try a live scenario end-to-end, then click "End session" and re-check the
   Reply Inbox is still clean.
-- Last: add the HeaderBar nav button (the one remaining build step,
-  intentionally not done yet) so it's reachable from the dashboard.
+- [x] HeaderBar nav button added — 🧪 icon, reachable from the dashboard.
 
 ## 5. If anything looks wrong
 
