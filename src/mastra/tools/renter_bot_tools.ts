@@ -283,10 +283,12 @@ export const checkLocationTool = createTool({
 export const findOwnedAlternativesTool = createTool({
   id: "find_owned_alternatives",
   description:
-    "List gear we ACTUALLY own and can rent right now (active, in stock), optionally filtered to a kind (lens, camera, drone, gimbal, monitor, audio, lighting, grip) and lens_mount. Use this to recommend a REAL substitute when the renter asks for something we can't rent. Returns names + real daily prices. Pass account_slug from get_renter_context.",
+    "List gear we ACTUALLY own and can rent right now (active, in stock), filtered to the SAME kind as the unavailable item (lens, camera, drone, gimbal, monitor, audio, lighting, grip) and, for lenses, lens_mount. Use this to recommend a REAL substitute when the renter asks for something we can't rent — kind is REQUIRED so a camera never gets swapped for a lens or vice versa (real bug, 2026-08-17: an unavailable Sony FX3 camera was 'substituted' with a Sony GM 16-35mm lens because kind was omitted). Returns names + real daily prices. Pass account_slug from get_renter_context.",
   inputSchema: z.object({
     account_slug: z.string(),
-    kind: z.string().optional().describe("camera|lens|drone|gimbal|monitor|audio|lighting|grip|..."),
+    kind: z
+      .string()
+      .describe("REQUIRED — camera|lens|drone|gimbal|monitor|audio|lighting|grip|... — the SAME kind as the item that's unavailable"),
     lens_mount: z.string().optional().describe("e.g. E, RF, EF — match the renter camera mount for lenses"),
     exclude_name: z.string().optional(),
   }),
