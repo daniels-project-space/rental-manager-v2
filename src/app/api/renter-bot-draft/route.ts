@@ -551,6 +551,11 @@ export async function POST(req: Request) {
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
       resolvedItems,
+      // TEMP DEBUG — resolvedItems is coming back empty; need to see whether
+      // the fresh-inquiry branch even ran and what it saw. Remove once
+      // resolved.
+      debugGroundTruth: groundTruth,
+      debugLastRenter: lastRenter,
     });
   } catch (e) {
     return NextResponse.json(
