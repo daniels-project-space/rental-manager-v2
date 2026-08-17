@@ -51,7 +51,8 @@ async function getVaultKey(service: string, keyName: string): Promise<string> {
 
 // Convex-side LLM provider selector. Every account uses the vault-backed
 // OpenRouter lane: DeepSeek for background resolution, Grok 4.3 for calendar
-// time extraction, and Haiku for drafts.
+// time extraction, and Gemini 3.7 Flash for drafts (Daniel, 2026-08-17:
+// replace all Haiku calls, no Haiku fallback).
 //
 // IMPORTANT — Convex actions can't cross-import from src/, so this helper is
 // the single source of truth on the Convex side. denial_resolver,
@@ -78,11 +79,14 @@ export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boole
       process.env.CHAT_MODEL_SMART ?? "anthropic/claude-sonnet-4.6",
     );
   }
-  // Haiku 4.5 — the default draft tier now. Much stronger than deepseek-flash at
-  // tracking context + following the grounding, cheap/fast enough for every draft.
-  // Anthropic is its own provider, so no deepseek provider pin.
+  // Gemini 3.7 Flash — the default draft tier (Daniel, 2026-08-17: replace all
+  // Haiku calls with Gemini 3.7 Flash, no Haiku fallback). Stronger than
+  // deepseek-flash at tracking context + following the grounding. Hardcoded,
+  // no env override — same reasoning as getRenterBotModel() in
+  // src/lib/llm-client.ts: a stray legacy env var must never silently bring
+  // Haiku back for drafts.
   if (opts?.haiku) {
-    return _openrouter(process.env.HAIKU_MODEL ?? "anthropic/claude-haiku-4.5");
+    return _openrouter("google/gemini-3.7-flash");
   }
   // Calendar times are negotiated conversationally and are displayed as
   // operational facts, so keep this narrow task on the more reliable Grok 4.3

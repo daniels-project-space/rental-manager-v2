@@ -81,12 +81,15 @@ export async function getExtractorModel() {
   });
 }
 
-/** On-demand renter drafts always use OpenRouter's Haiku lane and the vault
- * credential. This deliberately ignores AI_PROVIDER so a legacy xAI setting
- * cannot route Quick Reply away from the low-cost shared account. */
+/** On-demand renter drafts always use OpenRouter's Gemini 3.7 Flash lane and
+ * the vault credential (Daniel, 2026-08-17: replace all Haiku calls with
+ * Gemini 3.7 Flash, no Haiku fallback — matches WallE's CHAT_MODEL primary
+ * lane, see src/lib/ai-models.ts). This deliberately ignores AI_PROVIDER so a
+ * legacy xAI setting cannot route Quick Reply away from the low-cost shared
+ * account. */
 export async function getRenterBotModel() {
   const openrouter = await getOpenRouter();
-  return openrouter("anthropic/claude-haiku-4.5");
+  return openrouter("google/gemini-3.7-flash");
 }
 
 /** Vault-backed model accessor for server-only dashboard widget routes. */

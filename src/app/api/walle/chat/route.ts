@@ -10,8 +10,12 @@
  *      earnings, utilization, buy/sell advice, trends, issues) must come from a
  *      tool call; analytical questions force `toolChoice:'required'` on step 0
  *      (see prepareStep) so the model can't skip the tool and confabulate.
- *   2. Streams the LLM response via OpenRouter → CHAT_MODEL (Claude Haiku 4.5),
- *      with the shared read-only Convex query tools available (max 4 hops).
+ *   2. Streams the LLM response via OpenRouter → CHAT_MODEL (google/gemini-3.7-flash,
+ *      CHAT_MODEL_SMART for compat/optics intents — same model currently), falling
+ *      back to CHAT_MODEL_FALLBACK (Claude Haiku 4.5) / CHAT_MODEL_SMART_FALLBACK
+ *      (Claude Sonnet 4.6) if the primary lane errors. See /api/walle/health for a
+ *      live per-lane probe. The shared read-only Convex query tools are available
+ *      (max 4 hops) on whichever lane answers.
  *   3. On completion, persists the last user turn + the full assistant text
  *      through Convex `dashboard_chat:appendTurn`.
  *
