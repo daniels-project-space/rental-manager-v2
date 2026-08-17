@@ -464,12 +464,7 @@ export async function POST(req: Request) {
       const stepsArr = (result?.steps ?? []) as any[];
       usedTools = stepsArr.some((st) => (st?.toolCalls?.length ?? 0) > 0);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      debugToolCalls = stepsArr.flatMap((st) =>
-        ((st?.toolCalls ?? []) as any[]).map((tc) => ({
-          name: tc?.toolName ?? tc?.name ?? null,
-          args: tc?.args ?? null,
-        })),
-      );
+      debugToolCalls = stepsArr.flatMap((st) => (st?.toolCalls ?? []) as any[]);
     try {
       let js = text.trim();
       const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
