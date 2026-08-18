@@ -112,10 +112,18 @@ crons.interval(
 
 // Pull the DB Cinema WEBSITE's own paid bookings (db-cinema-v2 storefront) up
 // into RMv2 as the "dbcinema_web" profile — ongoing rentals, availability and
-// revenue, alongside the Hygglo accounts. 30 min. 2026-06-25.
+// revenue, alongside the Hygglo accounts. 2026-06-25.
+//
+// 30 min → 8 h (2026-08-18): the storefront now PUSHES each booking change to
+// /dbcinema/booking-sync the moment it happens, so this poll is no longer the
+// primary path — it's the fallback that repairs a dropped push, plus the only
+// thing that runs the reconciliation sweep (cancel-if-absent), which the
+// single-booking webhook deliberately skips. Each cycle re-reads the
+// storefront's whole bookings+listings+units+customers set, so widening it is
+// where the actual cost saving lands.
 crons.interval(
   "sync dbcinema website bookings",
-  { minutes: 30 },
+  { hours: 8 },
   syncDbcinemaWebRef,
   {},
 );

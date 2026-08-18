@@ -109,9 +109,31 @@ export const syncDbcinemaWeb = internalAction({
   },
 });
 
+/**
+ * db-cinema-v2 booking.status → RMv2 reservation status.
+ *
+ * Explicit and total over the storefront's status union (see its schema:
+ * pending_payment | confirmed | active | returned | cancelled). Anything NOT in
+ * this map is skipped rather than defaulted — `pending_payment` is an unpaid
+ * cart, and silently defaulting it to "confirmed" would invent a rental that
+ * blocks real availability. Previously only `returned` was special-cased and
+ * EVERYTHING else fell through to "confirmed"; that was safe only because the
+ * bulk feed pre-filtered to paid statuses, which the webhook deliberately does
+ * not (2026-08-18).
+ */
+const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> = {
+  confirmed: "confirmed", // paid, not yet collected → upcoming
+  active: "confirmed", // out with the customer (order_step DELIVERED)
+  returned: "completed", // back → historical revenue
+  cancelled: "cancelled", // retired — must not show as a phantom upcoming
+};
+
 export const upsertSiteBookingsBatch = internalMutation({
-  args: { bookings: v.array(v.any()) },
-  handler: async (ctx, { bookings }) => {
+  // reconcile: when false, SKIP the "cancel anything missing from the feed"
+  // sweep. The event-driven webhook pushes ONE booking, so reconciling against
+  // it would cancel every other web reservation. Bulk poll omits it → true.
+  args: { bookings: v.array(v.any()), reconcile: v.optional(v.boolean()) },
+  handler: async (ctx, { bookings, reconcile }) => {
     // Ensure the account row exists so the switcher pill + avatar render.
     const acct = await ctx.db
       .query("accounts")
@@ -155,14 +177,16 @@ export const upsertSiteBookingsBatch = internalMutation({
     for (const raw of bookings as SiteBooking[]) {
       const b = raw;
       if (!b || !b.id || !b.start || !b.end) continue;
+      // status → RMv2 status + order_step (so due-returns / Return Hub / the
+      // ongoing-vs-upcoming split treat web rentals like Hygglo ones).
+      // Unknown / non-actionable (pending_payment) → skip, never default.
+      const status = SITE_STATUS_MAP[b.status];
+      if (!status) {
+        skipped++;
+        continue;
+      }
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
-      // status → RMv2 status + order_step (so due-returns / Return Hub / the
-      // ongoing-vs-upcoming split treat web rentals like Hygglo ones):
-      //   confirmed = paid, not yet collected → upcoming (no order_step)
-      //   active    = currently out with the customer → DELIVERED
-      //   returned  = back → completed (REVIEWED)
-      const status = b.status === "returned" ? "completed" : "confirmed";
       const order_step =
         b.status === "active" ? "DELIVERED"
         : b.status === "returned" ? "REVIEWED"
@@ -260,7 +284,11 @@ export const upsertSiteBookingsBatch = internalMutation({
         delivery_fee_gbp: b.deliveryFee ?? 0,
         currency: b.currency ?? "GBP",
         duration_days: durationDays,
-        is_obsolete: false,
+        // A pushed cancellation must land in the SAME shape the reconciliation
+        // sweep below produces, or the two paths would disagree about whether a
+        // cancelled web rental is obsolete.
+        is_obsolete: status === "cancelled",
+        ...(status === "cancelled" ? { obsolete_reason: "renter_cancelled" } : {}),
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
       };
@@ -310,8 +338,11 @@ export const upsertSiteBookingsBatch = internalMutation({
     // paid feed was cancelled (or removed) upstream — flip it to cancelled so
     // the profile doesn't show a phantom upcoming rental forever. Completed
     // rows (from `returned` bookings) are historical revenue and left as-is.
+    // reconcile === false ⇒ single-booking webhook push: the "feed" is one
+    // booking, so absence from it means nothing. Skipping this is what stops a
+    // push from cancelling every OTHER web reservation.
     let cancelled = 0;
-    if (incomingIds.size > 0 || bookings.length === 0) {
+    if (reconcile !== false && (incomingIds.size > 0 || bookings.length === 0)) {
       const confirmedRows = await ctx.db
         .query("reservations")
         .withIndex("by_status", (q) => q.eq("status", "confirmed"))

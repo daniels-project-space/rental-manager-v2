@@ -102,6 +102,84 @@ http.route({
   }),
 });
 
+/**
+ * DB Cinema storefront → RMv2 booking push (2026-08-18).
+ *
+ * POST /dbcinema/booking-sync
+ *
+ * Event-driven replacement for the 30-min `syncDbcinemaWeb` poll: db-cinema-v2
+ * calls this the moment a booking is confirmed / returned / cancelled /
+ * rescheduled / extended / has an add-on attached, so RMv2 reflects the change
+ * in seconds instead of up to half an hour. The poll survives as an 8-hourly
+ * reliability fallback, so a dropped push is self-healing.
+ *
+ * Auth: header `x-dbcinema-sync-token` must equal env DBCINEMA_WEBHOOK_SECRET.
+ *   - missing env → 503 (fail closed)
+ *   - bad/absent header → 401
+ * Body: { booking } (one SiteBooking) → sync_dbcinema_web:upsertSiteBookingsBatch
+ *
+ * reconcile:false is REQUIRED here: the batch mutation's default behaviour
+ * cancels any confirmed web reservation absent from the incoming feed, and a
+ * one-booking payload would otherwise wipe out every other live booking.
+ */
+http.route({
+  path: "/dbcinema/booking-sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const expected = process.env.DBCINEMA_WEBHOOK_SECRET ?? "";
+    if (!expected) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "server_missing_DBCINEMA_WEBHOOK_SECRET" }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const provided = request.headers.get("x-dbcinema-sync-token") ?? "";
+    if (!provided || provided !== expected) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ ok: false, error: "bad json" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const booking = body?.booking;
+    if (!booking || typeof booking !== "object" || typeof booking.id !== "string") {
+      return new Response(
+        JSON.stringify({ ok: false, error: "booking object with string id required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    let result: unknown;
+    try {
+      result = await ctx.runMutation(internal.sync_dbcinema_web.upsertSiteBookingsBatch, {
+        bookings: [booking],
+        reconcile: false,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return new Response(
+        JSON.stringify({ ok: false, error: msg }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 http.route({
   path: "/telegram/webhook",
   method: "POST",
