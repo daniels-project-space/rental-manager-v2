@@ -35,8 +35,10 @@ import {
 } from "../lib/ai-models";
 import { decideRecommendation } from "../lib/model-version";
 
+// Never fall back to NEXT_PUBLIC_CONVEX_URL — Vercel pins it to the orphan
+// exciting-lion-29, which has stale, incomplete data (CLAUDE.md hard rule #3).
 const CONVEX_URL =
-  process.env.CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
+  process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
 
 const GH_REPO =
   process.env.GITHUB_REPO ?? "daniels-project-space/rental-manager-v2";

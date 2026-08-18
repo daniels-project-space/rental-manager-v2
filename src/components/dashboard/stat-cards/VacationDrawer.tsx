@@ -162,9 +162,11 @@ export default function VacationDrawer({ data }: Props) {
     setChecking(true);
     try {
       const { ConvexHttpClient } = await import("convex/browser");
-      const client = new ConvexHttpClient(
-        process.env.NEXT_PUBLIC_CONVEX_URL ?? "",
-      );
+      // Hardcode the canonical deployment (CLAUDE.md hard rule #3): Vercel pins
+      // NEXT_PUBLIC_CONVEX_URL to the orphan exciting-lion-29, which has a stale,
+      // incomplete dataset (missing 1481 v1 imports) and would silently give
+      // wrong vacation-conflict results.
+      const client = new ConvexHttpClient("https://hearty-oyster-600.convex.cloud");
       const result = await client.query(api.vacation.checkVacationConflicts, {
         start_date: start,
         end_date: end,
