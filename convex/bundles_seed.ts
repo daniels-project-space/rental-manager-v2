@@ -50,11 +50,11 @@ const V1_BUNDLES: V1Bundle[] = [
   {
     slug: "sony-fx3-full-production-kit-vmount-95",
     bundle_name: "Sony FX3 Full Production Kit + V-Mount 95mAh",
-    description: "Full Production Kit with V-mount 95mAh battery",
+    description: "Full Production Kit with V-mount 95Wh battery",
     items: [
       "Sony FX3", "Sony GM 24-70mm f2.8", "DJI RS3 Pro gimbal",
       "Rode Wireless Mic Pro set", "Atomos Ninja V", "ND filter",
-      "V-mount 95mAh",
+      "V-mount 95Wh",
     ],
     category: "camera_kit",
     daily_price_min: 130,
@@ -63,11 +63,11 @@ const V1_BUNDLES: V1Bundle[] = [
   {
     slug: "sony-fx3-full-production-kit-vmount-150",
     bundle_name: "Sony FX3 Full Production Kit + V-Mount 150mAh",
-    description: "Full Production Kit with V-mount 150mAh battery",
+    description: "Full Production Kit with V-mount 150Wh battery",
     items: [
       "Sony FX3", "Sony GM 24-70mm f2.8", "DJI RS3 Pro gimbal",
       "Rode Wireless Mic Pro set", "Atomos Ninja V", "ND filter",
-      "V-mount 150mAh",
+      "V-mount 150Wh",
     ],
     category: "camera_kit",
     daily_price_min: 140,

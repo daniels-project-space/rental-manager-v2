@@ -637,8 +637,8 @@ export const ACCESSORY_ITEMS = new Set([
   'DJI gimbal battery',
   'Sony NP-FZ100 batteries 2x sets',
   'Sony NP-F970 batteries 2x sets',
-  'V-mount 95mAh',
-  'V-mount 150mAh',
+  'V-mount 95Wh',
+  'V-mount 150Wh',
   'Suction cups',
 ]);
 
@@ -725,8 +725,8 @@ export const MASTER_INVENTORY: Record<string, number> = {
   '5-in-1 reflector panel': 1,
   'Camera flash': 1,
   // Power
-  'V-mount 95mAh': 2,
-  'V-mount 150mAh': 4,
+  'V-mount 95Wh': 2,
+  'V-mount 150Wh': 4,
   'Sony NP-FZ100 batteries 2x sets': 4,
   'SmallRig FX3 cage': 1,
   'Sony NP-F970 batteries 2x sets': 4,

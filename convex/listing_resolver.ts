@@ -159,7 +159,7 @@ function patternMatch(title: string): ResolvedItem[] {
     const is95 = /95\s*w/i.test(lower);
     return [
       {
-        item_name: is95 ? "V-mount 95mAh" : "V-mount 150mAh",
+        item_name: is95 ? "V-mount 95Wh" : "V-mount 150Wh",
         qty,
         confidence: 0.9,
         source: "pattern",

@@ -54,7 +54,7 @@ describe('findBestMatch', () => {
 
   it('respects coverage threshold ≥ 0.5 of candidate tokens', () => {
     // Single-word "battery" is generic and provides 1/2 = 0.5 coverage at most, but
-    // also has zero specific matches → should NOT match V-mount 150mAh.
+    // also has zero specific matches → should NOT match V-mount 150Wh.
     expect(findBestMatch('battery', MASTER_INVENTORY_KEYS)).toBeNull();
   });
 
@@ -207,13 +207,13 @@ describe('GENERIC_TOKENS filter', () => {
 });
 
 describe('CANONICAL_MAP overrides', () => {
-  it('maps "V-mount battery" → "V-mount 150mAh"', () => {
-    expect(CANONICAL_MAP['V-mount battery']).toBe('V-mount 150mAh');
+  it('maps "V-mount battery" → "V-mount 150Wh"', () => {
+    expect(CANONICAL_MAP['V-mount battery']).toBe('V-mount 150Wh');
   });
 
-  it('maps multiple battery variants to canonical V-mount 150mAh', () => {
-    expect(CANONICAL_MAP['V mount battery']).toBe('V-mount 150mAh');
-    expect(CANONICAL_MAP['V mount 150mAh']).toBe('V-mount 150mAh');
+  it('maps multiple battery variants to canonical V-mount 150Wh', () => {
+    expect(CANONICAL_MAP['V mount battery']).toBe('V-mount 150Wh');
+    expect(CANONICAL_MAP['V mount 150mAh']).toBe('V-mount 150Wh');
   });
 
   it('maps "DJI Mic 2" → canonical "DJI Mic 2 wireless"', () => {
@@ -240,7 +240,7 @@ describe('MASTER_INVENTORY locked', () => {
     // We assert the count is stable so accidental edits show up in CI.
     expect(MASTER_INVENTORY_KEYS.length).toBeGreaterThanOrEqual(60);
     expect(MASTER_INVENTORY_KEYS).toContain('Sony FX3');
-    expect(MASTER_INVENTORY_KEYS).toContain('V-mount 150mAh');
+    expect(MASTER_INVENTORY_KEYS).toContain('V-mount 150Wh');
   });
 });
 

@@ -34,7 +34,7 @@ export const INVENTORY_BY_CATEGORY: Record<string, string[]> = {
     'Ambitful RGB light tubes 2x set', '5-in-1 reflector panel', 'Camera flash',
   ],
   power: [
-    'V-mount 95mAh', 'V-mount 150mAh',
+    'V-mount 95Wh', 'V-mount 150Wh',
     'DJI gimbal battery', 'Anker Power Station F2000',
   ],
   support: [
@@ -89,10 +89,10 @@ export const CATEGORY_SIGNALS: Record<string, string[]> = {
  * Used to clean up itemcatalog entries and AI outputs.
  */
 export const CANONICAL_MAP: Record<string, string> = {
-  'V-mount battery': 'V-mount 150mAh',
-  'V-mount Battery': 'V-mount 150mAh',
-  'V mount battery': 'V-mount 150mAh',
-  'V mount 150mAh': 'V-mount 150mAh',
+  'V-mount battery': 'V-mount 150Wh',
+  'V-mount Battery': 'V-mount 150Wh',
+  'V mount battery': 'V-mount 150Wh',
+  'V mount 150mAh': 'V-mount 150Wh',
   'Video tripod': 'Small rig tripod',
   'video tripod': 'Small rig tripod',
   'SmallRig tripod': 'Small rig tripod',
