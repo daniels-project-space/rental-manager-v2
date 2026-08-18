@@ -6,7 +6,6 @@ import {
   dedupKey,
   effectiveDate,
   isConfirmedWithDates,
-  isLive,
   isOngoing,
   isPaidWithV1Legacy,
   isPendingVerification,
@@ -30,12 +29,8 @@ import {
 import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_booking";
 import { claimHoldsStock } from "./lib/availability";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
-import {
-  attributeRevenue,
-  overridePoolForReservation,
-  OWNER_SHARE as OWNER_SHARE_CANONICAL,
-  type RentalForAttribution,
-} from "./lib/revenue_attribution";
+// The rental-volume queries now reach it through ./lib/rental_volume.
+import { OWNER_SHARE as OWNER_SHARE_CANONICAL } from "./lib/revenue_attribution";
 import {
   tieredCreditTotals,
   median as medianOfArray,
@@ -43,6 +38,12 @@ import {
   type AiDecisionAuditLite,
 } from "./lib/ai_attribution";
 import { computeMissedRevenue } from "./lib/missed_revenue";
+import {
+  aggregateKindEntries,
+  forEachAttributionLine,
+  labelFor,
+  loadRentalVolumeWindow,
+} from "./lib/rental_volume";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
@@ -2456,17 +2457,8 @@ export const getNextRentals = query({
 // weighted by (pricing_catalog daily_price_min * qty); equal split fallback.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const KIND_LABELS: Record<string, string> = {
-  camera: "Cameras", lens: "Lenses", drone: "Drones", audio: "Audio",
-  lighting: "Lighting", grip: "Grip", gimbal: "Gimbals", monitor: "Monitors",
-  transmission: "Transmission", accessory: "Accessories", smoke_fx: "Smoke/FX",
-  dj_audio: "DJ Audio", power: "Power", storage_card: "Storage", support: "Support",
-  motion: "Motion", stabilizer: "Stabilizers", video: "Video", effects: "Effects",
-  bundle: "Bundles", unknown: "Unknown", other: "Other",
-};
-const labelFor = (k: string): string =>
-  KIND_LABELS[k] ?? (k.charAt(0).toUpperCase() + k.slice(1));
-
+// KIND_LABELS / labelFor moved to ./lib/rental_volume (imported above) —
+// shared with the extracted volume-attribution pipeline.
 const CATEGORY_PALETTE = ["#60a5fa", "#34d399", "#a78bfa", "#fbbf24", "#f87171", "#22d3ee"];
 const OTHER_COLOR = "#cbd5e1";
 
@@ -2511,93 +2503,10 @@ export const getRentalVolumeByCategory = query({
         .first();
       if (cached) return cached.payload;
     }
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - effectiveDays);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-    // Match revenue.ts semantics: drop cancelled/declined/obsolete, then
-    // collapse v1/Hygglo duplicates, then restrict to effectiveDate window.
-    reservations = reservations.filter(isLive);
-    reservations = dedupByLogicalRental(reservations);
-    const todayStr = new Date().toISOString().slice(0, 10);
-    reservations = reservations.filter((r) => {
-      const d = effectiveDate(r);
-      return d !== undefined && d >= cutoffStr && d <= todayStr;
-    });
-
-    // Pricing catalog for revenue split weights (canonical → daily_price_min).
-    const pricingAll = await ctx.db.query("pricing_catalog").collect();
-    const priceByCanonical = new Map<string, number>(
-      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
-    );
-
-    // Item kind lookup (_id → kind).
-    const items = await ctx.db.query("items").collect();
-    const kindById = new Map<string, string>();
-    for (const it of items) kindById.set(it._id as string, it.kind);
-
-    // Phase 6 — attribution engine is the only path. Maps built once, reused.
-    const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
-    const itemByCanonical = new Map<string, typeof items[number]>();
-    for (const it of items) {
-      itemById.set(it._id, it);
-      const nm = (it as { name_canonical?: string }).name_canonical;
-      if (nm) itemByCanonical.set(nm, it);
-    }
-    const nameByIdStr = new Map<string, string>();
-    for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
-    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
-    for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
-
-    const countByKind = new Map<string, number>();
-    const revenueByKind = new Map<string, number>();
-
-    for (const r of reservations) {
-      const resolved =
-        (r as {
-          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
-        }).resolved_items ?? [];
-      if (resolved.length === 0) continue;
-
-      const rental: RentalForAttribution = {
-        _id: r._id,
-        gross_gbp: r.gross_paid_gbp ?? 0,
-        duration_days: r.duration_days,
-        expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
-        resolved_items: resolved as RentalForAttribution["resolved_items"],
-        pool_override: overridePoolForReservation(r as { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> }, overrideByProduct, (id) => nameByIdStr.get(id)),
-      };
-      const lines = attributeRevenue(rental, {
-        itemById,
-        itemByCanonical,
-        priceByName: priceByCanonical,
-      });
-      for (const line of lines) {
-        const k = line.kind;
-        // One AttributionLine per input pickLines entry; count is per source line.
-        countByKind.set(k, (countByKind.get(k) ?? 0) + 1);
-        revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + line.share);
-      }
-    }
-
-    // Assemble entries (any kind with count>0 OR revenue>0).
-    const kinds = new Set<string>([...countByKind.keys(), ...revenueByKind.keys()]);
-    const entries = Array.from(kinds)
-      .map((k) => ({
-        kind: k,
-        label: labelFor(k),
-        count: countByKind.get(k) ?? 0,
-        revenue: revenueByKind.get(k) ?? 0,
-      }))
-      .filter((e) => e.count > 0 || e.revenue > 0)
-      .sort((a, b) => b.count - a.count);
+    // Shared pipeline: reservation window + attribution → per-kind entries.
+    const window = await loadRentalVolumeWindow(ctx, accountSlug, effectiveDays);
+    const cutoffStr = window.cutoffStr;
+    const entries = aggregateKindEntries(window);
 
     // Pre-truncation totals.
     const totals = {
@@ -2692,31 +2601,12 @@ export const getRentalVolumeKindBreakdown = query({
         return cached.payload;
       }
     }
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    // Shared pipeline — same window/dedup/attribution as the parent chart, so
+    // this drill-down always reconciles against its slice.
+    const window = await loadRentalVolumeWindow(ctx, accountSlug, days);
+    const cutoffStr = window.cutoffStr;
+    const { reservations, items } = window;
 
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-    reservations = reservations.filter(isLive);
-    reservations = dedupByLogicalRental(reservations);
-    const todayStr = new Date().toISOString().slice(0, 10);
-    reservations = reservations.filter((r) => {
-      const d = effectiveDate(r);
-      return d !== undefined && d >= cutoffStr && d <= todayStr;
-    });
-
-    const pricingAll = await ctx.db.query("pricing_catalog").collect();
-    const priceByCanonical = new Map<string, number>(
-      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
-    );
-
-    const items = await ctx.db.query("items").collect();
     const kindById = new Map<string, { kind: string; name: string }>();
     for (const it of items) {
       kindById.set(it._id as string, {
@@ -2749,51 +2639,17 @@ export const getRentalVolumeKindBreakdown = query({
       return k === kind;
     };
 
-    // Phase 6 — attribution engine is the only path.
-    const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
-    const itemByCanonical = new Map<string, typeof items[number]>();
-    for (const it of items) {
-      itemById.set(it._id, it);
-      const nm = (it as { name_canonical?: string }).name_canonical;
-      if (nm) itemByCanonical.set(nm, it);
-    }
-    const nameByIdStr = new Map<string, string>();
-    for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
-    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
-    for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
-
     // Second pass: split each row's gross across ALL resolved items (to keep
     // attribution math identical to the main query), then keep only the
     // in-target items.
     const itemCount = new Map<string, number>();
     const itemRevenue = new Map<string, number>();
-    for (const r of reservations) {
-      const resolved =
-        (r as {
-          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
-        }).resolved_items ?? [];
-      if (resolved.length === 0) continue;
-
-      const rental: RentalForAttribution = {
-        _id: r._id,
-        gross_gbp: r.gross_paid_gbp ?? 0,
-        duration_days: r.duration_days,
-        expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
-        resolved_items: resolved as RentalForAttribution["resolved_items"],
-        pool_override: overridePoolForReservation(r as { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> }, overrideByProduct, (id) => nameByIdStr.get(id)),
-      };
-      const lines = attributeRevenue(rental, {
-        itemById,
-        itemByCanonical,
-        priceByName: priceByCanonical,
-      });
-      for (const line of lines) {
-        if (!isInTargetSet(line.kind)) continue;
-        const idStr = (line.key.id as string | undefined) ?? line.key.nameCanonical;
-        itemCount.set(idStr, (itemCount.get(idStr) ?? 0) + 1);
-        itemRevenue.set(idStr, (itemRevenue.get(idStr) ?? 0) + line.share);
-      }
-    }
+    forEachAttributionLine(window, (line) => {
+      if (!isInTargetSet(line.kind)) return;
+      const idStr = (line.key.id as string | undefined) ?? line.key.nameCanonical;
+      itemCount.set(idStr, (itemCount.get(idStr) ?? 0) + 1);
+      itemRevenue.set(idStr, (itemRevenue.get(idStr) ?? 0) + line.share);
+    });
 
     type ItemSlice = { itemId: string; name: string; count: number; revenue: number; color: string };
     const allIds = new Set<string>([...itemCount.keys(), ...itemRevenue.keys()]);
@@ -2845,87 +2701,12 @@ export const getRentalVolumeOtherSubKinds = query({
   },
   handler: async (ctx, { accountSlug, days }) => {
     const effectiveDays = typeof days === "number" ? days : 30;
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - effectiveDays);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-    reservations = reservations.filter(isLive);
-    reservations = dedupByLogicalRental(reservations);
-    const todayStr = new Date().toISOString().slice(0, 10);
-    reservations = reservations.filter((r) => {
-      const d = effectiveDate(r);
-      return d !== undefined && d >= cutoffStr && d <= todayStr;
-    });
-
-    const pricingAll = await ctx.db.query("pricing_catalog").collect();
-    const priceByCanonical = new Map<string, number>(
-      pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
-    );
-
-    const items = await ctx.db.query("items").collect();
-    const kindById = new Map<string, string>();
-    for (const it of items) kindById.set(it._id as string, it.kind);
-
-    // Phase 6 — attribution engine is the only path.
-    const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
-    const itemByCanonical = new Map<string, typeof items[number]>();
-    for (const it of items) {
-      itemById.set(it._id, it);
-      const nm = (it as { name_canonical?: string }).name_canonical;
-      if (nm) itemByCanonical.set(nm, it);
-    }
-    const nameByIdStr = new Map<string, string>();
-    for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
-    const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
-    for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
-
-    const countByKind = new Map<string, number>();
-    const revenueByKind = new Map<string, number>();
-
-    for (const r of reservations) {
-      const resolved =
-        (r as {
-          resolved_items?: Array<{ item_id: string; item_name_canonical: string; qty?: number }>;
-        }).resolved_items ?? [];
-      if (resolved.length === 0) continue;
-
-      const rental: RentalForAttribution = {
-        _id: r._id,
-        gross_gbp: r.gross_paid_gbp ?? 0,
-        duration_days: r.duration_days,
-        expanded_items: (r as { expanded_items?: RentalForAttribution["expanded_items"] }).expanded_items,
-        resolved_items: resolved as RentalForAttribution["resolved_items"],
-        pool_override: overridePoolForReservation(r as { account_slug?: string; hygglo_items?: Array<{ product_id?: number; qty?: number }> }, overrideByProduct, (id) => nameByIdStr.get(id)),
-      };
-      const lines = attributeRevenue(rental, {
-        itemById,
-        itemByCanonical,
-        priceByName: priceByCanonical,
-      });
-      for (const line of lines) {
-        const k = line.kind;
-        countByKind.set(k, (countByKind.get(k) ?? 0) + 1);
-        revenueByKind.set(k, (revenueByKind.get(k) ?? 0) + line.share);
-      }
-    }
-
-    const kinds = new Set<string>([...countByKind.keys(), ...revenueByKind.keys()]);
-    const entries = Array.from(kinds)
-      .map((k) => ({
-        kind: k,
-        label: labelFor(k),
-        count: countByKind.get(k) ?? 0,
-        revenue: revenueByKind.get(k) ?? 0,
-      }))
-      .filter((e) => e.count > 0 || e.revenue > 0)
-      .sort((a, b) => b.count - a.count);
+    // Shared pipeline — identical to getRentalVolumeByCategory by design, so
+    // the "Other" sub-slices always reconcile against the parent chart.
+    const window = await loadRentalVolumeWindow(ctx, accountSlug, effectiveDays);
+    const cutoffStr = window.cutoffStr;
+    const entries = aggregateKindEntries(window);
 
     // Phase 6 — strip `unknown` from the "Other" sub-bucket so Unresolved is
     // not double-counted (it appears as its own slice in the parent query).
