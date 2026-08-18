@@ -79,6 +79,42 @@ DANIEL RULE 18 — *"ANY item not on master list = not in stock"* — these must
 nothing. Left unmapped deliberately: they now surface as UNRESOLVED instead of
 silently blocking real gear.
 
+### Round 2 — unlinked listings and bundles (both completed)
+
+**The 178 unlinked listings are mostly harmless.** Only **4** have ever actually
+been rented; the other 174 hold nothing and mislead nobody today. Mapped the 3
+outstanding ones (the 4th, Sony FX3 1011866, was already covered):
+
+| Listing | Now holds |
+|---|---|
+| `Pl to e mount adapter for cinema lenses` | PL to Sony E mount |
+| `Lexar CFexpress Type A 320GB + Reader` | CF Express Type A card |
+| `Atomos ninja v + 1tb ssd` | **bundle**: Atomos Ninja V + Atomos 1TB SSD |
+
+**Bundles corrected** — each previously held one component, so the rest of the
+kit read as available while rented:
+
+| Listing | Was | Now |
+|---|---|---|
+| `2x Go Pro Hero 12 set + 4x batteries + 2x 128gb sd` | the SD card only | **GoPro 12 Hero ×2** |
+| `2x Sony FX3 + 2x 24-70mm Cinema Camera Set` | the lens only | **Sony FX3 ×2 + GM 24-70mm ×2** |
+| `Budget interview setup 3x GoPro Hero 12 + ...` | the Rode set only | **GoPro 12 Hero ×3 + Rode Wireless Pro** |
+
+### Why the remaining 174 were NOT auto-mapped
+
+A strict brand+model classifier (no similarity scoring) was written and run over
+them. It failed the same way the original matcher did:
+
+- `Blackmagic Pyxis 6K Cinema Camera` → **Canon C70** (wrong brand entirely)
+- `Sony g master 35mm f1.4` → **Sony GM 16-35mm**
+- `Cannon 15-35 RF` → **Canon EF 16-35**
+
+The last two are listings Daniel had *just* confirmed he does not own — they
+appeared as unlinked precisely because they had been unmapped, and the
+classifier immediately re-proposed the same wrong mapping. Automated matching is
+therefore not permitted to write here at any confidence threshold; the remaining
+174 stay unlinked (safe: they hold nothing) pending operator review.
+
 ### Needs Daniel's call
 
 - Does he own an RS2 / RS4 / R5 C / FX30 / a6600 / 12-24mm / 15-35mm / 35mm f1.4?
