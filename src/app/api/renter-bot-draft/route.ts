@@ -7,6 +7,7 @@ import {
   OUT_OF_SCOPE_INTENTS,
   type RenterBotIntent,
 } from "@/../convex/lib/renter_bot_intents";
+import { resolvePickupHours, remainingWindowsToday } from "@/lib/pickup-hours";
 
 const accountCommunicationRef = makeFunctionReference<"query">(
   "settings:listAccountCommunication",
@@ -361,9 +362,12 @@ export async function POST(req: Request) {
   // Per-account PICKUP location — share ONLY after the booking is confirmed.
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [hubs, communications] = await Promise.all([
+    const [hubs, communications, globalSettings] = await Promise.all([
       convex.query(api.settings.listAccountHubs, {}),
       convex.query(accountCommunicationRef, {}),
+      // Needed for the pickup-hours cascade below — see there for why.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      convex.query(api.settings.get, {}) as Promise<any>,
     ]);
     const hub = (hubs || []).find((h: { slug?: string }) => h.slug === account_slug);
     const communication = (communications || []).find(
@@ -384,19 +388,24 @@ export async function POST(req: Request) {
     }
     // Time-aware pickup/return windows (per account) — at 4pm the morning slot
     // is gone, so only offer windows that haven't passed today.
-    const hours = (hub?.pickup_hours && hub.pickup_hours.length
-      ? hub.pickup_hours
-      : [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }]) as Array<{ start: string; end: string }>;
+    //
+    // THREE-TIER CASCADE (fixed 2026-08-18): per-account override → the GLOBAL
+    // settings.pickup_hours → a hardcoded last resort. The middle tier was
+    // missing here, while convex/replyInbox.ts:1167 has always had it, so the
+    // two halves of the same bot disagreed: an account with no per-account
+    // windows got the operator's real global setting in one prompt path and a
+    // hardcoded literal in this one. Worse, SettingsDrawer.tsx:444 tells the
+    // operator "Using the shared fallback windows." when an account's list is
+    // empty and offers a delete button to get there — so the settings page
+    // promised behaviour this path did not honour, and editing the global
+    // hours would silently not reach renters. Cascade + its regression tests
+    // now live in src/lib/pickup-hours.ts.
+    const hours = resolvePickupHours(hub?.pickup_hours, globalSettings?.pickup_hours);
     const nowHM = new Date().toLocaleString("en-GB", {
       timeZone: "Europe/London", hour12: false, hour: "2-digit", minute: "2-digit",
     });
-    const toMin = (t: string) => {
-      const [h, m2] = t.split(":").map(Number);
-      return h * 60 + (m2 || 0);
-    };
-    const nowMin = toMin(nowHM);
     const fmt = (w: { start: string; end: string }) => `${w.start}–${w.end}`;
-    const remaining = hours.filter((w) => toMin(w.end) > nowMin + 15);
+    const remaining = remainingWindowsToday(hours, nowHM);
     groundTruth +=
       `CURRENT LONDON TIME: ${nowHM}. Pickup/return windows for this account: ${hours.map(fmt).join(", ")} — NEVER agree to any time outside these. ` +
       (remaining.length
