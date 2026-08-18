@@ -101,7 +101,22 @@ export async function POST(req: Request) {
   // these). The agent can still call check_location, search_knowledge, etc.
   let groundTruth = "";
   const marketingItems: string[] = [];
-  let bookingConfirmed = true; // stays true when we can't tell (avoid false blocks)
+  // Defaults FALSE — this must FAIL CLOSED. It gates pickup-address disclosure
+  // (below) and the false-confirmation guard, and it is only set true when a
+  // linked reservation actually reports is_confirmed.
+  //
+  // Live-reproduced 2026-08-18: this defaulted to TRUE ("avoid false blocks"),
+  // and the assignment below only runs inside `if (lc?.found)`. A FRESH inquiry
+  // has no linked order, so it stayed true and the location block told the
+  // agent "booking IS confirmed — OK to share" for someone who had booked
+  // NOTHING. Verified against all three accounts: leo and diogo (the two with a
+  // pickup_address configured) both handed out the exact street address and
+  // postcode to an unbooked stranger who simply asked where pickup was;
+  // dbcinema only behaved correctly because it has no address on file, so the
+  // bad instruction was never injected. Failing closed costs at most a manual
+  // send when a genuinely-confirmed booking's lookup fails; failing open leaks
+  // Daniel's pickup locations to anyone who asks.
+  let bookingConfirmed = false;
   // Structured echo of whatever real facts made it into groundTruth above,
   // for the ORDER-linked path and the fresh-inquiry path below alike.
   // replyInbox_actions.ts's hasItemGrounding / guardDraft's factPack only
@@ -385,6 +400,19 @@ export async function POST(req: Request) {
       groundTruth += bookingConfirmed
         ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
         : `PICKUP LOCATION for this account is "${hub.pickup_address}" — do NOT reveal it yet (booking not confirmed). Say you'll send the exact pickup address the moment the booking is confirmed. NEVER give a different or made-up address.\n`;
+    } else if (!bookingConfirmed) {
+      // No pickup_address configured for this account (dbcinema, as of
+      // 2026-08-18) — but the withhold instruction must STILL be injected.
+      // Previously the whole gate lived inside the `if (hub?.pickup_address)`
+      // above, so an account with no address on file got no location guidance
+      // at all and the only thing standing between a renter and the address
+      // was the system prompt. That matters because the address for such an
+      // account is not absent from the bot's reach: it is written into the
+      // account's TEMPLATES (e.g. "Template: DB Cinema Welcome Text" contains
+      // the full Trafalgar Square meeting point), which search_knowledge can
+      // return at any conversation stage.
+      groundTruth +=
+        `PICKUP LOCATION: do NOT reveal any street address, postcode, or specific meeting point for this account yet (booking is NOT confirmed) — including any address that appears inside an account template you may retrieve. Say you'll send the exact pickup address the moment the booking is confirmed; you may say "central London" and nothing more specific.\n`;
     }
     // Time-aware pickup/return windows (per account) — at 4pm the morning slot
     // is gone, so only offer windows that haven't passed today.
