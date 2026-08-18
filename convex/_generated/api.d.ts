@@ -59,6 +59,7 @@ import type * as draft_learning_actions from "../draft_learning_actions.js";
 import type * as extract_booking_times from "../extract_booking_times.js";
 import type * as extract_booking_times_q from "../extract_booking_times_q.js";
 import type * as feature_flags from "../feature_flags.js";
+import type * as fix_bmpccff_title from "../fix_bmpccff_title.js";
 import type * as grounding_audit from "../grounding_audit.js";
 import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
@@ -99,6 +100,7 @@ import type * as lib_message_reconciliation from "../lib/message_reconciliation.
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
+import type * as lib_renterLookup from "../lib/renterLookup.js";
 import type * as lib_renter_bot_filters from "../lib/renter_bot_filters.js";
 import type * as lib_renter_bot_filters_supplemental from "../lib/renter_bot_filters_supplemental.js";
 import type * as lib_renter_bot_intents from "../lib/renter_bot_intents.js";
@@ -273,6 +275,7 @@ declare const fullApi: ApiFromModules<{
   extract_booking_times: typeof extract_booking_times;
   extract_booking_times_q: typeof extract_booking_times_q;
   feature_flags: typeof feature_flags;
+  fix_bmpccff_title: typeof fix_bmpccff_title;
   grounding_audit: typeof grounding_audit;
   health: typeof health;
   historical_revenue: typeof historical_revenue;
@@ -313,6 +316,7 @@ declare const fullApi: ApiFromModules<{
   "lib/missed_revenue": typeof lib_missed_revenue;
   "lib/notification_events": typeof lib_notification_events;
   "lib/quiet_hours": typeof lib_quiet_hours;
+  "lib/renterLookup": typeof lib_renterLookup;
   "lib/renter_bot_filters": typeof lib_renter_bot_filters;
   "lib/renter_bot_filters_supplemental": typeof lib_renter_bot_filters_supplemental;
   "lib/renter_bot_intents": typeof lib_renter_bot_intents;

@@ -327,6 +327,28 @@ export async function POST(req: Request) {
           }
           groundTruth +=
             "Compare the renter's requested dates against the booking list above yourself (you know today's date). Use ONLY this data for availability/price on these item(s) — do NOT call check_availability again for the same item, and do NOT state a price that isn't given above.\n";
+          // RULE 10 — Minimum Rental Value, extended to fresh inquiries
+          // (Daniel, 2026-08-18): previously this nudge only fired in the
+          // order-linked branch above, so it never ran during a renter's
+          // first "is X available" message — the exact moment a small
+          // booking is still being decided, arguably more useful than
+          // nudging after an order already exists. No real dates yet here,
+          // so use the single-day rate as a conservative "at least this
+          // small" signal rather than guessing a duration.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const settings: any = await convex.query(api.settings.get, {});
+            const minGbp = typeof settings?.minimum_rental_gbp === "number" ? settings.minimum_rental_gbp : 40;
+            const singleDayTotal = resolvedItems.reduce(
+              (sum, it) => sum + (typeof it.dailyRateGbp === "number" ? it.dailyRateGbp : 0),
+              0,
+            );
+            if (singleDayTotal > 0 && singleDayTotal < minGbp) {
+              groundTruth += `RESOLVED ITEM(S) ABOVE total only ~£${Math.round(singleDayTotal)}/day — likely a small booking. DANIEL RULE 10 (Minimum Rental Value): FIRST naturally suggest a relevant add-on or two that we OWN (an extra lens, a gimbal, a monitor, lighting, extra batteries/cards) to lift the total; if they decline, warmly offer to adjust the booking total (e.g. a slightly longer hire). NEVER reveal there is a minimum, NEVER name a threshold or the words "minimum rental value", NEVER mention revenue or earnings.\n`;
+            }
+          } catch {
+            /* best-effort */
+          }
         }
       } catch {
         /* best-effort — if this fails, groundTruth just stays empty as before */
