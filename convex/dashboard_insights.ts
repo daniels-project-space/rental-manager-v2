@@ -15,6 +15,7 @@ import {
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import { OWNER_SHARE } from "./mv/constants";
+import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -155,18 +156,25 @@ export const getItemUtilizationRanking = query({
       }
     }
     // Need replacement_cost_gbp from items table.
-    const out: Array<{
+    // 2026-08 cost audit: this is subscribed live by ItemUtilizationRanking.tsx
+    // and previously did a sequential `await ctx.db.get()` per item — N
+    // round-trips in series. Batched via Promise.all (same doc reads, run in
+    // parallel instead of serially).
+    type UtilOut = {
       item_id: Id<"items">;
       name: string;
       utilization: number;
       replacement_cost_gbp: number;
       idle_cost_per_week: number;
-    }> = [];
-    for (const v of agg.values()) {
-      const item = await ctx.db.get(v.item_id);
-      if (!item) continue;
+    };
+    const aggEntries = Array.from(agg.values());
+    const itemDocs = await Promise.all(aggEntries.map((v) => ctx.db.get(v.item_id)));
+    const out: UtilOut[] = [];
+    aggEntries.forEach((v, i) => {
+      const item = itemDocs[i];
+      if (!item) return;
       const cost = item.replacement_cost_gbp ?? 0;
-      if (cost === 0) continue;
+      if (cost === 0) return;
       const util = v.util_sum / v.util_n;
       const idle = cost * (1 - util);
       // Crude weekly idle £ proxy: replacement cost × idle ratio × (1/52)
@@ -179,7 +187,7 @@ export const getItemUtilizationRanking = query({
         replacement_cost_gbp: cost,
         idle_cost_per_week: idle_per_week,
       });
-    }
+    });
     return out.sort((a, b) => b.idle_cost_per_week - a.idle_cost_per_week).slice(0, 5);
   },
 });
@@ -253,39 +261,73 @@ export const getRentalHistory = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, { accountSlug, sinceIso, untilIso, limit = 100 }) => {
-    // ── 1. Fetch completed rows via index ─────────────────────────────
-    // Primary pass: status="completed" (the bulk of history).
-    const completedRows = await ctx.db
-      .query("reservations")
-      .withIndex("by_status", (q) => q.eq("status", "completed"))
-      .collect();
-
-    // Secondary pass: status="confirmed" rows whose order_step indicates
-    // completion (RETURNED / REVIEWED). These exist when the poller hasn't
-    // yet flipped status (or in edge-import scenarios). Bounded by
-    // by_start_date to avoid a full confirmed-table scan — any rental that
-    // ended is either recently confirmed or old history captured by the
-    // completed pass above. We use a generous 5-year lookback.
-    const fiveYearsAgo = new Date(Date.now() - 5 * 365 * 86400000)
-      .toISOString()
-      .slice(0, 10);
-    const confirmedRows = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", fiveYearsAgo))
-      .collect();
-
-    // Keep confirmed rows only when order_step says they are done.
+    // ── 1. Fetch completed + confirmed-done rows via the compound
+    // `by_account_status` index (["account_slug", "status"], schema.ts) ──
+    //
+    // 2026-08 cost audit: this used to be TWO unbounded scans —
+    // `by_status("completed")` (indexed by status only, so it read every
+    // account's completed rows) PLUS `by_start_date(">= 5y ago")`, which
+    // has no status predicate at all and so read essentially the ENTIRE
+    // reservations table (every status, every account) across a 5-year
+    // window before filtering down to confirmed+DONE_STEPS in JS. Both
+    // passes now go through `by_account_status`, so the DB only returns
+    // rows for the exact (account_slug, status) pairs actually needed —
+    // `by_account_start` (["account_slug", "start_date"]) was considered
+    // but doesn't fit this access pattern: we need to prune by STATUS
+    // (completed / confirmed), not by date, and status="confirmed" alone
+    // already narrows the table to a small slice (see schema.ts's
+    // by_account_status comment: "~300 rows vs ~1700" / "~250 rich rows"),
+    // so no extra date bound is needed on top of it.
+    //
+    // accountSlug is frequently null — WallE's query_rental_history tool
+    // (src/lib/chat/dashboard-tools.ts) always calls with accountSlug: null
+    // ("all-time" history is the default) — so when null we fan out one
+    // indexed (account, status) query per entry in the canonical
+    // ACCOUNT_SLUGS list instead of falling back to an unfiltered
+    // cross-account scan.
     const DONE_STEPS = new Set(["RETURNED", "REVIEWED"]);
+
+    async function fetchByAccountStatus(
+      status: "completed" | "confirmed",
+    ): Promise<ReservationRow[]> {
+      if (accountSlug !== null) {
+        return (await ctx.db
+          .query("reservations")
+          .withIndex("by_account_status", (q) =>
+            q.eq("account_slug", accountSlug).eq("status", status),
+          )
+          .collect()) as unknown as ReservationRow[];
+      }
+      const perAccount = await Promise.all(
+        ACCOUNT_SLUGS.map((slug) =>
+          ctx.db
+            .query("reservations")
+            .withIndex("by_account_status", (q) =>
+              q.eq("account_slug", slug).eq("status", status),
+            )
+            .collect(),
+        ),
+      );
+      return perAccount.flat() as unknown as ReservationRow[];
+    }
+
+    const [completedRows, confirmedRows] = await Promise.all([
+      fetchByAccountStatus("completed"),
+      fetchByAccountStatus("confirmed"),
+    ]);
+
+    // Keep confirmed rows only when order_step says they are done. (status
+    // is already guaranteed "confirmed" by the index eq() above, so that
+    // check — present in the old JS filter — is no longer needed here.)
     const confirmedDone = confirmedRows.filter(
       (r) =>
-        r.status === "confirmed" &&
         r.order_step !== undefined &&
         DONE_STEPS.has(r.order_step) &&
         !r.is_obsolete,
     );
 
-    // Merge, casting to ReservationRow (structural match).
-    const allRows = [...completedRows, ...confirmedDone] as unknown as ReservationRow[];
+    // Merge (both passes already came back typed as ReservationRow).
+    const allRows = [...completedRows, ...confirmedDone];
 
     // ── 2. Account + date-window filter ──────────────────────────────
     const filtered = allRows.filter((r) => {
@@ -310,11 +352,16 @@ export const getRentalHistory = query({
         if (x.item_id) itemIdSet.add(x.item_id);
       }
     }
+    // 2026-08 cost audit: was a sequential `await ctx.db.get()` per unique
+    // item id — batched via Promise.all (same reads, run in parallel).
     const itemNameById = new Map<string, string>();
-    for (const id of itemIdSet) {
-      const item = await ctx.db.get(id as Id<"items">);
-      if (item) itemNameById.set(id, item.name_canonical ?? id);
-    }
+    const itemIdList = Array.from(itemIdSet);
+    const itemDocsForNames = await Promise.all(
+      itemIdList.map((id) => ctx.db.get(id as Id<"items">)),
+    );
+    itemDocsForNames.forEach((item, i) => {
+      if (item) itemNameById.set(itemIdList[i], item.name_canonical ?? itemIdList[i]);
+    });
 
     // Helper: get item names for a reservation row (prefer resolved catalog
     // names; fall back to raw r.items[].item_name).

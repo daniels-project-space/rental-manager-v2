@@ -24,6 +24,7 @@ import {
   displayReturnDate,
   londonToday,
 } from "./lib/effectiveDates";
+import { buildRenterDisplayNameMap, getRenterDisplayName } from "./lib/renterLookup";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -478,13 +479,7 @@ export async function computeStripLive(
         reservations.filter((r) => r.renter_id).map((r) => r.renter_id!)
       ),
     ];
-    const renterMap = new Map<string, string>();
-    await Promise.all(
-      renterIds.map(async (rid) => {
-        const renter = await ctx.db.get(rid);
-        if (renter) renterMap.set(rid, renter.display_name ?? "?");
-      })
-    );
+    const renterMap = await buildRenterDisplayNameMap(ctx, renterIds);
 
     // Calendar holds for the date range.
     // Phase 7e (2026-05-24): cross-account path now uses by_date indexed
@@ -608,8 +603,8 @@ export async function computeStripLive(
         if (res) {
           const r = res as { renter_id?: string };
           if (r.renter_id) {
-            const renter = await ctx.db.get(r.renter_id as Parameters<typeof ctx.db.get>[0]);
-            if (renter) holdRenterMap.set(rid, (renter as { display_name?: string }).display_name ?? "?");
+            const nm = await getRenterDisplayName(ctx, r.renter_id as Id<"renters">);
+            if (nm !== null) holdRenterMap.set(rid, nm);
           }
         }
       })
@@ -1220,13 +1215,7 @@ export async function computeWeeklyLive(
 
     // Renter name lookup (denorm + fallback to renters table).
     const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];
-    const renterMap = new Map<string, string>();
-    await Promise.all(
-      renterIds.map(async (rid) => {
-        const renter = await ctx.db.get(rid);
-        if (renter) renterMap.set(rid, renter.display_name ?? "?");
-      }),
-    );
+    const renterMap = await buildRenterDisplayNameMap(ctx, renterIds);
 
     // Items table for per-item image lookups (fuzzy by name). Preloads = the
     // identical full-table collects, same rows in the same order.
@@ -1482,13 +1471,7 @@ export const getGanttWeek = query({
 
     // --- Renter name lookup ---
     const renterIds = [...new Set(reservations.filter((r) => r.renter_id).map((r) => r.renter_id!))];
-    const renterMap = new Map<string, string>();
-    await Promise.all(
-      renterIds.map(async (rid) => {
-        const renter = await ctx.db.get(rid);
-        if (renter) renterMap.set(rid, renter.display_name ?? "?");
-      })
-    );
+    const renterMap = await buildRenterDisplayNameMap(ctx, renterIds);
 
     // --- Items table: load all for fuzzy resolver + shared-blacklist guard ---
     type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string; kind?: string };
