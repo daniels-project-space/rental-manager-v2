@@ -11,16 +11,22 @@
  *                                 (DEFAULT_LISTING_EQUIVALENCE_MAP) when the
  *                                 override is absent.
  *
- *   updateEquivalenceMap        — admin mutation, validates every candidate
- *                                 SKU against MASTER_INVENTORY before saving.
+ *   updateEquivalenceMap        — admin-gated internalMutation, validates every
+ *                                 candidate SKU against MASTER_INVENTORY before
+ *                                 saving. NOT part of the public API surface.
  *
- *   TODO admin auth: there is no project-wide admin-auth pattern yet
- *   (everything is internal-tools). This mutation is currently PUBLIC. Wrap
- *   in the admin-auth gate when introduced.
+ *   Admin gating: this project has no end-user auth (no auth.config.ts, no
+ *   ctx.auth.getUserIdentity anywhere). The established convention for
+ *   admin-only writes is `internalMutation`, which removes the function from
+ *   the public API entirely so it is unreachable from a browser client holding
+ *   only the deployment URL. Precedent: admin_reset_account_state.resetAccount,
+ *   admin_bootstrap_pidindex.run, admin_fix_inventory_20260625.run,
+ *   listing_price_admin.consumeProposal. Daniel can still run it from the
+ *   Convex dashboard or `npx convex run`, both of which carry a deploy key.
  */
 
 import { v } from "convex/values";
-import { internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import {
   DEFAULT_LISTING_EQUIVALENCE_MAP,
 } from "./lib/listing_equivalence";
@@ -66,9 +72,11 @@ export const getEffectiveEquivalenceMapPublic = query({
  * Pass an empty map (`{}`) to clear the override and fall back to the in-code
  * DEFAULT_LISTING_EQUIVALENCE_MAP.
  *
- * TODO admin auth: currently public — gate when admin-auth pattern lands.
+ * Admin-gated via `internalMutation` (see module header): this rewrites the map
+ * that drives listing→SKU resolution for real bookings, so it must not be
+ * callable by anyone who merely knows the deployment URL.
  */
-export const updateEquivalenceMap = mutation({
+export const updateEquivalenceMap = internalMutation({
   args: {
     map: v.record(v.string(), v.array(v.string())),
   },
