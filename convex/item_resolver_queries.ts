@@ -28,6 +28,53 @@ export const getReservationForResolve = internalQuery({
       photos_urls: (r as any).photos_urls ?? [],
       resolved_items: (r as any).resolved_items ?? undefined,
       resolution_input_hash: (r as any).resolution_input_hash ?? undefined,
+      // Deterministic product_id tier (2026-08-18). ONLY hygglo_items carries
+      // product_id — items[] does not (0/25 on live bookings) — and the
+      // resolution maps are keyed by account_slug + product_id.
+      account_slug: (r as any).account_slug ?? null,
+      hygglo_items: ((r as any).hygglo_items ?? []) as Array<{
+        product_id?: number;
+        name?: string;
+      }>,
+    };
+  },
+});
+
+/**
+ * Deterministic listing → inventory resolution for one account.
+ *
+ * Same tables that drive calendar_holds since 2026-08-18, so the two halves of
+ * the system (holds vs reservations.expanded_items) resolve identically. Only
+ * these tables are authoritative — no fuzzy/LLM step — because token matching
+ * is what mapped a "Cinema Tripod Stand" listing onto the C-stand.
+ */
+export const getResolutionMapsForAccount = internalQuery({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) => {
+    const index = await ctx.db
+      .query("hygglo_product_index")
+      .withIndex("by_account_product", (q) => q.eq("account_slug", account_slug))
+      .collect();
+    const overrides = await ctx.db
+      .query("listing_resolution_override")
+      .withIndex("by_account_product", (q) => q.eq("account_slug", account_slug))
+      .collect();
+    const items = await ctx.db.query("items").collect();
+    const nameOf = new Map(items.map((i) => [String(i._id), i.name_canonical]));
+    return {
+      index: index.map((r) => ({
+        product_id: r.product_id,
+        item_id: String(r.item_id),
+        item_name_canonical: nameOf.get(String(r.item_id)) ?? "",
+      })),
+      overrides: overrides.map((r) => ({
+        product_id: r.product_id,
+        components: r.components.map((c) => ({
+          item_id: String(c.item_id),
+          item_name_canonical: nameOf.get(String(c.item_id)) ?? "",
+          qty: c.qty,
+        })),
+      })),
     };
   },
 });

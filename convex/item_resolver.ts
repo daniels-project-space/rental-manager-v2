@@ -306,6 +306,75 @@ export const resolveReservation = action({
 
     const tHash = titleHash(items);
 
+    // ── Deterministic product_id tier (HIGHEST priority, 2026-08-18) ──
+    // Hygglo's product_id exactly identifies the listing; the override/index
+    // tables say which inventory item(s) that listing consumes. This is the
+    // SAME resolution reconcile-holds uses, so reservations.expanded_items and
+    // calendar_holds can no longer disagree — which they did: the overbooking
+    // widget and calendar availability read expanded_items
+    // (convex/lib/availability.ts:130) and so inherited every LLM mis-map,
+    // including the tripod-listing → C-stand fault and two rented Nanlite
+    // lights that resolved to nothing and read as available.
+    //
+    // Requires EVERY line to resolve. A partial match falls through to the
+    // existing tiers rather than writing a half-complete item list, because a
+    // silently short expanded_items is exactly what under-counts booked units.
+    const hyggloLines = ((res as { hygglo_items?: Array<{ product_id?: number }> })
+      .hygglo_items) ?? [];
+    if (accountSlug && hyggloLines.length > 0) {
+      const maps = await ctx.runQuery(
+        internal.item_resolver_queries.getResolutionMapsForAccount,
+        { account_slug: accountSlug },
+      );
+      const idx = new Map(maps.index.map((r) => [r.product_id, r]));
+      const ovr = new Map(maps.overrides.map((r) => [r.product_id, r]));
+      type DetItem = { item_id: string; item_name_canonical: string; qty: number };
+      const det: DetItem[] = [];
+      let allResolved = true;
+      for (const line of hyggloLines) {
+        const pid = typeof line.product_id === "number" ? line.product_id : null;
+        if (pid === null) {
+          allResolved = false;
+          break;
+        }
+        const bundle = ovr.get(pid);
+        const single = idx.get(pid);
+        if (bundle) {
+          for (const c of bundle.components) {
+            const ex = det.find((d) => d.item_id === c.item_id);
+            if (ex) ex.qty += c.qty;
+            else det.push({ ...c });
+          }
+        } else if (single) {
+          const ex = det.find((d) => d.item_id === single.item_id);
+          if (ex) ex.qty += 1;
+          else det.push({ ...single, qty: 1 });
+        } else {
+          allResolved = false;
+          break;
+        }
+      }
+      if (allResolved && det.length > 0) {
+        await ctx.runMutation(internal.item_resolver_queries.setResolution, {
+          reservation_id,
+          resolved_items: det.map((d) => ({
+            item_id: d.item_id,
+            item_name_canonical: d.item_name_canonical,
+            confidence: 1.0,
+            qty: d.qty,
+          })) as unknown as Array<{
+            item_id: never; item_name_canonical: string; confidence: number; qty: number;
+          }>,
+          expanded_items: det as unknown as Array<{
+            item_id: never; item_name_canonical: string; qty: number; via_bundle?: never;
+          }>,
+          method: "manual",
+          input_hash: newHash,
+        });
+        return { ok: true, resolved: det.length, skipped: "product_id" };
+      }
+    }
+
     // ── Manual override (highest-priority tier) ────────────────────
     // If the owner has manually mapped this listing to a specific items
     // list, use it verbatim. No cache check, no LLM call, no vision pass.
