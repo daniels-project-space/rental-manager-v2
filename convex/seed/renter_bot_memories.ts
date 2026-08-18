@@ -120,7 +120,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "operational",
     title: "DANIEL RULE 13 — Sets and Minimum Packages",
     content:
-      "Sony cameras: 3× NP-FZ100 + 128GB card. Blackmagic: 5× LP-E6NH + 128GB card. Block included items from singular availability. Don't discourage extra battery purchases using included batteries as reason.",
+      "Sony cameras: 2x NP-FZ100 battery sets + card (256GB SD on A7 II/A7 III, CF Express Type A on FX3/A7 V — check the specific body). Blackmagic: 5x LP-E6NH + SSD (not a card). Block included items from singular availability. Do not discourage extra battery purchases using included batteries as reason.",
     tags: ["daniel-rule", "kit", "batteries", "cards"],
     priority: 10,
   },
@@ -282,7 +282,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
 
   // ── Gear FAQs (~30 entries, scope=faq, priority 6-7) ──
   { scope: "faq", title: "FAQ: Memory Cards", content:
-    "128GB cards are included for Sony + Blackmagic cameras. Larger / extra cards on request — quote a daily rate matching the camera tier. SD vs CFexpress per body.",
+    "Card/storage included varies by body. Sony: 256GB SD card (A7 II/A7 III), or CF Express Type A on newer models (FX3, A7 V) — check the specific camera. Blackmagic: SSD included, not a card. Larger / extra cards on request — quote a daily rate matching the camera tier.",
     tags: ["faq", "cards", "storage"], priority: 6 },
   { scope: "faq", title: "FAQ: Camera Cages", content:
     "Cages compatible with the listing body are included where listed. Generic cages are not interchangeable across mounts — confirm body before quoting.",
