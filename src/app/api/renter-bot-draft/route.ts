@@ -432,12 +432,21 @@ export async function POST(req: Request) {
     const nowHM = new Date().toLocaleString("en-GB", {
       timeZone: "Europe/London", hour12: false, hour: "2-digit", minute: "2-digit",
     });
-    const fmt = (w: { start: string; end: string }) => `${w.start}–${w.end}`;
+    // "10:00 to 12:00", NOT "10:00–12:00". Live-caught 2026-08-18: with an
+    // en-dash the agent routinely rewrote a window as a comma pair — "our
+    // windows are 10am, 12pm and 7pm, 9pm" — which reads to a renter as four
+    // fixed appointment times rather than two continuous ranges, and is
+    // actively misleading for the evening one (7-9pm is a two-hour window, not
+    // "7pm or 9pm"). 6 of 8 window mentions across the response matrix came out
+    // in the ambiguous comma form. Spelling the range out in words, plus the
+    // explicit presentation instruction below, removes the ambiguity at source.
+    const fmt = (w: { start: string; end: string }) => `${w.start} to ${w.end}`;
     const remaining = remainingWindowsToday(hours, nowHM);
     groundTruth +=
-      `CURRENT LONDON TIME: ${nowHM}. Pickup/return windows for this account: ${hours.map(fmt).join(", ")} — NEVER agree to any time outside these. ` +
+      `CURRENT LONDON TIME: ${nowHM}. Pickup/return windows for this account: ${hours.map(fmt).join(" or ")} — NEVER agree to any time outside these. ` +
+      `Each window is a CONTINUOUS range the renter can arrive within, not two fixed times: always write it to the renter as a range ("10am to 12pm", "7-9pm"), NEVER as a comma pair ("7pm, 9pm"), which reads as two separate appointments. ` +
       (remaining.length
-        ? `Windows still open TODAY: ${remaining.map(fmt).join(", ")} — offer the EARLIEST of these first; do NOT offer a window that has already passed today (e.g. don't offer a morning slot in the afternoon).`
+        ? `Windows still open TODAY: ${remaining.map(fmt).join(" or ")} — offer the EARLIEST of these first; do NOT offer a window that has already passed today (e.g. don't offer a morning slot in the afternoon).`
         : `No windows remain today — for today it's too late, offer tomorrow's first window (${fmt(hours[0])}).`) + `\n`;
     const blocks = communication?.draft_text_blocks;
     const controlledWording = blocks
