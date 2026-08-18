@@ -673,7 +673,6 @@ export async function POST(req: Request) {
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
       resolvedItems,
-      debugRule10Injected: groundTruth.includes("DANIEL RULE 10"),
     });
   } catch (e) {
     return NextResponse.json(

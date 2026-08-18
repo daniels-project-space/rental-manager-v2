@@ -59,7 +59,6 @@ import type * as draft_learning_actions from "../draft_learning_actions.js";
 import type * as extract_booking_times from "../extract_booking_times.js";
 import type * as extract_booking_times_q from "../extract_booking_times_q.js";
 import type * as feature_flags from "../feature_flags.js";
-import type * as fix_bmpccff_title from "../fix_bmpccff_title.js";
 import type * as grounding_audit from "../grounding_audit.js";
 import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
@@ -275,7 +274,6 @@ declare const fullApi: ApiFromModules<{
   extract_booking_times: typeof extract_booking_times;
   extract_booking_times_q: typeof extract_booking_times_q;
   feature_flags: typeof feature_flags;
-  fix_bmpccff_title: typeof fix_bmpccff_title;
   grounding_audit: typeof grounding_audit;
   health: typeof health;
   historical_revenue: typeof historical_revenue;
