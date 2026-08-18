@@ -30,7 +30,35 @@ export interface ReservationInput {
    */
   resolved_items?: Array<{ item_id: string; qty?: number }>;
   expanded_items?: Array<{ item_id: string; qty?: number }>;
+  /**
+   * Raw Hygglo per-rental items — the ONLY array that carries `product_id`, the
+   * deterministic key tying an order line to a listing and thus to a master
+   * item. Measured 2026-08-18: populated on 21/21 live booking lines, versus
+   * 0/25 on `items[]`. convex/calendar.ts already keys off this; reconcile used
+   * `items[]`, found no id, and fell through to the LLM resolver — which is how
+   * a "Cinema Tripod Stand" line became a C-stand hold and two Nanlite lights
+   * got no hold at all.
+   */
+  hygglo_items?: Array<{ product_id?: number; name?: string }>;
   renter_name?: string;
+}
+
+/** `${account_slug}#${product_id}` → master item id (single-item listings). */
+export type ProductIndexMap = Map<string, string>;
+
+/**
+ * `${account_slug}#${product_id}` → component items (bundle listings such as
+ * "Sony FX3 Full Frame 4K Cinema Camera Kit | 24-70", which a single
+ * product_id → item_id row cannot represent).
+ */
+export type BundleOverrideMap = Map<string, Array<{ item_id: string; qty: number }>>;
+
+/** An order line we could not resolve deterministically — surfaced, never dropped. */
+export interface UnresolvedLine {
+  reservation_id: string;
+  account_slug: string;
+  product_id: number | null;
+  title: string;
 }
 
 export interface ItemRow {
@@ -55,12 +83,24 @@ export interface ReconcileResult {
   holds: HoldInput[];
   deleteReservationIds: string[];
   unmatchedItemNames: string[];
+  /**
+   * Order lines carrying a real Hygglo product_id that no override/index row
+   * maps to an inventory item. These MUST be surfaced: an unresolved line means
+   * rented stock that nothing is holding, which reads to the renter bot as
+   * "available". Silence here is what let the 2026-08-18 double-booking
+   * exposure sit undetected for three months.
+   */
+  unresolvedLines: UnresolvedLine[];
   stats: {
     reservations_processed: number;
     holds_generated: number;
     skipped_pending: number;
     skipped_obsolete: number;
     forward_cap_skipped: number;
+    /** Lines resolved deterministically via product_id (the good path). */
+    resolved_by_product_id: number;
+    /** Reservations that still needed the legacy name/LLM path. */
+    fell_back_to_legacy: number;
   };
 }
 
@@ -145,8 +185,18 @@ export function computeHoldsForReservations(args: {
   items: ItemRow[];
   today: Date;
   forwardCapDays?: number;
+  /** Deterministic product_id → item maps. Omit and behaviour is unchanged. */
+  productIndex?: ProductIndexMap;
+  bundleOverrides?: BundleOverrideMap;
 }): ReconcileResult {
-  const { reservations, items, today, forwardCapDays = 180 } = args;
+  const {
+    reservations,
+    items,
+    today,
+    forwardCapDays = 180,
+    productIndex,
+    bundleOverrides,
+  } = args;
 
   const todayMs = Date.UTC(
     today.getUTCFullYear(),
@@ -159,10 +209,13 @@ export function computeHoldsForReservations(args: {
   const holds: HoldInput[] = [];
   const deleteReservationIds: string[] = [];
   const unmatchedItemNames: string[] = [];
+  const unresolvedLines: UnresolvedLine[] = [];
 
   let skipped_pending = 0;
   let skipped_obsolete = 0;
   let forward_cap_skipped = 0;
+  let resolved_by_product_id = 0;
+  let fell_back_to_legacy = 0;
 
   for (const res of reservations) {
     const { _id, order_step, status, is_obsolete, account_slug } = res;
@@ -241,6 +294,84 @@ export function computeHoldsForReservations(args: {
     const holdStatus: "confirmed" | "completed" =
       order_step && COMPLETED_STEPS.has(order_step) ? "completed" : "confirmed";
 
+    // ── Rule 5a: DETERMINISTIC resolution via Hygglo product_id ──────────────
+    // Preferred over everything below. product_id is an exact identifier for
+    // the listing; the override/index tables say which inventory item(s) that
+    // listing consumes. No name matching, no LLM, no confidence score — the
+    // three mechanisms that between them produced a C-stand hold for a tripod
+    // and left two rented Nanlite lights reading as free.
+    //
+    // A line whose product_id is in NEITHER table is recorded in
+    // `unresolvedLines` rather than quietly skipped. If every line on the
+    // reservation resolves this way we are done; if only some do, we still fall
+    // through so today's behaviour is not regressed while the tables are being
+    // populated — but the gap is now visible instead of silent.
+    const hyggloLines = res.hygglo_items ?? [];
+    if (hyggloLines.length > 0 && (productIndex || bundleOverrides)) {
+      const itemById = new Map(items.map((i) => [i._id, i]));
+      const written = new Set<string>();
+      let resolvedAll = true;
+      let resolvedAny = false;
+
+      for (const line of hyggloLines) {
+        const pid = typeof line.product_id === "number" ? line.product_id : null;
+        const key = pid === null ? null : `${account_slug}#${pid}`;
+        const components = key ? bundleOverrides?.get(key) : undefined;
+        const single = key ? productIndex?.get(key) : undefined;
+        const targets =
+          components && components.length
+            ? components
+            : single
+              ? [{ item_id: single, qty: 1 }]
+              : [];
+
+        if (targets.length === 0) {
+          resolvedAll = false;
+          unresolvedLines.push({
+            reservation_id: _id,
+            account_slug,
+            product_id: pid,
+            title: String(line.name ?? ""),
+          });
+          continue;
+        }
+
+        for (const t of targets) {
+          const item = itemById.get(t.item_id);
+          // A mapping pointing at a missing or cross-account item is itself a
+          // data error — treat it as unresolved rather than dropping silently.
+          if (!item || (item.account_slug && item.account_slug !== account_slug)) {
+            resolvedAll = false;
+            unresolvedLines.push({
+              reservation_id: _id,
+              account_slug,
+              product_id: pid,
+              title: String(line.name ?? ""),
+            });
+            continue;
+          }
+          resolvedAny = true;
+          resolved_by_product_id += 1;
+          if (written.has(t.item_id)) continue;
+          written.add(t.item_id);
+          for (const date of filteredDates) {
+            holds.push({
+              item_id: t.item_id,
+              date,
+              reservation_id: _id,
+              account_slug,
+              status: holdStatus,
+              qty_held: t.qty > 0 ? t.qty : undefined,
+              renter_name: res.renter_name || undefined,
+            });
+          }
+        }
+      }
+
+      if (resolvedAll && resolvedAny) continue;
+      fell_back_to_legacy += 1;
+    }
+
     // ── Rule 5: Resolve items ─────────────────────────────────────────────────
     // Preferred path: trust the LLM resolver / bundle expander. expanded_items
     // is bundle-decomposed (e.g. "Sony FX3 kit" → FX3 + 24-70mm lens),
@@ -309,12 +440,15 @@ export function computeHoldsForReservations(args: {
     holds,
     deleteReservationIds,
     unmatchedItemNames,
+    unresolvedLines,
     stats: {
       reservations_processed: reservations.length,
       holds_generated: holds.length,
       skipped_pending,
       skipped_obsolete,
       forward_cap_skipped,
+      resolved_by_product_id,
+      fell_back_to_legacy,
     },
   };
 }

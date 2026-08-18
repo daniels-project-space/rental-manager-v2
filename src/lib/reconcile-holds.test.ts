@@ -321,3 +321,138 @@ describe("computeHoldsForReservations", () => {
     assert.equal(result.holds[0].date, "2025-06-14");
   });
 });
+
+/**
+ * Deterministic product_id resolution (added 2026-08-18).
+ *
+ * Regression cover for the live double-booking exposure: reconcile read
+ * `items[]` (no product_id) instead of `hygglo_items[]` (product_id on 21/21
+ * live lines), fell through to the LLM resolver, and produced a C-stand hold
+ * for a "Cinema Tripod Stand" line while two genuinely rented Nanlite lights
+ * got no hold at all and read as available.
+ */
+describe("computeHoldsForReservations — deterministic product_id path", () => {
+  const CAM = makeItem({ _id: "item_cam", name: "Sony FX3", qty: 1 });
+  const LENS = makeItem({ _id: "item_lens", name: "Sony GM 24-70mm f2.8", qty: 1 });
+  const DECOY = makeItem({ _id: "item_cstand", name: "C-stand", qty: 1 });
+
+  const oneDay = {
+    order_step: "BOOKED_AFTER_VERIFIED",
+    start_date: "2025-06-20",
+    end_date: "2025-06-20",
+  };
+
+  it("resolves a line by product_id and ignores the LLM's wrong answer", () => {
+    // expanded_items points at the DECOY — exactly the failure that happened
+    // live. The product_id mapping must win.
+    const result = computeHoldsForReservations({
+      reservations: [
+        makeRes({
+          _id: "res_1",
+          ...oneDay,
+          hygglo_items: [{ product_id: 999, name: "Sony FX3 Full-Frame Cinema Camera" }],
+          expanded_items: [{ item_id: "item_cstand" }],
+        }),
+      ],
+      items: [CAM, LENS, DECOY],
+      today: TODAY,
+      productIndex: new Map([["acme#999", "item_cam"]]),
+    });
+    assert.equal(result.holds.length, 1);
+    assert.equal(result.holds[0].item_id, "item_cam");
+    assert.equal(result.stats.resolved_by_product_id, 1);
+    assert.equal(result.unresolvedLines.length, 0);
+  });
+
+  it("expands a bundle listing into every component it consumes", () => {
+    // "FX3 Kit | 24-70" consumes TWO items; a single product_id -> item_id row
+    // cannot express that, which is why the lens-only mapping lost the camera.
+    const result = computeHoldsForReservations({
+      reservations: [
+        makeRes({
+          _id: "res_2",
+          ...oneDay,
+          hygglo_items: [{ product_id: 1000, name: "Sony FX3 Kit | 24-70" }],
+        }),
+      ],
+      items: [CAM, LENS, DECOY],
+      today: TODAY,
+      bundleOverrides: new Map([
+        ["acme#1000", [{ item_id: "item_cam", qty: 1 }, { item_id: "item_lens", qty: 1 }]],
+      ]),
+    });
+    assert.deepEqual(
+      result.holds.map((h) => h.item_id).sort(),
+      ["item_cam", "item_lens"],
+    );
+  });
+
+  it("RECORDS an unmapped line instead of silently dropping it", () => {
+    // The core bug: a rented item nothing holds reads as "available". It must
+    // surface, not vanish.
+    const result = computeHoldsForReservations({
+      reservations: [
+        makeRes({
+          _id: "res_3",
+          ...oneDay,
+          hygglo_items: [{ product_id: 4242, name: "Nanlite Forza 300 LED Light Kit" }],
+        }),
+      ],
+      items: [CAM, LENS, DECOY],
+      today: TODAY,
+      productIndex: new Map(),
+    });
+    assert.equal(result.unresolvedLines.length, 1);
+    assert.equal(result.unresolvedLines[0].product_id, 4242);
+    assert.match(result.unresolvedLines[0].title, /Nanlite/);
+    assert.equal(result.holds.length, 0);
+  });
+
+  it("treats a mapping to a cross-account item as unresolved, not a hold", () => {
+    const foreign = makeItem({ _id: "item_x", name: "Someone else's FX3", account_slug: "other" });
+    const result = computeHoldsForReservations({
+      reservations: [
+        makeRes({ _id: "res_4", ...oneDay, hygglo_items: [{ product_id: 7, name: "FX3" }] }),
+      ],
+      items: [foreign],
+      today: TODAY,
+      productIndex: new Map([["acme#7", "item_x"]]),
+    });
+    assert.equal(result.holds.length, 0);
+    assert.equal(result.unresolvedLines.length, 1);
+  });
+
+  it("prefers the bundle override over a single-item index row", () => {
+    const result = computeHoldsForReservations({
+      reservations: [
+        makeRes({ _id: "res_5", ...oneDay, hygglo_items: [{ product_id: 55, name: "Kit" }] }),
+      ],
+      items: [CAM, LENS],
+      today: TODAY,
+      productIndex: new Map([["acme#55", "item_cam"]]),
+      bundleOverrides: new Map([
+        ["acme#55", [{ item_id: "item_cam", qty: 1 }, { item_id: "item_lens", qty: 1 }]],
+      ]),
+    });
+    assert.equal(result.holds.length, 2);
+  });
+
+  it("leaves existing behaviour untouched when no maps are supplied", () => {
+    // Guards the rollout: omitting the maps must reproduce today's output.
+    const result = computeHoldsForReservations({
+      reservations: [
+        makeRes({
+          _id: "res_6",
+          ...oneDay,
+          hygglo_items: [{ product_id: 999, name: "Sony FX3" }],
+          expanded_items: [{ item_id: "item_cam" }],
+        }),
+      ],
+      items: [CAM],
+      today: TODAY,
+    });
+    assert.equal(result.holds.length, 1);
+    assert.equal(result.holds[0].item_id, "item_cam");
+    assert.equal(result.stats.resolved_by_product_id, 0);
+  });
+});

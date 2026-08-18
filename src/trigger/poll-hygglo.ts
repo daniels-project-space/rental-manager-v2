@@ -927,12 +927,45 @@ export const pollHyggloInbox = schedules.task({
               _id: i._id as string,
             }));
 
+            // Deterministic product_id → item maps. Without these reconcile
+            // falls back to LLM/name matching, which mis-mapped rented gear and
+            // left other rented gear with no hold at all (reading as available
+            // to the renter bot). See docs/inventory-linkage-audit-2026-08-18.md.
+            const maps = await convex.query(api.calendar.getResolutionMaps, {
+              account_slug: account.slug,
+            });
+            const productIndex = new Map(
+              maps.index.map((r) => [`${account.slug}#${r.product_id}`, r.item_id]),
+            );
+            const bundleOverrides = new Map(
+              maps.overrides.map((r) => [`${account.slug}#${r.product_id}`, r.components]),
+            );
+
             const result = computeHoldsForReservations({
               reservations: reconReservations,
               items: reconItems,
               today: new Date(),
               forwardCapDays: 180,
+              productIndex,
+              bundleOverrides,
             });
+
+            // An unresolved line is rented stock that nothing is holding — it
+            // reads as AVAILABLE and can be double-booked. Never let this be
+            // silent; silence is why it went unnoticed for three months.
+            if (result.unresolvedLines.length > 0) {
+              logger.error(
+                `[reconcile] UNRESOLVED account=${account.slug} count=${result.unresolvedLines.length} — these rented items have NO hold and read as available`,
+                {
+                  lines: result.unresolvedLines.map(
+                    (l) => `pid=${l.product_id ?? "none"} "${l.title.slice(0, 60)}"`,
+                  ),
+                },
+              );
+            }
+            logger.log(
+              `[reconcile] account=${account.slug} deterministic=${result.stats.resolved_by_product_id} legacyFallback=${result.stats.fell_back_to_legacy} unresolved=${result.unresolvedLines.length}`,
+            );
 
             if (result.holds.length > 0) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any

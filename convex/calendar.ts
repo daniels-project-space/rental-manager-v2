@@ -950,6 +950,35 @@ export const getCalendarStrip = query({
 });
 
 /**
+ * Deterministic listing → inventory maps for hold reconciliation.
+ *
+ * `product_id` is the only exact key tying a Hygglo order line to an inventory
+ * item. Reconcile previously had no access to these tables, so it fell back to
+ * LLM/name matching and silently mis-mapped or dropped rented items — see
+ * docs/inventory-linkage-audit-2026-08-18.md. Read-only.
+ */
+export const getResolutionMaps = query({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) => {
+    const index = await ctx.db
+      .query("hygglo_product_index")
+      .withIndex("by_account_product", (q) => q.eq("account_slug", account_slug))
+      .collect();
+    const overrides = await ctx.db
+      .query("listing_resolution_override")
+      .withIndex("by_account_product", (q) => q.eq("account_slug", account_slug))
+      .collect();
+    return {
+      index: index.map((r) => ({ product_id: r.product_id, item_id: String(r.item_id) })),
+      overrides: overrides.map((r) => ({
+        product_id: r.product_id,
+        components: r.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })),
+      })),
+    };
+  },
+});
+
+/**
  * W08 Weekly Calendar Overlay
  */
 // Batch insert/update calendar holds
