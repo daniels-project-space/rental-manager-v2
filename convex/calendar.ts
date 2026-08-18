@@ -2207,3 +2207,87 @@ export const backfillHoldRenterNames = mutation({
     return { total: holds.length, patched, skipped_already_set, missing_reservation };
   },
 });
+
+/**
+ * UNMAPPED RENTED LISTINGS — dashboard alert.
+ *
+ * A live booking line whose Hygglo product_id has no entry in
+ * `hygglo_product_index` / `listing_resolution_override` holds NOTHING. The
+ * gear is physically out, but every availability surface (overbooking widget,
+ * calendar, renter bot) reads it as free, so it can be double-booked.
+ *
+ * Previously this only reached a Trigger.dev error log, which nobody reads.
+ * Computed live rather than stored so it can never go stale, and scoped to
+ * current/future bookings via the by_start_date index to stay cheap.
+ */
+export const getUnmappedRentedListings = query({
+  args: {},
+  handler: async (ctx) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const horizon = new Date(Date.now() + 180 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+
+    const rows = await ctx.db
+      .query("reservations")
+      .withIndex("by_start_date", (q) =>
+        q.gte("start_date", today).lt("start_date", horizon),
+      )
+      .collect();
+    const live = rows.filter(
+      (r) =>
+        ["confirmed", "ongoing"].includes(String(r.status ?? "")) &&
+        !(r as { is_obsolete?: boolean }).is_obsolete,
+    );
+    if (live.length === 0) return { count: 0, alerts: [] };
+
+    const index = await ctx.db.query("hygglo_product_index").collect();
+    const overrides = await ctx.db.query("listing_resolution_override").collect();
+    // A line also counts as mapped when the catalogue row still carries a
+    // masterItemId (the legacy link). Those resolve to SOMETHING, so they are
+    // not a double-booking risk and must not fire this alert — over-reporting
+    // would make it noise and get it ignored, which is how the original
+    // problem stayed hidden. Only lines that resolve to nothing appear here.
+    const products = await ctx.db.query("hygglo_products").collect();
+    const mapped = new Set<string>([
+      ...index.map((r) => `${r.account_slug}#${r.product_id}`),
+      ...overrides.map((r) => `${r.account_slug}#${r.product_id}`),
+      ...products
+        .filter((p) => p.masterItemId && !(p as { isMarketingOnly?: boolean }).isMarketingOnly)
+        .map((p) => `${p.accountSlug}#${p.productId}`),
+    ]);
+
+    const alerts: Array<{
+      reservation_id: string;
+      account_slug: string | null;
+      renter_name: string | null;
+      start_date: string | null;
+      end_date: string | null;
+      product_id: number | null;
+      listing_title: string;
+    }> = [];
+
+    for (const r of live) {
+      const acct = String(r.account_slug ?? "");
+      const lines =
+        ((r as { hygglo_items?: Array<{ product_id?: number; name?: string }> })
+          .hygglo_items) ?? [];
+      for (const l of lines) {
+        const pid = typeof l.product_id === "number" ? l.product_id : null;
+        // No product_id at all is equally unmappable — surface it the same way.
+        if (pid !== null && mapped.has(`${acct}#${pid}`)) continue;
+        alerts.push({
+          reservation_id: String(r._id),
+          account_slug: r.account_slug ?? null,
+          renter_name: (r as { renter_name?: string }).renter_name ?? null,
+          start_date: r.start_date ?? null,
+          end_date: r.end_date ?? null,
+          product_id: pid,
+          listing_title: String(l.name ?? "(untitled listing)").slice(0, 90),
+        });
+      }
+    }
+    alerts.sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""));
+    return { count: alerts.length, alerts: alerts.slice(0, 25) };
+  },
+});

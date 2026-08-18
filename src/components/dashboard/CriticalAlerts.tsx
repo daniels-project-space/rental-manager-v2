@@ -55,8 +55,26 @@ interface BlacklistAlert {
   reason: string | null;
 }
 
+/**
+ * A rented listing whose Hygglo product_id maps to no inventory item. The gear
+ * is physically out, but the overbooking widget, calendar and renter bot all
+ * read it as FREE — so it can be double-booked. Highest-severity alert here:
+ * the others describe a conflict you can see, this one describes stock the
+ * system does not know is gone.
+ */
+interface UnmappedListing {
+  reservation_id: string;
+  account_slug: string | null;
+  renter_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  product_id: number | null;
+  listing_title: string;
+}
+
 interface Props {
   conflicts: Conflict[];
+  unmapped_listings?: UnmappedListing[];
   qty_drift_count?: number;
   qty_drift_sample?: QtyDriftSample[];
   blacklist_alerts?: BlacklistAlert[];
@@ -105,6 +123,7 @@ const KIND_COLOR: Record<ConflictReservation["kind"], string> = {
 
 export function CriticalAlerts({
   conflicts,
+  unmapped_listings = [],
   qty_drift_count = 0,
   qty_drift_sample = [],
   blacklist_alerts = [],
@@ -115,7 +134,15 @@ export function CriticalAlerts({
   const pending = conflicts.filter((c) => c.severity === "pending");
   const hasDrift = qty_drift_count > 0;
   const hasBlacklist = blacklist_alerts.length > 0;
-  if (!confirmed.length && !pending.length && !hasDrift && !hasBlacklist) return null;
+  const hasUnmapped = unmapped_listings.length > 0;
+  if (
+    !confirmed.length &&
+    !pending.length &&
+    !hasDrift &&
+    !hasBlacklist &&
+    !hasUnmapped
+  )
+    return null;
 
   return (
     <>
@@ -129,6 +156,8 @@ export function CriticalAlerts({
       `}</style>
 
       <div className="space-y-2 mb-3">
+        {/* First: this is stock the system does not know is gone. */}
+        {hasUnmapped && <UnmappedListingsBanner alerts={unmapped_listings} />}
         {hasBlacklist && <BlacklistBanner alerts={blacklist_alerts} />}
         {confirmed.length > 0 && <OverbookBanner conflicts={confirmed} variant="confirmed" />}
         {pending.length > 0 && <OverbookBanner conflicts={pending} variant="pending" />}
@@ -290,6 +319,81 @@ function ConflictCard({ conflict, variant }: { conflict: Conflict; variant: Vari
 }
 
 // Blacklisted-renter alert — a flagged renter has a LIVE booking (request → out).
+/**
+ * Rented gear the system cannot see. Deliberately the loudest banner: the other
+ * alerts describe a conflict that IS visible somewhere, this one describes
+ * stock that is out while every availability surface still reads it as free —
+ * i.e. it can be double-booked. Amber rather than red so it reads as
+ * "needs mapping", not "a booking is broken".
+ */
+function UnmappedListingsBanner({ alerts }: { alerts: UnmappedListing[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const bookings = new Set(alerts.map((a) => a.reservation_id)).size;
+  return (
+    <div
+      className={!expanded ? "ob-pulse rounded-xl" : "rounded-xl"}
+      style={
+        {
+          background: "linear-gradient(135deg, rgba(245,158,11,0.18), rgba(120,53,15,0.12))",
+          border: "1px solid rgba(245,158,11,0.5)",
+          "--ring": "rgba(245,158,11,0.55)",
+        } as React.CSSProperties
+      }
+    >
+      <button
+        onClick={() => setExpanded((x) => !x)}
+        className="w-full flex items-center gap-3 text-left p-3"
+      >
+        <span
+          className="flex-shrink-0 flex items-center justify-center rounded-lg text-base"
+          style={{
+            width: 34,
+            height: 34,
+            background: "rgba(245,158,11,0.2)",
+            border: "1px solid rgba(245,158,11,0.45)",
+          }}
+        >
+          🔗
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-bold" style={{ color: "#f59e0b" }}>
+            Rented gear not tracked · {alerts.length} line
+            {alerts.length === 1 ? "" : "s"} across {bookings} booking
+            {bookings === 1 ? "" : "s"}
+          </div>
+          <div className="text-[11px]" style={{ color: "#9ca3af" }}>
+            These listings aren&apos;t linked to inventory, so the gear is out but still
+            shows as available — it can be double-booked. Map them in Settings.
+          </div>
+        </div>
+        <span className="text-[11px]" style={{ color: "#9ca3af" }}>
+          {expanded ? "hide" : "show"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 space-y-1">
+          {alerts.map((a, i) => (
+            <div
+              key={`${a.reservation_id}-${a.product_id ?? i}`}
+              className="text-[11px] flex items-baseline gap-2"
+              style={{ color: "#d1d5db" }}
+            >
+              <span style={{ color: "#f59e0b" }}>
+                {fmtDate(a.start_date)}–{fmtDate(a.end_date)}
+              </span>
+              <span className="truncate">{a.listing_title}</span>
+              <span style={{ color: "#6b7280" }}>
+                {a.account_slug ?? "?"}
+                {a.product_id === null ? " · no product id" : ` · #${a.product_id}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BlacklistBanner({ alerts }: { alerts: BlacklistAlert[] }) {
   const [expanded, setExpanded] = useState(false);
   const renterCount = new Set(alerts.map((a) => a.renter_name ?? "?")).size;

@@ -182,6 +182,13 @@ export function StatsGrid() {
   const rawData = useStableQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
+  // Rented gear with no inventory mapping. Small, live, and deliberately NOT
+  // folded into getStatsDrawerData — that payload comes from an hourly MV, and
+  // stock that is out while reading as available must not sit behind a cache.
+  const unmappedListings = useStableQuery(
+    api.calendar.getUnmappedRentedListings,
+    {},
+  );
   // Pass 10b (2026-05-25) — drawer drill-down rentals split into a
   // separate MV row. Fetch only when a drawer is currently expanded so
   // the headline subscription stays at ~6KB instead of ~78KB. Drawers
@@ -670,6 +677,10 @@ export function StatsGrid() {
     <>
       <CriticalAlerts
         conflicts={(rawData as any)?.conflicts ?? []}
+        // Queried directly, NOT via getStatsDrawerData: that payload is served
+        // from an hourly materialised view, and gear that is out but untracked
+        // must not sit behind a cache.
+        unmapped_listings={unmappedListings?.alerts ?? []}
         blacklist_alerts={(rawData as any)?.blacklist_alerts ?? []}
         qty_drift_count={(rawData as any)?.qty_drift_count ?? 0}
         qty_drift_sample={(rawData as any)?.qty_drift_sample ?? []}
