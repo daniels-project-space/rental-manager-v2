@@ -456,4 +456,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     tags: ["template", "arrival", "dbcinema"],
     priority: 10,
   },
+  { scope: "faq", title: "FAQ: Weight/Dimensions/Replacement Cost Questions", content:
+    "If a renter asks about an item's weight, dimensions, or replacement cost and we do not have a confirmed, grounded figure for it, do NOT estimate or guess a number. Say: \"I'll inform my colleague about this and get back to you.\" Never invent a weight or cost figure.",
+    tags: ["faq", "weight", "dimensions", "replacement-cost", "escalation"], priority: 7 },
 ];
