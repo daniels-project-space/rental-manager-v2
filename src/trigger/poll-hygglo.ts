@@ -15,6 +15,7 @@ import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
 import { HYGGLO_POLL_CRON, hyggloPollMode } from "../lib/quiet-hours";
+import { computeBackoffIntervalMs, nextQuietStreak } from "../lib/hygglo-poll-backoff";
 // Phase 2 (corePoll cutover complete) — the pure hygglo-core poll assembler is
 // now the SOLE fetch+shape path. It produces the `{ messages, reservations,
 // renters, conversations }` payload arrays consumed by downstream (B) — Convex
@@ -226,6 +227,15 @@ async function scrapeAccountViaCore(
   currentOrderIds: string[];
   presenceComplete: boolean;
   observedAt: number;
+  /** Phase 31 (cost opt) — corePoll's quiet-cycle diagnostics for THIS
+   *  account, forwarded so run() can aggregate an all-accounts "fully
+   *  quiet this cycle" signal for the adaptive backoff (see
+   *  ../lib/hygglo-poll-backoff.ts). Not sent to any Hygglo/Convex write. */
+  quietMeta: {
+    ordersSelected: number;
+    ordersSkippedUnchanged: number;
+    hadErrors: boolean;
+  };
 }> {
   const observedAt = Date.now();
   const core = await corePoll(accountSlug, {
@@ -315,6 +325,11 @@ async function scrapeAccountViaCore(
     presenceComplete:
       core.meta.list_filter_errors === 0 && core.meta.detail_fetch_errors === 0,
     observedAt,
+    quietMeta: {
+      ordersSelected: core.meta.orders_selected,
+      ordersSkippedUnchanged: core.meta.orders_skipped_unchanged,
+      hadErrors: core.meta.list_filter_errors > 0 || core.meta.detail_fetch_errors > 0,
+    },
   };
 }
 
@@ -351,6 +366,15 @@ export const pollHyggloInbox = schedules.task({
     // skipped tick costs only two small Convex reads.
     const convex = new ConvexHttpClient(CONVEX_URL);
     let effectiveIntervalMs = MIN_EFFECTIVE_POLL_INTERVAL_MS;
+    // Phase 31 (cost opt) — the human-set dial, clamped to the hard 2-60min
+    // bounds, BEFORE the adaptive backoff widening below. Kept separate so
+    // the backoff always widens from the operator's actual setting, never
+    // from an already-widened value.
+    let baseIntervalMs = MIN_EFFECTIVE_POLL_INTERVAL_MS;
+    // Consecutive fully-quiet FULL-poll cycles read from sync_state
+    // (source="hygglo_poller"); 0 for a fresh/legacy row. See
+    // ../lib/hygglo-poll-backoff.ts for the exact curve + semantics.
+    let quietStreak = 0;
     try {
       const [settings, previous] = await Promise.all([
         convex.query(api.settings.get, {}),
@@ -358,22 +382,34 @@ export const pollHyggloInbox = schedules.task({
       ]);
       const configured = Number(settings?.polling_interval_ms);
       if (Number.isFinite(configured)) {
-        effectiveIntervalMs = Math.min(
+        baseIntervalMs = Math.min(
           MAX_EFFECTIVE_POLL_INTERVAL_MS,
           Math.max(MIN_EFFECTIVE_POLL_INTERVAL_MS, Math.round(configured)),
         );
       }
+      const storedQuietStreak = Number((previous as { quietStreak?: number } | null)?.quietStreak);
+      quietStreak = Number.isFinite(storedQuietStreak) ? storedQuietStreak : 0;
+      effectiveIntervalMs = computeBackoffIntervalMs(
+        baseIntervalMs,
+        quietStreak,
+        MIN_EFFECTIVE_POLL_INTERVAL_MS,
+        MAX_EFFECTIVE_POLL_INTERVAL_MS,
+      );
       const previousLastRunAt = previous?.lastRunAt ?? null;
       const elapsedMs = previousLastRunAt !== null ? Date.now() - previousLastRunAt : null;
       if (isScheduledRun && elapsedMs !== null && elapsedMs < effectiveIntervalMs) {
         logger.info("[poll-hygglo] skipped by configured interval", {
-          configured_interval_ms: effectiveIntervalMs,
+          configured_interval_ms: baseIntervalMs,
+          effective_interval_ms: effectiveIntervalMs,
+          quiet_streak: quietStreak,
           elapsed_ms: elapsedMs,
         });
         return {
           skipped: true,
           reason: "configured_interval_not_elapsed",
           effectiveIntervalMs,
+          baseIntervalMs,
+          quietStreak,
           nextEligibleAt: previousLastRunAt! + effectiveIntervalMs,
         };
       }
@@ -395,6 +431,19 @@ export const pollHyggloInbox = schedules.task({
     let totalHyggloMessagesUpserted = 0;
     let totalRentersUpserted = 0;
     let totalConversationsUpserted = 0;
+
+    // Phase 31 (cost opt) — adaptive backoff quiet-cycle aggregation. Only
+    // accumulated on FULL polls (matching sync_state.recordSyncRun /
+    // account_state.upsert, which are also full-poll-only below) — an
+    // operational-mode poll only samples a bounded recent-activity window
+    // (selectOperationalOrders), which would bias "fully quiet" toward false
+    // positives. Accounts skipped for paused-mode/missing-creds don't reach
+    // scrapeAccountViaCore and are correctly excluded (nothing to learn from
+    // an account that wasn't polled).
+    let cycleOrdersSelected = 0;
+    let cycleOrdersSkippedUnchanged = 0;
+    let cycleHadErrors = false;
+    let cycleAnyAccountFailed = false;
 
     const hyggloSecrets = await getVaultSecrets("hygglo");
 
@@ -492,8 +541,18 @@ export const pollHyggloInbox = schedules.task({
             currentOrderIds,
             presenceComplete,
             observedAt,
+            quietMeta,
           } =
             await scrapeAccountViaCore(account.slug, pollMode, convex);
+
+          // Phase 31 (cost opt) — feed this account's quiet-cycle diagnostics
+          // into the cycle-level aggregate (full polls only; see the
+          // declaration above for why operational polls are excluded).
+          if (isFullPoll) {
+            cycleOrdersSelected += quietMeta.ordersSelected;
+            cycleOrdersSkippedUnchanged += quietMeta.ordersSkippedUnchanged;
+            if (quietMeta.hadErrors) cycleHadErrors = true;
+          }
 
           // Upsert chat messages (batched 50)
           let totalInserted = 0;
@@ -902,6 +961,13 @@ export const pollHyggloInbox = schedules.task({
           // Continue — Leo failure must not crash DB Cinema
           results.push({ slug: account.slug, ok: false, error: msg });
 
+          // Phase 31 (cost opt) — a whole-account failure means this
+          // cycle's "everything confirmed unchanged" signal is untrustworthy
+          // for that account; hold the adaptive-backoff streak rather than
+          // widening or resetting on incomplete information (see
+          // nextQuietStreak in ../lib/hygglo-poll-backoff.ts).
+          if (isFullPoll) cycleAnyAccountFailed = true;
+
           // ── account_state: failure ────────────────────────────
           if (isFullPoll) {
             try {
@@ -920,6 +986,29 @@ export const pollHyggloInbox = schedules.task({
     } finally {
       const durationMs = Date.now() - runStart;
       if (isFullPoll) try {
+        // Phase 31 (cost opt) — resolve this cycle's next quiet-streak value
+        // and persist it alongside the existing sync_state bookkeeping (one
+        // mutation, no extra write). A fatal error before the accounts loop
+        // ran (runError set, all cycle* counters still at their zero/false
+        // defaults) naturally falls through nextQuietStreak's
+        // totalOrdersSelected<=0 branch and HOLDS the streak — never widens
+        // on a cycle that saw no real data.
+        const newQuietStreak = nextQuietStreak(quietStreak, {
+          totalOrdersSelected: cycleOrdersSelected,
+          totalOrdersSkippedUnchanged: cycleOrdersSkippedUnchanged,
+          hadErrors: cycleHadErrors,
+          anyAccountFailed: cycleAnyAccountFailed,
+        });
+        logger.info("[poll-hygglo] adaptive backoff", {
+          quiet_streak_before: quietStreak,
+          quiet_streak_after: newQuietStreak,
+          base_interval_ms: baseIntervalMs,
+          effective_interval_ms: effectiveIntervalMs,
+          cycle_orders_selected: cycleOrdersSelected,
+          cycle_orders_skipped_unchanged: cycleOrdersSkippedUnchanged,
+          cycle_had_errors: cycleHadErrors,
+          cycle_any_account_failed: cycleAnyAccountFailed,
+        });
         await convex.mutation(api.sync_state.recordSyncRun, {
           source: "hygglo_poller",
           succeeded: runSucceeded,
@@ -930,6 +1019,7 @@ export const pollHyggloInbox = schedules.task({
             renters: totalRentersUpserted,
             conversations: totalConversationsUpserted,
           },
+          quietStreak: newQuietStreak,
           ...(runError ? { errorMessage: runError } : {}),
         });
       } catch (syncErr) {

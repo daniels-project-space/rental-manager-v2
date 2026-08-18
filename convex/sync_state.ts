@@ -45,8 +45,14 @@ export const recordSyncRun = mutation({
     })),
     errorMessage: v.optional(v.string()),
     kind: v.optional(v.union(v.literal("run"), v.literal("heartbeat"))),
+    // Phase 31 (Wave 8 cost opt) — adaptive polling backoff counter. Only
+    // poll-hygglo.ts (source="hygglo_poller") passes this. Omitted by other
+    // callers (catalog-sync, competitor-intel-sync) — see the conditional
+    // spread below, which leaves any existing stored value untouched when
+    // this argument isn't supplied, rather than clearing it.
+    quietStreak: v.optional(v.number()),
   },
-  handler: async (ctx, { source, succeeded, durationMs, rowsUpserted, errorMessage, kind }): Promise<void> => {
+  handler: async (ctx, { source, succeeded, durationMs, rowsUpserted, errorMessage, kind, quietStreak }): Promise<void> => {
     const existing = await ctx.db
       .query("sync_state")
       .withIndex("by_source", (q) => q.eq("source", source))
@@ -78,6 +84,11 @@ export const recordSyncRun = mutation({
       rowsUpserted,
       errorMessage,
       kind: effectiveKind,
+      // Only patch quietStreak when the caller explicitly supplied it —
+      // Convex patch() treats an `undefined` key as "clear this field", so
+      // an unconditional include would wipe the counter on every call from
+      // a source that doesn't know about it.
+      ...(quietStreak !== undefined ? { quietStreak } : {}),
     };
 
     if (existing) {

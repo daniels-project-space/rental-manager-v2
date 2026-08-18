@@ -1055,6 +1055,13 @@ export default defineSchema({
     })),
     errorMessage: v.optional(v.string()),
     kind: v.optional(v.union(v.literal("run"), v.literal("heartbeat"))),
+    // Phase 31 (Wave 8 cost opt) — adaptive polling backoff. Consecutive
+    // FULL poll cycles (source="hygglo_poller" only) where every account's
+    // corePoll orders were confirmed skip-unchanged. Read by poll-hygglo.ts
+    // to widen the EFFECTIVE poll interval on top of the human-set
+    // polling_interval_ms dial; see src/lib/hygglo-poll-backoff.ts. Absent
+    // on rows written before this field existed — callers default to 0.
+    quietStreak: v.optional(v.number()),
   }).index("by_source", ["source"]),
 
   // -- Dashboard AI Chat (Phase B-1) ----
