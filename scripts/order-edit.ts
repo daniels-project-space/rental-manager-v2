@@ -1,12 +1,27 @@
 /**
- * order-edit CLI (2026-07-03) — Trigger/Convex-independent probe + operator tool
- * for the Hygglo order-edit dispatcher. Exercises the SAME src/lib/hygglo-write
- * functions the dashboard order editor calls, so the wire shapes can be verified
- * offline before/after a deploy.
+ * order-edit CLI (2026-07-03, generalized 2026-08-18) — Trigger/Convex-
+ * independent probe + operator tool for the Hygglo order-edit dispatcher.
+ * Exercises the SAME src/lib/hygglo-write functions the dashboard order
+ * editor calls, so the wire shapes can be verified offline before/after a
+ * deploy.
  *
- * HARD SAFETY RAIL: writes are refused for any order id not in ALLOWLIST. During
- * development the only order Daniel authorised edits on is 4075255 (leo). Reads
- * (`state`, `preview`) are allowed for any id.
+ * SAFETY MODEL — two independent layers, mirroring the ALLOW_* env-gate
+ * pattern used throughout this codebase (ALLOW_HYGGLO_SEND,
+ * ALLOW_LISTING_PRICE_WRITES, ALLOW_MANUAL_ORDER_ACTIONS):
+ *
+ *   1. TEST_ORDER_ID (4075255, leo) is always writable — this is the one
+ *      order Daniel pre-authorised for exercising the write path itself, so
+ *      the tool can be tested end-to-end without touching real bookings.
+ *   2. Every OTHER order id is refused unless ALLOW_REAL_ORDER_EDITS="true"
+ *      is set. This var is unset by default and nothing in the codebase
+ *      sets it — the capability to edit a real order's price/dates is fully
+ *      implemented, but inert until Daniel deliberately flips it on. Even
+ *      then, the existing --yes flag is still required per invocation (no
+ *      env var alone ever sends a write) — every change still needs an
+ *      explicit go-ahead each time it's run, matching how --yes already
+ *      works for the test order today.
+ *
+ * Reads (`state`, `preview`) are unrestricted for any id — always were.
  *
  * Usage (from repo root):
  *   npx tsx scripts/order-edit.ts state   [leo] [4075255]
@@ -35,7 +50,13 @@ import {
 process.env.ALLOW_MANUAL_ORDER_ACTIONS =
   process.env.ALLOW_MANUAL_ORDER_ACTIONS ?? "true";
 
-const ALLOWLIST = new Set(["4075255"]);
+const TEST_ORDER_ID = "4075255";
+
+/** Real (non-test) order writes stay hard-blocked until Daniel sets this. */
+function realOrderEditsAllowed(): boolean {
+  return process.env.ALLOW_REAL_ORDER_EDITS === "true";
+}
+
 const TZ = "Europe/London";
 
 async function tokenFor(slug: string) {
@@ -88,8 +109,11 @@ async function preview(slug: string, id: string, newPrice: number) {
 }
 
 function guardWrite(id: string, doIt: boolean) {
-  if (!ALLOWLIST.has(id)) {
-    console.error(`\n✋ REFUSED: order ${id} is not in the write allowlist ${[...ALLOWLIST].join(",")}.`);
+  if (id !== TEST_ORDER_ID && !realOrderEditsAllowed()) {
+    console.error(
+      `\n✋ REFUSED: order ${id} is not the test order (${TEST_ORDER_ID}) and ` +
+        `ALLOW_REAL_ORDER_EDITS is not "true" — real-order writes are disabled by default.`,
+    );
     process.exit(2);
   }
   if (!doIt) {
