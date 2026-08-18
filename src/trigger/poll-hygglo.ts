@@ -190,7 +190,11 @@ type OrderReservationPayload = {
 // never a money field) is undefined because corePoll strips `order` off the
 // hot path. This only affects brand-new-listing enrichment, not
 // reservation/revenue data.
-async function scrapeAccountViaCore(accountSlug: string, mode: CorePollMode): Promise<{
+async function scrapeAccountViaCore(
+  accountSlug: string,
+  mode: CorePollMode,
+  convex: ConvexHttpClient,
+): Promise<{
   messages: Array<{
     thread_id: string;
     message_id: string;
@@ -224,7 +228,17 @@ async function scrapeAccountViaCore(accountSlug: string, mode: CorePollMode): Pr
   observedAt: number;
 }> {
   const observedAt = Date.now();
-  const core = await corePoll(accountSlug, { fetchedAt: observedAt, mode });
+  const core = await corePoll(accountSlug, {
+    fetchedAt: observedAt,
+    mode,
+    // Phase 18.2 — batched Convex lookup so corePoll can skip the per-order
+    // detail GET when Hygglo's list-endpoint activity stamp matches the
+    // stored value and the row already has order_step. See the corePoll
+    // docstring NOTE + activityStampUnchanged for the conservative semantics
+    // (any ambiguity falls through to a real fetch).
+    getStoredActivity: (hygglo_order_ids) =>
+      convex.query(api.hygglo.getLatestActivityBatch, { hygglo_order_ids }),
+  });
 
   // B4 — surface non-fatal per-filter / per-order fetch failures that corePoll
   // counted (instead of swallowing them silently). A non-zero count means this
@@ -234,6 +248,13 @@ async function scrapeAccountViaCore(accountSlug: string, mode: CorePollMode): Pr
       account: accountSlug,
       list_filter_errors: core.meta.list_filter_errors,
       detail_fetch_errors: core.meta.detail_fetch_errors,
+    });
+  }
+  if (core.meta.orders_skipped_unchanged > 0) {
+    logger.info("[poll-hygglo] skipped unchanged-order detail fetches", {
+      account: accountSlug,
+      orders_skipped_unchanged: core.meta.orders_skipped_unchanged,
+      orders_selected: core.meta.orders_selected,
     });
   }
 
@@ -279,11 +300,18 @@ async function scrapeAccountViaCore(accountSlug: string, mode: CorePollMode): Pr
     reservations,
     renters: core.renters,
     conversations: core.conversations,
-    currentOrderIds: reservations
-      .filter((r) => r.sourceFilter === "current")
-      .map((r) => String(r.hygglo_order_id)),
-    // A detail failure can remove a current order from `reservations`, so only
-    // publish a replacement snapshot when both stages were complete.
+    // Phase 18.2: sourced from `presentOrderIds`, NOT `reservations` — a
+    // skipped-unchanged order has no row in `reservations` this cycle (nothing
+    // new to upsert) but IS still confirmed present via presentOrderIds, so
+    // presence tracking stays accurate regardless of how many orders were
+    // skipped this cycle. Before this optimisation the two sets were
+    // equivalent; presentOrderIds is the durable source of truth going forward.
+    currentOrderIds: core.presentOrderIds
+      .filter((o) => o.sourceFilter === "current")
+      .map((o) => o.id),
+    // A detail failure can remove a current order from `presentOrderIds`, so
+    // only publish a replacement snapshot when both stages were complete. A
+    // skipped-unchanged order is NOT a failure and does not affect this flag.
     presenceComplete:
       core.meta.list_filter_errors === 0 && core.meta.detail_fetch_errors === 0,
     observedAt,
@@ -450,9 +478,12 @@ export const pollHyggloInbox = schedules.task({
         try {
           // (A) FETCH + SHAPE — corePoll is the sole engine. It yields the
           // `{ messages, reservations, renters, conversations }` shape that
-          // everything below (B) consumes unchanged. corePoll always fetches
-          // detail (no skip-detail optimization), which the production soak
-          // proved acceptable.
+          // everything below (B) consumes unchanged. Phase 18.2 (2026-08-18):
+          // corePoll now skips the per-order detail GET for orders whose
+          // Hygglo list-endpoint `latest_activity` stamp matches the stored
+          // value (via the injected getStoredActivity lookup below) — see the
+          // corePoll docstring NOTE. Ambiguous/missing/mismatched stamps still
+          // fetch, same as before this cycle-cost optimisation existed.
           const {
             messages,
             reservations,
@@ -462,7 +493,7 @@ export const pollHyggloInbox = schedules.task({
             presenceComplete,
             observedAt,
           } =
-            await scrapeAccountViaCore(account.slug, pollMode);
+            await scrapeAccountViaCore(account.slug, pollMode, convex);
 
           // Upsert chat messages (batched 50)
           let totalInserted = 0;

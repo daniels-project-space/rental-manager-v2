@@ -144,6 +144,16 @@ export interface CorePollResult {
   conversations: ConversationPayload[];
   /** Args ready for `upsertMessages({ account_slug, messages })`. */
   messages: MessagePayload[];
+  /** Phase 18.2 — every order confirmed present this cycle, whether its detail
+   *  was freshly fetched (has a row in `reservations`) or its fetch was SKIPPED
+   *  because nothing changed (`activityStampUnchanged`). This is the correct
+   *  source for "is this order still on Hygglo's current list" — unlike
+   *  `reservations`, it is NOT reduced by the skip-fetch optimisation, so
+   *  hygglo_presence.replaceCurrentOrders / Return Hub freshness stays accurate
+   *  even when most orders this cycle were skipped. Excludes orders whose
+   *  detail GET failed (unknown state) and date-less orders with no
+   *  reservation payload, matching pre-existing currentOrderIds semantics. */
+  presentOrderIds: Array<{ id: string; sourceFilter: string }>;
   /** Diagnostics (NOT sent to any mutation). */
   meta: {
     account_slug: string;
@@ -157,6 +167,10 @@ export interface CorePollResult {
     /** B4 — count of per-order `getOrder(id)` detail GETs that threw (non-fatal,
      *  skipped). >0 means some listed orders were not refreshed this cycle. */
     detail_fetch_errors: number;
+    /** Phase 18.2 — count of orders whose detail GET was skipped because
+     *  `activityStampUnchanged` proved nothing changed since the stored row.
+     *  0 whenever `opts.getStoredActivity` is omitted. */
+    orders_skipped_unchanged: number;
     mode: CorePollMode;
     orders_selected: number;
   };
@@ -185,6 +199,48 @@ type ListedOrder = {
   sourceFilter: string;
   latest_activity?: number | string;
 };
+
+/** Mirror of `getLatestActivityBatch`'s return-map value (convex/hygglo.ts). */
+export interface StoredActivityEntry {
+  latest_activity: number | string;
+  has_order_step: boolean;
+}
+
+/**
+ * Injected by the caller (poll-hygglo.ts) to fetch each candidate order's
+ * stored `latest_activity` + order_step presence from Convex in ONE batched
+ * call (`api.hygglo.getLatestActivityBatch`). corePoll stays Convex-free by
+ * construction — same dependency-injection pattern as `core` (HyggloCore)
+ * above — so tests / parity-dryrun / manual-poll can omit it and keep fetching
+ * every order's detail unconditionally.
+ */
+export type StoredActivityLookup = (
+  hygglo_order_ids: string[],
+) => Promise<Record<string, StoredActivityEntry>>;
+
+/**
+ * Phase 18.2 skip-fetch decision. True ONLY when both the stored (last-write)
+ * and freshly-listed `latest_activity` stamps are present and resolve to the
+ * identical instant. Any parse failure, undefined value, or mismatch returns
+ * false — the caller MUST then fetch. Never guess: a false positive here would
+ * mean a real Hygglo change (new message, step transition, status change,
+ * price update) silently never reaches Convex, which is worse than the extra
+ * API call this optimisation is trying to save.
+ */
+export function activityStampUnchanged(
+  stored: number | string | undefined,
+  listed: number | string | undefined,
+): boolean {
+  if (stored === undefined || listed === undefined) return false;
+  const storedMs = parseLatestActivityMs(stored);
+  const listedMs = parseLatestActivityMs(listed);
+  if (storedMs !== null && listedMs !== null) return storedMs === listedMs;
+  // One or both sides didn't parse as a timestamp (Hygglo has been observed to
+  // return this field as epoch seconds, epoch ms, or ISO text — see the
+  // parseLatestActivityMs docstring). Only trust an exact raw match in that
+  // case; anything else must fetch rather than guess.
+  return stored === listed;
+}
 
 /**
  * Keep quick refreshes bounded while never depending on one timestamp format.
@@ -269,13 +325,26 @@ export function selectOperationalMessages(
  * single timestamp per scrape — see poll-hygglo.ts L371). Override for
  * deterministic tests/fixtures.
  *
- * NOTE on the skip-fetch optimisation: poll-hygglo.ts skips the detail GET when
- * Hygglo's list `latest_activity` matches the stored value AND the row already
- * has order_step. That is a Convex-read-driven cost optimisation, NOT a shaping
- * step — it changes WHICH orders get refreshed this cycle, never the SHAPE of a
- * refreshed row. For a parity dry-run we must fetch every order's detail so we
- * can compare the full row, so corePoll intentionally does NOT replicate the
- * skip. The assembled payload for any given order is byte-identical either way.
+ * NOTE on the skip-fetch optimisation (Phase 18.2, wired 2026-08-18): when the
+ * caller supplies `opts.getStoredActivity`, corePoll fetches each candidate
+ * order's stored `latest_activity` + order_step presence from Convex in ONE
+ * batched call, then skips the per-order detail GET whenever Hygglo's freshly
+ * listed `latest_activity` matches the stored value AND the stored row already
+ * has order_step (see `activityStampUnchanged`). This is a Convex-read-driven
+ * cost optimisation, NOT a shaping step — it changes WHICH orders get refreshed
+ * this cycle, never the SHAPE of a refreshed row, and it NEVER guesses: a
+ * missing/unparseable/mismatched stamp, a legacy row with no order_step yet, or
+ * a lookup failure all fall through to a real fetch (see `activityStampUnchanged`
+ * and the try/catch around the batched call). Skipped orders are still recorded
+ * as present via `presentOrderIds` so hygglo_presence / Return Hub freshness
+ * tracking is unaffected by the skip.
+ *
+ * `opts.getStoredActivity` is intentionally omitted by parity-dryrun.ts (which
+ * must fetch every order's detail to prove field parity), manual-poll.ts (an
+ * emergency full refresh should always be thorough), and every test in
+ * poll.test.ts — for all of them the assembled payload for any given order is
+ * byte-identical to before this optimisation existed. Only poll-hygglo.ts (the
+ * live scheduled poller) supplies the lookup.
  */
 export async function corePoll(
   accountInput: HyggloAccount | string,
@@ -285,6 +354,10 @@ export async function corePoll(
     mode?: CorePollMode;
     operationalWindowMs?: number;
     operationalMaxOrders?: number;
+    /** Phase 18.2 — when supplied, enables the skip-fetch optimisation (see
+     *  the corePoll docstring's NOTE). Omit to always fetch every order's
+     *  detail (tests / parity-dryrun / manual-poll all omit it). */
+    getStoredActivity?: StoredActivityLookup;
   } = {},
 ): Promise<CorePollResult> {
   const core = opts.core ?? createHyggloCore(accountInput);
@@ -345,10 +418,51 @@ export async function corePoll(
   const renterMap = new Map<string, RenterPayload>();
   const conversations: ConversationPayload[] = [];
   const messages: MessagePayload[] = [];
+  const presentOrderIds: Array<{ id: string; sourceFilter: string }> = [];
   let ordersWithDetail = 0;
+  let ordersSkippedUnchanged = 0;
+
+  // Phase 18.2 — one batched Convex read for every candidate order's stored
+  // latest_activity + order_step presence. A lookup failure degrades to "fetch
+  // everything" (empty map), never to a false skip — see the try/catch below
+  // and `activityStampUnchanged`'s conservative semantics.
+  let storedActivity: Record<string, StoredActivityEntry> = {};
+  if (opts.getStoredActivity && selectedOrders.length > 0) {
+    try {
+      storedActivity = await opts.getStoredActivity(
+        selectedOrders.map((o) => String(o.id)),
+      );
+    } catch (err) {
+      console.error(
+        `[corePoll] getStoredActivity batch lookup failed account=${account_slug}: ${
+          err instanceof Error ? err.message : String(err)
+        } — fetching every order's detail this cycle`,
+      );
+      storedActivity = {};
+    }
+  }
 
   // 2-4. Per-order detail fetch → mappers → batch-level field append.
   for (const order of selectedOrders) {
+    const stored = storedActivity[String(order.id)];
+    if (
+      stored?.has_order_step === true &&
+      activityStampUnchanged(stored.latest_activity, order.latest_activity)
+    ) {
+      // Hygglo's own list-endpoint activity stamp matches what we stored the
+      // last time we fetched this order's detail, AND that stored row already
+      // has an order_step (so we are not backfilling a legacy pre-Phase-18.2
+      // row). Nothing about this order — status, messages, steps, price — can
+      // have changed since then, so the detail GET+parse is skipped. The order
+      // is still recorded as present (presentOrderIds) for hygglo_presence /
+      // Return Hub freshness; it is deliberately NOT re-added to
+      // reservations/messages/conversations/renters since there is nothing new
+      // to write.
+      ordersSkippedUnchanged++;
+      presentOrderIds.push({ id: String(order.id), sourceFilter: order.sourceFilter });
+      continue;
+    }
+
     let detail: HyggloOrderDetail;
     try {
       detail = await core.getOrder(order.id);
@@ -457,6 +571,7 @@ export async function corePoll(
       hygglo_system_signal: payload.hygglo_system_signal,
       hygglo_system_signal_text: payload.hygglo_system_signal_text,
     });
+    presentOrderIds.push({ id: payload.hygglo_order_id, sourceFilter: order.sourceFilter });
   }
 
   return {
@@ -464,6 +579,7 @@ export async function corePoll(
     renters: Array.from(renterMap.values()),
     conversations,
     messages,
+    presentOrderIds,
     meta: {
       account_slug,
       orders_listed: uniqueOrders.length,
@@ -472,6 +588,7 @@ export async function corePoll(
       fetched_at: fetchedAt,
       list_filter_errors: listFilterErrors,
       detail_fetch_errors: detailFetchErrors,
+      orders_skipped_unchanged: ordersSkippedUnchanged,
       mode,
       orders_selected: selectedOrders.length,
     },

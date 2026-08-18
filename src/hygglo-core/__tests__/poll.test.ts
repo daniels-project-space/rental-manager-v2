@@ -14,7 +14,14 @@
  * `getOrder`); the rest of HyggloCore is cast away.
  */
 import { describe, it, expect, vi } from "vitest";
-import { corePoll, parseLatestActivityMs, selectOperationalMessages, selectOperationalOrders } from "../poll";
+import {
+  activityStampUnchanged,
+  corePoll,
+  parseLatestActivityMs,
+  selectOperationalMessages,
+  selectOperationalOrders,
+  type StoredActivityEntry,
+} from "../poll";
 import type { HyggloCore } from "../index";
 import type {
   HyggloOrderDetail,
@@ -274,5 +281,147 @@ describe("corePoll — bounded operational refresh", () => {
     expect(core.getOrder).toHaveBeenCalledWith(3);
     expect(result.meta).toMatchObject({ mode: "operational", orders_listed: 3, orders_selected: 2 });
     expect(result.reservations.map((row) => row.hygglo_order_id)).toEqual(["1", "3"]);
+  });
+});
+
+describe("activityStampUnchanged — Phase 18.2 skip-fetch guard", () => {
+  it("treats equivalent timestamps in different formats as unchanged", () => {
+    const ms = Date.parse("2026-08-05T12:00:00Z");
+    expect(activityStampUnchanged(ms, ms)).toBe(true);
+    expect(activityStampUnchanged(ms, ms / 1000)).toBe(true);
+    expect(activityStampUnchanged(ms, "2026-08-05T12:00:00Z")).toBe(true);
+    expect(activityStampUnchanged("2026-08-05T12:00:00Z", ms / 1000)).toBe(true);
+  });
+
+  it("detects a real change regardless of format", () => {
+    const t1 = Date.parse("2026-08-05T12:00:00Z");
+    const t2 = Date.parse("2026-08-05T12:05:00Z");
+    expect(activityStampUnchanged(t1, t2)).toBe(false);
+    expect(activityStampUnchanged(t1, "2026-08-05T12:05:00Z")).toBe(false);
+  });
+
+  it("never skips when either side is missing", () => {
+    expect(activityStampUnchanged(undefined, 123)).toBe(false);
+    expect(activityStampUnchanged(123, undefined)).toBe(false);
+    expect(activityStampUnchanged(undefined, undefined)).toBe(false);
+  });
+
+  it("falls back to exact raw equality when a value doesn't parse as a timestamp", () => {
+    // Neither "opaque-token" nor "" is a Date.parse-able string; only an exact
+    // raw match counts as unchanged — anything else must fetch.
+    expect(activityStampUnchanged("opaque-token", "opaque-token")).toBe(true);
+    expect(activityStampUnchanged("opaque-token", "different-token")).toBe(false);
+  });
+});
+
+describe("corePoll — Phase 18.2 skip-fetch optimisation", () => {
+  it("skips the detail GET for an order whose stamp is unchanged and has order_step", async () => {
+    const core = makeMockCore({
+      ordersByFilter: {
+        current: [
+          { id: 1, sourceFilter: "current", latest_activity: 1000 },
+          { id: 2, sourceFilter: "current", latest_activity: 2000 },
+        ],
+      },
+      details: {
+        // Order 1 must NOT be fetched — if the mock were called for id 1 with
+        // no matching detail, the test would throw "no detail for 1".
+        2: makeOrderDetail(2),
+      },
+    });
+    const storedActivity: Record<string, StoredActivityEntry> = {
+      "1": { latest_activity: 1000, has_order_step: true },
+      "2": { latest_activity: 9999, has_order_step: true }, // stale → must fetch
+    };
+    const getStoredActivity = vi.fn(async (ids: string[]) => {
+      const out: Record<string, StoredActivityEntry> = {};
+      for (const id of ids) if (storedActivity[id]) out[id] = storedActivity[id];
+      return out;
+    });
+
+    const result = await corePoll("test-account", {
+      core,
+      fetchedAt: 1,
+      getStoredActivity,
+    });
+
+    expect(getStoredActivity).toHaveBeenCalledWith(["1", "2"]);
+    expect(core.getOrder).toHaveBeenCalledTimes(1);
+    expect(core.getOrder).toHaveBeenCalledWith(2);
+    expect(core.getOrder).not.toHaveBeenCalledWith(1);
+    expect(result.reservations.map((r) => r.hygglo_order_id)).toEqual(["2"]);
+    expect(result.meta.orders_skipped_unchanged).toBe(1);
+    // Skipped order 1 is still confirmed present for hygglo_presence / Return
+    // Hub, even though it produced no reservation row this cycle.
+    expect(result.presentOrderIds).toEqual(
+      expect.arrayContaining([
+        { id: "1", sourceFilter: "current" },
+        { id: "2", sourceFilter: "current" },
+      ]),
+    );
+    expect(result.presentOrderIds).toHaveLength(2);
+  });
+
+  it("fetches (never skips) a legacy row with no order_step yet, even if the stamp matches", async () => {
+    const core = makeMockCore({
+      ordersByFilter: { current: [{ id: 1, sourceFilter: "current", latest_activity: 1000 }] },
+      details: { 1: makeOrderDetail(1) },
+    });
+    const getStoredActivity = vi.fn(async () => ({
+      "1": { latest_activity: 1000, has_order_step: false } as StoredActivityEntry,
+    }));
+
+    const result = await corePoll("test-account", { core, fetchedAt: 1, getStoredActivity });
+
+    expect(core.getOrder).toHaveBeenCalledWith(1);
+    expect(result.meta.orders_skipped_unchanged).toBe(0);
+    expect(result.reservations).toHaveLength(1);
+  });
+
+  it("fetches (never skips) when the list-endpoint order carries no latest_activity", async () => {
+    const core = makeMockCore({
+      ordersByFilter: { current: [{ id: 1, sourceFilter: "current" }] }, // no latest_activity
+      details: { 1: makeOrderDetail(1) },
+    });
+    const getStoredActivity = vi.fn(async () => ({
+      "1": { latest_activity: 1000, has_order_step: true } as StoredActivityEntry,
+    }));
+
+    const result = await corePoll("test-account", { core, fetchedAt: 1, getStoredActivity });
+
+    expect(core.getOrder).toHaveBeenCalledWith(1);
+    expect(result.meta.orders_skipped_unchanged).toBe(0);
+  });
+
+  it("degrades to fetching everything when the batched lookup itself fails", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const core = makeMockCore({
+      ordersByFilter: { current: [{ id: 1, sourceFilter: "current", latest_activity: 1000 }] },
+      details: { 1: makeOrderDetail(1) },
+    });
+    const getStoredActivity = vi.fn(async () => {
+      throw new Error("convex unavailable");
+    });
+
+    const result = await corePoll("test-account", { core, fetchedAt: 1, getStoredActivity });
+
+    expect(core.getOrder).toHaveBeenCalledWith(1);
+    expect(result.meta.orders_skipped_unchanged).toBe(0);
+    expect(result.reservations).toHaveLength(1);
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("never skips when getStoredActivity is omitted (default behaviour unchanged)", async () => {
+    const core = makeMockCore({
+      ordersByFilter: { current: [{ id: 1, sourceFilter: "current", latest_activity: 1000 }] },
+      details: { 1: makeOrderDetail(1) },
+    });
+
+    const result = await corePoll("test-account", { core, fetchedAt: 1 });
+
+    expect(core.getOrder).toHaveBeenCalledWith(1);
+    expect(result.meta.orders_skipped_unchanged).toBe(0);
+    expect(result.presentOrderIds).toEqual([{ id: "1", sourceFilter: "current" }]);
   });
 });
