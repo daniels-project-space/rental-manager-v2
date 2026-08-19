@@ -114,6 +114,43 @@ the boom mic and the override correctly expands it to the full kit.
   rows with real booking history, or surface them in the dashboard alert when
   rented.
 
+## Pass 2 — full `auto:desc` review (all 66 remaining rows)
+
+Reviewed every remaining `auto:desc` override against its listing title. 48 were
+correct. The failure mode is name-token contamination: the generator attached
+whichever item name matched an incidental word in the listing text —
+**Anker Power Station** for "power", **DJ RX3** for "DJ", **C-stand** for
+"stand", **SmallRig Fluid Head** for "fluid".
+
+29 corrections applied:
+
+- **10 contamination strips** — e.g. the Hollyland Mars kit also held a SmallRig
+  Fluid Head; the JBL Partybox held a C-stand; the fog machines held the DJ
+  controller; the projector held both an Anker and the DJ controller.
+- **4 quantity corrections** where the title states "Nx" and the override held
+  1x (3× and 2× Sony 24-70 GM, 2x RØDE Wireless PRO, 2× JBL).
+- **2 tripod listings** that held the qty-1 SmallRig Fluid Head instead of a
+  tripod, matching the earlier `dbcinema#1000760` fix.
+- **13 marketing rulings from Daniel** — Blackmagic Pyxis (×2), DJI Mini 5 Pro,
+  7.5mm fisheye, DJI RS2, Fujifilm X100VI, Zoom F6, RØDE Wireless GO II,
+  Aputure Amaran, Pioneer XDJ-RX2 (×2 listings), DZOFilm 6-lens set, Tilta matte
+  box, plus the two remaining RED Komodo sets. All now hold nothing.
+
+Result: `auto:desc` rows 77 → 37, `manual_audit` 160 → 200, impossible demand
+holds at **0**.
+
+## Unrelated deploy blocker fixed
+
+Commit `9ad01c4` (Hygglo response-rate alert) added a `low_response_rate` event
+type without adding it to `PushNotificationType`, which failed Convex
+typechecking and blocked **all** deploys. Added to the union.
+
+Note for whoever owns that feature: `subscriptionReceivesNotification()` passes
+only `booking_confirmed` through to `money_only` subscribers, and
+`telegramNotificationMode()` defaults to `money_only` — so this URGENT alert is
+currently suppressed on Daniel's Telegram fallback unless it is added to that
+allowlist. Left as-is rather than changing another feature's routing semantics.
+
 ## Durable diagnostics
 
 `convex/investigate_integrity.ts` and `convex/investigate_overrides.ts` hold
