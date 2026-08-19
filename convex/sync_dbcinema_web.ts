@@ -149,27 +149,53 @@ export const upsertSiteBookingsBatch = internalMutation({
       });
     }
 
-    // Build product_id → {item_id, canonical name} from the dbcinema index.
-    const [idxRows, items] = await Promise.all([
+    // Build product_id → item composition for the dbcinema account.
+    //
+    // listing_resolution_override is audit-authoritative and WINS over the
+    // index everywhere else in the system; reading the index alone here made
+    // website bookings resolve to gear the audit had already corrected (e.g.
+    // "DJI Avata 2" → DJI Mavic 3 Pro). An override may expand to several
+    // components with their own quantities, so this is a list, not one item.
+    // An override with zero components means "nothing in master inventory
+    // backs this listing" (DANIEL RULE 18) — it must hold nothing, and is
+    // counted separately from a genuinely unmapped product.
+    const [idxRows, overrideRows, items] = await Promise.all([
       ctx.db.query("hygglo_product_index").collect(),
+      ctx.db
+        .query("listing_resolution_override")
+        .withIndex("by_account_product", (q) => q.eq("account_slug", STOCK_ACCOUNT))
+        .collect(),
       ctx.db.query("items").collect(),
     ]);
     const itemById = new Map(items.map((i) => [String(i._id), i]));
-    const pidToItem = new Map<number, { item_id: Id<"items">; name: string; image_url: string | null }>();
-    for (const r of idxRows) {
-      if (r.account_slug !== STOCK_ACCOUNT) continue;
-      const it = itemById.get(String(r.item_id));
-      pidToItem.set(r.product_id, {
-        item_id: r.item_id,
+    const describe = (item_id: Id<"items">, qty: number) => {
+      const it = itemById.get(String(item_id));
+      return {
+        item_id,
+        qty,
         name: it?.name_canonical ?? "item",
         image_url: (it as { image_url?: string | null } | undefined)?.image_url ?? null,
-      });
+      };
+    };
+    const pidToItems = new Map<number, Array<ReturnType<typeof describe>>>();
+    for (const r of idxRows) {
+      if (r.account_slug !== STOCK_ACCOUNT) continue;
+      pidToItems.set(r.product_id, [describe(r.item_id, 1)]);
+    }
+    // Overrides applied second so they win over any index row.
+    for (const o of overrideRows) {
+      pidToItems.set(
+        o.product_id,
+        o.components.map((c) => describe(c.item_id, c.qty)),
+      );
     }
 
     let upserted = 0;
     let skipped = 0;
     let mappedUnits = 0;
     let unmappedUnits = 0;
+    // Units whose listing is deliberately backed by no inventory (RULE 18).
+    let marketingUnits = 0;
     const incomingIds = new Set(
       (bookings as SiteBooking[]).map((b) => b?.id).filter(Boolean),
     );
@@ -199,18 +225,29 @@ export const upsertSiteBookingsBatch = internalMutation({
       const byProduct = new Map<number, { name: string; image_url: string | null; qty: number }>();
       for (const li of b.lineItems ?? []) {
         for (const u of li.units ?? []) {
-          const hit = pidToItem.get(u.hyggloProductId);
-          if (!hit) {
+          const hits = pidToItems.get(u.hyggloProductId);
+          if (!hits) {
             unmappedUnits++;
             continue;
           }
+          if (hits.length === 0) {
+            // Deliberately backed by nothing (marketing-only listing).
+            marketingUnits++;
+            continue;
+          }
           mappedUnits++;
-          const cur = byItem.get(String(hit.item_id));
-          if (cur) cur.qty += u.qty;
-          else byItem.set(String(hit.item_id), { item_id: hit.item_id, name: hit.name, qty: u.qty, image_url: hit.image_url });
+          for (const hit of hits) {
+            const qty = u.qty * hit.qty;
+            const cur = byItem.get(String(hit.item_id));
+            if (cur) cur.qty += qty;
+            else byItem.set(String(hit.item_id), { item_id: hit.item_id, name: hit.name, qty, image_url: hit.image_url });
+          }
+          // The per-product row keeps the listing's own identity for thumbnails;
+          // it is named after the first component of the mapping.
+          const head = hits[0];
           const pcur = byProduct.get(u.hyggloProductId);
           if (pcur) pcur.qty += u.qty;
-          else byProduct.set(u.hyggloProductId, { name: hit.name, image_url: hit.image_url, qty: u.qty });
+          else byProduct.set(u.hyggloProductId, { name: head.name, image_url: head.image_url, qty: u.qty });
         }
       }
       const hygglo_items = [...byProduct.entries()].map(([product_id, p]) => ({
@@ -371,7 +408,14 @@ export const upsertSiteBookingsBatch = internalMutation({
       await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
     }
 
-    return { upserted, skipped, mapped_units: mappedUnits, unmapped_units: unmappedUnits, cancelled };
+    return {
+      upserted,
+      skipped,
+      mapped_units: mappedUnits,
+      unmapped_units: unmappedUnits,
+      marketing_units: marketingUnits,
+      cancelled,
+    };
   },
 });
 

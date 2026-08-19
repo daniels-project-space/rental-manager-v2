@@ -241,9 +241,24 @@ export const lookup_pricing = query({
       const toks = (str: string) =>
         Array.from(new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
           (t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t))));
-      const idxRows = await ctx.db.query("hygglo_product_index").collect();
+      // "Owned" = the index, CORRECTED by the audit-authoritative override.
+      // The index alone let the bot quote gear the audit had already ruled
+      // marketing-only (DANIEL RULE 18: not on the master list = not in stock),
+      // and hid gear whose only correct mapping lives in an override.
+      const [idxRows, ovrRows] = await Promise.all([
+        ctx.db.query("hygglo_product_index").collect(),
+        ctx.db
+          .query("listing_resolution_override")
+          .withIndex("by_account_product", (q) => q.eq("account_slug", account_slug))
+          .collect(),
+      ]);
       const ownedPids = new Set<number>();
       for (const r of idxRows) if (r.account_slug === account_slug) ownedPids.add(r.product_id);
+      for (const o of ovrRows) {
+        // Empty components = deliberately backed by nothing → never quotable.
+        if (o.components.length === 0) ownedPids.delete(o.product_id);
+        else ownedPids.add(o.product_id);
+      }
       const listings = (await ctx.db.query("online_listings")
         .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
         .collect()).filter((l) => ownedPids.has(l.product_id));
