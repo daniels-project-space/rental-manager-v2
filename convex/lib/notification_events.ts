@@ -11,7 +11,8 @@ export type PushNotificationMode = "all" | "money_only" | "my_share";
 export type PushNotificationType =
   | "booking_confirmed"
   | "new_request"
-  | "renter_message";
+  | "renter_message"
+  | "low_response_rate";
 
 export function isGenuinelyConfirmedBooking(
   step: string | null | undefined,
