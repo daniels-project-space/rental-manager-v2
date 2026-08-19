@@ -2252,6 +2252,7 @@ export default defineSchema({
       v.literal("booking_confirmed"),
       v.literal("new_request"),
       v.literal("renter_message"),
+      v.literal("low_response_rate"),
     ),
     thread_id: v.string(),                   // hygglo_order_id → deep-link target
     account_slug: v.optional(v.string()),

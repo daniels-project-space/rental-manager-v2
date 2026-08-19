@@ -42,7 +42,7 @@ import {
   buildConfirmedBookingNotificationCopy,
 } from "./lib/notification_events";
 
-export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message"] as const;
+export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message", "low_response_rate"] as const;
 export type NotifType = (typeof NOTIF_TYPES)[number];
 export const PUSH_NOTIFICATION_MODES = ["all", "money_only", "my_share"] as const;
 export type PushNotificationMode = (typeof PUSH_NOTIFICATION_MODES)[number];

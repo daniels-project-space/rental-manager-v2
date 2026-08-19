@@ -10,8 +10,13 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "./_generated/server";
 import { ACCOUNTS } from "./mv/constants";
+import { queueNotificationEvents, type NotifEventInput } from "./notifications";
+import { accountWord } from "./lib/notification_events";
 
 const SNAPSHOT_KEY = "all";
+
+/** Below this, a channel's Hygglo response rate is alerted as URGENT. */
+const LOW_RESPONSE_RATE_THRESHOLD = 0.40;
 
 const HYGGLO_PROFILE_URLS: Partial<Record<(typeof ACCOUNTS)[number], string>> = {
   dbcinema: "https://hygglo.com/users/dbcinemarentals",
@@ -91,9 +96,32 @@ export const write = internalMutation({
       .query("mv_channel_response_rates")
       .withIndex("by_key", (q) => q.eq("key", SNAPSHOT_KEY))
       .first();
+
+    // Edge-triggered URGENT alert: only fire when a channel crosses from
+    // unknown/≥40% into <40%, using the previous snapshot already in hand —
+    // no extra state needed, and it won't re-fire every 12h while still low.
+    const previousBySlug = new Map((existing?.channels ?? []).map((c) => [c.slug, c.rate]));
+    const alerts: NotifEventInput[] = [];
+    for (const channel of channels) {
+      if (channel.source !== "hygglo_profile" || channel.rate === null) continue;
+      const previousRate = previousBySlug.get(channel.slug) ?? null;
+      const wasAlreadyBelow = previousRate !== null && previousRate < LOW_RESPONSE_RATE_THRESHOLD;
+      if (channel.rate < LOW_RESPONSE_RATE_THRESHOLD && !wasAlreadyBelow) {
+        alerts.push({
+          type: "low_response_rate",
+          thread_id: `response-rate:${channel.slug}`,
+          account_slug: channel.slug,
+          title: `🚨 URGENT: ${accountWord(channel.slug)}'s Hygglo response rate dropped below 40%`,
+          body: `${Math.round(channel.rate * 100)}% response rate — Hygglo ranks on this, reply faster to recover it.`,
+          url: "/",
+        });
+      }
+    }
+
     const payload = { generatedAt, channels };
     if (existing) await ctx.db.patch(existing._id, payload);
     else await ctx.db.insert("mv_channel_response_rates", { key: SNAPSHOT_KEY, ...payload });
+    if (alerts.length > 0) await queueNotificationEvents(ctx, alerts);
     return { ok: true };
   },
 });

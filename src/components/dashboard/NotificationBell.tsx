@@ -405,7 +405,7 @@ export function NotificationBell() {
                   className="w-full text-left px-3 py-2.5 border-b border-white/[0.06] hover:bg-white/[0.04] transition-colors flex gap-2.5"
                 >
                   <span className="text-base leading-none mt-0.5">
-                    {e.type === "booking_confirmed" ? "🎉" : "🔔"}
+                    {e.type === "booking_confirmed" ? "🎉" : e.type === "low_response_rate" ? "🚨" : "🔔"}
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="flex items-center gap-1.5">

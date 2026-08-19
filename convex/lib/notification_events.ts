@@ -79,7 +79,7 @@ const ACCOUNT_WORD: Record<string, string> = {
   diogo: "Diogo",
 };
 
-function accountWord(slug: string | undefined): string {
+export function accountWord(slug: string | undefined): string {
   if (!slug) return "";
   const known = ACCOUNT_WORD[slug];
   if (known) return known;
