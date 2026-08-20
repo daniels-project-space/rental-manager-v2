@@ -151,6 +151,90 @@ only `booking_confirmed` through to `money_only` subscribers, and
 currently suppressed on Daniel's Telegram fallback unless it is added to that
 allowlist. Left as-is rather than changing another feature's routing semantics.
 
+## 2026-08-20 — live Diogo order, same C-stand bug reproduced
+
+The `qty_drift_alerts` dashboard banner ("N bookings with an unmatched
+listing") had exactly one open row, and it was real: order `4096440`
+(Diogo account, Caylamina Roberts), gear physically out (`order_step:
+DELIVERED`), due back 2026-09-11. None of its 4 listings had ever been
+mapped, so it resolved via the old LLM fallback and reproduced the exact
+original bug:
+
+| Listing | Was resolved to | Fixed to |
+|---|---|---|
+| Nanlite Forza 300 LED Light Kit | dropped entirely | `Nanlite Forza 300` ×1 |
+| Nanlite FC 500B Bi-Color 550W | dropped entirely | `Nanlite 500B` ×1 |
+| 3x Heavy Duty Tripod Kit + Fluid Head | **C-stand ×1** | `Small rig tripod` ×3 |
+| Smallrig 85cm Soft Box, 2x Set | Softbox 85cm ×2 (already correct) | unchanged |
+
+Added the 4 override rows (`account_slug: "diogo"`), then rewrote this one
+reservation's `calendar_holds` (6 wrong rows deleted, 12 correct ones
+inserted) and its `resolved_items`/`expanded_items`. The stale
+`qty_drift_alerts` row was marked `resolved` — see the structural note below
+for why that needed a direct patch rather than an automated re-check.
+
+### Structural finding: resolving a listing later doesn't retroactively fix reservations already resolved
+
+`item_resolver.ts:resolveReservation` checks `resolution_input_hash` —
+computed only from the raw listing titles — **before** it ever reaches the
+deterministic product_id tier. Adding or fixing an override after a
+reservation has already been resolved once therefore has no effect on that
+reservation; the hash still matches and it returns `skipped: "fresh"`
+without rechecking.
+
+This means every correction applied earlier in this sweep (the 18 + 29
+override fixes) may leave `resolved_items`/`expanded_items` stale on any
+reservation that was resolved via the LLM fallback *before* its listing's
+override existed. `calendar_holds` doesn't have this problem — it's
+recomputed fresh from the override/index tables on every poll cycle, not
+cached — so holds and the calendar are correct going forward; only the
+Active Rentals / overbooking-widget side (which reads `expanded_items`) can
+still show stale data for past bookings that were never revisited.
+
+Not fixed structurally here — doing so is a separate decision (either skip
+the freshness check when the deterministic tier would apply, or key it off
+override-table state too) and doesn't change data correctness going forward
+for anything resolved after this session's fixes landed. Flagged for
+Daniel's call.
+
+Separately confirmed: `qty_drift_alerts` has no automated close path. Its
+own docstring (`audit_qty_drift.ts`) references a "Layer C backfill
+(`admin_backfill_qty_resolution`)" that was never actually built — the
+function doesn't exist anywhere in the repo. "Manually resolved" is the
+real, only mechanism today.
+
+## Sony 28-70mm — not a mapping bug, a real live overbooking
+
+Checked: one master-inventory row, qty 2, correctly pooled by the conflict
+detector (which groups by canonical `item_id`, not by listing — confirmed by
+reading `convex/dashboard.ts`'s conflict-building loop). The detector is
+behaving exactly as intended (only flags at 3+ concurrent, matching "should
+not double-book until rented 3x").
+
+The live `conflicts` array from `getStatsDrawerData` shows a genuine active
+conflict: **3 confirmed reservations overlapping 2026-08-20 against 2
+physical units**, across two different accounts — Tade Abdullahi (leo,
+order 4205995), Jamie Hunt (diogo, order 4209227, ends 2026-08-20), Samuel
+Castaneto (diogo, order 4211390, ends 2026-08-22). This needs an operational
+decision (who gets the lens), not a data fix.
+
+## Renter bot — live-tested via the real pipeline
+
+Ran `renter_bot_probe` (synthetic `__probe__` threads, no send capability,
+swept after) against the real `generateDraft` action, three identical
+pricing questions on the dbcinema account:
+
+- **Sony FX3** (real stock) → confidently quoted, `usedTools: true`,
+  `confidence: 1`.
+- **Camera flash** (this session's override fix) → confidently quoted
+  correctly, same as FX3.
+- **RED Komodo** (marketing-only per Daniel's ruling) → refused to quote a
+  price or confirm stock, escalated instead of fabricating.
+
+Same account, same phrasing — the only variable was the underlying mapping,
+confirming the `renter_bot_tools.ts` ownership fix is live and correct
+end-to-end, not just in the resolver layer.
+
 ## Durable diagnostics
 
 `convex/investigate_integrity.ts` and `convex/investigate_overrides.ts` hold
