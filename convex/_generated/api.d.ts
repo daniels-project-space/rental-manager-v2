@@ -118,6 +118,7 @@ import type * as lib_reservations_itemUnits from "../lib/reservations/itemUnits.
 import type * as lib_reservations_monthRevenue from "../lib/reservations/monthRevenue.js";
 import type * as lib_reservations_predicates from "../lib/reservations/predicates.js";
 import type * as lib_reservations_views from "../lib/reservations/views.js";
+import type * as lib_response_rate_alerts from "../lib/response_rate_alerts.js";
 import type * as lib_return_discounts from "../lib/return_discounts.js";
 import type * as lib_return_messages from "../lib/return_messages.js";
 import type * as lib_return_presence from "../lib/return_presence.js";
@@ -337,6 +338,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reservations/monthRevenue": typeof lib_reservations_monthRevenue;
   "lib/reservations/predicates": typeof lib_reservations_predicates;
   "lib/reservations/views": typeof lib_reservations_views;
+  "lib/response_rate_alerts": typeof lib_response_rate_alerts;
   "lib/return_discounts": typeof lib_return_discounts;
   "lib/return_messages": typeof lib_return_messages;
   "lib/return_presence": typeof lib_return_presence;

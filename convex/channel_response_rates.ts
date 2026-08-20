@@ -10,9 +10,9 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "./_generated/server";
 import { ACCOUNTS } from "./mv/constants";
-import { queueNotificationEvents, type NotifEventInput } from "./notifications";
+import { queueNotificationEventsDetailed, type NotifEventInput } from "./notifications";
 import { accountWord } from "./lib/notification_events";
-import { evaluateResponseRateAlerts } from "./lib/response_rate_alerts";
+import { evaluateResponseRateAlerts, markAlertsDelivered } from "./lib/response_rate_alerts";
 
 const SNAPSHOT_KEY = "all";
 
@@ -106,23 +106,57 @@ export const write = internalMutation({
       accountWord,
     });
 
-    // queueNotificationEvents also dedupes (thread_id, type) over 24h. That
-    // window is well inside RE_ARM_MS, so it can never swallow a re-arm —
-    // it just backstops an overlapping double-run of this cron.
+    const threadId = (slug: string) => `response-rate:${slug}`;
     const alerts: NotifEventInput[] = decided.map((a) => ({
       type: "low_response_rate",
-      thread_id: `response-rate:${a.slug}`,
+      thread_id: threadId(a.slug),
       account_slug: a.slug,
       title: a.title,
       body: a.body,
       url: "/",
     }));
 
-    const payload = { generatedAt, channels, alert_state: nextState };
+    // The queue applies its own 24h (thread_id, type) dedupe and can refuse an
+    // event. Stamp the re-arm clock only for the ones it actually inserted —
+    // a refused alert leaves the slug unstamped so the next refresh retries it,
+    // rather than going quiet for RE_ARM_MS on a notification never delivered.
+    const insertedThreads = alerts.length > 0
+      ? new Set(await queueNotificationEventsDetailed(ctx, alerts))
+      : new Set<string>();
+    const delivered = new Map(
+      decided
+        .filter((a) => insertedThreads.has(threadId(a.slug)))
+        .map((a) => [a.slug, a.rate] as const),
+    );
+
+    const payload = {
+      generatedAt,
+      channels,
+      alert_state: markAlertsDelivered(nextState, delivered, generatedAt),
+    };
     if (existing) await ctx.db.patch(existing._id, payload);
     else await ctx.db.insert("mv_channel_response_rates", { key: SNAPSHOT_KEY, ...payload });
-    if (alerts.length > 0) await queueNotificationEvents(ctx, alerts);
-    return { ok: true, alerts: alerts.length };
+    return { ok: true, alerts: delivered.size, suppressed: alerts.length - delivered.size };
+  },
+});
+
+/**
+ * Ops escape hatch: drop the per-slug alert bookkeeping so the next refresh
+ * treats every low channel as a fresh crossing. Needed when a stamp was
+ * written for an alert that never reached anyone (see markAlertsDelivered),
+ * and handy if the copy or threshold changes and you want one clean re-fire.
+ */
+export const resetAlertState = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await ctx.db
+      .query("mv_channel_response_rates")
+      .withIndex("by_key", (q) => q.eq("key", SNAPSHOT_KEY))
+      .first();
+    if (!existing) return { ok: true, cleared: 0 };
+    const cleared = existing.alert_state?.length ?? 0;
+    await ctx.db.patch(existing._id, { alert_state: [] });
+    return { ok: true, cleared };
   },
 });
 

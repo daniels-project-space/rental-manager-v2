@@ -81,9 +81,25 @@ export async function queueNotificationEvents(
   ctx: MutationCtx,
   events: NotifEventInput[],
 ): Promise<number> {
-  if (events.length === 0) return 0;
+  return (await queueNotificationEventsDetailed(ctx, events)).length;
+}
+
+/**
+ * As `queueNotificationEvents`, but reports the thread_ids that were actually
+ * inserted rather than just how many.
+ *
+ * Callers that keep their own "last alerted at" bookkeeping need this: stamping
+ * that timestamp when the dedupe window silently dropped the event starts a
+ * re-arm clock for a notification the user never received. See
+ * channel_response_rates:write.
+ */
+export async function queueNotificationEventsDetailed(
+  ctx: MutationCtx,
+  events: NotifEventInput[],
+): Promise<string[]> {
+  if (events.length === 0) return [];
   const now = Date.now();
-  let inserted = 0;
+  const insertedThreadIds: string[] = [];
   for (const e of events) {
     // Type-aware dedup. renter_message events are ALREADY gated on a genuinely
     // new inserted message (upsertMessages only queues the latest NEW message per
@@ -112,16 +128,16 @@ export async function queueNotificationEvents(
       copy_data: e.copy_data,
       created_at: now,
     });
-    inserted++;
+    insertedThreadIds.push(e.thread_id);
   }
-  if (inserted > 0) {
+  if (insertedThreadIds.length > 0) {
     await ctx.scheduler.runAfter(
       0,
       internal.notifications_send.dispatchPending,
       {},
     );
   }
-  return inserted;
+  return insertedThreadIds;
 }
 
 // ── Bell: VAPID key + subscription management ─────────────────────────

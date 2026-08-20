@@ -179,15 +179,40 @@ export function evaluateResponseRateAlerts({
       });
     }
 
+    // NOTE: last_alert_at / last_alert_rate are deliberately carried forward
+    // UNCHANGED here, even when shouldAlert is true. Queuing can still be
+    // refused downstream by the notification dedupe window, and stamping an
+    // alert that never went out would start the re-arm clock on a silent
+    // notification. The caller applies stamps via markAlertsDelivered() once
+    // the insert is confirmed; anything refused simply retries next refresh.
     nextState.push({
       slug: channel.slug,
       last_known_rate: rate,
       last_known_at: now,
       low_since: lowSince,
-      last_alert_at: shouldAlert ? now : lastAlertAt,
-      last_alert_rate: shouldAlert ? rate : lastAlertRate,
+      last_alert_at: lastAlertAt,
+      last_alert_rate: lastAlertRate,
     });
   }
 
   return { alerts, nextState };
+}
+
+/**
+ * Stamp the re-arm clock for the slugs whose notification actually landed.
+ * `delivered` maps slug → the rate that was reported, so the further-drop
+ * baseline reflects what the user was genuinely told.
+ */
+export function markAlertsDelivered(
+  state: ChannelAlertState[],
+  delivered: Map<string, number>,
+  now: number,
+): ChannelAlertState[] {
+  if (delivered.size === 0) return state;
+  return state.map((s) => {
+    const rate = delivered.get(s.slug);
+    return rate === undefined
+      ? s
+      : { ...s, last_alert_at: now, last_alert_rate: rate };
+  });
 }

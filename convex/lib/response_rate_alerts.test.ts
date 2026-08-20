@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateResponseRateAlerts,
+  markAlertsDelivered,
   FURTHER_DROP_DELTA,
   RE_ARM_MS,
   type ChannelAlertState,
@@ -17,11 +18,25 @@ const ok = (slug: string, rate: number | null) => ({
   source: "hygglo_profile" as const,
 });
 
+/**
+ * Evaluate, then apply the delivery stamps for every alert raised — i.e. the
+ * happy path where the notification queue accepts everything. Tests that care
+ * about a refused insert call the two halves separately.
+ */
 const run = (
   channels: ChannelReading[],
   previousState: ChannelAlertState[],
   now: number,
-) => evaluateResponseRateAlerts({ channels, previousState, now, accountWord: who });
+) => {
+  const { alerts, nextState } = evaluateResponseRateAlerts({
+    channels,
+    previousState,
+    now,
+    accountWord: who,
+  });
+  const delivered = new Map(alerts.map((a) => [a.slug, a.rate] as const));
+  return { alerts, nextState: markAlertsDelivered(nextState, delivered, now) };
+};
 
 describe("evaluateResponseRateAlerts", () => {
   it("alerts on the first below-threshold reading", () => {
@@ -127,6 +142,31 @@ describe("evaluateResponseRateAlerts", () => {
   it("treats exactly 50% as healthy", () => {
     const { alerts } = run([ok("leo", 0.5)], [], T0);
     expect(alerts).toHaveLength(0);
+  });
+
+  // Caught live: the first prod run stamped last_alert_at even though the
+  // notification queue's 24h dedupe refused the insert, which would have
+  // muted dbcinema for the full re-arm window on an alert nobody received.
+  it("does not start the re-arm clock when the queue refuses the insert", () => {
+    const { alerts, nextState } = evaluateResponseRateAlerts({
+      channels: [ok("dbcinema", 0.46)],
+      previousState: [],
+      now: T0,
+      accountWord: who,
+    });
+    expect(alerts).toHaveLength(1);
+
+    // Queue refused it — nothing delivered, so nothing gets stamped.
+    const unstamped = markAlertsDelivered(nextState, new Map(), T0);
+    expect(unstamped[0].last_alert_at).toBeUndefined();
+    expect(unstamped[0].last_alert_rate).toBeUndefined();
+    // …and low_since is still recorded, so the day counter stays honest.
+    expect(unstamped[0].low_since).toBe(T0);
+
+    // Next refresh retries instead of waiting out RE_ARM_MS.
+    const retry = run([ok("dbcinema", 0.46)], unstamped, T0 + 6 * 60 * 60 * 1000);
+    expect(retry.alerts).toHaveLength(1);
+    expect(retry.alerts[0].reason).toBe("crossed");
   });
 
   it("scores each channel independently", () => {
