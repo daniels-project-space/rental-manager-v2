@@ -316,13 +316,26 @@ crons.interval(
   { scope: "accounts" },
 );
 
-// Channel response-rate speedometer: fixed twice-daily snapshots. This is
-// deliberately independent from the hourly stats megaquery, so it never turns
-// a cheap card subscription into a live conversation/message scan. UTC is
-// shown in the card footer, avoiding a misleading fixed London time at DST.
+// Channel response-rate speedometer: fixed snapshots four times a day (every
+// 6h, 2026-08-20 — was twice daily). This is deliberately independent from the
+// hourly stats megaquery, so it never turns a cheap card subscription into a
+// live conversation/message scan. UTC is shown in the card footer, avoiding a
+// misleading fixed London time at DST.
+crons.daily(
+  "refresh_channel_response_rates_night",
+  { hourUTC: 2, minuteUTC: 0 },
+  channelResponseRatesRefreshRef,
+  {},
+);
 crons.daily(
   "refresh_channel_response_rates_morning",
   { hourUTC: 8, minuteUTC: 0 },
+  channelResponseRatesRefreshRef,
+  {},
+);
+crons.daily(
+  "refresh_channel_response_rates_afternoon",
+  { hourUTC: 14, minuteUTC: 0 },
   channelResponseRatesRefreshRef,
   {},
 );

@@ -66,7 +66,7 @@ async function fetchProfileRate(url: string): Promise<number | null> {
 // The committed generated API intentionally lags newly added Convex modules.
 const writeRef = makeFunctionReference<"mutation">("channel_response_rates:write");
 
-/** Scheduled at 08:00 and 20:00 UTC from convex/crons.ts. */
+/** Scheduled at 02:00, 08:00, 14:00 and 20:00 UTC from convex/crons.ts. */
 export const refresh = internalAction({
   args: {},
   handler: async (ctx): Promise<{ ok: true; channels: number; generatedAt: number }> => {

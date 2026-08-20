@@ -149,7 +149,7 @@ export function ChannelResponseRateCard() {
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-wider text-slate-400">Channel response rate</p>
-          <p className="mt-1 text-[11px] text-slate-500">Official Hygglo profile metric · refreshed twice daily</p>
+          <p className="mt-1 text-[11px] text-slate-500">Official Hygglo profile metric · refreshed 4x daily</p>
         </div>
       </div>
 
