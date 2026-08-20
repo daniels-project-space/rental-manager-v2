@@ -12,11 +12,9 @@ import { internalAction, internalMutation, query } from "./_generated/server";
 import { ACCOUNTS } from "./mv/constants";
 import { queueNotificationEvents, type NotifEventInput } from "./notifications";
 import { accountWord } from "./lib/notification_events";
+import { evaluateResponseRateAlerts } from "./lib/response_rate_alerts";
 
 const SNAPSHOT_KEY = "all";
-
-/** Below this, a channel's Hygglo response rate is alerted as URGENT. */
-const LOW_RESPONSE_RATE_THRESHOLD = 0.50;
 
 const HYGGLO_PROFILE_URLS: Partial<Record<(typeof ACCOUNTS)[number], string>> = {
   dbcinema: "https://hygglo.com/users/dbcinemarentals",
@@ -97,32 +95,34 @@ export const write = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", SNAPSHOT_KEY))
       .first();
 
-    // Edge-triggered URGENT alert: only fire when a channel crosses from
-    // unknown/≥50% into <50%, using the previous snapshot already in hand —
-    // no extra state needed, and it won't re-fire every 12h while still low.
-    const previousBySlug = new Map((existing?.channels ?? []).map((c) => [c.slug, c.rate]));
-    const alerts: NotifEventInput[] = [];
-    for (const channel of channels) {
-      if (channel.source !== "hygglo_profile" || channel.rate === null) continue;
-      const previousRate = previousBySlug.get(channel.slug) ?? null;
-      const wasAlreadyBelow = previousRate !== null && previousRate < LOW_RESPONSE_RATE_THRESHOLD;
-      if (channel.rate < LOW_RESPONSE_RATE_THRESHOLD && !wasAlreadyBelow) {
-        alerts.push({
-          type: "low_response_rate",
-          thread_id: `response-rate:${channel.slug}`,
-          account_slug: channel.slug,
-          title: `🚨 URGENT: ${accountWord(channel.slug)}'s Hygglo response rate dropped below 50%`,
-          body: `${Math.round(channel.rate * 100)}% response rate — Hygglo ranks on this, reply faster to recover it.`,
-          url: "/",
-        });
-      }
-    }
+    // Firing rules live in lib/response_rate_alerts.ts (pure + unit tested).
+    // Level-triggered with a 3-day re-arm, and alert state is carried in its
+    // own field so a failed scrape can neither silence a real slump nor fake
+    // a fresh crossing. See that file's header for the two bugs this replaced.
+    const { alerts: decided, nextState } = evaluateResponseRateAlerts({
+      channels,
+      previousState: existing?.alert_state ?? [],
+      now: generatedAt,
+      accountWord,
+    });
 
-    const payload = { generatedAt, channels };
+    // queueNotificationEvents also dedupes (thread_id, type) over 24h. That
+    // window is well inside RE_ARM_MS, so it can never swallow a re-arm —
+    // it just backstops an overlapping double-run of this cron.
+    const alerts: NotifEventInput[] = decided.map((a) => ({
+      type: "low_response_rate",
+      thread_id: `response-rate:${a.slug}`,
+      account_slug: a.slug,
+      title: a.title,
+      body: a.body,
+      url: "/",
+    }));
+
+    const payload = { generatedAt, channels, alert_state: nextState };
     if (existing) await ctx.db.patch(existing._id, payload);
     else await ctx.db.insert("mv_channel_response_rates", { key: SNAPSHOT_KEY, ...payload });
     if (alerts.length > 0) await queueNotificationEvents(ctx, alerts);
-    return { ok: true };
+    return { ok: true, alerts: alerts.length };
   },
 });
 

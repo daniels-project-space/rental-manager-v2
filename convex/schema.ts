@@ -1199,6 +1199,18 @@ export default defineSchema({
       rate: v.union(v.number(), v.null()),
       source: v.optional(v.union(v.literal("hygglo_profile"), v.literal("not_available"))),
     })),
+    // Per-slug low-response-rate alert bookkeeping. Tracked SEPARATELY from
+    // `channels` so a failed scrape (rate: null) can never erase what we knew —
+    // deriving alert state from `channels` made one Hygglo blip look like a
+    // fresh crossing. Optional: absent on snapshots written before 2026-08-20.
+    alert_state: v.optional(v.array(v.object({
+      slug: v.string(),
+      last_known_rate: v.number(),
+      last_known_at: v.number(),
+      low_since: v.optional(v.number()),
+      last_alert_at: v.optional(v.number()),
+      last_alert_rate: v.optional(v.number()),
+    }))),
   }).index("by_key", ["key"]),
 
   // 2026-07-07 — wrap-and-cache getInsights (AI Investment Insights). The live

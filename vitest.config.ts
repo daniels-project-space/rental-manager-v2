@@ -41,6 +41,7 @@ export default defineConfig({
       "convex/lib/draft_guard.test.ts",
       "convex/lib/knowledge_search.test.ts",
       "convex/lib/channel_response_rates.test.ts",
+      "convex/lib/response_rate_alerts.test.ts",
       "convex/dashboard_insights.spec.ts",
       "convex/dashboard_chat.walle.spec.ts",
       "src/lib/dashboard/edit-mode-context.spec.ts",
