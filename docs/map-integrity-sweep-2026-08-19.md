@@ -235,6 +235,58 @@ Same account, same phrasing — the only variable was the underlying mapping,
 confirming the `renter_bot_tools.ts` ownership fix is live and correct
 end-to-end, not just in the resolver layer.
 
+## 2026-08-20 — the Sony 28-70mm "conflict" was itself a bug
+
+Daniel: *"its rented only twice today you can see that in the calendar too,
+investigate where this wrong notion comes from and fix it."* He was right —
+the reported 3-way conflict was wrong, not the underlying gear.
+
+Traced `expandedIdsOf()` in `convex/dashboard.ts`, the function the conflict
+detector uses. It does **not** read a reservation's stored `expanded_items`
+— it re-derives item mapping live, per Hygglo listing position, through its
+own priority order: audit override → **a third resolution table,
+`listing_info_pool`, not covered by any earlier pass this session** →
+`hygglo_product_index` → LLM `resolved_items` with a name-sanity check. Two
+of the three "conflicting" reservations were wrong at this layer:
+
+- **`diogo#1173818`** ("Sony FX3 Camera | DJI Pro Gimbal / Video Kit") had an
+  existing override bundling `[Sony FX3, DJI RS3 Pro gimbal, **Sony
+  28-70mm**]` — a lens the listing title never mentions. Source of this row
+  predates this session. Fixed to `[Sony FX3, DJI RS3 Pro gimbal]`.
+- **`diogo#1173821`** ("Sony 70-200mm f4 OSS II Lens") had no override or
+  index row, fell through to the LLM, which resolved it to Sony 28-70mm —
+  wrong lens entirely, and master inventory has no 70-200mm f4 OSS to begin
+  with (only the GM 70-200mm f2.8). Added an empty override, same RULE 18
+  pattern as every other not-owned listing this session, pending Daniel's
+  confirmation he doesn't separately own this lens.
+
+Result: live conflict count for this item **1 → 0** (only the genuine leo
+booking remains, well under qty 2). Verified immediately, no caching lag —
+unlike `item_resolver.ts`'s stored `resolved_items` (see the diogo-order
+finding above), `expandedIdsOf()` reads the override/index tables fresh on
+every call, so a fix here takes effect instantly with no force-resolve step
+needed.
+
+### Gap in this session's own earlier audit
+
+The `diogo#1173818` contamination is a pattern the "zero token overlap"
+check (`investigate_overrides.ts`) cannot catch: 2 of its 3 components
+(FX3, gimbal) genuinely matched the title, so `anyHit` was true and the row
+never surfaced. Only a *fully* unrelated override gets flagged today; a
+mostly-correct one with one smuggled-in extra component does not. Not swept
+systemically — flagged as a possible follow-up, not executed unprompted.
+
+### Architecture note: a third "expanded items" computation
+
+Beyond the two systems already documented above (holds via
+`reconcile-holds.ts`, `resolved_items`/`expanded_items` via
+`item_resolver.ts`), `dashboard.ts`'s conflict/untracked/sell-reco detectors
+use a **third**, independent live computation (`expandedIdsOf`) with its own
+tier order and its own extra data source (`listing_info_pool`, currently
+feature-flagged off for every account). All three should agree once mapping
+tables are correct, but they are three separate code paths, not one shared
+function.
+
 ## Durable diagnostics
 
 `convex/investigate_integrity.ts` and `convex/investigate_overrides.ts` hold
