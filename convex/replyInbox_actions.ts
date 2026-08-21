@@ -799,7 +799,11 @@ export const generateDraft = action({
       (f) => f.action === "flagged" && f.severity === "critical",
     );
     if (unresolvedCriticalFlags.length > 0) {
-      return { status: "skipped", reason: "needs_human" };
+      // Return the flags that caused it. Previously this escalated silently,
+      // so "needs_human" was indistinguishable from the agent's own
+      // escalation and there was no way to tell WHY a thread never drafted —
+      // which is how a 100%-escalation path on not-owned items went unnoticed.
+      return { status: "skipped", reason: "needs_human", flags: unresolvedCriticalFlags };
     }
 
     const finalDraft = guard.text.trim() || checkedDraft;

@@ -663,12 +663,32 @@ export const find_owned_alternatives = query({
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
     // robust when a marketing listing has kind=null.
-    const base = kind
+    // The `kind` taxonomy is NOT consistent across the catalog: the RED Komodo
+    // is "camera_body" while every rentable camera is "camera". A kind-scoped
+    // query therefore returned only marketing rows, filtered to ZERO owned
+    // alternatives, and the caller silently got nothing to offer — which left
+    // the draft with no grounding at all and escalated 100% of not-owned
+    // inquiries. Normalise for comparison, and never let a kind filter be the
+    // reason we have nothing to suggest.
+    const normKind = (k?: string | null): string =>
+      (k ?? "").toLowerCase().replace(/_?(body|bodies)$/, "").replace(/_+$/, "");
+    const isOwned = (it: { status?: string; is_marketing_only?: boolean; qty?: number }) =>
+      it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0;
+
+    let base = kind
       ? await ctx.db.query("items").withIndex("by_kind", (q) => q.eq("kind", kind)).collect()
       : await ctx.db.query("items").collect();
-    const owned = base.filter(
-      (it) => it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0,
-    );
+    let owned = base.filter(isOwned);
+    let kindFellBack = false;
+    if (owned.length === 0) {
+      // Either the kind was wrong/unknown, or everything of that kind is
+      // marketing-only. Scan the whole catalog and let substitution ranking
+      // (same normalised category, mount, family) pick — that is strictly
+      // better than returning an empty list.
+      base = await ctx.db.query("items").collect();
+      owned = base.filter(isOwned);
+      kindFellBack = true;
+    }
 
     // NOTE (2026-08-21): the old local tokenizer here listed "pro", "full",
     // "frame", "camera" and "lens" as STOP words. That made "BMPCC 6K Pro" and
@@ -715,7 +735,12 @@ export const find_owned_alternatives = query({
     const targetName = item_name ?? exclude_name ?? null;
     let target: { name: string; kind?: string | null; lens_mount?: string | null } | null = null;
     if (targetName) {
-      const tm = bestMatch(targetName, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
+      // Resolve against the FULL catalog, not just owned: the item being
+      // replaced is very often the one we do NOT stock, so looking it up in
+      // `owned` would never find it and we would lose its kind and mount —
+      // exactly the signals that make a substitute sensible.
+      const allForTarget = await ctx.db.query("items").collect();
+      const tm = bestMatch(targetName, allForTarget, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
       if (tm.match) {
         target = {
           name: tm.match.name_canonical,
@@ -728,11 +753,12 @@ export const find_owned_alternatives = query({
     }
     if (target) {
       const t = target;
+      const tn = { ...t, kind: normKind(t.kind) };
       ranked = owned
         .slice()
         .sort((a, b) =>
-          substitutionScore(t, { name: b.name_canonical, kind: b.kind, lens_mount: b.lens_mount }) -
-          substitutionScore(t, { name: a.name_canonical, kind: a.kind, lens_mount: a.lens_mount }),
+          substitutionScore(tn, { name: b.name_canonical, kind: normKind(b.kind), lens_mount: b.lens_mount }) -
+          substitutionScore(tn, { name: a.name_canonical, kind: normKind(a.kind), lens_mount: a.lens_mount }),
         );
       matchedBy = "substitution";
     } else if (item_name) {
@@ -784,7 +810,7 @@ export const find_owned_alternatives = query({
       if (lens_mount && it.lens_mount && it.lens_mount !== lens_mount) continue;
       // With a known target, keep suggestions in the same category. Offering a
       // lens as a substitute for a camera body is never useful.
-      if (target?.kind && it.kind && it.kind !== target.kind) continue;
+      if (target?.kind && it.kind && normKind(it.kind) !== normKind(target.kind)) continue;
       const d = describeFor(String(it._id));
       alternatives.push({
         name: it.name_canonical,
@@ -806,6 +832,7 @@ export const find_owned_alternatives = query({
     return {
       kind: kind ?? null,
       matched_by: matchedBy,
+      kind_fell_back: kindFellBack,
       target: target?.name ?? null,
       count: alternatives.length,
       alternatives,
