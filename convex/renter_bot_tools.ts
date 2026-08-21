@@ -165,6 +165,12 @@ export const get_listing_context = query({
       let owned: boolean | null = null;
       let kind: string | null = null;
       let ownership_source: string = "unresolved";
+      // The body's mount, so we can offer glass that actually fits even when
+      // the listing carries no "what's included" text. Knowing a body is
+      // EF-mount is enough to answer "does it come with a lens?" usefully
+      // ("body only, I can add the Canon EF 24-105 for £X") instead of
+      // stalling with "let me check".
+      let lens_mount: string | null = null;
       if (account_slug && typeof l.product_id === "number") {
         const prod = await ctx.db
           .query("hygglo_products")
@@ -200,6 +206,7 @@ export const get_listing_context = query({
         if (m.match && m.confident) {
           const it = m.match;
           kind = kind ?? (it.kind ?? null);
+          lens_mount = (it as { lens_mount?: string | null }).lens_mount ?? null;
           owned = it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0;
           ownership_source = "name_match";
           // Pull the real kit + price for THIS item via the deterministic
@@ -253,6 +260,7 @@ export const get_listing_context = query({
         owned,
         ownership_source,
         kind,
+        lens_mount,
         listing_name,
         daily_price_gbp,
         whats_included,

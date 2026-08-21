@@ -204,7 +204,7 @@ export async function POST(req: Request) {
           : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
         groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -269,6 +269,28 @@ export async function POST(req: Request) {
           groundTruth += `- ${it.name}: ownership NOT yet verified from the listing link (this is a DATA gap, NOT a signal that we lack the item). Do NOT say or imply it is unavailable on this basis. Treat the AVAILABILITY line below as the truth for these dates.\n`;
         }
         if (!it.whats_included && it.name) itemsWithoutKitData.push(it.name);
+        // A camera with no kit text still supports a USEFUL lens answer: we
+        // know its mount, and we know what glass we own that fits. Without
+        // this the honest reply degrades to "let me check and come back",
+        // which loses the booking and the upsell in one line.
+        if (it.kind === "camera" && it.lens_mount) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const glass: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
+              account_slug: account_slug || "",
+              kind: "lens",
+              lens_mount: it.lens_mount,
+            });
+            const fits = ((glass?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
+              .slice(0, 3)
+              .map((g) => `${g.name}${g.daily_price_gbp != null ? ` (£${g.daily_price_gbp}/day)` : ""}`);
+            if (fits.length) {
+              groundTruth += `  LENS OPTIONS for ${it.name} (${it.lens_mount}) — real, owned, and a native fit: ${fits.join("; ")}. If they ask about a lens, or if the body goes out without one, OFFER one of these BY NAME with its price rather than saying you'll check.\n`;
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
         const kitText = it.whats_included
           ? it.whats_included
           : "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)";
