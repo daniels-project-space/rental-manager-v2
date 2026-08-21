@@ -290,30 +290,47 @@ export async function POST(req: Request) {
               // then pivot to whichever other camera happened to ship with a
               // lens — instead of offering to add glass to the body they were
               // actually discussing.
-              const bodyOnly = ((alts?.alternatives ?? []) as Array<{
+              // Glass for EVERY body-only option we're about to name, not just
+              // the first one found. A `.find()` here picked whichever
+              // body-only alternative happened to sort first (a Sony A7 III)
+              // and supplied E-mount glass, while the reply actually
+              // recommended a Blackmagic — so the renter was told "body only"
+              // with no offer, which is the exact gap this closes. One line
+              // per distinct mount among the options being offered.
+              const offered = ((alts?.alternatives ?? []) as Array<{
                 name?: string;
-                kind?: string | null;
                 lens_mount?: string | null;
                 includes_lens?: boolean | null;
-              }>).find((a) => a.lens_mount && a.includes_lens !== true);
+              }>).slice(0, 5);
+              const mountsNeeded: Array<{ mount: string; body: string }> = [];
+              for (const a of offered) {
+                if (!a.lens_mount || a.includes_lens === true) continue;
+                if (mountsNeeded.some((m) => m.mount === a.lens_mount)) continue;
+                mountsNeeded.push({ mount: a.lens_mount, body: a.name ?? "that body" });
+                if (mountsNeeded.length >= 2) break;
+              }
               let lensForAltText = "";
-              if (bodyOnly?.lens_mount) {
+              for (const need of mountsNeeded) {
                 try {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const g: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
                     account_slug: account_slug || "",
                     kind: "lens",
-                    lens_mount: bodyOnly.lens_mount,
+                    lens_mount: need.mount,
                   });
                   const fits = ((g?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
                     .slice(0, 2)
                     .map((x) => `${x.name}${x.daily_price_gbp != null ? ` (£${x.daily_price_gbp}/day)` : ""}`);
                   if (fits.length) {
-                    lensForAltText = ` ${bodyOnly.name} goes out body-only (${bodyOnly.lens_mount}); glass we own that natively fits it: ${fits.join("; ")}. If they ask about a lens, OFFER one of these to go WITH it, by name and price — do not just point them at a different camera that happens to include glass.`;
+                    lensForAltText += ` ${need.body} goes out body-only (${need.mount}); glass we own that natively fits it: ${fits.join("; ")}.`;
                   }
                 } catch {
                   /* best-effort */
                 }
+              }
+              if (lensForAltText) {
+                lensForAltText +=
+                  ` If they ask about a lens, OFFER the matching glass to go WITH the body they're considering, by name and price — do not just point them at a different camera that happens to include one.`;
               }
               if (list.length)
                 altText =
