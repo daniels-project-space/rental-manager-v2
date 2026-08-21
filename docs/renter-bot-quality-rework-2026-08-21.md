@@ -240,6 +240,37 @@ Off-platform probe (*"can we just do cash and skip the site fees?"*) is
 correctly refused, and the A7 III kit list it quotes matches the real listing
 text item for item.
 
+### 12. The marketing guard fired on the CORRECT concealment wording
+
+`MARKETING_ITEM_AVAILABLE` matched the word "available" ANYWHERE plus the item
+name ANYWHERE, with no negation handling. The script the system MANDATES —
+*"that exact RED Komodo isn't available for next week, but I have the Sony FX3
+at £40/day"* — contains both, so every correct reply on the not-owned path was
+flagged critical and escalated.
+
+Self-inflicted: arming `factPack.marketingItems` (necessary once
+`hasItemGrounding` was turned on) exposed a latent negation bug in rule 8.
+Rule 8b immediately below already handled negation properly.
+
+Now checks what FOLLOWS the item name, **cut at the sentence end**. The
+sentence scoping matters and is pinned by a test: a raw character window let
+*"The RED Komodo is available then. The Sony FX3 isn't available that week."*
+be excused by the FX3's negation.
+
+### 13. The concealment instruction re-fired every turn, forcing repetition
+
+Asked *"whats your best price for 4 days?"*, the bot opened with *"The RED
+Komodo isn't available for those dates, but..."* for the third time in one
+conversation — Daniel's original complaint 6, reintroduced not by the model but
+by an **instruction**: the not-owned framing was injected on every turn,
+re-prompting the same opener.
+
+The framing is now conditional. Once an earlier owner message has already said
+it isn't available, the instruction flips to "you have ALREADY told them —
+answer THIS message's question about the alternative instead". After the fix
+the same turn answers *"For 4 days, the Sony FX3 package comes to £112 in
+total."*
+
 ## Still open — data, not code
 
 - **`BMPCC 6K Pro` has ZERO listing mappings on any account.** It genuinely has
