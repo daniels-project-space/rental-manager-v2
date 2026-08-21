@@ -149,7 +149,11 @@ export function NotificationBell() {
           endpoint: sub.endpoint,
           p256dh: json.keys?.p256dh ?? "",
           auth: json.keys?.auth ?? "",
-          mode: storedPushMode(),
+          // Refreshing an existing subscription must not overwrite a mode the
+          // operator changed elsewhere (for example, restoring All updates
+          // after a money-only setting suppressed an urgent rate alert). Only
+          // the explicit mode buttons below are allowed to change the server
+          // preference.
           user_agent: navigator.userAgent,
         });
         if (!cancelled) {

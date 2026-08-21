@@ -7,6 +7,8 @@ import {
   notificationAttemptDue,
   notificationClaimAvailable,
   notificationRetryDelayMs,
+  PREFERENCE_SUPPRESSED_ALERT_REPLAY_WINDOW_MS,
+  shouldReplayPreferenceSuppressedLowResponseRateAlert,
   subscriptionReceivesNotification,
   telegramNotificationMode,
 } from "./notification_events";
@@ -152,6 +154,32 @@ describe("per-device notification modes", () => {
     expect(telegramNotificationMode("money_only")).toBe("money_only");
     expect(telegramNotificationMode("all")).toBe("all");
     expect(telegramNotificationMode("my_share")).toBe("my_share");
+  });
+
+  it("replays only a recent rate alert that was delivered solely by preference suppression", () => {
+    const now = Date.parse("2026-08-21T22:30:00Z");
+    const suppressed = {
+      type: "low_response_rate" as const,
+      created_at: now - 60_000,
+      delivered_at: now - 59_000,
+      push_ok: 0,
+      push_eligible: 0,
+      push_suppressed: 1,
+      telegram_ok: false,
+    };
+    expect(shouldReplayPreferenceSuppressedLowResponseRateAlert(suppressed, now)).toBe(true);
+    expect(shouldReplayPreferenceSuppressedLowResponseRateAlert({
+      ...suppressed,
+      created_at: now - PREFERENCE_SUPPRESSED_ALERT_REPLAY_WINDOW_MS - 1,
+    }, now)).toBe(false);
+    expect(shouldReplayPreferenceSuppressedLowResponseRateAlert({
+      ...suppressed,
+      push_eligible: 1,
+    }, now)).toBe(false);
+    expect(shouldReplayPreferenceSuppressedLowResponseRateAlert({
+      ...suppressed,
+      type: "new_request",
+    }, now)).toBe(false);
   });
 });
 

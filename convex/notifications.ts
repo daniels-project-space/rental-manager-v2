@@ -25,6 +25,7 @@
  *   NOTIF_BASE_URL (optional, defaults to the prod alias)
  */
 import { v } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import {
   query,
   mutation,
@@ -40,6 +41,8 @@ import {
   notificationClaimAvailable,
   notificationRetryDelayMs,
   buildConfirmedBookingNotificationCopy,
+  isMoneyOnlyMode,
+  shouldReplayPreferenceSuppressedLowResponseRateAlert,
 } from "./lib/notification_events";
 
 export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message", "low_response_rate"] as const;
@@ -52,6 +55,12 @@ const pushModeValidator = v.union(
   v.literal("all"),
   v.literal("money_only"),
   v.literal("my_share"),
+);
+
+// Kept as a name reference until the generated API catches up with this new
+// internal recovery mutation.
+const replayPreferenceSuppressedRateAlertsRef = makeFunctionReference<"mutation">(
+  "notifications:replayRecentPreferenceSuppressedLowResponseRateAlerts",
 );
 
 export interface NotifEventInput {
@@ -231,8 +240,56 @@ export const setPushSubscriptionMode = mutation({
     if (!existing) throw new Error("Enable phone notifications on this device first.");
     if (existing.mode !== mode) {
       await ctx.db.patch(existing._id, { mode, last_seen_at: Date.now() });
+      // `my_share` and `money_only` deliberately suppress operational alerts.
+      // If Daniel moves back to All updates, replay a recently suppressed
+      // low-response warning through the normal dispatcher rather than making
+      // him wait for a future threshold crossing.
+      if (mode === "all" && isMoneyOnlyMode(existing.mode)) {
+        await ctx.scheduler.runAfter(0, replayPreferenceSuppressedRateAlertsRef, {});
+      }
     }
     return { mode };
+  },
+});
+
+/**
+ * Re-open recent rate alerts that were marked delivered only because every
+ * channel was configured to suppress them. This is intentionally internal,
+ * bounded to 24 hours by the shared predicate, and resets the retry metadata
+ * so `dispatchPending` can make one fresh real delivery attempt.
+ */
+export const replayRecentPreferenceSuppressedLowResponseRateAlerts = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const recent = await ctx.db
+      .query("notification_events")
+      .withIndex("by_created")
+      .order("desc")
+      .take(100);
+    let replayed = 0;
+    for (const event of recent) {
+      if (!shouldReplayPreferenceSuppressedLowResponseRateAlert(event, now)) continue;
+      await ctx.db.patch(event._id, {
+        delivered_at: undefined,
+        read_at: undefined,
+        dispatch_claimed_at: undefined,
+        delivery_attempts: undefined,
+        last_attempt_at: undefined,
+        delivery_exhausted_at: undefined,
+        push_ok: undefined,
+        push_eligible: undefined,
+        push_suppressed: undefined,
+        telegram_ok: undefined,
+        telegram_eligible: undefined,
+        telegram_suppressed: undefined,
+      });
+      replayed++;
+    }
+    if (replayed > 0) {
+      await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
+    }
+    return { replayed };
   },
 });
 

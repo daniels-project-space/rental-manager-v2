@@ -14,6 +14,42 @@ export type PushNotificationType =
   | "renter_message"
   | "low_response_rate";
 
+/**
+ * A device moving from a money-only mode to "all" may have just missed a
+ * response-rate warning. Replaying a short, bounded window keeps that change
+ * useful without turning a notification preference change into a backlog dump.
+ */
+export const PREFERENCE_SUPPRESSED_ALERT_REPLAY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+type PreferenceSuppressedLowResponseRateEvent = {
+  type: PushNotificationType;
+  created_at: number;
+  delivered_at?: number;
+  push_ok?: number;
+  push_eligible?: number;
+  push_suppressed?: number;
+  telegram_ok?: boolean;
+};
+
+/**
+ * `delivered_at` is also written when every configured channel was
+ * intentionally suppressed by its preference. That is correct for the old
+ * preference, but it should not permanently hide a recent urgent rate alert
+ * after the owner changes the device back to All updates.
+ */
+export function shouldReplayPreferenceSuppressedLowResponseRateAlert(
+  event: PreferenceSuppressedLowResponseRateEvent,
+  now: number,
+): boolean {
+  return event.type === "low_response_rate" &&
+    event.delivered_at !== undefined &&
+    event.created_at >= now - PREFERENCE_SUPPRESSED_ALERT_REPLAY_WINDOW_MS &&
+    event.push_ok === 0 &&
+    event.push_eligible === 0 &&
+    (event.push_suppressed ?? 0) > 0 &&
+    event.telegram_ok !== true;
+}
+
 export function isGenuinelyConfirmedBooking(
   step: string | null | undefined,
   status: string | null | undefined,
