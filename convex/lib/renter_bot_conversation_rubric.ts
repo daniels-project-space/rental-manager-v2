@@ -107,6 +107,13 @@ export function similarity(a: string, b: string): number {
   return inter / (ta.size + tb.size - inter);
 }
 
+/**
+ * Generic closing pleasantries. Repeating these is normal, human and warm —
+ * they carry no claim — so they are excluded from repetition detection.
+ */
+const CLOSER_RE =
+  /^(?:and\s+)?(?:just\s+)?(?:let me know|feel free|happy to help|hope that helps|hope this helps|any questions|if you have any|give me a shout|shout if)/i;
+
 const UNAVAILABLE_RE =
   /\b(is\s?n[o']?t\s+available|not\s+available|unavailable|isn't\s+free|fully\s+booked|already\s+booked|is\s+booked|no\s+longer\s+available)\b/i;
 
@@ -210,6 +217,12 @@ export function scoreConversation(
       const prev = turns.slice(0, i).flatMap((t) => sentences(t.draft));
       for (const s of sentences(turns[i].draft)) {
         if (s.length < 25) continue; // ignore short pleasantries
+        // Generic sign-offs are NOT the defect. A human lender ends most
+        // messages with "let me know what works best" — repeating that is
+        // ordinary warmth, not the "broken machine" repetition being tested
+        // for (which was re-stating the same SUBSTANTIVE claim every turn).
+        // Flagging closers would push the bot toward cold, abrupt endings.
+        if (CLOSER_RE.test(s)) continue;
         // 0.5, not 0.6: the live turn-2 repeat scored 0.550 because the bot
         // re-sent its opener with one parenthetical bolted on. Padding a
         // recycled sentence must not buy its way under the threshold.
@@ -476,10 +489,17 @@ export function scoreConversation(
   //    booking and a lost upsell in the same sentence.
   {
     const findings: CheckResult[] = [];
+    // Once glass has been offered with a price, later mentions of "body only"
+    // are just accurate description — demanding the offer AGAIN every turn
+    // would force exactly the repetition the rubric penalises elsewhere.
+    let lensAlreadyOffered = false;
     turns.forEach((t, i) => {
       const d = t.draft;
       const saysNoLens = /\b(lens not included|without a lens|body only|no lens|doesn'?t include a lens|does not include a lens)\b/i.test(d);
-      if (!saysNoLens) return;
+      if (/\b(add|adding|throw in|pair it|bolt on|put)\b[^.]{0,110}£\s?\d/i.test(d)) {
+        lensAlreadyOffered = true;
+      }
+      if (!saysNoLens || lensAlreadyOffered) return;
       // Must be an offer to ADD glass to the body under discussion, with a
       // price. Deliberately narrow: the live failure was "I have the Sony A7
       // III kit with a 28-70mm lens for £25/day" — a DIFFERENT camera that
