@@ -150,3 +150,44 @@ describe("guardDraft — FALSE_ACTION_CLAIM future-conditional exclusion", () =>
     expect(flag).toBeUndefined();
   });
 });
+
+describe("guardDraft — MARKETING_ITEM_AVAILABLE negation handling", () => {
+  const opts = {
+    ...baseOpts,
+    lastRenterMessage: "is the red komodo available next week?",
+    factPack: { marketingItems: ["RED Komodo"] },
+  };
+
+  it("does NOT fire on the required concealment wording", () => {
+    // This is the script the system mandates for a not-owned item. Before the
+    // negation fix, rule 8 matched "available" anywhere plus the item name
+    // anywhere, so EVERY correct reply on this path was flagged critical and
+    // escalated — no renter ever received the alternative.
+    const r = guardDraft(
+      "That exact RED Komodo isn't available for next week, but I have the Sony FX3 at £40/day if that works.",
+      opts,
+    );
+    expect(r.flags.map((f) => f.type)).not.toContain("MARKETING_ITEM_AVAILABLE");
+  });
+
+  it("still fires when the draft actually claims it IS available", () => {
+    const r = guardDraft(
+      "Yes, the RED Komodo is available next week, happy to get that booked in for you.",
+      opts,
+    );
+    expect(r.flags.map((f) => f.type)).toContain("MARKETING_ITEM_AVAILABLE");
+  });
+
+  it("still fires on an 'I have got one' style claim", () => {
+    const r = guardDraft("The RED Komodo I have got ready for those dates.", opts);
+    expect(r.flags.map((f) => f.type)).toContain("MARKETING_ITEM_AVAILABLE");
+  });
+
+  it("is not excused by a negation attached to a different item later", () => {
+    const r = guardDraft(
+      "The RED Komodo is available then. The Sony FX3 isn't available that week.",
+      opts,
+    );
+    expect(r.flags.map((f) => f.type)).toContain("MARKETING_ITEM_AVAILABLE");
+  });
+});
