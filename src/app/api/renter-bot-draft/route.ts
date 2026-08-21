@@ -497,7 +497,6 @@ export async function POST(req: Request) {
       }
       groundTruth +=
         "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the facts show the booking is already PAID/confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — confirm availability warmly, then invite them to lock it in by completing the booking. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
-      groundTruth += CONVERSATION_CRAFT;
     } else {
       // FRESH INQUIRY — no linked reservation yet (the common case for a
       // renter's very first "is X available" message, before any order
@@ -604,7 +603,6 @@ export async function POST(req: Request) {
           }
           groundTruth +=
             "Compare the renter's requested dates against the booking list above yourself (you know today's date). Use ONLY this data for availability/price on these item(s) — do NOT call check_availability again for the same item, and do NOT state a price that isn't given above.\n";
-          groundTruth += CONVERSATION_CRAFT;
           // RULE 10 — Minimum Rental Value, extended to fresh inquiries
           // (Daniel, 2026-08-18): previously this nudge only fired in the
           // order-linked branch above, so it never ran during a renter's
@@ -738,7 +736,37 @@ export async function POST(req: Request) {
     ? `🚫 INTERNAL — DO NOT REVEAL: we cannot rent ${marketingItems.join(", ")} to this renter. Do NOT tell them it's "marketing-only", a "display listing", that we "don't stock/own it", or explain why — that is INTERNAL and must never be said. Simply say that exact one isn't available for their dates, and warmly recommend a real alternative we own (by name, with its price). NEVER say ${marketingItems.join(", ")} is available / ready / works for pickup.\n\n`
     : "";
 
+  // PROMPT CACHING (2026-08-21).
+  //
+  // CONVERSATION_CRAFT is ~2KB of byte-identical text on every single call, and
+  // it used to be concatenated into the volatile user message below — where it
+  // can never be cached, because that message changes every turn.
+  //
+  // It now rides in its own system message carrying an explicit cache_control
+  // breakpoint. `@openrouter/ai-sdk-provider` reads providerOptions.openrouter
+  // .cacheControl off a system message and emits `cache_control` on the wire
+  // (see convertToOpenRouterChatMessages), so everything up to and including
+  // this block becomes a cacheable prefix.
+  //
+  // Measured on google/gemini-3.7-flash via scripts/probe-openrouter-cache.mjs,
+  // same ~31k-token prefix, with vs without the breakpoint:
+  //   call 1  $0.00184 vs $0.01179  → 6.4x cheaper
+  //   call 2  $0.00119 vs $0.00213  → 1.8x cheaper
+  // Gemini's implicit caching does NOT make this redundant: the control's
+  // first call reported cached=0 and paid full price. Percentages mislead here
+  // (the control shows a bigger *within-arm* drop purely because it starts from
+  // an uncached baseline) — absolute cost is the number that decides.
+  //
+  // ORDERING IS LOAD-BEARING: a cache prefix must be byte-stable, so anything
+  // volatile (dates, ground truth, the renter's message) must come AFTER this.
   const baseMessages = [
+    {
+      role: "system" as const,
+      content: CONVERSATION_CRAFT,
+      providerOptions: {
+        openrouter: { cacheControl: { type: "ephemeral" as const } },
+      },
+    },
     {
       role: "user" as const,
       content: [
