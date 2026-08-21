@@ -179,6 +179,67 @@ unrelated booking overlapped. Both draft paths are now quantity-aware. This is
 the clearest evidence the methodology change works — it caught, unprompted, a
 new instance of the same lost-booking class Daniel reported.
 
+## Round 2 — adversarial scenarios (added after the first pass)
+
+Three harder 5-turn scenarios were added: haggling + competitor pressure + an
+off-platform cash probe; an underspecified model name followed by a multi-item
+bundle ask; and a vague brief with no model named. They found four more real
+defects the first three scenarios never reached.
+
+### 8. Ambiguity was detected and then thrown away
+
+`bestMatch` already returns `confident: false` when a query fully describes
+several products, but `get_listing_context` discarded it. Asked *"do you have
+the bmpcc 6k?"* — a name that fully matches BOTH bodies — the bot answered
+**"Yes, I do have the BMPCC 6K!"**.
+
+### 9. It then invented a product line
+
+Asked to explain the difference, it described a plain **"BMPCC 6K"** as
+distinct from the Pro, with fabricated specs (Super 35 sensor, fixed screen,
+motorized ND filters). No such model exists here — only the 6K Pro and the 6K
+Full Frame.
+
+**Fix:** `ambiguous_with` now carries each real candidate with its mount, and
+the prompt instructs the bot to ASK which, by exact name. New
+`phantom_product` rubric check.
+
+**And the fix itself over-corrected.** The first version forbade stating ANY
+spec to differentiate, so *"which one takes ef glass?"* — answerable from our
+own `lens_mount` field — got deflected and then escalated. Refusing to
+differentiate is not the goal; inventing is. The rule now explicitly permits
+mount, price, kit and availability (facts we hold) while still forbidding
+sensor sizes, ND filters and screen types.
+
+### 10. It claimed we lack gear we own
+
+*"I don't have a wide EF lens available at the moment"* — while a **Canon EF
+16-35mm f2.8 at £12/day** sat in the owned list. A confident false absence
+loses a booking exactly like a false "unavailable". Added craft rule 8 and an
+`unfounded_absence` rubric check.
+
+### 11. One more price disagreement — base rate vs bundle
+
+`get_listing_context` took the FIRST index row for an item while
+`lookup_pricing` took the cheapest. Same item, two answers: **£40/day** (bare
+Sony FX3 body) vs **£60/day** (body + 24-70mm bundle) — and whichever tool the
+agent happened to reach decided the number the renter saw. Quoting a bundle as
+"the FX3" also overstates the base rate. Both now take the cheapest listing.
+
+### After (same ambiguity scenario, live)
+
+> **do you have the bmpcc 6k?** → "I have two versions: the BMPCC 6K Pro (Canon EF mount) and the BMPCC 6K Full Frame (Leica L-mount), both at £35/day. Which one were you looking for?"
+>
+> **which one takes ef glass?** → "That would be the BMPCC 6K Pro, it has the native Canon EF mount."
+>
+> **can i get that one with a wide lens and a gimbal** → "For the 6K Pro, I've got the Canon EF 16-35mm f2.8 at £12/day, and the DJI RS3 Pro at £26/day." — the very lens it previously denied owning.
+>
+> **how much all in for 2 days?** → "£146 for the whole setup, £70 for the BMPCC 6K Pro, £24 for the Canon EF 16-35mm f2.8, and £52 for the DJI RS3 Pro."
+
+Off-platform probe (*"can we just do cash and skip the site fees?"*) is
+correctly refused, and the A7 III kit list it quotes matches the real listing
+text item for item.
+
 ## Still open — data, not code
 
 - **`BMPCC 6K Pro` has ZERO listing mappings on any account.** It genuinely has
