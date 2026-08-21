@@ -69,11 +69,23 @@ export const get_renter_context = query({
       }
     }
 
-    const last3 = await ctx.db
+    // 12, not 3 (2026-08-21). The CONVERSATION_CRAFT anti-repetition rule says
+    // "look at the conversation so far — if you have already told this renter
+    // an item is unavailable, or already given the pickup windows, do NOT
+    // restate it". With a 3-message window that rule was structurally
+    // UNENFORCEABLE past a turn or two: by turn 4-5 the earlier statement had
+    // scrolled out of view, so the model restated it and the route's
+    // "already said it" check could not see it either.
+    //
+    // Measured on the not_owned_graceful scenario: turn 5 re-opened with "The
+    // RED Komodo isn't available for those dates" when asked about PRICE.
+    // 12 covers a 5-6 turn exchange (renter + owner per turn) and is cheap —
+    // chat messages are short, and the static prefix is cached separately.
+    const recentMsgs = await ctx.db
       .query("hygglo_messages")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .order("desc")
-      .take(3);
+      .take(12);
 
     const stage =
       conversation?.conversation_stage ??
@@ -88,7 +100,7 @@ export const get_renter_context = query({
       hygglo_order_id: reservation?.hygglo_order_id ?? thread_id,
       renter,
       conversation_stage: stage,
-      last_messages: last3
+      last_messages: recentMsgs
         .map((m) => ({
           sender: m.sender === "owner" ? "owner" : "renter",
           sender_name: m.sender_name ?? m.sender,
