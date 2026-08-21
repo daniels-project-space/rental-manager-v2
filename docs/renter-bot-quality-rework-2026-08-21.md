@@ -159,6 +159,26 @@ Not-owned path (RED Komodo), previously 100% escalation:
 
 > "The Blackmagic cameras are body-only, so you would use your own EF glass with the 6K Pro or L-mount lenses with the Full Frame. If you need a complete kit with glass included, the Sony FX3 comes with the 24-70mm GM lens."
 
+## Final verification (3 scenarios x 5 turns, live pipeline)
+
+| scenario | result |
+|---|---|
+| `bmpcc_lens_and_daycount` | **PASS** — no failures |
+| `fx3_kit_and_upsell` | **PASS** — no failures |
+| `not_owned_graceful` | 1 flag: `lens_follow_through` |
+
+The remaining flag is genuine and minor: asked whether the alternatives include
+glass, the bot correctly says the Blackmagic bodies are body-only and the FX3
+includes a 24-70mm — but pivots to the FX3 rather than also offering to add EF
+glass to the Blackmagic. Correct and useful, one step short of the standard.
+
+An eighth defect was found by the new rubric on a scenario nobody had
+hand-inspected: **availability ignored quantity**. The Sony FX3 is qty 4 with 3
+units free, and the bot said it was "booked out this weekend" because one
+unrelated booking overlapped. Both draft paths are now quantity-aware. This is
+the clearest evidence the methodology change works — it caught, unprompted, a
+new instance of the same lost-booking class Daniel reported.
+
 ## Still open — data, not code
 
 - **`BMPCC 6K Pro` has ZERO listing mappings on any account.** It genuinely has

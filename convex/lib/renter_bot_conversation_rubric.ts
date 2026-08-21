@@ -431,7 +431,7 @@ export function scoreConversation(
       // flagged — so a bare time mention must not satisfy this.
       const hasTime = /\d{1,2}\s?(am|pm)|evening|morning|night/i.test(d);
       const proposes =
-        /\bso (?:you|it|that)|that way|instead|alternatively|if you(?:'d| would) prefer|you'?re welcome to|you can also|keeps? it|stays? a|still (?:only|just)|single[- ]day|one[- ]day|could work|happy to\b/i.test(
+        /\bso (?:you|it|that)|that way|instead|alternatively|if you(?:'d| would) prefer|you'?re welcome to|you can\b|i can\b|we can\b|keeps? it|stays? a|still (?:only|just)|single[- ]day|one[- ]day|could work|happy to\b/i.test(
           d,
         );
       const offers = hasTime && proposes;
