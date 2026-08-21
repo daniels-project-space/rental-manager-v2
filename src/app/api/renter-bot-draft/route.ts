@@ -135,7 +135,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let body: { thread_id?: string };
+  let body: { thread_id?: string; craft_override?: string };
   try {
     body = await req.json();
   } catch {
@@ -143,6 +143,28 @@ export async function POST(req: Request) {
   }
   const { thread_id } = body;
   if (!thread_id) return NextResponse.json({ ok: false, error: "no_thread_id" }, { status: 400 });
+
+  /**
+   * OPTIMISER HOOK — lets a caller swap the CONVERSATION_CRAFT block for a
+   * candidate variant, so a prompt optimiser (GEPA) can score alternatives
+   * against the conversation rubric without a redeploy per candidate.
+   *
+   * Safe by construction:
+   *  - this endpoint already requires the Bearer RENTER_BOT_API_SECRET, so
+   *    only we can reach it at all;
+   *  - it swaps CRAFT rules only — never the ground-truth block, the tools, or
+   *    any availability/price fact, so an optimiser cannot talk the bot into
+   *    an ungrounded claim;
+   *  - it is restricted to __probe__ threads, so a candidate prompt can never
+   *    touch a real renter's conversation even by accident.
+   */
+  const craftOverride =
+    typeof body.craft_override === "string" &&
+    body.craft_override.length > 0 &&
+    thread_id.startsWith("__probe__")
+      ? body.craft_override
+      : null;
+  const craftRules = craftOverride ?? CONVERSATION_CRAFT;
 
   const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
   const convex = new ConvexHttpClient(convexUrl);
@@ -762,10 +784,17 @@ export async function POST(req: Request) {
   const baseMessages = [
     {
       role: "system" as const,
-      content: CONVERSATION_CRAFT,
-      providerOptions: {
-        openrouter: { cacheControl: { type: "ephemeral" as const } },
-      },
+      content: craftRules,
+      // Only cache the real, byte-stable block. A candidate variant changes
+      // every evaluation, so caching it would pay write cost for a prefix that
+      // is never read back.
+      ...(craftOverride
+        ? {}
+        : {
+            providerOptions: {
+              openrouter: { cacheControl: { type: "ephemeral" as const } },
+            },
+          }),
     },
     {
       role: "user" as const,
