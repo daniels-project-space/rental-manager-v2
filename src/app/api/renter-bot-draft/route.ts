@@ -66,6 +66,20 @@ CONVERSATION CRAFT — how to actually write the reply:
 
 7. Never repeat the pickup windows in consecutive messages, and never restate
    the price they already have unless it changed or they asked again.
+
+8. NEVER SAY WE DON'T HAVE SOMETHING UNLESS THE FACTS SAY SO. A confident "I
+   don't have a wide lens for that" costs a booking exactly like a false
+   "it's unavailable" does, and it is just as unfounded when you are guessing.
+   Live-caught: the bot told a renter there was no wide EF lens while a Canon
+   EF 16-35mm f2.8 sat in the owned list at £20/day. If the facts above don't
+   list what they asked for, either call find_owned_alternatives for that
+   category/mount, or say you'll confirm — never assert an absence.
+
+9. DO NOT INVENT PRODUCTS OR SPECS. Only ever discuss models named in the
+   facts above. Never describe sensor sizes, ND filters, screens, resolutions
+   or other specs to differentiate products unless that text is given to you.
+   If asked to compare, name the exact products we actually have and ask what
+   matters for their shoot rather than reciting specs from memory.
 `;
 
 // Conversational/date/question filler — NOT item-name content. Strips a free-
@@ -204,7 +218,7 @@ export async function POST(req: Request) {
           : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
         groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: string[] }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -316,6 +330,14 @@ export async function POST(req: Request) {
         // check availability and answer normally.
         if (it.owned == null) {
           groundTruth += `- ${it.name}: ownership NOT yet verified from the listing link (this is a DATA gap, NOT a signal that we lack the item). Do NOT say or imply it is unavailable on this basis. Treat the AVAILABILITY line below as the truth for these dates.\n`;
+        }
+        // AMBIGUOUS MODEL NAME — ask, do not pick. "BMPCC 6K" fully describes
+        // both the 6K Pro and the 6K Full Frame. Live-caught: the bot replied
+        // "yes I have the BMPCC 6K", then invented a THIRD product line with
+        // fabricated specs (ND filters, screen types) to explain the
+        // difference between them.
+        if (Array.isArray(it.ambiguous_with) && it.ambiguous_with.length > 1) {
+          groundTruth += `- "${it.name}" is AMBIGUOUS — it matches ${it.ambiguous_with.length} DIFFERENT products we own: ${it.ambiguous_with.join(", ")}. These are the ONLY ones that exist; there is no other model in this line. Do NOT answer as if "${it.name}" were a single product, do NOT invent a variant, and do NOT state specs to tell them apart. ASK which of these they mean, listing them by their exact names.\n`;
         }
         if (!it.whats_included && it.name) itemsWithoutKitData.push(it.name);
         // A camera with no kit text still supports a USEFUL lens answer: we

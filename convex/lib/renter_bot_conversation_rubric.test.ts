@@ -147,6 +147,73 @@ describe("price consistency across turns", () => {
   });
 });
 
+describe("phantom products and unfounded absence (live-caught 2026-08-21)", () => {
+  const INV = [
+    { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
+    { name: "BMPCC 6K Full Frame", kind: "camera", lens_mount: "Leica L-mount (native)" },
+    { name: "Canon EF 16-35mm f2.8", kind: "lens", lens_mount: "Canon EF mount" },
+  ];
+  const base = {
+    requestedItem: "BMPCC 6K",
+    requestedItemAvailable: true,
+    requestedItemOwned: true,
+    ownedItems: INV,
+  };
+
+  it("catches an invented product variant", () => {
+    // Only the Pro and Full Frame exist; a plain "BMPCC 6K" does not.
+    const out = scoreConversation(
+      [
+        {
+          renter: "whats the difference between them?",
+          draft: "The BMPCC 6K has a Super 35 sensor and a fixed screen, while the Pro adds motorized ND filters.",
+        },
+      ],
+      { ...base, phantomPatterns: ["BMPCC 6K(?!\\s*(Pro|Full))"] },
+    );
+    expect(out.failures).toContain("phantom_product");
+  });
+
+  it("does not flag the real products", () => {
+    const out = scoreConversation(
+      [
+        {
+          renter: "whats the difference between them?",
+          draft: "I have the BMPCC 6K Pro (Canon EF mount) and the BMPCC 6K Full Frame (L-mount). Which mount suits your glass?",
+        },
+      ],
+      { ...base, phantomPatterns: ["BMPCC 6K(?!\\s*(Pro|Full))"] },
+    );
+    expect(out.failures).not.toContain("phantom_product");
+  });
+
+  it("catches denying a wide lens we actually own", () => {
+    const out = scoreConversation(
+      [
+        {
+          renter: "can i get it with a wide lens",
+          draft: "I don't have a wide EF lens available at the moment, so you'd need to bring your own EF glass.",
+        },
+      ],
+      base,
+    );
+    expect(out.failures).toContain("unfounded_absence");
+  });
+
+  it("passes when the wide lens is actually offered", () => {
+    const out = scoreConversation(
+      [
+        {
+          renter: "can i get it with a wide lens",
+          draft: "Yes, I can add the Canon EF 16-35mm f2.8 for £20/day, that's a native fit on the EF mount.",
+        },
+      ],
+      base,
+    );
+    expect(out.failures).not.toContain("unfounded_absence");
+  });
+});
+
 describe("helpers", () => {
   it("similarity spots the near-duplicate opener", () => {
     const a = "That exact BMPCC 6K Pro isn't available for tomorrow, but I have the BMPCC 6K Full Frame available for £35/day if that works for your shoot?";

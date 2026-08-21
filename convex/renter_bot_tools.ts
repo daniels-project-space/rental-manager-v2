@@ -171,6 +171,13 @@ export const get_listing_context = query({
       // ("body only, I can add the Canon EF 24-105 for £X") instead of
       // stalling with "let me check".
       let lens_mount: string | null = null;
+      // When the renter's wording matches SEVERAL real products (e.g. "BMPCC
+      // 6K" fully describes both the 6K Pro and the 6K Full Frame), the bot
+      // must ASK which. Detected already by bestMatch's confidence gate, but
+      // previously discarded — so the agent answered "yes I have the BMPCC 6K"
+      // and then invented a third product line with fabricated specs to
+      // explain the difference. Surface the candidates instead.
+      let ambiguous_with: string[] = [];
       if (account_slug && typeof l.product_id === "number") {
         const prod = await ctx.db
           .query("hygglo_products")
@@ -235,6 +242,7 @@ export const get_listing_context = query({
           }
         } else if (m.match && m.ambiguousWith.length > 0) {
           ownership_source = "ambiguous_name";
+          ambiguous_with = [m.match, ...m.ambiguousWith].map((i) => i.name_canonical);
         }
       }
       if (account_slug && typeof l.product_id === "number") {
@@ -261,6 +269,7 @@ export const get_listing_context = query({
         ownership_source,
         kind,
         lens_mount,
+        ambiguous_with,
         listing_name,
         daily_price_gbp,
         whats_included,

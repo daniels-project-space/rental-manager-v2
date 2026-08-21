@@ -48,6 +48,12 @@ export interface ConversationGroundTruth {
    * kit data" — any specific kit claim about it is therefore fabricated.
    */
   knownKit?: Record<string, string | null>;
+  /**
+   * Regexes for model names that must NOT appear as products in their own
+   * right — e.g. `BMPCC 6K(?!\s*(Pro|Full))` when only the Pro and Full Frame
+   * exist. Catches an invented variant being discussed as if we stocked it.
+   */
+  phantomPatterns?: string[];
 }
 
 export type Status = "pass" | "fail" | "flag" | "n_a";
@@ -539,6 +545,78 @@ export function scoreConversation(
         detail: rates.length ? `Daily rates quoted: ${rates.map((r) => `£${r}`).join(", ")}.` : "No daily rate quoted.",
       });
     }
+  }
+
+  // 9. PHANTOM PRODUCT. Discussing a model that is not in the owned list at
+  //    all. Live-caught: asked to compare "the BMPCC 6K", the bot described a
+  //    plain "BMPCC 6K" as distinct from the 6K Pro — a product line that does
+  //    not exist here — with invented specs to tell them apart.
+  if (gt.ownedItems?.length && gt.phantomPatterns?.length) {
+    const findings: CheckResult[] = [];
+    const owned = gt.ownedItems.map((o) => o.name.toLowerCase());
+    turns.forEach((t, i) => {
+      for (const pat of gt.phantomPatterns ?? []) {
+        const re = new RegExp(pat, "i");
+        if (!re.test(t.draft)) continue;
+        // Only a phantom if no real owned name covers the mention.
+        const covered = owned.some((o) => t.draft.toLowerCase().includes(o));
+        if (!covered) {
+          findings.push({
+            check: "phantom_product",
+            status: "fail",
+            turn: i + 1,
+            detail: `Discussed a product matching /${pat}/ that is not in the owned inventory.`,
+            evidence: t.draft.slice(0, 150),
+          });
+        }
+      }
+    });
+    results.push(
+      ...(findings.length
+        ? findings
+        : [{ check: "phantom_product", status: "pass" as Status, detail: "Only real products discussed." }]),
+    );
+  }
+
+  // 10. UNFOUNDED ABSENCE. "I don't have a wide lens for that" loses a booking
+  //     exactly like a false "it's unavailable", and is just as unfounded when
+  //     guessed. Fails when we DO own something matching what was denied.
+  if (gt.ownedItems?.length) {
+    const ABSENCE =
+      /\b(?:i|we)\s+(?:don'?t|do not)\s+(?:have|stock|carry)\b([^.!?]*)|\bno\s+(\w+\s+)?(lens|lenses|glass|gimbal|tripod|monitor|light|mic)\b[^.!?]*\bavailable\b/i;
+    const findings: CheckResult[] = [];
+    turns.forEach((t, i) => {
+      for (const s of sentences(t.draft)) {
+        const m = ABSENCE.exec(s);
+        if (!m) continue;
+        const claim = (m[1] ?? s).toLowerCase();
+        // Does anything we own plausibly satisfy the denied category?
+        const hit = (gt.ownedItems ?? []).find((o) => {
+          const on = o.name.toLowerCase();
+          const kindWord = /lens|glass/.test(claim) ? "lens" : null;
+          if (kindWord && o.kind === "lens") {
+            // If they denied a WIDE lens, look for a wide focal length.
+            if (/\bwide\b/.test(claim)) return /1[0-9]\s*-|\b1[0-9]mm|16-35|11mm|7\.5/.test(on);
+            return true;
+          }
+          return false;
+        });
+        if (hit) {
+          findings.push({
+            check: "unfounded_absence",
+            status: "fail",
+            turn: i + 1,
+            detail: `Claimed we lack something we actually own ("${hit.name}").`,
+            evidence: s.slice(0, 150),
+          });
+        }
+      }
+    });
+    results.push(
+      ...(findings.length
+        ? findings
+        : [{ check: "unfounded_absence", status: "pass" as Status, detail: "No unfounded absence claims." }]),
+    );
   }
 
   const failures = results.filter((r) => r.status === "fail").map((r) => r.check);
