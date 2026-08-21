@@ -224,20 +224,39 @@ export const get_listing_context = query({
               .query("hygglo_product_index")
               .withIndex("by_item_id", (q) => q.eq("item_id", it._id))
               .collect();
-            const pid = idxRows.find((r) => r.account_slug === account_slug)?.product_id;
-            if (typeof pid === "number") {
+            // An item often has SEVERAL listings — a bare body and bundles
+            // built around it. Take the CHEAPEST, i.e. its base offering,
+            // exactly as lookup_pricing does.
+            //
+            // This previously took the FIRST index row, so the two tools
+            // disagreed about the same item: lookup_pricing said the Sony FX3
+            // was £40/day (bare body) while this handed the agent £60/day
+            // (the body + 24-70mm bundle). Quoting the bundle as "the FX3"
+            // overstates the base rate, and whichever tool the agent happened
+            // to use decided the number the renter saw.
+            const pids = idxRows
+              .filter((r) => r.account_slug === account_slug)
+              .map((r) => r.product_id);
+            let bestListing: { daily_price?: number; description?: string; name?: string; public_url?: string } | null = null;
+            for (const pid of pids) {
               const listing = await ctx.db
                 .query("online_listings")
                 .withIndex("by_account_product", (q) =>
                   q.eq("account_slug", account_slug).eq("product_id", pid),
                 )
                 .first();
-              if (listing) {
-                daily_price_gbp = daily_price_gbp ?? listing.daily_price ?? null;
-                whats_included = whats_included ?? listing.description ?? null;
-                listing_name = listing_name ?? listing.name ?? null;
-                public_url = public_url ?? listing.public_url ?? null;
+              if (!listing) continue;
+              const p = listing.daily_price;
+              const bp = bestListing?.daily_price;
+              if (!bestListing || (typeof p === "number" && (typeof bp !== "number" || p < bp))) {
+                bestListing = listing;
               }
+            }
+            if (bestListing) {
+              daily_price_gbp = daily_price_gbp ?? bestListing.daily_price ?? null;
+              whats_included = whats_included ?? bestListing.description ?? null;
+              listing_name = listing_name ?? bestListing.name ?? null;
+              public_url = public_url ?? bestListing.public_url ?? null;
             }
           }
         } else if (m.match && m.ambiguousWith.length > 0) {
