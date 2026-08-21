@@ -243,6 +243,13 @@ export async function POST(req: Request) {
    * instruction — which, live, it did not.
    */
   const itemsWithoutKitData: string[] = [];
+  /** Per-draft token accounting, so caching is observable rather than assumed. */
+  let tokenUsage: {
+    prompt: number | null;
+    completion: number | null;
+    cached: number | null;
+    cost: number | null;
+  } | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
@@ -849,6 +856,37 @@ export async function POST(req: Request) {
       usedTools = ((result?.steps ?? []) as any[]).some(
         (st) => (st?.toolCalls?.length ?? 0) > 0,
       );
+      // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
+      // minimum, provider ignores the breakpoint, or a framework wrapper drops
+      // cache_control on the way out. All three look identical from outside:
+      // it just quietly costs full price. Without this, "caching is on" was an
+      // assumption rather than an observation.
+      //
+      // Also tells us the real static/volatile split per draft, so prompt-size
+      // work can be aimed with numbers instead of guesses.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const u: any = result?.usage ?? {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pm: any = result?.providerMetadata ?? {};
+      tokenUsage = {
+        prompt: u.promptTokens ?? u.inputTokens ?? null,
+        completion: u.completionTokens ?? u.outputTokens ?? null,
+        cached:
+          u.cachedPromptTokens ??
+          u.cachedInputTokens ??
+          pm?.openrouter?.usage?.promptTokensDetails?.cachedTokens ??
+          null,
+        cost: pm?.openrouter?.usage?.cost ?? null,
+      };
+      if (tokenUsage.prompt != null) {
+        const pct =
+          tokenUsage.cached != null && tokenUsage.prompt
+            ? ` (${Math.round((tokenUsage.cached / tokenUsage.prompt) * 100)}% cached)`
+            : "";
+        console.log(
+          `[renter-bot-draft] tokens prompt=${tokenUsage.prompt} cached=${tokenUsage.cached ?? "?"}${pct} completion=${tokenUsage.completion ?? "?"} cost=${tokenUsage.cost ?? "?"}`,
+        );
+      }
     try {
       let js = text.trim();
       const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -1039,6 +1077,7 @@ export async function POST(req: Request) {
       usedTools,
       resolvedItems,
       itemsWithoutKitData,
+      tokenUsage,
       // Verified NOT-rentable items. Registering the alternatives above turns
       // hasItemGrounding on, which disables the blanket ungrounded-assertion
       // net — so the marketing-specific net (guardDraft rule 8,

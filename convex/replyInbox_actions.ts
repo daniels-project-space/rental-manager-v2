@@ -560,6 +560,12 @@ export const generateDraft = action({
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
           itemsWithoutKitData?: string[];
           marketingItems?: string[];
+          tokenUsage?: {
+            prompt: number | null;
+            completion: number | null;
+            cached: number | null;
+            cost: number | null;
+          } | null;
         };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
@@ -585,6 +591,17 @@ export const generateDraft = action({
           freshInquiryItems = j.resolvedItems ?? [];
           noKitItems = j.itemsWithoutKitData ?? [];
           routeMarketingItems = j.marketingItems ?? [];
+          // Surface token/cache accounting so prompt-caching is observable
+          // end-to-end rather than assumed (it fails silently otherwise).
+          if (j.tokenUsage?.prompt != null) {
+            const tu = j.tokenUsage;
+            const pct = tu.cached != null && tu.prompt
+              ? ` (${Math.round((tu.cached / tu.prompt) * 100)}% cached)`
+              : "";
+            console.log(
+              `[generateDraft] tokens prompt=${tu.prompt} cached=${tu.cached ?? "?"}${pct} cost=${tu.cost ?? "?"}`,
+            );
+          }
         }
       } catch {
         return { status: "skipped", reason: "subscription_unavailable" };
