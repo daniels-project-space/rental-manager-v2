@@ -55,6 +55,17 @@ export interface GuardOpts {
     verifiedListingItem?: string;
     marketingItems?: string[];
     lowValueInstruction?: string;
+    /**
+     * Items we hold NO kit/"what's included" data for. Any specific claim
+     * about what such an item ships with is fabricated by definition.
+     *
+     * Added 2026-08-21: the BMPCC 6K Pro has zero listing mappings, so
+     * get_listing_context correctly returned whats_included=null and the
+     * prompt explicitly said not to invent contents — and the model still
+     * told a renter it "comes with batteries, charger, and SSD". A prompt
+     * instruction is not enforcement; this is.
+     */
+    itemsWithoutKitData?: string[];
   };
   /** Real per-item availability for the rental dates (verify.ts cross-check). */
   availability?: { items: { name: string; available: boolean }[] };
@@ -87,6 +98,10 @@ const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
   CHAIN_OF_THOUGHT: "critical",
   PRICE_HALLUCINATION: "critical",
+  // Same class as a hallucinated price: the renter plans around it and turns
+  // up to find the card/charger isn't in the bag. Critical ⇒ escalates to
+  // Daniel rather than going out fabricated.
+  KIT_HALLUCINATION: "critical",
   FALSE_ACTION_CLAIM: "critical",
   PREMATURE_CONFIRMATION: "critical",
   MARKETING_ITEM_AVAILABLE: "critical",
@@ -784,6 +799,44 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
           `Stated £${wrong.join(", £")} not in catalog [${known}]`,
           "flagged",
         );
+      }
+    }
+  }
+
+  // 16b. KIT HALLUCINATION — FLAG (factPack-gated)
+  // Asserting what an item ships with, for an item we have no kit data on.
+  // Live-caught 2026-08-21 on a body with no listing at all: "it comes with
+  // batteries, charger, and SSD". The renter has no way to know that is
+  // invented, and turns up expecting a card and a charger that aren't coming.
+  if (factPack?.itemsWithoutKitData?.length) {
+    const CLAIM_VERB = /\b(comes with|ships with|bundled with|includes?)\b/i;
+    const KIT_NOUN =
+      /\b(cage|card|cards|sd|cfast|ssd|batter\w*|charger|tripod|mic|microphone|case|bag|filter|rig|monitor|gimbal|adapter)\b/i;
+    for (const raw of text.split(/(?<=[.!?])\s+|\n+/)) {
+      const s = raw.trim();
+      if (!s) continue;
+      const m = CLAIM_VERB.exec(s);
+      if (!m) continue;
+      let after = s.slice(m.index + m[0].length);
+      const neg = after.search(/\b(no|not|without|except|excluding|apart from)\b/i);
+      if (neg >= 0) after = after.slice(0, neg);
+      if (!KIT_NOUN.test(after)) continue;
+      // Named item, or an unattributed claim ("the camera body ... it comes
+      // with") while an unknown-kit item is the subject of the conversation.
+      const named = factPack.itemsWithoutKitData.filter((n) =>
+        s.toLowerCase().includes(n.toLowerCase()),
+      );
+      const anaphoric =
+        named.length === 0 &&
+        /\b(it|the camera|the body|camera body|the kit|this one|that one)\b/i.test(s);
+      if (named.length > 0 || anaphoric) {
+        const subject = named[0] ?? factPack.itemsWithoutKitData[0];
+        push(
+          "KIT_HALLUCINATION",
+          `Claimed kit contents for "${subject}" but we hold no what's-included data for it: "${s.slice(0, 120)}"`,
+          "flagged",
+        );
+        break;
       }
     }
   }

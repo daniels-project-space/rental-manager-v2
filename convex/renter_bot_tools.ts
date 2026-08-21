@@ -15,6 +15,7 @@ import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
+import { bestMatch, rankByName, substitutionScore } from "./lib/item_name_match";
 
 // ── Tool 1: get_renter_context ───────────────────────────────
 
@@ -146,10 +147,24 @@ export const get_listing_context = query({
       let whats_included: string | null = null;
       let listing_name: string | null = null;
       let public_url: string | null = null;
-      // OWNED check: does this listing map to an ACTIVE, non-marketing item we
-      // actually stock? A marketing-only / inactive item = we do NOT have it.
-      let owned = false;
+      // OWNERSHIP IS TRI-STATE (2026-08-21). Previously this was a bare
+      // boolean defaulting to false, so "we could not determine ownership"
+      // was indistinguishable from "we verified we do NOT own it".
+      //
+      // That default was fail-DANGEROUS. Reaching `owned: true` required all
+      // of: account_slug present -> product_id is a number -> a hygglo_products
+      // row exists -> it has a masterItemId -> that item is active. Any gap
+      // (most commonly: an inquiry line with no product_id, which is every
+      // fresh inquiry and every Lab scenario) silently produced owned:false.
+      // The draft route then told the agent "we CANNOT rent this, frame it
+      // ONLY as not available" — so the bot confidently told renters that
+      // real, in-stock, completely free gear was unavailable, and invented a
+      // substitute because kind was null too. Live-reproduced on BMPCC 6K Pro.
+      //
+      // null = UNKNOWN. Only an explicit false may drive the concealment path.
+      let owned: boolean | null = null;
       let kind: string | null = null;
+      let ownership_source: string = "unresolved";
       if (account_slug && typeof l.product_id === "number") {
         const prod = await ctx.db
           .query("hygglo_products")
@@ -165,7 +180,54 @@ export const get_listing_context = query({
             owned =
               (it as { status?: string }).status === "active" &&
               !(it as { is_marketing_only?: boolean }).is_marketing_only;
+            ownership_source = "product_id";
           }
+        }
+      }
+
+      // FALLBACK: no product_id (fresh inquiry / Lab scenario) or the listing
+      // carried no masterItemId. Resolve the line by NAME against master
+      // inventory instead of giving up. Ambiguous names stay UNKNOWN rather
+      // than guessing a body the renter never specified.
+      if (owned === null) {
+        const allItems = await ctx.db.query("items").collect();
+        const m = bestMatch(
+          l.name,
+          allItems,
+          (i) => i.name_canonical,
+          (i) => (i.aliases ?? []) as string[],
+        );
+        if (m.match && m.confident) {
+          const it = m.match;
+          kind = kind ?? (it.kind ?? null);
+          owned = it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0;
+          ownership_source = "name_match";
+          // Pull the real kit + price for THIS item via the deterministic
+          // product_id index, so an alternative/inquiry line still gets true
+          // "what's included" text instead of the agent inventing one.
+          if (account_slug && (daily_price_gbp === null || whats_included === null)) {
+            const idxRows = await ctx.db
+              .query("hygglo_product_index")
+              .withIndex("by_item_id", (q) => q.eq("item_id", it._id))
+              .collect();
+            const pid = idxRows.find((r) => r.account_slug === account_slug)?.product_id;
+            if (typeof pid === "number") {
+              const listing = await ctx.db
+                .query("online_listings")
+                .withIndex("by_account_product", (q) =>
+                  q.eq("account_slug", account_slug).eq("product_id", pid),
+                )
+                .first();
+              if (listing) {
+                daily_price_gbp = daily_price_gbp ?? listing.daily_price ?? null;
+                whats_included = whats_included ?? listing.description ?? null;
+                listing_name = listing_name ?? listing.name ?? null;
+                public_url = public_url ?? listing.public_url ?? null;
+              }
+            }
+          }
+        } else if (m.match && m.ambiguousWith.length > 0) {
+          ownership_source = "ambiguous_name";
         }
       }
       if (account_slug && typeof l.product_id === "number") {
@@ -186,7 +248,10 @@ export const get_listing_context = query({
         name: l.name,
         qty: l.qty,
         product_id: l.product_id,
+        // true = verified owned; false = verified NOT rentable; null = UNKNOWN.
+        // Consumers MUST treat null as "not verified" and never as "not owned".
         owned,
+        ownership_source,
         kind,
         listing_name,
         daily_price_gbp,
@@ -262,25 +327,59 @@ export const lookup_pricing = query({
       const listings = (await ctx.db.query("online_listings")
         .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
         .collect()).filter((l) => ownedPids.has(l.product_id));
-      const q = toks(item_name);
-      const qDigits = q.filter((t) => /^[0-9]+$/.test(t));
+      // DETERMINISTIC FIRST (2026-08-21): resolve the item by name against
+      // master inventory, then find ITS listing via the audit-authoritative
+      // product_id index. Identity, not string similarity.
+      //
+      // The old path scored raw COVERAGE (hits / query-token-count) over long
+      // marketing listing names, which is how "BMPCC 6K Pro" scored a PERFECT
+      // 1.0 against "Blackmagic cinema camera full frame 6k Bmpcc + Rode video
+      // mic PRO plus microphone + tripod smallrig interview set": the "pro"
+      // came from the MICROPHONE. It returned the wrong body, the wrong kit,
+      // and £70/day for a £35/day camera. Coverage cannot distinguish "this
+      // listing IS the item" from "this listing merely mentions the item".
       let best: (typeof listings)[number] | null = null;
-      let bestScore = 0; let bestPrice = Infinity;
-      for (const l of listings) {
-        const tset = new Set(toks(l.name));
-        if (qDigits.some((d) => !tset.has(d))) continue;
-        let hit = 0; for (const t of q) if (tset.has(t)) hit++;
-        if (hit < 2) continue;
-        const score = hit / q.length;
-        // Best token coverage; among ties prefer the CHEAPEST matching listing
-        // (the base offering, not an add-on bundle) so a generic name quotes the
-        // base rate. (Daniel)
-        const price = typeof l.daily_price === "number" ? l.daily_price : Infinity;
-        if (score > bestScore || (score === bestScore && price < bestPrice)) {
-          best = l; bestScore = score; bestPrice = price;
+      let bestScore = 0;
+      {
+        const allItems = await ctx.db.query("items").collect();
+        const im = bestMatch(
+          item_name,
+          allItems,
+          (i) => i.name_canonical,
+          (i) => (i.aliases ?? []) as string[],
+        );
+        if (im.match && im.confident) {
+          const idxRows = await ctx.db
+            .query("hygglo_product_index")
+            .withIndex("by_item_id", (q2) => q2.eq("item_id", im.match!._id))
+            .collect();
+          const pids = new Set(
+            idxRows.filter((r) => r.account_slug === account_slug).map((r) => r.product_id),
+          );
+          // Among this item's own listings prefer the CHEAPEST — that's the
+          // base offering rather than an add-on bundle built around it.
+          for (const l of listings) {
+            if (!pids.has(l.product_id)) continue;
+            if (typeof l.daily_price !== "number") continue;
+            if (!best || l.daily_price < (best.daily_price as number)) best = l;
+          }
+          if (best) bestScore = 1;
         }
       }
-      if (best && bestScore >= 0.6 && typeof best.daily_price === "number") {
+      // Fallback: Jaccard over listing names (penalises the extra tokens a fat
+      // bundle carries, unlike the old coverage score) with FULL query
+      // coverage required, so every word the renter said must be present.
+      if (!best) {
+        const ranked = rankByName(item_name, listings, (l) => l.name ?? "");
+        const top = ranked.find(
+          (r) => r.coverage === 1 && typeof r.item.daily_price === "number",
+        );
+        if (top) {
+          best = top.item;
+          bestScore = top.score;
+        }
+      }
+      if (best && bestScore >= 0.3 && typeof best.daily_price === "number") {
         const dailyRate = best.daily_price;
         const multiDayMult = days >= 30 ? 0.4 : days >= 7 ? 0.5 : days >= 3 ? 0.7 : 1.0;
         return {
@@ -563,19 +662,12 @@ export const find_owned_alternatives = query({
       (it) => it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0,
     );
 
-    // Category/model-aware tokenizer: drop fillers, stem trailing plural 's'.
-    const STOP = new Set([
-      "the", "and", "for", "with", "plus", "set", "kit", "bundle", "combo",
-      "portable", "battery", "powered", "wireless", "pro", "system", "alternative",
-      "like", "or", "channel", "full", "frame", "camera", "lens",
-    ]);
-    const stem = (t: string) => (t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t);
-    const toks = (str: string) =>
-      new Set(
-        (str.toLowerCase().match(/[a-z0-9]+/g) ?? [])
-          .filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t))
-          .map(stem),
-      );
+    // NOTE (2026-08-21): the old local tokenizer here listed "pro", "full",
+    // "frame", "camera" and "lens" as STOP words. That made "BMPCC 6K Pro" and
+    // "BMPCC 6K Full Frame" both reduce to {bmpcc, 6k} — identical — so the
+    // ranker could not tell two different camera bodies apart and happily
+    // offered the wrong one. Ranking now uses the shared, variant-preserving
+    // matcher in lib/item_name_match.ts instead.
 
     // Price via real Hygglo listing name-token match (any account — shared gear).
     const PSTOP = new Set(["the", "and", "for", "with", "plus", "set", "kit", "sony", "lens"]);
@@ -604,40 +696,111 @@ export const find_owned_alternatives = query({
       return best;
     };
 
-    // Rank by name similarity when we have the requested item's name.
+    // Rank by SUBSTITUTABILITY, not bare name overlap. A renter asking for a
+    // Blackmagic cinema body should be offered the other Blackmagic body (same
+    // family, and ideally a mount their glass already fits) — not whichever
+    // Sony happens to share the token "camera". Same-kind + same-mount +
+    // shared family tokens all contribute; see lib/item_name_match.ts.
     let ranked = owned as typeof owned;
     let matchedBy = kind ? "kind" : "all";
-    if (item_name) {
-      const q = toks(item_name);
-      const scored = owned
-        .map((it) => {
-          const tset = toks(it.name_canonical);
-          let hit = 0;
-          for (const t of q) if (tset.has(t)) hit++;
-          return { it, score: hit };
-        })
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score);
+    // The item being replaced — needed for mount/family affinity scoring.
+    const targetName = item_name ?? exclude_name ?? null;
+    let target: { name: string; kind?: string | null; lens_mount?: string | null } | null = null;
+    if (targetName) {
+      const tm = bestMatch(targetName, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
+      if (tm.match) {
+        target = {
+          name: tm.match.name_canonical,
+          kind: tm.match.kind ?? null,
+          lens_mount: tm.match.lens_mount ?? null,
+        };
+      } else {
+        target = { name: targetName, kind: kind ?? null, lens_mount: lens_mount ?? null };
+      }
+    }
+    if (target) {
+      const t = target;
+      ranked = owned
+        .slice()
+        .sort((a, b) =>
+          substitutionScore(t, { name: b.name_canonical, kind: b.kind, lens_mount: b.lens_mount }) -
+          substitutionScore(t, { name: a.name_canonical, kind: a.kind, lens_mount: a.lens_mount }),
+        );
+      matchedBy = "substitution";
+    } else if (item_name) {
+      const scored = rankByName(item_name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
       if (scored.length) {
-        ranked = scored.map((x) => x.it);
+        ranked = scored.map((x) => x.item);
         matchedBy = "name";
       }
     }
 
+    // What each alternative ACTUALLY comes with, resolved by IDENTITY via the
+    // deterministic product_id index — never by matching the listing title.
+    //
+    // Listing titles are SEO keyword-stuffed and actively lie about identity:
+    // the real BMPCC 6K Full Frame listing is titled "...Dual Native ISO)
+    // Bmpcc 6k pro camera cinema", i.e. it contains the RIVAL body's full name.
+    // Any title-similarity lookup (including a Jaccard one) therefore hands
+    // back the wrong body's kit. Identity-only, or nothing.
+    //
+    // Returning null when there is no mapping is deliberate and correct: the
+    // agent must say it will confirm, not invent contents. Inventing is exactly
+    // what produced "comes with cage, 1TB card, and batteries" for a body that
+    // has no listing at all.
+    const idxAll = await ctx.db.query("hygglo_product_index").collect();
+    const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
+    const describeFor = (
+      itemId: string,
+    ): { included: string | null; listing: string | null } => {
+      const pids = idxAll
+        .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
+        .map((r) => r.product_id);
+      for (const pid of pids) {
+        const l = listingByPid.get(pid) as { name?: string; description?: string } | undefined;
+        if (l && (l.description || l.name)) {
+          return { included: l.description ?? null, listing: l.name ?? null };
+        }
+      }
+      return { included: null, listing: null };
+    };
+
     const exclude = (exclude_name ?? "").toLowerCase().trim();
+    const targetLower = (item_name ?? "").toLowerCase().trim();
     const alternatives: Array<Record<string, unknown>> = [];
     for (const it of ranked) {
-      if (exclude && it.name_canonical.toLowerCase() === exclude) continue;
+      const nameLower = it.name_canonical.toLowerCase();
+      // Never offer the very item being replaced back as its own alternative.
+      if (exclude && nameLower === exclude) continue;
+      if (targetLower && nameLower === targetLower) continue;
       if (lens_mount && it.lens_mount && it.lens_mount !== lens_mount) continue;
+      // With a known target, keep suggestions in the same category. Offering a
+      // lens as a substitute for a camera body is never useful.
+      if (target?.kind && it.kind && it.kind !== target.kind) continue;
+      const d = describeFor(String(it._id));
       alternatives.push({
         name: it.name_canonical,
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
         daily_price_gbp: priceFor(it.name_canonical),
+        included: d.included,
+        listing_name: d.listing,
+        // Does this alternative ship WITH glass? Drives "lens not included,
+        // but I can add one" instead of silently dropping the question.
+        includes_lens:
+          d.included || d.listing
+            ? /\blens|\d{2,3}\s*-?\s*\d{0,3}\s*mm\b/i.test(`${d.included ?? ""} ${d.listing ?? ""}`)
+            : null,
       });
       if (alternatives.length >= 8) break;
     }
     void account_slug;
-    return { kind: kind ?? null, matched_by: matchedBy, count: alternatives.length, alternatives };
+    return {
+      kind: kind ?? null,
+      matched_by: matchedBy,
+      target: target?.name ?? null,
+      count: alternatives.length,
+      alternatives,
+    };
   },
 });

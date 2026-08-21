@@ -519,6 +519,9 @@ export const generateDraft = action({
     // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
     // still empty.
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
+    // Names the draft route resolved but has NO kit text for — see
+    // draft_guard KIT_HALLUCINATION.
+    let noKitItems: string[] = [];
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -540,6 +543,7 @@ export const generateDraft = action({
           needs_human?: boolean;
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
+          itemsWithoutKitData?: string[];
         };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
@@ -563,6 +567,7 @@ export const generateDraft = action({
           // should never be treated the same as "verified".
           usedTools = j.usedTools === true;
           freshInquiryItems = j.resolvedItems ?? [];
+          noKitItems = j.itemsWithoutKitData ?? [];
         }
       } catch {
         return { status: "skipped", reason: "subscription_unavailable" };
@@ -708,7 +713,7 @@ export const generateDraft = action({
       // order-linked signals above — see freshInquiryItems' own comment for
       // why this can't just be done at hasItemGrounding's declaration.
       hasItemGrounding: hasItemGrounding || freshInquiryItems.length > 0,
-      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length
+      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70
             // quote as valid (the generic catalog would flag it vs its £40 range).
@@ -726,6 +731,19 @@ export const generateDraft = action({
               : undefined,
             verifiedListingItem: c.fact_pack?.verifiedListingItem,
             marketingItems: c.fact_pack?.marketingItems,
+            // Items we hold NO "what's included" text for. The agent is told
+            // not to invent kit for these; this makes it enforceable rather
+            // than advisory (see draft_guard KIT_HALLUCINATION).
+            itemsWithoutKitData: [
+              ...noKitItems,
+              ...listingFacts.filter((f) => !f.description).map((f) => f.name),
+            ].filter(
+              (n, i, arr) =>
+                !!n &&
+                arr.indexOf(n) === i &&
+                // Drop any name that DOES have kit text from another listing.
+                !listingFacts.some((f) => f.name === n && !!f.description),
+            ),
           }
         : undefined,
       availability: c.availability || freshInquiryItems.length

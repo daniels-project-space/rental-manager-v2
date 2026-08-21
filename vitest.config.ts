@@ -24,6 +24,8 @@ export default defineConfig({
     include: [
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
+      "convex/lib/item_name_match.test.ts",
+      "convex/lib/renter_bot_conversation_rubric.test.ts",
       "convex/lib/listing_equivalence.test.ts",
       "convex/lib/revenue_attribution.test.ts",
       "convex/lib/denial_classifier.test.ts",

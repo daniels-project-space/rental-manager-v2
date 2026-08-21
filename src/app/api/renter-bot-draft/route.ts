@@ -13,6 +13,61 @@ const accountCommunicationRef = makeFunctionReference<"query">(
   "settings:listAccountCommunication",
 );
 
+/**
+ * Conversation craft — the difference between a lookup service and a lender
+ * someone wants to rent from. Added 2026-08-21 after a live multi-turn review
+ * where every individual fact was eventually right but the CONVERSATION was
+ * unusable: the same "that exact one isn't available" sentence opened all
+ * three replies, a lens question was answered with a different brand's body,
+ * and a "can I collect the day before?" was priced as an extra day with no
+ * explanation and no offer.
+ *
+ * These are craft rules, not fact rules — they never license a claim that the
+ * ground-truth block above doesn't support.
+ */
+const CONVERSATION_CRAFT = `
+CONVERSATION CRAFT — how to actually write the reply:
+
+1. NEVER REPEAT YOURSELF ACROSS TURNS. Look at the conversation so far. If you
+   have already told this renter an item is unavailable, or already given the
+   pickup windows, or already named an alternative, do NOT restate it. Say it
+   ONCE, then move the conversation forward. Re-opening consecutive replies
+   with the same sentence reads like a broken machine. Answer THIS message's
+   actual question first, in your first sentence.
+
+2. ANSWER THE QUESTION THAT WAS ASKED. If they ask "does it include a lens?",
+   the reply must begin by answering about a LENS for the item under
+   discussion. Do not restate availability, do not pivot to a different
+   product line, and do not answer about a different camera than the one being
+   discussed. If they asked about a Blackmagic, answer about that Blackmagic.
+
+3. STAY IN THE RENTER'S SYSTEM. A substitute should be the same category and,
+   where possible, the same brand/family and lens mount, so their existing
+   glass and workflow still fit. Only cross to a different system if nothing
+   closer exists — and if you do, say so plainly ("that's a different system,
+   so your EF glass wouldn't fit") rather than silently swapping brand.
+
+4. LENSES AND KIT — BE USEFUL, NOT JUST ACCURATE. If a body is offered without
+   glass, don't stop at "lens not included". Immediately offer to add a
+   specific lens we own that fits its mount, and say what that would cost.
+   "Body only, but I can add the [lens] for £X/day so you're ready to shoot"
+   is the standard. Never state kit contents that aren't in the facts above.
+
+5. DAY-COUNT REQUESTS ARE A NEGOTIATION, NOT A REJECTION. When someone asks to
+   collect earlier or return later, explain the rule in ONE clear sentence,
+   then offer the workable version. Late-evening collection the night before
+   and an early-morning return can often make a 2-day booking function as a
+   single shooting day — if the calendar allows it, offer exactly that, with
+   the concrete windows. Lead with what they CAN have, not what they can't.
+
+6. UPSELL WITH RELEVANCE. Suggest only gear that genuinely serves the shoot
+   they described, and at most one or two items. A relevant lens or support for
+   a camera booking is helpful; a random accessory list is noise.
+
+7. Never repeat the pickup windows in consecutive messages, and never restate
+   the price they already have unless it changed or they asked again.
+`;
+
 // Conversational/date/question filler — NOT item-name content. Strips a free-
 // text renter message down to whatever's left, for feeding
 // calendar.getItemAvailabilityForChat's fuzzy matcher a focused candidate
@@ -126,6 +181,13 @@ export async function POST(req: Request) {
   // "UNGROUNDED_PRICE"/"UNGROUNDED_AVAILABILITY" after the groundTruth
   // extension shipped. Returning this lets the caller fold it in.
   const resolvedItems: Array<{ name: string; dailyRateGbp?: number }> = [];
+  /**
+   * Items in play that we hold NO "what's included" text for. Fed to
+   * guardDraft as factPack.itemsWithoutKitData so a fabricated kit list is
+   * caught mechanically rather than relying on the agent obeying an
+   * instruction — which, live, it did not.
+   */
+  const itemsWithoutKitData: string[] = [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
@@ -164,10 +226,33 @@ export async function POST(req: Request) {
                 item_name: it.name ?? undefined,
                 exclude_name: it.name ?? undefined,
               });
-              const list = ((alts?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
+              // Ranked by SUBSTITUTABILITY (same category, same lens mount,
+              // same product family) — the first entry is the closest real
+              // match, not just anything sharing a kind. Carry the mount and
+              // the lens-inclusion flag so the agent can answer "does it come
+              // with a lens?" from data instead of guessing.
+              const list = ((alts?.alternatives ?? []) as Array<{
+                name?: string;
+                daily_price_gbp?: number;
+                lens_mount?: string | null;
+                includes_lens?: boolean | null;
+              }>)
                 .slice(0, 5)
-                .map((a) => `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`);
-              if (list.length) altText = ` Recommend ONE of these we DO own instead, by name: ${list.join("; ")}.`;
+                .map((a) => {
+                  const price = a.daily_price_gbp != null ? ` £${a.daily_price_gbp}/day` : "";
+                  const mount = a.lens_mount ? `, ${a.lens_mount}` : "";
+                  const lens =
+                    a.includes_lens === true
+                      ? ", INCLUDES a lens"
+                      : a.includes_lens === false
+                        ? ", body only (no lens)"
+                        : "";
+                  return `${a.name}(${price}${mount}${lens})`;
+                });
+              if (list.length)
+                altText =
+                  ` Closest real alternatives WE OWN, best first: ${list.join("; ")}.` +
+                  ` Offer the FIRST one unless the renter's stated need clearly favours another. Stay in the same product family/mount where possible — do NOT jump brand or system (e.g. answering a Blackmagic request with a Sony body) unless nothing closer exists, and if you must, say plainly that it's a different system.`;
             } catch {
               /* best-effort alternatives */
             }
@@ -175,7 +260,19 @@ export async function POST(req: Request) {
           groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". Frame it ONLY as not available for their dates, then IMMEDIATELY recommend a real alternative BY NAME. Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
           continue;
         }
-        groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${it.whats_included ?? "(not listed)"}\n`;
+        // owned === null means UNVERIFIED, not "we don't own it". Before the
+        // tri-state fix these were indistinguishable and every unverified line
+        // took the concealment path above, so the bot told renters that real,
+        // free, in-stock gear was unavailable. Never conceal on unknown —
+        // check availability and answer normally.
+        if (it.owned == null) {
+          groundTruth += `- ${it.name}: ownership NOT yet verified from the listing link (this is a DATA gap, NOT a signal that we lack the item). Do NOT say or imply it is unavailable on this basis. Treat the AVAILABILITY line below as the truth for these dates.\n`;
+        }
+        if (!it.whats_included && it.name) itemsWithoutKitData.push(it.name);
+        const kitText = it.whats_included
+          ? it.whats_included
+          : "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)";
+        groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${kitText}\n`;
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const av: any = await convex.query(api.calendar.getItemAvailabilityForChat, {
@@ -246,6 +343,7 @@ export async function POST(req: Request) {
       }
       groundTruth +=
         "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the facts show the booking is already PAID/confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — confirm availability warmly, then invite them to lock it in by completing the booking. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
+      groundTruth += CONVERSATION_CRAFT;
     } else {
       // FRESH INQUIRY — no linked reservation yet (the common case for a
       // renter's very first "is X available" message, before any order
@@ -343,6 +441,7 @@ export async function POST(req: Request) {
           }
           groundTruth +=
             "Compare the renter's requested dates against the booking list above yourself (you know today's date). Use ONLY this data for availability/price on these item(s) — do NOT call check_availability again for the same item, and do NOT state a price that isn't given above.\n";
+          groundTruth += CONVERSATION_CRAFT;
           // RULE 10 — Minimum Rental Value, extended to fresh inquiries
           // (Daniel, 2026-08-18): previously this nudge only fired in the
           // order-linked branch above, so it never ran during a renter's
@@ -719,6 +818,7 @@ export async function POST(req: Request) {
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
       resolvedItems,
+      itemsWithoutKitData,
     });
   } catch (e) {
     return NextResponse.json(
