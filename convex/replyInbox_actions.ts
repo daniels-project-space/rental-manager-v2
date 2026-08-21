@@ -522,6 +522,8 @@ export const generateDraft = action({
     // Names the draft route resolved but has NO kit text for — see
     // draft_guard KIT_HALLUCINATION.
     let noKitItems: string[] = [];
+    // Verified not-rentable items reported by the draft route.
+    let routeMarketingItems: string[] = [];
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -544,6 +546,7 @@ export const generateDraft = action({
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
           itemsWithoutKitData?: string[];
+          marketingItems?: string[];
         };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
@@ -568,6 +571,7 @@ export const generateDraft = action({
           usedTools = j.usedTools === true;
           freshInquiryItems = j.resolvedItems ?? [];
           noKitItems = j.itemsWithoutKitData ?? [];
+          routeMarketingItems = j.marketingItems ?? [];
         }
       } catch {
         return { status: "skipped", reason: "subscription_unavailable" };
@@ -730,7 +734,10 @@ export const generateDraft = action({
                 }
               : undefined,
             verifiedListingItem: c.fact_pack?.verifiedListingItem,
-            marketingItems: c.fact_pack?.marketingItems,
+            marketingItems: [
+              ...(c.fact_pack?.marketingItems ?? []),
+              ...routeMarketingItems,
+            ].filter((n, i, arr) => !!n && arr.indexOf(n) === i),
             // Items we hold NO "what's included" text for. The agent is told
             // not to invent kit for these; this makes it enforceable rather
             // than advisory (see draft_guard KIT_HALLUCINATION).

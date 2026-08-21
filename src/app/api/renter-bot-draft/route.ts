@@ -249,6 +249,23 @@ export async function POST(req: Request) {
                         : "";
                   return `${a.name}(${price}${mount}${lens})`;
                 });
+              // Register the alternatives as GROUNDED items. Without this the
+              // system contradicted itself: the instruction below REQUIRES
+              // naming an alternative with its real price, but the item under
+              // discussion is marketing-only so hasItemGrounding was false,
+              // and guardDraft then flagged the (correct, real) price as
+              // UNGROUNDED_PRICE — critical — so every single marketing-only
+              // inquiry escalated to Daniel and no renter ever got the
+              // alternative. These prices come from find_owned_alternatives'
+              // real listing lookup, so they are grounded by construction.
+              for (const a of (alts?.alternatives ?? []) as Array<{
+                name?: string;
+                daily_price_gbp?: number;
+              }>) {
+                if (a.name && typeof a.daily_price_gbp === "number") {
+                  resolvedItems.push({ name: a.name, dailyRateGbp: a.daily_price_gbp });
+                }
+              }
               if (list.length)
                 altText =
                   ` Closest real alternatives WE OWN, best first: ${list.join("; ")}.` +
@@ -841,6 +858,11 @@ export async function POST(req: Request) {
       usedTools,
       resolvedItems,
       itemsWithoutKitData,
+      // Verified NOT-rentable items. Registering the alternatives above turns
+      // hasItemGrounding on, which disables the blanket ungrounded-assertion
+      // net — so the marketing-specific net (guardDraft rule 8,
+      // MARKETING_ITEM_AVAILABLE) must be armed with real data instead.
+      marketingItems,
     });
   } catch (e) {
     return NextResponse.json(
