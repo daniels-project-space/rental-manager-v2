@@ -29,6 +29,7 @@ import { query, internalAction, internalMutation, internalQuery } from "./_gener
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { sendTelegram } from "./lib/telegram_convex";
+import { isWithinActivePollingWindow } from "./lib/poller_window";
 
 const STALE_MS = 30 * 60 * 1000;
 const DEDUP_MS = 60 * 60 * 1000;
@@ -36,8 +37,14 @@ const DEDUP_MS = 60 * 60 * 1000;
 export const checkPollerHealth = query({
   args: {},
   handler: async (ctx) => {
-    const accounts = await ctx.db.query("account_state").collect();
     const now = Date.now();
+    // The Trigger poller intentionally idles overnight. The staleness action
+    // already respects this window; the public probe must do the same or
+    // Uptime checks report a false production failure every London night.
+    if (!isWithinActivePollingWindow(londonMinutesSinceMidnight())) {
+      return { ok: true, staleCount: 0, checkedAt: now, skippedOffHours: true };
+    }
+    const accounts = await ctx.db.query("account_state").collect();
     const stale = accounts.filter(
       (a) => (a.mode === "active" || a.mode === "paused") && now - (a.lastSuccessfulPollAt ?? 0) > STALE_MS,
     );
@@ -142,11 +149,6 @@ async function enqueueRecoveryPoll(): Promise<{ ok: boolean; detail?: string }> 
   }
 }
 
-// Active polling window in London local time, expressed as minutes-since-
-// midnight. Outside [07:00, 23:00) the poller is intentionally idle.
-const ACTIVE_WINDOW_START_MIN = 7 * 60; // 07:00
-const ACTIVE_WINDOW_END_MIN = 23 * 60; // 23:00
-
 /** Current Europe/London time as minutes-since-midnight (DST-correct via Intl). */
 function londonMinutesSinceMidnight(): number {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -170,7 +172,7 @@ export const runStalenessCheck = internalAction({
     // Return a type-correct "skipped" report WITHOUT scanning account_state or
     // inserting alerts. (07:00 = 420 min inclusive, 23:00 = 1380 min exclusive.)
     const londonMin = londonMinutesSinceMidnight();
-    if (londonMin < ACTIVE_WINDOW_START_MIN || londonMin >= ACTIVE_WINDOW_END_MIN) {
+    if (!isWithinActivePollingWindow(londonMin)) {
       return {
         checkedAt: now,
         staleFound: 0,
