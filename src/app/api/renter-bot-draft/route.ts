@@ -150,6 +150,16 @@ export async function POST(req: Request) {
   let account_slug = "";
   let lastRenter = "";
   let recentTranscript = "";
+  /**
+   * Have we ALREADY told this renter the item isn't available?
+   *
+   * The concealment instruction re-fires on every turn, so it kept
+   * re-prompting the same opener: the renter asked about price and got "The
+   * RED Komodo isn't available for those dates, but..." for the third time.
+   * That is the original "it repeated the same text on the top every time"
+   * complaint, reintroduced by an instruction rather than by the model.
+   */
+  let alreadySaidUnavailable = false;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rc: any = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id });
@@ -160,6 +170,11 @@ export async function POST(req: Request) {
     recentTranscript = msgs
       .map((m) => `${m.sender === "renter" ? "Renter" : "Owner"}: ${m.body ?? ""}`)
       .join("\n");
+    alreadySaidUnavailable = msgs.some(
+      (m) =>
+        m.sender !== "renter" &&
+        /\b(is\s?n[o']?t available|not available|unavailable|isn'?t free)\b/i.test(m.body ?? ""),
+    );
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: "context_failed", detail: e instanceof Error ? e.message : String(e) },
@@ -341,7 +356,13 @@ export async function POST(req: Request) {
               /* best-effort alternatives */
             }
           }
-          groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". Frame it ONLY as not available for their dates, then IMMEDIATELY recommend a real alternative BY NAME. Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
+          // Say it ONCE. After that, repeating the unavailability line instead
+          // of answering the question they actually asked is the exact defect
+          // this whole pass exists to remove.
+          const framing = alreadySaidUnavailable
+            ? `You have ALREADY told this renter it isn't available — do NOT say it again. Answer THIS message's actual question about the alternative(s) instead, and do not re-open with the unavailability line.`
+            : `Frame it ONLY as not available for their dates, then IMMEDIATELY recommend a real alternative BY NAME.`;
+          groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". ${framing} Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
           continue;
         }
         // owned === null means UNVERIFIED, not "we don't own it". Before the
