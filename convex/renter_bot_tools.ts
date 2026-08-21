@@ -697,30 +697,48 @@ export const find_owned_alternatives = query({
     // offered the wrong one. Ranking now uses the shared, variant-preserving
     // matcher in lib/item_name_match.ts instead.
 
-    // Price via real Hygglo listing name-token match (any account — shared gear).
-    const PSTOP = new Set(["the", "and", "for", "with", "plus", "set", "kit", "sony", "lens"]);
-    const ptoks = (str: string) =>
-      new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => (t.length > 1 || /^[0-9]$/.test(t)) && !PSTOP.has(t)));
     // Prices and wording are account-specific. Reading every account's fat
     // listing docs both mixed brands and dominated this tool's DB bandwidth.
     const listings = await ctx.db
       .query("online_listings")
       .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
       .collect();
-    const priceFor = (name: string): number | null => {
-      const q = ptoks(name);
-      const qDigits = [...q].filter((t) => /^[0-9]+$/.test(t) || /mm$/.test(t));
+    // Resolve price by IDENTITY (item -> product_id index -> listing), the
+    // same path lookup_pricing uses.
+    //
+    // The old implementation here matched listing NAME tokens at >=0.6
+    // coverage and took the CHEAPEST hit. Live consequence: this tool quoted
+    // the Sony FX3 at £18/day while lookup_pricing quoted the real £40/day
+    // from its actual listing — so a single conversation said "£18/day" in one
+    // turn and "£112 for 4 days" (£40/day) in another, and every substitution
+    // we offered was under-priced. Identity, not similarity.
+    const idxAll = await ctx.db.query("hygglo_product_index").collect();
+    const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
+    const pidsForItem = (itemId: string): number[] =>
+      idxAll
+        .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
+        .map((r) => r.product_id);
+    // Curated fallback for items with no listing on THIS account — the same
+    // source lookup_pricing falls back to, so the two tools cannot disagree.
+    // Without it, switching to identity-only resolution left most
+    // alternatives with a null price, which stops the bot quoting them at all.
+    const catalog = await ctx.db.query("pricing_catalog").collect();
+    const catalogPrice = new Map<string, number>();
+    for (const row of catalog) {
+      const k = row.item_name_canonical.toLowerCase().trim();
+      const cur = catalogPrice.get(k);
+      if (cur === undefined || row.daily_price_min < cur) catalogPrice.set(k, row.daily_price_min);
+    }
+    const priceFor = (itemId: string, name?: string): number | null => {
       let best: number | null = null;
-      for (const l of listings) {
-        if (typeof (l as { daily_price?: number }).daily_price !== "number") continue;
-        const tset = ptoks((l as { name?: string }).name ?? "");
-        if (qDigits.some((d) => !tset.has(d))) continue;
-        let hit = 0;
-        for (const t of q) if (tset.has(t)) hit++;
-        if (q.size === 0 || hit / q.size < 0.6) continue;
-        const price = (l as { daily_price: number }).daily_price;
-        if (best === null || price < best) best = price;
+      for (const pid of pidsForItem(itemId)) {
+        const l = listingByPid.get(pid) as { daily_price?: number } | undefined;
+        if (typeof l?.daily_price !== "number") continue;
+        // Among an item's OWN listings prefer the cheapest — that's its base
+        // offering rather than a bundle built around it.
+        if (best === null || l.daily_price < best) best = l.daily_price;
       }
+      if (best === null && name) best = catalogPrice.get(name.toLowerCase().trim()) ?? null;
       return best;
     };
 
@@ -782,15 +800,10 @@ export const find_owned_alternatives = query({
     // agent must say it will confirm, not invent contents. Inventing is exactly
     // what produced "comes with cage, 1TB card, and batteries" for a body that
     // has no listing at all.
-    const idxAll = await ctx.db.query("hygglo_product_index").collect();
-    const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
     const describeFor = (
       itemId: string,
     ): { included: string | null; listing: string | null } => {
-      const pids = idxAll
-        .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
-        .map((r) => r.product_id);
-      for (const pid of pids) {
+      for (const pid of pidsForItem(itemId)) {
         const l = listingByPid.get(pid) as { name?: string; description?: string } | undefined;
         if (l && (l.description || l.name)) {
           return { included: l.description ?? null, listing: l.name ?? null };
@@ -816,7 +829,7 @@ export const find_owned_alternatives = query({
         name: it.name_canonical,
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
-        daily_price_gbp: priceFor(it.name_canonical),
+        daily_price_gbp: priceFor(String(it._id), it.name_canonical),
         included: d.included,
         listing_name: d.listing,
         // Does this alternative ship WITH glass? Drives "lens not included,
