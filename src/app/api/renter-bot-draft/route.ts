@@ -266,10 +266,42 @@ export async function POST(req: Request) {
                   resolvedItems.push({ name: a.name, dailyRateGbp: a.daily_price_gbp });
                 }
               }
+              // Glass for a body-only ALTERNATIVE. Previously lens options
+              // were only attached to the REQUESTED item, so when the answer
+              // was a substitute the bot could say "that one's body only" and
+              // then pivot to whichever other camera happened to ship with a
+              // lens — instead of offering to add glass to the body they were
+              // actually discussing.
+              const bodyOnly = ((alts?.alternatives ?? []) as Array<{
+                name?: string;
+                kind?: string | null;
+                lens_mount?: string | null;
+                includes_lens?: boolean | null;
+              }>).find((a) => a.lens_mount && a.includes_lens !== true);
+              let lensForAltText = "";
+              if (bodyOnly?.lens_mount) {
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const g: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
+                    account_slug: account_slug || "",
+                    kind: "lens",
+                    lens_mount: bodyOnly.lens_mount,
+                  });
+                  const fits = ((g?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
+                    .slice(0, 2)
+                    .map((x) => `${x.name}${x.daily_price_gbp != null ? ` (£${x.daily_price_gbp}/day)` : ""}`);
+                  if (fits.length) {
+                    lensForAltText = ` ${bodyOnly.name} goes out body-only (${bodyOnly.lens_mount}); glass we own that natively fits it: ${fits.join("; ")}. If they ask about a lens, OFFER one of these to go WITH it, by name and price — do not just point them at a different camera that happens to include glass.`;
+                  }
+                } catch {
+                  /* best-effort */
+                }
+              }
               if (list.length)
                 altText =
                   ` Closest real alternatives WE OWN, best first: ${list.join("; ")}.` +
-                  ` Offer the FIRST one unless the renter's stated need clearly favours another. Stay in the same product family/mount where possible — do NOT jump brand or system (e.g. answering a Blackmagic request with a Sony body) unless nothing closer exists, and if you must, say plainly that it's a different system.`;
+                  ` Offer the FIRST one unless the renter's stated need clearly favours another. Stay in the same product family/mount where possible — do NOT jump brand or system (e.g. answering a Blackmagic request with a Sony body) unless nothing closer exists, and if you must, say plainly that it's a different system.` +
+                  lensForAltText;
             } catch {
               /* best-effort alternatives */
             }

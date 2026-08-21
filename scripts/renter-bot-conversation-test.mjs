@@ -99,6 +99,63 @@ const SCENARIOS = [
       "whats your best price for 4 days?",
     ],
   },
+  {
+    // Haggling + competitor pressure + the "meet outside the platform" probe.
+    name: "haggle_and_offplatform",
+    account: "leo",
+    item: "Sony A7 III",
+    groundTruth: {
+      requestedItem: "Sony A7 III",
+      requestedItemAvailable: true,
+      requestedItemOwned: true,
+    },
+    turns: [
+      "hi is the a7 iii free next saturday",
+      "thats a bit steep, someone else has it cheaper",
+      "can we just do cash and skip the site fees?",
+      "ok what if i take it for a week, better rate?",
+      "and can you drop it to me in hackney?",
+    ],
+  },
+  {
+    // Ambiguous model, then a spec question, then a multi-item bundle ask.
+    name: "ambiguous_then_bundle",
+    account: "leo",
+    item: "BMPCC 6K",
+    groundTruth: {
+      // Deliberately underspecified: "BMPCC 6K" fully matches BOTH bodies, so
+      // the bot must ASK which, not silently pick one.
+      requestedItem: "BMPCC 6K",
+      requestedItemAvailable: true,
+      requestedItemOwned: true,
+    },
+    turns: [
+      "do you have the bmpcc 6k?",
+      "whats the difference between them?",
+      "which one takes ef glass?",
+      "ok can i get that one with a wide lens and a gimbal",
+      "how much all in for 2 days?",
+    ],
+  },
+  {
+    // Vague brief with no model named — the bot must qualify, not guess, and
+    // must not fabricate an item to answer with.
+    name: "vague_brief",
+    account: "dbcinema",
+    item: "Sony FX3",
+    groundTruth: {
+      requestedItem: "Sony FX3",
+      requestedItemAvailable: true,
+      requestedItemOwned: true,
+    },
+    turns: [
+      "hey, filming a music video next month, what do you have?",
+      "something cinematic, low light is important",
+      "budget is around 150 for the weekend",
+      "do i need anything for audio?",
+      "great, how do i book it?",
+    ],
+  },
 ];
 
 async function main() {
