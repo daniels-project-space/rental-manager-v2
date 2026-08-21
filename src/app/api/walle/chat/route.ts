@@ -12,14 +12,12 @@
  *      (see prepareStep) so the model can't skip the tool and confabulate.
  *   2. Streams the LLM response via OpenRouter → CHAT_MODEL (google/gemini-3.7-flash,
  *      CHAT_MODEL_SMART for compat/optics intents — same model currently). The
- *      plain lane is Gemini-only (Daniel, 2026-08-17: no Haiku fallback) — a
- *      primary failure surfaces as a real error instead of a silent Haiku
- *      switch. The smart lane still falls back to CHAT_MODEL_SMART_FALLBACK
- *      (Claude Sonnet 4.6) if Gemini errors — that decision was scoped to
- *      Haiku specifically, so compat/availability/inventory questions keep a
- *      non-Gemini safety net. See /api/walle/health for a live per-lane
- *      probe. The shared read-only Convex query tools are available (max 4
- *      hops) on whichever lane answers.
+ *      Gemini-only on BOTH lanes: there is no Anthropic fallback anywhere
+ *      (Daniel — Haiku dropped 2026-08-17, Sonnet dropped 2026-08-21). A
+ *      primary failure surfaces as a real, visible error rather than being
+ *      silently masked by a switch to another provider. See
+ *      /api/walle/health for a live per-lane probe. The shared read-only
+ *      Convex query tools are available (max 4 hops).
  *   3. On completion, persists the last user turn + the full assistant text
  *      through Convex `dashboard_chat:appendTurn`.
  *
@@ -50,7 +48,6 @@ import {
 import {
   CHAT_MODEL,
   CHAT_MODEL_SMART,
-  CHAT_MODEL_SMART_FALLBACK,
 } from "../../../../lib/ai-models";
 import { traceWalle } from "../../../../lib/walle/langfuse";
 
@@ -153,18 +150,19 @@ export async function POST(req: Request) {
   // Last user content (drives intent routing + persistence).
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const lastUserContent = lastUser ? extractText(lastUser) : "";
-  // Compatibility / optics turns route to Sonnet (Haiku inverted the APS-C vs
-  // full-frame fact from memory). Grounding itself is carried by the always-
-  // injected inventory index + the grounding rules, not a forced tool call:
-  // Mastra's agent loop has no per-step prepareStep, so toolChoice:"required"
-  // would force a tool on EVERY step and never emit final text. The model
-  // elects the tools on its own (reliably, on Haiku/Sonnet) for the turns that
-  // need them.
-  // Compatibility/optics, per-item availability, and inventory/spec/autofocus
-  // turns all go to the smart model. These are the questions with one correct
-  // answer in the data that Haiku kept answering from memory (the "everything
-  // he says is wrong" set); Sonnet reliably elects the grounding tool and
-  // respects the never-guess rules. Everything else stays on cheap Haiku.
+  // Compatibility/optics, per-item availability, and inventory/spec turns
+  // route to the smart lane. These are the questions with exactly one correct
+  // answer in the data, and historically the ones a weaker model answered from
+  // memory instead of the tools (the "everything he says is wrong" set).
+  //
+  // Grounding is carried by the always-injected inventory index + the
+  // grounding rules, not a forced tool call: Mastra's agent loop has no
+  // per-step prepareStep, so toolChoice:"required" would force a tool on
+  // EVERY step and never emit final text. The model elects the tools itself.
+  //
+  // Both lanes are the same Gemini model today, so this split is currently a
+  // routing seam kept for future divergence rather than a live cost/quality
+  // trade — see ai-models.ts.
   const needsSmart =
     COMPAT_INTENT.test(lastUserContent) ||
     AVAILABILITY_INTENT.test(lastUserContent) ||
@@ -285,46 +283,18 @@ export async function POST(req: Request) {
           `[walle/chat] primary model ${modelId} produced no output`,
           primaryErr instanceof Error ? primaryErr.stack : primaryErr,
         );
-        // Daniel, 2026-08-17: no Haiku fallback, Gemini-only for the plain
-        // lane -- a primary failure now surfaces as a real, visible error
-        // (see the deltas===0 block below) instead of being silently
-        // masked by an automatic switch to Claude Haiku 4.5. The smart
-        // lane's Sonnet fallback is untouched (that decision was scoped to
-        // Haiku specifically) -- compat/availability/inventory questions
-        // still have a non-Gemini safety net.
-        if (needsSmart) {
-          const fallbackId = CHAT_MODEL_SMART_FALLBACK;
-          try {
-            const fbModel = await getVaultOpenRouterModel(fallbackId);
-            const fbAgent = buildWalleChatAgent({
-              instructions: system,
-              model: fbModel,
-              tools,
-            });
-            const fbResult = await fbAgent.stream(modelMessages, {
-              maxSteps: 4,
-              modelSettings: { maxOutputTokens: 1800 },
-              toolChoice: "auto",
-            });
-            deltas = await drain(fbResult.textStream);
-            if (deltas > 0) {
-              console.warn(
-                `[walle/chat] served via fallback ${fallbackId} (primary ${modelId} was empty)`,
-              );
-            }
-          } catch (fbErr) {
-            console.error(
-              `[walle/chat] fallback ${fallbackId} also failed:`,
-              fbErr instanceof Error ? fbErr.stack : fbErr,
-            );
-          }
-        }
+        // Daniel, 2026-08-21: NO Anthropic fallback on any lane. The plain
+        // lane lost its Haiku fallback on 2026-08-17; the smart lane's Sonnet
+        // fallback is now gone too, so there is no Claude call anywhere in
+        // this codebase. A primary failure surfaces as a real, visible error
+        // (the deltas===0 block below) rather than being silently masked by a
+        // switch to another provider.
       }
 
       if (deltas === 0) {
         // Never end on an empty bubble: say so, in the chat, where Daniel is.
         const msg =
-          "WallE can't reach its language model right now — both the primary and fallback lanes failed. Check OpenRouter credits/key, then GET /api/walle/health for the exact error.";
+          "WallE can't reach its language model right now — the Gemini lane returned nothing. Check OpenRouter credits/key, then GET /api/walle/health for the exact error.";
         assistantText = msg;
         writer.write({ type: "text-delta", id: "0", delta: msg });
       }

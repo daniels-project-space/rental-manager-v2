@@ -24,7 +24,6 @@ import { getVaultOpenRouterModel } from "@/lib/llm-client";
 import {
   CHAT_MODEL,
   CHAT_MODEL_SMART,
-  CHAT_MODEL_SMART_FALLBACK,
 } from "@/lib/ai-models";
 
 export const dynamic = "force-dynamic";
@@ -90,14 +89,13 @@ export async function GET() {
   const vaultConfigured = Boolean(process.env.VAULT_ACCESS_TOKEN);
 
   // Dedupe: primary fast/smart are usually the same model id.
-  // Daniel, 2026-08-17: no Haiku fallback on the plain lane — probing
-  // CHAT_MODEL_FALLBACK here would report on a lane the chat route no
-  // longer actually falls back to. fallback_smart (Sonnet) is real —
+  // Daniel, 2026-08-21: there is NO fallback lane on either the plain or the
+  // smart path any more, so probing one would report on a lane the chat route
+  // cannot actually use. Only the real lanes are probed —
   // the smart lane still uses it.
   const wanted: Array<[string, string]> = [
     ["primary", CHAT_MODEL],
     ["primary_smart", CHAT_MODEL_SMART],
-    ["fallback_smart", CHAT_MODEL_SMART_FALLBACK],
   ];
   const seen = new Set<string>();
   const lanes = wanted.filter(([, id]) => {

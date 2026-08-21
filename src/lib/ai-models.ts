@@ -35,50 +35,52 @@ export const CALENDAR_EXTRACTION_MODEL: string =
  * widget (`/api/chat`) and the WallE chat bot (`/api/walle/chat`). These call
  * read-only Convex tools and must ground every number; DeepSeek-chat under
  * toolChoice:auto intermittently skipped the tools and confabulated (FX3
- * earnings/utilization, 2026-06-01), so these run on Claude Haiku — a far more
- * reliable tool-caller — while the cheap single-shot text gens (joke / narrate
- * / compact) stay on DEEPSEEK_MODEL. A distinct env var (NOT DEEPSEEK_MODEL,
- * which is already pinned on Vercel) so this default actually applies in prod.
- * 2026-08-16: primary lane moved to Gemini 3.7 Flash on cost — $0.375 / $1.875
- * per 1M tok (in/out) vs Haiku 4.5's $1 / $5 and Sonnet 4.6's $3 / $15, i.e.
- * ~62% and ~87% cheaper.
- * 2026-08-17 (Daniel): removed the Haiku fallback for this plain lane — no
- * Haiku calls anywhere. A primary failure now surfaces as a real, visible
- * error (see /api/walle/chat, /api/walle/health) instead of a silent switch
- * to Claude. The smart lane's Sonnet fallback (CHAT_MODEL_SMART_FALLBACK)
- * is untouched — that decision was scoped to Haiku specifically.
+ * earnings/utilization, 2026-06-01), so these need a reliable tool-caller,
+ * while the cheap single-shot text gens (joke / narrate / compact) stay on
+ * DEEPSEEK_MODEL. A distinct env var (NOT DEEPSEEK_MODEL, which is already
+ * pinned on Vercel) so this default actually applies in prod.
+ *
+ * 2026-08-16: moved to Gemini 3.7 Flash on cost — $0.375 / $1.875 per 1M tok
+ * (in/out), roughly 62% cheaper than the Claude Haiku 4.5 lane it replaced and
+ * ~87% cheaper than Sonnet 4.6.
+ * 2026-08-21 (Daniel): Gemini everywhere. No Anthropic model is referenced in
+ * this codebase on any lane, primary or fallback.
  */
 export const CHAT_MODEL: string =
   process.env.CHAT_MODEL ?? "google/gemini-3.7-flash";
 
 /**
  * Smarter chat model for REASONING-HEAVY chat turns — gear compatibility /
- * optics questions where Haiku confabulated (e.g. inverting the APS-C vs
- * full-frame vignetting fact, 2026-06-02). The chat routes pick this over
- * CHAT_MODEL when a compatibility/optics intent is detected; plain existence
- * and metric turns stay on the cheap lane. Now the same Gemini 3.7 Flash: it
- * already undercuts the OLD cheap lane (Haiku) on price, so there is no saving
- * left to win by splitting, and one model means one grounding behaviour to
- * reason about. Env-overridable per deployment if the two need to diverge.
+ * optics questions that a weaker model answered from memory (e.g. inverting
+ * the APS-C vs full-frame vignetting fact, 2026-06-02). The chat routes pick
+ * this over CHAT_MODEL when a compatibility/optics intent is detected; plain
+ * existence and metric turns stay on the cheap lane.
+ *
+ * Currently the SAME Gemini 3.7 Flash as CHAT_MODEL: it already undercuts the
+ * old cheap lane on price, so there is no saving left to win by splitting, and
+ * one model means one grounding behaviour to reason about. The seam is kept
+ * (and env-overridable) so the two can diverge again without touching routes.
  */
 export const CHAT_MODEL_SMART: string =
   process.env.CHAT_MODEL_SMART ?? "google/gemini-3.7-flash";
 
-/**
- * Fallback for the reasoning-heavy (compat/availability/inventory) lane only,
- * used when CHAT_MODEL_SMART yields an error or an empty reply. This is the
- * pre-2026-08-16 smart-lane primary (Claude Sonnet 4.6), kept because it is
- * the proven grounded tool-caller for these routes, and because Daniel's
- * 2026-08-17 "no Haiku" decision was scoped to Haiku specifically — Sonnet
- * isn't Haiku.
+/*
+ * NO ANTHROPIC FALLBACK — removed entirely 2026-08-21 (Daniel).
  *
- * The plain lane's old Haiku fallback (CHAT_MODEL_FALLBACK) was removed the
- * same day: no Haiku calls anywhere, even as a dormant safety net. See
- * /api/walle/chat for why a fallback existed at all (2026-08-16 OpenRouter
- * outage caused every WallE surface to go silently blank).
+ * History: the plain lane's Haiku fallback went on 2026-08-17, scoped to Haiku
+ * specifically, leaving the smart lane a Claude Sonnet 4.6 safety net
+ * (CHAT_MODEL_SMART_FALLBACK). That is now gone too — there is no Anthropic
+ * model referenced anywhere in this codebase, not even as a dormant net.
+ *
+ * Consequence, deliberately accepted: if the Gemini lane errors or returns
+ * empty, that surfaces as a real, visible error (see /api/walle/chat's
+ * deltas===0 branch and /api/walle/health) instead of being silently masked by
+ * a switch to another provider. The 2026-08-16 OpenRouter outage — which made
+ * every WallE surface go blank — is the scenario a fallback covered; it is now
+ * covered by failing loudly rather than by paying for a second provider.
+ *
+ * Do not reintroduce a cross-provider fallback here without saying so.
  */
-export const CHAT_MODEL_SMART_FALLBACK: string =
-  process.env.CHAT_MODEL_SMART_FALLBACK ?? "anthropic/claude-sonnet-4.6";
 
 /** xAI direct Grok chat model — used when AI_PROVIDER=xai. */
 export const GROK_CHAT_MODEL: string =

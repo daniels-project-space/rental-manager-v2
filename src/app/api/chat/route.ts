@@ -25,8 +25,8 @@
  *   re-hydrates on every render, so history survives reloads.
  *
  * Provider:
- *   OpenRouter → CHAT_MODEL (default Claude Haiku 4.5), the same path the
- *   WallE chat route uses. Haiku is a reliable tool-caller; DeepSeek-chat was
+ *   OpenRouter → CHAT_MODEL (google/gemini-3.7-flash), the same path the
+ *   WallE chat route uses. It is a reliable tool-caller; DeepSeek-chat was
  *   swapped off these two surfaces after it intermittently skipped the
  *   grounding tools and confabulated numbers (2026-06-01).
  */

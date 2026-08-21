@@ -579,11 +579,11 @@ export const generateDraft = action({
     }
 
     if (!mastraOk) {
-    // Haiku 4.5 is the default draft model now — much smarter than the old
+    // Gemini 3.7 Flash is the default draft model — much smarter than the old
     // deepseek-flash at tracking context and following the grounding, and
     // cheap/fast enough for every draft. Genuine high-stakes turns (refund,
     // damage-on-shipped, legal, big-£) still escalate to Sonnet when the master
-    // "Escalate to Sonnet" toggle is on; everything else runs on Haiku.
+    // "Escalate" toggle is on; everything else runs on the same Gemini lane.
     const useStrongModel = highStakes && c.escalate_to_sonnet !== false;
     // TOOLS: give the draft a way to ACTUALLY check availability for an item and
     // its dates, instead of guessing or hedging "let me check". The model calls
@@ -611,7 +611,7 @@ export const generateDraft = action({
       }),
     };
     const gen = await gatedGenerateText({
-      model: await getActionLlmModel(useStrongModel ? { strong: true } : { haiku: true }),
+      model: await getActionLlmModel(useStrongModel ? { strong: true } : { draft: true }),
       system,
       prompt,
       tools: draftTools,
@@ -644,7 +644,7 @@ export const generateDraft = action({
           .filter(Boolean)
           .join("\n\n");
         const chk = await gatedGenerateText({
-          model: await getActionLlmModel({ haiku: true }),
+          model: await getActionLlmModel({ draft: true }),
           system:
             "You fact-check an equipment-rental owner's reply drafts. You get the GROUNDING (the only true facts) and a DRAFT. " +
             "Find any sentence that states a specific PRICE, a SPEC, what's INCLUDED, or that we OWN / have a specific item IN STOCK, which the grounding does NOT support. " +

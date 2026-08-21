@@ -66,26 +66,36 @@ let _openrouter: ReturnType<typeof createOpenRouter> | null = null;
  *  are stable. */
 const PROVIDER_PIN = { only: ["deepseek", "alibaba"] } as const;
 
-export async function getActionLlmModel(opts?: { strong?: boolean; haiku?: boolean; calendarExtraction?: boolean }) {
+export async function getActionLlmModel(opts?: { strong?: boolean; draft?: boolean; calendarExtraction?: boolean }) {
   if (!_openrouter) {
     const key = await getVaultKey("openrouter", "OPENROUTER_API_KEY");
     _openrouter = createOpenRouter({ apiKey: key });
   }
   // High-stakes turns (refund, damage-on-shipped, big-£ negotiation, legal,
-  // sarcasm) route to a stronger reasoning model — same Sonnet the dashboard
-  // chat uses for its hard turns. No provider pin (anthropic is its own).
+  // sarcasm) used to route to Claude Sonnet 4.6 here.
+  //
+  // Removed 2026-08-21 (Daniel: remove the Claude fallback fully, no residue).
+  // There is no Anthropic model anywhere in this codebase now. Note this was
+  // NOT a fallback — it was a primary model for the hardest turns — so the
+  // trade is real: high-stakes drafts now run on the same Gemini lane as
+  // everything else. These are also the turns most likely to escalate to
+  // Daniel rather than send, which is what makes the trade acceptable.
+  //
+  // Hardcoded with no env override, for the same reason as the draft tier
+  // below: a stray legacy CHAT_MODEL_SMART on some deployment must never
+  // silently route money/legal turns back to Anthropic.
   if (opts?.strong) {
-    return _openrouter(
-      process.env.CHAT_MODEL_SMART ?? "anthropic/claude-sonnet-4.6",
-    );
+    return _openrouter("google/gemini-3.7-flash");
   }
-  // Gemini 3.7 Flash — the default draft tier (Daniel, 2026-08-17: replace all
-  // Haiku calls with Gemini 3.7 Flash, no Haiku fallback). Stronger than
-  // deepseek-flash at tracking context + following the grounding. Hardcoded,
-  // no env override — same reasoning as getRenterBotModel() in
-  // src/lib/llm-client.ts: a stray legacy env var must never silently bring
-  // Haiku back for drafts.
-  if (opts?.haiku) {
+  // Gemini 3.7 Flash — the default draft tier. Stronger than deepseek-flash at
+  // tracking context + following the grounding. Hardcoded, no env override —
+  // same reasoning as getRenterBotModel() in src/lib/llm-client.ts: a stray
+  // legacy env var must never silently route drafts to another provider.
+  //
+  // Flag renamed from `haiku` to `draft` on 2026-08-21: it had already been
+  // pointed at Gemini, so the old name described a model this codebase no
+  // longer calls anywhere.
+  if (opts?.draft) {
     return _openrouter("google/gemini-3.7-flash");
   }
   // Calendar times are negotiated conversationally and are displayed as
@@ -491,7 +501,7 @@ export const resolveReservation = action({
           // Haiku 4.5: resolving a renter's fuzzy item mention -> the real listing
           // is what feeds the draft its facts. Better resolution = more threads
           // grounded = fewer hedges/guesses. (was deepseek-flash)
-          model: await getActionLlmModel({ haiku: true }),
+          model: await getActionLlmModel({ draft: true }),
           schema: RESOLUTION_SCHEMA,
           messages: [
             { role: "system", content: modelPrompt() },
