@@ -29,12 +29,13 @@ WARNING — read before trusting the output: GEPA optimises toward whatever the
 metric says. Our rubric has produced false positives during development. Fix
 rubric precision first, or this will faithfully overfit to its mistakes.
 
-  export RENTER_BOT_API_SECRET=...   # or inject via the vault runner
+Runs through Convex, which forwards the override to the draft route, so
+RENTER_BOT_API_SECRET stays server-side and is never handled here.
+
   python3 scripts/gepa-optimize-craft.py --budget 30
 """
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess  # noqa: S404 - trusted, fixed-argv local tooling only
@@ -105,9 +106,6 @@ def main():
     )
     ap.add_argument("--baseline-only", action="store_true", help="just score the current prompt and exit")
     args = ap.parse_args()
-
-    if not os.environ.get("RENTER_BOT_API_SECRET"):
-        sys.exit("RENTER_BOT_API_SECRET not set — the draft route will reject every call.")
 
     scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
     seed = current_craft()

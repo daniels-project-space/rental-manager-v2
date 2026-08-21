@@ -1,0 +1,52 @@
+[mcp_servers.convex]
+command = "npx"
+args = ["--no-install", "convex", "mcp", "start", "--project-dir", "/home/ubuntu/rental-manager-v2"]
+cwd = "/home/ubuntu/rental-manager-v2"
+enabled_tools = [
+  "status",
+  "functionSpec",
+  "insights",
+  "logs",
+  "tables",
+  "envGet",
+  "envList",
+  "data",
+]
+default_tools_approval_mode = "approve"
+startup_timeout_sec = 15
+tool_timeout_sec = 60
+
+[mcp_servers.trigger]
+command = "npx"
+args = [
+  "--offline",
+  "-y",
+  "trigger.dev@4.5.4",
+  "mcp",
+  "--readonly",
+  "--dev-only",
+  "--project-ref",
+  "proj_cdhxwycwcjdmxnsodsmc",
+  "--skip-telemetry",
+  "--log-level",
+  "error",
+]
+cwd = "/home/ubuntu/rental-manager-v2"
+enabled_tools = [
+  "search_docs",
+  "get_current_worker",
+  "get_task_schema",
+  "list_runs",
+  "get_run_details",
+  "get_span_details",
+  "wait_for_run_to_complete",
+  "list_deploys",
+  "get_query_schema",
+  "query",
+  "list_dashboards",
+  "run_dashboard_query",
+  "dev_server_status",
+]
+default_tools_approval_mode = "approve"
+startup_timeout_sec = 30
+tool_timeout_sec = 90

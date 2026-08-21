@@ -42,10 +42,21 @@ import {
  * bypasses the UK quiet-hours LLM gate. Returns the draft text.
  */
 export const generateDraft = action({
-  args: { thread_id: v.string() },
+  args: {
+    thread_id: v.string(),
+    /**
+     * Prompt-optimiser hook (GEPA). Forwarded verbatim to the draft route,
+     * which honours it ONLY on __probe__ threads and only swaps the CRAFT
+     * rules — never ground truth, tools, or any price/availability fact.
+     *
+     * It lives here rather than the optimiser calling the route directly so
+     * RENTER_BOT_API_SECRET stays server-side and is never handled locally.
+     */
+    craft_override: v.optional(v.string()),
+  },
   handler: async (
     ctx,
-    { thread_id },
+    { thread_id, craft_override },
   ): Promise<{
     status: "ok" | "skipped";
     draft?: string;
@@ -535,7 +546,9 @@ export const generateDraft = action({
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiSecret}`,
           },
-          body: JSON.stringify({ thread_id }),
+          body: JSON.stringify(
+            craft_override ? { thread_id, craft_override } : { thread_id },
+          ),
         });
         if (!resp.ok) {
           return { status: "skipped", reason: "subscription_unavailable" };

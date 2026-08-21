@@ -135,6 +135,49 @@ describe("price consistency across turns", () => {
     expect(out.failures).toContain("price_consistency");
   });
 
+  it("does NOT flag a menu of two different lenses at their two correct prices", () => {
+    // Caught by the GEPA harness on its first baseline run: the naive check
+    // saw "£20" and "£12" in one turn and called it a contradiction, when the
+    // bot was correctly offering a CHOICE. Left unfixed, an optimiser would
+    // have learned to stop offering choices.
+    const out = scoreConversation(
+      [
+        {
+          renter: "does that price include a lens ?",
+          draft:
+            "No, it's body only, but I can add a native EF lens if you need one, I have the Canon EF 24-105mm f4 for £20/day or the Canon EF 16-35mm f2.8 for £12/day.",
+        },
+      ],
+      {
+        requestedItem: "BMPCC 6K Pro",
+        requestedItemAvailable: true,
+        requestedItemOwned: true,
+        ownedItems: [
+          { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
+          { name: "Canon EF 24-105mm f4", kind: "lens", lens_mount: "Canon EF mount" },
+          { name: "Canon EF 16-35mm f2.8", kind: "lens", lens_mount: "Canon EF mount" },
+        ],
+      },
+    );
+    expect(out.failures).not.toContain("price_consistency");
+  });
+
+  it("still flags ONE item quoted at two different rates", () => {
+    const out = scoreConversation(
+      [
+        { renter: "how much?", draft: "The Sony FX3 is £18/day." },
+        { renter: "and again?", draft: "The Sony FX3 is £40/day." },
+      ],
+      {
+        requestedItem: "Sony FX3",
+        requestedItemAvailable: true,
+        requestedItemOwned: true,
+        ownedItems: [{ name: "Sony FX3", kind: "camera" }],
+      },
+    );
+    expect(out.failures).toContain("price_consistency");
+  });
+
   it("passes when the rate is stable", () => {
     const out = scoreConversation(
       [

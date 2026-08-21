@@ -518,27 +518,63 @@ export function scoreConversation(
   //    live: "the Sony FX3 at £18/day" in one turn, "£112 for 4 days" (=£40/day)
   //    in another, because two tools resolved price by different methods.
   {
-    const perDay = new Map<number, number[]>(); // rate -> turns
+    // Attribute each rate to the ITEM it was quoted for, and flag only when the
+    // SAME item carries two different rates.
+    //
+    // A bare "more than one rate in the conversation" test is wrong: offering a
+    // menu ("the 24-105 is £20/day or the 16-35 is £12/day") is exactly the
+    // behaviour we want, and the naive version flagged it as a contradiction —
+    // caught by the GEPA harness on its very first baseline run. Left unfixed,
+    // an optimiser would have learned to stop offering choices.
+    const known = [
+      ...(gt.ownedItems ?? []).map((o) => o.name),
+      gt.requestedItem,
+    ].filter(Boolean);
+    const ratesFor = new Map<string, Map<number, number[]>>(); // item -> rate -> turns
+    let sawAnyRate = false;
     turns.forEach((t, i) => {
-      for (const m of t.draft.matchAll(/£\s?(\d+(?:\.\d+)?)\s*(?:\/|\s*(?:per|a)\s*)day/gi)) {
-        const v = Math.round(parseFloat(m[1]));
-        if (!Number.isFinite(v)) continue;
-        const arr = perDay.get(v) ?? [];
-        arr.push(i + 1);
-        perDay.set(v, arr);
+      for (const s of sentences(t.draft)) {
+        for (const m of s.matchAll(/£\s?(\d+(?:\.\d+)?)\s*(?:\/|\s*(?:per|a)\s*)day/gi)) {
+          const v = Math.round(parseFloat(m[1]));
+          if (!Number.isFinite(v)) continue;
+          sawAnyRate = true;
+          // Attribute to the item named NEAREST BEFORE this price, not merely
+          // the first one in the sentence: a menu puts several item/price pairs
+          // in ONE sentence ("the 24-105 for £20/day or the 16-35 for £12/day"),
+          // and first-match attribution pinned both prices on the same lens and
+          // called it a contradiction.
+          const before = s.slice(0, m.index ?? 0).toLowerCase();
+          let subject: string | undefined;
+          let bestAt = -1;
+          for (const n of known) {
+            const at = before.lastIndexOf(n.toLowerCase());
+            if (at > bestAt) {
+              bestAt = at;
+              subject = n;
+            }
+          }
+          if (!subject || bestAt < 0) continue;
+          const byRate = ratesFor.get(subject) ?? new Map<number, number[]>();
+          const arr = byRate.get(v) ?? [];
+          arr.push(i + 1);
+          byRate.set(v, arr);
+          ratesFor.set(subject, byRate);
+        }
       }
     });
-    const rates = [...perDay.keys()];
-    // More than one distinct per-day rate is only OK if several different items
-    // are genuinely in play; with a single subject item it is a contradiction.
-    if (rates.length > 1 && (gt.ownedItems?.length ?? 0) === 0) {
+    const conflicted = [...ratesFor.entries()].filter(([, byRate]) => byRate.size > 1);
+    if (conflicted.length > 0) {
+      const [item, byRate] = conflicted[0];
+      const rs = [...byRate.keys()];
       results.push({
         check: "price_consistency",
         status: "fail",
-        detail: `Quoted ${rates.length} different daily rates across the conversation: ${rates.map((r) => `£${r}`).join(", ")}.`,
-        evidence: rates.map((r) => `£${r}/day (turn ${perDay.get(r)!.join(",")})`).join("; "),
+        detail: `"${item}" was quoted at ${rs.length} different daily rates: ${rs.map((r) => `£${r}`).join(", ")}.`,
+        evidence: rs.map((r) => `£${r}/day (turn ${byRate.get(r)!.join(",")})`).join("; "),
       });
     } else {
+      const rates = [...new Set([...ratesFor.values()].flatMap((m) => [...m.keys()]))];
+      void sawAnyRate;
       results.push({
         check: "price_consistency",
         status: "pass",

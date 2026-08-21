@@ -25,8 +25,6 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const CVX = "./node_modules/.bin/convex";
-const BASE = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
-const SECRET = process.env.RENTER_BOT_API_SECRET;
 
 function convexRun(fn, args) {
   const out = execFileSync(CVX, ["run", fn, JSON.stringify(args)], {
@@ -82,15 +80,17 @@ const SCENARIOS = {
   },
 };
 
-async function draft(threadId, craft) {
-  const res = await fetch(`${BASE}/api/renter-bot-draft`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SECRET}` },
-    body: JSON.stringify({ thread_id: threadId, craft_override: craft }),
+/**
+ * Draft via Convex rather than hitting the Vercel route directly, so
+ * RENTER_BOT_API_SECRET stays server-side and is never handled by this script
+ * or by whoever runs it. Convex forwards craft_override to the route.
+ */
+function draft(threadId, craft) {
+  const r = convexRun("replyInbox_actions:generateDraft", {
+    thread_id: threadId,
+    craft_override: craft,
   });
-  if (!res.ok) return { draft: "", error: `HTTP ${res.status}` };
-  const j = await res.json();
-  return { draft: (j.draft ?? "").trim(), needsHuman: !!j.needs_human };
+  return { draft: (r?.draft ?? "").trim(), skipped: r?.status === "skipped" };
 }
 
 async function runScenario(name, craft) {
@@ -107,7 +107,7 @@ async function runScenario(name, craft) {
       items: [{ name: sc.item }],
       messages: history,
     });
-    const { draft: text } = await draft(threadId, craft);
+    const { draft: text } = draft(threadId, craft);
     history.push({ role: "owner", text });
     turns.push({ renter: renterMsg, draft: text });
   }
@@ -115,10 +115,6 @@ async function runScenario(name, craft) {
 }
 
 async function main() {
-  if (!SECRET) {
-    console.log(JSON.stringify({ score: 0, feedback: "RENTER_BOT_API_SECRET not set — cannot evaluate." }));
-    return;
-  }
   const job = JSON.parse(readFileSync(0, "utf8"));
   const craft = job.craft;
   const names = job.scenarios?.length ? job.scenarios : Object.keys(SCENARIOS);
