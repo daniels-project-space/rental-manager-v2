@@ -419,11 +419,22 @@ export function scoreConversation(
     turns.forEach((t, i) => {
       if (!renterTopics(t.renter).includes("day_count")) return;
       const d = t.draft;
-      const explains = /extra day|counts as|two days|2 days|additional day|charged as/i.test(d);
-      const offers =
-        /evening|late|last window|early|first window|\d{1,2}\s?(am|pm)|could work|can do|happy to|that way|so it only/i.test(
+      // "adds an extra RENTAL day" did not match a bare /extra day/ — a false
+      // positive against a reply that explained the rule perfectly well.
+      const explains =
+        /extra\s+\w*\s*day|counts? as|two days|2 days|additional\s+\w*\s*day|charged as|second day|another day/i.test(
           d,
         );
+      // An OFFER is a concrete alternative arrangement, not merely reciting
+      // the pickup windows. The original transcript listed "10am to 12pm and
+      // 7-9pm" and stopped — which is precisely the non-negotiation Daniel
+      // flagged — so a bare time mention must not satisfy this.
+      const hasTime = /\d{1,2}\s?(am|pm)|evening|morning|night/i.test(d);
+      const proposes =
+        /\bso (?:you|it|that)|that way|instead|alternatively|if you(?:'d| would) prefer|you'?re welcome to|you can also|keeps? it|stays? a|still (?:only|just)|single[- ]day|one[- ]day|could work|happy to\b/i.test(
+          d,
+        );
+      const offers = hasTime && proposes;
       if (!explains) {
         findings.push({
           check: "day_count_negotiation",

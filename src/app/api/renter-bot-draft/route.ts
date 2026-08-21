@@ -332,7 +332,17 @@ export async function POST(req: Request) {
             // Bookings are {pickup:"YYYY-MM-DD HH:MM", return:"YYYY-MM-DD HH:MM"}.
             // If one RETURNS on the requested day, the item is free 1 HOUR after
             // that return time (turnaround buffer) — not fully booked, not free.
-            let conflict = false;
+            // QUANTITY-AWARE (2026-08-21). This previously treated ANY
+            // overlapping booking as a conflict, ignoring how many units we
+            // own. Live-caught by the conversation rubric: the Sony FX3 is
+            // qty 4 with 3 units free and free_whole_horizon=true, and the bot
+            // still told a renter it was "booked out this weekend" because a
+            // single unrelated booking overlapped. For every multi-unit item,
+            // one booking silently made the whole line unavailable — the same
+            // lost-booking failure as the owned:false bug, from a different
+            // direction.
+            const totalUnits = typeof m.qty === "number" && m.qty > 0 ? m.qty : 1;
+            let overlapping = 0;
             let turnaround: string | null = null;
             if (reqDate) {
               for (const b of bookings) {
@@ -341,18 +351,24 @@ export async function POST(req: Request) {
                 const rDate = rParts[0];
                 const rTime = rParts[1];
                 if (pDate && rDate && pDate <= reqDate && rDate >= reqDate) {
+                  // A booking RETURNING on the requested day frees its unit
+                  // later that day rather than blocking it outright.
                   if (rDate === reqDate && rTime) turnaround = addHour(rTime);
-                  else conflict = true;
+                  else overlapping++;
                 }
               }
             }
+            const conflict = overlapping >= totalUnits;
+            // Only surface the turnaround caveat when it's the LAST free unit;
+            // with spare units the renter can collect whenever they like.
+            if (turnaround && overlapping + 1 < totalUnits) turnaround = null;
             const verdict = turnaround
               ? `it's out on another rental that RETURNS ${reqDate} — so it's only free from ${turnaround} that day (1-hour turnaround buffer); do NOT offer it before ${turnaround}, and only inside a pickup window`
               : conflict
-                ? `BOOKED on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
+                ? `ALL ${totalUnits} unit(s) are out on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
                 : bookings.length === 0
                   ? `FREE — no bookings, available for ${reqDate ?? "the requested date"}`
-                  : `no booking conflict on ${reqDate} — available`;
+                  : `AVAILABLE for ${reqDate} — we hold ${totalUnits} of these and only ${overlapping} is/are out then, so ${totalUnits - overlapping} remain free. Do NOT describe it as booked out.`;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict}.\n`;
           }
         } catch { /* best-effort */ }
@@ -471,10 +487,19 @@ export async function POST(req: Request) {
               .slice(0, 5)
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               .map((b: any) => `${String(b.pickup ?? "").split(" ")[0]}→${String(b.return ?? "").split(" ")[0]}`);
+            // Same quantity blind spot as the order-linked branch: a bare list
+            // of booked dates reads as "unavailable then", but with several
+            // units a booking on a date does not block it. State the unit count
+            // so the model cannot infer a conflict that isn't there.
+            const units = typeof (m as { qty?: number }).qty === "number" ? (m as { qty?: number }).qty! : 1;
+            const unitNote =
+              units > 1
+                ? ` NOTE: we hold ${units} of these, so a booking on a date does NOT make it unavailable — only treat it as unavailable if ALL ${units} are out.`
+                : "";
             const verdict = m.free_whole_horizon
               ? "FREE for the next 30 days — no bookings in that window"
               : bookingDates.length
-                ? `has existing bookings on: ${bookingDates.join(", ")} (dates outside this list are free within the next 30 days)`
+                ? `has existing bookings on: ${bookingDates.join(", ")} (dates outside this list are free within the next 30 days).${unitNote}`
                 : `next confirmed-free date: ${m.next_free_date ?? "unknown — treat as unconfirmed, offer to check exact dates"}`;
             groundTruth += `- ${m.name}: ${verdict}.${priceLine}\n`;
           }
