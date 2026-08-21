@@ -157,7 +157,10 @@ const TOPIC_MARKERS: Record<Exclude<RenterTopic, "other">, RegExp> = {
   // A price question can be answered without a number — "that's the best rate
   // I can do" is a complete answer to "can you do anything on the price?".
   price: /£\s?\d|\bprice|cost|per day|\/day|\brate\b|best i can|discount|no lower|firm\b/i,
-  pickup_time: /\d{1,2}\s?(am|pm)|\bwindow|pick ?up|collect\b/i,
+  // `collect\w*` so "Collecting the evening before" counts — a bare
+  // /\bcollect\b/ missed every inflected form and failed replies that answered
+  // the timing question perfectly well.
+  pickup_time: /\d{1,2}\s?(am|pm)|\bwindow|pick ?up|collect\w*|drop ?off|evening before|morning after/i,
   availability: /\bavailable|free\b|\bbooked\b/i,
   day_count: /\bday|days|night|evening|morning\b/i,
 };
