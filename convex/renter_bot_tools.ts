@@ -177,7 +177,7 @@ export const get_listing_context = query({
       // previously discarded — so the agent answered "yes I have the BMPCC 6K"
       // and then invented a third product line with fabricated specs to
       // explain the difference. Surface the candidates instead.
-      let ambiguous_with: string[] = [];
+      let ambiguous_with: Array<{ name: string; lens_mount: string | null; kind: string | null }> = [];
       if (account_slug && typeof l.product_id === "number") {
         const prod = await ctx.db
           .query("hygglo_products")
@@ -242,7 +242,15 @@ export const get_listing_context = query({
           }
         } else if (m.match && m.ambiguousWith.length > 0) {
           ownership_source = "ambiguous_name";
-          ambiguous_with = [m.match, ...m.ambiguousWith].map((i) => i.name_canonical);
+          // Carry each candidate's REAL mount/kind. Telling them apart by
+          // mount is a fact we hold and is exactly what the renter needs
+          // ("which one takes EF glass?"); withholding it just to avoid
+          // inventing specs made the bot useless and escalate instead.
+          ambiguous_with = [m.match, ...m.ambiguousWith].map((i) => ({
+            name: i.name_canonical,
+            lens_mount: (i as { lens_mount?: string | null }).lens_mount ?? null,
+            kind: i.kind ?? null,
+          }));
         }
       }
       if (account_slug && typeof l.product_id === "number") {

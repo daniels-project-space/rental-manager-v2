@@ -75,11 +75,15 @@ CONVERSATION CRAFT — how to actually write the reply:
    list what they asked for, either call find_owned_alternatives for that
    category/mount, or say you'll confirm — never assert an absence.
 
-9. DO NOT INVENT PRODUCTS OR SPECS. Only ever discuss models named in the
-   facts above. Never describe sensor sizes, ND filters, screens, resolutions
-   or other specs to differentiate products unless that text is given to you.
-   If asked to compare, name the exact products we actually have and ask what
-   matters for their shoot rather than reciting specs from memory.
+9. DO NOT INVENT PRODUCTS OR SPECS - BUT DO USE THE FACTS YOU HAVE. Only
+   discuss models named in the facts above; never invent a variant. Never
+   state sensor sizes, ND filters, screen types or resolutions unless that
+   text is given to you. You MAY freely use what IS given - lens mount, price,
+   kit contents, availability - to compare two products and help them choose,
+   and you should: "the Pro is EF mount and the Full Frame is L-mount, so it
+   depends which glass you have" is a genuinely useful answer built entirely
+   from real data. Refusing to differentiate at all is not the goal; inventing
+   is.
 `;
 
 // Conversational/date/question filler — NOT item-name content. Strips a free-
@@ -218,7 +222,7 @@ export async function POST(req: Request) {
           : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
         groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: string[] }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -337,7 +341,10 @@ export async function POST(req: Request) {
         // fabricated specs (ND filters, screen types) to explain the
         // difference between them.
         if (Array.isArray(it.ambiguous_with) && it.ambiguous_with.length > 1) {
-          groundTruth += `- "${it.name}" is AMBIGUOUS — it matches ${it.ambiguous_with.length} DIFFERENT products we own: ${it.ambiguous_with.join(", ")}. These are the ONLY ones that exist; there is no other model in this line. Do NOT answer as if "${it.name}" were a single product, do NOT invent a variant, and do NOT state specs to tell them apart. ASK which of these they mean, listing them by their exact names.\n`;
+          const opts = it.ambiguous_with
+            .map((a) => `${a.name}${a.lens_mount ? ` — ${a.lens_mount}` : ""}`)
+            .join("; ");
+          groundTruth += `- "${it.name}" is AMBIGUOUS — it matches ${it.ambiguous_with.length} DIFFERENT products we own: ${opts}. These are the ONLY models in this line; there is no other variant. Do NOT answer as if "${it.name}" were one product and do NOT invent a variant. ASK which they mean, by exact name. You MAY and SHOULD use the mounts listed here to help them choose (e.g. which one their existing glass fits) and you may quote each one's price — those are real facts. What you must NOT do is state sensor sizes, ND filters, screen types or other specs that are not given to you.\n`;
         }
         if (!it.whats_included && it.name) itemsWithoutKitData.push(it.name);
         // A camera with no kit text still supports a USEFUL lens answer: we
