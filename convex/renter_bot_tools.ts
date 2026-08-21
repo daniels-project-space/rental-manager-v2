@@ -878,7 +878,19 @@ export const find_owned_alternatives = query({
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
         daily_price_gbp: priceFor(String(it._id), it.name_canonical),
-        included: d.included,
+        // TRUNCATED (2026-08-21). `included` is a full Hygglo listing
+        // description — SEO marketing copy that runs 700+ chars each. Times 8
+        // alternatives that made this the largest tool payload in the system
+        // (4.7KB, vs 180B-1.5KB for every other tool), and the agent loop
+        // re-sends every prior tool result on each subsequent step, so the
+        // cost was multiplied by step count.
+        //
+        // The decisive facts for choosing an ALTERNATIVE are its name, price,
+        // mount and whether it ships with glass — `includes_lens` below already
+        // carries the last one. The full kit text for the item actually being
+        // discussed still comes through get_listing_context untruncated, so
+        // nothing is lost for the question that needs it.
+        included: d.included ? d.included.slice(0, 240) : null,
         listing_name: d.listing,
         // Does this alternative ship WITH glass? Drives "lens not included,
         // but I can add one" instead of silently dropping the question.
@@ -887,7 +899,10 @@ export const find_owned_alternatives = query({
             ? /\blens|\d{2,3}\s*-?\s*\d{0,3}\s*mm\b/i.test(`${d.included ?? ""} ${d.listing ?? ""}`)
             : null,
       });
-      if (alternatives.length >= 8) break;
+      // 6, not 8. The route only ever shows the top 5 and the craft rules say
+      // to offer ONE (at most two) — the tail was never used, but was re-sent
+      // on every subsequent agent step.
+      if (alternatives.length >= 6) break;
     }
     void account_slug;
     return {
