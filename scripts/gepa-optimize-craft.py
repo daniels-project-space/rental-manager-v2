@@ -83,6 +83,10 @@ def evaluate(craft: str, scenarios):
         res = json.loads(line[-1])
     except json.JSONDecodeError:
         return 0.0, f"evaluator output was not JSON: {line[-1][:300]}"
+    q = res.get("quality")
+    c = res.get("coverage")
+    if q is not None and c is not None:
+        print(f"    quality {float(q):.3f} x coverage {float(c):.3f}")
     return float(res.get("score", 0.0)), str(res.get("feedback", ""))
 
 

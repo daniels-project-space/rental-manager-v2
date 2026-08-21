@@ -133,6 +133,8 @@ async function main() {
 
   let totalChecks = 0;
   let passedChecks = 0;
+  let totalTurns = 0;
+  let draftedTurns = 0;
   const feedbackLines = [];
   const perScenario = [];
 
@@ -143,6 +145,8 @@ async function main() {
     const passed = scored.filter((c) => c.status === "pass").length;
     totalChecks += scored.length;
     passedChecks += passed;
+    totalTurns += r.turns.length;
+    draftedTurns += drafted.length;
 
     // Empty drafts are a real failure mode (the model produced nothing usable),
     // so penalise them rather than silently scoring fewer turns.
@@ -159,12 +163,23 @@ async function main() {
     perScenario.push({ scenario: r.name, overall: out.overall, failures: out.failures });
   }
 
-  const score = totalChecks ? passedChecks / totalChecks : 0;
+  // Weight rubric quality by DRAFT COVERAGE.
+  //
+  // Without this, the score averaged only over turns that produced a draft —
+  // so a prompt that made the bot escalate more would score HIGHER (fewer
+  // turns, fewer chances to fail), and a run that drafted nothing at all would
+  // score a vacuous 1.000. An optimiser would have found that immediately.
+  // Silence is not quality: a turn that produced no reply is a failed turn.
+  const quality = totalChecks ? passedChecks / totalChecks : 0;
+  const coverage = totalTurns ? draftedTurns / totalTurns : 0;
+  const score = quality * coverage;
   const feedback = feedbackLines.length
     ? `Failures to fix:\n${feedbackLines.join("\n")}`
     : "All rubric checks passed on every scenario.";
 
-  console.log(JSON.stringify({ score, feedback, per_scenario: perScenario }));
+  console.log(
+    JSON.stringify({ score, quality, coverage, feedback, per_scenario: perScenario }),
+  );
 }
 
 main().catch((e) => {
