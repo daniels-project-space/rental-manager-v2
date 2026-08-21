@@ -496,6 +496,40 @@ export function scoreConversation(
     );
   }
 
+  // 8. PRICE CONSISTENCY ACROSS TURNS. Quoting one daily rate early and a
+  //    different one later destroys trust and is invisible per-draft. Caught
+  //    live: "the Sony FX3 at £18/day" in one turn, "£112 for 4 days" (=£40/day)
+  //    in another, because two tools resolved price by different methods.
+  {
+    const perDay = new Map<number, number[]>(); // rate -> turns
+    turns.forEach((t, i) => {
+      for (const m of t.draft.matchAll(/£\s?(\d+(?:\.\d+)?)\s*(?:\/|\s*(?:per|a)\s*)day/gi)) {
+        const v = Math.round(parseFloat(m[1]));
+        if (!Number.isFinite(v)) continue;
+        const arr = perDay.get(v) ?? [];
+        arr.push(i + 1);
+        perDay.set(v, arr);
+      }
+    });
+    const rates = [...perDay.keys()];
+    // More than one distinct per-day rate is only OK if several different items
+    // are genuinely in play; with a single subject item it is a contradiction.
+    if (rates.length > 1 && (gt.ownedItems?.length ?? 0) === 0) {
+      results.push({
+        check: "price_consistency",
+        status: "fail",
+        detail: `Quoted ${rates.length} different daily rates across the conversation: ${rates.map((r) => `£${r}`).join(", ")}.`,
+        evidence: rates.map((r) => `£${r}/day (turn ${perDay.get(r)!.join(",")})`).join("; "),
+      });
+    } else {
+      results.push({
+        check: "price_consistency",
+        status: "pass",
+        detail: rates.length ? `Daily rates quoted: ${rates.map((r) => `£${r}`).join(", ")}.` : "No daily rate quoted.",
+      });
+    }
+  }
+
   const failures = results.filter((r) => r.status === "fail").map((r) => r.check);
   const overall: "pass" | "fail" | "flag" =
     failures.length > 0 ? "fail" : results.some((r) => r.status === "flag") ? "flag" : "pass";

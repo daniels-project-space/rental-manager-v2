@@ -70,7 +70,6 @@ import type * as inquiry_context from "../inquiry_context.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as intel from "../intel.js";
 import type * as investigate_autodesc from "../investigate_autodesc.js";
-import type * as investigate_bmpcc_listings from "../investigate_bmpcc_listings.js";
 import type * as investigate_integrity from "../investigate_integrity.js";
 import type * as investigate_overrides from "../investigate_overrides.js";
 import type * as item_resolver from "../item_resolver.js";
@@ -293,7 +292,6 @@ declare const fullApi: ApiFromModules<{
   insurance_claims: typeof insurance_claims;
   intel: typeof intel;
   investigate_autodesc: typeof investigate_autodesc;
-  investigate_bmpcc_listings: typeof investigate_bmpcc_listings;
   investigate_integrity: typeof investigate_integrity;
   investigate_overrides: typeof investigate_overrides;
   item_resolver: typeof item_resolver;

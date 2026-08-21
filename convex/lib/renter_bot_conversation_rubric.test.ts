@@ -117,6 +117,36 @@ describe("a corrected conversation passes", () => {
   });
 });
 
+describe("price consistency across turns", () => {
+  // Caught live: find_owned_alternatives resolved price by cheapest
+  // token-overlap while lookup_pricing resolved by identity, so one
+  // conversation quoted the same camera at two different daily rates.
+  const DRIFT = [
+    { renter: "how much is the fx3?", draft: "The Sony FX3 is £18/day if that works." },
+    { renter: "whats the total for 4 days?", draft: "For 4 days the Sony FX3 comes to £160, so £40/day." },
+  ];
+
+  it("fails when one item is quoted at two different daily rates", () => {
+    const out = scoreConversation(DRIFT, {
+      requestedItem: "Sony FX3",
+      requestedItemAvailable: true,
+      requestedItemOwned: true,
+    });
+    expect(out.failures).toContain("price_consistency");
+  });
+
+  it("passes when the rate is stable", () => {
+    const out = scoreConversation(
+      [
+        { renter: "how much is the fx3?", draft: "The Sony FX3 is £40/day." },
+        { renter: "and for 4 days?", draft: "For 4 days it works out at £112 total, still £40/day before the multi-day rate." },
+      ],
+      { requestedItem: "Sony FX3", requestedItemAvailable: true, requestedItemOwned: true },
+    );
+    expect(out.failures).not.toContain("price_consistency");
+  });
+});
+
 describe("helpers", () => {
   it("similarity spots the near-duplicate opener", () => {
     const a = "That exact BMPCC 6K Pro isn't available for tomorrow, but I have the BMPCC 6K Full Frame available for £35/day if that works for your shoot?";
