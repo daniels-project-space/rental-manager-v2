@@ -54,6 +54,12 @@ export interface ConversationGroundTruth {
    * exist. Catches an invented variant being discussed as if we stocked it.
    */
   phantomPatterns?: string[];
+  /**
+   * Item names ALREADY included in the listing under discussion. Offering any
+   * of these as a paid add-on is a defect: the renter is being quoted for gear
+   * they are already paying for.
+   */
+  kitContents?: string[];
 }
 
 export type Status = "pass" | "fail" | "flag" | "n_a";
@@ -432,6 +438,94 @@ export function scoreConversation(
             },
           ]),
     );
+  }
+
+  // 5b. UPSELLING WHAT IS ALREADY INCLUDED. Live-caught: on a bundle whose kit
+  //     is a body plus the Canon 16-35 and 24-105, the bot offered those exact
+  //     two lenses at £12 and £20/day. Quoting a renter for gear already in
+  //     their rental reads as a scam and hides the bundle's selling point.
+  if (gt.kitContents?.length) {
+    const findings: CheckResult[] = [];
+    const OFFER_RE =
+      /\b(add|adding|include|throw in|for an extra|on top|available for|can have)\b/i;
+    const PRICE_RE = /£\s*\d+/;
+    turns.forEach((t, i) => {
+      for (const s of sentences(t.draft)) {
+        for (const kit of gt.kitContents ?? []) {
+          const key = kit.toLowerCase();
+          if (!s.toLowerCase().includes(key)) continue;
+          // Only an OFFER is a defect. Mentioning included gear is the goal.
+          if (!(OFFER_RE.test(s) && PRICE_RE.test(s))) continue;
+          findings.push({
+            check: "upsold_included_item",
+            status: "fail",
+            turn: i + 1,
+            detail: `Offered "${kit}" as a paid add-on, but it is ALREADY INCLUDED in this rental.`,
+            evidence: s,
+          });
+        }
+      }
+    });
+    results.push(
+      ...(findings.length
+        ? findings
+        : [
+            {
+              check: "upsold_included_item",
+              status: "pass" as Status,
+              detail: "Nothing already in the kit was offered as a paid extra.",
+            },
+          ]),
+    );
+  }
+
+  // 5c. A SOLVABLE BLOCKER LEFT UNSOLVED. Live-caught: the bot correctly said
+  //     the PL-mount Blazar lenses need a PL-to-EF adapter that isn't
+  //     included, then stopped — while we rent that exact adapter. Naming the
+  //     obstacle without the fix we stock talks the renter out of a booking.
+  {
+    const owned = gt.ownedItems ?? [];
+    const solvers = owned.filter((o) => /\bto\b.*\bmount\b|adapter/i.test(o.name));
+    const BLOCK_RE =
+      /\b(adapter|adaptor)\b|\bwould(?:n't| not) fit\b|\bdoes(?:n't| not) fit\b/i;
+    if (solvers.length) {
+      let hit: { turn: number; sentence: string } | null = null;
+      let mentioned = false;
+      const wholeConvo = turns.map((t) => t.draft).join(" ").toLowerCase();
+      // Did we ever actually OFFER one of the adapters we own?
+      const offered = solvers.some((o) => wholeConvo.includes(o.name.toLowerCase()));
+      turns.forEach((t, i) => {
+        for (const s of sentences(t.draft)) {
+          if (!BLOCK_RE.test(s)) continue;
+          mentioned = true;
+          // Only a blocker FRAMED as an obstacle needs solving. A reply that
+          // brings the adapter up as part of the offer is already doing the
+          // right thing and must not be scored n_a for it.
+          if (!hit && /\bnot included\b|\bisn't included\b|\brequire/i.test(s)) {
+            hit = { turn: i + 1, sentence: s };
+          }
+        }
+      });
+      results.push(
+        hit && !offered
+          ? {
+              check: "unsolved_blocker",
+              status: "fail",
+              turn: (hit as { turn: number }).turn,
+              detail: `Raised an adapter/fit blocker but never offered one we own (${solvers
+                .map((o) => o.name)
+                .join(", ")}).`,
+              evidence: (hit as { sentence: string }).sentence,
+            }
+          : {
+              check: "unsolved_blocker",
+              status: mentioned ? "pass" : "n_a",
+              detail: mentioned
+                ? "Adapter/fit came up and an adapter we own was offered by name."
+                : "No fit blocker raised.",
+            },
+      );
+    }
   }
 
   // 6. DAY-COUNT NEGOTIATION — an early-collection / late-return ask must be

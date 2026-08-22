@@ -932,3 +932,71 @@ export const find_owned_alternatives = query({
     };
   },
 });
+
+/**
+ * Mount adapters we own and rent.
+ *
+ * Why this exists: the bot correctly told a renter the Blazar Remus lenses are
+ * native PL and "would require a PL-to-EF adapter, which isn't included" — and
+ * then stopped there. We own five mount adapters. A blocker we can actually
+ * sell the fix for should never be delivered as a dead end.
+ *
+ * Selection is by CANONICAL NAME PATTERN over our own inventory ("X to Y
+ * mount"), which is exact and auditable — it deliberately excludes "V-mount
+ * 150Wh"/"V-mount 95Wh", which are batteries, not adapters. This is not a
+ * similarity match against listing titles.
+ */
+export const get_mount_adapters = query({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) => {
+    const ADAPTER_RE = /^\s*([a-z0-9 ]+?)\s+to\s+([a-z0-9 ]+?)\s*mount\s*$/i;
+    const items = (await ctx.db.query("items").collect()).filter(
+      (i) =>
+        i.status === "active" &&
+        !i.is_marketing_only &&
+        (i.qty ?? 0) > 0 &&
+        ADAPTER_RE.test(i.name_canonical),
+    );
+    if (items.length === 0) return { adapters: [] };
+
+    const listings = await ctx.db
+      .query("online_listings")
+      .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
+      .collect();
+    const idxAll = await ctx.db.query("hygglo_product_index").collect();
+    const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
+    const catalog = await ctx.db.query("pricing_catalog").collect();
+    const catalogPrice = new Map<string, number>();
+    for (const row of catalog) {
+      const k = row.item_name_canonical.toLowerCase().trim();
+      const cur = catalogPrice.get(k);
+      if (cur === undefined || row.daily_price_min < cur) catalogPrice.set(k, row.daily_price_min);
+    }
+    // Identity-first, cheapest own listing, then the curated catalog — the same
+    // order lookup_pricing and find_owned_alternatives use, so the three tools
+    // cannot quote different numbers for one item.
+    const priceFor = (itemId: string, name: string): number | null => {
+      let best: number | null = null;
+      for (const r of idxAll) {
+        if (String(r.item_id) !== itemId || r.account_slug !== account_slug) continue;
+        const l = listingByPid.get(r.product_id) as { daily_price?: number } | undefined;
+        if (typeof l?.daily_price !== "number") continue;
+        if (best === null || l.daily_price < best) best = l.daily_price;
+      }
+      return best ?? catalogPrice.get(name.toLowerCase().trim()) ?? null;
+    };
+
+    return {
+      adapters: items.map((i) => {
+        const m = i.name_canonical.match(ADAPTER_RE);
+        return {
+          name: i.name_canonical,
+          from_mount: (m?.[1] ?? "").trim(),
+          to_mount: (m?.[2] ?? "").trim(),
+          qty: i.qty ?? 0,
+          daily_price_gbp: priceFor(String(i._id), i.name_canonical),
+        };
+      }),
+    };
+  },
+});

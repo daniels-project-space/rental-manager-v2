@@ -84,6 +84,23 @@ CONVERSATION CRAFT — how to actually write the reply:
    depends which glass you have" is a genuinely useful answer built entirely
    from real data. Refusing to differentiate at all is not the goal; inventing
    is.
+
+10. NEVER SELL SOMETHING THEY ARE ALREADY PAYING FOR. Before you offer any
+    add-on, check the kit contents in the facts. If the item is already in
+    this rental, say so as a POSITIVE ("it already comes with the 16-35 and
+    the 24-105, so you're covered wide to long") — never quote a price for it.
+    Live-caught: on a bundle that includes both Canon zooms, the bot offered
+    those same two lenses at £12 and £20/day. Charging for included gear reads
+    as a scam, and it hides the bundle's best selling point.
+
+11. A BLOCKER YOU CAN SOLVE IS AN OFFER, NOT A FULL STOP. If you tell them
+    something won't fit or isn't included — an adapter, a card, a battery,
+    glass — check the facts for whether we own that part, and if we do, offer
+    it BY NAME with its price in the same breath. Live-caught: the bot
+    correctly said the PL-mount Blazar lenses need a PL-to-EF adapter that
+    isn't included, and stopped there, while we rent that exact adapter. State
+    the constraint and the fix together, or you have just talked them out of a
+    booking you could have had.
 `;
 
 // Conversational/date/question filler — NOT item-name content. Strips a free-
@@ -266,6 +283,17 @@ export async function POST(req: Request) {
           : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
         groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
+      // What this listing ALREADY includes. Anything in here must never be
+      // offered as a paid extra: live-caught on a bundle whose own kit is a
+      // body plus the Canon 16-35 and 24-105, where the bot offered both
+      // lenses as add-ons at £12 and £20/day. Quoting a renter for gear they
+      // are already paying for reads as either a scam or incompetence, and it
+      // buries the bundle's actual selling point.
+      const kitNames = new Set(
+        ((lc.items ?? []) as Array<{ name?: string }>)
+          .map((i) => (i.name ?? "").toLowerCase().trim())
+          .filter(Boolean),
+      );
       for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
@@ -426,11 +454,58 @@ export async function POST(req: Request) {
               kind: "lens",
               lens_mount: it.lens_mount,
             });
-            const fits = ((glass?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
+            const all = (glass?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>;
+            // Split, don't just filter: the renter needs to hear "already
+            // included" about kit glass, which is a stronger answer than
+            // silence AND stops it being quoted as an extra.
+            const alreadyIn = all
+              .filter((g) => kitNames.has((g.name ?? "").toLowerCase().trim()))
+              .map((g) => g.name)
+              .filter(Boolean);
+            const fits = all
+              .filter((g) => !kitNames.has((g.name ?? "").toLowerCase().trim()))
               .slice(0, 3)
               .map((g) => `${g.name}${g.daily_price_gbp != null ? ` (£${g.daily_price_gbp}/day)` : ""}`);
+            if (alreadyIn.length) {
+              groundTruth += `  ALREADY IN THIS RENTAL for ${it.name}: ${alreadyIn.join("; ")}. This glass is INCLUDED in the price they already have. Say so as a positive ("it already comes with…") and NEVER offer it as a paid add-on.\n`;
+            }
             if (fits.length) {
-              groundTruth += `  LENS OPTIONS for ${it.name} (${it.lens_mount}) — real, owned, and a native fit: ${fits.join("; ")}. If they ask about a lens, or if the body goes out without one, OFFER one of these BY NAME with its price rather than saying you'll check.\n`;
+              groundTruth += `  LENS OPTIONS for ${it.name} (${it.lens_mount}) — real, owned, NOT already in this rental, and a native fit: ${fits.join("; ")}. If they ask about a lens, or if the body goes out without one, OFFER one of these BY NAME with its price rather than saying you'll check.\n`;
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+        // MOUNT ADAPTERS WE ACTUALLY OWN.
+        //
+        // Live-caught: the bot told a renter the Blazar Remus lenses are
+        // native PL and "would require a PL-to-EF adapter, which isn't
+        // included" — true, well explained, and a dead end. We rent five
+        // adapters. Naming the blocker without naming the fix we stock turns
+        // a solvable objection into a lost booking.
+        if (it.lens_mount) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ad: any = await convex.query(api.renter_bot_tools.get_mount_adapters, {
+              account_slug: account_slug || "",
+            });
+            const relevant = ((ad?.adapters ?? []) as Array<{
+              name?: string;
+              to_mount?: string;
+              daily_price_gbp?: number | null;
+            }>)
+              // Only adapters that land ON this body's mount are useful here.
+              .filter(
+                (a) =>
+                  (a.to_mount ?? "").toLowerCase() ===
+                  (it.lens_mount ?? "").toLowerCase(),
+              )
+              .map(
+                (a) =>
+                  `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`,
+              );
+            if (relevant.length) {
+              groundTruth += `  ADAPTERS WE OWN AND RENT for ${it.name} (${it.lens_mount}): ${relevant.join("; ")}. If you tell them a lens needs an adapter to fit, you MUST immediately offer the matching one from this list BY NAME with its price. Never end on "an adapter is required and not included" — we have it, so say so.\n`;
             }
           } catch {
             /* best-effort */

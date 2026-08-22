@@ -57,6 +57,8 @@ import type * as denial_records from "../denial_records.js";
 import type * as denial_resolutions from "../denial_resolutions.js";
 import type * as denial_resolver from "../denial_resolver.js";
 import type * as diag_bundle_parse from "../diag_bundle_parse.js";
+import type * as diag_kit_contents from "../diag_kit_contents.js";
+import type * as diag_twin_gaps from "../diag_twin_gaps.js";
 import type * as draft_learning from "../draft_learning.js";
 import type * as draft_learning_actions from "../draft_learning_actions.js";
 import type * as extract_booking_times from "../extract_booking_times.js";
@@ -287,6 +289,8 @@ declare const fullApi: ApiFromModules<{
   denial_resolutions: typeof denial_resolutions;
   denial_resolver: typeof denial_resolver;
   diag_bundle_parse: typeof diag_bundle_parse;
+  diag_kit_contents: typeof diag_kit_contents;
+  diag_twin_gaps: typeof diag_twin_gaps;
   draft_learning: typeof draft_learning;
   draft_learning_actions: typeof draft_learning_actions;
   extract_booking_times: typeof extract_booking_times;

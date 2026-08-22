@@ -284,3 +284,69 @@ describe("helpers", () => {
     expect(f.status).toBe("n_a");
   });
 });
+
+describe("accessory defects from the 2026-08-22 live transcript", () => {
+  const OWNED = [
+    { name: "PL to EF mount", kind: "accessory", lens_mount: null },
+    { name: "Canon EF 24-105mm f4", kind: "lens", lens_mount: "EF" },
+    { name: "Canon EF 16-35mm f2.8", kind: "lens", lens_mount: "EF" },
+  ];
+  const GT = {
+    requestedItem: "BMPCC 6K Pro",
+    requestedItemAvailable: true,
+    requestedItemOwned: true,
+    ownedItems: OWNED,
+    kitContents: ["Canon EF 24-105mm f4", "Canon EF 16-35mm f2.8"],
+  };
+
+  // The actual draft Daniel flagged.
+  const BAD =
+    "Hi! Yes, the BMPCC 6K Pro is free and available. For anamorphics, I have " +
+    "Blazar Remus lenses (33mm, 45mm, 65mm, 100mm at £26/day each), but they " +
+    "are native PL mount, so they would require a PL-to-EF adapter, which " +
+    "isn't included. If native EF glass works for you, I can add the Canon EF " +
+    "24-105mm f4 for £20/day or the Canon EF 16-35mm f2.8 for £12/day.";
+
+  it("flags upselling glass that is already in the kit", () => {
+    const r = scoreConversation([{ renter: "is this free?", draft: BAD }], GT);
+    const c = r.results.filter((x) => x.check === "upsold_included_item");
+    expect(c.some((x) => x.status === "fail")).toBe(true);
+  });
+
+  it("flags an adapter blocker we could have solved", () => {
+    const r = scoreConversation([{ renter: "anamorphics?", draft: BAD }], GT);
+    const c = r.results.find((x) => x.check === "unsolved_blocker");
+    expect(c?.status).toBe("fail");
+  });
+
+  it("passes the corrected reply", () => {
+    const GOOD =
+      "Hi! Yes, the BMPCC 6K Pro is free for those dates. It already comes " +
+      "with the Canon EF 16-35mm f2.8 and the 24-105mm f4, so you're covered " +
+      "wide to long. I also have Blazar Remus anamorphics (£26/day each) — " +
+      "they're PL mount, and I rent the PL to EF mount adapter for £8/day, so " +
+      "they'll fit straight onto this body.";
+    const r = scoreConversation([{ renter: "anamorphics?", draft: GOOD }], GT);
+    expect(
+      r.results.find((x) => x.check === "upsold_included_item")?.status,
+    ).toBe("pass");
+    expect(r.results.find((x) => x.check === "unsolved_blocker")?.status).toBe(
+      "pass",
+    );
+  });
+
+  it("does not fire when the kit genuinely lacks the lens", () => {
+    const r = scoreConversation(
+      [
+        {
+          renter: "lens?",
+          draft: "Body only, but I can add the Canon EF 24-105mm f4 for £20/day.",
+        },
+      ],
+      { ...GT, kitContents: [] },
+    );
+    expect(
+      r.results.find((x) => x.check === "upsold_included_item"),
+    ).toBeUndefined();
+  });
+});
