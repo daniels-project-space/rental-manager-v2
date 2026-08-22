@@ -461,7 +461,7 @@ export async function POST(req: Request) {
           .map((i) => (i.name ?? "").toLowerCase().trim())
           .filter(Boolean),
       );
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; price_tiers?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -653,7 +653,8 @@ export async function POST(req: Request) {
           // list; the prompt only needs enough to answer "what's included".
           ? it.whats_included.slice(0, 900)
           : "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)";
-        groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${kitText}\n`;
+        const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
+        groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day${tierTxt ? ` [Hygglo multi-day rates: ${tierTxt} — quote the rate for the length they asked for, never the 1-day rate times the days]` : ""}. Included: ${kitText}\n`;
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const av: any = await convex.query(api.calendar.getItemAvailabilityForChat, {

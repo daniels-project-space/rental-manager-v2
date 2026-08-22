@@ -16,6 +16,7 @@ import { api } from "./_generated/api";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import { sameMount, bestMatch, rankByName, substitutionScore } from "./lib/item_name_match";
+import { tierRateForDays, describeTiers, type PriceTier } from "./lib/hygglo_pricing";
 
 // ── Tool 1: get_renter_context ───────────────────────────────
 
@@ -183,6 +184,7 @@ export const get_listing_context = query({
       // ("body only, I can add the Canon EF 24-105 for £X") instead of
       // stalling with "let me check".
       let lens_mount: string | null = null;
+      let price_tiers: string | null = null;
       // When the renter's wording matches SEVERAL real products (e.g. "BMPCC
       // 6K" fully describes both the 6K Pro and the 6K Full Frame), the bot
       // must ASK which. Detected already by bestMatch's confidence gate, but
@@ -265,6 +267,16 @@ export const get_listing_context = query({
               }
             }
             if (bestListing) {
+              const bl = bestListing as { product_id?: number };
+              if (bl.product_id != null) {
+                const hp = await ctx.db
+                  .query("hygglo_products")
+                  .withIndex("by_account_product", (q) =>
+                    q.eq("accountSlug", account_slug).eq("productId", bl.product_id as number),
+                  )
+                  .unique();
+                price_tiers = describeTiers((hp?.prices ?? []) as PriceTier[]);
+              }
               daily_price_gbp = daily_price_gbp ?? bestListing.daily_price ?? null;
               whats_included = whats_included ?? bestListing.description ?? null;
               listing_name = listing_name ?? bestListing.name ?? null;
@@ -308,6 +320,7 @@ export const get_listing_context = query({
         ownership_source,
         kind,
         lens_mount,
+        price_tiers,
         ambiguous_with,
         listing_name,
         daily_price_gbp,
@@ -453,17 +466,35 @@ export const lookup_pricing = query({
         }
       }
       if (best && bestScore >= 0.3 && typeof best.daily_price === "number") {
-        const dailyRate = best.daily_price;
-        const multiDayMult = days >= 30 ? 0.4 : days >= 7 ? 0.5 : days >= 3 ? 0.7 : 1.0;
+        // REAL Hygglo tiers, not a guessed curve.
+        //
+        // This used a hardcoded multiplier (0.7 at 3 days, 0.5 at 7) that has
+        // nothing to do with what Hygglo charges. leo#1172440's real 3-day
+        // rate is 0.83x, not 0.7 — so a 3-day quote came out £168 against a
+        // real £200, i.e. we undercut our own listing by £32 and would have
+        // had to either honour it or correct it in front of the renter. Every
+        // listing carries its own tier table, synced daily by catalog-sync.
+        const hp = await ctx.db
+          .query("hygglo_products")
+          .withIndex("by_account_product", (q) =>
+            q.eq("accountSlug", account_slug).eq("productId", best!.product_id),
+          )
+          .unique();
+        const tiers = (hp?.prices ?? []) as PriceTier[];
+        const oneDay = tierRateForDays(tiers, 1) ?? best.daily_price;
+        const tierRate = tierRateForDays(tiers, days);
+        const dailyRate = tierRate ?? best.daily_price;
         return {
           found: true as const,
-          source: "hygglo_listing" as const,
+          source: tierRate != null ? ("hygglo_tier" as const) : ("hygglo_listing" as const),
           item_name,
           matched_listing: best.name,
-          daily_rate_gbp: dailyRate,
+          // The rate that applies to THIS length — what the renter pays per day.
+          daily_rate_gbp: Math.round(dailyRate * 100) / 100,
+          one_day_rate_gbp: Math.round(oneDay * 100) / 100,
           days,
-          multi_day_multiplier: multiDayMult,
-          listed_total_gbp: Math.round(dailyRate * days * multiDayMult * 100) / 100,
+          price_tiers: describeTiers(tiers),
+          listed_total_gbp: Math.round(dailyRate * days * 100) / 100,
           included: best.description ?? null,
           distance_discount_applies: !!listing_location_non_central,
         };
@@ -525,7 +556,12 @@ export const lookup_pricing = query({
       daily_rate_gbp: dailyRate,
       daily_rate_max_gbp: top.daily_price_max,
       days,
+      // ESTIMATED, not from Hygglo. This is the curated-catalog fallback for
+      // an item with no matched listing, so there is no real tier table to
+      // read; the multiplier is our own guess. Flagged so the agent (and the
+      // guard) can tell it apart from a hygglo_tier quote, which is exact.
       multi_day_multiplier: multiDayMult,
+      multi_day_basis: "estimated_no_listing" as const,
       listed_total_gbp: Math.round(listedTotal * 100) / 100,
       distance_discount_applies: distanceDiscountApplies,
       // Internal — kept off-limits to renter per disclosure rules.
@@ -910,7 +946,22 @@ export const find_owned_alternatives = query({
       // lens as a substitute for a camera body is never useful.
       if (target?.kind && it.kind && normKind(it.kind) !== normKind(target.kind)) continue;
       const d = describeFor(String(it._id));
+      // Tier table for the listing this alternative is priced from, so an
+      // upsell quoted during a 5-day booking uses the 5-day rate rather than
+      // the 1-day one.
+      const altPid = pidsForItem(String(it._id))[0];
+      let altTiers: string | null = null;
+      if (altPid != null) {
+        const hp = await ctx.db
+          .query("hygglo_products")
+          .withIndex("by_account_product", (q) =>
+            q.eq("accountSlug", account_slug).eq("productId", altPid),
+          )
+          .unique();
+        altTiers = describeTiers((hp?.prices ?? []) as PriceTier[]);
+      }
       alternatives.push({
+        price_tiers: altTiers,
         name: it.name_canonical,
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
@@ -1022,16 +1073,24 @@ export const get_mount_adapters = query({
     };
 
     return {
-      adapters: items.map((i) => {
+      adapters: await Promise.all(items.map(async (i) => {
         const m = i.name_canonical.match(ADAPTER_RE);
+        const pid = pidsFor(String(i._id))[0];
+        const hp = pid == null ? null : await ctx.db
+          .query("hygglo_products")
+          .withIndex("by_account_product", (q) =>
+            q.eq("accountSlug", account_slug).eq("productId", pid),
+          )
+          .unique();
         return {
+          price_tiers: describeTiers((hp?.prices ?? []) as PriceTier[]),
           name: i.name_canonical,
           from_mount: (m?.[1] ?? "").trim(),
           to_mount: (m?.[2] ?? "").trim(),
           qty: i.qty ?? 0,
           daily_price_gbp: priceFor(String(i._id), i.name_canonical),
         };
-      }),
+      })),
     };
   },
 });
