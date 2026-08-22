@@ -528,6 +528,35 @@ export function scoreConversation(
     }
   }
 
+  // 5d. A DATE RANGE WRITTEN AS A LIST. "free for 4th, 6th September" means
+  //     two separate dates to a reader; the booking is 4th THROUGH 6th. Live
+  //     -caught in the sweep, on a booking whose day count was otherwise right.
+  {
+    const RANGE_AS_LIST =
+      /\b(\d{1,2})(?:st|nd|rd|th)?\s*,\s*(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
+    let hit: { turn: number; sentence: string } | null = null;
+    turns.forEach((t, i) => {
+      if (hit) return;
+      for (const s of sentences(t.draft)) {
+        if (RANGE_AS_LIST.test(s)) {
+          hit = { turn: i + 1, sentence: s };
+          break;
+        }
+      }
+    });
+    results.push(
+      hit
+        ? {
+            check: "date_range_as_list",
+            status: "fail",
+            turn: (hit as { turn: number }).turn,
+            detail: "Wrote a date RANGE as a comma-separated pair — reads as two separate dates.",
+            evidence: (hit as { sentence: string }).sentence,
+          }
+        : { check: "date_range_as_list", status: "pass", detail: "Date ranges written as ranges." },
+    );
+  }
+
   // 6. DAY-COUNT NEGOTIATION — an early-collection / late-return ask must be
   //    explained AND met with a workable offer, not just priced and dropped.
   {

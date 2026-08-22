@@ -144,6 +144,11 @@ CONVERSATION CRAFT — how to actually write the reply:
     100mm and adapter", got told the items were available and asked AGAIN
     whether to go ahead. Only ask when something is genuinely ambiguous —
     which model, which dates.
+
+13. WRITE DATE RANGES AS A RANGE. "the 4th to the 6th of September", never
+    "4th, 6th September" — a comma reads as two separate dates and is how a
+    renter ends up arriving on the wrong day. Say the day count too when it
+    matters to the price ("the 4th to the 6th, so 3 days").
 `;
 
 // Conversational/date/question filler — NOT item-name content. Strips a free-
@@ -346,7 +351,16 @@ export async function POST(req: Request) {
     if (lc?.found) {
       bookingConfirmed = lc.is_confirmed === true;
       const req: string[] = [];
-      if (lc.start_date) req.push(`dates ${lc.start_date}${lc.end_date && lc.end_date !== lc.start_date ? "–" + lc.end_date : ""}`);
+      // "2026-09-04–2026-09-06" came back out of the model as "4th, 6th
+      // September", which reads as two separate dates rather than a range and
+      // is exactly the kind of thing a renter turns up on the wrong day for.
+      // Spell the range out.
+      if (lc.start_date)
+        req.push(
+          lc.end_date && lc.end_date !== lc.start_date
+            ? `dates from ${lc.start_date} to ${lc.end_date} inclusive`
+            : `date ${lc.start_date} (single day)`,
+        );
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
@@ -379,14 +393,20 @@ export async function POST(req: Request) {
           }
           if (typeof ord.total_gbp === "number") offeredPrices.push(ord.total_gbp);
           const rows = lines
-            .map(
-              (l) =>
-                `${l.qty}x ${l.name}${l.daily_price_gbp != null ? ` @ £${l.daily_price_gbp}/day` : " (no price on file)"}`,
-            )
+            .map((l) => {
+              const r = (l as { effective_rate_gbp?: number | null }).effective_rate_gbp;
+              const t = (l as { tiers?: string | null }).tiers;
+              return (
+                `${l.qty}x ${l.name}` +
+                (r != null ? ` @ £${Math.round(r)}/day for this length` : " (no price on file)") +
+                (t ? ` [Hygglo tiers: ${t}]` : "")
+              );
+            })
             .join("; ");
           groundTruth += `CURRENT BOOKING (live, you CAN change it with modify_booking): ${rows || "(empty)"}. Dates: ${ord.start_date ?? "not set"} to ${ord.end_date ?? "not set"} = ${ord.days} day(s). Total: ${ord.total_gbp != null ? `£${ord.total_gbp}` : `NOT CALCULABLE (no price for ${ord.unpriced.join(", ")}) — do not quote a total`}.\n`;
           orderChangesBefore = (ord.changes ?? []).length;
           groundTruth += `  When the renter asks you to add or remove gear or move dates, CALL modify_booking and then state what changed and the new total. Do NOT ask them to confirm a change they just asked for.\n`;
+          groundTruth += `  PRICING IS TIERED: the per-day rate DROPS at 3 and 7 days, and the tiers above are what Hygglo charges. Quote the rate for the length they actually asked for, and when a longer hire is better value, say so using the tier numbers above and nothing else. Never multiply the 1-day rate across a longer booking, and never invent a rate that is not in the tiers.\n`;
         }
       } catch {
         /* not a Lab session — no simulated order exists */

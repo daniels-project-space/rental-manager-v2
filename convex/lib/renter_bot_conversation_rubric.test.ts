@@ -350,3 +350,29 @@ describe("accessory defects from the 2026-08-22 live transcript", () => {
     ).toBeUndefined();
   });
 });
+
+describe("date_range_as_list", () => {
+  const GT = {
+    requestedItem: "BMPCC 6K Pro",
+    requestedItemAvailable: true,
+    requestedItemOwned: true,
+  };
+  const check = (draft: string) =>
+    scoreConversation([{ renter: "is it free 4-6 sept?", draft }], GT).results.find(
+      (r) => r.check === "date_range_as_list",
+    )?.status;
+
+  it("flags a range written as two dates", () => {
+    expect(check("Yes, the BMPCC 6K Pro is free for 4th, 6th September.")).toBe("fail");
+    expect(check("I've updated the dates to 4th, 7th September (4 days).")).toBe("fail");
+  });
+
+  it("passes a properly written range", () => {
+    expect(check("Yes, it's free from the 4th to the 6th of September, so 3 days.")).toBe("pass");
+    expect(check("That's the 4th through the 6th of September.")).toBe("pass");
+  });
+
+  it("does not fire on a single date", () => {
+    expect(check("It's free on the 4th of September.")).toBe("pass");
+  });
+});

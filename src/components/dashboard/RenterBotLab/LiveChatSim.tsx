@@ -318,9 +318,16 @@ function OrderPanel({ threadId }: { threadId: string }) {
                 )}
               </td>
               <td className="py-0.5 text-right text-[#8b8fa3]">
-                {l.daily_price_gbp != null
-                  ? `${money(l.daily_price_gbp)}/day`
-                  : "no price on file"}
+                {l.effective_rate_gbp != null ? (
+                  <>
+                    £{Math.round(l.effective_rate_gbp)}/day
+                    {l.tiers && (
+                      <span className="ml-1 text-[10px] opacity-70">({l.tiers})</span>
+                    )}
+                  </>
+                ) : (
+                  "no price on file"
+                )}
               </td>
               <td className="w-16 py-0.5 text-right tabular-nums">
                 {money(l.line_total_gbp)}

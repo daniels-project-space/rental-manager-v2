@@ -1,6 +1,7 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
+import { describeTiers, tierRateForDays, type PriceTier } from "./lib/hygglo_pricing";
 
 /**
  * The SIMULATED Hygglo order behind a Renter Bot Lab session.
@@ -44,17 +45,24 @@ type OrderLine = {
   name: string;
   qty: number;
   daily_price_gbp?: number;
+  price_tiers?: PriceTier[];
   origin: string;
 };
 
 /** Line totals + grand total, so the Lab and the bot quote the same numbers. */
 export function summarise(lines: OrderLine[], start?: string, end?: string) {
   const days = inclusiveDays(start, end);
-  const priced = lines.map((l) => ({
-    ...l,
-    line_total_gbp:
-      typeof l.daily_price_gbp === "number" ? l.daily_price_gbp * l.qty * days : null,
-  }));
+  const priced = lines.map((l) => {
+    // The rate the renter actually pays for THIS length, not the 1-day rate.
+    const tiered = tierRateForDays(l.price_tiers, days);
+    const rate = tiered ?? l.daily_price_gbp ?? null;
+    return {
+      ...l,
+      effective_rate_gbp: rate,
+      tiers: describeTiers(l.price_tiers),
+      line_total_gbp: rate != null ? Math.round(rate * l.qty * days) : null,
+    };
+  });
   const known = priced.filter((l) => l.line_total_gbp != null);
   return {
     start_date: start ?? null,
@@ -77,6 +85,48 @@ export function summarise(lines: OrderLine[], start?: string, end?: string) {
  * lookup_pricing and find_owned_alternatives use, so the Lab panel, the tools
  * and the draft cannot quote three different numbers for one item.
  */
+/** The listing id an item is priced from on this account (cheapest wins). */
+async function listingPidForItem(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  accountSlug: string,
+  itemId: string,
+): Promise<number | undefined> {
+  const listings = await ctx.db
+    .query("online_listings")
+    .withIndex("by_account", (q: { eq: (a: string, b: string) => unknown }) =>
+      q.eq("account_slug", accountSlug),
+    )
+    .collect();
+  const idx = await ctx.db.query("hygglo_product_index").collect();
+  const ov = await ctx.db.query("listing_resolution_override").collect();
+  const pids: number[] = [
+    ...idx
+      .filter(
+        (r: { item_id: unknown; account_slug: string }) =>
+          String(r.item_id) === itemId && r.account_slug === accountSlug,
+      )
+      .map((r: { product_id: number }) => r.product_id),
+    ...ov
+      .filter(
+        (o: { account_slug: string; components: Array<{ item_id: unknown }> }) =>
+          o.account_slug === accountSlug &&
+          o.components.length === 1 &&
+          String(o.components[0].item_id) === itemId,
+      )
+      .map((o: { product_id: number }) => o.product_id),
+  ];
+  let best: { pid: number; price: number } | null = null;
+  for (const pid of pids) {
+    const l = listings.find((x: { product_id: number }) => x.product_id === pid) as
+      | { daily_price?: number }
+      | undefined;
+    if (typeof l?.daily_price !== "number") continue;
+    if (!best || l.daily_price < best.price) best = { pid, price: l.daily_price };
+  }
+  return best?.pid;
+}
+
 async function resolveDailyPrice(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
@@ -125,6 +175,26 @@ async function resolveDailyPrice(
     price = hit?.daily_price_min;
   }
   return price;
+}
+
+
+/** Hygglo's tier table for a listing, from the daily-synced catalog cache. */
+async function tiersForProduct(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  accountSlug: string,
+  productId: number,
+): Promise<PriceTier[] | undefined> {
+  const hp = await ctx.db
+    .query("hygglo_products")
+    .withIndex("by_account_product", (q: { eq: (a: string, b: unknown) => unknown }) =>
+      (q as unknown as { eq: (a: string, b: unknown) => { eq: (c: string, d: unknown) => unknown } })
+        .eq("accountSlug", accountSlug)
+        .eq("productId", productId),
+    )
+    .unique();
+  const rows = (hp?.prices ?? []) as PriceTier[];
+  return rows.length ? rows.map((r) => ({ days: r.days, pricePerDay: r.pricePerDay })) : undefined;
 }
 
 export const get = query({
@@ -192,6 +262,7 @@ export const seed = internalMutation({
           name: (listing.name ?? "listing").slice(0, 70),
           qty: 1,
           daily_price_gbp: listing.daily_price,
+          price_tiers: await tiersForProduct(ctx, a.account_slug, a.base_product_id as number),
           origin: "listing",
         });
       }
@@ -332,6 +403,12 @@ export const applyChange = mutation({
       String(m.match._id),
       m.match.name_canonical,
     );
+    // Multi-day tiers for the listing this item was priced from, so an added
+    // lens gets the same length discount the renter would get on Hygglo.
+    const pricedPid = await listingPidForItem(ctx, row.account_slug, String(m.match._id));
+    const tiers = pricedPid != null
+      ? await tiersForProduct(ctx, row.account_slug, pricedPid)
+      : undefined;
 
     const already = lines.find((l) => l.item_id === String(m.match!._id));
     if (already) {
@@ -343,6 +420,7 @@ export const applyChange = mutation({
         name: m.match.name_canonical,
         qty,
         daily_price_gbp: price,
+        price_tiers: tiers,
         origin: "added",
       });
       summaryText = `added ${qty}x ${m.match.name_canonical}${price != null ? ` at £${price}/day` : ""}`;

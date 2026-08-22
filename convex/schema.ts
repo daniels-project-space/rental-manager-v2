@@ -2506,6 +2506,14 @@ export default defineSchema({
         name: v.string(),
         qty: v.number(),
         daily_price_gbp: v.optional(v.number()),
+        /**
+         * Hygglo's multi-day tier table for this line's listing. Needed because
+         * the rate DROPS with length (1 day £80, 3+ £66.67, 7+ £50), so
+         * multiplying the 1-day rate overstates every longer booking.
+         */
+        price_tiers: v.optional(
+          v.array(v.object({ days: v.optional(v.number()), pricePerDay: v.optional(v.number()) })),
+        ),
         // "seed" = came with the scenario, "added" = the bot put it on.
         origin: v.string(),
       }),
