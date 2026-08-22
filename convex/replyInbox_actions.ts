@@ -63,7 +63,13 @@ export const generateDraft = action({
     confidence?: number;
     flags?: DraftFlag[];
     usedTools?: boolean;
-    reason?: "needs_human" | "subscription_unavailable";
+    /**
+     * "needs_human" now carries WHY after a colon (e.g.
+     * "needs_human:unparseable_model_output"). A bare escalation was
+     * undiagnosable: six appeared in one sweep with no way to tell a model
+     * that declined from output we failed to parse.
+     */
+    reason?: string;
   }> => {
     // Make sure we know the inquiry's listing before drafting — pulls the order
     // detail's items onto conv.inquiry_items (no-op if cached or a reservation
@@ -564,6 +570,7 @@ export const generateDraft = action({
           marketingItems?: string[];
           offeredPrices?: number[];
           bookingModified?: boolean;
+          needs_human_reason?: string | null;
           tokenUsage?: {
             prompt: number | null;
             completion: number | null;
@@ -575,7 +582,7 @@ export const generateDraft = action({
           // The subscription model deliberately declined an under-grounded or
           // consequential reply. Keep any earlier preview untouched and tell
           // Quick Reply this needs Daniel's judgement.
-          return { status: "skipped", reason: "needs_human" };
+          return { status: "skipped", reason: `needs_human:${j.needs_human_reason ?? "unknown"}` };
         }
         draft = (j.draft ?? "").trim();
         if (draft) {

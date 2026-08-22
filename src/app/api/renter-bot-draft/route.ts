@@ -340,6 +340,8 @@ export async function POST(req: Request) {
    * framework's result shape is an implementation detail that can drift.
    */
   let orderChangesBefore: number | null = null;
+  /** Why a reply was withheld, so an escalation is diagnosable rather than opaque. */
+  let needsHumanReason: string | null = null;
   /** Per-draft token accounting, so caching is observable rather than assumed. */
   let tokenUsage: {
     prompt: number | null;
@@ -1113,7 +1115,18 @@ export async function POST(req: Request) {
     }
     if (!obj) {
       // Couldn't parse a decision — escalate rather than send garbage.
-      return NextResponse.json({ ok: true, draft: "", needs_human: true, factsClaimed: [] });
+      //
+      // Named, because "needs_human" with no reason is the same black box the
+      // empty Lab bubble was: a sweep produced six of these and there was no
+      // way to tell a model that DECLINED from output we simply failed to
+      // parse. Those need completely different fixes.
+      return NextResponse.json({
+        ok: true,
+        draft: "",
+        needs_human: true,
+        needs_human_reason: "unparseable_model_output",
+        factsClaimed: [],
+      });
     }
 
     // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling
@@ -1222,6 +1235,7 @@ export async function POST(req: Request) {
       if (violated) {
         obj.draft = "";
         obj.needs_human = true;
+        needsHumanReason = "would_reveal_marketing_only";
       }
     }
     // Never refer a renter to a competitor / another lender — blank + escalate.
@@ -1232,6 +1246,7 @@ export async function POST(req: Request) {
       if (refersCompetitor) {
         obj.draft = "";
         obj.needs_human = true;
+        needsHumanReason = "referred_to_competitor";
       }
     }
     // Never claim an unconfirmed booking is confirmed/paid/booked — escalate.
@@ -1254,6 +1269,7 @@ export async function POST(req: Request) {
       if (falseConfirm) {
         obj.draft = "";
         obj.needs_human = true;
+        needsHumanReason = "premature_confirmation";
       }
     }
     // Never agree to an off-hours pickup/return — windows are 10–12 & 7–9pm.
@@ -1295,6 +1311,9 @@ export async function POST(req: Request) {
       ok: true,
       draft: obj.draft ?? "",
       needs_human: !!obj.needs_human,
+      needs_human_reason: obj.needs_human
+        ? (needsHumanReason ?? "model_declined")
+        : null,
       intent: obj.intent ?? null,
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
