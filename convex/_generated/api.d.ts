@@ -59,6 +59,7 @@ import type * as denial_resolver from "../denial_resolver.js";
 import type * as diag_bundle_parse from "../diag_bundle_parse.js";
 import type * as diag_kit_contents from "../diag_kit_contents.js";
 import type * as diag_lab_runs from "../diag_lab_runs.js";
+import type * as diag_price_coverage from "../diag_price_coverage.js";
 import type * as diag_price_tiers from "../diag_price_tiers.js";
 import type * as diag_twin_gaps from "../diag_twin_gaps.js";
 import type * as draft_learning from "../draft_learning.js";
@@ -295,6 +296,7 @@ declare const fullApi: ApiFromModules<{
   diag_bundle_parse: typeof diag_bundle_parse;
   diag_kit_contents: typeof diag_kit_contents;
   diag_lab_runs: typeof diag_lab_runs;
+  diag_price_coverage: typeof diag_price_coverage;
   diag_price_tiers: typeof diag_price_tiers;
   diag_twin_gaps: typeof diag_twin_gaps;
   draft_learning: typeof draft_learning;
