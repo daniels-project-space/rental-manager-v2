@@ -1,6 +1,6 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { bestMatch } from "./lib/item_name_match";
+import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
 
 /**
  * The SIMULATED Hygglo order behind a Renter Bot Lab session.
@@ -70,6 +70,63 @@ export function summarise(lines: OrderLine[], start?: string, end?: string) {
   };
 }
 
+
+/**
+ * Daily price for one item on one account: its own listing (cheapest), else
+ * the curated catalog. Identity-first, override ∪ index — the same order
+ * lookup_pricing and find_owned_alternatives use, so the Lab panel, the tools
+ * and the draft cannot quote three different numbers for one item.
+ */
+async function resolveDailyPrice(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  accountSlug: string,
+  itemId: string,
+  itemName: string,
+): Promise<number | undefined> {
+  const listings = await ctx.db
+    .query("online_listings")
+    .withIndex("by_account", (q: { eq: (a: string, b: string) => unknown }) =>
+      q.eq("account_slug", accountSlug),
+    )
+    .collect();
+  const idx = await ctx.db.query("hygglo_product_index").collect();
+  const ov = await ctx.db.query("listing_resolution_override").collect();
+  const pids: number[] = [
+    ...idx
+      .filter(
+        (r: { item_id: unknown; account_slug: string; product_id: number }) =>
+          String(r.item_id) === itemId && r.account_slug === accountSlug,
+      )
+      .map((r: { product_id: number }) => r.product_id),
+    ...ov
+      .filter(
+        (o: { account_slug: string; components: Array<{ item_id: unknown }>; product_id: number }) =>
+          o.account_slug === accountSlug &&
+          o.components.length === 1 &&
+          String(o.components[0].item_id) === itemId,
+      )
+      .map((o: { product_id: number }) => o.product_id),
+  ];
+  let price: number | undefined;
+  for (const pid of pids) {
+    const l = listings.find((x: { product_id: number }) => x.product_id === pid) as
+      | { daily_price?: number }
+      | undefined;
+    if (typeof l?.daily_price === "number" && (price === undefined || l.daily_price < price))
+      price = l.daily_price;
+  }
+  if (price === undefined) {
+    const cat = await ctx.db.query("pricing_catalog").collect();
+    const hit = cat.find(
+      (c: { item_name_canonical: string }) =>
+        c.item_name_canonical.toLowerCase().trim() === itemName.toLowerCase().trim(),
+    ) as { daily_price_min?: number } | undefined;
+    price = hit?.daily_price_min;
+  }
+  return price;
+}
+
 export const get = query({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
@@ -113,11 +170,17 @@ export const seed = internalMutation({
     const lines = [];
     for (const name of a.item_names) {
       const m = bestMatch(name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
+      const hit = m.match && m.confident ? m.match : null;
+      // Price the SEEDED items too. Leaving them undefined made total_gbp null
+      // for every scenario, so the bot was told "do not quote a total" on a
+      // perfectly ordinary booking and the Lab panel could never show one.
       lines.push({
-        item_id: m.match && m.confident ? m.match._id : undefined,
-        name: m.match && m.confident ? m.match.name_canonical : name,
+        item_id: hit ? hit._id : undefined,
+        name: hit ? hit.name_canonical : name,
         qty: 1,
-        daily_price_gbp: undefined,
+        daily_price_gbp: hit
+          ? await resolveDailyPrice(ctx, a.account_slug, String(hit._id), hit.name_canonical)
+          : undefined,
         origin: "seed",
       });
     }
@@ -215,6 +278,15 @@ export const applyChange = mutation({
     const owned = (await ctx.db.query("items").collect()).filter(
       (i) => i.status === "active" && !i.is_marketing_only && (i.qty ?? 0) > 0,
     );
+    // A category is not a product. "a lens" resolved to a DZOFilm Vespid
+    // 3-Lens Set purely because its one token was covered — a £20/day set
+    // added to a booking nobody asked for. Ask which, don't pick.
+    if (isGenericItemQuery(a.item_name)) {
+      return {
+        ok: false,
+        error: `"${a.item_name}" names a category, not a specific item — ask the renter WHICH model they want before adding anything`,
+      };
+    }
     const m = bestMatch(a.item_name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
     if (!m.match || !m.confident) {
       // Refusing beats guessing: adding the wrong lens to a booking is exactly
@@ -226,40 +298,12 @@ export const applyChange = mutation({
     }
     const qty = Math.max(1, Math.min(a.qty ?? 1, m.match.qty ?? 1));
 
-    // Price by identity: the item's own listing on this account (cheapest),
-    // else the curated catalog — the same order every other tool uses.
-    const listings = await ctx.db
-      .query("online_listings")
-      .withIndex("by_account", (q) => q.eq("account_slug", row.account_slug))
-      .collect();
-    const idx = await ctx.db.query("hygglo_product_index").collect();
-    const ov = await ctx.db.query("listing_resolution_override").collect();
-    const pids = [
-      ...idx
-        .filter((r) => String(r.item_id) === String(m.match!._id) && r.account_slug === row.account_slug)
-        .map((r) => r.product_id),
-      ...ov
-        .filter(
-          (o) =>
-            o.account_slug === row.account_slug &&
-            o.components.length === 1 &&
-            String(o.components[0].item_id) === String(m.match!._id),
-        )
-        .map((o) => o.product_id),
-    ];
-    let price: number | undefined;
-    for (const pid of pids) {
-      const l = listings.find((x) => x.product_id === pid);
-      if (typeof l?.daily_price === "number" && (price === undefined || l.daily_price < price))
-        price = l.daily_price;
-    }
-    if (price === undefined) {
-      const cat = await ctx.db.query("pricing_catalog").collect();
-      const hit = cat.find(
-        (c) => c.item_name_canonical.toLowerCase().trim() === m.match!.name_canonical.toLowerCase().trim(),
-      );
-      price = hit?.daily_price_min;
-    }
+    const price = await resolveDailyPrice(
+      ctx,
+      row.account_slug,
+      String(m.match._id),
+      m.match.name_canonical,
+    );
 
     const already = lines.find((l) => l.item_id === String(m.match!._id));
     if (already) {

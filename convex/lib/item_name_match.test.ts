@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenize, rankByName, bestMatch, substitutionScore, sameMount } from "./item_name_match";
+import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery } from "./item_name_match";
 
 const ITEMS = [
   { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
@@ -131,5 +131,25 @@ describe("normalizeMount / sameMount", () => {
   it("makes no claim when either side is unknown", () => {
     expect(sameMount(null, "EF")).toBe(false);
     expect(sameMount("EF", "")).toBe(false);
+  });
+});
+
+describe("isGenericItemQuery", () => {
+  it("refuses category-only requests", () => {
+    // Live: "a lens" resolved to "DZOFilm Vespid 3-Lens Set" and added a
+    // £20/day set to a booking nobody asked for.
+    for (const q of ["a lens", "lens", "something wide", "a mic", "a camera", "extra battery", "another card"])
+      expect(isGenericItemQuery(q)).toBe(true);
+  });
+
+  it("allows anything that names an actual product", () => {
+    for (const q of [
+      "Blazar Remus 100mm",
+      "Canon EF 24-105mm f4",
+      "PL to EF mount",
+      "BMPCC 6K Pro",
+      "wide Canon lens",
+    ])
+      expect(isGenericItemQuery(q)).toBe(false);
   });
 });

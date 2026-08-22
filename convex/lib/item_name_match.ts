@@ -203,3 +203,38 @@ export function sameMount(a: string | null | undefined, b: string | null | undef
   const y = normalizeMount(b);
   return !!x && !!y && x === y;
 }
+
+/**
+ * Category words that name a KIND of gear, not a product.
+ *
+ * A request built only from these ("a lens", "a mic", "something wide") does
+ * not identify anything, and must never be resolved to a specific item. Live:
+ * "a lens" matched "DZOFilm Vespid 3-Lens Set" through the coverage gate,
+ * because the single query token "lens" was fully covered — so a £20/day
+ * 3-lens set was silently added to a booking nobody asked for.
+ */
+// NOTE: run through tokenize() below, because tokenize STEMS ("lens" -> "len").
+// Hand-writing the surface forms silently failed to match: "a lens" sailed
+// past this guard and added a 3-lens set.
+const GENERIC_ITEM_WORDS_RAW = [
+  "lens", "lense", "lenses", "glass", "camera", "cameras", "body", "bodies",
+  "mic", "mics", "microphone", "microphones", "audio", "sound", "light",
+  "lights", "lighting", "adapter", "adaptor", "mount", "battery", "batteries",
+  "card", "cards", "storage", "gimbal", "stabiliser", "stabilizer", "drone",
+  "monitor", "screen", "tripod", "stand", "rig", "cage", "bag", "case", "kit",
+  "set", "gear", "equipment", "something", "anything", "one", "another",
+  "extra", "spare", "wide", "long", "zoom", "prime", "cheap", "good", "best",
+];
+const GENERIC_ITEM_WORDS = new Set(
+  GENERIC_ITEM_WORDS_RAW.flatMap((w) => [...tokenize(w)]),
+);
+
+/**
+ * True when a request names only a category and no actual product, so it
+ * cannot be resolved to one item and the renter must be asked which they mean.
+ */
+export function isGenericItemQuery(raw: string): boolean {
+  const toks = [...tokenize(raw)];
+  if (toks.length === 0) return true;
+  return toks.every((t: string) => GENERIC_ITEM_WORDS.has(t));
+}
