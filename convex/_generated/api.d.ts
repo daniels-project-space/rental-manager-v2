@@ -56,6 +56,7 @@ import type * as denial_canonicalizer_queries from "../denial_canonicalizer_quer
 import type * as denial_records from "../denial_records.js";
 import type * as denial_resolutions from "../denial_resolutions.js";
 import type * as denial_resolver from "../denial_resolver.js";
+import type * as diag_bundle_parse from "../diag_bundle_parse.js";
 import type * as draft_learning from "../draft_learning.js";
 import type * as draft_learning_actions from "../draft_learning_actions.js";
 import type * as extract_booking_times from "../extract_booking_times.js";
@@ -72,6 +73,7 @@ import type * as inquiry_context from "../inquiry_context.js";
 import type * as insurance_claims from "../insurance_claims.js";
 import type * as intel from "../intel.js";
 import type * as investigate_autodesc from "../investigate_autodesc.js";
+import type * as investigate_diogo_desc from "../investigate_diogo_desc.js";
 import type * as investigate_integrity from "../investigate_integrity.js";
 import type * as investigate_overrides from "../investigate_overrides.js";
 import type * as item_resolver from "../item_resolver.js";
@@ -80,6 +82,7 @@ import type * as items from "../items.js";
 import type * as knowledge from "../knowledge.js";
 import type * as lib_ai_attribution from "../lib/ai_attribution.js";
 import type * as lib_availability from "../lib/availability.js";
+import type * as lib_bundle_description_parse from "../lib/bundle_description_parse.js";
 import type * as lib_capacity_gap from "../lib/capacity_gap.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
 import type * as lib_customer_metrics from "../lib/customer_metrics.js";
@@ -283,6 +286,7 @@ declare const fullApi: ApiFromModules<{
   denial_records: typeof denial_records;
   denial_resolutions: typeof denial_resolutions;
   denial_resolver: typeof denial_resolver;
+  diag_bundle_parse: typeof diag_bundle_parse;
   draft_learning: typeof draft_learning;
   draft_learning_actions: typeof draft_learning_actions;
   extract_booking_times: typeof extract_booking_times;
@@ -299,6 +303,7 @@ declare const fullApi: ApiFromModules<{
   insurance_claims: typeof insurance_claims;
   intel: typeof intel;
   investigate_autodesc: typeof investigate_autodesc;
+  investigate_diogo_desc: typeof investigate_diogo_desc;
   investigate_integrity: typeof investigate_integrity;
   investigate_overrides: typeof investigate_overrides;
   item_resolver: typeof item_resolver;
@@ -307,6 +312,7 @@ declare const fullApi: ApiFromModules<{
   knowledge: typeof knowledge;
   "lib/ai_attribution": typeof lib_ai_attribution;
   "lib/availability": typeof lib_availability;
+  "lib/bundle_description_parse": typeof lib_bundle_description_parse;
   "lib/capacity_gap": typeof lib_capacity_gap;
   "lib/co_occurrence": typeof lib_co_occurrence;
   "lib/customer_metrics": typeof lib_customer_metrics;

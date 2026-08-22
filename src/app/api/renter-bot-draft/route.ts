@@ -437,7 +437,10 @@ export async function POST(req: Request) {
           }
         }
         const kitText = it.whats_included
-          ? it.whats_included
+          // Truncate at INJECTION, not in storage. The stored description is
+          // now full-length so bundle mapping can read the whole component
+          // list; the prompt only needs enough to answer "what's included".
+          ? it.whats_included.slice(0, 900)
           : "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)";
         groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day. Included: ${kitText}\n`;
         try {

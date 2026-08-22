@@ -101,7 +101,19 @@ export const setDescription = internalMutation({
         q.eq("account_slug", account_slug).eq("product_id", product_id),
       )
       .unique();
-    if (row) await ctx.db.patch(row._id, { description: description.slice(0, 600) });
+    // 2500, not 600. Measured 2026-08-22: ALL 38 of diogo's Blackmagic
+    // descriptions sat at exactly 600 chars — every one truncated by this cap.
+    // Diogo's listings carry the most detailed kit lists we have ("In this
+    // kit: * 1x Blackmagic Pocket Cinema Camera 6K Pro * 5x Batteries * 1x 2TB
+    // SSD * 1x Tilta Shoulder Rig * 1x Canon 24-105mm f4 Lens ..."), and
+    // cutting them mid-list silently drops components — which is the entire
+    // input for mapping a bundle to its parts.
+    //
+    // Storage is cheap. The cap existed to bound PROMPT size, and that belongs
+    // where the text is USED (the draft route truncates before injecting),
+    // not where it is stored — destroying the data on the way in is not a
+    // token optimisation, it is data loss.
+    if (row) await ctx.db.patch(row._id, { description: description.slice(0, 2500) });
     return { ok: !!row };
   },
 });

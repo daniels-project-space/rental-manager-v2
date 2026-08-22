@@ -26,62 +26,7 @@ import { bestMatch } from "./lib/item_name_match";
  *  - a component qty is never allowed to exceed what master inventory holds
  */
 
-/** Consumables/packaging that are not separately-tracked inventory. */
-const NOISE_RE =
-  /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable)\b/i;
-
-/** Pull the component list out of an "Included in this rental" style block. */
-export function extractComponents(desc: string): Array<{ qty: number; name: string }> {
-  const clean = desc.replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ");
-  const m = clean.match(/included in th(?:is|e)[^:]*:?(.*)$/i);
-  let body = m ? m[1] : clean;
-  // Everything after "About this ..." is marketing prose, not contents.
-  body = body.split(/\bAbout th(?:is|e)\b/i)[0];
-  // Section labels ("Camera:", "Lenses (Anamorphic):", "Media:") are headings.
-  body = body.replace(/\b(camera|lenses?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");
-  body = body.replace(/\b(camera|lenses?|media|audio|support|accessories|lighting|power)\s*:/gi, " ");
-
-  // Common misspellings in the real listings — normalise BEFORE matching, so a
-  // genuinely-owned component isn't dropped for a typo. Live: "1x 24-105mm f4
-  // cannon lens" failed the confidence gate against "Canon EF 24-105mm f4"
-  // purely because of "cannon".
-  body = body
-    .replace(/\bcannon\b/gi, "Canon")
-    .replace(/\bannamorphic\b/gi, "anamorphic")
-    .replace(/\bsenheiser\b/gi, "Sennheiser")
-    .replace(/\blaveliers?\b/gi, "lavalier");
-
-  // Split ONLY on an explicit "Nx" quantity marker.
-  //
-  // Allowing a bare "N " split inside names: "1x 1 TB SSD" broke at "1 TB",
-  // and "1.8x T2.9" broke at the decimal, producing garbage components like
-  // "1, 8x T2.9" and merged ones like "4x batteries 1x 1TB SSD". A wrong
-  // quantity is worse than no mapping — the live parse produced "2x DJI RS3
-  // Pro gimbal" from a description that says "1x", by inheriting the "2x"
-  // from the DJI Mics before it. The negative lookbehind rejects decimals.
-  // Accept both "1x NAME" and "1 NAME" — the listings mix both formats, and
-  // requiring the "x" lost every body written as "1 Blackmagic Pocket Cinema
-  // Camera 6K Full Frame (L-Mount)". The unit lookahead is what makes the
-  // bare-number form safe: without it "1x 1 TB SSD" split at "1 TB".
-  const parts = body.split(
-    /(?=(?<![\d.])\b\d{1,2}\s*x?\s+(?!(?:tb|gb|mb|mm|k)\b)[A-Za-z])/i,
-  );
-  const out: Array<{ qty: number; name: string }> = [];
-  for (const raw of parts) {
-    const p = raw.trim();
-    if (!p) continue;
-    const q = p.match(/^(\d{1,2})\s*x?\s+(.*)$/);
-    if (!q) continue;
-    const qty = Math.max(1, Math.min(10, parseInt(q[1], 10)));
-    let name = q[2].trim().replace(/[.,;]+$/, "");
-    // A component name never runs to the end of a long block; anything past a
-    // second quantity marker belongs to the next item.
-    name = name.split(/\b\d{1,2}\s*x\s+/)[0].trim();
-    if (!name || NOISE_RE.test(name)) continue;
-    out.push({ qty, name: name.slice(0, 60) });
-  }
-  return out;
-}
+import { extractComponents } from "./lib/bundle_description_parse";
 
 export const propose = internalQuery({
   args: {},
@@ -112,8 +57,13 @@ export const propose = internalQuery({
       const desc = l.description ?? "";
       if (!desc) continue;
 
-      const comps = extractComponents(desc);
-      const resolved: Array<{ item_id: string; name: string; qty: number }> = [];
+      const { components: comps, usedBullets } = extractComponents(desc);
+      const resolved: Array<{
+        item_id: string;
+        name: string;
+        qty: number;
+        kind: string;
+      }> = [];
       const unmatched: string[] = [];
       for (const c of comps) {
         // ASYMMETRIC MATCH: a kit line CONTAINS the item name plus extra words
@@ -137,7 +87,15 @@ export const propose = internalQuery({
           const itemToks = (it.name_canonical.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(
             (t) => (t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t),
           );
-          const required = itemToks.filter((t) => !MOUNT_TOKS.has(t));
+          // Mount tokens are tolerated as missing because kit lines omit them
+          // -- but ONLY when enough signal survives. "PL to EF mount" is
+          // ENTIRELY mount tokens, so stripping them left the single token
+          // "to", which matched the phrase "ready-to-shoot" in a marketing
+          // sentence and proposed a mount adapter for a kit that has none.
+          // Below 2 surviving tokens the tolerance is dropped and the full
+          // item name must appear.
+          const stripped = itemToks.filter((t) => !MOUNT_TOKS.has(t));
+          const required = stripped.length >= 2 ? stripped : itemToks;
           if (required.length === 0) continue;
           if (!required.every((t) => lineToks.has(t))) continue;
           // Prefer the most specific item that fits, so "BMPCC 6K Full Frame"
@@ -163,38 +121,56 @@ export const propose = internalQuery({
         const cap = m.match.qty ?? 1;
         const qty = Math.min(c.qty, cap);
         const seen = resolved.find((r) => r.item_id === String(m.match!._id));
-        if (seen) seen.qty = Math.min(seen.qty + qty, cap);
-        else resolved.push({ item_id: String(m.match._id), name: m.match.name_canonical, qty });
+        // MAX, not SUM. Two lines resolving to the same item almost always
+        // means the item was MENTIONED twice (intro prose plus the bullet),
+        // not that there are two of them: diogo#1173794 lists "1x Variable ND
+        // filter" once and describes it once, and summing proposed 2x. Max
+        // errs toward under-holding, which is the safe direction -- an
+        // over-count marks real stock as rented when it is on the shelf.
+        if (seen) seen.qty = Math.min(Math.max(seen.qty, qty), cap);
+        else
+          resolved.push({
+            item_id: String(m.match._id),
+            name: m.match.name_canonical,
+            qty,
+            kind: m.match.kind,
+          });
       }
 
-      const body = resolved.find((r) => /bmpcc/i.test(r.name));
+      // The body must be an actual CAMERA, checked by inventory kind.
+      // Matching /bmpcc/i on the NAME accepted "BMPCC battery pack" as the
+      // body: two listings resolved to a battery pack alone, passing this gate
+      // while the real camera stayed unmapped and free to double-book. Kind is
+      // the fact; the name is a string that happens to share a prefix.
+      const body = resolved.find((r) => r.kind === "camera");
       if (!body) {
         noBody.push(`${key} £${l.daily_price ?? "?"} ${title.slice(0, 60)}`);
         continue;
       }
 
-      // BODY ONLY, QTY 1 — a deliberate, documented reduction.
+      // TWO TIERS, by how trustworthy the description's structure is.
       //
-      // Free-text descriptions cannot be split reliably, because product names
-      // contain digits: "1x DJI RS 3 Pro Gimbal" split at the "3" and produced
-      // a phantom "3x", which the accessory path then wrote as 2x a qty-2 item
-      // from a description that plainly says 1x. Same shape as "A7 III" and
-      // "24-105". Each regex iteration fixed one split and broke another, and
-      // the failure mode is a SILENTLY WRONG QUANTITY on live inventory — the
-      // exact bug class this whole effort exists to remove.
+      // Quantities are only believed when the description used real bullet
+      // delimiters. Each bullet carries its own count, so a number cannot leak
+      // across items -- the failure that turned "1x DJI RS 3 Pro Gimbal" into
+      // a phantom "3x" (splitting at the "3" in "RS 3") is impossible there.
       //
-      // The camera body is the scarce, expensive item and the one that
-      // actually double-books; it is always exactly 1 per listing, so it
-      // carries no quantity ambiguity. Mapping just the body is strictly
-      // better than mapping nothing (today the body is held by NOTHING when
-      // one of these bundles goes out) and cannot be wrong about counts.
-      //
-      // Accessories stay unmapped: they read as free, which is the current
-      // state, not a regression. Enumerating them needs per-listing review.
-      const bodyOnly = [{ item_id: body.item_id, name: body.name, qty: 1 }];
-      const notMapped = resolved
-        .filter((r) => r.item_id !== body.item_id)
-        .map((r) => `${r.qty}x ${r.name}`);
+      // Everything else falls back to the numeric split, which is NOT safe for
+      // counts, so those listings map the CAMERA BODY ONLY at qty 1. The body
+      // is the scarce, expensive item and the one that actually double-books;
+      // there is exactly one per listing, so it carries no count ambiguity.
+      // Their accessories stay unmapped and read as free -- today's behaviour,
+      // not a regression.
+      const useFull = usedBullets;
+      const chosen = useFull
+        ? resolved
+        : [{ item_id: body.item_id, name: body.name, qty: 1 }];
+      const bodyOnly = chosen;
+      const notMapped = useFull
+        ? []
+        : resolved
+            .filter((r) => r.item_id !== body.item_id)
+            .map((r) => `${r.qty}x ${r.name}`);
 
       proposals.push({
         key,
@@ -204,6 +180,7 @@ export const propose = internalQuery({
         title: title.replace(/[^\x20-\x7E]/g, "").slice(0, 70),
         components: bodyOnly.map((r) => `${r.qty}x ${r.name}`),
         component_ids: bodyOnly,
+        source: useFull ? "bulleted-description" : "body-only-fallback",
         accessories_seen_but_not_mapped: notMapped,
         dropped: unmatched.slice(0, 6),
       });
@@ -225,7 +202,8 @@ export const apply = internalMutation({
       proposals?: Array<{
         account_slug: string;
         product_id: number;
-        component_ids: Array<{ item_id: string; qty: number }>;
+        source: string;
+        component_ids: Array<{ item_id: string; name: string; qty: number }>;
       }>;
     };
     const log: string[] = [];
@@ -244,7 +222,9 @@ export const apply = internalMutation({
           item_id: c.item_id as unknown as never,
           qty: c.qty,
         })),
-        note: "fix:2026-08-22 bundle mapped from listing description component list",
+        note: `fix:2026-08-22 from listing description [${p.source}]: ${p.component_ids
+          .map((c) => `${c.qty}x ${c.name}`)
+          .join(", ")}`,
         source: "manual_audit",
         updated_at: Date.now(),
       });

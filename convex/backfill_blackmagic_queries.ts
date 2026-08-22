@@ -25,7 +25,9 @@ export const targets = internalQuery({
         if (!RE.test(t)) return false;
         if (/pyxis/i.test(t)) return false; // different camera, ruled marketing
         if (mapped.has(`${l.account_slug}#${l.product_id}`)) return false;
-        return !l.description; // only those still missing one
+        // Missing OR truncated at the old 600-char cap — those lost the tail
+        // of their component list and must be re-fetched, not skipped.
+        return !l.description || l.description.length >= 600;
       })
       .map((l) => ({ account_slug: l.account_slug, product_id: l.product_id }));
   },
