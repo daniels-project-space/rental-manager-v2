@@ -9,6 +9,12 @@ import {
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import {
+  isTrackableLine,
+  lineResolvesToSomething,
+  type LineResolutionMaps,
+} from "./lib/reservations/itemResolution";
+import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import { buildHyggloListingTiles } from "./lib/reservations/hyggloTiles";
 import { claimHoldsStock } from "./lib/availability";
 import {
@@ -2219,6 +2225,20 @@ export const backfillHoldRenterNames = mutation({
  * Previously this only reached a Trigger.dev error log, which nobody reads.
  * Computed live rather than stored so it can never go stale, and scoped to
  * current/future bookings via the by_start_date index to stay cheap.
+ *
+ * 2026-08-22 — false-alarm sweep. The banner was shouting about lines the rest
+ * of the dashboard already resolves fine:
+ *   1. INSURANCE add-on lines were counted as gear (this was the only
+ *      hygglo_items[] consumer in the codebase missing that filter).
+ *   2. It trusted 3 resolution signals where dashboard.ts:expandedIdsOf trusts
+ *      5 — the info pool and the positional LLM pick were ignored here.
+ *   3. A line with no product_id was flagged unconditionally, even when
+ *      resolved_items[i] / expanded_items[] named it. Both are already
+ *      materialised on the row, so this costs no extra read and no LLM call.
+ * Shared judgement now lives in lib/reservations/itemResolution.ts so the two
+ * cannot drift apart again. Genuine gaps can be dismissed from the banner,
+ * which writes an empty-components listing_resolution_override ("not
+ * inventory") — one of the signals checked below, so it self-silences.
  */
 export const getUnmappedRentedListings = query({
   args: {},
@@ -2249,13 +2269,44 @@ export const getUnmappedRentedListings = query({
     // would make it noise and get it ignored, which is how the original
     // problem stayed hidden. Only lines that resolve to nothing appear here.
     const products = await ctx.db.query("hygglo_products").collect();
-    const mapped = new Set<string>([
-      ...index.map((r) => `${r.account_slug}#${r.product_id}`),
-      ...overrides.map((r) => `${r.account_slug}#${r.product_id}`),
-      ...products
-        .filter((p) => p.masterItemId && !(p as { isMarketingOnly?: boolean }).isMarketingOnly)
-        .map((p) => `${p.accountSlug}#${p.productId}`),
-    ]);
+
+    // listing_info_pool components are a resolution signal the dashboard's
+    // resolver already trusts (dashboard.ts:expandedIdsOf step A.5), so a line
+    // covered by the pool is NOT untracked. Flag-gated exactly as there, and
+    // the collect is skipped entirely when no account has the pool enabled.
+    const candidateSlugs = Array.from(
+      new Set(live.map((r) => String(r.account_slug ?? "")).filter((s) => s.length > 0)),
+    );
+    const poolEnabledAccounts = await infoPoolEnabledAccounts(ctx, candidateSlugs);
+    const infoPoolKeys = new Set<string>();
+    if (poolEnabledAccounts.size > 0) {
+      for (const pr of await ctx.db.query("listing_info_pool").collect()) {
+        if (!poolEnabledAccounts.has(pr.account_slug)) continue;
+        const moComps = pr.manual_override?.bundle_components;
+        const hasComponent =
+          (moComps && moComps.length > 0) ||
+          pr.bundle_components.some(
+            (c) =>
+              !!c.item_id &&
+              c.source_kind !== "comparison_reference" &&
+              c.source_kind !== "standard_included",
+          );
+        if (hasComponent) infoPoolKeys.add(`${pr.account_slug}#${pr.product_id}`);
+      }
+    }
+
+    const maps: LineResolutionMaps = {
+      overrideByProduct: new Set(
+        overrides.map((r) => `${r.account_slug}#${r.product_id}`),
+      ),
+      infoPoolByProduct: infoPoolKeys,
+      productIndex: new Set(index.map((r) => `${r.account_slug}#${r.product_id}`)),
+      catalogueLinked: new Set(
+        products
+          .filter((p) => p.masterItemId && !(p as { isMarketingOnly?: boolean }).isMarketingOnly)
+          .map((p) => `${p.accountSlug}#${p.productId}`),
+      ),
+    };
 
     const alerts: Array<{
       reservation_id: string;
@@ -2270,19 +2321,44 @@ export const getUnmappedRentedListings = query({
     for (const r of live) {
       const acct = String(r.account_slug ?? "");
       const lines =
-        ((r as { hygglo_items?: Array<{ product_id?: number; name?: string }> })
-          .hygglo_items) ?? [];
-      for (const l of lines) {
-        const pid = typeof l.product_id === "number" ? l.product_id : null;
-        // No product_id at all is equally unmappable — surface it the same way.
-        if (pid !== null && mapped.has(`${acct}#${pid}`)) continue;
+        ((r as {
+          hygglo_items?: Array<{ product_id?: number; name?: string; type?: string }>;
+        }).hygglo_items) ?? [];
+      const resolvedItems =
+        ((r as { resolved_items?: Array<{ item_name_canonical?: string }> })
+          .resolved_items) ?? [];
+      const expandedItems =
+        ((r as { expanded_items?: Array<{ item_name_canonical?: string }> })
+          .expanded_items) ?? [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        // Hygglo's insurance add-on is a fee line, not gear — it has no product
+        // to map and holds no stock. Every other hygglo_items[] consumer drops
+        // it; this query used to be the sole exception, which is why the banner
+        // reported insurance rows as "rented gear not tracked".
+        if (!isTrackableLine(l)) continue;
+        // Positional index must stay the line's TRUE position in hygglo_items[]
+        // (resolved_items[] is position-aligned with it), so filter inside the
+        // loop rather than by pre-filtering the array.
+        if (
+          lineResolvesToSomething({
+            accountSlug: acct,
+            line: l,
+            index: i,
+            maps,
+            resolvedItems,
+            expandedItems,
+          })
+        ) {
+          continue;
+        }
         alerts.push({
           reservation_id: String(r._id),
           account_slug: r.account_slug ?? null,
           renter_name: (r as { renter_name?: string }).renter_name ?? null,
           start_date: r.start_date ?? null,
           end_date: r.end_date ?? null,
-          product_id: pid,
+          product_id: typeof l.product_id === "number" ? l.product_id : null,
           listing_title: String(l.name ?? "(untitled listing)").slice(0, 90),
         });
       }

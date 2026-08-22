@@ -373,23 +373,79 @@ function UnmappedListingsBanner({ alerts }: { alerts: UnmappedListing[] }) {
       {expanded && (
         <div className="px-3 pb-3 space-y-1">
           {alerts.map((a, i) => (
-            <div
-              key={`${a.reservation_id}-${a.product_id ?? i}`}
-              className="text-[11px] flex items-baseline gap-2"
-              style={{ color: "#d1d5db" }}
-            >
-              <span style={{ color: "#f59e0b" }}>
-                {fmtDate(a.start_date)}–{fmtDate(a.end_date)}
-              </span>
-              <span className="truncate">{a.listing_title}</span>
-              <span style={{ color: "#6b7280" }}>
-                {a.account_slug ?? "?"}
-                {a.product_id === null ? " · no product id" : ` · #${a.product_id}`}
-              </span>
-            </div>
+            <UnmappedRow key={`${a.reservation_id}-${a.product_id ?? i}`} alert={a} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * One unmapped line, with an inline escape hatch.
+ *
+ * Not every flagged line is a mapping bug — some listings genuinely hold no
+ * inventory (a delivery fee, a marketing-only listing). "Not inventory" pins
+ * that judgement as an audit-authoritative `listing_resolution_override` with
+ * an EMPTY components list, which is the codebase's existing convention for
+ * "this listing owns nothing" (see dashboard.ts expandedIdsOf step A.0). The
+ * override is one of the signals getUnmappedRentedListings checks, so the line
+ * drops out of this banner on the next tick — and, because it is the same row
+ * the conflict/out-of-stock resolver reads, the rest of the dashboard agrees.
+ *
+ * The override table is keyed by (account_slug, product_id), so a line Hygglo
+ * gave no product_id cannot be pinned this way — that one needs fixing at the
+ * listing, and the button says so instead of failing silently.
+ */
+function UnmappedRow({ alert: a }: { alert: UnmappedListing }) {
+  const setOverride = useMutation(api.listing_overrides.setOverride);
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+  const canPin = a.product_id !== null && !!a.account_slug;
+
+  async function onNotInventory() {
+    if (saving || done || !canPin) return;
+    setSaving(true);
+    try {
+      await setOverride({
+        account_slug: a.account_slug as string,
+        product_id: a.product_id as number,
+        components: [],
+        note: `marked non-inventory from dashboard alert: ${a.listing_title}`,
+      });
+      setDone(true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="text-[11px] flex items-center gap-2" style={{ color: "#d1d5db" }}>
+      <span style={{ color: "#f59e0b" }}>
+        {fmtDate(a.start_date)}–{fmtDate(a.end_date)}
+      </span>
+      <span className="truncate flex-1 min-w-0">{a.listing_title}</span>
+      <span className="flex-shrink-0" style={{ color: "#6b7280" }}>
+        {a.account_slug ?? "?"}
+        {a.product_id === null ? " · no product id" : ` · #${a.product_id}`}
+      </span>
+      <button
+        onClick={onNotInventory}
+        disabled={!canPin || saving || done}
+        className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-semibold transition-colors disabled:opacity-40"
+        style={{
+          background: "rgba(148,163,184,0.14)",
+          color: "#cbd5e1",
+          border: "1px solid rgba(148,163,184,0.35)",
+        }}
+        title={
+          canPin
+            ? "This listing holds no inventory (fee, service, marketing-only). Pins it as non-inventory so it stops being reported as untracked."
+            : "Hygglo sent no product id for this line, so it can't be pinned — fix the listing itself."
+        }
+      >
+        {done ? "pinned" : saving ? "…" : "not inventory"}
+      </button>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import {
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
+import { passesNameSanityCheck } from "./lib/reservations/itemResolution";
 import { londonToday } from "./lib/effectiveDates";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import {
@@ -591,37 +592,16 @@ export const getStatsDrawerData = query({
     }
 
     /**
-     * Structural sanity check for LLM-resolved item names. Strips parentheticals
-     * containing comparison keywords ("same sensor as ...", "like ...") then
-     * looks for any model-identifier token of the canonical name in the cleaned
-     * titles. Used as a per-position filter in expandedIdsOf so spurious LLM
-     * picks driven by marketing copy don't enter the conflict graph.
+     * Structural sanity check for LLM-resolved item names — strips comparison
+     * parentheticals, then looks for a model-identifier token of the canonical
+     * name in the cleaned titles. Used as a per-position filter in
+     * expandedIdsOf so spurious LLM picks driven by marketing copy don't enter
+     * the conflict graph.
+     *
+     * Moved to convex/lib/reservations/itemResolution.ts (2026-08-22) so the
+     * "Rented gear not tracked" banner applies the IDENTICAL check. Behaviour
+     * is unchanged — this is the same code, imported rather than inlined.
      */
-    function stripParentheticalComparisons(s: string): string {
-      return s.replace(
-        /\([^)]*\b(same|like|equivalent|comparable|as good as|similar|alternative)\b[^)]*\)/gi,
-        " ",
-      );
-    }
-    function modelTokensOf(name: string): string[] {
-      const out = new Set<string>();
-      const re = /\b([a-z]+\d+\w*|[a-z]+\s*[ivx]{1,4}\b|\d+\.\d+|\d+[a-z]+)/gi;
-      for (const m of name.toLowerCase().matchAll(re)) {
-        out.add(m[1].replace(/\s+/g, ""));
-      }
-      return Array.from(out);
-    }
-    function passesNameSanityCheck(
-      canonical: string,
-      titles: Array<{ name?: string }>,
-    ): boolean {
-      const toks = modelTokensOf(canonical);
-      if (toks.length === 0) return true; // no discriminating tokens — accept
-      const cleaned = titles
-        .map((t) => stripParentheticalComparisons(t.name ?? "").toLowerCase().replace(/\s+/g, ""))
-        .filter((s) => s.length > 0);
-      return toks.some((t) => cleaned.some((c) => c.includes(t)));
-    }
 
     // ────────────────────────────────────────────────────────────
     // Derived sets from reservations
