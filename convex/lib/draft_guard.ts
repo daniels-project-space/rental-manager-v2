@@ -198,15 +198,25 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     push("CHAIN_OF_THOUGHT", "Stripped leaked reasoning tag", "stripped");
   }
 
+  // TYPOGRAPHIC APOSTROPHES. 78 patterns in this file spell contractions with
+  // an ASCII apostrophe ("I'?ll", "it'?s", "don'?t"), but the model writes the
+  // curly U+2019 — so every one of those rules silently failed to match. The
+  // guard looked strict and was not: "I'll confirm the booking" and "I'll get
+  // it approved" both walked straight through FALSE_ACTION_CLAIM. Normalise
+  // once, here, rather than touching 78 regexes (and every future one).
+  const deSmart = (v: string) =>
+    v.replace(/[\u2018\u2019\u02BC]/g, "'").replace(/[\u201C\u201D]/g, '"');
+  text = deSmart(text);
+
   const account = opts.account;
   const stage = opts.stage?.toLowerCase();
-  const message = opts.lastRenterMessage ?? "";
+  const message = deSmart(opts.lastRenterMessage ?? "");
   const ranges = windowRanges(opts.pickupWindows);
   const factPack = opts.factPack;
   // V1 filter expects user/assistant roles.
   const history = opts.history.map((m) => ({
     role: m.role === "owner" ? "assistant" : "user",
-    content: m.content,
+    content: deSmart(m.content),
   }));
 
   // 1. INTERNAL ACTION LEAK (asterisk-wrapped) — STRIP
@@ -997,7 +1007,15 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   const selfAdminAction =
     /\bjust (?:approved|accepted|confirmed) (?:your|the|this)\b/i.test(text) ||
     /\bI(?:'?ve| have| just)? (?:approved|accepted|confirmed) (?:it|your|the|this)\b/i.test(text) ||
-    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get it |have it )?(?:accept|approve|confirm)(?:ed)?\b/i.test(text) ||
+    // "confirm" is only an admin claim when its OBJECT is the booking. Bare
+    // "let me confirm what's in the kit" / "I can confirm the 100mm is
+    // available" are ordinary English for "I'll check" — and the fact pack
+    // itself INSTRUCTS the bot to say "I'll confirm the exact kit" when kit
+    // data is missing. Blocking that made the system contradict itself and
+    // withhold the entire reply: live-caught on "yes please, and what's
+    // included in the bmpcc kit?", which returned an empty draft.
+    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get it |have it )?(?:accept|approve)(?:ed)?\b/i.test(text) ||
+    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get |have )?(?:it |the |your |this )?(?:accept|approve|confirm)(?:ed)?\s+(?:your |the |this )?(?:booking|request|order|reservation|rental)\b/i.test(text) ||
     /\b(?:I'?ll|let me|I can|I'?ve|just|I'?m) (?:going to )?mark(?:ing|ed)? (?:it|the|your|this)?\s*(?:as )?(?:picked up|collected|returned|complete)\b/i.test(text) ||
     /\bprocess(?:ed|ing)? the return\b/i.test(text) ||
     /\bI'?m (?:accepting|confirming|approving)\b/i.test(text);

@@ -220,3 +220,30 @@ describe("PRICE_HALLUCINATION vs prices we supplied", () => {
     expect(r.flags.some((f) => f.type === "PRICE_HALLUCINATION")).toBe(true);
   });
 });
+
+describe("FALSE_ACTION_CLAIM — apostrophes and the object of 'confirm'", () => {
+  const opts = { history: [], lastRenterMessage: "yes please, and what's in the kit?" };
+  const fired = (draft: string) =>
+    guardDraft(draft, opts).flags.some((f) => f.type === "FALSE_ACTION_CLAIM");
+
+  it("catches a real admin claim written with a CURLY apostrophe", () => {
+    // The model writes U+2019. Every "I'?ll" pattern in the guard used ASCII,
+    // so these walked straight through and the guard only looked strict.
+    expect(fired("I’ll confirm the booking for you.")).toBe(true);
+    expect(fired("I’ll get it approved for you.")).toBe(true);
+    expect(fired("I’ve approved your request.")).toBe(true);
+  });
+
+  it("still catches the ASCII spelling", () => {
+    expect(fired("I'll get it approved for you.")).toBe(true);
+    expect(fired("I'm accepting your booking now.")).toBe(true);
+  });
+
+  it("does NOT fire on ordinary 'confirm' with a non-booking object", () => {
+    // The fact pack literally instructs the bot to say it will confirm the
+    // kit when kit data is missing. Blocking that withheld a whole reply.
+    expect(fired("Let me confirm what's in the kit and come back to you.")).toBe(false);
+    expect(fired("I can confirm the 100mm is available for those dates.")).toBe(false);
+    expect(fired("I'll confirm the exact kit contents shortly.")).toBe(false);
+  });
+});

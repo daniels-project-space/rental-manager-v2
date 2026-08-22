@@ -778,11 +778,28 @@ export const find_owned_alternatives = query({
     // turn and "£112 for 4 days" (£40/day) in another, and every substitution
     // we offered was under-priced. Identity, not similarity.
     const idxAll = await ctx.db.query("hygglo_product_index").collect();
+    // OVERRIDE ∪ INDEX. listing_resolution_override is audit-authoritative and
+    // wins over the index everywhere; reading the index alone made this tool
+    // miss the mapping and fall back to the curated catalog. Live: it quoted
+    // the Blazar Remus 100mm at £26 (stale catalog) while lookup_pricing --
+    // which does consult overrides -- quoted the real listing's £25, so one
+    // conversation stated two different prices for the same lens two turns
+    // apart. Only SINGLE-item overrides count: a bundle's price is the
+    // bundle's, not the component's.
+    const ovAll = await ctx.db.query("listing_resolution_override").collect();
     const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
-    const pidsForItem = (itemId: string): number[] =>
-      idxAll
+    const pidsForItem = (itemId: string): number[] => {
+      const out = idxAll
         .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
         .map((r) => r.product_id);
+      for (const o of ovAll) {
+        if (o.account_slug !== account_slug) continue;
+        if (o.components.length !== 1) continue;
+        if (String(o.components[0].item_id) !== itemId) continue;
+        if (!out.includes(o.product_id)) out.push(o.product_id);
+      }
+      return out;
+    };
     // Curated fallback for items with no listing on THIS account — the same
     // source lookup_pricing falls back to, so the two tools cannot disagree.
     // Without it, switching to identity-only resolution left most
@@ -978,11 +995,26 @@ export const get_mount_adapters = query({
     // Identity-first, cheapest own listing, then the curated catalog — the same
     // order lookup_pricing and find_owned_alternatives use, so the three tools
     // cannot quote different numbers for one item.
+    // Override ∪ index, for the same reason as find_owned_alternatives above:
+    // the index alone misses adapters that are only mapped by an override, and
+    // the price silently degrades to null or a stale catalog row.
+    const ovAll = await ctx.db.query("listing_resolution_override").collect();
+    const pidsFor = (itemId: string): number[] => {
+      const out = idxAll
+        .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
+        .map((r) => r.product_id);
+      for (const o of ovAll) {
+        if (o.account_slug !== account_slug) continue;
+        if (o.components.length !== 1) continue;
+        if (String(o.components[0].item_id) !== itemId) continue;
+        if (!out.includes(o.product_id)) out.push(o.product_id);
+      }
+      return out;
+    };
     const priceFor = (itemId: string, name: string): number | null => {
       let best: number | null = null;
-      for (const r of idxAll) {
-        if (String(r.item_id) !== itemId || r.account_slug !== account_slug) continue;
-        const l = listingByPid.get(r.product_id) as { daily_price?: number } | undefined;
+      for (const pid of pidsFor(itemId)) {
+        const l = listingByPid.get(pid) as { daily_price?: number } | undefined;
         if (typeof l?.daily_price !== "number") continue;
         if (best === null || l.daily_price < best) best = l.daily_price;
       }
