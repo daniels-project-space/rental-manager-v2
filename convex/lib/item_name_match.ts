@@ -173,3 +173,33 @@ export function substitutionScore(
   s += shared * 2;
   return s;
 }
+
+/**
+ * Reduce a lens-mount string to its distinctive token so two spellings of the
+ * same mount compare equal.
+ *
+ * Inventory is not consistent about this: the BMPCC 6K Pro records
+ * "Canon EF mount" while adapters and lenses use "EF". An exact string
+ * comparison therefore said the body's mount and the adapter's mount were
+ * different things, so the bot was never shown the PL-to-EF adapter we stock
+ * and told a renter we did not have it.
+ *
+ *   "Canon EF mount" -> "ef"      "EF" -> "ef"
+ *   "Sony E mount"   -> "e"       "Leica L" -> "l"
+ */
+export function normalizeMount(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return raw
+    .toLowerCase()
+    .replace(/\b(canon|leica|sony|nikon|fujifilm|fuji|panasonic|blackmagic|arri)\b/g, " ")
+    .replace(/\b(mount|lens|bayonet)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Do two mount strings refer to the same mount? Empty on either side = unknown, so no claim. */
+export function sameMount(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = normalizeMount(a);
+  const y = normalizeMount(b);
+  return !!x && !!y && x === y;
+}

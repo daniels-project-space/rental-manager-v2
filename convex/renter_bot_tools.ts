@@ -15,7 +15,7 @@ import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
-import { bestMatch, rankByName, substitutionScore } from "./lib/item_name_match";
+import { sameMount, bestMatch, rankByName, substitutionScore } from "./lib/item_name_match";
 
 // ── Tool 1: get_renter_context ───────────────────────────────
 
@@ -885,7 +885,10 @@ export const find_owned_alternatives = query({
       // Never offer the very item being replaced back as its own alternative.
       if (exclude && nameLower === exclude) continue;
       if (targetLower && nameLower === targetLower) continue;
-      if (lens_mount && it.lens_mount && it.lens_mount !== lens_mount) continue;
+      // Normalised compare: inventory spells the same mount several ways
+      // ("Canon EF mount" vs "EF"), and an exact compare silently filtered out
+      // every genuinely-compatible lens.
+      if (lens_mount && it.lens_mount && !sameMount(it.lens_mount, lens_mount)) continue;
       // With a known target, keep suggestions in the same category. Offering a
       // lens as a substitute for a camera body is never useful.
       if (target?.kind && it.kind && normKind(it.kind) !== normKind(target.kind)) continue;

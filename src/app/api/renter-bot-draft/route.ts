@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sameMount } from "../../../../convex/lib/item_name_match";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
@@ -541,11 +542,10 @@ export async function POST(req: Request) {
               daily_price_gbp?: number | null;
             }>)
               // Only adapters that land ON this body's mount are useful here.
-              .filter(
-                (a) =>
-                  (a.to_mount ?? "").toLowerCase() ===
-                  (it.lens_mount ?? "").toLowerCase(),
-              )
+              // Mount spellings differ across inventory ("Canon EF mount" vs
+              // "EF"), so compare normalised — an exact compare matched
+              // nothing and hid the adapter we stock.
+              .filter((a) => sameMount(a.to_mount, it.lens_mount))
               .map((a) => {
                 if (typeof a.daily_price_gbp === "number")
                   offeredPrices.push(a.daily_price_gbp);

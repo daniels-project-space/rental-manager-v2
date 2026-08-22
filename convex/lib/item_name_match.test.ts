@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenize, rankByName, bestMatch, substitutionScore } from "./item_name_match";
+import { tokenize, rankByName, bestMatch, substitutionScore, sameMount } from "./item_name_match";
 
 const ITEMS = [
   { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
@@ -109,5 +109,27 @@ describe("substitutionScore — stop cross-brand nonsense", () => {
     const camera = substitutionScore(target, ITEMS[1]);
     const lens = substitutionScore(target, ITEMS[4]);
     expect(camera).toBeGreaterThan(lens);
+  });
+});
+
+describe("normalizeMount / sameMount", () => {
+  it("treats the inventory's two spellings of one mount as equal", () => {
+    // Live bug: BMPCC 6K Pro stores "Canon EF mount", adapters store "EF".
+    // Exact compare said they were different mounts, so the bot was never
+    // shown the PL-to-EF adapter and told the renter we didn't have one.
+    expect(sameMount("Canon EF mount", "EF")).toBe(true);
+    expect(sameMount("Sony E mount", "Sony E")).toBe(true);
+    expect(sameMount("Leica L", "L mount")).toBe(true);
+  });
+
+  it("keeps genuinely different mounts apart", () => {
+    expect(sameMount("Canon EF mount", "L")).toBe(false);
+    expect(sameMount("PL", "EF")).toBe(false);
+    expect(sameMount("Canon EF mount", "RF")).toBe(false);
+  });
+
+  it("makes no claim when either side is unknown", () => {
+    expect(sameMount(null, "EF")).toBe(false);
+    expect(sameMount("EF", "")).toBe(false);
   });
 });
