@@ -14,7 +14,7 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
-import { hyggloPollMode } from "../lib/quiet-hours";
+import { HYGGLO_POLL_CRON, hyggloPollMode } from "../lib/quiet-hours";
 import {
   MAX_EFFECTIVE_POLL_INTERVAL_MS,
   MIN_EFFECTIVE_POLL_INTERVAL_MS,
@@ -39,8 +39,28 @@ const CONVEX_URL = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.c
 // inert after a transient Hygglo/Vault/network failure. A successful retry
 // resets it to active through account_state.upsert().
 const PAUSED_ACCOUNT_RETRY_MS = 60 * 60 * 1000;
-const MIN_EFFECTIVE_POLL_INTERVAL_MS = 2 * 60 * 1000;
-const MAX_EFFECTIVE_POLL_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Backup cadence (2026-08-22). The PRIMARY clock for this task is now the
+ * Convex cron `poll_clock:tickPollClock` (every 2 min), which evaluates the
+ * same active-window and interval gates from local Convex reads and only
+ * enqueues this task when real work is due — see `convex/poll_clock.ts`.
+ *
+ * This declarative cron is deliberately kept as an INDEPENDENT safety net for
+ * the case where Convex crons stop firing entirely. It runs at :07 past every
+ * second hour (12/day), offset off the top of the hour so it never lands on the
+ * same instant as the Convex clock. Backup ticks still self-gate through the
+ * normal `hyggloPollMode` + interval logic below, so a backup tick during a
+ * healthy period is a cheap no-op rather than an unconditional full poll.
+ *
+ * ⚠️ NOT YET ACTIVE (2026-08-22). The task below still runs on the original
+ * `HYGGLO_POLL_CRON` because the Convex poll clock cannot enqueue yet — see the
+ * enable-checklist comment in `convex/crons.ts`. Deploying this backup cadence
+ * while the clock is disabled would cut real polling from ~370/day to 12/day.
+ * Swap `cron:` to this constant ONLY in the same change that enables the Convex
+ * cron.
+ */
+export const HYGGLO_POLL_BACKUP_CRON = "7 */2 * * *";
 
 // ── Vault helper ──────────────────────────────────────────────
 
@@ -348,15 +368,39 @@ export const pollHyggloInbox = schedules.task({
   maxDuration: 120,
   retry: { maxAttempts: 2 },
   run: async (payload) => {
-    // Declarative schedule payloads carry type="DECLARATIVE". A manual task
-    // trigger has no such marker and must always perform a real poll so an
-    // operator-triggered repair cannot silently become a heartbeat-only no-op.
-    const isScheduledRun =
-      typeof payload === "object" &&
-      payload !== null &&
-      "type" in payload &&
-      (payload as { type?: string }).type === "DECLARATIVE";
-    const pollMode = hyggloPollMode(new Date(), !isScheduledRun);
+    // Three ways this task starts, and they are NOT interchangeable:
+    //
+    //  1. Trigger.dev's own backup cron  -> payload.type === "DECLARATIVE"
+    //  2. The Convex poll clock          -> payload.source === "convex-clock"
+    //  3. A manual operator trigger      -> neither marker
+    //
+    // (1) and (2) are SCHEDULED: they must keep self-gating through the
+    // interval logic below. (3) is a deliberate operator repair and must
+    // always perform a real poll, so it bypasses both gates — unchanged
+    // behaviour, and what `/api/poll-hygglo` with no body still produces
+    // (including the staleness auto-heal in convex/poller_health.ts).
+    //
+    // Getting this wrong is expensive in a non-obvious way: if a clock-driven
+    // run were misread as manual, every 2-minute tick would force a FULL poll
+    // and skip the interval gate, making the clock strictly worse than the
+    // cron it replaced.
+    const payloadObj =
+      typeof payload === "object" && payload !== null
+        ? (payload as { type?: string; source?: string; mode?: string })
+        : {};
+    const isDeclarativeRun = payloadObj.type === "DECLARATIVE";
+    const isClockRun = payloadObj.source === "convex-clock";
+    const isScheduledRun = isDeclarativeRun || isClockRun;
+
+    // The clock already evaluated `hyggloPollMode` before enqueueing, so honour
+    // its decision rather than recomputing it a few seconds later (which could
+    // straddle a 15-minute boundary and silently downgrade a full poll to an
+    // operational one). Any other entry point resolves the mode locally.
+    const forwardedMode =
+      isClockRun && (payloadObj.mode === "full" || payloadObj.mode === "operational")
+        ? payloadObj.mode
+        : null;
+    const pollMode = forwardedMode ?? hyggloPollMode(new Date(), !isScheduledRun);
     if (pollMode === "skip") {
       logger.info("[poll-active-window] skipped", {
         task: "poll-hygglo-inbox",
@@ -386,24 +430,19 @@ export const pollHyggloInbox = schedules.task({
         convex.query(api.settings.get, {}),
         convex.query(api.sync_state.get, { source: "hygglo_poller" }),
       ]);
-      const configured = Number(settings?.polling_interval_ms);
-      if (Number.isFinite(configured)) {
-        baseIntervalMs = Math.min(
-          MAX_EFFECTIVE_POLL_INTERVAL_MS,
-          Math.max(MIN_EFFECTIVE_POLL_INTERVAL_MS, Math.round(configured)),
-        );
-      }
-      const storedQuietStreak = Number((previous as { quietStreak?: number } | null)?.quietStreak);
-      quietStreak = Number.isFinite(storedQuietStreak) ? storedQuietStreak : 0;
-      effectiveIntervalMs = computeBackoffIntervalMs(
-        baseIntervalMs,
-        quietStreak,
-        MIN_EFFECTIVE_POLL_INTERVAL_MS,
-        MAX_EFFECTIVE_POLL_INTERVAL_MS,
+      // Shared with convex/poll_clock.ts so the clock's "is it due?" answer and
+      // this task's answer are computed by the same code, never two drifting
+      // copies of it.
+      const resolved = resolveEffectivePollInterval(
+        settings?.polling_interval_ms,
+        (previous as { quietStreak?: number } | null)?.quietStreak,
       );
+      baseIntervalMs = resolved.baseIntervalMs;
+      quietStreak = resolved.quietStreak;
+      effectiveIntervalMs = resolved.effectiveIntervalMs;
       const previousLastRunAt = previous?.lastRunAt ?? null;
       const elapsedMs = previousLastRunAt !== null ? Date.now() - previousLastRunAt : null;
-      if (isScheduledRun && elapsedMs !== null && elapsedMs < effectiveIntervalMs) {
+      if (isScheduledRun && !isPollIntervalElapsed(previousLastRunAt, Date.now(), effectiveIntervalMs)) {
         logger.info("[poll-hygglo] skipped by configured interval", {
           configured_interval_ms: baseIntervalMs,
           effective_interval_ms: effectiveIntervalMs,

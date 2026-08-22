@@ -3,11 +3,14 @@
  *
  * POST /api/poll-hygglo
  *
- * Called by: manual invocations via curl for ops/debug only. The Convex
- * cron that previously called this (every 15 min) was deleted 2026-05-24
- * — it was redundant with the Trigger.dev 5-min scrape and burned ~192
- * action-runs/day for no downstream effect. Keep this route as a manual
- * "poke the inbox" escape hatch for incident response.
+ * Called by:
+ *  - `convex/poll_clock.ts` (2026-08-22) — the PRIMARY poll clock. It gates on
+ *    local Convex reads first and only POSTs here when real work is due, so
+ *    this is not a return of the unconditional 15-min Convex cron that was
+ *    deleted 2026-05-24 (that one burned ~192 action-runs/day discovering
+ *    there was nothing to do only AFTER paying for the round-trip).
+ *  - `convex/poller_health.ts` staleness auto-heal.
+ *  - manual invocations via curl for ops/debug.
  *
  * Purpose: enqueue a one-shot run of the `poll-hygglo-inbox` Trigger.dev
  * task. Idempotent (poller detects "nothing new" fast).
@@ -42,13 +45,42 @@ function checkAuth(req: Request): NextResponse | null {
   return null;
 }
 
+/**
+ * Optional JSON body: `{ mode?: "full" | "operational", source?: "convex-clock" }`.
+ *
+ * Sent by the Convex poll clock, which has already decided both that a poll is
+ * due and which mode it should run in. `source` is what makes the task treat the
+ * run as SCHEDULED rather than manual — see the payload-classification comment
+ * in src/trigger/poll-hygglo.ts.
+ *
+ * A request with no body (or an unparseable/foreign one) forwards `{}`, which is
+ * the historical manual-poke behaviour: full poll, both gates bypassed. curl and
+ * the staleness auto-heal rely on that, so it must keep working as before.
+ * Values are allow-listed rather than passed through, so this route can never be
+ * used to inject an arbitrary payload into the task.
+ */
+async function readTriggerPayload(req: Request): Promise<Record<string, string>> {
+  try {
+    const body = await req.json();
+    if (typeof body !== "object" || body === null) return {};
+    const { mode, source } = body as { mode?: unknown; source?: unknown };
+    const payload: Record<string, string> = {};
+    if (mode === "full" || mode === "operational") payload.mode = mode;
+    if (source === "convex-clock") payload.source = source;
+    return payload;
+  } catch {
+    return {};
+  }
+}
+
 export async function POST(req: Request) {
   const unauth = checkAuth(req);
   if (unauth) return unauth;
 
   try {
-    const handle = await tasks.trigger("poll-hygglo-inbox", {});
-    return NextResponse.json({ ok: true, handle: { id: handle.id } });
+    const payload = await readTriggerPayload(req);
+    const handle = await tasks.trigger("poll-hygglo-inbox", payload);
+    return NextResponse.json({ ok: true, handle: { id: handle.id }, payload });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });

@@ -86,6 +86,62 @@ crons.daily(
 // in convex/poller_health.ts). Telegram alerts still fire on staleness, just
 // without an auto-heal action. Restore from git history if needed.
 
+// ── Hygglo poll clock (added 2026-08-22 — Trigger.dev run-volume fix) ──
+//
+// Replaces the Trigger.dev declarative cron as the PRIMARY clock for
+// `poll-hygglo-inbox`. That cron ran "*/2,15,45 * * * *" = 768 billed
+// Trigger.dev runs/day, and roughly half of them evaluated the task's two
+// internal gates and returned `{ skipped: true }` immediately — a full billed
+// run to learn there was nothing to do.
+//
+// Both gates (active-window/mode selection, and the polling-interval +
+// adaptive-backoff cadence) are decidable from `settings` and `sync_state`,
+// which Convex already holds. `tickPollClock` evaluates them from LOCAL READS
+// ONLY and reaches out over the network exclusively when work is genuinely due.
+//
+// This is deliberately the OPPOSITE shape to the two Convex→Vercel pollers
+// deleted 2026-05-24 (see the comment blocks directly above): those paid for an
+// unconditional round-trip and only then discovered there was nothing to do.
+// This one proves there is work before it spends anything. Polling cadence and
+// data freshness are unchanged — only the billed no-op runs are removed.
+//
+// Trigger.dev keeps an independent low-frequency backup cron (12/day, still
+// self-gating) so a Convex cron outage cannot silently stop the poller.
+//
+// ⚠️ REGISTRATION INTENTIONALLY COMMENTED OUT — NOT YET ENABLED (2026-08-22).
+//
+// `convex/poll_clock.ts` is complete, typechecked and live on the deployment,
+// but it cannot enqueue anything yet: BOTH `POLL_TRIGGER_URL` and
+// `POLL_TRIGGER_SECRET` are unset in the Convex deployment AND
+// `POLL_TRIGGER_SECRET` is unset in Vercel production, so `/api/poll-hygglo`
+// currently fails closed with 503 `server_missing_POLL_TRIGGER_SECRET` for
+// every caller. (Same root cause silently disables the staleness auto-heal
+// `enqueueRecoveryPoll` in convex/poller_health.ts — that "L3" layer has been
+// dead, not merely unused.)
+//
+// Enabling this cron before provisioning those vars just logs an enqueue
+// failure every 2 minutes; enabling it AFTER provisioning but BEFORE the
+// Trigger.dev backup cron ships would double-poll (clock + the existing
+// 768/day declarative cron).
+//
+// TO ENABLE, in this order:
+//   1. Set POLL_TRIGGER_SECRET in Vercel production + the Convex deployment
+//      (same value), and POLL_TRIGGER_URL in Convex
+//      (https://<prod-domain>/api/poll-hygglo).
+//   2. Deploy Vercel so the route sees the secret and the new
+//      {mode, source} body handling.
+//   3. Uncomment the registration below and deploy Convex.
+//   4. Switch src/trigger/poll-hygglo.ts to HYGGLO_POLL_BACKUP_CRON and run
+//      `trigger deploy` — this is what actually removes the ~768 billed
+//      runs/day. Steps 3 and 4 must ship together.
+//
+// crons.interval(
+//   "hygglo poll clock",
+//   { minutes: 2 },
+//   internal.poll_clock.tickPollClock,
+//   {},
+// );
+
 // Demote stale-confirmed rows (Hygglo dropped them from every filter) to
 // completed so they stop appearing as ongoing/overdue in the Active widget.
 // Cadence loosened 2026-05-24 from 60min → 4h: stale-confirmed rows turn
