@@ -414,6 +414,40 @@ export async function POST(req: Request) {
         /* not a Lab session — no simulated order exists */
       }
 
+      // EVERY MOUNT ADAPTER WE OWN — listed unconditionally, not matched to the
+      // body's mount.
+      //
+      // The matched version worked and then intermittently stopped: it depended
+      // on the discussed item appearing in the first three resolved items AND
+      // carrying a parseable lens_mount, so on some turns the fact was simply
+      // absent and the bot filled the gap by asserting we had no adapter. It
+      // did that twice in one conversation about lenses we rent alongside an
+      // £8/day adapter that fits them.
+      //
+      // Five rows is roughly forty tokens. Paying that on every draft is much
+      // cheaper than one lost booking, and it removes a whole class of
+      // conditional-fact bug rather than tightening the condition again.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ad: any = await convex.query(api.renter_bot_tools.get_mount_adapters, {
+          account_slug: account_slug || "",
+        });
+        const all = ((ad?.adapters ?? []) as Array<{
+          name?: string;
+          from_mount?: string;
+          to_mount?: string;
+          daily_price_gbp?: number | null;
+        }>).map((a) => {
+          if (typeof a.daily_price_gbp === "number") offeredPrices.push(a.daily_price_gbp);
+          return `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : " (price on request)"}`;
+        });
+        if (all.length) {
+          groundTruth += `MOUNT ADAPTERS WE OWN AND RENT: ${all.join("; ")}. These are REAL and in stock. If a lens needs an adapter to fit a body, offer the matching one BY NAME with its price. You must NEVER tell a renter to bring their own adapter, or that we don't have one, when it is on this list.\n`;
+        }
+      } catch {
+        /* best-effort */
+      }
+
       // What this listing ALREADY includes. Anything in here must never be
       // offered as a paid extra: live-caught on a bundle whose own kit is a
       // body plus the Canon 16-35 and 24-105, where the bot offered both
@@ -606,41 +640,6 @@ export async function POST(req: Request) {
             }
             if (fits.length) {
               groundTruth += `  LENS OPTIONS for ${it.name} (${it.lens_mount}) — real, owned, NOT already in this rental, and a native fit: ${fits.join("; ")}. If they ask about a lens, or if the body goes out without one, OFFER one of these BY NAME with its price rather than saying you'll check.\n`;
-            }
-          } catch {
-            /* best-effort */
-          }
-        }
-        // MOUNT ADAPTERS WE ACTUALLY OWN.
-        //
-        // Live-caught: the bot told a renter the Blazar Remus lenses are
-        // native PL and "would require a PL-to-EF adapter, which isn't
-        // included" — true, well explained, and a dead end. We rent five
-        // adapters. Naming the blocker without naming the fix we stock turns
-        // a solvable objection into a lost booking.
-        if (it.lens_mount) {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ad: any = await convex.query(api.renter_bot_tools.get_mount_adapters, {
-              account_slug: account_slug || "",
-            });
-            const relevant = ((ad?.adapters ?? []) as Array<{
-              name?: string;
-              to_mount?: string;
-              daily_price_gbp?: number | null;
-            }>)
-              // Only adapters that land ON this body's mount are useful here.
-              // Mount spellings differ across inventory ("Canon EF mount" vs
-              // "EF"), so compare normalised — an exact compare matched
-              // nothing and hid the adapter we stock.
-              .filter((a) => sameMount(a.to_mount, it.lens_mount))
-              .map((a) => {
-                if (typeof a.daily_price_gbp === "number")
-                  offeredPrices.push(a.daily_price_gbp);
-                return `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`;
-              });
-            if (relevant.length) {
-              groundTruth += `  ADAPTERS WE OWN AND RENT for ${it.name} (${it.lens_mount}): ${relevant.join("; ")}. If you tell them a lens needs an adapter to fit, you MUST immediately offer the matching one from this list BY NAME with its price. Never end on "an adapter is required and not included" — we have it, so say so.\n`;
             }
           } catch {
             /* best-effort */
