@@ -536,6 +536,7 @@ export const generateDraft = action({
     // Verified not-rentable items reported by the draft route.
     let routeMarketingItems: string[] = [];
     let routeOfferedPrices: number[] = [];
+    let routeBookingModified = false;
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -562,6 +563,7 @@ export const generateDraft = action({
           itemsWithoutKitData?: string[];
           marketingItems?: string[];
           offeredPrices?: number[];
+          bookingModified?: boolean;
           tokenUsage?: {
             prompt: number | null;
             completion: number | null;
@@ -594,6 +596,7 @@ export const generateDraft = action({
           noKitItems = j.itemsWithoutKitData ?? [];
           routeMarketingItems = j.marketingItems ?? [];
           routeOfferedPrices = j.offeredPrices ?? [];
+          routeBookingModified = j.bookingModified === true;
           // Surface token/cache accounting so prompt-caching is observable
           // end-to-end rather than assumed (it fails silently otherwise).
           if (j.tokenUsage?.prompt != null) {
@@ -750,6 +753,7 @@ export const generateDraft = action({
       // order-linked signals above — see freshInquiryItems' own comment for
       // why this can't just be done at hasItemGrounding's declaration.
       hasItemGrounding: hasItemGrounding || freshInquiryItems.length > 0,
+      bookingModified: routeBookingModified,
       factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70

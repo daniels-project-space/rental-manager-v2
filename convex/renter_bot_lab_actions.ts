@@ -185,6 +185,15 @@ export const startLiveSession = action({
       items: itemNames.map((name) => ({ name })),
       messages,
     });
+    // Simulated Hygglo order for this session, so the bot can genuinely add
+    // and remove gear and move dates instead of only talking about it.
+    await ctx.runMutation(internal.renter_bot_lab_order.seed, {
+      thread_id: threadId,
+      account_slug: args.accountSlug,
+      item_names: itemNames,
+      start_date: startDate,
+      end_date: endDate,
+    });
     return {
       threadId,
       context: { items: itemNames, priceGbp, dates, startDate, endDate, location },

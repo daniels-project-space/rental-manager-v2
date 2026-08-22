@@ -26,6 +26,7 @@ export default defineConfig({
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_name_match.test.ts",
       "convex/lib/bundle_description_parse.test.ts",
+      "convex/renter_bot_lab_order.test.ts",
       "convex/lib/renter_bot_conversation_rubric.test.ts",
       "convex/lib/listing_equivalence.test.ts",
       "convex/lib/revenue_attribution.test.ts",

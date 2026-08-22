@@ -2487,6 +2487,36 @@ export default defineSchema({
   // scenario templates or imported read-only from a real historical Hygglo
   // order — used to replay against the REAL draft pipeline (generateDraft /
   // renter_bot.ts). This table has no relationship to any Hygglo write path.
+  /**
+   * SIMULATED booking state for a Renter Bot Lab session.
+   *
+   * Mirrors what a renter can do on Hygglo itself -- add an item, drop one,
+   * move the dates -- so the bot's booking-modification behaviour, item
+   * resolution and pricing can be exercised end to end without any write
+   * reaching Hygglo. Rows are keyed by a `__probe__` thread id and are
+   * unreachable from a real conversation by construction; the tool that
+   * mutates them refuses any thread id without that prefix.
+   */
+  renter_bot_lab_orders: defineTable({
+    thread_id: v.string(),
+    account_slug: v.string(),
+    items: v.array(
+      v.object({
+        item_id: v.optional(v.id("items")),
+        name: v.string(),
+        qty: v.number(),
+        daily_price_gbp: v.optional(v.number()),
+        // "seed" = came with the scenario, "added" = the bot put it on.
+        origin: v.string(),
+      }),
+    ),
+    start_date: v.optional(v.string()),
+    end_date: v.optional(v.string()),
+    /** Append-only trail of what the bot did, for the Lab's overview panel. */
+    changes: v.array(v.object({ at: v.number(), summary: v.string() })),
+    updated_at: v.number(),
+  }).index("by_thread", ["thread_id"]),
+
   renter_bot_fixtures: defineTable({
     name: v.string(),                          // human-readable label
     account_slug: v.string(),                  // daniel | leo | diogo

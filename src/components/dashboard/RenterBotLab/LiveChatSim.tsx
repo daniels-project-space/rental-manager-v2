@@ -76,6 +76,7 @@ function RentalListingCard({
               src={itemCtx.image_url}
               alt={itemCtx.name}
               className="h-full w-full object-cover"
+              title="Photo attached to this ITEM in inventory (taken from a past rental) — it may show a bundle, and is not what the bot sees."
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[11px] text-[#8b8fa3]">
@@ -92,6 +93,10 @@ function RentalListingCard({
                 (not found in real catalog)
               </span>
             )}
+          </p>
+          <p className="text-[10px] text-[#8b8fa3]">
+            item photo from a past rental — may show a fuller kit. The bot
+            never sees images.
           </p>
           <p className="text-xs text-[#8b8fa3]">
             {itemCtx?.kind ? `${itemCtx.kind} · ` : ""}
@@ -267,6 +272,96 @@ function ContextBanner({ context }: { context: SessionContext }) {
   );
 }
 
+
+/**
+ * The simulated Hygglo order for this session — what the bot has actually
+ * changed, with the arithmetic shown.
+ *
+ * The point is verification: seeing "1x Blazar Remus 100mm @ £25/day x 2 days
+ * = £50" next to the bot's prose is how you catch it adding the wrong item or
+ * quoting a total that doesn't follow from the line items.
+ */
+function OrderPanel({ threadId }: { threadId: string }) {
+  const order = useQuery(api.renter_bot_lab_order.get, { thread_id: threadId });
+  if (!order) return null;
+  const money = (n: number | null | undefined) =>
+    typeof n === "number" ? `£${n}` : "—";
+  return (
+    <div className="border-t border-white/10 bg-black/25 px-4 py-3">
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-[#8b8fa3]">
+          Simulated booking
+        </p>
+        <p className="text-[11px] text-[#8b8fa3]">
+          {order.start_date ?? "no dates"}
+          {order.end_date && order.end_date !== order.start_date
+            ? ` → ${order.end_date}`
+            : ""}{" "}
+          · {order.days} day{order.days === 1 ? "" : "s"}
+        </p>
+      </div>
+      <table className="w-full text-[12px]">
+        <tbody>
+          {order.lines.length === 0 && (
+            <tr>
+              <td className="py-0.5 text-[#8b8fa3]">(nothing on the booking)</td>
+            </tr>
+          )}
+          {order.lines.map((l, i) => (
+            <tr key={i} className="text-[#e4e6eb]">
+              <td className="py-0.5">
+                {l.qty}× {l.name}
+                {l.origin === "added" && (
+                  <span className="ml-1.5 rounded bg-emerald-500/20 px-1 text-[10px] text-emerald-300">
+                    added by bot
+                  </span>
+                )}
+              </td>
+              <td className="py-0.5 text-right text-[#8b8fa3]">
+                {l.daily_price_gbp != null
+                  ? `${money(l.daily_price_gbp)}/day`
+                  : "no price on file"}
+              </td>
+              <td className="w-16 py-0.5 text-right tabular-nums">
+                {money(l.line_total_gbp)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-white/10 font-semibold text-[#e4e6eb]">
+            <td className="pt-1">Total</td>
+            <td />
+            <td className="pt-1 text-right tabular-nums">
+              {order.total_gbp != null ? money(order.total_gbp) : "not calculable"}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      {order.unpriced.length > 0 && (
+        <p className="mt-1 text-[11px] text-amber-400">
+          No price on file for {order.unpriced.join(", ")} — the bot is told not
+          to quote a total.
+        </p>
+      )}
+      {order.changes.length > 0 && (
+        <p className="mt-1.5 text-[11px] text-[#8b8fa3]">
+          Changes: {order.changes.map((c) => c.summary).join(" · ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Human-readable reason a draft was withheld, from the real guard flags. */
+function blockReason(flags: unknown): string {
+  const list = (flags as Array<{ type?: string; severity?: string; detail?: string }>) ?? [];
+  const critical = list.filter((f) => f.severity === "critical");
+  const shown = (critical.length ? critical : list).slice(0, 2);
+  if (!shown.length) return "no flags recorded (check the run)";
+  return shown.map((f) => `${f.type}: ${f.detail ?? ""}`.trim()).join(" | ");
+}
+
 export function LiveChatSim({
   session,
 }: {
@@ -293,7 +388,13 @@ export function LiveChatSim({
         ...t,
         {
           role: "bot",
-          text: result.draft || "(empty draft — see run for details)",
+          // An empty draft means the guard WITHHELD the reply. Saying only
+          // "(empty draft)" hid the reason and made a real, reproducible
+          // failure look like a glitch — the block reason was sitting in the
+          // run row the whole time. Show it.
+          text:
+            result.draft ||
+            `⚠ Reply withheld by the production guard — ${blockReason(result.productionGuardFlags)}`,
           overallStatus: result.overall_status,
           runId: result.runId,
         },
@@ -352,6 +453,7 @@ export function LiveChatSim({
           <p className="text-xs text-[#8b8fa3]">Generating real draft…</p>
         )}
       </div>
+      <OrderPanel threadId={session.threadId} />
       <div className="flex gap-2 border-t border-white/10 p-3">
         <input
           value={input}

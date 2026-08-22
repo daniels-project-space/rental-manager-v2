@@ -36,6 +36,22 @@ const accountCommunicationRef = makeFunctionReference<"query">(
  * PRICE_HALLUCINATION and the reply was withheld. Walk the tool output and
  * treat any price-shaped number in it as grounded — because it is ours.
  */
+/**
+ * Did `modify_booking` run AND report success? Only a real, applied change
+ * licenses the bot to say it made one.
+ */
+function didModifyBooking(steps: unknown): boolean {
+  for (const st of (steps as Array<{ toolResults?: unknown }>) ?? []) {
+    for (const tr of (st?.toolResults as Array<Record<string, unknown>>) ?? []) {
+      const name = (tr?.toolName ?? tr?.tool_name) as string | undefined;
+      if (name !== "modify_booking") continue;
+      const out = (tr?.result ?? tr?.output) as { ok?: boolean } | undefined;
+      if (out?.ok === true) return true;
+    }
+  }
+  return false;
+}
+
 function harvestToolPrices(steps: unknown, into: number[]): void {
   const PRICE_KEY = /(price|rate|gbp|per_day|perday|daily|total|min|max)/i;
   const seen = new Set<unknown>();
@@ -134,6 +150,16 @@ CONVERSATION CRAFT — how to actually write the reply:
     isn't included, and stopped there, while we rent that exact adapter. State
     the constraint and the fix together, or you have just talked them out of a
     booking you could have had.
+
+12. WHEN THEY SAY YES, DO IT — DON'T ASK AGAIN. If the renter has asked you
+    to add or remove gear or change dates, that IS the instruction. Call
+    modify_booking, then tell them what the booking now contains and what it
+    now costs. Asking "would you like me to lock those in?" about the very
+    thing they just asked for is friction, not politeness, and it reads as
+    though you weren't listening. Live-caught: they said "can you add the
+    100mm and adapter", got told the items were available and asked AGAIN
+    whether to go ahead. Only ask when something is genuinely ambiguous —
+    which model, which dates.
 `;
 
 // Conversational/date/question filler — NOT item-name content. Strips a free-
@@ -303,6 +329,14 @@ export async function POST(req: Request) {
    * definition; a price the model invented is still caught.
    */
   const offeredPrices: number[] = [];
+  /**
+   * Did a booking-modification tool actually SUCCEED this turn? The guard uses
+   * this to tell a truthful "I've added it" (Lab, where the simulated order
+   * really changed) from a fabricated one (production, where the chat cannot
+   * act). Without it, either the Lab is blocked for telling the truth or
+   * production is free to invent an action.
+   */
+  let bookingModified = false;
   /** Per-draft token accounting, so caching is observable rather than assumed. */
   let tokenUsage: {
     prompt: number | null;
@@ -326,6 +360,41 @@ export async function POST(req: Request) {
           : `You MAY confirm the item is AVAILABLE and warmly invite them to complete the booking to lock it in — nothing beyond that.`;
         groundTruth += `⚠️ THIS BOOKING IS NOT CONFIRMED — funds may be reserved but it is NOT locked in. Do NOT say "booked", "confirmed", "paid", "it's yours", "all set", "reserved for you", or anything implying it's secured. ${inviteLine}\n`;
       }
+      // CURRENT SIMULATED BOOKING (Lab sessions only). Giving the bot the live
+      // line items, day count and total means its "your total is now £X" is
+      // read off the same arithmetic the Lab panel shows, rather than being
+      // recomputed in prose — which is where day-count and multi-item maths
+      // goes wrong.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ord: any = await convex.query(api.renter_bot_lab_order.get, {
+          thread_id,
+        });
+        if (ord) {
+          const lines = (ord.lines ?? []) as Array<{
+            name: string;
+            qty: number;
+            daily_price_gbp?: number | null;
+            line_total_gbp?: number | null;
+          }>;
+          for (const l of lines) {
+            if (typeof l.daily_price_gbp === "number") offeredPrices.push(l.daily_price_gbp);
+            if (typeof l.line_total_gbp === "number") offeredPrices.push(l.line_total_gbp);
+          }
+          if (typeof ord.total_gbp === "number") offeredPrices.push(ord.total_gbp);
+          const rows = lines
+            .map(
+              (l) =>
+                `${l.qty}x ${l.name}${l.daily_price_gbp != null ? ` @ £${l.daily_price_gbp}/day` : " (no price on file)"}`,
+            )
+            .join("; ");
+          groundTruth += `CURRENT BOOKING (live, you CAN change it with modify_booking): ${rows || "(empty)"}. Dates: ${ord.start_date ?? "not set"} to ${ord.end_date ?? "not set"} = ${ord.days} day(s). Total: ${ord.total_gbp != null ? `£${ord.total_gbp}` : `NOT CALCULABLE (no price for ${ord.unpriced.join(", ")}) — do not quote a total`}.\n`;
+          groundTruth += `  When the renter asks you to add or remove gear or move dates, CALL modify_booking and then state what changed and the new total. Do NOT ask them to confirm a change they just asked for.\n`;
+        }
+      } catch {
+        /* not a Lab session — no simulated order exists */
+      }
+
       // What this listing ALREADY includes. Anything in here must never be
       // offered as a paid extra: live-caught on a bundle whose own kit is a
       // body plus the Canon 16-35 and 24-105, where the bot offered both
@@ -982,6 +1051,7 @@ export async function POST(req: Request) {
         (st) => (st?.toolCalls?.length ?? 0) > 0,
       );
       harvestToolPrices(result?.steps, offeredPrices);
+      bookingModified = bookingModified || didModifyBooking(result?.steps);
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
       // cache_control on the way out. All three look identical from outside:
@@ -1091,6 +1161,7 @@ export async function POST(req: Request) {
             obj = retryObj;
             usedTools = retryUsedTools;
             harvestToolPrices(retryResult?.steps, offeredPrices);
+            bookingModified = bookingModified || didModifyBooking(retryResult?.steps);
           }
         }
       } catch {
@@ -1206,6 +1277,7 @@ export async function POST(req: Request) {
       itemsWithoutKitData,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
+      bookingModified,
       tokenUsage,
       // Verified NOT-rentable items. Registering the alternatives above turns
       // hasItemGrounding on, which disables the blanket ungrounded-assertion

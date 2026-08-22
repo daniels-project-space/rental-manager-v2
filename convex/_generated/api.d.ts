@@ -200,6 +200,7 @@ import type * as renter_bot_fixture_import_db from "../renter_bot_fixture_import
 import type * as renter_bot_fixture_seed_v1_scenarios from "../renter_bot_fixture_seed_v1_scenarios.js";
 import type * as renter_bot_harness from "../renter_bot_harness.js";
 import type * as renter_bot_lab_actions from "../renter_bot_lab_actions.js";
+import type * as renter_bot_lab_order from "../renter_bot_lab_order.js";
 import type * as renter_bot_probe from "../renter_bot_probe.js";
 import type * as renter_bot_seed from "../renter_bot_seed.js";
 import type * as renter_bot_tools from "../renter_bot_tools.js";
@@ -433,6 +434,7 @@ declare const fullApi: ApiFromModules<{
   renter_bot_fixture_seed_v1_scenarios: typeof renter_bot_fixture_seed_v1_scenarios;
   renter_bot_harness: typeof renter_bot_harness;
   renter_bot_lab_actions: typeof renter_bot_lab_actions;
+  renter_bot_lab_order: typeof renter_bot_lab_order;
   renter_bot_probe: typeof renter_bot_probe;
   renter_bot_seed: typeof renter_bot_seed;
   renter_bot_tools: typeof renter_bot_tools;

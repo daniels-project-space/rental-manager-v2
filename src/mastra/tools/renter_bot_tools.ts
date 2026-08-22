@@ -298,10 +298,52 @@ export const findOwnedAlternativesTool = createTool({
   },
 });
 
+
+/**
+ * SIMULATED booking edit — Renter Bot Lab only.
+ *
+ * Without this, "yes please, add the 100mm and the adapter" had no truthful
+ * reply available: the bot could only ask the renter to confirm again (which
+ * they just did), or claim it had added them and be blocked by the guard for
+ * attributing an action to itself. Both were observed live.
+ *
+ * The Convex mutation refuses any thread id that is not a `__probe__` Lab
+ * thread, so a real Hygglo booking cannot be reached through this tool. On a
+ * real conversation it returns ok:false with an instruction to say the renter
+ * should make the change on Hygglo.
+ */
+export const modifyBookingTool = createTool({
+  id: "modify_booking",
+  description:
+    "SIMULATION (Renter Bot Lab only): actually add an item, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made.",
+  inputSchema: z.object({
+    thread_id: z.string().describe("The conversation/thread id."),
+    action: z
+      .enum(["add_item", "remove_item", "set_dates"])
+      .describe("What to do to the booking."),
+    item_name: z.string().optional().describe("Exact item name for add_item/remove_item."),
+    qty: z.number().optional().describe("How many (defaults to 1)."),
+    start_date: z.string().optional().describe("YYYY-MM-DD, for set_dates."),
+    end_date: z.string().optional().describe("YYYY-MM-DD, for set_dates. Same as start for a one-day rental."),
+  }),
+  outputSchema: z.unknown(),
+  execute: async (input) => {
+    if (!input.thread_id.startsWith("__probe__")) {
+      return {
+        ok: false,
+        error:
+          "You cannot modify a real booking. Tell the renter you'll note it and that they can add it on the listing page, or that you'll confirm it with them.",
+      };
+    }
+    return await convex().mutation(anyApi.renter_bot_lab_order.applyChange, input);
+  },
+});
+
 export const RENTER_BOT_TOOLS = {
   find_owned_alternatives: findOwnedAlternativesTool,
   check_location: checkLocationTool,
   get_order_edit_state: getOrderEditStateTool,
+  modify_booking: modifyBookingTool,
   get_renter_context: getRenterContextTool,
   get_listing_context: getListingContextTool,
   lookup_pricing: lookupPricingTool,

@@ -45,6 +45,8 @@ export interface GuardOpts {
   account?: string;
   /** Lowercased rental stage (booked / confirmed / completed / …). */
   stage?: string;
+  /** True when a modify_booking call actually succeeded this turn (Lab sim). */
+  bookingModified?: boolean;
   /** Owner-configured pickup/return windows, "HH:MM". Empty = skip time checks. */
   pickupWindows?: { start: string; end: string }[];
   /** Accounts that speak in the first person singular ("I", not "we"). */
@@ -1004,6 +1006,25 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   // SELF-ATTRIBUTED admin actions — the chat can NEVER approve/accept/mark/
   // process, so attributing the act to itself is always wrong, even on an order
   // that IS approved ("just approved your booking" implies the chat did it).
+  // 22b. CLAIMING A BOOKING CHANGE THAT NEVER HAPPENED.
+  // The chat can only edit a booking where a modify_booking call actually
+  // succeeded (Lab simulation). Anywhere else, "I've added the 100mm to your
+  // booking" is fabricated — the renter turns up expecting a lens nobody put
+  // on the order. Past/present tense only: "I can add X for £20/day" is an
+  // offer and must stay allowed, since that is the upsell we want.
+  if (!opts.bookingModified) {
+    const claimedEdit =
+      /\bI(?:'?ve| have)?\s*(?:just\s+)?(?:added|removed|taken off|put)\s+(?:the|it|that|those|them)\b/i.test(text) ||
+      /\b(?:added|removed|updated|changed|moved)\s+(?:it|the|your|this)\s*(?:booking|order|dates?|reservation)\b/i.test(text) ||
+      /\byour (?:booking|order) (?:now )?(?:includes|has been updated|is updated)\b/i.test(text);
+    if (claimedEdit)
+      push(
+        "FALSE_ACTION_CLAIM",
+        "Says it changed the booking (added/removed gear or moved dates) but no booking edit was actually performed",
+        "flagged",
+      );
+  }
+
   const selfAdminAction =
     /\bjust (?:approved|accepted|confirmed) (?:your|the|this)\b/i.test(text) ||
     /\bI(?:'?ve| have| just)? (?:approved|accepted|confirmed) (?:it|your|the|this)\b/i.test(text) ||

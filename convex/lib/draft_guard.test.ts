@@ -247,3 +247,29 @@ describe("FALSE_ACTION_CLAIM — apostrophes and the object of 'confirm'", () =>
     expect(fired("I'll confirm the exact kit contents shortly.")).toBe(false);
   });
 });
+
+describe("FALSE_ACTION_CLAIM — booking edits", () => {
+  const opts = (bookingModified: boolean) => ({
+    history: [],
+    lastRenterMessage: "yes please add the 100mm",
+    bookingModified,
+  });
+  const fired = (draft: string, modified: boolean) =>
+    guardDraft(draft, opts(modified)).flags.some((f) => f.type === "FALSE_ACTION_CLAIM");
+
+  it("flags a claimed edit when nothing was actually changed", () => {
+    // Production: the chat cannot edit a booking, so this is fabricated and
+    // the renter turns up expecting a lens nobody put on the order.
+    expect(fired("I've added the 100mm to your booking.", false)).toBe(true);
+    expect(fired("I’ve added the adapter — your booking now includes both.", false)).toBe(true);
+  });
+
+  it("allows the same sentence when the edit really happened", () => {
+    expect(fired("I've added the 100mm to your booking.", true)).toBe(false);
+  });
+
+  it("never blocks an OFFER to add, which is the upsell we want", () => {
+    expect(fired("I can add the Canon EF 24-105mm f4 for £20/day.", false)).toBe(false);
+    expect(fired("Happy to add the adapter for £8/day if you'd like.", false)).toBe(false);
+  });
+});
