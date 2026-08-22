@@ -187,14 +187,35 @@ export function substitutionScore(
  *   "Canon EF mount" -> "ef"      "EF" -> "ef"
  *   "Sony E mount"   -> "e"       "Leica L" -> "l"
  */
+const MOUNT_BRANDS =
+  /\b(canon|leica|sony|nikon|fujifilm|fuji|panasonic|blackmagic|arri|sigma)\b/g;
+/**
+ * Words that qualify a mount without changing which mount it is. Inventory
+ * writes "Leica L-mount (native)", which reduced to "l native" and so did not
+ * equal "L" — the bot then told a renter we had no PL-to-L adapter while one
+ * sits in stock at £8/day.
+ */
+const MOUNT_FILLER =
+  /\b(mount|lens|bayonet|native|only|fit|fits|type|adapter|adaptor|system|body)\b/g;
+/** Longest first, so "ef s" wins over "ef". */
+const KNOWN_MOUNTS = ["micro four thirds", "mft", "m43", "ef s", "ef", "rf", "pl", "l", "e", "x", "z"];
+
 export function normalizeMount(raw: string | null | undefined): string {
   if (!raw) return "";
-  return raw
+  const cleaned = raw
     .toLowerCase()
-    .replace(/\b(canon|leica|sony|nikon|fujifilm|fuji|panasonic|blackmagic|arri)\b/g, " ")
-    .replace(/\b(mount|lens|bayonet)\b/g, " ")
+    .replace(MOUNT_BRANDS, " ")
+    .replace(MOUNT_FILLER, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+  if (!cleaned) return "";
+  const toks = cleaned.split(" ");
+  // Collapse to a canonical mount token when we recognise one, so free-text
+  // qualifiers can never split one mount into two values again.
+  for (const k of KNOWN_MOUNTS) {
+    if (k.split(" ").every((part) => toks.includes(part))) return k;
+  }
+  return cleaned;
 }
 
 /** Do two mount strings refer to the same mount? Empty on either side = unknown, so no claim. */

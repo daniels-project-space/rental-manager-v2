@@ -36,22 +36,6 @@ const accountCommunicationRef = makeFunctionReference<"query">(
  * PRICE_HALLUCINATION and the reply was withheld. Walk the tool output and
  * treat any price-shaped number in it as grounded — because it is ours.
  */
-/**
- * Did `modify_booking` run AND report success? Only a real, applied change
- * licenses the bot to say it made one.
- */
-function didModifyBooking(steps: unknown): boolean {
-  for (const st of (steps as Array<{ toolResults?: unknown }>) ?? []) {
-    for (const tr of (st?.toolResults as Array<Record<string, unknown>>) ?? []) {
-      const name = (tr?.toolName ?? tr?.tool_name) as string | undefined;
-      if (name !== "modify_booking") continue;
-      const out = (tr?.result ?? tr?.output) as { ok?: boolean } | undefined;
-      if (out?.ok === true) return true;
-    }
-  }
-  return false;
-}
-
 function harvestToolPrices(steps: unknown, into: number[]): void {
   const PRICE_KEY = /(price|rate|gbp|per_day|perday|daily|total|min|max)/i;
   const seen = new Set<unknown>();
@@ -337,6 +321,18 @@ export async function POST(req: Request) {
    * production is free to invent an action.
    */
   let bookingModified = false;
+  /**
+   * Length of the simulated order's change log BEFORE this turn. Comparing it
+   * afterwards is how we know a booking edit really happened.
+   *
+   * The first attempt read Mastra's `steps[].toolResults[]` looking for a
+   * successful modify_booking call and never matched, so every truthful "I've
+   * added the 24-105" was flagged as a fabricated action and the whole reply
+   * withheld -- the tool ran, the booking changed, and the renter was told
+   * nothing. The order row is the authority on whether it changed; the
+   * framework's result shape is an implementation detail that can drift.
+   */
+  let orderChangesBefore: number | null = null;
   /** Per-draft token accounting, so caching is observable rather than assumed. */
   let tokenUsage: {
     prompt: number | null;
@@ -389,6 +385,7 @@ export async function POST(req: Request) {
             )
             .join("; ");
           groundTruth += `CURRENT BOOKING (live, you CAN change it with modify_booking): ${rows || "(empty)"}. Dates: ${ord.start_date ?? "not set"} to ${ord.end_date ?? "not set"} = ${ord.days} day(s). Total: ${ord.total_gbp != null ? `£${ord.total_gbp}` : `NOT CALCULABLE (no price for ${ord.unpriced.join(", ")}) — do not quote a total`}.\n`;
+          orderChangesBefore = (ord.changes ?? []).length;
           groundTruth += `  When the renter asks you to add or remove gear or move dates, CALL modify_booking and then state what changed and the new total. Do NOT ask them to confirm a change they just asked for.\n`;
         }
       } catch {
@@ -1051,7 +1048,6 @@ export async function POST(req: Request) {
         (st) => (st?.toolCalls?.length ?? 0) > 0,
       );
       harvestToolPrices(result?.steps, offeredPrices);
-      bookingModified = bookingModified || didModifyBooking(result?.steps);
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
       // cache_control on the way out. All three look identical from outside:
@@ -1161,7 +1157,6 @@ export async function POST(req: Request) {
             obj = retryObj;
             usedTools = retryUsedTools;
             harvestToolPrices(retryResult?.steps, offeredPrices);
-            bookingModified = bookingModified || didModifyBooking(retryResult?.steps);
           }
         }
       } catch {
@@ -1265,6 +1260,15 @@ export async function POST(req: Request) {
         text = text.replace(/[ \t]{2,}/g, " ").replace(/ +\n/g, "\n");
       }
       obj.draft = text;
+    }
+    if (orderChangesBefore !== null) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const after: any = await convex.query(api.renter_bot_lab_order.get, { thread_id });
+        bookingModified = ((after?.changes ?? []).length as number) > orderChangesBefore;
+      } catch {
+        /* leave false — a claim without proof stays a false claim */
+      }
     }
     return NextResponse.json({
       ok: true,

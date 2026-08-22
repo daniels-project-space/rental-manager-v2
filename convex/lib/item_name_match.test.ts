@@ -122,10 +122,21 @@ describe("normalizeMount / sameMount", () => {
     expect(sameMount("Leica L", "L mount")).toBe(true);
   });
 
+  it("ignores free-text qualifiers around the mount name", () => {
+    // Live: the BMPCC 6K Full Frame stores "Leica L-mount (native)", which
+    // reduced to "l native" and so did not equal "L" — the bot told a renter
+    // to bring their own PL adapter while we rent a PL to L mount at £8/day.
+    expect(sameMount("Leica L-mount (native)", "L")).toBe(true);
+    expect(sameMount("Canon EF mount (native)", "EF")).toBe(true);
+    expect(sameMount("Sony E-mount", "Sony E")).toBe(true);
+  });
+
   it("keeps genuinely different mounts apart", () => {
     expect(sameMount("Canon EF mount", "L")).toBe(false);
     expect(sameMount("PL", "EF")).toBe(false);
     expect(sameMount("Canon EF mount", "RF")).toBe(false);
+    expect(sameMount("Leica L-mount (native)", "EF")).toBe(false);
+    expect(sameMount("Canon EF-S", "Canon EF")).toBe(false);
   });
 
   it("makes no claim when either side is unknown", () => {
