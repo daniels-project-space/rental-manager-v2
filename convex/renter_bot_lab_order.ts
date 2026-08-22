@@ -359,7 +359,16 @@ export const applyChange = mutation({
         (l) => !l.name.toLowerCase().includes(target) && !target.includes(l.name.toLowerCase()),
       );
       if (kept.length === before)
-        return { ok: false, error: `"${a.item_name}" is not on this booking` };
+        // Actionable, because the bot has to SAY something useful here. The
+        // usual cause is a renter asking to drop something that is part of the
+        // kit rather than a separate line ("actually drop the battery"), where
+        // there is nothing to remove and nothing to deduct. Without this the
+        // bot claimed a removal that never happened and the guard withheld the
+        // entire reply, so the renter got silence.
+        return {
+          ok: false,
+          error: `"${a.item_name}" is not a separate line on this booking — it is most likely part of the kit already. Tell the renter it's included, so there is nothing to remove and nothing to deduct from the price. Do NOT say you removed it.`,
+        };
       summaryText = `removed ${a.item_name}`;
       await ctx.db.patch(row._id, {
         items: kept.map((l) => ({ ...l, item_id: l.item_id as never })),
