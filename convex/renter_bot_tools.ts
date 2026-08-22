@@ -412,6 +412,23 @@ export const lookup_pricing = query({
           const pids = new Set(
             idxRows.filter((r) => r.account_slug === account_slug).map((r) => r.product_id),
           );
+          // Overrides are audit-authoritative and are where hand-mapped
+          // listings land, so identity resolution must read BOTH tables.
+          // Reading only the index meant a listing mapped via an override was
+          // invisible here: the 2026-08-22 Blackmagic body mappings resolved
+          // correctly for holds and get_listing_context but not for pricing,
+          // which silently fell back to the curated catalog.
+          const ovrForItem = await ctx.db
+            .query("listing_resolution_override")
+            .withIndex("by_account_product", (q2) => q2.eq("account_slug", account_slug))
+            .collect();
+          for (const o of ovrForItem) {
+            // Single-item mappings only: a bundle's price is the BUNDLE's
+            // price, not this item's, so it must not set the item's rate.
+            if (o.components.length === 1 && String(o.components[0].item_id) === String(im.match!._id)) {
+              pids.add(o.product_id);
+            }
+          }
           // Among this item's own listings prefer the CHEAPEST — that's the
           // base offering rather than an add-on bundle built around it.
           for (const l of listings) {

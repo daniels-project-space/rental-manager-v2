@@ -102,6 +102,7 @@ import type * as lib_listing_photo_reference from "../lib/listing_photo_referenc
 import type * as lib_message_reconciliation from "../lib/message_reconciliation.js";
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
+import type * as lib_poller_window from "../lib/poller_window.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_rental_volume from "../lib/rental_volume.js";
 import type * as lib_renterLookup from "../lib/renterLookup.js";
@@ -181,6 +182,7 @@ import type * as order_step_semantics from "../order_step_semantics.js";
 import type * as poller_health from "../poller_health.js";
 import type * as ported_listings from "../ported_listings.js";
 import type * as pricing_catalog from "../pricing_catalog.js";
+import type * as propose_bmpcc_mapping from "../propose_bmpcc_mapping.js";
 import type * as rate_limit_config from "../rate_limit_config.js";
 import type * as renter_bot_batch from "../renter_bot_batch.js";
 import type * as renter_bot_drafts from "../renter_bot_drafts.js";
@@ -324,6 +326,7 @@ declare const fullApi: ApiFromModules<{
   "lib/message_reconciliation": typeof lib_message_reconciliation;
   "lib/missed_revenue": typeof lib_missed_revenue;
   "lib/notification_events": typeof lib_notification_events;
+  "lib/poller_window": typeof lib_poller_window;
   "lib/quiet_hours": typeof lib_quiet_hours;
   "lib/rental_volume": typeof lib_rental_volume;
   "lib/renterLookup": typeof lib_renterLookup;
@@ -403,6 +406,7 @@ declare const fullApi: ApiFromModules<{
   poller_health: typeof poller_health;
   ported_listings: typeof ported_listings;
   pricing_catalog: typeof pricing_catalog;
+  propose_bmpcc_mapping: typeof propose_bmpcc_mapping;
   rate_limit_config: typeof rate_limit_config;
   renter_bot_batch: typeof renter_bot_batch;
   renter_bot_drafts: typeof renter_bot_drafts;
