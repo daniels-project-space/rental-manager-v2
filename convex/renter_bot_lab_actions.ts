@@ -139,6 +139,8 @@ export const startLiveSession = action({
     startDate: v.optional(v.string()),
     endDate: v.optional(v.string()),
     location: v.optional(v.string()),
+    /** Real Hygglo listing to base the scenario on (its price is what the renter pays). */
+    productId: v.optional(v.number()),
   },
   handler: async (
     ctx,
@@ -193,6 +195,7 @@ export const startLiveSession = action({
       item_names: itemNames,
       start_date: startDate,
       end_date: endDate,
+      base_product_id: args.productId,
     });
     return {
       threadId,

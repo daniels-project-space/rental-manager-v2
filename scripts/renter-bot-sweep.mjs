@@ -52,6 +52,7 @@ const SCENARIOS = [
     name: "bundle_addons_and_totals",
     account: "leo",
     item: "BMPCC 6K Pro",
+    productId: 1172593, // leo, £80 — body + Canon 16-35 and 24-105
     start: "2026-09-04",
     end: "2026-09-06",
     profile: "confident filmmaker who knows the gear",
@@ -84,6 +85,7 @@ const SCENARIOS = [
     name: "anamorphic_mount_and_swap",
     account: "leo",
     item: "BMPCC 6K Full Frame",
+    productId: 1122324, // leo, £110 — Full Frame + 3 anamorphics
     start: "2026-09-12",
     end: "2026-09-14",
     profile: "knows mounts, will push on compatibility",
@@ -144,6 +146,71 @@ const SCENARIOS = [
       "ok book both for the 29th",
     ],
   },
+  {
+    name: "qty_and_stock_limits",
+    account: "leo",
+    item: "DJI Wireless Mics",
+    start: "2026-10-02",
+    end: "2026-10-03",
+    profile: "wants MORE units than we own",
+    turns: [
+      "do you have wireless mics for the 2nd-3rd oct?",
+      "i need 6 of them, can you add 6",
+      "ok how many can i actually have",
+      "add the max then",
+      "and a boom mic as well",
+      "whats the total",
+    ],
+  },
+  {
+    name: "remove_and_rebuild",
+    account: "leo",
+    item: "Sony FX3",
+    start: "2026-10-08",
+    end: "2026-10-09",
+    profile: "adds then removes then re-adds, tests state tracking",
+    turns: [
+      "fx3 free 8-9 oct?",
+      "add the 24-70 and the 16-35",
+      "actually remove the 16-35",
+      "whats on the booking now and what does it cost",
+      "put the 16-35 back on",
+      "and now the total?",
+    ],
+  },
+  {
+    name: "marketing_item_trap",
+    account: "leo",
+    item: "BMPCC 6K Pro",
+    start: "2026-10-15",
+    end: "2026-10-15",
+    profile: "asks for gear listed but marketing-only",
+    turns: [
+      "hi do you have the dji mini 5 pro drone?",
+      "its on your listings though isnt it",
+      "ok what drone can i actually rent",
+      "fine, just the bmpcc on the 15th then",
+      "add a gimbal too",
+      "total?",
+    ],
+  },
+  {
+    name: "late_night_and_delivery",
+    account: "leo",
+    item: "BMPCC 6K Pro",
+    productId: 1172440, // leo, £80 — BMPCC kit + tripod + follow focus
+    start: "2026-10-20",
+    end: "2026-10-21",
+    profile: "pushes on collection times and delivery",
+    turns: [
+      "can i pick up at 11pm on the 20th?",
+      "what times can i actually collect",
+      "can you deliver to E1 6AN instead",
+      "how much is delivery",
+      "ok add the camera for 20-21st",
+      "and confirm the total with delivery",
+    ],
+  },
 ];
 
 async function main() {
@@ -174,6 +241,7 @@ async function main() {
       item_names: [sc.item],
       start_date: sc.start,
       end_date: sc.end,
+      base_product_id: sc.productId,
     });
 
     for (let i = 0; i < sc.turns.length; i++) {
@@ -183,7 +251,7 @@ async function main() {
         thread_id: threadId,
         account_slug: sc.account,
         stage: "INQUIRY",
-        items: [{ name: sc.item }],
+        items: [{ name: sc.item, product_id: sc.productId }],
         messages: history,
       });
       const res = convexRun("replyInbox_actions:generateDraft", { thread_id: threadId });

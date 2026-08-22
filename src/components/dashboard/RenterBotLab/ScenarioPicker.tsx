@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
 
 export interface FixtureOption {
   _id: string;
@@ -17,6 +19,8 @@ function scenarioLabel(scenario_type: string): string {
 
 export interface CustomScenarioInput {
   items: string[];
+  /** Real Hygglo listing id — its price is what the renter pays. */
+  productId?: number;
   priceGbp?: number;
   startDate?: string;
   endDate?: string;
@@ -92,6 +96,10 @@ export function ScenarioPicker({
   const [customStartDate, setCustomStartDate] = useState(inThreeDays);
   const [customEndDate, setCustomEndDate] = useState(inFiveDays);
   const [customLocation, setCustomLocation] = useState("");
+  const [productId, setProductId] = useState("");
+  // Real listings for the chosen account, so a scenario can be based on what a
+  // renter actually sees and pays.
+  const listings = useQuery(api.online_listings.list, { account_slug: accountSlug });
 
   const list = fixtures ?? [];
   const byType = new Map<string, FixtureOption[]>();
@@ -117,12 +125,19 @@ export function ScenarioPicker({
       startSession(accountSlug, fixtureId);
       return;
     }
+    const chosen = listings?.find((l) => String(l.product_id) === productId);
     startSession(accountSlug, undefined, {
-      items: customItems
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      priceGbp: customPrice ? Number(customPrice) : undefined,
+      // A real listing wins over the free-text items box: on Hygglo the renter
+      // is looking at ONE listing and pays ITS price, so basing the scenario on
+      // a listing is the only way the price shown is the price they'd pay.
+      productId: chosen ? chosen.product_id : undefined,
+      items: chosen
+        ? [chosen.name]
+        : customItems
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+      priceGbp: chosen?.daily_price ?? (customPrice ? Number(customPrice) : undefined),
       startDate: customStartDate || undefined,
       endDate: customEndDate || undefined,
       location: customLocation || undefined,
@@ -184,11 +199,33 @@ export function ScenarioPicker({
           <p className="text-xs font-medium text-[#8b8fa3]">
             Custom scenario base info
           </p>
+          <select
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+            disabled={disabled}
+            className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
+          >
+            <option value="">
+              — Base on a real Hygglo listing (recommended) —
+            </option>
+            {(listings ?? []).map((l) => (
+              <option key={l.product_id} value={String(l.product_id)}>
+                {l.daily_price != null ? `£${l.daily_price}/day — ` : ""}
+                {l.name.slice(0, 70)}
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-[#8b8fa3]">
+            Listing price = what the renter actually pays on Hygglo. The same
+            camera appears at very different prices depending on the set, so
+            basing a scenario on an item name quotes the cheapest body-only
+            rate instead.
+          </p>
           <input
             value={customItems}
             onChange={(e) => setCustomItems(e.target.value)}
             disabled={disabled}
-            placeholder="Items, comma-separated"
+            placeholder="…or items, comma-separated (ignored if a listing is picked)"
             className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
           />
           <input

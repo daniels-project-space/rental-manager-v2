@@ -155,6 +155,16 @@ export const seed = internalMutation({
     item_names: v.array(v.string()),
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
+    /**
+     * The Hygglo listing the renter is actually looking at.
+     *
+     * A renter books a LISTING at the listing's price, not a basket of item
+     * rates. Seeding from item names priced the BMPCC 6K Pro at £35 — the
+     * cheapest body-only listing — even when the scenario represented a set
+     * that really costs more. Quoting an item rate for a set understates what
+     * the renter pays, which is the one number they care about.
+     */
+    base_product_id: v.optional(v.number()),
   },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
@@ -168,7 +178,25 @@ export const seed = internalMutation({
       (i) => i.status === "active" && (i.qty ?? 0) > 0,
     );
     const lines = [];
-    for (const name of a.item_names) {
+    if (a.base_product_id != null) {
+      const listing = await ctx.db
+        .query("online_listings")
+        .withIndex("by_account_product", (q) =>
+          q.eq("account_slug", a.account_slug).eq("product_id", a.base_product_id as number),
+        )
+        .unique();
+      if (listing) {
+        lines.push({
+          item_id: undefined,
+          // The listing IS the line, exactly as on Hygglo.
+          name: (listing.name ?? "listing").slice(0, 70),
+          qty: 1,
+          daily_price_gbp: listing.daily_price,
+          origin: "listing",
+        });
+      }
+    }
+    for (const name of lines.length ? [] : a.item_names) {
       const m = bestMatch(name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
       const hit = m.match && m.confident ? m.match : null;
       // Price the SEEDED items too. Leaving them undefined made total_gbp null
