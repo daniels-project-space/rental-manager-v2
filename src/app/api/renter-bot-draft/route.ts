@@ -1114,6 +1114,33 @@ export async function POST(req: Request) {
     }
     }
     if (!obj) {
+      // SALVAGE a reply the model wrote as plain prose.
+      //
+      // A parse failure was discarding the entire turn, and a sweep caught one
+      // live. When the output contains no JSON at all the model simply answered
+      // in prose rather than in the envelope — the reply itself may be perfectly
+      // good, and throwing it away costs the renter an answer for a formatting
+      // slip. Salvaging is SAFE here precisely because factsClaimed comes back
+      // empty: that leaves hasItemGrounding false, which arms the blanket
+      // ungrounded-assertion net, so a salvaged draft is checked MORE strictly
+      // than a parsed one, not less. Anything containing braces is a malformed
+      // envelope rather than prose and is still escalated.
+      const prose = text.trim();
+      if (prose.length > 20 && prose.length < 2000 && !prose.includes("{") && !prose.includes("}")) {
+        return NextResponse.json({
+          ok: true,
+          draft: prose,
+          needs_human: false,
+          needs_human_reason: null,
+          salvagedFromProse: true,
+          factsClaimed: [],
+          usedTools,
+          resolvedItems,
+          itemsWithoutKitData,
+          offeredPrices: [...new Set(offeredPrices)],
+          marketingItems,
+        });
+      }
       // Couldn't parse a decision — escalate rather than send garbage.
       //
       // Named, because "needs_human" with no reason is the same black box the

@@ -851,7 +851,8 @@ export const generateDraft = action({
       // so "needs_human" was indistinguishable from the agent's own
       // escalation and there was no way to tell WHY a thread never drafted —
       // which is how a 100%-escalation path on not-owned items went unnoticed.
-      return { status: "skipped", reason: "needs_human", flags: unresolvedCriticalFlags };
+      // Distinct from a route-level escalation: here the GUARD withheld it.
+      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags };
     }
 
     const finalDraft = guard.text.trim() || checkedDraft;
