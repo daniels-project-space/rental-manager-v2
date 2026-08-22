@@ -535,6 +535,7 @@ export const generateDraft = action({
     let noKitItems: string[] = [];
     // Verified not-rentable items reported by the draft route.
     let routeMarketingItems: string[] = [];
+    let routeOfferedPrices: number[] = [];
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -560,6 +561,7 @@ export const generateDraft = action({
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
           itemsWithoutKitData?: string[];
           marketingItems?: string[];
+          offeredPrices?: number[];
           tokenUsage?: {
             prompt: number | null;
             completion: number | null;
@@ -591,6 +593,7 @@ export const generateDraft = action({
           freshInquiryItems = j.resolvedItems ?? [];
           noKitItems = j.itemsWithoutKitData ?? [];
           routeMarketingItems = j.marketingItems ?? [];
+          routeOfferedPrices = j.offeredPrices ?? [];
           // Surface token/cache accounting so prompt-caching is observable
           // end-to-end rather than assumed (it fails silently otherwise).
           if (j.tokenUsage?.prompt != null) {
@@ -761,6 +764,10 @@ export const generateDraft = action({
                       .filter((f) => f.dailyRateGbp != null)
                       .map((f) => ({ name: f.name, min: f.dailyRateGbp as number, max: f.dailyRateGbp as number })),
                   ],
+                  // Add-on prices the fact pack handed the model. Without
+                  // these the guard flags the bot for quoting a number we
+                  // supplied. See route.ts `offeredPrices`.
+                  offeredPrices: routeOfferedPrices,
                 }
               : undefined,
             verifiedListingItem: c.fact_pack?.verifiedListingItem,

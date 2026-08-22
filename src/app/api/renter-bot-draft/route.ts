@@ -260,6 +260,16 @@ export async function POST(req: Request) {
    * instruction — which, live, it did not.
    */
   const itemsWithoutKitData: string[] = [];
+  /**
+   * Every price the FACT PACK offers the model as ground truth (lens options,
+   * mount adapters, alternatives). The draft guard's PRICE_HALLUCINATION check
+   * only derives valid prices from the LISTING, so an add-on we explicitly told
+   * the bot to quote — an £8/day adapter, a £26/day lens — was flagged critical
+   * and escalated. The system was instructing the bot to make an offer and then
+   * blocking it for making that offer. A price we supplied is grounded by
+   * definition; a price the model invented is still caught.
+   */
+  const offeredPrices: number[] = [];
   /** Per-draft token accounting, so caching is observable rather than assumed. */
   let tokenUsage: {
     prompt: number | null;
@@ -462,10 +472,14 @@ export async function POST(req: Request) {
               .filter((g) => kitNames.has((g.name ?? "").toLowerCase().trim()))
               .map((g) => g.name)
               .filter(Boolean);
-            const fits = all
+            const keep = all
               .filter((g) => !kitNames.has((g.name ?? "").toLowerCase().trim()))
-              .slice(0, 3)
-              .map((g) => `${g.name}${g.daily_price_gbp != null ? ` (£${g.daily_price_gbp}/day)` : ""}`);
+              .slice(0, 3);
+            for (const g of keep)
+              if (typeof g.daily_price_gbp === "number") offeredPrices.push(g.daily_price_gbp);
+            const fits = keep.map(
+              (g) => `${g.name}${g.daily_price_gbp != null ? ` (£${g.daily_price_gbp}/day)` : ""}`,
+            );
             if (alreadyIn.length) {
               groundTruth += `  ALREADY IN THIS RENTAL for ${it.name}: ${alreadyIn.join("; ")}. This glass is INCLUDED in the price they already have. Say so as a positive ("it already comes with…") and NEVER offer it as a paid add-on.\n`;
             }
@@ -500,10 +514,11 @@ export async function POST(req: Request) {
                   (a.to_mount ?? "").toLowerCase() ===
                   (it.lens_mount ?? "").toLowerCase(),
               )
-              .map(
-                (a) =>
-                  `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`,
-              );
+              .map((a) => {
+                if (typeof a.daily_price_gbp === "number")
+                  offeredPrices.push(a.daily_price_gbp);
+                return `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : ""}`;
+              });
             if (relevant.length) {
               groundTruth += `  ADAPTERS WE OWN AND RENT for ${it.name} (${it.lens_mount}): ${relevant.join("; ")}. If you tell them a lens needs an adapter to fit, you MUST immediately offer the matching one from this list BY NAME with its price. Never end on "an adapter is required and not included" — we have it, so say so.\n`;
             }
@@ -1155,6 +1170,8 @@ export async function POST(req: Request) {
       usedTools,
       resolvedItems,
       itemsWithoutKitData,
+      // Prices the fact pack itself offered — see offeredPrices' declaration.
+      offeredPrices: [...new Set(offeredPrices)],
       tokenUsage,
       // Verified NOT-rentable items. Registering the alternatives above turns
       // hasItemGrounding on, which disables the blanket ungrounded-assertion

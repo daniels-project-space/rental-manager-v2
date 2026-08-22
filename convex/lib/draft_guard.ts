@@ -51,7 +51,11 @@ export interface GuardOpts {
   firstPerson?: boolean;
   /** Grounding facts (Phase 2). Optional — price/model checks no-op without it. */
   factPack?: {
-    pricing?: { itemPrices?: { name: string; min: number; max: number }[] };
+    pricing?: {
+      itemPrices?: { name: string; min: number; max: number }[];
+      /** Add-on prices the fact pack itself offered — see the check below. */
+      offeredPrices?: number[];
+    };
     verifiedListingItem?: string;
     marketingItems?: string[];
     lowValueInstruction?: string;
@@ -788,6 +792,12 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     );
     if (stated.length) {
       const valid = new Set<number>();
+      // Prices the FACT PACK offered the model are grounded by construction:
+      // we computed them from real listings/catalog and instructed the bot to
+      // quote them. Flagging those made the system contradict itself — it told
+      // the bot to offer a £8/day adapter, then escalated the reply that did.
+      // Invented prices are still caught: only what we supplied is whitelisted.
+      for (const v of factPack.pricing.offeredPrices ?? []) valid.add(Math.round(v));
       for (const p of factPack.pricing.itemPrices) {
         for (let v = Math.floor(p.min * 0.9); v <= Math.ceil(p.max * 1.1); v++) valid.add(v);
         for (const mult of [2, 2.5, 3, 4, 5, 6, 7])

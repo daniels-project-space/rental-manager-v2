@@ -191,3 +191,32 @@ describe("guardDraft — MARKETING_ITEM_AVAILABLE negation handling", () => {
     expect(r.flags.map((f) => f.type)).toContain("MARKETING_ITEM_AVAILABLE");
   });
 });
+
+describe("PRICE_HALLUCINATION vs prices we supplied", () => {
+  const itemPrices = [{ name: "BMPCC 6K Pro", min: 80, max: 80 }];
+  const draft =
+    "Yes it's free. I also rent the PL to EF mount adapter for £8/day if you " +
+    "want to use the Blazar Remus anamorphics at £26/day.";
+  const opts = (offeredPrices?: number[]) => ({
+    history: [],
+    lastRenterMessage: "any anamorphics that work with it?",
+    factPack: { pricing: { itemPrices, ...(offeredPrices ? { offeredPrices } : {}) } },
+  });
+
+  it("flags an add-on price we never supplied", () => {
+    const r = guardDraft(draft, opts());
+    expect(r.flags.some((f) => f.type === "PRICE_HALLUCINATION")).toBe(true);
+  });
+
+  it("accepts the same prices once the fact pack offered them", () => {
+    // The system told the bot to quote these. Escalating the reply that did
+    // is the system contradicting itself.
+    const r = guardDraft(draft, opts([8, 26]));
+    expect(r.flags.some((f) => f.type === "PRICE_HALLUCINATION")).toBe(false);
+  });
+
+  it("still catches an invented price alongside supplied ones", () => {
+    const r = guardDraft(`${draft} A spare body is £999/day.`, opts([8, 26]));
+    expect(r.flags.some((f) => f.type === "PRICE_HALLUCINATION")).toBe(true);
+  });
+});
