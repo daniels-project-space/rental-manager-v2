@@ -58,12 +58,13 @@ crons.daily(
   {},
 );
 
-// Cached listing prices, refreshed from the daily catalog sync (cron 04:37).
-// Runs after it so it reads fresh tiers. Convex-only, no Hygglo call.
-crons.daily(
+// Cached listing prices, re-synced from the catalog cache. WEEKLY — owners
+// change prices in occasional bulk edits, and the job is a Convex-only diff
+// that writes nothing on a week where nothing moved.
+crons.weekly(
   "listing_price_cache_refresh",
-  { hourUTC: 5, minuteUTC: 7 },
-  internal.listing_price_sync.refreshAllDaily,
+  { dayOfWeek: "sunday", hourUTC: 5, minuteUTC: 7 },
+  internal.listing_price_sync.refreshAllWeekly,
   {},
 );
 

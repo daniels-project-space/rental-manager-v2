@@ -101,12 +101,16 @@ export const refresh = internalAction({
 });
 
 /**
- * All accounts, run daily just after catalog-sync (cron "37 4 * * *") has
- * refreshed hygglo_products. Without this the cache silently re-stales: it is
- * only otherwise updated by a manual Settings click, which is how an entire
- * account drifted ~10% below its own live prices unnoticed.
+ * All accounts, WEEKLY, after catalog-sync has refreshed hygglo_products.
+ *
+ * Weekly is enough: owners change prices in occasional bulk edits, not
+ * continuously, and the whole job is a Convex-only diff — it patches nothing on
+ * a week where nothing moved, which is the normal case. Without it the cache
+ * silently re-stales, since it is otherwise only updated by a manual Settings
+ * click; that is how an entire account drifted ~10% below its own live prices
+ * unnoticed.
  */
-export const refreshAllDaily = internalAction({
+export const refreshAllWeekly = internalAction({
   args: {},
   handler: async (ctx): Promise<unknown> => {
     const out: Record<string, number> = {};
@@ -114,6 +118,11 @@ export const refreshAllDaily = internalAction({
       const p = (await ctx.runQuery(internal.listing_price_sync.plan, {
         account_slug: slug,
       })) as { updates: Array<{ id: string; to: number }> };
+      // No drift, nothing to write — leave the rows untouched.
+      if (p.updates.length === 0) {
+        out[slug] = 0;
+        continue;
+      }
       const res = (await ctx.runMutation(internal.listing_price_sync.apply, {
         updates: p.updates.map((u) => ({ id: u.id, to: u.to })),
       })) as { patched: number };
