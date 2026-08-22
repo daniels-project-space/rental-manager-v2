@@ -797,7 +797,12 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       // quote them. Flagging those made the system contradict itself — it told
       // the bot to offer a £8/day adapter, then escalated the reply that did.
       // Invented prices are still caught: only what we supplied is whitelisted.
-      for (const v of factPack.pricing.offeredPrices ?? []) valid.add(Math.round(v));
+      for (const v of factPack.pricing.offeredPrices ?? []) {
+        // Same multi-day expansion the listing prices get below: a renter
+        // booking 3 days is legitimately quoted 3x an add-on's daily rate.
+        valid.add(Math.round(v));
+        for (const mult of [2, 2.5, 3, 4, 5, 6, 7]) valid.add(Math.round(v * mult));
+      }
       for (const p of factPack.pricing.itemPrices) {
         for (let v = Math.floor(p.min * 0.9); v <= Math.ceil(p.max * 1.1); v++) valid.add(v);
         for (const mult of [2, 2.5, 3, 4, 5, 6, 7])

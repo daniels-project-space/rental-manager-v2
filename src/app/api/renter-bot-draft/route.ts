@@ -25,6 +25,38 @@ const accountCommunicationRef = makeFunctionReference<"query">(
  * These are craft rules, not fact rules — they never license a claim that the
  * ground-truth block above doesn't support.
  */
+/**
+ * Every price the SYSTEM returned to the model, harvested from tool results.
+ *
+ * The fact pack is not the only grounded source: the agent calls
+ * find_owned_alternatives / lookup_pricing mid-turn, and those results carry
+ * real prices straight from our listings. The draft guard cannot see tool
+ * results, so a correctly-quoted £26 anamorphic came back as a critical
+ * PRICE_HALLUCINATION and the reply was withheld. Walk the tool output and
+ * treat any price-shaped number in it as grounded — because it is ours.
+ */
+function harvestToolPrices(steps: unknown, into: number[]): void {
+  const PRICE_KEY = /(price|rate|gbp|per_day|perday|daily|total|min|max)/i;
+  const seen = new Set<unknown>();
+  const walk = (node: unknown, keyHint = ""): void => {
+    if (node == null || seen.has(node)) return;
+    if (typeof node === "number") {
+      if (PRICE_KEY.test(keyHint) && Number.isFinite(node) && node > 0 && node < 10000)
+        into.push(Math.round(node));
+      return;
+    }
+    if (typeof node !== "object") return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const v of node) walk(v, keyHint);
+      return;
+    }
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) walk(v, k);
+  };
+  for (const st of (steps as Array<{ toolResults?: unknown }>) ?? [])
+    walk(st?.toolResults ?? null);
+}
+
 const CONVERSATION_CRAFT = `
 CONVERSATION CRAFT — how to actually write the reply:
 
@@ -949,6 +981,7 @@ export async function POST(req: Request) {
       usedTools = ((result?.steps ?? []) as any[]).some(
         (st) => (st?.toolCalls?.length ?? 0) > 0,
       );
+      harvestToolPrices(result?.steps, offeredPrices);
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
       // cache_control on the way out. All three look identical from outside:
@@ -1057,6 +1090,7 @@ export async function POST(req: Request) {
           if (retryObj && (retryObj.draft || retryObj.needs_human === false)) {
             obj = retryObj;
             usedTools = retryUsedTools;
+            harvestToolPrices(retryResult?.steps, offeredPrices);
           }
         }
       } catch {
