@@ -58,6 +58,15 @@ crons.daily(
   {},
 );
 
+// Cached listing prices, refreshed from the daily catalog sync (cron 04:37).
+// Runs after it so it reads fresh tiers. Convex-only, no Hygglo call.
+crons.daily(
+  "listing_price_cache_refresh",
+  { hourUTC: 5, minuteUTC: 7 },
+  internal.listing_price_sync.refreshAllDaily,
+  {},
+);
+
 // ── Wave 4 — Hygglo polling workflow trigger ──────────────────
 // REMOVED 2026-05-24 (Convex pro-plan cost audit).
 //

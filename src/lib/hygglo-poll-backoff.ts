@@ -39,6 +39,78 @@
 export const HYGGLO_BACKOFF_GROWTH_FACTOR = 1.5;
 
 /**
+ * Hard bounds the human-set `settings.polling_interval_ms` dial is clamped to,
+ * and the same bounds the adaptive backoff may widen within.
+ *
+ * These used to live as private consts in `src/trigger/poll-hygglo.ts`. They
+ * were promoted here (2026-08-22) because the Convex-side poll clock
+ * (`convex/poll_clock.ts`) must evaluate the SAME interval gate as the
+ * Trigger.dev task — if the two ever disagreed, the clock would either starve
+ * the poller (too strict) or hand Trigger.dev runs it immediately discards
+ * (too loose, which is exactly the billed-no-op waste the clock exists to
+ * remove). One definition, imported by both.
+ */
+export const MIN_EFFECTIVE_POLL_INTERVAL_MS = 2 * 60 * 1000;
+export const MAX_EFFECTIVE_POLL_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Resolve the effective poll interval from the two persisted inputs the gate
+ * depends on: the human dial (`settings.polling_interval_ms`) and the stored
+ * adaptive `quietStreak` (`sync_state[source="hygglo_poller"].quietStreak`).
+ *
+ * Both inputs are read from untyped Convex documents, so everything is
+ * defensively coerced here rather than at each call site. Non-finite/missing
+ * values fall back to the 2-minute floor — the historical behaviour of the
+ * inline gate this replaces.
+ */
+export function resolveEffectivePollInterval(
+  configuredIntervalMs: unknown,
+  storedQuietStreak: unknown,
+): { baseIntervalMs: number; effectiveIntervalMs: number; quietStreak: number } {
+  const configured = Number(configuredIntervalMs);
+  const baseIntervalMs = Number.isFinite(configured)
+    ? Math.min(
+        MAX_EFFECTIVE_POLL_INTERVAL_MS,
+        Math.max(MIN_EFFECTIVE_POLL_INTERVAL_MS, Math.round(configured)),
+      )
+    : MIN_EFFECTIVE_POLL_INTERVAL_MS;
+  const streakRaw = Number(storedQuietStreak);
+  const quietStreak = Number.isFinite(streakRaw) ? streakRaw : 0;
+  return {
+    baseIntervalMs,
+    quietStreak,
+    effectiveIntervalMs: computeBackoffIntervalMs(
+      baseIntervalMs,
+      quietStreak,
+      MIN_EFFECTIVE_POLL_INTERVAL_MS,
+      MAX_EFFECTIVE_POLL_INTERVAL_MS,
+    ),
+  };
+}
+
+/**
+ * True when enough time has elapsed since the last recorded poll for a
+ * scheduled invocation to do real work.
+ *
+ * NOTE `lastRunAt` is only stamped by FULL polls (`recordSyncRun` is inside
+ * `if (isFullPoll)` in poll-hygglo.ts), so this gate measures "time since the
+ * last FULL poll", not "time since any poll". That is pre-existing behaviour
+ * and is preserved verbatim — the poll clock must reproduce the current
+ * cadence exactly, not silently tighten it.
+ *
+ * A null/absent `lastRunAt` (fresh or legacy row) means "never polled" and is
+ * always due.
+ */
+export function isPollIntervalElapsed(
+  lastRunAt: number | null | undefined,
+  now: number,
+  effectiveIntervalMs: number,
+): boolean {
+  if (lastRunAt === null || lastRunAt === undefined || !Number.isFinite(lastRunAt)) return true;
+  return now - lastRunAt >= effectiveIntervalMs;
+}
+
+/**
  * Widen `baseIntervalMs` by `HYGGLO_BACKOFF_GROWTH_FACTOR` per consecutive
  * quiet cycle, hard-clamped to [minIntervalMs, maxIntervalMs] — pass the
  * SAME 2-60 minute bounds the human-set dial is already clamped to

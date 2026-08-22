@@ -99,3 +99,26 @@ export const refresh = internalAction({
     return { account_slug, listings: p.listings, patched: res.patched };
   },
 });
+
+/**
+ * All accounts, run daily just after catalog-sync (cron "37 4 * * *") has
+ * refreshed hygglo_products. Without this the cache silently re-stales: it is
+ * only otherwise updated by a manual Settings click, which is how an entire
+ * account drifted ~10% below its own live prices unnoticed.
+ */
+export const refreshAllDaily = internalAction({
+  args: {},
+  handler: async (ctx): Promise<unknown> => {
+    const out: Record<string, number> = {};
+    for (const slug of ["leo", "dbcinema", "diogo"]) {
+      const p = (await ctx.runQuery(internal.listing_price_sync.plan, {
+        account_slug: slug,
+      })) as { updates: Array<{ id: string; to: number }> };
+      const res = (await ctx.runMutation(internal.listing_price_sync.apply, {
+        updates: p.updates.map((u) => ({ id: u.id, to: u.to })),
+      })) as { patched: number };
+      out[slug] = res.patched;
+    }
+    return out;
+  },
+});

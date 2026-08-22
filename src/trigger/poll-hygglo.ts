@@ -14,8 +14,14 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
-import { HYGGLO_POLL_CRON, hyggloPollMode } from "../lib/quiet-hours";
-import { computeBackoffIntervalMs, nextQuietStreak } from "../lib/hygglo-poll-backoff";
+import { hyggloPollMode } from "../lib/quiet-hours";
+import {
+  MAX_EFFECTIVE_POLL_INTERVAL_MS,
+  MIN_EFFECTIVE_POLL_INTERVAL_MS,
+  isPollIntervalElapsed,
+  nextQuietStreak,
+  resolveEffectivePollInterval,
+} from "../lib/hygglo-poll-backoff";
 // Phase 2 (corePoll cutover complete) — the pure hygglo-core poll assembler is
 // now the SOLE fetch+shape path. It produces the `{ messages, reservations,
 // renters, conversations }` payload arrays consumed by downstream (B) — Convex
