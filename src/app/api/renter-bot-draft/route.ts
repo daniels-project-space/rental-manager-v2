@@ -608,7 +608,13 @@ export async function POST(req: Request) {
             .join("; ");
           groundTruth += `- "${it.name}" is AMBIGUOUS — it matches ${it.ambiguous_with.length} DIFFERENT products we own: ${opts}. These are the ONLY models in this line; there is no other variant. Do NOT answer as if "${it.name}" were one product and do NOT invent a variant. ASK which they mean, by exact name. You MAY and SHOULD use the mounts listed here to help them choose (e.g. which one their existing glass fits) and you may quote each one's price — those are real facts. What you must NOT do is state sensor sizes, ND filters, screen types or other specs that are not given to you.\n`;
         }
-        if (!it.whats_included && it.name) itemsWithoutKitData.push(it.name);
+        // "No kit data" must mean no data ANYWHERE, not just no listing text.
+        // The structured inventory kit is data, and this line not knowing that
+        // made the system contradict itself: the fact pack handed the bot "5x
+        // Canon LP-E6NH batteries, 1TB SSD, cage, hard case" and the guard then
+        // withheld the reply as a KIT_HALLUCINATION for saying so.
+        if (!it.whats_included && !it.included_with_rental?.length && it.name)
+          itemsWithoutKitData.push(it.name);
         // A camera with no kit text still supports a USEFUL lens answer: we
         // know its mount, and we know what glass we own that fits. Without
         // this the honest reply degrades to "let me check and come back",
