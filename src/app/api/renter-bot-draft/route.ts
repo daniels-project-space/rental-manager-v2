@@ -461,7 +461,7 @@ export async function POST(req: Request) {
           .map((i) => (i.name ?? "").toLowerCase().trim())
           .filter(Boolean),
       );
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; price_tiers?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -647,13 +647,34 @@ export async function POST(req: Request) {
             /* best-effort */
           }
         }
+        // STRUCTURED KIT beats "I'll confirm". When the listing carries no
+        // description we used to tell the bot it knew nothing about the kit —
+        // while items.compatibility.included_with_rental held the answer. That
+        // is the exact turn ("what's included in the bmpcc kit?") that
+        // produced an empty draft.
+        const structuredKit = it.included_with_rental?.length
+          ? `${it.included_with_rental.join(", ")} (from our inventory record — accurate)`
+          : null;
         const kitText = it.whats_included
           // Truncate at INJECTION, not in storage. The stored description is
           // now full-length so bundle mapping can read the whole component
           // list; the prompt only needs enough to answer "what's included".
           ? it.whats_included.slice(0, 900)
-          : "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)";
+          : (structuredKit ??
+            "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)");
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
+        const detail: string[] = [];
+        if (it.card_type) detail.push(`takes ${it.card_type} cards`);
+        if (it.battery_type) detail.push(`uses ${it.battery_type} batteries`);
+        if (it.size_note) detail.push(`${it.size_note} packed`);
+        if (structuredKit && it.whats_included) detail.push(`kit per our records: ${it.included_with_rental!.join(", ")}`);
+        if (detail.length)
+          groundTruth += `  ${it.name} FACTS (real, from inventory — use them, do not say you'll check): ${detail.join("; ")}.\n`;
+        if (it.spec_text)
+          groundTruth += `  ${it.name} SPEC (real, verified — you MAY quote these; they are not invented): ${it.spec_text}\n`;
+        if (it.replacement_cost_gbp != null) offeredPrices.push(it.replacement_cost_gbp);
+        if (it.replacement_cost_gbp != null)
+          groundTruth += `  ${it.name} insured replacement value: £${it.replacement_cost_gbp}. Only bring this up if they ask about damage, loss, deposit or insurance — then give the figure plainly rather than dodging, and note cover runs through the platform.\n`;
         groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day${tierTxt ? ` [Hygglo multi-day rates: ${tierTxt} — quote the rate for the length they asked for, never the 1-day rate times the days]` : ""}. Included: ${kitText}\n`;
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

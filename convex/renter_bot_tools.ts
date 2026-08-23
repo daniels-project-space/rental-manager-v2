@@ -185,6 +185,21 @@ export const get_listing_context = query({
       // stalling with "let me check".
       let lens_mount: string | null = null;
       let price_tiers: string | null = null;
+      /**
+       * Detail we already hold per item and never showed the bot. Measured
+       * 2026-08-23: card_type and battery_type on 67 of 81 rentable items,
+       * dimensions/weight on 68, replacement cost on 76, structured kit on 32,
+       * and 72 item_specs rows. A six-turn probe of exactly the questions these
+       * answer scored 0/6 — three turns produced NO REPLY AT ALL and one leaked
+       * "I'll inform my colleague" to the renter. The data was sitting in the
+       * same table the bot already reads.
+       */
+      let card_type: string | null = null;
+      let battery_type: string | null = null;
+      let included_with_rental: string[] | null = null;
+      let size_note: string | null = null;
+      let replacement_cost_gbp: number | null = null;
+      let spec_text: string | null = null;
       // When the renter's wording matches SEVERAL real products (e.g. "BMPCC
       // 6K" fully describes both the 6K Pro and the 6K Full Frame), the bot
       // must ASK which. Detected already by bestMatch's confidence gate, but
@@ -228,6 +243,41 @@ export const get_listing_context = query({
           const it = m.match;
           kind = kind ?? (it.kind ?? null);
           lens_mount = (it as { lens_mount?: string | null }).lens_mount ?? null;
+          const det = it as {
+            card_type?: string | null;
+            battery_type?: string | null;
+            weight_kg?: number | null;
+            length_cm?: number | null;
+            width_cm?: number | null;
+            height_cm?: number | null;
+            replacement_cost_gbp?: number | null;
+            compatibility?: { included_with_rental?: string[] };
+          };
+          // "N/A" / "N/A (lens)" are placeholders, not answers — a lens has no
+          // card slot, and repeating "N/A" at a renter is worse than silence.
+          const real = (v?: string | null) =>
+            v && !/^n\/?a\b/i.test(v.trim()) ? v : null;
+          card_type = real(det.card_type);
+          battery_type = real(det.battery_type);
+          included_with_rental = det.compatibility?.included_with_rental?.length
+            ? det.compatibility.included_with_rental
+            : null;
+          replacement_cost_gbp = det.replacement_cost_gbp ?? null;
+          if (det.weight_kg != null || det.length_cm != null) {
+            const dims =
+              det.length_cm != null
+                ? `${det.length_cm}x${det.width_cm}x${det.height_cm}cm`
+                : null;
+            size_note = [det.weight_kg != null ? `${det.weight_kg}kg` : null, dims]
+              .filter(Boolean)
+              .join(", ");
+          }
+          const sp = await ctx.db
+            .query("item_specs")
+            .withIndex("by_item", (q) => q.eq("item_id", it._id))
+            .first();
+          if (sp)
+            spec_text = `${sp.description ?? ""}`.replace(/\s+/g, " ").slice(0, 400) || null;
           owned = it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0;
           ownership_source = "name_match";
           // Pull the real kit + price for THIS item via the deterministic
@@ -321,6 +371,12 @@ export const get_listing_context = query({
         kind,
         lens_mount,
         price_tiers,
+        card_type,
+        battery_type,
+        included_with_rental,
+        size_note,
+        replacement_cost_gbp,
+        spec_text,
         ambiguous_with,
         listing_name,
         daily_price_gbp,
