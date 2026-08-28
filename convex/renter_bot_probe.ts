@@ -206,10 +206,15 @@ export const run = action({
     model_override: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<{ draft?: string; confidence?: number; flags?: unknown }> => {
-    await ctx.runMutation(internal.renter_bot_probe.seed, a);
+    // model_override belongs to the DRAFT call, not the seed — passing the
+    // whole args object through made seed's validator reject the extra field
+    // and every bake-off run returned no draft at all, which then scored as
+    // "0 violations" for every model. A silent-looking pass built on nothing.
+    const { model_override, ...seedArgs } = a;
+    await ctx.runMutation(internal.renter_bot_probe.seed, seedArgs);
     const r = await ctx.runAction(api.replyInbox_actions.generateDraft, {
       thread_id: a.thread_id,
-      ...(a.model_override ? { model_override: a.model_override } : {}),
+      ...(model_override ? { model_override } : {}),
     });
     return { draft: r.draft, confidence: r.confidence, flags: r.flags };
   },
