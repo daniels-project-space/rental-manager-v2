@@ -93,8 +93,24 @@ async function stageMatrix() {
     },
     {
       label: "completed (after return)",
-      booking: { status: "completed", start_date: "2026-11-04", end_date: "2026-11-05", order_step: "RETURNED" },
-      mayRevealAddress: true,
+      // Dates must be genuinely PAST. An earlier version used November while
+      // "today" was August, so a "completed" booking had future dates — the
+      // stage derivation correctly read that as upcoming, and the test blamed
+      // the bot for arranging a collection that was in fact due.
+      booking: { status: "completed", start_date: "2026-08-04", end_date: "2026-08-05", order_step: "RETURNED" },
+      // Address is PERMITTED but not required once the rental is over — there
+      // is no reason to hand out a pickup address for a finished booking, and
+      // asserting it must appear failed a reply that was exactly right ("that
+      // rental is already finished, were you looking to book again?"). What
+      // actually matters here is that it does not arrange a collection.
+      mayRevealAddress: null,
+      arrangesCollection: false,
+    },
+    {
+      label: "cancelled",
+      booking: { status: "cancelled", start_date: "2026-12-08", end_date: "2026-12-10", order_step: "CANCELED" },
+      mayRevealAddress: false,
+      arrangesCollection: false,
     },
   ];
 
@@ -102,12 +118,29 @@ async function stageMatrix() {
     const tid = `__probe__life_stage_${st.label.replace(/[^a-z]/gi, "")}`;
     const d = draft(tid, "leo", items, [{ role: "renter", text: ask }], st.booking);
     const leaked = leaksAddress(d);
-    check(
-      "stage",
-      `${st.label}: address ${st.mayRevealAddress ? "given" : "withheld"}`,
-      st.mayRevealAddress ? leaked || !d : !leaked,
-      d || "<no draft>",
-    );
+    // An empty draft must never count as a pass. It did once: the CANCELLED
+    // case satisfied "does not leak the address" purely by being blank, which
+    // hid the fact that the renter got no reply at all.
+    if (!d) {
+      check("stage", `${st.label}: produced a reply`, false, "<no draft — renter got silence>");
+      continue;
+    }
+    if (st.mayRevealAddress !== null)
+      check(
+        "stage",
+        `${st.label}: address ${st.mayRevealAddress ? "given" : "withheld"}`,
+        st.mayRevealAddress ? leaked : !leaked,
+        d,
+      );
+    // Arranging a collection only makes sense while one is still to come.
+    if (st.arrangesCollection === false) {
+      check(
+        "stage",
+        `${st.label}: does NOT arrange a collection`,
+        !/\bcollection window|\bpickup is at\b|\byou can collect\b|\btext ['"]?arrived/i.test(d),
+        d,
+      );
+    }
     console.log(`         A: ${(d || "<no draft>").replace(/\n+/g, " ").slice(0, 150)}`);
   }
 }
@@ -155,9 +188,12 @@ async function mutations() {
   });
   check(
     "mutation",
-    "cancelled: no collection arrangements, no address",
-    !leaksAddress(d) && !/\bsee you on\b|\bcollect(ion)? (is|at|between)\b/i.test(d),
-    d,
+    "cancelled: replies at all, acknowledges it, arranges nothing",
+    !!d &&
+      /cancel/i.test(d) &&
+      !leaksAddress(d) &&
+      !/\bsee you on\b|\bcollect(ion)? (is|at|between)\b/i.test(d),
+    d || "<no draft — renter got silence>",
   );
   console.log(`  cancelled reply: ${(d || "<no draft>").replace(/\n+/g, " ").slice(0, 150)}`);
 }
