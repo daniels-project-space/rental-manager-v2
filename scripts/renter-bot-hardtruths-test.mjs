@@ -58,10 +58,13 @@ const TURNS = [
   },
   {
     q: "do you have an atomos ninja monitor?",
-    // A listing titled "Hollyland Pyro 7 (Like Atomos...)" must not become an
-    // offer of an Atomos. Naming it as available is the failure.
-    bad: /\b(yes|i (do )?have|i've got)\b[^.!?]{0,40}atomos/i,
-    label: "offers an Atomos off the back of a 'like Atomos' listing title",
+    // WE GENUINELY OWN an Atomos Ninja V, so "yes, I have one" is TRUE and an
+    // earlier version of this regex was simply wrong to flag it. The real
+    // breach would be offering a model we DON'T stock because a listing title
+    // says "like a [model]" — e.g. offering an Atomos Shogun, which we do not
+    // have, off the back of the Hollyland Pyro's "(Like Atomos)" title.
+    bad: /\b(yes|i (do )?have|i've got)\b[^.!?]{0,40}atomos (shogun|flame|inferno)/i,
+    label: "offers an Atomos model we do not stock, off a 'like Atomos' title",
   },
 ];
 

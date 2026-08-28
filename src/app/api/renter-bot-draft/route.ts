@@ -37,6 +37,51 @@ const accountCommunicationRef = makeFunctionReference<"query">(
  * PRICE_HALLUCINATION and the reply was withheld. Walk the tool output and
  * treat any price-shaped number in it as grounded — because it is ours.
  */
+/**
+ * Per-tool telemetry for one generation.
+ *
+ * "usedTools: true/false" was all we had, which cannot answer any of the
+ * questions that matter for reliability or cost: which tools run, how often the
+ * SAME call is repeated inside one turn, whether any of them error, and how
+ * many agent steps it takes. Optimising tool calling without this is guesswork.
+ */
+function toolTelemetry(steps: unknown) {
+  const calls: Array<{ name: string; args: string }> = [];
+  let errors = 0;
+  let stepCount = 0;
+  for (const st of (steps as Array<{ toolCalls?: unknown; toolResults?: unknown }>) ?? []) {
+    stepCount++;
+    for (const tc of (st?.toolCalls as Array<Record<string, unknown>>) ?? []) {
+      const name = String(tc?.toolName ?? tc?.tool_name ?? "?");
+      let args = "";
+      try {
+        args = JSON.stringify(tc?.input ?? tc?.args ?? {});
+      } catch {
+        args = "?";
+      }
+      calls.push({ name, args });
+    }
+    for (const tr of (st?.toolResults as Array<Record<string, unknown>>) ?? []) {
+      const out = tr?.result ?? tr?.output;
+      // A tool that returned an error object still "ran" — count it separately
+      // so a silently failing tool cannot hide behind a healthy call count.
+      if (out && typeof out === "object" && "error" in (out as object)) errors++;
+    }
+  }
+  const byName: Record<string, number> = {};
+  for (const c of calls) byName[c.name] = (byName[c.name] ?? 0) + 1;
+  // Identical name+args twice in one turn is wasted latency and tokens: the
+  // answer cannot have changed mid-turn.
+  const seen = new Set<string>();
+  let duplicates = 0;
+  for (const c of calls) {
+    const k = `${c.name}|${c.args}`;
+    if (seen.has(k)) duplicates++;
+    else seen.add(k);
+  }
+  return { steps: stepCount, total: calls.length, byName, duplicates, errors };
+}
+
 function harvestToolPrices(steps: unknown, into: number[]): void {
   const PRICE_KEY = /(price|rate|gbp|per_day|perday|daily|total|min|max)/i;
   const seen = new Set<unknown>();
@@ -361,6 +406,7 @@ export async function POST(req: Request) {
    * framework's result shape is an implementation detail that can drift.
    */
   let orderChangesBefore: number | null = null;
+  let toolStats: ReturnType<typeof toolTelemetry> | null = null;
   /** Why a reply was withheld, so an escalation is diagnosable rather than opaque. */
   let needsHumanReason: string | null = null;
   /** True once we have supplied REAL co-rental data for something discussed. */
@@ -1163,6 +1209,7 @@ export async function POST(req: Request) {
         (st) => (st?.toolCalls?.length ?? 0) > 0,
       );
       harvestToolPrices(result?.steps, offeredPrices);
+      toolStats = toolTelemetry(result?.steps);
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
       // cache_control on the way out. All three look identical from outside:
@@ -1439,6 +1486,7 @@ export async function POST(req: Request) {
       resolvedItems,
       itemsWithoutKitData,
       hasPairingData,
+      toolStats,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
