@@ -64,6 +64,7 @@ import type * as diag_lab_runs from "../diag_lab_runs.js";
 import type * as diag_price_coverage from "../diag_price_coverage.js";
 import type * as diag_price_staleness from "../diag_price_staleness.js";
 import type * as diag_price_tiers from "../diag_price_tiers.js";
+import type * as diag_renter_questions from "../diag_renter_questions.js";
 import type * as diag_tier_coverage from "../diag_tier_coverage.js";
 import type * as diag_twin_gaps from "../diag_twin_gaps.js";
 import type * as diag_unused_data from "../diag_unused_data.js";
@@ -310,6 +311,7 @@ declare const fullApi: ApiFromModules<{
   diag_price_coverage: typeof diag_price_coverage;
   diag_price_staleness: typeof diag_price_staleness;
   diag_price_tiers: typeof diag_price_tiers;
+  diag_renter_questions: typeof diag_renter_questions;
   diag_tier_coverage: typeof diag_tier_coverage;
   diag_twin_gaps: typeof diag_twin_gaps;
   diag_unused_data: typeof diag_unused_data;

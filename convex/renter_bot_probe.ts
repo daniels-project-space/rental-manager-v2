@@ -19,8 +19,21 @@ export const seed = internalMutation({
     stage: v.optional(v.string()),
     items: v.array(v.object({ name: v.string(), product_id: v.optional(v.number()) })),
     messages: v.array(v.object({ role: v.string(), text: v.string() })),
+    /**
+     * Seed a real CONFIRMED reservation for this thread.
+     *
+     * Without one the bot always reads the thread as an enquiry, because
+     * confirmation comes from reservations.status — not the conversation
+     * stage. That made an arrival scenario ("I'm outside now") untestable:
+     * the probe said CONFIRMED and the bot correctly answered "this request
+     * hasn't been confirmed yet", so the test was measuring an incoherent
+     * situation rather than a defect.
+     */
+    confirmed_booking: v.optional(
+      v.object({ start_date: v.string(), end_date: v.string() }),
+    ),
   },
-  handler: async (ctx, { thread_id, account_slug, stage, items, messages }) => {
+  handler: async (ctx, { thread_id, account_slug, stage, items, messages, confirmed_booking }) => {
     const acc = (await ctx.db.query("accounts").collect()).find(
       (a) => a.slug === account_slug,
     );
@@ -66,6 +79,24 @@ export const seed = internalMutation({
       });
       i++;
     }
+    // Clear any prior probe reservation for this thread, then seed if asked.
+    for (const old of await ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
+      .collect())
+      await ctx.db.delete(old._id);
+    if (confirmed_booking) {
+      await ctx.db.insert("reservations", {
+        hygglo_order_id: thread_id,
+        account_slug,
+        status: "confirmed",
+        renter_name: "Probe Renter",
+        start_date: confirmed_booking.start_date,
+        end_date: confirmed_booking.end_date,
+        items: items.map((i) => ({ item_name: i.name, qty: 1 })),
+        created_at: now,
+      });
+    }
     return { thread_id };
   },
 });
@@ -77,6 +108,9 @@ export const run = action({
     stage: v.optional(v.string()),
     items: v.array(v.object({ name: v.string(), product_id: v.optional(v.number()) })),
     messages: v.array(v.object({ role: v.string(), text: v.string() })),
+    confirmed_booking: v.optional(
+      v.object({ start_date: v.string(), end_date: v.string() }),
+    ),
   },
   handler: async (ctx, a): Promise<{ draft?: string; confidence?: number; flags?: unknown }> => {
     await ctx.runMutation(internal.renter_bot_probe.seed, a);
@@ -134,6 +168,8 @@ export const cleanup = mutation({
       await ctx.db.delete(c._id);
       n++;
     }
+    for (const r of await ctx.db.query("reservations").collect())
+      if (r.hygglo_order_id?.startsWith(PREFIX)) await ctx.db.delete(r._id);
     return { removed: n };
   },
 });
