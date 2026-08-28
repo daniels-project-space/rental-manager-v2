@@ -58,6 +58,7 @@ import type * as denial_resolutions from "../denial_resolutions.js";
 import type * as denial_resolver from "../denial_resolver.js";
 import type * as diag_bundle_parse from "../diag_bundle_parse.js";
 import type * as diag_conv_levers from "../diag_conv_levers.js";
+import type * as diag_grounding_gap from "../diag_grounding_gap.js";
 import type * as diag_item_detail from "../diag_item_detail.js";
 import type * as diag_kit_contents from "../diag_kit_contents.js";
 import type * as diag_lab_runs from "../diag_lab_runs.js";
@@ -305,6 +306,7 @@ declare const fullApi: ApiFromModules<{
   denial_resolver: typeof denial_resolver;
   diag_bundle_parse: typeof diag_bundle_parse;
   diag_conv_levers: typeof diag_conv_levers;
+  diag_grounding_gap: typeof diag_grounding_gap;
   diag_item_detail: typeof diag_item_detail;
   diag_kit_contents: typeof diag_kit_contents;
   diag_lab_runs: typeof diag_lab_runs;

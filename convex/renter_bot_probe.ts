@@ -7,6 +7,8 @@
 import { action, internalMutation, mutation } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
+import { bestMatch } from "./lib/item_name_match";
 
 // Exported so other modules (e.g. replyInbox.ts's getReplyQueue) can exclude
 // probe/fixture threads from real UI surfaces without duplicating the string.
@@ -86,6 +88,32 @@ export const seed = internalMutation({
       .collect())
       await ctx.db.delete(old._id);
     if (confirmed_booking) {
+      // expanded_items matter as much as the reservation itself: item
+      // grounding is derived from them, and without it UNGROUNDED_PRICE fires
+      // CRITICAL on any £ figure and the whole reply is withheld. A probe
+      // reservation without them tests a broken booking, not a normal one.
+      const owned = (await ctx.db.query("items").collect()).filter(
+        (i) => i.status === "active" && (i.qty ?? 0) > 0,
+      );
+      const expanded: Array<{
+        item_id: Id<"items">;
+        item_name_canonical: string;
+        qty: number;
+      }> = [];
+      for (const i of items) {
+        const m = bestMatch(
+          i.name,
+          owned,
+          (x) => x.name_canonical,
+          (x) => (x.aliases ?? []) as string[],
+        );
+        if (m.match && m.confident)
+          expanded.push({
+            item_id: m.match._id,
+            item_name_canonical: m.match.name_canonical,
+            qty: 1,
+          });
+      }
       await ctx.db.insert("reservations", {
         hygglo_order_id: thread_id,
         account_slug,
@@ -94,6 +122,7 @@ export const seed = internalMutation({
         start_date: confirmed_booking.start_date,
         end_date: confirmed_booking.end_date,
         items: items.map((i) => ({ item_name: i.name, qty: 1 })),
+        expanded_items: expanded,
         created_at: now,
       });
     }
