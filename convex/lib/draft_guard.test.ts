@@ -301,3 +301,44 @@ describe("INVENTED_POPULARITY", () => {
     expect(fired("I can add the 16-35mm for £20/day if you want something wider.", false)).toBe(false);
   });
 });
+
+describe("UNGROUNDED_DELIVERY_FEE", () => {
+  const opts = {
+    history: [],
+    lastRenterMessage: "how much would delivery cost to E1 6AN?",
+    factPack: { pricing: { itemPrices: [{ name: "BMPCC 6K Pro", min: 80, max: 80 }] } },
+  };
+  const fired = (draft: string) =>
+    guardDraft(draft, opts).flags.some((f) => f.type === "UNGROUNDED_DELIVERY_FEE");
+
+  it("catches the exact invented quote seen live", () => {
+    // Verbatim from a sweep transcript. We hold no delivery rate anywhere and
+    // the policy is "request postcode + courier quote", so this is a
+    // commercial commitment on a price we do not know.
+    expect(
+      fired(
+        "Addison Lee courier rates depend on the exact time of day and traffic, but to E1 6AN it's typically around £15, £25 each way at direct cost.",
+      ),
+    ).toBe(true);
+    expect(fired("Delivery to that postcode is about £20.")).toBe(true);
+  });
+
+  it("was previously waved through by the £10-100 delivery whitelist", () => {
+    // The same sentence must ALSO not be silently validated as a normal price.
+    const r = guardDraft("Delivery there is around £25.", opts);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_DELIVERY_FEE")).toBe(true);
+  });
+
+  it("leaves the correct answer alone", () => {
+    expect(
+      fired(
+        "I use Addison Lee, so the cost is their live courier quote for the distance. I can pull an exact quote once the booking is set up.",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not fire on the rental price in a delivery conversation", () => {
+    // The £80/day is grounded and unrelated to the courier fee.
+    expect(fired("The camera is £80/day. I can arrange a courier if you'd like.")).toBe(false);
+  });
+});

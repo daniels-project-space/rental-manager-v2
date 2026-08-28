@@ -59,6 +59,8 @@ export interface GuardOpts {
       itemPrices?: { name: string; min: number; max: number }[];
       /** Add-on prices the fact pack itself offered — see the check below. */
       offeredPrices?: number[];
+      /** A REAL delivery fee, if we ever hold one. Today we never do. */
+      deliveryFeeGbp?: number | null;
     };
     verifiedListingItem?: string;
     marketingItems?: string[];
@@ -106,6 +108,8 @@ const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
   // High, not critical: it misleads but does not create a wrong booking.
   INVENTED_POPULARITY: "high",
+  // High: it is a money commitment, but escalating beats withholding the reply.
+  UNGROUNDED_DELIVERY_FEE: "high",
   CHAIN_OF_THOUGHT: "critical",
   PRICE_HALLUCINATION: "critical",
   // Same class as a hallucinated price: the renter plans around it and turns
@@ -828,8 +832,20 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       // Only widen for delivery/deposit when the conversation is actually about
       // them — otherwise a £10-100 catch-all hides wrong daily-rate quotes (v1 bug).
       const ctxText = `${message} ${text}`.toLowerCase();
-      if (/\b(deliver|delivery|courier|drop.?off|postage|ship)\b/.test(ctxText))
-        for (let v = 10; v <= 100; v++) valid.add(v);
+      // DELIVERY USED TO WHITELIST £10-100 OUTRIGHT.
+      //
+      // That handed the model a blank cheque: any delivery figure in the band
+      // was auto-approved. We hold no delivery rate anywhere — settings, rules
+      // and memories all have none — and the policy rule states the number
+      // comes from a courier quote ("request postcode + courier quote (Addison
+      // Lee, not taxi)"). So every delivery price the bot states is invented,
+      // and the widening existed only to stop the guard complaining about it.
+      // Kept ONLY when a real delivery figure was supplied to the model.
+      if (
+        factPack?.pricing?.deliveryFeeGbp != null &&
+        /\b(deliver|delivery|courier|drop.?off|postage|ship)\b/.test(ctxText)
+      )
+        valid.add(Math.round(factPack.pricing.deliveryFeeGbp));
       if (/\b(deposit|security|hold)\b/.test(ctxText))
         for (let v = 50; v <= 500; v += 10) valid.add(v);
       // Same "only widen with real evidence" rule as delivery/deposit above.
@@ -1044,6 +1060,26 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       push(
         "INVENTED_POPULARITY",
         `Claims what other renters typically take, with no pairing data for this item: "${hit.slice(0, 110)}"`,
+        "flagged",
+      );
+  }
+
+  // 22d. INVENTED DELIVERY FEE. We hold no delivery rate, and the policy is to
+  // get a courier quote — so a figure here is a commercial commitment on a
+  // price we do not know. Live-caught: "to E1 6AN it's typically around £15,
+  // £25 each way at direct cost." The renter plans around that number and
+  // either we honour it or correct it after they have committed.
+  if (factPack?.pricing?.deliveryFeeGbp == null) {
+    const deliverySentence = text
+      .split(/(?<=[.!?])\s+|\n+/)
+      .find(
+        (x: string) =>
+          /\b(deliver\w*|courier|drop.?off|addison)\b/i.test(x) && /£\s?\d/.test(x),
+      );
+    if (deliverySentence)
+      push(
+        "UNGROUNDED_DELIVERY_FEE",
+        `States a delivery price we do not hold — the rate comes from a courier quote: "${deliverySentence.trim().slice(0, 110)}"`,
         "flagged",
       );
   }
