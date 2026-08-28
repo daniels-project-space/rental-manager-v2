@@ -68,6 +68,16 @@ crons.weekly(
   {},
 );
 
+// Co-rental pairings, from completed rentals. Weekly: what people take
+// together shifts over months, and this is the only thing standing between the
+// bot and inventing "most people also rent X".
+crons.weekly(
+  "item_pairings_refresh",
+  { dayOfWeek: "sunday", hourUTC: 5, minuteUTC: 20 },
+  internal.mv.item_pairings.refresh,
+  {},
+);
+
 // ── Wave 4 — Hygglo polling workflow trigger ──────────────────
 // REMOVED 2026-05-24 (Convex pro-plan cost audit).
 //

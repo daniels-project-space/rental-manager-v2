@@ -273,3 +273,31 @@ describe("FALSE_ACTION_CLAIM — booking edits", () => {
     expect(fired("Happy to add the adapter for £8/day if you'd like.", false)).toBe(false);
   });
 });
+
+describe("INVENTED_POPULARITY", () => {
+  const fired = (draft: string, hasPairingData: boolean) =>
+    guardDraft(draft, {
+      history: [],
+      lastRenterMessage: "what do most people rent alongside it?",
+      hasPairingData,
+    }).flags.some((f) => f.type === "INVENTED_POPULARITY");
+
+  it("flags a popularity claim made with no pairing data", () => {
+    // Live-caught: a confident list of "the most common additions" for an item
+    // we held no co-rental data on. It reads as sales patter, which is why it
+    // went unnoticed — but it is a claim about our own rental history.
+    expect(fired("The most common additions are lighting and an external monitor.", false)).toBe(true);
+    expect(fired("Most people also rent a wide lens with it.", false)).toBe(true);
+    expect(fired("It's a popular pairing with the gimbal.", false)).toBe(true);
+  });
+
+  it("allows the same claim once real counts were supplied", () => {
+    expect(fired("Most people also rent the 24-70mm with it.", true)).toBe(false);
+  });
+
+  it("does not fire on a plain recommendation", () => {
+    // Recommending is fine; asserting what OTHERS do is the regulated part.
+    expect(fired("For interviews I'd suggest the 24-70mm — it's the most versatile.", false)).toBe(false);
+    expect(fired("I can add the 16-35mm for £20/day if you want something wider.", false)).toBe(false);
+  });
+});

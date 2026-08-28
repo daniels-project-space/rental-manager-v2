@@ -342,6 +342,8 @@ export async function POST(req: Request) {
   let orderChangesBefore: number | null = null;
   /** Why a reply was withheld, so an escalation is diagnosable rather than opaque. */
   let needsHumanReason: string | null = null;
+  /** True once we have supplied REAL co-rental data for something discussed. */
+  let hasPairingData = false;
   /** Per-draft token accounting, so caching is observable rather than assumed. */
   let tokenUsage: {
     prompt: number | null;
@@ -669,6 +671,28 @@ export async function POST(req: Request) {
           : (structuredKit ??
             "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)");
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
+        // WHAT ACTUALLY GOES OUT WITH IT, from completed rentals.
+        //
+        // Asked "what do most people rent alongside it?", the bot produced a
+        // confident list of "the most common additions" while holding no
+        // pairing data at all — a factual claim about our own rental history,
+        // invented. It sounds like ordinary sales patter, which is exactly why
+        // it went unnoticed.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const pr: any = await convex.query(api.mv.item_pairings.get, {
+            item_name: it.name ?? "",
+          });
+          const pairs = (pr ?? []) as Array<{ with_name: string; count: number }>;
+          if (pairs.length) {
+            hasPairingData = true;
+            groundTruth += `  OFTEN RENTED WITH ${it.name} (real counts from our completed rentals): ${pairs
+              .map((x) => `${x.with_name} (${x.count} times)`)
+              .join("; ")}. THIS is what "most people also take" means — if you make a popularity claim it must come from this list. If a renter asks what others pair with it and this list is absent, say you'd suggest X for their shoot instead of claiming it is popular.\n`;
+          }
+        } catch {
+          /* best-effort */
+        }
         const detail: string[] = [];
         if (it.card_type) detail.push(`takes ${it.card_type} cards`);
         if (it.battery_type) detail.push(`uses ${it.battery_type} batteries`);
@@ -1374,6 +1398,7 @@ export async function POST(req: Request) {
       usedTools,
       resolvedItems,
       itemsWithoutKitData,
+      hasPairingData,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,

@@ -2497,6 +2497,17 @@ export default defineSchema({
    * unreachable from a real conversation by construction; the tool that
    * mutates them refuses any thread id without that prefix.
    */
+  /**
+   * What actually goes out together, from completed rentals. Materialised
+   * because the source is ~3.7k reservations with expanded item arrays —
+   * far too much to scan per draft. See convex/mv/item_pairings.ts.
+   */
+  mv_item_pairings: defineTable({
+    item_name_canonical: v.string(),
+    pairs: v.array(v.object({ with_name: v.string(), count: v.number() })),
+    updated_at: v.number(),
+  }).index("by_name", ["item_name_canonical"]),
+
   renter_bot_lab_orders: defineTable({
     thread_id: v.string(),
     account_slug: v.string(),

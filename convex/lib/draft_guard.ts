@@ -47,6 +47,8 @@ export interface GuardOpts {
   stage?: string;
   /** True when a modify_booking call actually succeeded this turn (Lab sim). */
   bookingModified?: boolean;
+  /** True when REAL co-rental counts were supplied for something discussed. */
+  hasPairingData?: boolean;
   /** Owner-configured pickup/return windows, "HH:MM". Empty = skip time checks. */
   pickupWindows?: { start: string; end: string }[];
   /** Accounts that speak in the first person singular ("I", not "we"). */
@@ -102,6 +104,8 @@ const SHOOT_QUESTION_PATTERN = /\bwhat(?:'s| is) the shoot for\b/i;
 
 const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
+  // High, not critical: it misleads but does not create a wrong booking.
+  INVENTED_POPULARITY: "high",
   CHAIN_OF_THOUGHT: "critical",
   PRICE_HALLUCINATION: "critical",
   // Same class as a hallucinated price: the renter plans around it and turns
@@ -1021,6 +1025,25 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       push(
         "FALSE_ACTION_CLAIM",
         "Says it changed the booking (added/removed gear or moved dates) but no booking edit was actually performed",
+        "flagged",
+      );
+  }
+
+  // 22c. INVENTED POPULARITY. "Most people also rent X" is a claim about our
+  // own rental history. Without the pairing data it is fabricated, and it is
+  // persuasive precisely because it reads as ordinary sales patter — live
+  // -caught producing a confident list of "the most common additions" for an
+  // item we had no pairing data on at all.
+  if (!opts.hasPairingData) {
+    const POPULARITY =
+      /\b(most|many|other)\s+(?:people|renters|customers|clients)\s+(?:also\s+)?(?:rent|take|add|book|hire|go for|pair)\b|\bmost (?:common|popular)\s+(?:add-?ons?|additions?|pairings?|combos?)\b|\bcommonly (?:rented|paired|added)\b|\bpopular (?:add-?on|pairing|combo|choice) (?:with|for)\b/i;
+    const hit = text
+      .split(/(?<=[.!?])\s+|\n+/)
+      .find((x: string) => POPULARITY.test(x));
+    if (hit)
+      push(
+        "INVENTED_POPULARITY",
+        `Claims what other renters typically take, with no pairing data for this item: "${hit.slice(0, 110)}"`,
         "flagged",
       );
   }
