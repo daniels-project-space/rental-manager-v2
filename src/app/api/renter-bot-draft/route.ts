@@ -339,6 +339,7 @@ export async function POST(req: Request) {
    * 2026-08-30" into a time a renter can actually turn up at. Hoisted rather
    * than re-queried so this costs nothing extra.
    */
+  let headlineAvailability = "";
   let pickupWindows: Array<{ start: string; end: string }> = [];
   let hubsCache: unknown = null;
   let globalSettingsCache: unknown = null;
@@ -1044,6 +1045,12 @@ export async function POST(req: Request) {
             // the fact was emitted did not explain why the reply deferred —
             // only which branch produced it can.
             factsEmitted.push(`availability:${it.name}:${verdict.slice(0, 90)}`);
+            // Availability is the most-asked question in the whole corpus, and
+            // buried mid-pack the model read past it — it was told the item was
+            // OUT until the 29th and still answered "let me check". Lead with
+            // it instead of relying on the model to go looking.
+            if (!headlineAvailability)
+              headlineAvailability = `AVAILABILITY — ANSWER THIS FIRST (${it.name}): ${verdict}.\n`;
           } else {
             // No calendar match is NOT the same as "free". Say so.
             groundTruth += `  AVAILABILITY (${it.name}): NOT FOUND in the calendar — you do NOT know if it is free. Say you'll confirm the dates; never assert it is available.\n`;
@@ -1368,7 +1375,7 @@ export async function POST(req: Request) {
         `TODAY IS ${today} (Europe/London). Compute any relative dates the renter uses from TODAY; never guess a date.`,
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
-        groundTruth ? `\n${groundTruth}` : "",
+        groundTruth ? `\n${headlineAvailability}${groundTruth}` : "",
         `LATEST INBOUND MESSAGE FROM RENTER:`,
         lastRenter,
       ].join("\n"),
