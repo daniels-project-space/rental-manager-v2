@@ -457,6 +457,21 @@ export async function POST(req: Request) {
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
+      // ALREADY-GATHERED CONTEXT.
+      //
+      // Measured over 25 real turns: get_renter_context and
+      // get_listing_context ran on 100% of them and check_availability on 84%
+      // — every one of which the ROUTE has already fetched and put in these
+      // facts. The agent was paying a model round trip each to re-read data
+      // sitting in its own prompt, at ~4.5 steps and 5.8 tool calls per turn.
+      //
+      // Prefetch-then-declare is the cheap half of the fix: the calls are
+      // already made server-side and in parallel with each other, so saying so
+      // removes the round trips without removing the capability. The tools stay
+      // available for the cases where the agent genuinely needs a second look
+      // (a different item, a different date range).
+      groundTruth += `CONTEXT ALREADY GATHERED FOR YOU — do NOT call these tools again this turn unless you need a DIFFERENT item or date range than the one above: get_renter_context (renter + history + this conversation), get_listing_context (the item, its price, kit, mount and specs), check_availability (the verdict is in the AVAILABILITY line). Calling them again returns what you can already read here and just makes the renter wait.\n`;
+
       // THE OWNER'S OWN STANDING INSTRUCTIONS, per account.
       //
       // Written in Settings and never delivered to the model until now. Placed
