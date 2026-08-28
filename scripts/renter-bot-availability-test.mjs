@@ -48,7 +48,7 @@ const ASSERTS_FREE =
   /\b(yes|yep|yeah)\b[^.!?]{0,40}\b(available|free|up for grabs)\b|\bit'?s (currently )?available\b|\bis available\b(?![^.!?]{0,60}\b(from|after|on the)\b)/i;
 /** Acknowledges the real position instead. */
 const ACKNOWLEDGES_OUT =
-  /\b(out|booked|rented|unavailable|on (another )?rental|currently with)\b|\bfree (from|after)\b|\bnext (free|available)\b|\bback on\b/i;
+  /\b(out|booked|rented|unavailable|on (another )?rental|currently with)\b|\bfree (from|after)\b|\bnext (free|available)\b|\bback on\b|\bearliest it (could|can) be collected\b|\bcollected (from|between)\b/i;
 
 async function main() {
   const cases = [
