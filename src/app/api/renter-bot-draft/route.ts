@@ -64,17 +64,25 @@ function toolTelemetry(steps: unknown) {
           shape = "unserialisable";
         }
       }
-      const name = String(tc?.toolName ?? tc?.tool_name ?? "?");
+      // Mastra nests the call under `payload`:
+      //   { type:"tool-call", runId, from:"AGENT",
+      //     payload:{ toolCallId, toolName, args, providerMetadata } }
+      // Reading toolName/args at the top level yielded undefined for BOTH, so
+      // every call collapsed to the same key and the duplicate rate was
+      // meaningless. Fall back to the top level for other shapes.
+      const pl = (tc?.payload ?? tc) as Record<string, unknown>;
+      const name = String(pl?.toolName ?? pl?.tool_name ?? "?");
       let args = "";
       try {
-        args = JSON.stringify(tc?.input ?? tc?.args ?? {});
+        args = JSON.stringify(pl?.args ?? pl?.input ?? {});
       } catch {
         args = "?";
       }
       calls.push({ name, args });
     }
     for (const tr of (st?.toolResults as Array<Record<string, unknown>>) ?? []) {
-      const out = tr?.result ?? tr?.output;
+      const trp = (tr?.payload ?? tr) as Record<string, unknown>;
+      const out = trp?.result ?? trp?.output;
       // A tool that returned an error object still "ran" — count it separately
       // so a silently failing tool cannot hide behind a healthy call count.
       if (out && typeof out === "object" && "error" in (out as object)) errors++;
