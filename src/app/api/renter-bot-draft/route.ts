@@ -1040,7 +1040,10 @@ export async function POST(req: Request) {
                   ? `FREE — no bookings, available for ${reqDate ?? "the requested date"}`
                   : `AVAILABLE for ${reqDate} — we hold ${totalUnits} of these and only ${overlapping} is/are out then, so ${totalUnits - overlapping} remain free. Do NOT describe it as booked out.`;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict}.\n`;
-            factsEmitted.push(`availability:${it.name}`);
+            // Record the VERDICT, not just that a verdict happened. Knowing
+            // the fact was emitted did not explain why the reply deferred —
+            // only which branch produced it can.
+            factsEmitted.push(`availability:${it.name}:${verdict.slice(0, 90)}`);
           } else {
             // No calendar match is NOT the same as "free". Say so.
             groundTruth += `  AVAILABILITY (${it.name}): NOT FOUND in the calendar — you do NOT know if it is free. Say you'll confirm the dates; never assert it is available.\n`;
