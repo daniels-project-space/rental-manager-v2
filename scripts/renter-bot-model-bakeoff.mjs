@@ -34,10 +34,19 @@ const REPEATS = Number(process.argv[2] || 2);
  */
 const MODELS = [
   "google/gemini-3.7-flash", // incumbent
-  "openai/gpt-5.2-mini",
   "anthropic/claude-haiku-4.5",
   "google/gemini-3.5-flash",
-  "mistralai/mistral-medium-3.2",
+  "openai/gpt-5-mini",
+  "openai/gpt-4.1-mini",
+  "qwen/qwen3-max",
+  "meta-llama/llama-4-maverick",
+  // Verified reachable on this OpenRouter account by a single probe call each
+  // before being listed. Four guesses did NOT return a draft and were dropped
+  // rather than left in to score a silent zero: openai/gpt-5.2-mini,
+  // mistralai/mistral-medium-3.2, deepseek/deepseek-chat, x-ai/grok-4.1-fast.
+  // An unreachable model scores "no violations" for the same reason a broken
+  // harness does, which is how the first run produced a clean sheet for
+  // everything.
 ];
 
 function convexRun(fn, args) {
@@ -160,9 +169,10 @@ async function main() {
       }
     }
     rows.push(tally);
-    const pct = (n) => `${Math.round((100 * n) / Math.max(tally.runs, 1))}%`;
+    const answered = tally.runs - tally.errors;
+    const pct = (n) => `${Math.round((100 * n) / Math.max(answered, 1))}%`;
     console.log(
-      `${model.padEnd(32)} violations=${tally.fails} (${pct(tally.fails)})  good=${tally.wants} (${pct(tally.wants)})  defer=${tally.defers}  noDraft=${tally.errors}  n=${tally.runs}`,
+      `${model.padEnd(30)} violations=${String(tally.fails).padStart(2)} (${pct(tally.fails).padStart(4)})  good=${String(tally.wants).padStart(2)} (${pct(tally.wants).padStart(4)})  defer=${String(tally.defers).padStart(2)}  noDraft=${tally.errors}  answered=${answered}/${tally.runs}`,
     );
   }
 
