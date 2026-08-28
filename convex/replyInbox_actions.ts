@@ -572,6 +572,13 @@ export const generateDraft = action({
           offeredPrices?: number[];
           bookingModified?: boolean;
           hasPairingData?: boolean;
+          toolStats?: {
+            steps: number;
+            total: number;
+            byName: Record<string, number>;
+            duplicates: number;
+            errors: number;
+          } | null;
           needs_human_reason?: string | null;
           tokenUsage?: {
             prompt: number | null;
@@ -607,6 +614,14 @@ export const generateDraft = action({
           routeOfferedPrices = j.offeredPrices ?? [];
           routeBookingModified = j.bookingModified === true;
           routeHasPairingData = j.hasPairingData === true;
+        // Surface tool telemetry through CONVEX logs. The route's own
+        // console.log goes to Vercel, which the probe harness cannot read — so
+        // the numbers that would drive any tool-calling optimisation were
+        // invisible from where the testing happens.
+        if (j.toolStats)
+          console.log(
+            `[generateDraft] tools steps=${j.toolStats.steps} calls=${j.toolStats.total} dup=${j.toolStats.duplicates} err=${j.toolStats.errors} by=${JSON.stringify(j.toolStats.byName)}`,
+          );
           // Surface token/cache accounting so prompt-caching is observable
           // end-to-end rather than assumed (it fails silently otherwise).
           if (j.tokenUsage?.prompt != null) {
