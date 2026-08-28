@@ -66,3 +66,43 @@ export function remainingWindowsToday(
     return Number.isFinite(end) && end > nowMin + bufferMinutes;
   });
 }
+
+/**
+ * The earliest moment a returning unit can actually be collected again.
+ *
+ * Two constraints compose, and stating either alone gives a wrong answer:
+ *   1. a one-hour turnaround after the previous renter hands it back
+ *   2. collection only happens inside a pickup window
+ *
+ * So a 12:30 return is not "free at 13:30" — it is free at the start of the
+ * first window that has not already ended by 13:30. With windows of 10:00-12:00
+ * and 19:00-21:00 that is 19:00 the same day; a 12:00 return against a window
+ * opening at 13:00 is collectable at 13:00.
+ *
+ * Returns null when no window on the return day still works, so the caller can
+ * fall back to the next day's opening.
+ */
+export function nextCollectableTime(
+  returnTime: string,
+  windows: Array<{ start: string; end: string }>,
+  turnaroundMinutes = 60,
+): string | null {
+  const toMin = (hm: string) => {
+    const [h, m] = hm.split(":").map(Number);
+    return Number.isFinite(h) ? h * 60 + (m || 0) : NaN;
+  };
+  const ready = toMin(returnTime) + turnaroundMinutes;
+  if (!Number.isFinite(ready)) return null;
+  const usable = [...windows]
+    .filter((w) => Number.isFinite(toMin(w.start)) && Number.isFinite(toMin(w.end)))
+    .sort((a, b) => toMin(a.start) - toMin(b.start));
+  for (const w of usable) {
+    // The window must not already be over by the time the kit is ready.
+    if (toMin(w.end) <= ready) continue;
+    const at = Math.max(toMin(w.start), ready);
+    const hh = String(Math.floor(at / 60)).padStart(2, "0");
+    const mm = String(at % 60).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+  return null;
+}

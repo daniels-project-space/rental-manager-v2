@@ -9,7 +9,11 @@ import {
   OUT_OF_SCOPE_INTENTS,
   type RenterBotIntent,
 } from "@/../convex/lib/renter_bot_intents";
-import { resolvePickupHours, remainingWindowsToday } from "@/lib/pickup-hours";
+import {
+  resolvePickupHours,
+  remainingWindowsToday,
+  nextCollectableTime,
+} from "@/lib/pickup-hours";
 
 const accountCommunicationRef = makeFunctionReference<"query">(
   "settings:listAccountCommunication",
@@ -327,6 +331,17 @@ export async function POST(req: Request) {
    * That is the original "it repeated the same text on the top every time"
    * complaint, reintroduced by an instruction rather than by the model.
    */
+  /**
+   * Pickup windows, resolved ONCE and early.
+   *
+   * They were only fetched near the end, where they are printed — but the
+   * availability verdict needs them much earlier to turn "next free
+   * 2026-08-30" into a time a renter can actually turn up at. Hoisted rather
+   * than re-queried so this costs nothing extra.
+   */
+  let pickupWindows: Array<{ start: string; end: string }> = [];
+  let hubsCache: unknown = null;
+  let globalSettingsCache: unknown = null;
   let alreadySaidUnavailable = false;
   /** Hygglo moderation banner seen in this thread, if any. */
   let platformNotice: string | null = null;
@@ -358,6 +373,24 @@ export async function POST(req: Request) {
         m.sender !== "renter" &&
         /\b(is\s?n[o']?t available|not available|unavailable|isn'?t free)\b/i.test(m.body ?? ""),
     );
+    try {
+      const [hubsEarly, settingsEarly] = await Promise.all([
+        convex.query(api.settings.listAccountHubs, {}),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        convex.query(api.settings.get, {}) as Promise<any>,
+      ]);
+      hubsCache = hubsEarly;
+      globalSettingsCache = settingsEarly;
+      const hubEarly = ((hubsEarly || []) as Array<{ slug?: string; pickup_hours?: unknown }>).find(
+        (h) => h.slug === account_slug,
+      );
+      pickupWindows = resolvePickupHours(
+        hubEarly?.pickup_hours as never,
+        (settingsEarly as { pickup_hours?: unknown })?.pickup_hours as never,
+      );
+    } catch {
+      /* windows stay empty; the verdict falls back to a date */
+    }
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: "context_failed", detail: e instanceof Error ? e.message : String(e) },
@@ -936,6 +969,18 @@ export async function POST(req: Request) {
                 }
               }
             }
+            // Windows are needed HERE, not only later where they are printed:
+            // "next free 2026-08-30" is a day, and the renter wants a time.
+            const availWindows = pickupWindows;
+            /** "back 2026-08-29 12:30" -> "19:00 on 2026-08-29", or null. */
+            const collectableAfter = (stamp: string | null): string | null => {
+              if (!stamp) return null;
+              const [d, t] = stamp.split(" ");
+              if (!d || !t) return null;
+              const at = nextCollectableTime(t, availWindows);
+              return at ? `${at} on ${d}` : null;
+            };
+
             // IS IT OUT RIGHT NOW? Needed for the no-date case below, and for
             // "available" to mean something when the renter has not said when.
             const todayIso = new Date().toISOString().slice(0, 10);
@@ -970,7 +1015,11 @@ export async function POST(req: Request) {
             // from what IS known: the position today and the next free date.
             const noDateVerdict =
               outNow >= totalUnits
-                ? `NO DATES GIVEN, and it is OUT on rental RIGHT NOW (back ${backAt ?? "?"}), next free ${m.next_free_date ?? "?"}. Do NOT say it is available. Tell them it's currently out, give the earliest date it IS free, and ask which dates they need.`
+                ? `NO DATES GIVEN, and it is OUT on rental RIGHT NOW (back ${backAt ?? "?"}).${
+                    collectableAfter(backAt)
+                      ? ` It can be collected from ${collectableAfter(backAt)} — that is the first pickup window at least an hour after it comes back.`
+                      : ` Next free ${m.next_free_date ?? "?"}.`
+                  } Do NOT say it is available. Tell them when it's back and the earliest they can collect, then ask which dates they need.`
                 : `NO DATES GIVEN — you do NOT know whether their dates are free, so do NOT assert it is available. ${totalUnits - outNow} of ${totalUnits} free today${m.next_free_date ? `, next free date on file ${m.next_free_date}` : ""}. Ask which dates they need, then answer.`;
 
             const verdict = !reqDate
@@ -978,7 +1027,13 @@ export async function POST(req: Request) {
               : reqDate < todayIso
                 ? `THE REQUESTED DATE (${reqDate}) IS IN THE PAST — today is ${todayIso}. Do not answer as if it were bookable; ask which upcoming dates they mean.`
                 : turnaround
-              ? `it's out on another rental that RETURNS ${reqDate} — so it's only free from ${turnaround} that day (1-hour turnaround buffer); do NOT offer it before ${turnaround}, and only inside a pickup window`
+              ? (() => {
+                  // +1h alone is not collectable — it has to land in a window.
+                  const slot = nextCollectableTime(turnaround as string, availWindows);
+                  return slot
+                    ? `it's out on another rental that RETURNS ${reqDate} — the earliest it can be collected is ${slot} that day (one hour turnaround, then the first pickup window). Offer ${slot}, never earlier.`
+                    : `it's out on another rental that RETURNS ${reqDate} and no pickup window is left that day once the hour turnaround is applied — offer the next day instead.`;
+                })()
               : conflict
                 ? `ALL ${totalUnits} unit(s) are out on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
                 : bookings.length === 0
@@ -1165,13 +1220,14 @@ export async function POST(req: Request) {
   // Per-account PICKUP location — share ONLY after the booking is confirmed.
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [hubs, communications, globalSettings] = await Promise.all([
-      convex.query(api.settings.listAccountHubs, {}),
-      convex.query(accountCommunicationRef, {}),
-      // Needed for the pickup-hours cascade below — see there for why.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      convex.query(api.settings.get, {}) as Promise<any>,
-    ]);
+    // hubs/settings were already fetched above for the availability verdict —
+    // reuse them instead of querying the same two things twice per draft.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const communications: any = await convex.query(accountCommunicationRef, {});
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hubs: any = hubsCache;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const globalSettings: any = globalSettingsCache;
     const hub = (hubs || []).find((h: { slug?: string }) => h.slug === account_slug);
     const communication = (communications || []).find(
       (row: { slug?: string }) => row.slug === account_slug,

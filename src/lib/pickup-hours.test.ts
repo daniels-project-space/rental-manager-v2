@@ -13,6 +13,7 @@ import {
   toMinutes,
   FALLBACK_PICKUP_HOURS,
   type PickupWindow,
+  nextCollectableTime,
 } from "./pickup-hours";
 
 const PER_ACCOUNT: PickupWindow[] = [{ start: "09:00", end: "11:00" }];
@@ -89,5 +90,32 @@ describe("toMinutes", () => {
 
   it("does not silently coerce unparseable input to midnight", () => {
     expect(Number.isNaN(toMinutes("not-a-time"))).toBe(true);
+  });
+});
+
+describe("nextCollectableTime", () => {
+  const WINDOWS = [
+    { start: "10:00", end: "12:00" },
+    { start: "19:00", end: "21:00" },
+  ];
+
+  it("skips a window that has already ended by the time the kit is ready", () => {
+    // Returns 12:30, ready 13:30 — the morning window is long gone.
+    expect(nextCollectableTime("12:30", WINDOWS)).toBe("19:00");
+  });
+
+  it("uses the window's own start when the kit is ready before it opens", () => {
+    // Daniel's case: back at 12:00, ready 13:00, a window opening at 13:00.
+    expect(nextCollectableTime("12:00", [{ start: "13:00", end: "17:00" }])).toBe("13:00");
+  });
+
+  it("uses the ready time when the window is already open", () => {
+    // Ready 11:00 inside the 10:00-12:00 window — not 10:00, which is before
+    // the previous renter has even handed it back.
+    expect(nextCollectableTime("10:00", WINDOWS)).toBe("11:00");
+  });
+
+  it("returns null when nothing on that day works, so the caller rolls over", () => {
+    expect(nextCollectableTime("20:30", WINDOWS)).toBeNull();
   });
 });
