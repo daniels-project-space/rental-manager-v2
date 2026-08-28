@@ -53,7 +53,7 @@ export const check = internalQuery({
       }
       if (!hit) {
         uncategorised++;
-        if (uncatSamples.length < 12) uncatSamples.push(body.slice(0, 90));
+        if (uncatSamples.length < 120) uncatSamples.push(body.slice(0, 100));
       }
     }
     return {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -254,13 +255,28 @@ export async function POST(req: Request) {
    * complaint, reintroduced by an instruction rather than by the model.
    */
   let alreadySaidUnavailable = false;
+  /** Hygglo moderation banner seen in this thread, if any. */
+  let platformNotice: string | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rc: any = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id });
     account_slug = rc?.account_slug ?? "";
     const msgs = (rc?.last_messages ?? []) as Array<{ sender?: string; body?: string }>;
-    const r = [...msgs].reverse().find((m) => m.sender === "renter");
+    // Skip Hygglo's own moderation banners when deciding what the renter
+    // "just said". Stored with sender "renter", they made the platform the
+    // last speaker: the bot then replied to Hygglo with an unprompted lecture
+    // about on-platform payment, addressed to a renter who had asked nothing.
+    const r = [...msgs]
+      .reverse()
+      .find((m) => m.sender === "renter" && !isPlatformNotice(m.body));
     lastRenter = r?.body ?? "";
+    // The notice is still real, and the OWNER needs it: a renter trying to move
+    // off-platform is Daniel's call, not something to answer autonomously.
+    const notice = [...msgs]
+      .reverse()
+      .find((m) => m.sender === "renter" && isPlatformNotice(m.body));
+    if (notice)
+      platformNotice = (notice.body ?? "").replace(/\s+/g, " ").slice(0, 200);
     recentTranscript = msgs
       .map((m) => `${m.sender === "renter" ? "Renter" : "Owner"}: ${m.body ?? ""}`)
       .join("\n");
@@ -375,6 +391,9 @@ export async function POST(req: Request) {
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
+      if (platformNotice) {
+        groundTruth += `PLATFORM NOTICE (Hygglo said this, NOT the renter): "${platformNotice}". Do NOT reply to it and do NOT bring it up — the renter did not say it and may not even know it happened. Answer their actual last message instead. If THEY raise paying or talking off-platform, keep it on the platform, warmly and without accusing them.\n`;
+      }
       if (!bookingConfirmed) {
         const inviteLine = lc.is_inquiry
           ? `This is an ENQUIRY (no booking placed yet) — just confirm the item is available and answer warmly. Do NOT tell them to "send a request" or "complete a booking" merely to get info/a quote; only talk booking if they say they're ready.`

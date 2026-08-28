@@ -259,3 +259,22 @@ export function isGenericItemQuery(raw: string): boolean {
   if (toks.length === 0) return true;
   return toks.every((t: string) => GENERIC_ITEM_WORDS.has(t));
 }
+
+/**
+ * Is this a Hygglo PLATFORM notice rather than something the renter typed?
+ *
+ * Hygglo's moderation notices are stored with sender "renter" — "A message was
+ * hidden. We hid a message from Tristan S that suggested paying outside
+ * Hygglo." That makes the platform's own text the renter's turn, so the bot
+ * answers Hygglo instead of the customer, and untrusted third-party text
+ * steers the reply on a compliance-sensitive topic.
+ *
+ * Deliberately NARROW. An early, looser version also matched "Hi Leo, I see
+ * you've still not changed this to returned... considered a partial refund" —
+ * a real renter asking for money back, which must never be silenced as a
+ * system message. Only the unmistakable moderation banner counts.
+ */
+export function isPlatformNotice(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /\bA message was hidden\b|\bWe hid a message from\b/i.test(text);
+}

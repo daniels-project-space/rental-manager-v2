@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery } from "./item_name_match";
+import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery, isPlatformNotice } from "./item_name_match";
 
 const ITEMS = [
   { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
@@ -162,5 +162,28 @@ describe("isGenericItemQuery", () => {
       "wide Canon lens",
     ])
       expect(isGenericItemQuery(q)).toBe(false);
+  });
+});
+
+describe("isPlatformNotice", () => {
+  it("recognises Hygglo moderation banners", () => {
+    expect(
+      isPlatformNotice(
+        "A message was hidden. We hid a message from Tristan S that suggested paying outside Hygglo.",
+      ),
+    ).toBe(true);
+    expect(isPlatformNotice("We hid a message from Stefano R that contained contact details.")).toBe(true);
+  });
+
+  it("does NOT silence a real renter asking for money back", () => {
+    // A looser first draft matched this. It is a renter asking for a partial
+    // refund — exactly the message that must never be dropped as "system".
+    expect(
+      isPlatformNotice(
+        "Hi Leo, I see you've still not changed this to returned. I wanted to check if you've considered a partial refund for the day I lost.",
+      ),
+    ).toBe(false);
+    expect(isPlatformNotice("can you hide the tripod behind the door for me?")).toBe(false);
+    expect(isPlatformNotice("")).toBe(false);
   });
 });
