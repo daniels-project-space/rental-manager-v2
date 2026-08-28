@@ -1150,3 +1150,33 @@ export const get_mount_adapters = query({
     };
   },
 });
+
+/**
+ * The account's HARD TRUTHS — the owner's own standing instructions.
+ *
+ * Daniel writes these per account in Settings ("SD cards, batteries, chargers,
+ * cables and straps are INCLUDED free ... never quote them as separate paid
+ * items", "only ever offer gear that's actually in my inventory", "listing
+ * titles sometimes say 'like a [model]' — those are marketing comparisons, NOT
+ * gear I stock"). They are assembled in replyInbox.ts and editable in the
+ * Settings drawer, and the renter-bot draft route never received them, so the
+ * model had never seen one.
+ *
+ * Today's replies happen to comply because the kit data says the same thing —
+ * but that is accidental. Any item without kit data leaves the rule with
+ * nothing behind it, and the other clauses are not covered by data at all.
+ */
+export const get_hard_truths = query({
+  args: { account_slug: v.string() },
+  handler: async (ctx, { account_slug }) => {
+    const account = (await ctx.db.query("accounts").collect()).find(
+      (a) => a.slug === account_slug,
+    );
+    if (!account) return { hard_truths: null };
+    const profile = await ctx.db
+      .query("account_profiles")
+      .withIndex("by_account", (q) => q.eq("account_id", account._id))
+      .unique();
+    return { hard_truths: profile?.hard_truths ?? null };
+  },
+});

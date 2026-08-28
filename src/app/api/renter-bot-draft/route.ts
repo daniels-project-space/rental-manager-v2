@@ -391,6 +391,22 @@ export async function POST(req: Request) {
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
+      // THE OWNER'S OWN STANDING INSTRUCTIONS, per account.
+      //
+      // Written in Settings and never delivered to the model until now. Placed
+      // ahead of everything else because they override our defaults: what is
+      // free, what may be offered at all, and how to read a listing title.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ht: any = await convex.query(api.renter_bot_tools.get_hard_truths, {
+          account_slug: account_slug || "",
+        });
+        const truths = (ht?.hard_truths ?? "").toString().replace(/\s+/g, " ").trim();
+        if (truths)
+          groundTruth += `OWNER'S HARD RULES for this account (these OVERRIDE any general guidance — follow them exactly): ${truths.slice(0, 1200)}\n`;
+      } catch {
+        /* best-effort */
+      }
       if (platformNotice) {
         groundTruth += `PLATFORM NOTICE (Hygglo said this, NOT the renter): "${platformNotice}". Do NOT reply to it and do NOT bring it up — the renter did not say it and may not even know it happened. Answer their actual last message instead. If THEY raise paying or talking off-platform, keep it on the platform, warmly and without accusing them.\n`;
       }
