@@ -49,9 +49,21 @@ function toolTelemetry(steps: unknown) {
   const calls: Array<{ name: string; args: string }> = [];
   let errors = 0;
   let stepCount = 0;
+  let shape: string | null = null;
   for (const st of (steps as Array<{ toolCalls?: unknown; toolResults?: unknown }>) ?? []) {
     stepCount++;
     for (const tc of (st?.toolCalls as Array<Record<string, unknown>>) ?? []) {
+      // One-shot shape dump. The name came back "?" for every call, which also
+      // made every call look identical and produced a bogus 84% "duplicate"
+      // rate. Guessing at the framework's step shape has now cost two bugs;
+      // read it instead.
+      if (shape === null) {
+        try {
+          shape = `keys=${JSON.stringify(Object.keys(tc ?? {}))} sample=${JSON.stringify(tc).slice(0, 260)}`;
+        } catch {
+          shape = "unserialisable";
+        }
+      }
       const name = String(tc?.toolName ?? tc?.tool_name ?? "?");
       let args = "";
       try {
@@ -79,7 +91,7 @@ function toolTelemetry(steps: unknown) {
     if (seen.has(k)) duplicates++;
     else seen.add(k);
   }
-  return { steps: stepCount, total: calls.length, byName, duplicates, errors };
+  return { steps: stepCount, total: calls.length, byName, duplicates, errors, shape };
 }
 
 function harvestToolPrices(steps: unknown, into: number[]): void {
@@ -1487,6 +1499,7 @@ export async function POST(req: Request) {
       itemsWithoutKitData,
       hasPairingData,
       toolStats,
+      toolShape: toolStats?.shape ?? null,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
