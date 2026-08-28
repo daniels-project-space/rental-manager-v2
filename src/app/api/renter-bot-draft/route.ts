@@ -427,6 +427,15 @@ export async function POST(req: Request) {
    */
   let orderChangesBefore: number | null = null;
   let toolStats: ReturnType<typeof toolTelemetry> | null = null;
+  /**
+   * Which fact sections actually reached the prompt.
+   *
+   * Twelve fact-injection sites sit inside `catch {}`. When one throws the
+   * fact just disappears, and nothing downstream can tell "we have no data"
+   * from "the lookup failed" — which is how a silently-dropped availability
+   * check becomes a confident answer.
+   */
+  const factsEmitted: string[] = [];
   /** Why a reply was withheld, so an escalation is diagnosable rather than opaque. */
   let needsHumanReason: string | null = null;
   /** True once we have supplied REAL co-rental data for something discussed. */
@@ -968,8 +977,20 @@ export async function POST(req: Request) {
                   ? `FREE — no bookings, available for ${reqDate ?? "the requested date"}`
                   : `AVAILABLE for ${reqDate} — we hold ${totalUnits} of these and only ${overlapping} is/are out then, so ${totalUnits - overlapping} remain free. Do NOT describe it as booked out.`;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict}.\n`;
+            factsEmitted.push(`availability:${it.name}`);
+          } else {
+            // No calendar match is NOT the same as "free". Say so.
+            groundTruth += `  AVAILABILITY (${it.name}): NOT FOUND in the calendar — you do NOT know if it is free. Say you'll confirm the dates; never assert it is available.\n`;
+            factsEmitted.push(`availability-miss:${it.name}`);
           }
-        } catch { /* best-effort */ }
+        } catch {
+          // A THROWN lookup silently dropped the whole availability fact, and
+          // the model then answered from nothing. Absence of the line was
+          // indistinguishable from absence of bookings — the same
+          // fail-dangerous shape as the missing-date branch.
+          groundTruth += `  AVAILABILITY (${it.name}): LOOKUP FAILED — you do NOT know if it is free. Say you'll confirm before committing; never assert it is available.\n`;
+          factsEmitted.push(`availability-error:${it.name}`);
+        }
       }
       // RULE 10 — Minimum Rental Value. Nudge small bookings up (add-ons first,
       // then adjust the total) WITHOUT ever revealing a threshold.
@@ -1604,6 +1625,7 @@ export async function POST(req: Request) {
       resolvedItems,
       itemsWithoutKitData,
       hasPairingData,
+      factsEmitted,
       toolStats,
       toolShape: toolStats?.shape ?? null,
       // Prices the fact pack itself offered — see offeredPrices' declaration.

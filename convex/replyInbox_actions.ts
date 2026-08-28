@@ -573,6 +573,7 @@ export const generateDraft = action({
           bookingModified?: boolean;
           hasPairingData?: boolean;
           toolShape?: string | null;
+          factsEmitted?: string[];
           toolStats?: {
             steps: number;
             total: number;
@@ -619,6 +620,8 @@ export const generateDraft = action({
         // console.log goes to Vercel, which the probe harness cannot read — so
         // the numbers that would drive any tool-calling optimisation were
         // invisible from where the testing happens.
+        if (j.factsEmitted)
+          console.log(`[generateDraft] facts ${JSON.stringify(j.factsEmitted)}`);
         if (j.toolShape) console.log(`[generateDraft] toolShape ${j.toolShape}`);
         if (j.toolStats)
           console.log(
