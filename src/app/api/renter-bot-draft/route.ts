@@ -919,11 +919,48 @@ export async function POST(req: Request) {
                 }
               }
             }
+            // IS IT OUT RIGHT NOW? Needed for the no-date case below, and for
+            // "available" to mean something when the renter has not said when.
+            const todayIso = new Date().toISOString().slice(0, 10);
+            let outNow = 0;
+            let backAt: string | null = null;
+            for (const b of bookings) {
+              const p0 = String(b.pickup ?? "").split(" ")[0];
+              const rParts0 = String(b.return ?? "").split(" ");
+              const r0 = rParts0[0];
+              if (p0 && r0 && p0 <= todayIso && r0 >= todayIso) {
+                outNow++;
+                const stamp = `${r0}${rParts0[1] ? ` ${rParts0[1]}` : ""}`;
+                if (!backAt || stamp > backAt) backAt = stamp;
+              }
+            }
             const conflict = overlapping >= totalUnits;
             // Only surface the turnaround caveat when it's the LAST free unit;
             // with spare units the renter can collect whenever they like.
             if (turnaround && overlapping + 1 < totalUnits) turnaround = null;
-            const verdict = turnaround
+            // NO DATES GIVEN — the single most dangerous branch.
+            //
+            // The overlap loop is gated on reqDate, so without one `overlapping`
+            // stayed 0, `conflict` was false, and this fell through to the
+            // "AVAILABLE ... N remain free. Do NOT describe it as booked out."
+            // string — the strongest possible claim, made on zero evidence.
+            // Live: asked a bare "hi is this avaliable ?" about a camera that
+            // was physically out on rental that very day and not free until the
+            // 30th, the bot answered "Yes, the BMPCC 6K Full Frame is
+            // available." A renter books on that and the gear is not there.
+            //
+            // Absence of a date is absence of knowledge, so say so and answer
+            // from what IS known: the position today and the next free date.
+            const noDateVerdict =
+              outNow >= totalUnits
+                ? `NO DATES GIVEN, and it is OUT on rental RIGHT NOW (back ${backAt ?? "?"}), next free ${m.next_free_date ?? "?"}. Do NOT say it is available. Tell them it's currently out, give the earliest date it IS free, and ask which dates they need.`
+                : `NO DATES GIVEN — you do NOT know whether their dates are free, so do NOT assert it is available. ${totalUnits - outNow} of ${totalUnits} free today${m.next_free_date ? `, next free date on file ${m.next_free_date}` : ""}. Ask which dates they need, then answer.`;
+
+            const verdict = !reqDate
+              ? noDateVerdict
+              : reqDate < todayIso
+                ? `THE REQUESTED DATE (${reqDate}) IS IN THE PAST — today is ${todayIso}. Do not answer as if it were bookable; ask which upcoming dates they mean.`
+                : turnaround
               ? `it's out on another rental that RETURNS ${reqDate} — so it's only free from ${turnaround} that day (1-hour turnaround buffer); do NOT offer it before ${turnaround}, and only inside a pickup window`
               : conflict
                 ? `ALL ${totalUnits} unit(s) are out on ${reqDate} — NOT available; offer the next free date (${m.next_free_date ?? "?"})`
