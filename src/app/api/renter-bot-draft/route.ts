@@ -4,7 +4,11 @@ import { sameMount } from "../../../../convex/lib/item_name_match";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
-import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
+import {
+  getRenterBotAgent,
+  getRenterBotAgentForModel,
+  type RenterBotOutput,
+} from "@/mastra/agents/renter_bot";
 import {
   OUT_OF_SCOPE_INTENTS,
   type RenterBotIntent,
@@ -285,7 +289,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let body: { thread_id?: string; craft_override?: string };
+  let body: { thread_id?: string; craft_override?: string; model_override?: string };
   try {
     body = await req.json();
   } catch {
@@ -315,6 +319,18 @@ export async function POST(req: Request) {
       ? body.craft_override
       : null;
   const craftRules = craftOverride ?? CONVERSATION_CRAFT;
+
+  /**
+   * Probe-only model swap, for comparing prompt adherence across models.
+   * Same gate as craft_override: `__probe__` threads only, so a candidate
+   * model can never answer a real renter.
+   */
+  const modelOverride =
+    typeof body.model_override === "string" &&
+    body.model_override.length > 0 &&
+    thread_id.startsWith("__probe__")
+      ? body.model_override
+      : null;
 
   const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
   const convex = new ConvexHttpClient(convexUrl);
@@ -1398,7 +1414,9 @@ export async function POST(req: Request) {
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
     // subscription lane and no automatic stronger-model route.
     if (!obj) {
-      const agent = await getRenterBotAgent();
+      const agent = modelOverride
+        ? await getRenterBotAgentForModel(modelOverride)
+        : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result: any = await (agent as any).generate(baseMessages, {
         maxSteps: 10,

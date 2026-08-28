@@ -19,7 +19,7 @@ import "server-only";
 
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
-import { getRenterBotModel } from "@/lib/llm-client";
+import { getRenterBotModel, getVaultOpenRouterModel } from "@/lib/llm-client";
 import {
   RENTER_BOT_INTENTS,
   CONVERSATION_STAGES,
@@ -152,6 +152,29 @@ let _agent: Agent | null = null;
  * Returns a lazy-singleton agent. The agent is built on first call because
  * the model needs an async vault key fetch.
  */
+/**
+ * A one-off agent on a SPECIFIC model, for probe-only model comparison.
+ *
+ * Deliberately NOT cached: the singleton exists so production pays the vault
+ * fetch once, but a bake-off needs a different model per call and caching that
+ * would leak one candidate's model into the next request. Callers must gate
+ * this to `__probe__` threads — see the route.
+ */
+export async function getRenterBotAgentForModel(modelId: string): Promise<Agent> {
+  const model = await getVaultOpenRouterModel(modelId);
+  return new Agent({
+    id: `renter-bot-v1-probe-${modelId}`,
+    name: "Renter Bot (probe)",
+    // Same instructions and tools as production — only the model differs, so
+    // any behavioural gap is attributable to the model and nothing else.
+    instructions: RENTER_BOT_SYSTEM_PROMPT,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model: model as any,
+    tools: RENTER_BOT_TOOLS,
+    maxRetries: 1,
+  });
+}
+
 export async function getRenterBotAgent(): Promise<Agent> {
   if (_agent) return _agent;
   const model = await getRenterBotModel();

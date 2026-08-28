@@ -53,10 +53,12 @@ export const generateDraft = action({
      * RENTER_BOT_API_SECRET stays server-side and is never handled locally.
      */
     craft_override: v.optional(v.string()),
+    /** Probe-only model swap for adherence bake-offs; route gates it to __probe__ threads. */
+    model_override: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { thread_id, craft_override },
+    { thread_id, craft_override, model_override },
   ): Promise<{
     status: "ok" | "skipped";
     draft?: string;
@@ -555,9 +557,11 @@ export const generateDraft = action({
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiSecret}`,
           },
-          body: JSON.stringify(
-            craft_override ? { thread_id, craft_override } : { thread_id },
-          ),
+          body: JSON.stringify({
+            thread_id,
+            ...(craft_override ? { craft_override } : {}),
+            ...(model_override ? { model_override } : {}),
+          }),
         });
         if (!resp.ok) {
           return { status: "skipped", reason: "subscription_unavailable" };

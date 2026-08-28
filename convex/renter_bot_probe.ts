@@ -202,11 +202,14 @@ export const run = action({
         ),
       }),
     ),
+    /** Model to run this probe on. Probe threads only. */
+    model_override: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<{ draft?: string; confidence?: number; flags?: unknown }> => {
     await ctx.runMutation(internal.renter_bot_probe.seed, a);
     const r = await ctx.runAction(api.replyInbox_actions.generateDraft, {
       thread_id: a.thread_id,
+      ...(a.model_override ? { model_override: a.model_override } : {}),
     });
     return { draft: r.draft, confidence: r.confidence, flags: r.flags };
   },
