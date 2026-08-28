@@ -34,8 +34,43 @@ export const seed = internalMutation({
     confirmed_booking: v.optional(
       v.object({ start_date: v.string(), end_date: v.string() }),
     ),
+    /**
+     * A booking at ANY lifecycle stage, not just confirmed.
+     *
+     * The whole point of stage-aware behaviour is that what the bot should say
+     * changes as a rental moves: upsell while it is an enquiry, chase
+     * verification while pending, only then hand over address and times, then
+     * be useful during and after. Testing that needs pending_review, cancelled
+     * and completed too — `confirmed_booking` could only ever express one
+     * point on that line.
+     */
+    booking: v.optional(
+      v.object({
+        status: v.string(),
+        start_date: v.string(),
+        end_date: v.string(),
+        gross_paid_gbp: v.optional(v.number()),
+        // The real Hygglo lifecycle, in order. Keeping the literal union
+        // rather than a loose string means a probe cannot invent a stage that
+        // production can never be in.
+        order_step: v.optional(
+          v.union(
+            v.literal("REQUEST"),
+            v.literal("APPROVED"),
+            v.literal("FUNDS_RESERVED"),
+            v.literal("VERIFIED"),
+            v.literal("BOOKED_AFTER_VERIFIED"),
+            v.literal("DELIVERED"),
+            v.literal("RETURNED"),
+            v.literal("REVIEWED"),
+            v.literal("CANCELED"),
+            v.literal("VERIFICATION_FAILED"),
+          ),
+        ),
+      }),
+    ),
   },
-  handler: async (ctx, { thread_id, account_slug, stage, items, messages, confirmed_booking }) => {
+  handler: async (ctx, { thread_id, account_slug, stage, items, messages, confirmed_booking, booking }) => {
     const acc = (await ctx.db.query("accounts").collect()).find(
       (a) => a.slug === account_slug,
     );
@@ -87,7 +122,8 @@ export const seed = internalMutation({
       .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
       .collect())
       await ctx.db.delete(old._id);
-    if (confirmed_booking) {
+    const bk = booking ?? (confirmed_booking ? { status: "confirmed", ...confirmed_booking } : null);
+    if (bk) {
       // expanded_items matter as much as the reservation itself: item
       // grounding is derived from them, and without it UNGROUNDED_PRICE fires
       // CRITICAL on any £ figure and the whole reply is withheld. A probe
@@ -117,10 +153,14 @@ export const seed = internalMutation({
       await ctx.db.insert("reservations", {
         hygglo_order_id: thread_id,
         account_slug,
-        status: "confirmed",
+        status: bk.status,
         renter_name: "Probe Renter",
-        start_date: confirmed_booking.start_date,
-        end_date: confirmed_booking.end_date,
+        start_date: bk.start_date,
+        end_date: bk.end_date,
+        ...(("gross_paid_gbp" in bk && bk.gross_paid_gbp != null)
+          ? { gross_paid_gbp: bk.gross_paid_gbp }
+          : {}),
+        ...(("order_step" in bk && bk.order_step) ? { order_step: bk.order_step } : {}),
         items: items.map((i) => ({ item_name: i.name, qty: 1 })),
         expanded_items: expanded,
         created_at: now,
@@ -139,6 +179,28 @@ export const run = action({
     messages: v.array(v.object({ role: v.string(), text: v.string() })),
     confirmed_booking: v.optional(
       v.object({ start_date: v.string(), end_date: v.string() }),
+    ),
+    booking: v.optional(
+      v.object({
+        status: v.string(),
+        start_date: v.string(),
+        end_date: v.string(),
+        gross_paid_gbp: v.optional(v.number()),
+        order_step: v.optional(
+          v.union(
+            v.literal("REQUEST"),
+            v.literal("APPROVED"),
+            v.literal("FUNDS_RESERVED"),
+            v.literal("VERIFIED"),
+            v.literal("BOOKED_AFTER_VERIFIED"),
+            v.literal("DELIVERED"),
+            v.literal("RETURNED"),
+            v.literal("REVIEWED"),
+            v.literal("CANCELED"),
+            v.literal("VERIFICATION_FAILED"),
+          ),
+        ),
+      }),
     ),
   },
   handler: async (ctx, a): Promise<{ draft?: string; confidence?: number; flags?: unknown }> => {

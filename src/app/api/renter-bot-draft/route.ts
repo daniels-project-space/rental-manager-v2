@@ -457,6 +457,52 @@ export async function POST(req: Request) {
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
+      // WHERE IN THE RENTAL LIFECYCLE ARE WE?
+      //
+      // is_confirmed lumps confirmed, ongoing and completed together, so a
+      // finished rental was indistinguishable from an upcoming one and the bot
+      // treated both identically. Live: on a booking RETURNED three weeks
+      // earlier it replied "Pickup is at 5 Pall Mall ... collection windows on
+      // the 4th of November ... just text 'arrived'", confidently arranging a
+      // collection that had already happened.
+      //
+      // Stage is derived here, deterministically, from status and dates rather
+      // than left for the model to infer from a status string.
+      {
+        const today = new Date().toISOString().slice(0, 10);
+        const st = (lc.status ?? "").toString().toLowerCase();
+        const sd = (lc.start_date ?? "") as string;
+        const ed = (lc.end_date ?? "") as string;
+        let stage: string;
+        let guidance: string;
+        if (!lc.status && lc.is_inquiry) {
+          stage = "ENQUIRY — no booking exists yet";
+          guidance =
+            "Sell. Answer what they asked, make the gear sound right for their shoot, suggest ONE genuinely useful addition, and invite them to book. Do NOT give the exact pickup address.";
+        } else if (st === "cancelled" || st === "canceled") {
+          stage = "CANCELLED";
+          guidance =
+            "This booking is cancelled. Confirm that plainly and warmly, do NOT arrange a collection, do NOT give the address, and do not imply it is still going ahead. If they want to rebook, help them do that as a NEW booking.";
+        } else if (["pending_review", "pending"].includes(st)) {
+          stage = "PENDING — request placed, not yet confirmed";
+          guidance =
+            "Move it forward: what still needs to happen for this to be confirmed. Keep it warm and specific. Do NOT give the exact pickup address yet and do NOT speak as though it is booked.";
+        } else if (ed && ed < today) {
+          stage = "FINISHED — the rental has ended and the gear is back";
+          guidance =
+            "This rental is OVER. Do not arrange a collection, quote pickup windows, or say 'see you on the Nth'. Be useful about what comes after: how it went, anything left behind, a return or damage question, or booking again.";
+        } else if (sd && sd <= today && (!ed || ed >= today)) {
+          stage = "IN PROGRESS — they have the gear right now";
+          guidance =
+            "They are mid-rental. Help with using the kit, faults, and the RETURN (when and where), not with collecting it. Only mention collection if they have not picked it up yet.";
+        } else {
+          stage = "CONFIRMED — upcoming";
+          guidance =
+            "It is booked. Give the exact pickup address and windows, confirm the dates and total, and make collection easy.";
+        }
+        groundTruth += `RENTAL STAGE: ${stage}${sd ? ` (dates ${sd}${ed && ed !== sd ? ` to ${ed}` : ""}, today is ${today})` : ""}. ${guidance}\n`;
+      }
+
       // ALREADY-GATHERED CONTEXT.
       //
       // Measured over 25 real turns: get_renter_context and
