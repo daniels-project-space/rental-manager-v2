@@ -905,6 +905,23 @@ export async function POST(req: Request) {
           : (structuredKit ??
             "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)");
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
+        // Whitelist the prices we are about to HAND the model.
+        //
+        // Replaying real threads showed the guard blocking 13 of 40 replies,
+        // and the blocked threads were BETTER mapped than the answered ones —
+        // 13 of 13 had price tiers. The tier data existing is what caused the
+        // block: the fact pack below prints the daily rate and the multi-day
+        // table and tells the model to quote the right band, but neither figure
+        // was ever added to `offeredPrices`, so the guard rejected the number it
+        // had just been instructed to use. Same class as the earlier
+        // prompt-versus-guard contradictions: the guard was right that nothing
+        // grounded the price, and the prompt was the thing that failed to.
+        if (typeof it.daily_price_gbp === "number") offeredPrices.push(it.daily_price_gbp);
+        if (tierTxt)
+          for (const m of tierTxt.matchAll(/£\s?(\d+(?:\.\d{1,2})?)/g)) {
+            const n = Number(m[1]);
+            if (Number.isFinite(n)) offeredPrices.push(n);
+          }
         // WHAT ACTUALLY GOES OUT WITH IT, from completed rentals.
         //
         // Asked "what do most people rent alongside it?", the bot produced a
