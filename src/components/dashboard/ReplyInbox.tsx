@@ -1904,11 +1904,29 @@ export function ReplyModal({
         setDraft(r.draft);
         setDraftConfidence(r.confidence ?? null);
         setDraftFlags(r.flags ?? []);
-      } else if (r.reason === "needs_human") {
+      } else if (r.reason?.startsWith("needs_human")) {
+        // The reason gained a ":why" suffix (needs_human:guard_blocked and so
+        // on) so a withheld draft could be told apart from the agent's own
+        // escalation. This branch still tested exact equality, so every real
+        // escalation fell through to a bare "Draft unavailable." Replaying real
+        // threads put a quarter of them here, each telling Daniel nothing about
+        // why the assistant went quiet. Match the prefix, and say which.
+        const why = r.reason.split(":")[1];
+        const because =
+          why === "guard_blocked"
+            ? " It was about to state a price or availability it could not back up."
+            : why === "model_declined"
+              ? " It judged this one too close to call."
+              : why === "unparseable_model_output"
+                ? " The reply came back malformed, so nothing was kept."
+                : why === "premature_confirmation"
+                  ? " It was about to confirm something that isn't confirmed yet."
+                  : "";
         setNote(
-          draft.trim()
+          (draft.trim()
             ? "The draft assistant wants your judgement here, so the previous draft stayed untouched."
-            : "The draft assistant flagged this for your judgement. Write the reply yourself.",
+            : "The draft assistant flagged this for your judgement. Write the reply yourself.") +
+            because,
         );
       } else if (r.reason === "subscription_unavailable") {
         setNote("The draft assistant is temporarily unavailable.");
