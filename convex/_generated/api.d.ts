@@ -224,6 +224,7 @@ import type * as renter_bot_lab_order from "../renter_bot_lab_order.js";
 import type * as renter_bot_probe from "../renter_bot_probe.js";
 import type * as renter_bot_seed from "../renter_bot_seed.js";
 import type * as renter_bot_shadow from "../renter_bot_shadow.js";
+import type * as renter_bot_sweep_items from "../renter_bot_sweep_items.js";
 import type * as renter_bot_tools from "../renter_bot_tools.js";
 import type * as renter_reviews from "../renter_reviews.js";
 import type * as renter_trust from "../renter_trust.js";
@@ -479,6 +480,7 @@ declare const fullApi: ApiFromModules<{
   renter_bot_probe: typeof renter_bot_probe;
   renter_bot_seed: typeof renter_bot_seed;
   renter_bot_shadow: typeof renter_bot_shadow;
+  renter_bot_sweep_items: typeof renter_bot_sweep_items;
   renter_bot_tools: typeof renter_bot_tools;
   renter_reviews: typeof renter_reviews;
   renter_trust: typeof renter_trust;

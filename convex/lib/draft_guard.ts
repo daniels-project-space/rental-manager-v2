@@ -87,8 +87,32 @@ export interface GuardOpts {
   unfulfillableItems?: string[];
   /** Whether we have ANY item-level grounding (real availability / specs /
    *  pricing). When false, the draft must ask — never assert availability,
-   *  stock, or price. */
+   *  stock, or price.
+   *
+   *  NOTE: this is computed BEFORE the agent runs, from prefetched context
+   *  only. It cannot see grounding the agent established DURING the turn — see
+   *  `groundedDuringTurn` below, which is the thing to reach for. */
   hasItemGrounding?: boolean;
+  /**
+   * What the turn ITSELF established, per claim.
+   *
+   * `hasItemGrounding` answers "did we happen to have anything prefetched?"
+   * and arms four rules off that one answer. But a thread whose item never
+   * resolved up front is exactly the thread where the agent goes and looks
+   * things up — so the rules were judging the reply against what we knew
+   * before the work was done, and withholding answers built from real tool
+   * results. A renter writing "happy to proceed" got silence.
+   *
+   * Each flag means "a tool supplied this class of fact during this turn", so
+   * each rule can ask whether ITS OWN claim is grounded instead of sharing one
+   * coarse verdict. Absent/false keeps the old strict behaviour — a claim with
+   * nothing behind it is still caught.
+   */
+  groundedDuringTurn?: {
+    availability?: boolean;
+    price?: boolean;
+    specs?: boolean;
+  };
 }
 
 // ── Shared patterns (from patterns.ts) ────────────────────────────
@@ -550,11 +574,15 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   // When we have no item-level grounding, the draft must ASK, not assert. Catch
   // confident "yeah it's available" / "we've got 3" / "£5/day" with no basis.
   if (opts.hasItemGrounding === false) {
+    // Per-claim grounding. Four rules used to share one pre-turn verdict, so a
+    // reply built entirely from tool results was withheld as "ungrounded". Each
+    // now asks whether the tool behind ITS OWN claim actually ran this turn.
+    const g = opts.groundedDuringTurn ?? {};
     const assertsAvail =
       /\b(?:it'?s|that'?s|they'?re|these are|those are)\s+(?:all\s+)?(?:available|free|in stock)\b|\byeah,?\s*(?:it'?s|that'?s|they'?re|we'?ve got|i'?ve got)\b|\bavailable\s+(?:for|from|on|today|tomorrow|those|that|this|the\s+\d)\b|\bin stock\b|\b(?:we'?ve|i'?ve)\s+got\s+\d|\bfree\s+for\s+(?:those|that|the|today|tomorrow|your)\b/i.test(
         text,
       );
-    if (assertsAvail)
+    if (assertsAvail && !g.availability)
       push(
         "UNGROUNDED_AVAILABILITY",
         "Asserts availability/stock with no item grounding — should ask which item + say I'll check",
@@ -570,7 +598,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       /\b(not available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available)|don'?t have (?:that|it|one)|can'?t get (?:that|it|one))\b/i.test(
         text,
       );
-    if (assertsUnavail)
+    if (assertsUnavail && !g.availability)
       push(
         "UNGROUNDED_UNAVAILABILITY",
         "Asserts UNavailability with no item grounding (never called check_availability this turn) — should say I'll check, not guess",
@@ -644,6 +672,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     // Spec/dimension assertions (screen size, resolution, weight, aperture) with
     // no specs in context — the projector "100 inches" fabrication class.
     if (
+      !g.specs &&
       /\b\d+(?:\.\d+)?\s?(?:inch|inches|"|mm|cm|kg|metres?|meters?|ft|feet|fps|megapixel|mp|watts?|w)\b|\b(?:1080p|4k|6k|8k|f\/?\d|t\d\.\d)\b/i.test(
         text,
       )

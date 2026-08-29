@@ -546,6 +546,9 @@ export const generateDraft = action({
     let routeOfferedPrices: number[] = [];
     let routeBookingModified = false;
     let routeHasPairingData = false;
+    // Which classes of fact the agent actually established this turn. Empty
+    // means "we don't know", which keeps the guard's strict pre-turn behaviour.
+    let routeGrounded: { availability?: boolean; price?: boolean; specs?: boolean } = {};
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -576,6 +579,12 @@ export const generateDraft = action({
           offeredPrices?: number[];
           bookingModified?: boolean;
           hasPairingData?: boolean;
+          /** Which classes of fact a TOOL supplied this turn — see draft_guard. */
+          groundedDuringTurn?: {
+            availability?: boolean;
+            price?: boolean;
+            specs?: boolean;
+          };
           toolShape?: string | null;
           factsEmitted?: string[];
           toolStats?: {
@@ -620,6 +629,7 @@ export const generateDraft = action({
           routeOfferedPrices = j.offeredPrices ?? [];
           routeBookingModified = j.bookingModified === true;
           routeHasPairingData = j.hasPairingData === true;
+          routeGrounded = j.groundedDuringTurn ?? {};
         // Surface tool telemetry through CONVEX logs. The route's own
         // console.log goes to Vercel, which the probe harness cannot read — so
         // the numbers that would drive any tool-calling optimisation were
@@ -787,6 +797,7 @@ export const generateDraft = action({
       // order-linked signals above — see freshInquiryItems' own comment for
       // why this can't just be done at hasItemGrounding's declaration.
       hasItemGrounding: hasItemGrounding || freshInquiryItems.length > 0,
+      groundedDuringTurn: routeGrounded,
       bookingModified: routeBookingModified,
       hasPairingData: routeHasPairingData,
       factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length || routeOfferedPrices.length

@@ -424,3 +424,76 @@ describe("guardDraft — UNGROUNDED_PRICE on a mixed order", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(true);
   });
 });
+
+describe("guardDraft — grounding established DURING the turn", () => {
+  // The root defect, of which the price bug was one symptom. hasItemGrounding
+  // is computed BEFORE the agent runs, from prefetched context, and armed four
+  // rules off that single verdict. A thread whose item never resolved up front
+  // is exactly the thread where the agent goes and looks things up — so replies
+  // built entirely from real tool results were withheld as "ungrounded" and the
+  // renter got silence. Each rule now asks whether the tool behind ITS OWN
+  // claim actually ran.
+  const noPrefetch = {
+    ...baseOpts,
+    lastRenterMessage: "is this available and what are the specs?",
+    hasItemGrounding: false as const,
+  };
+
+  it("allows an availability claim when check_availability ran", () => {
+    const r = guardDraft("Yes, it's available for those dates.", {
+      ...noPrefetch,
+      groundedDuringTurn: { availability: true },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(false);
+  });
+
+  it("still blocks an availability claim when it did NOT run", () => {
+    const r = guardDraft("Yes, it's available for those dates.", noPrefetch);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
+  });
+
+  it("allows a NEGATIVE availability claim when check_availability ran", () => {
+    // A false "no" costs a booking exactly as a false "yes" costs a promise,
+    // so this rule is symmetric — and so is the fix.
+    const r = guardDraft("Sorry, that one's fully booked those days.", {
+      ...noPrefetch,
+      groundedDuringTurn: { availability: true },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
+  });
+
+  it("still blocks a NEGATIVE availability claim when it did not run", () => {
+    const r = guardDraft("Sorry, that one's fully booked those days.", noPrefetch);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(true);
+  });
+
+  it("allows a spec claim when the listing context was fetched", () => {
+    const r = guardDraft("It shoots 4K and the sensor is full frame.", {
+      ...noPrefetch,
+      groundedDuringTurn: { specs: true },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
+  });
+
+  it("still blocks a spec claim when nothing supplied one", () => {
+    const r = guardDraft("It shoots 4K and the sensor is full frame.", noPrefetch);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(true);
+  });
+
+  it("grounding one class does NOT unlock another", () => {
+    // The whole point of per-claim grounding: fetching a price must not license
+    // an availability assertion. One coarse verdict is what caused this.
+    const r = guardDraft("Yes it's available, and it's £30/day.", {
+      ...noPrefetch,
+      groundedDuringTurn: { price: true },
+      factPack: { pricing: { offeredPrices: [30] } },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("omitting groundedDuringTurn keeps the old strict behaviour", () => {
+    const r = guardDraft("Yes, it's available.", noPrefetch);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
+  });
+});

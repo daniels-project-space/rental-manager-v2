@@ -1716,6 +1716,22 @@ export async function POST(req: Request) {
       factsEmitted,
       toolStats,
       toolShape: toolStats?.shape ?? null,
+      // WHAT THIS TURN ESTABLISHED, per claim.
+      //
+      // toolStats already knew exactly which tools ran, and was only ever
+      // logged. Meanwhile the guard armed four "ungrounded" rules off a single
+      // boolean computed BEFORE the agent ran, so a thread whose item did not
+      // resolve up front — precisely the thread where the agent goes and looks
+      // things up — had its answer withheld as ungrounded no matter what came
+      // back. Feed the telemetry through instead of printing it.
+      groundedDuringTurn: {
+        availability: (toolStats?.byName?.check_availability ?? 0) > 0,
+        price:
+          offeredPrices.length > 0 ||
+          (toolStats?.byName?.lookup_pricing ?? 0) > 0 ||
+          (toolStats?.byName?.get_listing_context ?? 0) > 0,
+        specs: (toolStats?.byName?.get_listing_context ?? 0) > 0,
+      },
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
