@@ -789,11 +789,23 @@ export const generateDraft = action({
       hasItemGrounding: hasItemGrounding || freshInquiryItems.length > 0,
       bookingModified: routeBookingModified,
       hasPairingData: routeHasPairingData,
-      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length
+      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length || routeOfferedPrices.length
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70
             // quote as valid (the generic catalog would flag it vs its £40 range).
-            pricing: listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length
+            //
+            // routeOfferedPrices belongs in this condition, not just inside the
+            // block. It carries the prices the agent FETCHED during the turn,
+            // and gating it on prefetched listing facts threw them away in
+            // exactly the case where they were the only grounding there was: a
+            // thread whose item never resolved up front, where the bot answered
+            // by calling lookup_pricing five times. The guard then blocked the
+            // reply for quoting a price with no grounding, and the renter got
+            // silence on "happy to proceed with one A7iii and one A7V".
+            pricing:
+              listingFacts.some((f) => f.daily_price != null) ||
+              freshInquiryItems.length ||
+              routeOfferedPrices.length
               ? {
                   itemPrices: [
                     ...listingFacts
