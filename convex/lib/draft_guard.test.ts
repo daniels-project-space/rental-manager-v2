@@ -342,3 +342,85 @@ describe("UNGROUNDED_DELIVERY_FEE", () => {
     expect(fired("The camera is £80/day. I can arrange a courier if you'd like.")).toBe(false);
   });
 });
+
+describe("guardDraft — UNGROUNDED_PRICE respects the fetched-price whitelist", () => {
+  // hasItemGrounding is computed BEFORE the agent runs, from prefetched context
+  // only. A turn that resolves the item by calling tools still arrives with it
+  // false, so this rule used to block on the mere presence of "£<digit>" and
+  // never looked at what the tools returned. A reply built from five successful
+  // lookup_pricing calls was withheld for "no pricing grounding" and the renter
+  // got silence.
+  const opts = (offeredPrices: number[]) => ({
+    ...baseOpts,
+    lastRenterMessage: "one A7iii and one A7V plus lenses — what's the total per day?",
+    hasItemGrounding: false as const,
+    factPack: { pricing: { offeredPrices } },
+  });
+
+  it("allows prices the tools actually returned", () => {
+    const r = guardDraft("The A7 III is £26/day and the A7 V is £30/day.", opts([26, 30]));
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("still catches a price we never supplied", () => {
+    const r = guardDraft("I can do the pair for £15/day.", opts([26, 30]));
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(true);
+  });
+
+  it("flags the invented figure even when another price is grounded", () => {
+    const r = guardDraft("The A7 III is £26/day, and a tripod is £3/day.", opts([26, 30]));
+    const f = r.flags.find((x) => x.type === "UNGROUNDED_PRICE");
+    expect(f).toBeTruthy();
+    expect(f!.detail).toContain("3");
+  });
+
+  it("accepts a multi-day multiple of a supplied daily rate", () => {
+    const r = guardDraft("For the three days that's £78.", opts([26]));
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("blocks any price when the tools returned none", () => {
+    const r = guardDraft("It's £26/day.", opts([]));
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(true);
+  });
+});
+
+describe("guardDraft — UNGROUNDED_PRICE on a mixed order", () => {
+  // The real blocked reply: "one A7iii and one A7V plus lenses and a tripod".
+  // The tools returned 25.714 (A7 III), 42.857 (A7 V + lens) and 5 (tripod);
+  // the bot wrote £25, £42, £5 and a £72 total. Matching only Math.round
+  // rejected every one of them — its own tool results — and the renter got
+  // silence on a message that said "happy to proceed".
+  const mixed = {
+    ...baseOpts,
+    lastRenterMessage: "one A7iii and one A7V plus lenses and a tripod, total per day?",
+    hasItemGrounding: false as const,
+    factPack: { pricing: { offeredPrices: [25.714285, 42.857142, 5] } },
+  };
+
+  it("accepts components quoted as either floor or ceil of a fractional rate", () => {
+    const r = guardDraft("The A7 III is £25/day and the A7 V with lens is £42/day.", mixed);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("accepts the rounded-up form too", () => {
+    const r = guardDraft("That's £26/day for the A7 III, £43/day for the A7 V.", mixed);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("accepts the TOTAL of a mixed order", () => {
+    const r = guardDraft("Altogether that comes to £72 a day.", mixed);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("accepts a partial total (two of the three items)", () => {
+    // 25.714 + 5 = 30.714 -> £30 or £31
+    const r = guardDraft("Just the A7 III and the tripod would be £31/day.", mixed);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(false);
+  });
+
+  it("STILL rejects a total that is not a sum of grounded parts", () => {
+    const r = guardDraft("I'll do the lot for £55 a day.", mixed);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_PRICE")).toBe(true);
+  });
+});

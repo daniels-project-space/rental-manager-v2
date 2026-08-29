@@ -576,12 +576,71 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
         "Asserts UNavailability with no item grounding (never called check_availability this turn) — should say I'll check, not guess",
         "flagged",
       );
-    if (/£\s?\d/.test(text))
-      push(
-        "UNGROUNDED_PRICE",
-        "Quotes a price with no pricing grounding for this item",
-        "flagged",
+    // A price the bot FETCHED is grounded, whatever the up-front context held.
+    //
+    // `hasItemGrounding` is computed before the agent runs, from prefetched
+    // context only, so a turn that resolves the item by calling tools still
+    // arrives here with it false. This rule then fired on the mere presence of
+    // "£<digit>" and never consulted the whitelist — so a reply built from five
+    // successful lookup_pricing calls was blocked for "no pricing grounding",
+    // and the renter got silence. Real case: "one A7iii and one A7V plus lenses
+    // and a tripod", where every figure came from a tool.
+    //
+    // Only flag when a quoted figure is one we never supplied. That keeps the
+    // rule's original purpose — catching invented prices — while letting a
+    // grounded answer through.
+    const quoted = [...text.matchAll(/£\s?(\d+(?:\.\d{1,2})?)/g)].map((m) =>
+      Math.round(Number(m[1])),
+    );
+    if (quoted.length) {
+      const offered = (opts.factPack?.pricing?.offeredPrices ?? []).filter(
+        (v) => Number.isFinite(v) && v > 0,
       );
+      const supplied = new Set<number>();
+      // Accept floor AND ceil, not one rounded integer. Hygglo rates are not
+      // whole pounds — an A7 III comes back as 25.714 — and the bot may say
+      // either £25 or £26. Matching only Math.round flagged its own tool result.
+      const admit = (v: number) => {
+        supplied.add(Math.floor(v));
+        supplied.add(Math.ceil(v));
+        supplied.add(Math.round(v));
+      };
+      for (const v of offered) {
+        admit(v);
+        // A renter taking it for N days is legitimately quoted N x the daily
+        // rate, the same expansion the fuller price check below applies.
+        for (const mult of [2, 2.5, 3, 4, 5, 6, 7]) admit(v * mult);
+      }
+      // A mixed order is quoted as a TOTAL. "One A7 III, one A7 V and a tripod"
+      // is answered with the sum, and a sum of grounded parts is itself
+      // grounded — refusing it blocks precisely the reply a renter saying
+      // "happy to proceed" needs. Subsets only, over a capped set, so this
+      // stays a small enumeration rather than an open licence to invent.
+      const parts = [...new Set(offered)].slice(0, 12);
+      for (let mask = 1; mask < 1 << parts.length; mask++) {
+        let lo = 0;
+        let hi = 0;
+        for (let i = 0; i < parts.length; i++)
+          if (mask & (1 << i)) {
+            lo += Math.floor(parts[i]);
+            hi += Math.ceil(parts[i]);
+          }
+        // Admit the whole band a subset can produce, because the bot rounds each
+        // component before adding: it quoted £25 + £42 + £5 = £72 where the
+        // exact sum is 73.57. Both are honest arithmetic on grounded parts. The
+        // band is only as wide as the number of components, so a figure that is
+        // not reachable from real prices — £55 for these three — is still
+        // caught.
+        for (let v = lo; v <= hi; v++) supplied.add(v);
+      }
+      const ungrounded = quoted.filter((q) => !supplied.has(q));
+      if (ungrounded.length)
+        push(
+          "UNGROUNDED_PRICE",
+          `Quotes a price with no pricing grounding for this item (£${ungrounded.join(", £")})`,
+          "flagged",
+        );
+    }
     // Spec/dimension assertions (screen size, resolution, weight, aperture) with
     // no specs in context — the projector "100 inches" fabrication class.
     if (
