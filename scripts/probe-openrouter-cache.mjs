@@ -20,13 +20,13 @@
  *
  * Read-only: hits the model, touches no project data.
  *
- *   claude-vault-exec openrouter OPENROUTER_API_KEY=OPENROUTER_API_KEY -- \
+ *   ai-vault openrouter OPENROUTER_API_KEY=OPENROUTER_API_KEY -- \
  *     node scripts/probe-openrouter-cache.mjs [model]
  */
 const MODEL = process.argv[2] ?? "google/gemini-3.7-flash";
 const KEY = process.env.OPENROUTER_API_KEY;
 if (!KEY) {
-  console.error("OPENROUTER_API_KEY not present in env — run via claude-vault-exec.");
+  console.error("OPENROUTER_API_KEY not present in env — run via ai-vault.");
   process.exit(1);
 }
 
