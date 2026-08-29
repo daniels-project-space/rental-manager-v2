@@ -320,7 +320,48 @@ export async function POST(req: Request) {
       : null;
 
   const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-  const convex = new ConvexHttpClient(convexUrl);
+  const rawConvex = new ConvexHttpClient(convexUrl);
+
+  /**
+   * Request-scoped query memo.
+   *
+   * Building the fact pack fires up to five Convex queries PER ITEM inside the
+   * item loop (availability, pairings, owned alternatives on three branches),
+   * and several repeat with identical arguments — `settings.get` alone was
+   * fetched twice per request, and `find_owned_alternatives` refetches the same
+   * kind for every item of that kind. Each one is a separate HTTPS round trip
+   * from Vercel to Convex, all of them before the LLM is even called, and the
+   * renter waits for the lot.
+   *
+   * Memoising by (function, arguments) removes the duplicates without
+   * restructuring the loop. Safe because a single draft request is a point-in-
+   * time read: two identical queries within one request are meant to return the
+   * same thing, and if they didn't the fact pack would already be incoherent.
+   * The map dies with the request, so nothing is cached across drafts.
+   */
+  const queryMemo = new Map<string, Promise<unknown>>();
+  let memoHits = 0;
+  const convex = {
+    query: (<T,>(fn: Parameters<typeof rawConvex.query>[0], args: unknown): Promise<T> => {
+      let key: string;
+      try {
+        key = `${String((fn as { toString(): string }))}|${JSON.stringify(args ?? {})}`;
+      } catch {
+        // Unserialisable args — skip the memo rather than risk a wrong hit.
+        return rawConvex.query(fn, args as never) as Promise<T>;
+      }
+      const hit = queryMemo.get(key);
+      if (hit) {
+        memoHits++;
+        return hit as Promise<T>;
+      }
+      const p = rawConvex.query(fn, args as never) as Promise<unknown>;
+      queryMemo.set(key, p);
+      return p as Promise<T>;
+    }) as typeof rawConvex.query,
+    action: rawConvex.action.bind(rawConvex),
+    mutation: rawConvex.mutation.bind(rawConvex),
+  };
 
   let account_slug = "";
   let lastRenter = "";
@@ -1778,6 +1819,10 @@ export async function POST(req: Request) {
       factsEmitted,
       toolStats,
       toolShape: toolStats?.shape ?? null,
+      // Convex round trips saved by the request-scoped memo, and how many were
+      // actually issued. Reported so the hydration cost stays visible rather
+      // than being assumed fixed.
+      hydration: { queries: queryMemo.size, dedupedRoundTrips: memoHits },
       // WHAT THIS TURN ESTABLISHED, per claim.
       //
       // toolStats already knew exactly which tools ran, and was only ever

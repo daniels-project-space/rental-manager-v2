@@ -602,6 +602,8 @@ export const generateDraft = action({
             /** `tool(args)` per call — what makes a call judgeable as removable. */
             queries?: string[];
           } | null;
+          /** Convex round trips issued vs saved by the request-scoped memo. */
+          hydration?: { queries: number; dedupedRoundTrips: number };
           needs_human_reason?: string | null;
           tokenUsage?: {
             prompt: number | null;
@@ -653,6 +655,10 @@ export const generateDraft = action({
         // prompt each step — so knowing WHAT was asked is what makes a call
         // removable. byName alone could not tell a necessary lookup from one
         // re-fetching something the fact pack already held.
+        if (j.hydration)
+          console.log(
+            `[generateDraft] hydration convexQueries=${j.hydration.queries} dedupedRoundTrips=${j.hydration.dedupedRoundTrips}`,
+          );
         if (j.toolStats?.queries?.length)
           console.log(`[generateDraft] toolQueries ${JSON.stringify(j.toolStats.queries)}`);
           // Surface token/cache accounting so prompt-caching is observable
