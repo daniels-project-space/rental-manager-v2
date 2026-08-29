@@ -99,7 +99,24 @@ export const lookupPricingTool = createTool({
     "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Use this for any item NOT on the current request: an alternative, a second body, a different quantity, or anything the renter added. For items that ARE on the request, use get_listing_context daily_price_gbp + whats_included instead. Pass account_slug. Pass the item's FULL title exactly as you were given it — do not shorten or rephrase it. If the result has found:false, read did_you_mean: if one entry is the same item, call ONCE more with that exact title; if none is, we do not stock it — say so. Never retry with a reworded version of a name that already missed, and never quote a price for a did_you_mean entry you have not looked up.",
   inputSchema: z.object({
     item_name: z.string(),
-    account_slug: z.string().optional().describe("The account_slug from get_renter_context. Pass it so the price + what-is-included come from THIS account real Hygglo listing (the ground truth)."),
+    // REQUIRED, because optional meant "forgotten".
+    //
+    // Measured: the agent's FIRST call routinely omitted it — lookup_pricing
+    //({item_name:"Blazar Remus full frame 33mm t1.8 1.5x anamorphic"}) with no
+    // account — and without it the Convex query skips the entire real-listing
+    // block and falls through to the curated catalog, returning an ESTIMATED
+    // price. The agent then noticed and called again WITH the account, so the
+    // retry loop was not really about the name at all: it was one wasted step
+    // per lookup, each re-sending the whole base prompt.
+    //
+    // The account is a property of the thread, not a judgement call, and it is
+    // already in front of the model (ACCOUNT: <slug> in the prompt, and
+    // get_renter_context). Requiring it removes the chance to forget.
+    account_slug: z
+      .string()
+      .describe(
+        "REQUIRED. The account_slug for this thread — it is given to you as ACCOUNT in the prompt, and by get_renter_context. Without it the price comes from a generic estimate instead of THIS account's real Hygglo listing.",
+      ),
     days: z.number().int().positive().optional().describe("Rental duration in days. Default 1."),
     listing_location_non_central: z
       .boolean()
@@ -122,7 +139,12 @@ export const checkAvailabilityTool = createTool({
     item_name: z.string(),
     start_date: z.string().describe("ISO YYYY-MM-DD"),
     end_date: z.string().describe("ISO YYYY-MM-DD"),
-    account_slug: z.string().optional(),
+    // Required for the same reason as lookup_pricing: optional meant forgotten,
+    // and an availability answer that isn't scoped to this account is worse
+    // than no answer. The slug is in the prompt as ACCOUNT.
+    account_slug: z
+      .string()
+      .describe("REQUIRED. The account_slug for this thread — given to you as ACCOUNT in the prompt."),
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {
