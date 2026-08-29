@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery, isPlatformNotice } from "./item_name_match";
+import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery, isPlatformNotice, exactTitleMatch } from "./item_name_match";
 
 const ITEMS = [
   { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
@@ -185,5 +185,61 @@ describe("isPlatformNotice", () => {
     ).toBe(false);
     expect(isPlatformNotice("can you hide the tripod behind the door for me?")).toBe(false);
     expect(isPlatformNotice("")).toBe(false);
+  });
+});
+
+describe("exactTitleMatch — the retry-loop fix", () => {
+  const LISTINGS = [
+    { name: "2× Sony A7 III 4K Camera + 24-70mm f/2.8 GM Lens Kit – Full Frame Mirrorless" },
+    { name: "SONY A7III A7 III A73 MIRRORLESS FULL FRAME CAMERA – PHOTOGRAPHY VIDEO" },
+    { name: "Blazar Remus full frame 33mm t1.8 1.5x anamorphic" },
+    { name: "Blackmagic BMPCC 6K Pro" },
+    {
+      name: "Blackmagic cinema camera full frame 6k Bmpcc + Rode video mic PRO plus microphone + tripod smallrig interview set",
+    },
+  ];
+  const nameOf = (l: { name: string }) => l.name;
+
+  it("matches a title the agent copied verbatim from the fact pack", () => {
+    const hit = exactTitleMatch(
+      "Blazar Remus full frame 33mm t1.8 1.5x anamorphic",
+      LISTINGS,
+      nameOf,
+    );
+    expect(hit?.name).toContain("Blazar Remus");
+  });
+
+  it("survives the punctuation that broke token coverage", () => {
+    // Multiplication sign, en dash, slashes and hyphens all tokenise oddly;
+    // this is the title that could fail to match itself.
+    const hit = exactTitleMatch(
+      "2x Sony A7 III 4K Camera + 24-70mm f/2.8 GM Lens Kit - Full Frame Mirrorless",
+      LISTINGS,
+      nameOf,
+    );
+    expect(hit?.name).toContain("2×");
+  });
+
+  it("is case and spacing insensitive", () => {
+    expect(exactTitleMatch("  blackmagic   bmpcc 6k pro ", LISTINGS, nameOf)?.name).toBe(
+      "Blackmagic BMPCC 6K Pro",
+    );
+  });
+
+  it("does NOT match a listing that merely mentions the item", () => {
+    // The cross-quote this whole path exists to prevent: "BMPCC 6K Pro" must
+    // not resolve to the fat interview bundle that contains those words.
+    const hit = exactTitleMatch("BMPCC 6K Pro", LISTINGS, nameOf);
+    expect(hit).toBeNull();
+  });
+
+  it("does NOT match a shortened or partial name", () => {
+    expect(exactTitleMatch("Blazar Remus 33mm", LISTINGS, nameOf)).toBeNull();
+    expect(exactTitleMatch("Sony A7 III", LISTINGS, nameOf)).toBeNull();
+  });
+
+  it("returns null on empty input rather than matching anything", () => {
+    expect(exactTitleMatch("", LISTINGS, nameOf)).toBeNull();
+    expect(exactTitleMatch("   ", LISTINGS, nameOf)).toBeNull();
   });
 });

@@ -90,7 +90,13 @@ export const getListingContextTool = createTool({
 export const lookupPricingTool = createTool({
   id: "lookup_pricing",
   description:
-    "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Use this ONLY for an item that is NOT on the current request (an ALTERNATIVE you are offering because we do not own what they asked for). For items that ARE on the request, use get_listing_context daily_price_gbp + whats_included instead — do NOT call this for them. Returns the real Hygglo daily rate for the alternative (pass account_slug).",
+    // The 'one retry, using did_you_mean' clause is the point. Measured, this
+    // tool was called with progressively shortened invented names — "Blazar
+    // Remus full frame 33mm t1.8 1.5x anamorphic", then "Blazar Remus 33mm",
+    // then "Anamorphic Blazar Remus 33mm" — because a miss returned no way to
+    // correct the name. Each retry is another agent step re-sending the whole
+    // base prompt.
+    "Look up the daily rate + multi-day total for an item. Call BEFORE quoting any price. Use this for any item NOT on the current request: an alternative, a second body, a different quantity, or anything the renter added. For items that ARE on the request, use get_listing_context daily_price_gbp + whats_included instead. Pass account_slug. Pass the item's FULL title exactly as you were given it — do not shorten or rephrase it. If the result has found:false, read did_you_mean: if one entry is the same item, call ONCE more with that exact title; if none is, we do not stock it — say so. Never retry with a reworded version of a name that already missed, and never quote a price for a did_you_mean entry you have not looked up.",
   inputSchema: z.object({
     item_name: z.string(),
     account_slug: z.string().optional().describe("The account_slug from get_renter_context. Pass it so the price + what-is-included come from THIS account real Hygglo listing (the ground truth)."),

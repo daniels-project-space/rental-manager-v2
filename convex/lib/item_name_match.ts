@@ -278,3 +278,44 @@ export function isPlatformNotice(text: string | null | undefined): boolean {
   if (!text) return false;
   return /\bA message was hidden\b|\bWe hid a message from\b/i.test(text);
 }
+
+/**
+ * Does this query name the SAME listing title, ignoring punctuation and case?
+ *
+ * Identity, not similarity: it compares whole normalised strings, so it can
+ * never match one listing against a different one. That matters because the
+ * fuzzy path it sits in front of exists precisely to stop cross-quoting — a
+ * coverage score once matched "BMPCC 6K Pro" against a bundle that merely
+ * mentioned it and quoted £70/day for a £35/day camera.
+ *
+ * Why it is needed at all: the agent normally passes a listing's own title,
+ * copied from the fact pack, and that was falling through to a Jaccard test
+ * demanding full TOKEN coverage. Titles like "2× Sony A7 III … 24-70mm f/2.8
+ * GM" tokenise differently depending on the multiplication sign, slashes and
+ * hyphens, so an item's own name could fail to match itself. The agent then
+ * retried with invented variants — "Blazar Remus full frame 33mm t1.8 1.5x
+ * anamorphic" → "Blazar Remus 33mm" → "Anamorphic Blazar Remus 33mm" — and
+ * every retry is another agent step that re-sends the whole base prompt.
+ */
+export function normaliseTitle(s: string | null | undefined): string {
+  return (
+    (s ?? "")
+      .toLowerCase()
+      // Hygglo titles use the multiplication sign ("2× Sony A7 III"); the agent
+      // types an ASCII x. Without this the quantity survives in one form and
+      // vanishes in the other, so a title fails to match itself.
+      .replace(/×/g, "x")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+  );
+}
+
+export function exactTitleMatch<T>(
+  query: string,
+  candidates: readonly T[],
+  nameOf: (c: T) => string | null | undefined,
+): T | null {
+  const target = normaliseTitle(query);
+  if (!target) return null;
+  return candidates.find((c) => normaliseTitle(nameOf(c)) === target) ?? null;
+}

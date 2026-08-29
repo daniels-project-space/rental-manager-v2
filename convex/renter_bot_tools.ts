@@ -15,7 +15,7 @@ import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
-import { sameMount, bestMatch, rankByName, substitutionScore } from "./lib/item_name_match";
+import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
 import { tierRateForDays, describeTiers, type PriceTier } from "./lib/hygglo_pricing";
 
 // ── Tool 1: get_renter_context ───────────────────────────────
@@ -423,6 +423,16 @@ export const lookup_pricing = query({
     ctx,
     { item_name, account_slug, days = 1, listing_location_non_central },
   ) => {
+    /**
+     * Nearest listing TITLES when nothing matched, for the miss return.
+     *
+     * A miss used to say only "No pricing row ... treat price as 'check with
+     * Daniel'", which gave the agent nothing to correct, so it guessed another
+     * spelling and called again. Handing back the real titles turns three or
+     * four blind retries into at most one informed call.
+     */
+    let nearMisses: string[] = [];
+
     // GROUND TRUTH first: the account's REAL Hygglo listing (its actual
     // daily price + description/kit), matched by name against OWNED-backed
     // listings. Falls back to the curated pricing_catalog below. (Daniel)
@@ -508,6 +518,32 @@ export const lookup_pricing = query({
           if (best) bestScore = 1;
         }
       }
+      // EXACT TITLE FAST PATH — identity, not similarity.
+      //
+      // The agent usually passes the listing's own title, copied out of the
+      // fact pack. That should be a trivial hit, but it fell through to the
+      // Jaccard fallback below, which demands coverage === 1 over TOKENS — and
+      // a title like "2× Sony A7 III … 24-70mm f/2.8 GM" tokenises differently
+      // depending on the multiplication sign, slashes and hyphens, so an item's
+      // own name could fail to match itself. The agent then retried with
+      // shorter variants: "Blazar Remus full frame 33mm t1.8 1.5x anamorphic" →
+      // "Blazar Remus 33mm" → "Anamorphic Blazar Remus 33mm". Each retry is
+      // another step, and a step re-sends the whole ~8.5K base prompt.
+      //
+      // Comparing normalised FULL strings is an identity test, so it cannot
+      // quote one listing's price for another — the failure the Jaccard path
+      // exists to prevent.
+      if (!best) {
+        const exact = exactTitleMatch(
+          item_name,
+          listings.filter((l) => typeof l.daily_price === "number"),
+          (l) => l.name,
+        );
+        if (exact) {
+          best = exact;
+          bestScore = 1;
+        }
+      }
       // Fallback: Jaccard over listing names (penalises the extra tokens a fat
       // bundle carries, unlike the old coverage score) with FULL query
       // coverage required, so every word the renter said must be present.
@@ -520,6 +556,16 @@ export const lookup_pricing = query({
           best = top.item;
           bestScore = top.score;
         }
+        // Nearest NAMES for the miss path, so the agent can ask once more with
+        // a real title instead of inventing variants. Names only — handing back
+        // a near-miss PRICE is exactly how "BMPCC 6K Pro" once got quoted at
+        // £70/day off a bundle that merely mentioned it.
+        else
+          nearMisses = ranked
+            .filter((r) => typeof r.item.daily_price === "number")
+            .slice(0, 5)
+            .map((r) => r.item.name ?? "")
+            .filter(Boolean);
       }
       if (best && bestScore >= 0.3 && typeof best.daily_price === "number") {
         // REAL Hygglo tiers, not a guessed curve.
@@ -582,6 +628,12 @@ export const lookup_pricing = query({
         found: false as const,
         item_name,
         message: `No pricing row for "${item_name}". Treat price as 'check with Daniel'.`,
+        // The names that DO exist on this account, so the next call can be an
+        // informed one instead of another guess at the spelling.
+        did_you_mean: nearMisses,
+        guidance: nearMisses.length
+          ? "That exact name matched nothing. If one of did_you_mean is the same item, call lookup_pricing ONCE more with that exact title. If none of them is, we do not stock it — say so and offer the closest thing we do. Do NOT retry with reworded versions of the original name, and do NOT quote a price for a did_you_mean entry without looking it up."
+          : "That exact name matched nothing and there is no close listing on this account. Do not retry with a reworded name; say you'll confirm the price, or offer something we do stock.",
       };
     }
 
