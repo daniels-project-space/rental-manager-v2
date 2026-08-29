@@ -45,6 +45,7 @@ export default defineConfig({
       "convex/lib/draft_listing_grounding.test.ts",
       "convex/lib/draft_guard.test.ts",
       "convex/lib/shadow_compare.test.ts",
+      "src/lib/harvest-tool-prices.test.ts",
       "convex/lib/knowledge_search.test.ts",
       "convex/lib/channel_response_rates.test.ts",
       "convex/lib/poller_window.test.ts",

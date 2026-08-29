@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
 import { ConvexHttpClient } from "convex/browser";
@@ -108,28 +109,6 @@ function toolTelemetry(steps: unknown) {
     else seen.add(k);
   }
   return { steps: stepCount, total: calls.length, byName, duplicates, errors, shape };
-}
-
-function harvestToolPrices(steps: unknown, into: number[]): void {
-  const PRICE_KEY = /(price|rate|gbp|per_day|perday|daily|total|min|max)/i;
-  const seen = new Set<unknown>();
-  const walk = (node: unknown, keyHint = ""): void => {
-    if (node == null || seen.has(node)) return;
-    if (typeof node === "number") {
-      if (PRICE_KEY.test(keyHint) && Number.isFinite(node) && node > 0 && node < 10000)
-        into.push(Math.round(node));
-      return;
-    }
-    if (typeof node !== "object") return;
-    seen.add(node);
-    if (Array.isArray(node)) {
-      for (const v of node) walk(v, keyHint);
-      return;
-    }
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) walk(v, k);
-  };
-  for (const st of (steps as Array<{ toolResults?: unknown }>) ?? [])
-    walk(st?.toolResults ?? null);
 }
 
 const CONVERSATION_CRAFT = `
