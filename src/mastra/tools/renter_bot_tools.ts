@@ -128,8 +128,15 @@ export const checkAvailabilityTool = createTool({
 
 export const searchKnowledgeTool = createTool({
   id: "search_knowledge",
+  // Says what the KB does NOT hold, which is the expensive half.
+  //
+  // The old text ended "When unsure, query", and the agent obliged: measured
+  // over a 40-turn sweep this was 52% of ALL tool calls, up to six in a single
+  // turn. Every call is another step, and Mastra re-sends the whole ~8.5K base
+  // prompt per step, so one flail costs ~50K tokens and six sequential round
+  // trips to learn nothing.
   description:
-    "Free-text search across the knowledge base (33 business rules + 124 personal rules from Daniel + ~30 gear FAQs + 10 verbatim templates). Use for anything outside basic conversation: pricing rules, delivery policy, location handling, edge protocols, gear specs, templates. When unsure, query.",
+    "Search Daniel's POLICY knowledge base: business rules, personal rules, delivery/location/edge-case protocols, verbatim templates, general FAQs. It does NOT contain per-item specs, prices, stock or kit contents — those come from get_listing_context and lookup_pricing, and searching here for them returns nothing. One query per topic: if it comes back empty, the answer is not in the KB and rephrasing will not find it.",
   inputSchema: z.object({
     query: z.string(),
     scope: z
@@ -139,7 +146,22 @@ export const searchKnowledgeTool = createTool({
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {
-    return await convex().query(anyApi.knowledge.search, input);
+    const hits = await convex().query(anyApi.knowledge.search, input);
+    // An empty array told the agent nothing, so it rephrased and tried again —
+    // "Mavic 3 Classic specs 4k", then "Mavic 3", then "Mavic", then "specs",
+    // then scope:rule "invented", then "intents conversation_stage". Say the
+    // search failed and that retrying will not help.
+    //
+    // Shaped here rather than in convex/knowledge.ts because that query also
+    // backs the draft route and the dashboard, which expect an array.
+    if (Array.isArray(hits) && hits.length === 0)
+      return {
+        no_match: true,
+        results: [],
+        guidance:
+          "Nothing in the knowledge base matches that. Do NOT search again for this topic with different wording — the KB holds policy and templates, not per-item specs, prices or stock. Answer from the FACTS you were already given, or tell the renter you'll confirm.",
+      };
+    return hits;
   },
 });
 
