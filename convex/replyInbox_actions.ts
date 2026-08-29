@@ -599,6 +599,8 @@ export const generateDraft = action({
             byName: Record<string, number>;
             duplicates: number;
             errors: number;
+            /** `tool(args)` per call — what makes a call judgeable as removable. */
+            queries?: string[];
           } | null;
           needs_human_reason?: string | null;
           tokenUsage?: {
@@ -647,6 +649,12 @@ export const generateDraft = action({
           console.log(
             `[generateDraft] tools steps=${j.toolStats.steps} calls=${j.toolStats.total} dup=${j.toolStats.duplicates} err=${j.toolStats.errors} by=${JSON.stringify(j.toolStats.byName)}`,
           );
+        // Every call costs a whole extra step, and Mastra re-sends the base
+        // prompt each step — so knowing WHAT was asked is what makes a call
+        // removable. byName alone could not tell a necessary lookup from one
+        // re-fetching something the fact pack already held.
+        if (j.toolStats?.queries?.length)
+          console.log(`[generateDraft] toolQueries ${JSON.stringify(j.toolStats.queries)}`);
           // Surface token/cache accounting so prompt-caching is observable
           // end-to-end rather than assumed (it fails silently otherwise).
           if (j.tokenUsage?.prompt != null) {

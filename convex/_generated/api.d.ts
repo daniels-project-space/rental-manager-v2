@@ -72,6 +72,7 @@ import type * as diag_shadow_candidates from "../diag_shadow_candidates.js";
 import type * as diag_silence_cause from "../diag_silence_cause.js";
 import type * as diag_system_messages from "../diag_system_messages.js";
 import type * as diag_tier_coverage from "../diag_tier_coverage.js";
+import type * as diag_tool_payloads from "../diag_tool_payloads.js";
 import type * as diag_twin_gaps from "../diag_twin_gaps.js";
 import type * as diag_unused_data from "../diag_unused_data.js";
 import type * as draft_learning from "../draft_learning.js";
@@ -328,6 +329,7 @@ declare const fullApi: ApiFromModules<{
   diag_silence_cause: typeof diag_silence_cause;
   diag_system_messages: typeof diag_system_messages;
   diag_tier_coverage: typeof diag_tier_coverage;
+  diag_tool_payloads: typeof diag_tool_payloads;
   diag_twin_gaps: typeof diag_twin_gaps;
   diag_unused_data: typeof diag_unused_data;
   draft_learning: typeof draft_learning;

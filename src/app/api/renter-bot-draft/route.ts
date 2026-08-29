@@ -108,7 +108,15 @@ function toolTelemetry(steps: unknown) {
     if (seen.has(k)) duplicates++;
     else seen.add(k);
   }
-  return { steps: stepCount, total: calls.length, byName, duplicates, errors, shape };
+  // What each call actually asked for, compactly.
+  //
+  // byName alone said search_knowledge was 46% of all calls without saying WHY,
+  // and each call costs a whole extra step — Mastra re-sends the entire ~8.5K
+  // base prompt every step, so the turn's token bill is roughly 8.5K x
+  // (calls + 1). A call that re-asks for something the fact pack already
+  // contains is paid twice over, in tokens and in a sequential round trip.
+  const queries = calls.map((c) => `${c.name}(${c.args.slice(0, 60)})`);
+  return { steps: stepCount, total: calls.length, byName, duplicates, errors, shape, queries };
 }
 
 const CONVERSATION_CRAFT = `
