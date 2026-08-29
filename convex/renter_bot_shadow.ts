@@ -37,6 +37,21 @@ export type ShadowCandidate = {
   real_reply: string;
   items: Array<{ name: string; product_id?: number }>;
   has_items: boolean;
+  /**
+   * The real reservation behind this thread, when there is one.
+   *
+   * Without it every replay looks like a fresh enquiry, because the bot derives
+   * the rental stage from reservation status — not from the conversation. That
+   * made the first run blame the bot for asking "which dates?" in reply to
+   * "I'll pay now", when the harness had simply thrown away the booking it had
+   * already read to get the item names.
+   */
+  booking?: {
+    status: string;
+    start_date: string;
+    end_date: string;
+    gross_paid_gbp?: number;
+  };
 };
 
 /**
@@ -49,10 +64,22 @@ export type ShadowCandidate = {
 export const pickCandidates = internalQuery({
   args: {
     limit: v.number(),
+    /**
+     * Skip this many eligible candidates before taking `limit`.
+     *
+     * A Convex action is capped at ten minutes and each replay is an LLM call,
+     * so a sample of any size has to be run in chunks. Selection stays
+     * deterministic, so chunk N always returns the same exchanges and the
+     * chunks together tile the sample without overlap.
+     */
+    offset: v.optional(v.number()),
     require_items: v.optional(v.boolean()),
     account_slug: v.optional(v.string()),
   },
-  handler: async (ctx, { limit, require_items, account_slug }): Promise<ShadowCandidate[]> => {
+  handler: async (
+    ctx,
+    { limit, offset = 0, require_items, account_slug },
+  ): Promise<ShadowCandidate[]> => {
     const msgs = await ctx.db.query("hygglo_messages").order("desc").take(20000);
     const real = msgs.filter(
       (m) => !m.thread_id.startsWith("__probe__") && (!account_slug || m.account_slug === account_slug),
@@ -97,38 +124,47 @@ export const pickCandidates = internalQuery({
     }
 
     // Even spacing across the eligible set, so the sample spans accounts, item
-    // types and eras instead of clustering on whatever sorted first. Oversample
-    // because `require_items` will drop some, and each join costs 2 reads.
-    const want = require_items ? limit * 6 : limit;
-    const picked =
+    // types and eras instead of clustering on whatever sorted first. Spacing is
+    // computed over the WHOLE requested sample (offset + limit) so that chunked
+    // runs tile one evenly-spread sample rather than each chunk re-spreading
+    // itself over the full corpus and returning the same exchanges again.
+    const total = offset + limit;
+    const want = require_items ? total * 6 : total;
+    const spread =
       eligible.length <= want
         ? eligible
         : Array.from(
             { length: want },
             (_, k) => eligible[Math.floor(k * (eligible.length / want))],
           );
+    const picked = spread.slice(require_items ? offset * 6 : offset);
 
     // Now join items for the sampled threads only — reservation first, then the
     // inquiry listing, the same order the real draft route resolves them in.
-    const itemCache = new Map<string, Array<{ name: string; product_id?: number }>>();
+    type Joined = {
+      items: Array<{ name: string; product_id?: number }>;
+      booking?: ShadowCandidate["booking"];
+    };
+    const cache = new Map<string, Joined>();
     const out: ShadowCandidate[] = [];
     for (const p of picked) {
       if (out.length >= limit) break;
-      let items = itemCache.get(p.thread_id);
-      if (!items) {
+      let joined = cache.get(p.thread_id);
+      if (!joined) {
         const resv = await ctx.db
           .query("reservations")
           // Hygglo conflates order and conversation, so the thread id IS the
           // order id — that is how the rest of the codebase joins these tables.
           .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", p.thread_id))
           .first();
-        const fromResv = (resv?.hygglo_items ?? []).map((h) => ({
-          name: h.name ?? "",
-          product_id: typeof h.product_id === "number" ? h.product_id : undefined,
-        }));
-        if (fromResv.some((i) => i.name)) {
-          items = fromResv.filter((i) => i.name);
-        } else {
+        const fromResv = (resv?.hygglo_items ?? [])
+          .map((h) => ({
+            name: h.name ?? "",
+            product_id: typeof h.product_id === "number" ? h.product_id : undefined,
+          }))
+          .filter((i) => i.name);
+        let items = fromResv;
+        if (items.length === 0) {
           const conv = await ctx.db
             .query("conversations")
             .withIndex("by_thread", (q) => q.eq("thread_id", p.thread_id))
@@ -140,10 +176,27 @@ export const pickCandidates = internalQuery({
             }))
             .filter((i) => i.name);
         }
-        itemCache.set(p.thread_id, items);
+        // Carry the booking through so the replay sits at the stage the real
+        // conversation was actually at.
+        const booking =
+          resv?.start_date && resv?.end_date
+            ? {
+                status: resv.status,
+                start_date: resv.start_date,
+                end_date: resv.end_date,
+                gross_paid_gbp: resv.gross_paid_gbp,
+              }
+            : undefined;
+        joined = { items, booking };
+        cache.set(p.thread_id, joined);
       }
-      if (require_items && items.length === 0) continue;
-      out.push({ ...p, items, has_items: items.length > 0 });
+      if (require_items && joined.items.length === 0) continue;
+      out.push({
+        ...p,
+        items: joined.items,
+        has_items: joined.items.length > 0,
+        booking: joined.booking,
+      });
     }
     return out;
   },
@@ -162,6 +215,12 @@ export type ShadowResult = {
   divergences: number;
   incomparable: number;
   no_draft_reason?: string;
+  /** Guard rules that blocked the draft, when one did. */
+  blocking_flags: string[];
+  /** The history the bot was given, so any verdict can be audited against it. */
+  prefix: Array<{ role: string; text: string }>;
+  booking_status?: string;
+  item_product_ids: Array<number | null>;
 };
 
 /**
@@ -171,12 +230,13 @@ export type ShadowResult = {
 export const runSample = action({
   args: {
     limit: v.optional(v.number()),
+    offset: v.optional(v.number()),
     require_items: v.optional(v.boolean()),
     account_slug: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { limit = 25, require_items = true, account_slug },
+    { limit = 25, offset = 0, require_items = true, account_slug },
   ): Promise<{
     sampled: number;
     results: ShadowResult[];
@@ -185,7 +245,7 @@ export const runSample = action({
   }> => {
     const cands: ShadowCandidate[] = await ctx.runQuery(
       internal.renter_bot_shadow.pickCandidates,
-      { limit, require_items, account_slug },
+      { limit, offset, require_items, account_slug },
     );
 
     const results: ShadowResult[] = [];
@@ -199,16 +259,23 @@ export const runSample = action({
         // and a 60-message thread would blow the prompt budget for no gain.
         items: c.items.slice(0, 6),
         messages: c.prefix.slice(-12),
+        // Replay at the stage the real conversation was at. Only statuses the
+        // probe's validator accepts are passed through.
+        ...(c.booking ? { booking: c.booking } : {}),
       });
 
       let draft = "";
       let reason: string | undefined;
+      // Which guard rule blocked, when one did. Without this a silent failure
+      // reads as "no draft" and there is nothing to act on.
+      let flags: string[] = [];
       try {
         const res = (await ctx.runAction(api.replyInbox_actions.generateDraft, {
           thread_id: tid,
-        })) as { draft?: string; reason?: string } | null;
+        })) as { draft?: string; reason?: string; flags?: string[] } | null;
         draft = res?.draft ?? "";
         reason = res?.reason;
+        flags = res?.flags ?? [];
       } catch (e) {
         reason = `error: ${String(e).slice(0, 120)}`;
       }
@@ -227,6 +294,16 @@ export const runSample = action({
         divergences: cmp.divergences,
         incomparable: cmp.incomparable,
         no_draft_reason: draft ? undefined : reason,
+        blocking_flags: flags,
+        // Kept so a verdict can be audited against what the bot could actually
+        // see. "Asks which dates" is only a defect if the dates were already in
+        // the history it was given.
+        prefix: c.prefix.slice(-12),
+        booking_status: c.booking?.status,
+        // An item with no product_id cannot be priced or checked for stock, so
+        // the guard has nothing to verify against and blocks. Recording this
+        // separates "the model misbehaved" from "we never mapped the listing".
+        item_product_ids: c.items.map((it) => it.product_id ?? null),
       });
     }
 
