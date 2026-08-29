@@ -497,3 +497,54 @@ describe("guardDraft — grounding established DURING the turn", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
   });
 });
+
+describe("guardDraft — availability grounding is asymmetric", () => {
+  // With no dates in the renter's message there is nothing for
+  // check_availability to check, so it is never called: zero times across 80
+  // sweep turns. The fact pack meanwhile computed the calendar position and
+  // told the bot, in those words, to "tell them when it's back and the earliest
+  // they can collect" — and UNGROUNDED_UNAVAILABILITY withheld the reply for
+  // doing so. The rule was unreachable-by-design and blocked its own
+  // instruction. Only the negative direction is unlocked: a false "yes it's
+  // free" is how a renter turns up to gear that isn't there.
+  const noDates = {
+    ...baseOpts,
+    lastRenterMessage: "hi is this available?",
+    hasItemGrounding: false as const,
+  };
+
+  it("lets the bot say it is OUT when the calendar showed that", () => {
+    const r = guardDraft("It's out on a rental right now, back Saturday.", {
+      ...noDates,
+      groundedDuringTurn: { unavailability: true },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
+  });
+
+  it("does NOT let that same signal license a positive claim", () => {
+    // The whole point of splitting the flag.
+    const r = guardDraft("Yes, it's available for those dates.", {
+      ...noDates,
+      groundedDuringTurn: { unavailability: true },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
+  });
+
+  it("a checked-dates signal grounds BOTH directions", () => {
+    const pos = guardDraft("Yes, it's available for those dates.", {
+      ...noDates,
+      groundedDuringTurn: { availability: true },
+    });
+    const neg = guardDraft("Sorry, it's fully booked then.", {
+      ...noDates,
+      groundedDuringTurn: { availability: true },
+    });
+    expect(pos.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(false);
+    expect(neg.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
+  });
+
+  it("still blocks a negative when the calendar said nothing", () => {
+    const r = guardDraft("Sorry, that's fully booked.", noDates);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(true);
+  });
+});

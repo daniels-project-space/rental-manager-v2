@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { harvestToolPrices } from "../../../lib/harvest-tool-prices";
+import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
 import { ConvexHttpClient } from "convex/browser";
@@ -433,6 +433,31 @@ export async function POST(req: Request) {
    * instruction — which, live, it did not.
    */
   const itemsWithoutKitData: string[] = [];
+  /**
+   * Items a TOOL returned real kit text for during the turn, lower-cased.
+   *
+   * `itemsWithoutKitData` above is built before the agent runs, so an item with
+   * no listing text up front stays on it even after get_listing_context
+   * answers — and KIT_HALLUCINATION then withholds the reply for repeating what
+   * the tool just supplied. These names are subtracted before the list is sent
+   * to the guard.
+   */
+  const kitSuppliedByTool = new Set<string>();
+  /**
+   * The calendar gave a DEFINITE negative for some item this turn: it is out
+   * right now, or the requested dates conflict.
+   *
+   * The fact pack tells the bot, in those words, to "tell them when it's back
+   * and the earliest they can collect" — and UNGROUNDED_UNAVAILABILITY then
+   * withheld the reply for saying it was out, because no tool had run. With no
+   * dates in the message there is nothing for check_availability to check, so
+   * it is never called: across 80 sweep turns, zero times. The rule was
+   * unreachable-by-design and blocked the fact pack's own instruction.
+   *
+   * Only the NEGATIVE direction is unlocked. A positive "yes, it's free for
+   * your dates" still needs the dates, so that half of the guard stands.
+   */
+  let availabilityOutKnown = false;
   /**
    * Every price the FACT PACK offers the model as ground truth (lens options,
    * mount adapters, alternatives). The draft guard's PRICE_HALLUCINATION check
@@ -1026,6 +1051,9 @@ export async function POST(req: Request) {
             //
             // Absence of a date is absence of knowledge, so say so and answer
             // from what IS known: the position today and the next free date.
+            // Out on rental right now is a fact the calendar just gave us, so
+            // the bot may state it. See availabilityOutKnown.
+            if (outNow >= totalUnits) availabilityOutKnown = true;
             const noDateVerdict =
               outNow >= totalUnits
                 ? `NO DATES GIVEN, and it is OUT on rental RIGHT NOW (back ${backAt ?? "?"}).${
@@ -1052,6 +1080,9 @@ export async function POST(req: Request) {
                 : bookings.length === 0
                   ? `FREE — no bookings, available for ${reqDate ?? "the requested date"}`
                   : `AVAILABLE for ${reqDate} — we hold ${totalUnits} of these and only ${overlapping} is/are out then, so ${totalUnits - overlapping} remain free. Do NOT describe it as booked out.`;
+            // A dated conflict or a turnaround is the calendar telling us it is
+            // NOT free — same grounded negative as out-right-now.
+            if (reqDate && (turnaround || conflict)) availabilityOutKnown = true;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict}.\n`;
             // Record the VERDICT, not just that a verdict happened. Knowing
             // the fact was emitted did not explain why the reply deferred —
@@ -1436,6 +1467,7 @@ export async function POST(req: Request) {
         (st) => (st?.toolCalls?.length ?? 0) > 0,
       );
       harvestToolPrices(result?.steps, offeredPrices);
+      for (const n of harvestToolKitItems(result?.steps)) kitSuppliedByTool.add(n);
       toolStats = toolTelemetry(result?.steps);
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
@@ -1584,6 +1616,7 @@ export async function POST(req: Request) {
             obj = retryObj;
             usedTools = retryUsedTools;
             harvestToolPrices(retryResult?.steps, offeredPrices);
+            for (const n of harvestToolKitItems(retryResult?.steps)) kitSuppliedByTool.add(n);
           }
         }
       } catch {
@@ -1711,7 +1744,12 @@ export async function POST(req: Request) {
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
       resolvedItems,
-      itemsWithoutKitData,
+      // Minus anything a tool answered for during the turn — see
+      // kitSuppliedByTool. Without this the guard withholds a kit answer that
+      // get_listing_context had just supplied.
+      itemsWithoutKitData: itemsWithoutKitData.filter(
+        (n) => !kitSuppliedByTool.has(n.toLowerCase()),
+      ),
       hasPairingData,
       factsEmitted,
       toolStats,
@@ -1726,6 +1764,12 @@ export async function POST(req: Request) {
       // back. Feed the telemetry through instead of printing it.
       groundedDuringTurn: {
         availability: (toolStats?.byName?.check_availability ?? 0) > 0,
+        // Asymmetric on purpose. A negative is grounded by the calendar we
+        // already read; a positive "yes, free for your dates" is not grounded
+        // until someone checks THOSE dates, and a false yes is how a renter
+        // turns up to gear that isn't there.
+        unavailability:
+          availabilityOutKnown || (toolStats?.byName?.check_availability ?? 0) > 0,
         price:
           offeredPrices.length > 0 ||
           (toolStats?.byName?.lookup_pricing ?? 0) > 0 ||

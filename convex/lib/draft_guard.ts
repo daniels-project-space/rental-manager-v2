@@ -109,7 +109,18 @@ export interface GuardOpts {
    * nothing behind it is still caught.
    */
   groundedDuringTurn?: {
+    /** May assert something IS free — needs the actual dates checked. */
     availability?: boolean;
+    /**
+     * May assert something is NOT free.
+     *
+     * Deliberately separate from `availability`, because the two are not
+     * equally dangerous. The calendar we already read tells us an item is out
+     * right now, and the fact pack instructs the bot to say so — but a positive
+     * "yes, free for your dates" is not grounded until those dates are checked,
+     * and a false yes is how a renter turns up to gear that isn't there.
+     */
+    unavailability?: boolean;
     price?: boolean;
     specs?: boolean;
   };
@@ -598,7 +609,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       /\b(not available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available)|don'?t have (?:that|it|one)|can'?t get (?:that|it|one))\b/i.test(
         text,
       );
-    if (assertsUnavail && !g.availability)
+    if (assertsUnavail && !g.unavailability && !g.availability)
       push(
         "UNGROUNDED_UNAVAILABILITY",
         "Asserts UNavailability with no item grounding (never called check_availability this turn) — should say I'll check, not guess",

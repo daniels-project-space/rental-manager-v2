@@ -10,6 +10,55 @@
  * for long enough that replies were being blocked on turns where lookup_pricing
  * had run three times and returned real numbers.
  */
+/**
+ * Item names a TOOL returned real "what's included" text for this turn.
+ *
+ * `itemsWithoutKitData` is built in the route's item loop, before the agent
+ * runs, and gates KIT_HALLUCINATION. So an item that had no listing text up
+ * front stays on that list even after the agent fetches its kit via
+ * get_listing_context — and the guard then withholds the reply for stating what
+ * the tool just told it. Same shape as the price and availability faults.
+ *
+ * Deliberately narrow: it requires a NON-EMPTY kit field, not merely that the
+ * tool ran. A fabricated kit list is one of the worst things this bot can send
+ * (the renter turns up expecting a charger that isn't coming), so "the tool was
+ * called" is not good enough — the tool has to have answered.
+ */
+export function harvestToolKitItems(steps: unknown): Set<string> {
+  const found = new Set<string>();
+  const seen = new Set<unknown>();
+  const KIT_KEY = /^(whats_included|included_with_rental|kit_contents)$/i;
+  const NAME_KEY = /^(name|item|item_name|listing_name|title)$/i;
+
+  const scan = (node: unknown): void => {
+    if (node == null || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const v of node) scan(v);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    let kit = false;
+    let name: string | null = null;
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "args" || k === "input") continue;
+      if (KIT_KEY.test(k)) {
+        if (typeof v === "string" && v.trim().length > 2) kit = true;
+        if (Array.isArray(v) && v.length > 0) kit = true;
+      }
+      if (NAME_KEY.test(k) && typeof v === "string" && v.trim()) name = v.trim();
+    }
+    if (kit && name) found.add(name.toLowerCase());
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "args" || k === "input") continue;
+      scan(v);
+    }
+  };
+
+  for (const st of (steps as unknown[]) ?? []) scan(st);
+  return found;
+}
+
 export function harvestToolPrices(steps: unknown, into: number[]): void {
   const PRICE_KEY = /(price|rate|gbp|per_day|perday|daily|total|min|max)/i;
   const seen = new Set<unknown>();

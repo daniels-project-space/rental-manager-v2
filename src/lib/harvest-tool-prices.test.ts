@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { harvestToolPrices } from "./harvest-tool-prices";
+import { harvestToolKitItems, harvestToolPrices } from "./harvest-tool-prices";
 
 /**
  * The guard only lets the bot quote a price it can trace to a tool result, and
@@ -85,5 +85,55 @@ describe("harvestToolPrices", () => {
     harvestToolPrices(undefined, out);
     harvestToolPrices([], out);
     expect(out).toEqual([]);
+  });
+});
+
+describe("harvestToolKitItems", () => {
+  // KIT_HALLUCINATION is gated on a list built BEFORE the agent runs, so an
+  // item with no listing text up front stayed on it even after the agent
+  // fetched its kit — and the guard withheld the reply for repeating what the
+  // tool had just supplied. This is what un-gates it, and it is deliberately
+  // strict: a fabricated kit list is one of the worst things this bot can send.
+  it("returns items a tool answered with real kit text", () => {
+    const steps = [
+      {
+        payload: {
+          toolName: "get_listing_context",
+          result: {
+            name: "Sony A7 III",
+            whats_included: "body, 2 batteries, charger, 128GB SD card",
+          },
+        },
+      },
+    ];
+    expect(harvestToolKitItems(steps).has("sony a7 iii")).toBe(true);
+  });
+
+  it("accepts a structured kit array too", () => {
+    const steps = [
+      { payload: { result: { name: "BMPCC 6K", included_with_rental: ["cage", "SSD"] } } },
+    ];
+    expect(harvestToolKitItems(steps).has("bmpcc 6k")).toBe(true);
+  });
+
+  it("does NOT count an EMPTY kit field — the tool must actually have answered", () => {
+    const steps = [{ payload: { result: { name: "Sony A7 III", whats_included: "" } } }];
+    expect(harvestToolKitItems(steps).size).toBe(0);
+  });
+
+  it("does NOT count a missing kit field", () => {
+    const steps = [{ payload: { result: { name: "Sony A7 III", daily_price_gbp: 26 } } }];
+    expect(harvestToolKitItems(steps).size).toBe(0);
+  });
+
+  it("ignores args, so the model cannot assert its own kit list", () => {
+    const steps = [
+      { payload: { args: { name: "Sony A7 III", whats_included: "a cage I made up" } } },
+    ];
+    expect(harvestToolKitItems(steps).size).toBe(0);
+  });
+
+  it("survives empty steps", () => {
+    expect(harvestToolKitItems(undefined).size).toBe(0);
   });
 });

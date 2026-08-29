@@ -548,7 +548,12 @@ export const generateDraft = action({
     let routeHasPairingData = false;
     // Which classes of fact the agent actually established this turn. Empty
     // means "we don't know", which keeps the guard's strict pre-turn behaviour.
-    let routeGrounded: { availability?: boolean; price?: boolean; specs?: boolean } = {};
+    let routeGrounded: {
+      availability?: boolean;
+      unavailability?: boolean;
+      price?: boolean;
+      specs?: boolean;
+    } = {};
     if (process.env.USE_MASTRA_BOT !== "0") {
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -582,6 +587,7 @@ export const generateDraft = action({
           /** Which classes of fact a TOOL supplied this turn — see draft_guard. */
           groundedDuringTurn?: {
             availability?: boolean;
+            unavailability?: boolean;
             price?: boolean;
             specs?: boolean;
           };
