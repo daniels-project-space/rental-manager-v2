@@ -1061,7 +1061,23 @@ export async function POST(req: Request) {
                       ? ` It can be collected from ${collectableAfter(backAt)} — that is the first pickup window at least an hour after it comes back.`
                       : ` Next free ${m.next_free_date ?? "?"}.`
                   } Do NOT say it is available. Tell them when it's back and the earliest they can collect, then ask which dates they need.`
-                : `NO DATES GIVEN — you do NOT know whether their dates are free, so do NOT assert it is available. ${totalUnits - outNow} of ${totalUnits} free today${m.next_free_date ? `, next free date on file ${m.next_free_date}` : ""}. Ask which dates they need, then answer.`;
+                : // Do not hand over the free-today count.
+                  //
+                  // This used to read "N of M free today", then tell the model
+                  // not to assert availability. Three sweeps showed it
+                  // asserting anyway — UNGROUNDED_AVAILABILITY was the top
+                  // blocker every time, and the reply was binned. Of course it
+                  // was: a count of units free today is the answer to "is this
+                  // available?", and no instruction survives being handed the
+                  // answer and told not to say it. The count is also about
+                  // TODAY, which is not the question — they have not said when
+                  // they want it.
+                  //
+                  // Same self-contradiction as the price bug, mirrored: there
+                  // the fact pack supplied a number the guard then forbade; here
+                  // it supplies one the guard forbids repeating. The fix is to
+                  // stop supplying it, not to loosen the guard.
+                  `NO DATES GIVEN. You do NOT know whether their dates are free, and today's position does not answer their question because they have not said when they want it. Do NOT say it is available, do NOT say it is unavailable, and do NOT quote a number of units. Ask which dates they need — that is the whole reply${m.next_free_date ? `. If they push for a date, the next free date on file is ${m.next_free_date}` : ""}.`;
 
             const verdict = !reqDate
               ? noDateVerdict

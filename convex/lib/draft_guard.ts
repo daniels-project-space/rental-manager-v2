@@ -581,6 +581,10 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     }
   }
 
+/** Hoisted so the flag can quote the exact sentence that tripped it. */
+const ASSERTS_AVAIL_RE =
+  /\b(?:it'?s|that'?s|they'?re|these are|those are)\s+(?:all\s+)?(?:available|free|in stock)\b|\byeah,?\s*(?:it'?s|that'?s|they'?re|we'?ve got|i'?ve got)\b|\bavailable\s+(?:for|from|on|today|tomorrow|those|that|this|the\s+\d)\b|\bin stock\b|\b(?:we'?ve|i'?ve)\s+got\s+\d|\bfree\s+for\s+(?:those|that|the|today|tomorrow|your)\b/i;
+
   // 8c. UNGROUNDED AVAILABILITY / PRICE — FLAG (the inquiry-fabrication bug)
   // When we have no item-level grounding, the draft must ASK, not assert. Catch
   // confident "yeah it's available" / "we've got 3" / "£5/day" with no basis.
@@ -589,16 +593,23 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     // reply built entirely from tool results was withheld as "ungrounded". Each
     // now asks whether the tool behind ITS OWN claim actually ran this turn.
     const g = opts.groundedDuringTurn ?? {};
-    const assertsAvail =
-      /\b(?:it'?s|that'?s|they'?re|these are|those are)\s+(?:all\s+)?(?:available|free|in stock)\b|\byeah,?\s*(?:it'?s|that'?s|they'?re|we'?ve got|i'?ve got)\b|\bavailable\s+(?:for|from|on|today|tomorrow|those|that|this|the\s+\d)\b|\bin stock\b|\b(?:we'?ve|i'?ve)\s+got\s+\d|\bfree\s+for\s+(?:those|that|the|today|tomorrow|your)\b/i.test(
-        text,
-      );
-    if (assertsAvail && !g.availability)
+    const assertsAvail = ASSERTS_AVAIL_RE.test(text);
+    if (assertsAvail && !g.availability) {
+      // Quote the offending sentence. Three sweeps could not tell whether this
+      // rule was over-firing or the bot was genuinely asserting availability it
+      // could not know, because the flag never said WHAT tripped it. Daniel
+      // gets the same sentence in the Reply Inbox.
+      const sentence =
+        text
+          .split(/(?<=[.!?])\s+|\n+/)
+          .map((s) => s.trim())
+          .find((s) => s && ASSERTS_AVAIL_RE.test(s)) ?? "";
       push(
         "UNGROUNDED_AVAILABILITY",
-        "Asserts availability/stock with no item grounding — should ask which item + say I'll check",
+        `Asserts availability/stock with no item grounding — should ask which item + say I'll check${sentence ? `: "${sentence.slice(0, 140)}"` : ""}`,
         "flagged",
       );
+    }
     // Symmetric counterpart (2026-08-17, real bug: bot confidently told a
     // renter Sony A7 V "isn't available" for dates it was actually free for
     // — check_availability was never called this turn, but the confident
