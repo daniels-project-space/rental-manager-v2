@@ -693,17 +693,51 @@ const ASSERTS_AVAIL_RE =
     }
     // Spec/dimension assertions (screen size, resolution, weight, aperture) with
     // no specs in context — the projector "100 inches" fabrication class.
-    if (
-      !g.specs &&
-      /\b\d+(?:\.\d+)?\s?(?:inch|inches|"|mm|cm|kg|metres?|meters?|ft|feet|fps|megapixel|mp|watts?|w)\b|\b(?:1080p|4k|6k|8k|f\/?\d|t\d\.\d)\b/i.test(
-        text,
+    //
+    // Two things are NOT spec claims, and every one of the five live firings
+    // sampled was one of them:
+    //
+    //   The item's own NAME. "Blackmagic 6K Pro", "Blazar Remus 33mm", "MKE
+    //   600" — the numbers are part of what the thing is called, and the name
+    //   came from our own catalogue, so repeating it invents nothing. This rule
+    //   flagged "Two Blackmagic 6K Pros would come to £94/day", which states no
+    //   spec at all.
+    //
+    //   A DENIAL. "4K resolution doesn't apply to a microphone" and "resolution
+    //   depends on the camera you mount it to" were both flagged for the word
+    //   4K while explicitly refusing to claim it — the opposite of fabricating.
+    //
+    // Left non-blocking either way, but a rule this noisy poisons the flag data
+    // any monitoring would rest on, and would be actively harmful if its
+    // severity were ever raised.
+    if (!g.specs) {
+      const knownNames = [
+        ...(opts.factPack?.pricing?.itemPrices ?? []).map((p) => p.name),
+        opts.factPack?.verifiedListingItem ?? "",
+        ...(opts.factPack?.marketingItems ?? []),
+        ...(opts.factPack?.itemsWithoutKitData ?? []),
+      ].filter((n): n is string => !!n && n.length > 2);
+      // Blank out the item names before looking for specs, so only numbers the
+      // draft introduced ITSELF are considered.
+      let probe = text;
+      for (const n of knownNames) {
+        const esc = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        probe = probe.replace(new RegExp(esc, "gi"), " ");
+      }
+      const DENIES =
+        /\b(doesn'?t|does not|don'?t|do not|isn'?t|is not|aren'?t|are not|wouldn'?t|would not|n\/a|not applicable)\b[^.!?]{0,40}\b(apply|relevant|matter|a thing)\b|\b(depends on|rather than|not a)\b/i;
+      if (
+        /\b\d+(?:\.\d+)?\s?(?:inch|inches|"|mm|cm|kg|metres?|meters?|ft|feet|fps|megapixel|mp|watts?|w)\b|\b(?:1080p|4k|6k|8k|f\/?\d|t\d\.\d)\b/i.test(
+          probe,
+        ) &&
+        !DENIES.test(text)
       )
-    )
-      push(
-        "UNGROUNDED_SPEC",
-        "States a spec/dimension with no specs grounding for this item",
-        "flagged",
-      );
+        push(
+          "UNGROUNDED_SPEC",
+          "States a spec/dimension with no specs grounding for this item",
+          "flagged",
+        );
+    }
   }
 
   // 9. INVALID PICKUP TIME (renter proposed, draft accepted) — FLAG

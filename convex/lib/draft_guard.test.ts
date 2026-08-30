@@ -548,3 +548,70 @@ describe("guardDraft — availability grounding is asymmetric", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(true);
   });
 });
+
+describe("guardDraft — UNGROUNDED_SPEC stops flagging non-claims", () => {
+  // All five live firings sampled were false positives, in two shapes: the
+  // number was part of the item's own NAME, or the draft was DENYING the spec.
+  const base = {
+    ...baseOpts,
+    lastRenterMessage: "what are the specs, is it 4k?",
+    hasItemGrounding: false as const,
+    factPack: {
+      pricing: {
+        itemPrices: [
+          { name: "Blackmagic camera 6k pro BMPCC6K", min: 47, max: 47 },
+          { name: "Blazar Remus full frame 33mm t1.8", min: 30, max: 30 },
+          { name: "Senheiser MKE 600 Shotgun Mic", min: 12, max: 12 },
+        ],
+      },
+    },
+  };
+
+  it("does not flag the item's own name back at us", () => {
+    const r = guardDraft(
+      "Two Blackmagic camera 6k pro BMPCC6K would come to £94/day.",
+      base,
+    );
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
+  });
+
+  it("does not flag a focal length that is part of the product name", () => {
+    const r = guardDraft("The Blazar Remus full frame 33mm t1.8 is a great lens.", base);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
+  });
+
+  it("does not flag a DENIAL of the spec", () => {
+    const r = guardDraft(
+      "The Senheiser MKE 600 Shotgun Mic records audio, so 4K video resolution doesn't apply to it.",
+      base,
+    );
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
+  });
+
+  it("does not flag 'depends on what you mount it to'", () => {
+    const r = guardDraft(
+      "This is a lens rather than a body, so resolution like 4K depends on the camera you mount it to.",
+      base,
+    );
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
+  });
+
+  it("STILL flags a spec the draft invented", () => {
+    // The fabrication this rule exists for: a dimension we hold no data on.
+    const r = guardDraft("It has a 7 inch screen and weighs 2.4kg.", base);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(true);
+  });
+
+  it("STILL flags an invented resolution not present in any item name", () => {
+    const r = guardDraft("It records internally at 8K.", base);
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(true);
+  });
+
+  it("does not flag anything once specs were actually fetched", () => {
+    const r = guardDraft("It has a 7 inch screen.", {
+      ...base,
+      groundedDuringTurn: { specs: true },
+    });
+    expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
+  });
+});
