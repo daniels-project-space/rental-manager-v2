@@ -115,7 +115,7 @@ function toolTelemetry(steps: unknown) {
   // base prompt every step, so the turn's token bill is roughly 8.5K x
   // (calls + 1). A call that re-asks for something the fact pack already
   // contains is paid twice over, in tokens and in a sequential round trip.
-  const queries = calls.map((c) => `${c.name}(${c.args.slice(0, 60)})`);
+  const queries = calls.map((c) => `${c.name}(${c.args.slice(0, 200)})`);
   return { steps: stepCount, total: calls.length, byName, duplicates, errors, shape, queries };
 }
 
