@@ -358,7 +358,7 @@ export function NotificationBell() {
                 </p>
                 <div className="grid grid-cols-3 gap-1 rounded-lg bg-white/[0.04] p-1">
                   {([
-                    ["all", "All updates"],
+                    ["all", "All notifications"],
                     ["money_only", "Money only"],
                     ["my_share", "My 50%"],
                   ] as const).map(([mode, label]) => {
@@ -388,7 +388,7 @@ export function NotificationBell() {
                   })}
                 </div>
                 <p className="text-[9px] text-[#6b7280] mt-1.5 leading-snug">
-                  Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% sends the same alerts showing half the earnings — your share. Other devices keep their own setting, so Leo can stay on All updates.
+                  All notifications shows every rental alert. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% sends the same alerts showing half the earnings — your share. Other devices keep their own setting.
                 </p>
                 {err && <p className="text-[10px] text-red-400 mt-1">{err}</p>}
               </div>

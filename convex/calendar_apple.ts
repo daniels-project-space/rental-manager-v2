@@ -16,6 +16,11 @@ import crypto from "crypto";
 const ICLOUD_ROOT = "https://caldav.icloud.com";
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const APPLE_VAULT_SERVICE = "apple_calendar";
+// Calendar mutations are deliberately default-deny. A reconnect alone must
+// never restore writes to Daniel's Apple Calendar; that requires an explicit
+// production re-authorisation as well.
+const APPLE_CALENDAR_WRITES_ENABLED = process.env.ALLOW_APPLE_CALENDAR_WRITES === "true";
+const APPLE_CALENDAR_WRITES_DISABLED_ERROR = "Apple Calendar writes are disabled";
 const ACCOUNT_CALENDAR_NAMES: Record<string, string> = {
   leo: "Leo Rentals",
   diogo: "Arbeit",
@@ -184,6 +189,7 @@ async function deleteEvent(url: string, auth: string): Promise<void> {
 export const connectApple = action({
   args: { apple_id: v.string(), app_password: v.string(), calendar_name: v.optional(v.string()) },
   handler: async (ctx, { apple_id, app_password, calendar_name }): Promise<{ ok: boolean; calendars?: string[]; chosen?: string; error?: string }> => {
+    if (!APPLE_CALENDAR_WRITES_ENABLED) return { ok: false, error: APPLE_CALENDAR_WRITES_DISABLED_ERROR };
     try {
       const { principalUrl, home, calendars } = await discover(apple_id, app_password);
       if (!calendars.length) throw new Error("No writable calendars found on this iCloud account");
@@ -215,6 +221,7 @@ export const connectApple = action({
 export const connectFromVault = action({
   args: { calendar_name: v.optional(v.string()) },
   handler: async (ctx, { calendar_name }): Promise<{ ok: boolean; calendars?: string[]; chosen?: string; error?: string }> => {
+    if (!APPLE_CALENDAR_WRITES_ENABLED) return { ok: false, error: APPLE_CALENDAR_WRITES_DISABLED_ERROR };
     try {
       const { appleId, appPassword } = await getVaultAppleCredentials();
       const { principalUrl, home, calendars } = await discover(appleId, appPassword);
@@ -267,6 +274,7 @@ export const disconnect = action({
 export const syncReservation = action({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }): Promise<{ ok: boolean; synced?: number; removed?: number; error?: string }> => {
+    if (!APPLE_CALENDAR_WRITES_ENABLED) return { ok: false, error: APPLE_CALENDAR_WRITES_DISABLED_ERROR };
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
     if (c?.status !== "connected" || !c.apple_id || !c.calendar_url) return { ok: false, error: "not connected" };
     let credentials: { appleId: string; appPassword: string };
@@ -336,6 +344,7 @@ export const syncReservation = action({
 export const unsyncReservation = action({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }): Promise<{ ok: boolean; removed: number }> => {
+    if (!APPLE_CALENDAR_WRITES_ENABLED) return { ok: false, removed: 0 };
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
     if (c?.status !== "connected" || !c.apple_id) return { ok: false, removed: 0 };
     let credentials: { appleId: string; appPassword: string };
@@ -358,6 +367,7 @@ export const unsyncReservation = action({
 export const autoSyncTick = internalAction({
   args: {},
   handler: async (ctx): Promise<{ ran: boolean }> => {
+    if (!APPLE_CALENDAR_WRITES_ENABLED) return { ran: false };
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
     if (c?.status !== "connected" || !c.auto_sync) return { ran: false };
     await ctx.runAction(api.calendar_apple.syncAllConfirmed, {});
@@ -369,6 +379,9 @@ export const autoSyncTick = internalAction({
 export const syncAllConfirmed = action({
   args: {},
   handler: async (ctx): Promise<{ ok: boolean; threads: number; synced: number; removed: number; error?: string }> => {
+    if (!APPLE_CALENDAR_WRITES_ENABLED) {
+      return { ok: false, threads: 0, synced: 0, removed: 0, error: APPLE_CALENDAR_WRITES_DISABLED_ERROR };
+    }
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
     if (c?.status !== "connected") return { ok: false, threads: 0, synced: 0, removed: 0, error: "not connected" };
     const threads = await ctx.runQuery(internal.calendar_apple_db._listConfirmedThreads, {});
