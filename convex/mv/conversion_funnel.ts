@@ -8,7 +8,6 @@
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../_generated/server";
-import { api } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 
@@ -32,22 +31,25 @@ export async function refreshAll(
     { key: ACCOUNT_ALL, arg: null },
     ...ACCOUNTS.map((s) => ({ key: s, arg: s })),
   ];
+  // 2026-09-02: this used to call getConversionFunnel once per (account,
+  // window) — 5 x 4 = 20 COMPLETE scans of hygglo_messages + reservations per
+  // refresh. The matrix query builds the per-thread first-contact index once
+  // and slices it in memory, so a refresh is now a single scan.
+  const cells: Array<{ accountSlug: string | null; days: number; payload: unknown }> =
+    await ctx.runQuery(anyApi.reservations.computeConversionFunnelMatrix, {
+      accounts: slugs.map((s) => s.arg),
+      windows: [...STANDARD_WINDOWS],
+    });
+  const keyForArg = new Map<string | null, string>(slugs.map((s) => [s.arg, s.key]));
   let written = 0;
-  for (const { key, arg } of slugs) {
-    for (const days of STANDARD_WINDOWS) {
-      const payload = await ctx.runQuery(api.reservations.getConversionFunnel, {
-        accountSlug: arg,
-        days,
-        _bypassMv: true,
-      });
-      await ctx.runMutation(anyApi.mv.conversion_funnel.write, {
-        account: key,
-        days,
-        payload,
-        generatedAt: startedAt,
-      });
-      written += 1;
-    }
+  for (const cell of cells) {
+    await ctx.runMutation(anyApi.mv.conversion_funnel.write, {
+      account: keyForArg.get(cell.accountSlug) ?? ACCOUNT_ALL,
+      days: cell.days,
+      payload: cell.payload,
+      generatedAt: startedAt,
+    });
+    written += 1;
   }
   return { ok: true, written, durationMs: Date.now() - startedAt };
 }

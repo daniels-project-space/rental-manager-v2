@@ -972,7 +972,17 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
     }),
     query_funnel: tool({
       description:
-        "Reservation conversion funnel for the last N days. Returns bookings / declines / cancellations.",
+        "Conversation funnel for the last N days, cohorted on each Hygglo thread's FIRST RENTER MESSAGE. " +
+        "Three independent axes — do not mix them. " +
+        "PROGRESSION (strictly narrowing, each a subset of the last): inquiries >= requests >= booked, plus " +
+        "booked_net_gbp and rates request_rate / book_rate_of_requests / book_rate_of_inquiries (all 0-1). " +
+        "OUTCOME: `outcomes` is mutually exclusive and exhaustive — counts sum EXACTLY to `inquiries` — keys are " +
+        "booked / owner_denied / expired (renter never paid) / renter_cancelled / verification_failed / still_open / " +
+        "no_request / other. `top_leak` names the biggest losing outcome and the advice for it. " +
+        "SERVICE: `reply` has rate, replied, eligible, p50_hours, p90_hours, awaiting_reply; the rate counts only " +
+        "inquiries older than 24h so unanswered fresh ones can't distort it (null when nothing is eligible yet). " +
+        "There is deliberately NO denial-rate field: the old one came from an undated bulk import and reported " +
+        "99.7%/94.3%/53.1% for identical data at 7/30/90d. Use the dated `owner_denied` outcome instead.",
       inputSchema: z.object({
         days: z.number().min(1).max(180).optional().describe("Lookback days; default 30."),
       }),

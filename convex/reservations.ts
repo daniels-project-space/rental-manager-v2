@@ -2,6 +2,12 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
+import {
+  type FunnelPayload,
+  buildThreadContacts,
+  computeConversationFunnel,
+  indexReservationsByOrderId,
+} from "./lib/conversation_funnel";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -363,91 +369,69 @@ export const getConversionFunnel = query({
         .first();
       if (cached) return cached.payload;
     }
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
+    return await computeFunnelLive(ctx, accountSlug, days);
+  },
+});
 
-    // Conversations as proxy for inquiries
-    let conversations = await ctx.db.query("conversations").collect();
-    if (accountSlug) {
-      const accountRow = await ctx.db
-        .query("accounts")
-        .withIndex("by_slug", (q) =>
-          q.eq("slug", accountSlug as string)
-        )
-        .first();
-      if (accountRow) {
-        conversations = conversations.filter(
-          (c) => c.account_id === accountRow._id
-        );
+/**
+ * Live compute for ONE (account, window) cell. Rebuilt 2026-09-02 — see
+ * convex/lib/conversation_funnel.ts for why the previous implementation
+ * (conversations._creationTime cohorts + undatable denial_records) was
+ * replaced wholesale.
+ *
+ * Reads hygglo_messages in full because the cohort key is each thread's FIRST
+ * renter message: you cannot know which messages are "first" from a windowed
+ * slice, and hygglo_sent_at has no index. This is why the query is MV-backed —
+ * see mv/conversion_funnel.ts, which now does ONE scan for every account and
+ * window instead of one per cell.
+ */
+async function computeFunnelLive(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  accountSlug: string | null,
+  days: number,
+): Promise<FunnelPayload> {
+  const messages = await ctx.db.query("hygglo_messages").collect(); // check-patterns:ok — first-message cohort needs the whole thread history
+  const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — joined by hygglo_order_id, not by date
+  return computeConversationFunnel({
+    threads: buildThreadContacts(messages),
+    reservationsByOrderId: indexReservationsByOrderId(reservations),
+    now: Date.now(),
+    days,
+    accountSlug,
+  });
+}
+
+/**
+ * Every (account, window) cell from a SINGLE pass over messages+reservations.
+ * The MV refresher used to call getConversionFunnel once per cell — 5 accounts
+ * x 4 windows = 20 full scans per refresh. This does one.
+ */
+export const computeConversionFunnelMatrix = internalQuery({
+  args: { accounts: v.array(v.union(v.string(), v.null())), windows: v.array(v.number()) },
+  handler: async (ctx, { accounts, windows }) => {
+    const messages = await ctx.db.query("hygglo_messages").collect(); // check-patterns:ok — see computeFunnelLive
+    const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — see computeFunnelLive
+    const threads = buildThreadContacts(messages);
+    const reservationsByOrderId = indexReservationsByOrderId(reservations);
+    const now = Date.now();
+    const cells: Array<{ accountSlug: string | null; days: number; payload: FunnelPayload }> = [];
+    for (const accountSlug of accounts) {
+      for (const days of windows) {
+        cells.push({
+          accountSlug,
+          days,
+          payload: computeConversationFunnel({
+            threads,
+            reservationsByOrderId,
+            now,
+            days,
+            accountSlug,
+          }),
+        });
       }
     }
-    const windowConvs = conversations.filter(
-      (c) => c._creationTime >= cutoff.getTime()
-    );
-    const inquiries = windowConvs.length;
-
-    let denials = await ctx.db.query("denial_records").collect();
-    if (accountSlug) {
-      const accountRow = await ctx.db
-        .query("accounts")
-        .withIndex("by_slug", (q) =>
-          q.eq("slug", accountSlug as string)
-        )
-        .first();
-      if (accountRow) {
-        denials = denials.filter((d) => d.account_id === accountRow._id);
-      }
-    }
-    // ALL-TIME denial count, NOT windowed: denial_records are a one-shot bulk
-    // import (all created_at = the import date, no true per-event date), so a
-    // created_at window is meaningless AND would cliff the rate to 0 once the
-    // import date ages past the window. conversionRate stays windowed below
-    // (bookings + conversations have real dates); the denial rate is all-time.
-    const recentDenials = denials.length;
-
-    // Real "responses" = inquiries where WE (owner) replied at least once, AND
-    // "bookings" = of THIS window's inquiries, how many have a confirmed/completed
-    // reservation on the same Hygglo thread. Both computed in ONE pass over the
-    // in-window conversations (bounded, indexed lookups per thread).
-    //
-    // COHORT FIX: bookings was previously counted from reservations by
-    // `start_date >= cutoff` — a DIFFERENT population/time-base than the inquiry
-    // (conversation-creation) cohort, so `bookings/inquiries` could exceed 100%.
-    // Linking booked ⊆ in-window inquiries makes conversionRate a real 0–100%.
-    let responses = 0;
-    let bookings = 0;
-    for (const c of windowConvs) {
-      const ownerMsg = await ctx.db
-        .query("hygglo_messages")
-        .withIndex("by_thread", (q) => q.eq("thread_id", c.thread_id))
-        .filter((q) => q.eq(q.field("sender"), "owner"))
-        .first();
-      if (ownerMsg) responses++;
-      const res = await ctx.db
-        .query("reservations")
-        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", c.thread_id))
-        .first();
-      if (res && (res.status === "confirmed" || res.status === "completed")) bookings++;
-    }
-    const conversionRate = inquiries > 0 ? bookings / inquiries : 0;
-    // denial_records can exceed tracked conversations — an auto-declined Hygglo
-    // request never opens a conversation thread, and a multi-item decline can
-    // write several rows. So recentDenials/inquiries could exceed 1, which
-    // surfaced a nonsensical ">100% denial rate" on the funnel tile AND in chat.
-    // Bound it by the larger of inquiries or total decisions made, so the rate
-    // is always 0–100% and degrades to denials/inquiries when the data is clean.
-    const decisions = bookings + recentDenials;
-    const denialBase = Math.max(inquiries, decisions);
-    const denialRate = denialBase > 0 ? recentDenials / denialBase : 0;
-
-    return {
-      inquiries,
-      responses,
-      bookings,
-      denials: recentDenials,
-      conversionRate,
-      denialRate,
-    };
+    return cells;
   },
 });
 

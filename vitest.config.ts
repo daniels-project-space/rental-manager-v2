@@ -36,6 +36,7 @@ export default defineConfig({
       "convex/lib/weekly_metrics_compute.test.ts",
       "convex/lib/capacity_gap.test.ts",
       "convex/lib/month_projection.test.ts",
+      "convex/lib/conversation_funnel.test.ts",
       "convex/lib/double_booking.test.ts",
       "convex/lib/per_listing_merge.test.ts",
       "convex/lib/return_presence.test.ts",
