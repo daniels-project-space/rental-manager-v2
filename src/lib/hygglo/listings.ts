@@ -30,6 +30,24 @@
 import { createClient, HyggloApiError, type HyggloClient } from "@/hygglo-core";
 
 const COUNTRY = "GB";
+/**
+ * Hygglo API version for the product/catalog surface.
+ *
+ * MIGRATED v2 → v4 on 2026-09-02: Hygglo retired `/api/v2/*` entirely — every
+ * v2 path (products AND categories) now answers `404 NOT_FOUND` whether or not
+ * a valid bearer is attached, which had silently killed this whole module.
+ * `/api/v4/*` answers `401` unauthenticated, so it is live. The order/message
+ * surface (`src/lib/hygglo-write.ts`, `src/trigger/poll-hygglo.ts`) was already
+ * on v4 — this brings the catalog side into line.
+ *
+ * The payload shapes are UNCHANGED across the bump (verified against a live
+ * account): detail still carries `cancellationTerms` / `stockLevel` /
+ * `minimumRentalDays` / `prices[]` / `categoryId` / `valuation`, `images[].filename`
+ * is still the `products/<uuid>.<ext>` form that must be stripped to the bare
+ * name on PUT, and `listings[].location.id` still enumerates pickup locations.
+ * So only the version segment moved; every merge rule below still applies.
+ */
+const API_V = "v4";
 const NAME_MAX = 255;
 const CANCELLATION_DEFAULT = "1";
 const AI_FAIL = ["no object generated", "did not match schema", "transaction is aborted"];
@@ -250,7 +268,7 @@ export async function getItem(
   id: number | string,
 ): Promise<HyggloListing | null> {
   try {
-    return await c.getJson<HyggloListing>(`/v2/my/products/${encodeURIComponent(String(id))}`);
+    return await c.getJson<HyggloListing>(`/${API_V}/my/products/${encodeURIComponent(String(id))}`);
   } catch (err) {
     if (err instanceof HyggloApiError && err.status === 404) return null;
     throw err;
@@ -258,12 +276,12 @@ export async function getItem(
 }
 
 /**
- * ALL of the account's products. Hits the bare `/v2/my/products` (no
+ * ALL of the account's products. Hits the bare `/v4/my/products` (no
  * limit/offset) — the verified way to get the full set (leo has 250+; the
  * paged `?limit=100` form is ignored by Hygglo on offset and caps at one page).
  */
 export async function listMine(c: HyggloClient): Promise<HyggloListing[]> {
-  const j = await c.getJson<unknown>(`/v2/my/products`);
+  const j = await c.getJson<unknown>(`/${API_V}/my/products`);
   if (Array.isArray(j)) return j as HyggloListing[];
   const o = j as { products?: HyggloListing[]; data?: HyggloListing[] } | null;
   return o?.products ?? o?.data ?? [];
@@ -271,7 +289,7 @@ export async function listMine(c: HyggloClient): Promise<HyggloListing[]> {
 
 export async function categories(c: HyggloClient): Promise<Array<{ id: number; name?: string }>> {
   const cats = await c.getJson<Array<{ id: number; name?: string }>>(
-    `/v2/categories?country=${COUNTRY}`,
+    `/${API_V}/categories?country=${COUNTRY}`,
   );
   return (cats ?? []).map((cat) => ({ id: cat.id, name: cat.name }));
 }
@@ -321,7 +339,7 @@ export async function publishListing(
   published: boolean,
 ): Promise<WriteResult> {
   try {
-    await c.sendRaw("PATCH", `/v2/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, {
+    await c.sendRaw("PATCH", `/${API_V}/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, {
       isPublished: !!published,
     });
     return { ok: true, id };
@@ -374,7 +392,7 @@ export async function editListing(
       images: [{ filename: existingBare, displayOrder: 0 }],
     };
     try {
-      await c.sendRaw("PUT", `/v2/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, body);
+      await c.sendRaw("PUT", `/${API_V}/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, body);
       if (wantPublish !== undefined) await publishListing(c, id, wantPublish);
       return { ok: true, id };
     } catch (err) {
@@ -412,7 +430,7 @@ export async function presignedUpload(
 ): Promise<string> {
   const { json } = await c.sendRaw(
     "POST",
-    `/v2/my/products/presigned-url?country=${COUNTRY}`,
+    `/${API_V}/my/products/presigned-url?country=${COUNTRY}`,
     { mimeType: mime },
   );
   const url = (json as { url?: string })?.url;
@@ -474,7 +492,7 @@ export async function createListing(c: HyggloClient, p: CreatePayload): Promise<
       images: [{ filename, displayOrder: 0 }],
     };
     try {
-      const { json } = await c.sendRaw("POST", `/v2/my/products?country=${COUNTRY}`, body);
+      const { json } = await c.sendRaw("POST", `/${API_V}/my/products?country=${COUNTRY}`, body);
       const id = (json as { id?: number })?.id;
       // Hygglo publishes on create regardless of the body flag; enforce a
       // requested draft state with a follow-up PATCH (same as editListing).
@@ -505,7 +523,7 @@ export async function createListing(c: HyggloClient, p: CreatePayload): Promise<
 /** Delete a listing. */
 export async function deleteListing(c: HyggloClient, id: number | string): Promise<WriteResult> {
   try {
-    await c.sendRaw("DELETE", `/v2/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`);
+    await c.sendRaw("DELETE", `/${API_V}/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`);
     return { ok: true, id };
   } catch (err) {
     if (err instanceof HyggloApiError) return { ok: false, status: err.status, error: err.body.slice(0, 200) };
