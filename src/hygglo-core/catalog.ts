@@ -1,10 +1,10 @@
 /**
- * hygglo-core/catalog — catalog v2 surface.
+ * hygglo-core/catalog — catalog surface (Hygglo API v4).
  *
  * READS (live in Phase 1):
- *   - listProducts(client)              → GET /v2/my/products?limit&offset (paged)
- *   - getProduct(client, id)            → GET /v2/my/products/{id}
- *   - getPublicListing(client, id, ctry)→ GET /v2/product-listings/{id}?country=GB
+ *   - listProducts(client)              → GET /v4/my/products?limit&offset (paged)
+ *   - getProduct(client, id)            → GET /v4/my/products/{id}
+ *   - getPublicListing(client, id, ctry)→ GET /v4/product-listings/{id}?country=GB
  *
  * WRITES (typed, NOT live — throw notEnabledYet until Phase 4):
  *   - updateProduct / publishProduct / deleteProduct
@@ -13,6 +13,7 @@
  * Pure fetch via the client wrapper. No mutation reachable in Phase 1.
  */
 
+import { HYGGLO_API_VERSION } from "./auth";
 import type { HyggloClient } from "./client";
 import { notEnabledYet } from "./guards";
 import type {
@@ -45,11 +46,11 @@ export async function listProducts(
   // Hard cap on pages so a misbehaving endpoint can't loop forever.
   for (let page = 0; page < 100; page++) {
     const data = await client.getJson<unknown>(
-      `/v2/my/products?limit=${PAGE_SIZE}&offset=${offset}`,
+      `/${HYGGLO_API_VERSION}/my/products?limit=${PAGE_SIZE}&offset=${offset}`,
     );
     const batch = asProductArray(data);
 
-    // Defensive de-dupe + offset-ignored guard: Hygglo's `/v2/my/products`
+    // Defensive de-dupe + offset-ignored guard: Hygglo's `/${HYGGLO_API_VERSION}/my/products`
     // currently IGNORES `offset` and returns the SAME full page every time
     // (verified 2026-06-03 — offsets 0/100/200 all return the identical 110
     // rows). Walking pages would otherwise loop to the 100-page cap and emit
@@ -80,7 +81,7 @@ export async function getProduct(
   id: number | string,
 ): Promise<HyggloProductDetail> {
   return client.getJson<HyggloProductDetail>(
-    `/v2/my/products/${encodeURIComponent(String(id))}`,
+    `/${HYGGLO_API_VERSION}/my/products/${encodeURIComponent(String(id))}`,
   );
 }
 
@@ -94,7 +95,7 @@ export async function getPublicListing(
   country?: string,
 ): Promise<HyggloPublicListing> {
   return client.getPublicJson<HyggloPublicListing>(
-    `/v2/product-listings/${encodeURIComponent(String(listingId))}`,
+    `/${HYGGLO_API_VERSION}/product-listings/${encodeURIComponent(String(listingId))}`,
     country,
   );
 }
@@ -103,7 +104,7 @@ export async function getPublicListing(
 //  WRITES — typed, NOT live in Phase 1 (throw notEnabledYet)
 // ════════════════════════════════════════════════════════════════════════
 
-/** PATCH /v2/my/products/{id} — edit listing fields (title/desc/prices/…). */
+/** PATCH /v4/my/products/{id} — edit listing fields (title/desc/prices/…). */
 export async function updateProduct(
   _client: HyggloClient,
   _id: number | string,
@@ -112,7 +113,7 @@ export async function updateProduct(
   return notEnabledYet("updateProduct");
 }
 
-/** PATCH /v2/my/products/{id} { isPublished } — publish/unpublish. */
+/** PATCH /v4/my/products/{id} { isPublished } — publish/unpublish. */
 export async function publishProduct(
   _client: HyggloClient,
   _id: number | string,
@@ -121,7 +122,7 @@ export async function publishProduct(
   return notEnabledYet("publishProduct");
 }
 
-/** DELETE /v2/my/products/{id}. */
+/** DELETE /v4/my/products/{id}. */
 export async function deleteProduct(
   _client: HyggloClient,
   _id: number | string,
@@ -129,7 +130,7 @@ export async function deleteProduct(
   return notEnabledYet("deleteProduct");
 }
 
-/** PUT /v2/my/products/{id}/unavailability-dates — blocked dates. */
+/** PUT /v4/my/products/{id}/unavailability-dates — blocked dates. */
 export async function setUnavailability(
   _client: HyggloClient,
   _id: number | string,
@@ -138,7 +139,7 @@ export async function setUnavailability(
   return notEnabledYet("setUnavailability");
 }
 
-/** POST /v2/my/products/presigned-url → S3 upload URL for a new photo. */
+/** POST /v4/my/products/presigned-url → S3 upload URL for a new photo. */
 export async function requestPhotoUploadUrl(
   _client: HyggloClient,
   _id: number | string,

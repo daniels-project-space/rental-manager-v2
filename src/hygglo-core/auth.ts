@@ -22,6 +22,16 @@
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 export const HYGGLO_API_BASE = "https://api.hygglo.com/api";
+/**
+ * Version segment for the product / catalog / public-listing surface.
+ *
+ * Hygglo retired `/api/v2/*` — every v2 path answers 404 NOT_FOUND with or
+ * without a valid bearer, while `/api/v4/*` answers 401 unauthenticated.
+ * Migrated 2026-09-02. Build every catalog-side path from this constant so the
+ * next bump is one line. The order/message paths in `hygglo-write.ts` and
+ * `poll-hygglo.ts` were already on v4 and are deliberately left as they are.
+ */
+export const HYGGLO_API_VERSION = "v4";
 export const HYGGLO_CLIENT_ID = "ngHyggloApp";
 /** Default country for accounts that don't specify one (GB = leo / dbcinema). */
 export const HYGGLO_DEFAULT_COUNTRY = "GB";

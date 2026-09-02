@@ -7,10 +7,10 @@
  * the live poll path.
  *
  * Endpoints (public — `requireAuth:false`, also visible on hygglo.com):
- *   - Reviews : GET /v2/product-reviews?vendorId={id}&$limit=100&$skip=0
+ *   - Reviews : GET /v4/product-reviews?vendorId={id}&$limit=100&$skip=0
  *               envelope { limit, skip, total, data[] }, each row
  *               { rating, createdAt, product:{name}, productListing:{slug} }.
- *   - Listings: GET /v2/product-listings/search?vendorId={id}&pageSize=100&pageIndex=0
+ *   - Listings: GET /v4/product-listings/search?vendorId={id}&pageSize=100&pageIndex=0
  *               envelope { productListings[], totalCount, hasNextPage, ... }.
  *
  * ── PII FIREWALL (hard) ──────────────────────────────────────────────
@@ -23,6 +23,7 @@
  * `getPublicJson` auto-appends `&country=GB`, so paths omit `country`.
  */
 
+import { HYGGLO_API_VERSION } from "./auth";
 import type { HyggloClient } from "./client";
 
 /** PII-safe review fact: which item, when, what rating + the listing ref
@@ -59,7 +60,7 @@ interface RawReviewsEnvelope {
   }>;
 }
 
-// Public listing-detail shape (price source). `GET /v2/product-listings/{id}`.
+// Public listing-detail shape (price source). `GET /v4/product-listings/{id}`.
 interface RawListingDetail {
   id?: number;
   slug?: string;
@@ -118,7 +119,7 @@ export async function getVendorReviews(
   const limit = opts.limit ?? 100;
   const skip = opts.skip ?? 0;
   const env = await client.getPublicJson<RawReviewsEnvelope>(
-    `/v2/product-reviews?vendorId=${encodeURIComponent(String(vendorId))}` +
+    `/${HYGGLO_API_VERSION}/product-reviews?vendorId=${encodeURIComponent(String(vendorId))}` +
       `&$limit=${limit}&$skip=${skip}`,
   );
   const rows = Array.isArray(env?.data) ? env.data : [];
@@ -141,7 +142,7 @@ export async function getVendorReviews(
 
 /**
  * Resolve the daily price (GBP) for ONE listing via the public listing-detail
- * endpoint `GET /v2/product-listings/{id}` (200, no Bearer). Returns the true
+ * endpoint `GET /v4/product-listings/{id}` (200, no Bearer). Returns the true
  * single-day rate (`prices[].days===1`), falling back to highest/lowest per-day
  * or the first positive per-day tier. Read-only, PII-safe (no owner/reviewer
  * data read). Returns null if the listing has no usable price or 404s.
@@ -153,7 +154,7 @@ export async function getListingPrice(
   let detail: RawListingDetail;
   try {
     detail = await client.getPublicJson<RawListingDetail>(
-      `/v2/product-listings/${encodeURIComponent(String(listingId))}`,
+      `/${HYGGLO_API_VERSION}/product-listings/${encodeURIComponent(String(listingId))}`,
     );
   } catch {
     return null; // 404 / removed listing — treat as no price
@@ -251,7 +252,7 @@ export async function getVendorListings(
   const pageSize = opts.pageSize ?? 100;
   const pageIndex = opts.pageIndex ?? 0;
   const env = await client.getPublicJson<RawListingsEnvelope>(
-    `/v2/product-listings/search?vendorId=${encodeURIComponent(String(vendorId))}` +
+    `/${HYGGLO_API_VERSION}/product-listings/search?vendorId=${encodeURIComponent(String(vendorId))}` +
       `&pageSize=${pageSize}&pageIndex=${pageIndex}`,
   );
   const rows = asListingArray(env);

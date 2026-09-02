@@ -182,7 +182,7 @@ export interface HyggloProductListing {
   location?: unknown;
 }
 
-/** Product list element from `GET /v2/my/products` (bare array per fixture). */
+/** Product list element from `GET /v4/my/products` (bare array per fixture). */
 export interface HyggloProductListItem {
   id: number;
   name?: string;
@@ -199,7 +199,7 @@ export interface HyggloProductListItem {
   publicUrl?: string;
 }
 
-/** Full product detail from `GET /v2/my/products/{id}`. */
+/** Full product detail from `GET /v4/my/products/{id}`. */
 export interface HyggloProductDetail extends HyggloProductListItem {
   description?: string;
   ownerId?: number;
@@ -211,7 +211,7 @@ export interface HyggloProductDetail extends HyggloProductListItem {
   currency?: string;
 }
 
-/** Public listing from `GET /v2/product-listings/{id}?country=GB` (no token). */
+/** Public listing from `GET /v4/product-listings/{id}?country=GB` (no token). */
 export interface HyggloPublicListing {
   id: number;
   slug?: string;

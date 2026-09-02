@@ -40,6 +40,7 @@ export * from "./auth";
 export * from "./auth-account";
 export * from "./guards";
 export { HyggloApiError, createClient, type HyggloClient } from "./client";
+export { HYGGLO_API_BASE, HYGGLO_API_VERSION } from "./auth";
 export * as orders from "./orders";
 export * as catalog from "./catalog";
 export * as shape from "./shape";
