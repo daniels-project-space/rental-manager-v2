@@ -15,9 +15,14 @@
  *   - PUBLISH / UNPUBLISH = **PATCH { isPublished }** only. PUT ignores an
  *     unpublish, so `editListing` enforces the requested publish state with a
  *     follow-up PATCH.
- *   - The image reference on PUT must be the **bare `<uuid>.<ext>`** filename
- *     (strip any "products/" prefix or Hygglo 500s "Failed to get file
- *     reference"). PUT reuses the existing image — no re-upload on edit.
+ *   - On EDIT, reference the existing image by its **`id`**, with the filename
+ *     passed through unchanged. A bare `<uuid>.<ext>` also works for photos
+ *     stored as `products/…`, but NOT for the `fat-llama/products/…` ones
+ *     dbcinema imported — those 500 "Failed to get file reference" on both the
+ *     bare name and the full path. The id resolves either. It also stops Hygglo
+ *     minting a fresh image row on every edit. No re-upload on edit.
+ *   - On CREATE the file has no id yet, so there the **bare** filename from the
+ *     presigned upload is still what goes in.
  *   - PUT requires `cancellationTerms` as the enum string "0" | "1" | "2" plus
  *     every other field; `locationIds` must list ALL of the account's pickup
  *     locations (PUT is idempotent on them — it won't double them).
@@ -64,7 +69,12 @@ export interface HyggloListing {
   stockLevel?: number;
   cancellationTerms?: string;
   prices?: HyggloPrice[];
-  images?: Array<{ filename?: string; fullSizeUrl?: string; displayOrder?: number }>;
+  images?: Array<{
+    id?: number;
+    filename?: string;
+    fullSizeUrl?: string;
+    displayOrder?: number;
+  }>;
   listings?: Array<{ location?: { id: number; name?: string; address?: string } }>;
   publicUrl?: string;
 }
@@ -349,7 +359,27 @@ export async function editListing(
   const cur = await getItem(c, id);
   if (!cur) return { ok: false, error: `listing ${id} not found` };
 
-  const existingBare = bare(cur.images?.[0]?.filename);
+  // Image reference for the PUT. Name the EXISTING image by `id` and pass its
+  // filename through untouched.
+  //
+  // The old rule here was "strip to the bare <uuid>.<ext>", which worked only
+  // because every listing the rule was derived from stored its photo as
+  // `products/<uuid>.<ext>`. The listings dbcinema imported from Fat Llama are
+  // under `fat-llama/products/<slug>.jpeg`, and for those the bare name does
+  // not resolve — Hygglo 500s "Failed to get file reference" (as does the full
+  // path on its own). Sending the id makes Hygglo resolve the row directly, and
+  // that works for BOTH prefixes.
+  //
+  // It also stops the churn the bare form caused: without an id Hygglo minted a
+  // NEW image row on every edit (same file, new id, fresh createdAt). With the
+  // id the row is left alone.
+  //
+  // `bare()` is still right for `createListing`, where the file was just
+  // uploaded and has no id yet.
+  const curImage = cur.images?.[0];
+  const imageRef = curImage
+    ? [{ id: curImage.id, filename: curImage.filename, displayOrder: 0 }]
+    : [];
   const wantPublish = "isPublished" in changes ? !!changes.isPublished : undefined;
 
   // Locations: reuse the ones already on the product (idempotent), falling back
@@ -376,7 +406,7 @@ export async function editListing(
       cancellationTerms: changes.cancellationTerms ?? cur.cancellationTerms ?? CANCELLATION_DEFAULT,
       locationIds: locIds,
       prices: cleanPrices(changes.prices ?? cur.prices),
-      images: [{ filename: existingBare, displayOrder: 0 }],
+      images: imageRef,
     };
     try {
       await c.sendRaw("PUT", `/${HYGGLO_API_VERSION}/my/products/${encodeURIComponent(String(id))}?country=${COUNTRY}`, body);
