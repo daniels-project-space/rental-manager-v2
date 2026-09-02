@@ -4,6 +4,7 @@ import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
 import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
 import { realisedMonthRevenue, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
+import { projectCurrentMonth, trailingBaseline } from "./lib/month_projection";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue, OWNER_SHARE } from "./lib/missed_revenue";
 import {
@@ -810,15 +811,28 @@ export const getLifetimeByMonth = query({
     const revByMonth = new Map<string, number>();
     for (const r of rows) revByMonth.set(r.month, monthRev(r));
 
-    // Current-month month-to-date pace (extrapolate to full month).
     const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const dayOfMonth = now.getDate();
     const currentRow = rows.find((r) => r.month === currentMonth);
     const currentMonthSoFar = currentRow ? monthRev(currentRow) : 0;
-    const paceProjection =
-      dayOfMonth > 0
-        ? Math.round((currentMonthSoFar / dayOfMonth) * daysInCurrentMonth)
-        : currentMonthSoFar;
+
+    // Split the current month's booked total into "already earned" vs "booked
+    // for later this month". The old `paceProjection` divided the WHOLE month
+    // (currentMonthSoFar, which includes bookings dated later in the month) by
+    // dayOfMonth — treating future bookings as already earned. On 2026-09-02
+    // that turned £835.20 into £835.20 / 2 * 30 = £12,528, and the blend below
+    // published £11,546 as September's target for a ~£3,342/mo business.
+    const todayStr = now.toISOString().slice(0, 10);
+    let currentRealisedToDate = 0;
+    for (const res of dedupedFiltered) {
+      if (res.is_obsolete) continue;
+      if (res.status === "cancelled" || res.status === "declined") continue;
+      if (isPendingVerification(res as any)) continue;
+      const d = effectiveDate(res as any);
+      if (!d || d.slice(0, 7) !== currentMonth || d > todayStr) continue;
+      currentRealisedToDate += res.net_to_owner_gbp ?? 0;
+    }
+    const currentBookedRemainder = Math.max(0, currentMonthSoFar - currentRealisedToDate);
 
     // Same month in up to 3 prior years; year-over-year growth factor applied
     // when 2+ samples are available. Clamped 0.7x-1.5x to absorb outliers.
@@ -862,27 +876,31 @@ export const getLifetimeByMonth = query({
     };
     const forecast: ForecastEntry[] = [];
 
-    // Current month: prefer a blend of pace + seasonal when both available.
+    // Current month: the SINGLE canonical definition, shared byte-for-byte with
+    // the Expected Monthly stat card (convex/dashboard.ts) via
+    // convex/lib/month_projection.ts. Seasonality is deliberately excluded here
+    // — dashboard.ts reads only the last 365 days of reservations and cannot see
+    // prior-year Septembers, so including it would guarantee the tile and the
+    // chart disagree again. Seasonality still drives the FUTURE months below,
+    // which only the chart draws and no tile mirrors.
     {
-      const seasonal = seasonalProjection(currentMonth);
-      let value: number;
-      let basis: ForecastEntry["basis"];
-      if (seasonal.sampleYears >= 1 && currentMonthSoFar > 0) {
-        value = Math.round(paceProjection * 0.6 + seasonal.value * 0.4);
-        basis = "blend";
-      } else if (currentMonthSoFar > 0) {
-        value = paceProjection;
-        basis = "pace";
-      } else if (seasonal.sampleYears >= 1) {
-        value = seasonal.value;
-        basis = "seasonal";
-      } else {
-        value = movingAvg;
-        basis = "ma";
-      }
-      // Never project below what's already realised this month.
-      value = Math.max(value, currentMonthSoFar);
-      forecast.push({ month: currentMonth, value, basis });
+      const projection = projectCurrentMonth({
+        realisedToDate: currentRealisedToDate,
+        bookedRemainder: currentBookedRemainder,
+        daysElapsed: dayOfMonth,
+        daysInMonth: daysInCurrentMonth,
+        baseline: trailingBaseline(
+          completedRows.slice(-3).reverse().map((r) => monthRev(r)),
+        ),
+      });
+      forecast.push({
+        month: currentMonth,
+        // Never project below what is already on the books — projectCurrentMonth
+        // floors at `committed`, so this is belt-and-braces for the case where
+        // currentMonthSoFar counts rows the projection inputs did not.
+        value: Math.max(projection.projected, Math.round(currentMonthSoFar)),
+        basis: "blend",
+      });
     }
 
     // MoM growth rate from up to last 6 completed months (geometric mean).

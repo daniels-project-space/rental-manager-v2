@@ -16,6 +16,7 @@ import {
   isEarned,
   isLive,
   isOngoing,
+  isOverdue,
   isPendingVerification,
   isUpcoming,
   netOf,
@@ -65,12 +66,28 @@ describe("isOngoing / isUpcoming", () => {
     assert.equal(isOngoing(row({ start_date: "2026-05-20" }), TODAY), false);  // future start
     assert.equal(isOngoing(row({ status: "pending_review", start_date: "2026-05-14" }), TODAY), false);
   });
-  it("not ongoing once end_date has passed, even if not marked RETURNED", () => {
-    // Mirrors the dashboard-widget rule: a confirmed rental whose end_date is
-    // before today disappears from active even if order_step is RETURNED or
-    // DELIVERED (i.e. owner forgot to tick "returned" on Hygglo).
-    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "RETURNED" }), TODAY), false);
-    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "DELIVERED" }), TODAY), false);
+  it("STAYS ongoing once end_date has passed while the renter still has the gear", () => {
+    // Reversed 2026-09-02. The old rule dropped past-end rentals from Active,
+    // so the dashboard read "0 ongoing" while the Return Hub listed four
+    // rentals overdue since 22–31 Aug — gear physically out, invisible on the
+    // dashboard. completeStaleConfirmedCron deliberately will NOT auto-complete
+    // these steps, so they sit at status="confirmed" until the owner ticks the
+    // return on Hygglo. They are overdue, not finished.
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "RETURNED" }), TODAY), true);
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "DELIVERED" }), TODAY), true);
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "BOOKED_AFTER_VERIFIED" }), TODAY), true);
+  });
+  it("does NOT keep past-end rentals ongoing when the gear is not out", () => {
+    // Any other step means the kit is not with the renter; completeStaleConfirmedCron
+    // demotes these to "completed" within a day, so they must not linger in Active.
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "REVIEWED" }), TODAY), false);
+    assert.equal(isOngoing(row({ start_date: "2026-04-01", end_date: "2026-05-13" }), TODAY), false);
+  });
+  it("isOverdue marks exactly the past-end rentals whose gear is still out", () => {
+    assert.equal(isOverdue(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "RETURNED" }), TODAY), true);
+    // In-window rentals are ongoing but not overdue.
+    assert.equal(isOverdue(row({ start_date: "2026-05-14", end_date: "2026-05-22", order_step: "RETURNED" }), TODAY), false);
+    assert.equal(isOverdue(row({ start_date: "2026-04-01", end_date: "2026-05-13", order_step: "REVIEWED" }), TODAY), false);
   });
   it("upcoming when start > today", () => {
     assert.equal(isUpcoming(row({ start_date: "2026-05-20" }), TODAY), true);

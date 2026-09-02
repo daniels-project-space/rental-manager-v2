@@ -17,6 +17,11 @@ import {
   type ReservationRow,
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
+import {
+  pctOfTarget,
+  projectCurrentMonth,
+  trailingBaseline,
+} from "./lib/month_projection";
 import { passesNameSanityCheck } from "./lib/reservations/itemResolution";
 import { londonToday } from "./lib/effectiveDates";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
@@ -773,7 +778,11 @@ export const getStatsDrawerData = query({
       }),
     );
     const bookedFuture = bookedFutureUniq.reduce((s, r) => s + netOf(r), 0);
-    const projected = Math.round(monthTotal + bookedFuture + avgDailyRate * daysRemaining);
+    // The month projection itself now lives with the `monthly` card below and
+    // is computed by convex/lib/month_projection.ts. The old one-liner here
+    // (monthTotal + bookedFuture + avgDailyRate * daysRemaining) collapsed to
+    // just `bookedFuture` at the start of every month, because avgDailyRate is
+    // monthTotal/daysElapsed and nothing has been picked up yet on day 1–2.
 
     // ── card: active ─────────────────────────────────────────────
     // V1 PARITY: count unique rentals; expose ongoing/upcoming/pending split
@@ -1511,17 +1520,36 @@ export const getStatsDrawerData = query({
     const monthBookedRevenue = monthBookedRentals.reduce((s, r) => s + netOf(r), 0);
 
     // ── card: monthly ────────────────────────────────────────────
-    // Target = projected (current trend's end-of-month run-rate).
-    const monthlyTarget = projected;
-    const monthlyPct = monthlyTarget > 0
-      ? Math.round((monthBookedRevenue / monthlyTarget) * 100)
-      : 0;
+    // Target is now INDEPENDENT of this month's bookings — it is what a normal
+    // month looks like, from the trailing completed months. It used to be set
+    // to `projected`, which made pct_of_target read exactly 100% forever and
+    // made Expected Monthly a duplicate of Month Confirmed at the start of
+    // every month. See convex/lib/month_projection.ts for the full write-up.
+    const trailingMonthKeys = [1, 2, 3].map((back) =>
+      new Date(now.getFullYear(), now.getMonth() - back, 1).toISOString().slice(0, 7),
+    );
+    const monthlyBaseline = trailingBaseline(
+      trailingMonthKeys.map(
+        (m) => realisedMonthRevenue(allRes as unknown as ResRow[], m, accountSlug ?? null).netGbp,
+      ),
+    );
+    const monthProjection = projectCurrentMonth({
+      realisedToDate: monthTotal,
+      bookedRemainder: bookedFuture,
+      daysElapsed,
+      daysInMonth,
+      baseline: monthlyBaseline,
+    });
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
       confirmed_revenue: Math.round(monthBookedRevenue * 100) / 100,
-      projected,
-      target_gbp: monthlyTarget,
-      pct_of_target: Math.min(100, monthlyPct),
+      projected: monthProjection.projected,
+      target_gbp: monthProjection.target,
+      // Uncapped: a strong month should be allowed to read >100%. The UI clamps
+      // the progress BAR, not this number.
+      pct_of_target: pctOfTarget(monthBookedRevenue, monthProjection.target),
+      projection_basis: monthProjection.basis,
+      baseline_gbp: monthlyBaseline,
       days_remaining: daysRemaining,
       days_in_month: daysInMonth,
       days_elapsed: daysElapsed,
@@ -1538,6 +1566,15 @@ export const getStatsDrawerData = query({
     // here is stricter than isOngoing — Month Confirmed only highlights
     // strictly current rentals (end >= today), whereas isOngoing also keeps
     // overdue/never-returned rows visible.
+    //
+    // 2026-09-02: that last clause was ASPIRATIONAL, not true — isOngoing used
+    // to require `end >= today` as well, so overdue rentals appeared in neither
+    // card. isOngoing now genuinely keeps them (see predicates.ts isOverdue),
+    // which makes this comment accurate for the first time. The monthDone /
+    // monthActive split below is deliberately left alone: those slices are
+    // scoped to the CURRENT month, and an overdue rental's month has, by
+    // definition, already passed — it belongs to Active Rentals, not to this
+    // month's breakdown bar.
     const monthDone = monthBookedRentals.filter(
       (r) => r.status === "completed" || (r.end_date as string) < today,
     );

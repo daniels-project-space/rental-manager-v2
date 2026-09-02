@@ -132,11 +132,48 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
 }
 
 /**
- * Confirmed AND today falls within [effective pickup, effective return].
+ * Steps where the renter physically has the gear. Mirrors the skip-list in
+ * `reservations.completeStaleConfirmedCron`, which deliberately refuses to
+ * auto-complete these rows precisely because the kit is still out.
+ */
+const GEAR_STILL_OUT_STEPS = new Set([
+  "BOOKED_AFTER_VERIFIED",
+  "DELIVERED",
+  "RETURNED",
+]);
+
+/**
+ * Confirmed, past its effective return date, and the renter STILL has the gear.
+ * These are overdue rentals: the owner has not ticked the return on Hygglo, so
+ * completeStaleConfirmedCron leaves them at status="confirmed" indefinitely.
+ * The Return Hub lists exactly these for closing.
+ */
+export function isOverdue(r: ReservationRow, today: string): boolean {
+  return isConfirmedWithDates(r)
+    && displayPickupDate(r) <= today
+    && displayReturnDate(r) < today
+    && GEAR_STILL_OUT_STEPS.has(r.order_step ?? "");
+}
+
+/**
+ * Confirmed AND the gear is out today — either today falls within
+ * [effective pickup, effective return], or the return date has passed and the
+ * renter still has the kit (see isOverdue).
  * Honors the negotiated pickup_date / return_date (display dates) so an early/
- * late handover or chat-agreed extension moves the active window. Rentals whose
- * effective return has passed disappear from the active widget here even if the
- * owner has not yet marked them RETURNED on Hygglo — that's deliberate.
+ * late handover or chat-agreed extension moves the active window.
+ *
+ * OVERDUE INCLUSION (2026-09-02). This used to also require
+ * `displayReturnDate(r) >= today`, so a rental whose return date had passed
+ * vanished from Active Rentals even though the renter still had the gear. On
+ * 2026-09-02 the live dashboard read "0 ongoing" while the Return Hub listed
+ * four rentals overdue since 22–31 Aug. The docstring here contradicted itself
+ * (it claimed both that past-end rentals "disappear" AND that unreturned
+ * DELIVERED rentals "still appear as ongoing/overdue"), and
+ * convex/dashboard.ts asserted isOngoing "also keeps overdue/never-returned
+ * rows visible" — which was false. Daniel's call: they count as ongoing.
+ * Scoped to GEAR_STILL_OUT_STEPS so only genuinely-unreturned kit lingers —
+ * every other past-end confirmed row is auto-completed within a day by
+ * reservations.completeStaleConfirmedCron.
  *
  * NOTE: this intentionally does NOT exclude order_step==="VERIFIED". A genuine
  * "pending-verification" item is status!=="confirmed" (it lives at
@@ -151,7 +188,7 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
 export function isOngoing(r: ReservationRow, today: string): boolean {
   return isConfirmedWithDates(r)
     && displayPickupDate(r) <= today
-    && displayReturnDate(r) >= today;
+    && (displayReturnDate(r) >= today || isOverdue(r, today));
 }
 
 /** Confirmed AND effective pickup is in the future. */
