@@ -292,7 +292,7 @@ export function LifetimeRevenue() {
             <span>Avg/mo: <b style={{ color: "#e4e6eb" }}>{"£"}{avgMonthly.toLocaleString("en-GB")}</b></span>
             {leoTakeover.afterMonths > 0 && (
               <span
-                title={`After Leo uses only ${LEO_TAKEOVER_MONTH} onward (${leoTakeover.afterMonths} calendar month${leoTakeover.afterMonths === 1 ? "" : "s"}); the comparison uses the preceding ${leoTakeover.beforeMonths} calendar months. Zero-revenue months count. The current partial month is included.`}
+                title={`After Leo uses only ${LEO_TAKEOVER_MONTH} onward (${leoTakeover.afterMonths} completed calendar month${leoTakeover.afterMonths === 1 ? "" : "s"}); the comparison uses the preceding ${leoTakeover.beforeMonths} completed calendar months. Zero-revenue months count. The current partial month is EXCLUDED from both sides — same rule as Avg/mo, Best and Weakest.`}
               >
                 After Leo: <b style={{ color: "#fb923c" }}>£{leoTakeover.afterAverage.toLocaleString("en-GB")}/mo</b>
                 {leoTakeover.beforeMonths > 0 && (
@@ -307,9 +307,6 @@ export function LifetimeRevenue() {
                       </b>
                     )}
                   </span>
-                )}
-                {leoTakeover.includesPartialCurrentMonth && (
-                  <span className="ml-1 text-[9px] text-[#6b7280]">so far</span>
                 )}
               </span>
             )}
