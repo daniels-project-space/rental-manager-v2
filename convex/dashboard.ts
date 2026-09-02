@@ -1567,14 +1567,21 @@ export const getStatsDrawerData = query({
     // strictly current rentals (end >= today), whereas isOngoing also keeps
     // overdue/never-returned rows visible.
     //
-    // 2026-09-02: that last clause was ASPIRATIONAL, not true — isOngoing used
-    // to require `end >= today` as well, so overdue rentals appeared in neither
-    // card. isOngoing now genuinely keeps them (see predicates.ts isOverdue),
-    // which makes this comment accurate for the first time. The monthDone /
-    // monthActive split below is deliberately left alone: those slices are
-    // scoped to the CURRENT month, and an overdue rental's month has, by
-    // definition, already passed — it belongs to Active Rentals, not to this
-    // month's breakdown bar.
+    // 2026-09-02: that last clause is ASPIRATIONAL, not true. isOngoing also
+    // requires `end >= today`, so an overdue rental — gear physically still
+    // with the renter — is counted as neither ongoing nor done. On 2026-09-02
+    // Active Rentals read "0 ongoing" while the Return Hub listed four rentals
+    // overdue since 22–31 Aug.
+    //
+    // Do NOT "fix" this by relaxing isOngoing to trust order_step: historical
+    // rows sit at status="confirmed" + order_step="RETURNED" forever, because
+    // completeStaleConfirmedCron deliberately refuses to auto-complete those
+    // steps. Relaxing the predicate that way was tried and yielded 182 ongoing
+    // rentals instead of 4. The authoritative "gear is out" signal is the
+    // `hygglo_current_order_presence` table, which reservations.getDueReturns
+    // uses via isInCurrentOrderPresence() — a DB read, so it cannot live in
+    // these pure predicates. Any real fix belongs in the active card here,
+    // reading that table, not in predicates.ts.
     const monthDone = monthBookedRentals.filter(
       (r) => r.status === "completed" || (r.end_date as string) < today,
     );
