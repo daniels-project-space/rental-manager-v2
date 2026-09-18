@@ -42,6 +42,7 @@ import {
   notificationRetryDelayMs,
   buildConfirmedBookingNotificationCopy,
   isMoneyOnlyMode,
+  resolvePushSubscriptionMode,
   shouldReplayPreferenceSuppressedLowResponseRateAlert,
 } from "./lib/notification_events";
 
@@ -173,6 +174,21 @@ export const savePushSubscription = mutation({
       .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
       .first();
 
+    const subscriptions = await ctx.db.query("push_subscriptions").collect();
+    // An endpoint rotation reaches this mutation as a NEW endpoint with no
+    // explicit mode. Preserve the selected lane from the most recently active
+    // prior endpoint before that row is pruned below. Without this, iOS/Chrome
+    // endpoint rotation recreated the sole subscription as `all`, so a device
+    // configured for My 50% began receiving renter messages again.
+    const previousActive = subscriptions
+      .filter((row) => row.endpoint !== args.endpoint)
+      .sort((a, b) => b.last_seen_at - a.last_seen_at)[0];
+    const mode = resolvePushSubscriptionMode({
+      requested: args.mode,
+      existing: existing?.mode,
+      previousActive: previousActive?.mode,
+    });
+
     // Single-user dashboard: only one subscription is ever meant to be active
     // at a time (Daniel, 2026-08-14 — "only one path can be active at a
     // time"). Browsers/OSes (notably iOS Safari) periodically rotate the push
@@ -183,8 +199,7 @@ export const savePushSubscription = mutation({
     // for the same event, independent of the dispatch-race bug fixed in
     // 9aa4816. Prune every OTHER row on every save/refresh so at most one can
     // ever receive a push.
-    const others = await ctx.db.query("push_subscriptions").collect();
-    for (const row of others) {
+    for (const row of subscriptions) {
       if (row.endpoint !== args.endpoint) {
         await ctx.db.delete(row._id);
       }
@@ -192,14 +207,14 @@ export const savePushSubscription = mutation({
 
     if (existing) {
       const credentialsChanged = existing.p256dh !== args.p256dh || existing.auth !== args.auth;
-      const modeChanged = args.mode !== undefined && existing.mode !== args.mode;
+      const modeChanged = existing.mode !== mode;
       const metadataChanged = existing.user_agent !== args.user_agent || modeChanged;
       const refreshDue = now - existing.last_seen_at >= 24 * 60 * 60 * 1000;
       if (credentialsChanged || metadataChanged || refreshDue) {
         await ctx.db.patch(existing._id, {
           p256dh: args.p256dh,
           auth: args.auth,
-          ...(args.mode !== undefined ? { mode: args.mode } : {}),
+          mode,
           user_agent: args.user_agent,
           last_seen_at: now,
         });
@@ -209,21 +224,21 @@ export const savePushSubscription = mutation({
       }
       return {
         status: credentialsChanged || metadataChanged ? "updated" as const : "unchanged" as const,
-        mode: args.mode ?? existing.mode ?? "all" as const,
+        mode,
       };
     }
     await ctx.db.insert("push_subscriptions", {
       endpoint: args.endpoint,
       p256dh: args.p256dh,
       auth: args.auth,
-      mode: args.mode ?? "all",
+      mode,
       user_agent: args.user_agent,
       created_at: now,
       last_seen_at: now,
     });
     // A newly enabled toggle immediately retries any still-pending event.
     await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
-    return { status: "created" as const, mode: args.mode ?? "all" as const };
+    return { status: "created" as const, mode };
   },
 });
 

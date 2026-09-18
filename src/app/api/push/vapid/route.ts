@@ -10,7 +10,9 @@ export const runtime = "nodejs";
 // with a Next-env fallback.
 export async function GET() {
   const convexUrl =
-    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
+    process.env.CONVEX_URL ??
+    process.env.NEXT_PUBLIC_CONVEX_URL ??
+    "https://hearty-oyster-600.convex.cloud";
   try {
     const convex = new ConvexHttpClient(convexUrl);
     const key = await convex.query(api.notifications.getVapidPublicKey, {});

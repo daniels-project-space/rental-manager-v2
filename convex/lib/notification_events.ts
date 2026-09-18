@@ -175,6 +175,24 @@ export function isMoneyOnlyMode(
   return mode === "money_only" || mode === "my_share";
 }
 
+/**
+ * Select the mode for a subscription being saved or re-created.
+ *
+ * The dashboard deliberately keeps only one active push endpoint. Browsers may
+ * rotate that endpoint without user interaction, though, which means a save for
+ * the new endpoint has no row of its own yet. Falling back straight to `all`
+ * used to silently turn a selected "My 50%" / "Money only" lane into every
+ * incoming message as soon as that happened. Carry the most recently active
+ * preference forward unless the user explicitly picked a new mode.
+ */
+export function resolvePushSubscriptionMode(args: {
+  requested?: PushNotificationMode;
+  existing?: PushNotificationMode;
+  previousActive?: PushNotificationMode;
+}): PushNotificationMode {
+  return args.requested ?? args.existing ?? args.previousActive ?? "all";
+}
+
 /** Money-only is deliberately per subscription so other operators stay on all. */
 export function subscriptionReceivesNotification(
   mode: PushNotificationMode | undefined,

@@ -117,12 +117,11 @@ export function NotificationBell() {
       );
   }, []);
 
-  // Keep push alive so notifications never silently expire. Whenever the app
-  // loads with permission already granted, re-attach the subscription — RE-
-  // subscribing if the browser has dropped/rotated it — and re-save it.
-  // savePushSubscription upserts by endpoint (refreshes last_seen), so this is
-  // idempotent and won't duplicate. This is the reliable cross-platform heal;
-  // iOS doesn't fire `pushsubscriptionchange`, so we refresh on every open.
+  // Keep push alive so notifications never silently expire. Re-attach the
+  // subscription on load, whenever the dashboard becomes visible again, and
+  // periodically while it stays open. iOS does not reliably fire
+  // `pushsubscriptionchange`, so visibility/focus is the important recovery
+  // path after an endpoint has rotated in the background.
   useEffect(() => {
     if (typeof window === "undefined" || !vapidKey) return;
     if (
@@ -133,7 +132,7 @@ export function NotificationBell() {
     )
       return;
     let cancelled = false;
-    (async () => {
+    const refreshSubscription = async () => {
       try {
         const reg = await navigator.serviceWorker.ready;
         let sub = await reg.pushManager.getSubscription();
@@ -165,9 +164,19 @@ export function NotificationBell() {
       } catch {
         /* best-effort keep-alive; the manual Enable button is the fallback */
       }
-    })();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshSubscription();
+    };
+    void refreshSubscription();
+    const interval = window.setInterval(refreshSubscription, 30 * 60 * 1000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", refreshWhenVisible);
     };
   }, [vapidKey, save]);
 
@@ -354,7 +363,7 @@ export function NotificationBell() {
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-[0.12em] text-[#6b7280] mb-1.5">
-                  This device
+                  Active notification lane
                 </p>
                 <div className="grid grid-cols-3 gap-1 rounded-lg bg-white/[0.04] p-1">
                   {([
@@ -388,7 +397,7 @@ export function NotificationBell() {
                   })}
                 </div>
                 <p className="text-[9px] text-[#6b7280] mt-1.5 leading-snug">
-                  All notifications shows every rental alert. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% sends the same alerts showing half the earnings — your share. Other devices keep their own setting.
+                  All notifications shows every rental alert. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% sends the same alerts showing half the earnings — your share. This choice survives browser push-endpoint refreshes.
                 </p>
                 {err && <p className="text-[10px] text-red-400 mt-1">{err}</p>}
               </div>

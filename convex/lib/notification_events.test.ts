@@ -8,6 +8,7 @@ import {
   notificationClaimAvailable,
   notificationRetryDelayMs,
   PREFERENCE_SUPPRESSED_ALERT_REPLAY_WINDOW_MS,
+  resolvePushSubscriptionMode,
   shouldReplayPreferenceSuppressedLowResponseRateAlert,
   subscriptionReceivesNotification,
   telegramNotificationMode,
@@ -132,6 +133,17 @@ describe("confirmed booking notification transitions", () => {
 });
 
 describe("per-device notification modes", () => {
+  it("keeps the selected money lane when a browser rotates to a new endpoint", () => {
+    expect(resolvePushSubscriptionMode({ previousActive: "my_share" })).toBe("my_share");
+    expect(resolvePushSubscriptionMode({ existing: "money_only" })).toBe("money_only");
+    expect(resolvePushSubscriptionMode({
+      requested: "all",
+      existing: "my_share",
+      previousActive: "money_only",
+    })).toBe("all");
+    expect(resolvePushSubscriptionMode({})).toBe("all");
+  });
+
   it("keeps all existing subscriptions on every event by default", () => {
     expect(subscriptionReceivesNotification(undefined, "new_request")).toBe(true);
     expect(subscriptionReceivesNotification("all", "renter_message")).toBe(true);
@@ -147,6 +159,7 @@ describe("per-device notification modes", () => {
     expect(subscriptionReceivesNotification("my_share", "booking_confirmed")).toBe(true);
     expect(subscriptionReceivesNotification("my_share", "new_request")).toBe(false);
     expect(subscriptionReceivesNotification("my_share", "renter_message")).toBe(false);
+    expect(subscriptionReceivesNotification("my_share", "low_response_rate")).toBe(false);
   });
 
   it("defaults Daniel's Telegram fallback to money-only with explicit overrides", () => {
