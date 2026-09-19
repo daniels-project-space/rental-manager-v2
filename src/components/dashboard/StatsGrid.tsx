@@ -331,10 +331,10 @@ export function StatsGrid() {
               {data.monthly.missed && (
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-md border border-rose-500/30 bg-rose-500/[0.09] px-2 py-1.5 text-[11px] text-rose-200">
                   <span className="font-bold text-rose-300">
-                    {data.monthly.missed.total_count} missed bookings (12mo)
+                    {data.monthly.missed.total_count} missed
                   </span>
                   <span className="font-semibold text-rose-200">
-                    {fmtGbpFull(data.monthly.missed.expected_rent_lost_gbp)} expected rent lost
+                    {fmtGbpFull(data.monthly.missed.expected_rent_lost_gbp)} lost
                   </span>
                 </div>
               )}

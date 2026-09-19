@@ -1546,15 +1546,19 @@ export const getStatsDrawerData = query({
       daysInMonth,
       baseline: monthlyBaseline,
     });
-    // Surface the real obsolete-booking outcomes beneath Expected Monthly.
-    // This is deliberately a 12-month operational count, not a fictional £
-    // deduction from this month's projection: several genuine cancellations
-    // have rental dates outside the current calendar month and must not vanish
-    // from the manager merely because the month rolled over.
-    const platformFallout = countPlatformFallout(dedupRes(allRes));
+    // Expected Monthly only shows fallout for rentals scheduled in this revenue
+    // month, using the same effective-date basis as the card's £ totals.
+    const monthlyPlatformFallout = countPlatformFallout(
+      dedupRes(
+        allRes.filter((r) => {
+          const scheduledDate = effectiveDateStr(r as ResRow);
+          return scheduledDate !== undefined && scheduledDate >= monthStart && scheduledDate <= monthEnd;
+        }),
+      ),
+    );
     const monthlyMissedCount =
-      platformFallout.renter_cancelled_pending_count +
-      platformFallout.failed_security_checks_count;
+      monthlyPlatformFallout.renter_cancelled_pending_count +
+      monthlyPlatformFallout.failed_security_checks_count;
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
       confirmed_revenue: Math.round(monthBookedRevenue * 100) / 100,
@@ -1570,9 +1574,9 @@ export const getStatsDrawerData = query({
       days_elapsed: daysElapsed,
       avg_daily_rate: Math.round(avgDailyRate * 100) / 100,
       missed: {
-        ...platformFallout,
+        ...monthlyPlatformFallout,
         total_count: monthlyMissedCount,
-        period_days: 365,
+        scheduled_month: monthStart.slice(0, 7),
       },
     };
 
@@ -1825,6 +1829,7 @@ export const getStatsDrawerData = query({
       denialRows,
       reservations: { rows: allResRaw, gteStartDate: dashCutoff },
     });
+    const platformFallout = countPlatformFallout(dedupRes(allRes));
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({
