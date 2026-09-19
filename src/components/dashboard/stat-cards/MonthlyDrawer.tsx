@@ -38,7 +38,7 @@ export default function MonthlyDrawer({ data }: Props) {
       {data.missed && (
         <div className="col-span-2 rounded border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
           <div className="text-[10px] uppercase tracking-wider text-rose-300/60">
-            Renter cancellations &amp; failed verification · {data.missed.scheduled_month}
+            Renter-cancelled / verification failed · {data.missed.scheduled_month}
           </div>
           <div className="mt-1 text-xs text-rose-200/80">
             {data.missed.total_count === 0
