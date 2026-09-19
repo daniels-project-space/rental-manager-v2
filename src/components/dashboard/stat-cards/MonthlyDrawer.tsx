@@ -6,6 +6,12 @@ interface Props {
     projected: number;
     days_remaining: number;
     avg_daily_rate: number;
+    missed?: {
+      total_count: number;
+      renter_cancelled_pending_count: number;
+      failed_security_checks_count: number;
+      scheduled_month: string;
+    };
   };
 }
 
@@ -29,6 +35,23 @@ export default function MonthlyDrawer({ data }: Props) {
           </div>
         </div>
       ))}
+      {data.missed && (
+        <div className="col-span-2 rounded border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wider text-rose-300/60">
+            Missed scheduled rentals · {data.missed?.scheduled_month}
+          </div>
+          <div className="mt-1 text-xs text-rose-200/80">
+            {data.missed.total_count === 0
+              ? "No renter-cancelled pending requests or failed security checks scheduled this month."
+              : <>
+                  {data.missed.renter_cancelled_pending_count ? `${data.missed.renter_cancelled_pending_count} renter-cancelled pending ${data.missed.renter_cancelled_pending_count === 1 ? "request" : "requests"}` : null}
+                  {data.missed.renter_cancelled_pending_count && data.missed.failed_security_checks_count ? " · " : null}
+                  {data.missed.failed_security_checks_count ? `${data.missed.failed_security_checks_count} failed security ${data.missed.failed_security_checks_count === 1 ? "check" : "checks"}` : null}
+                </>}
+          </div>
+          <div className="mt-1 text-[9px] text-rose-200/50">Count only — not added to expected or realised revenue.</div>
+        </div>
+      )}
     </div>
   );
 }

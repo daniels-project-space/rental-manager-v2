@@ -563,6 +563,9 @@ export default defineSchema({
     // status-scoped queries. Cuts unindexed full-table scans down to the
     // confirmed-only slice (~300 rows vs ~1700).
     .index("by_account_status", ["account_slug", "status"])
+    // Live unmapped-listing alert: read only active status rows in its bounded
+    // forward horizon, rather than every reservation sharing that date range.
+    .index("by_status_start_date", ["status", "start_date"])
     // Pass 8b (2026-05-31): the stats_drawer MV dirty-probe needs to detect ANY
     // reservation mutation cheaply. The poller bumps last_polled_at on every
     // touched row, so an indexed max(last_polled_at) lets the probe catch status

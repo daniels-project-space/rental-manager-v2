@@ -129,6 +129,7 @@ import type * as lib_message_reconciliation from "../lib/message_reconciliation.
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_month_projection from "../lib/month_projection.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
+import type * as lib_platform_fallout from "../lib/platform_fallout.js";
 import type * as lib_poller_window from "../lib/poller_window.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_rental_volume from "../lib/rental_volume.js";
@@ -390,6 +391,7 @@ declare const fullApi: ApiFromModules<{
   "lib/missed_revenue": typeof lib_missed_revenue;
   "lib/month_projection": typeof lib_month_projection;
   "lib/notification_events": typeof lib_notification_events;
+  "lib/platform_fallout": typeof lib_platform_fallout;
   "lib/poller_window": typeof lib_poller_window;
   "lib/quiet_hours": typeof lib_quiet_hours;
   "lib/rental_volume": typeof lib_rental_volume;

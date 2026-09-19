@@ -307,7 +307,28 @@ export function StatsGrid() {
           value={fmtGbpFull(data.monthly.projected)}
           valueColor="green"
           accentColor="green"
-          subtitle={`£${Math.round(data.monthly.avg_daily_rate)}/day avg · ${data.monthly.days_remaining}d left`}
+          subtitle={(() => {
+            const missed = data.monthly.missed;
+            const parts = [
+              missed?.renter_cancelled_pending_count
+                ? `${missed.renter_cancelled_pending_count} renter cancelled`
+                : null,
+              missed?.failed_security_checks_count
+                ? `${missed.failed_security_checks_count} security check${missed.failed_security_checks_count === 1 ? "" : "s"} failed`
+                : null,
+            ].filter((part): part is string => part !== null);
+            const missedSummary = parts.length > 0
+              ? parts.join(" · ")
+              : "no cancelled requests or failed security checks";
+            return (
+              <div className="space-y-0.5">
+                <div>£{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining}d left</div>
+                <div className="font-medium text-rose-300/75">
+                  Missed: {missed?.total_count ?? 0} · {missedSummary}
+                </div>
+              </div>
+            );
+          })()}
           isExpanded={expandedId === "monthly"}
           onToggle={() => toggle("monthly")}
           headerExtra={
@@ -550,6 +571,20 @@ export function StatsGrid() {
           value={fmtGbp(data.missed_revenue.total_gbp)}
           valueColor="red"
           accentColor="red"
+          subtitle={(() => {
+            const losses = data.missed_revenue.operational_losses;
+            const parts = [
+              losses?.renter_cancelled_pending_count
+                ? `${losses.renter_cancelled_pending_count} renter cancellation${losses.renter_cancelled_pending_count === 1 ? "" : "s"}`
+                : null,
+              losses?.failed_security_checks_count
+                ? `${losses.failed_security_checks_count} failed security check${losses.failed_security_checks_count === 1 ? "" : "s"}`
+                : null,
+            ].filter((part): part is string => part !== null);
+            return parts.length > 0 ? (
+              <span className="text-rose-300/70">{parts.join(" · ")} · excluded from £</span>
+            ) : "30-day demand estimate";
+          })()}
           isExpanded={expandedId === "missed_revenue"}
           onToggle={() => toggle("missed_revenue")}
         >

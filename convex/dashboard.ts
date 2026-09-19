@@ -50,6 +50,7 @@ import {
   labelFor,
   loadRentalVolumeWindow,
 } from "./lib/rental_volume";
+import { countPlatformFallout } from "./lib/platform_fallout";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
@@ -1368,6 +1369,10 @@ export const getStatsDrawerData = query({
 
         return {
           reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
+          // Keep the internal document ID separately from the display-facing
+          // Hygglo/V1 ID. CalendarGantt keys its rows by this ID, so the Active
+          // Rentals click-through can focus the exact source booking.
+          calendar_reservation_id: r._id,
           renter_name: r.renter_name ?? null,
           account_slug: r.account_slug ?? "",
           start_date: r.start_date ?? null,
@@ -1449,6 +1454,7 @@ export const getStatsDrawerData = query({
 
       return {
         reservation_id: r.v1_rental_id ?? r.hygglo_order_id ?? r._id,
+        calendar_reservation_id: r._id,
         renter_name: r.renter_name ?? null,
         account_slug: r.account_slug ?? "",
         start_date: r.start_date ?? null,
@@ -1540,6 +1546,23 @@ export const getStatsDrawerData = query({
       daysInMonth,
       baseline: monthlyBaseline,
     });
+    // A miss belongs on the Expected Monthly card when its scheduled rental
+    // falls inside THIS revenue month — not merely because it was cancelled
+    // this month. This mirrors `effectiveDateStr`, the date basis for the
+    // card's earned and booked-remainder components. The classifier only
+    // accepts Hygglo's decisive event (or an equally explicit legacy state),
+    // so an ambiguous obsolete record never masquerades as a failed check.
+    const monthlyPlatformFallout = countPlatformFallout(
+      dedupRes(
+        allRes.filter((r) => {
+          const scheduledDate = effectiveDateStr(r as ResRow);
+          return scheduledDate !== undefined && scheduledDate >= monthStart && scheduledDate <= monthEnd;
+        }),
+      ),
+    );
+    const monthlyMissedCount =
+      monthlyPlatformFallout.renter_cancelled_pending_count +
+      monthlyPlatformFallout.failed_security_checks_count;
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
       confirmed_revenue: Math.round(monthBookedRevenue * 100) / 100,
@@ -1554,6 +1577,11 @@ export const getStatsDrawerData = query({
       days_in_month: daysInMonth,
       days_elapsed: daysElapsed,
       avg_daily_rate: Math.round(avgDailyRate * 100) / 100,
+      missed: {
+        ...monthlyPlatformFallout,
+        total_count: monthlyMissedCount,
+        scheduled_month: monthStart.slice(0, 7),
+      },
     };
 
     // ── card: confirmed ──────────────────────────────────────────
@@ -1805,6 +1833,10 @@ export const getStatsDrawerData = query({
       denialRows,
       reservations: { rows: allResRaw, gteStartDate: dashCutoff },
     });
+    // Counts only — these operational losses are intentionally kept out of
+    // every £ aggregate. `allRes` is already account-scoped and the dashboard
+    // uses its indexed 365-day reservation window for this reporting surface.
+    const platformFallout = countPlatformFallout(dedupRes(allRes));
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({
@@ -1815,6 +1847,10 @@ export const getStatsDrawerData = query({
         reason: `${it.count} ${it.count === 1 ? "request" : "requests"} · couldn't fulfil`,
         kind: "demand" as const,
       })),
+      operational_losses: {
+        ...platformFallout,
+        period_days: 365,
+      },
     };
 
     // ── card: ai_boost (Wave AI-BE rework, 2026-05-22) ────────────

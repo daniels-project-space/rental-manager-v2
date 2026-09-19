@@ -2248,65 +2248,125 @@ export const getUnmappedRentedListings = query({
       .toISOString()
       .slice(0, 10);
 
-    const rows = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", today).lt("start_date", horizon),
-      )
-      .collect();
-    const live = rows.filter(
-      (r) =>
-        ["confirmed", "ongoing"].includes(String(r.status ?? "")) &&
-        !(r as { is_obsolete?: boolean }).is_obsolete,
+    // This query is live-subscribed by StatsGrid, so avoid reading every
+    // pending/cancelled row in the next six months merely to filter it in JS.
+    // Status is first in the composite index, so two exact status ranges retain
+    // precisely the prior `status ∈ {confirmed, ongoing}` semantics.
+    const statusRows = await Promise.all(
+      (["confirmed", "ongoing"] as const).map((status) =>
+        ctx.db
+          .query("reservations")
+          .withIndex("by_status_start_date", (q) =>
+            q.eq("status", status).gte("start_date", today).lt("start_date", horizon),
+          )
+          .collect(),
+      ),
     );
+    const live = statusRows
+      .flat()
+      .filter((r) => !(r as { is_obsolete?: boolean }).is_obsolete)
+      // Preserve the by_start_date order from the former single indexed scan.
+      // The final alert sort is stable, so same-day order remains byte-for-byte
+      // compatible too.
+      .sort(
+        (a, b) =>
+          (a.start_date ?? "").localeCompare(b.start_date ?? "") ||
+          a._creationTime - b._creationTime,
+      );
     if (live.length === 0) return { count: 0, alerts: [] };
 
-    const index = await ctx.db.query("hygglo_product_index").collect();
-    const overrides = await ctx.db.query("listing_resolution_override").collect();
-    // A line also counts as mapped when the catalogue row still carries a
-    // masterItemId (the legacy link). Those resolve to SOMETHING, so they are
-    // not a double-booking risk and must not fire this alert — over-reporting
-    // would make it noise and get it ignored, which is how the original
-    // problem stayed hidden. Only lines that resolve to nothing appear here.
-    const products = await ctx.db.query("hygglo_products").collect();
-
-    // listing_info_pool components are a resolution signal the dashboard's
-    // resolver already trusts (dashboard.ts:expandedIdsOf step A.5), so a line
-    // covered by the pool is NOT untracked. Flag-gated exactly as there, and
-    // the collect is skipped entirely when no account has the pool enabled.
-    const candidateSlugs = Array.from(
-      new Set(live.map((r) => String(r.account_slug ?? "")).filter((s) => s.length > 0)),
-    );
-    const poolEnabledAccounts = await infoPoolEnabledAccounts(ctx, candidateSlugs);
-    const infoPoolKeys = new Set<string>();
-    if (poolEnabledAccounts.size > 0) {
-      for (const pr of await ctx.db.query("listing_info_pool").collect()) {
-        if (!poolEnabledAccounts.has(pr.account_slug)) continue;
-        const moComps = pr.manual_override?.bundle_components;
-        const hasComponent =
-          (moComps && moComps.length > 0) ||
-          pr.bundle_components.some(
-            (c) =>
-              !!c.item_id &&
-              c.source_kind !== "comparison_reference" &&
-              c.source_kind !== "standard_included",
-          );
-        if (hasComponent) infoPoolKeys.add(`${pr.account_slug}#${pr.product_id}`);
+    // Extract the exact (account, product) keys the pure line resolver could
+    // consult. The old implementation collected ALL rows from four mapping /
+    // catalogue tables — including full catalog documents with image and price
+    // payloads — then discarded almost all of them. This is O(live listing
+    // keys), with lookups kept in small batches so a busy day cannot create an
+    // unbounded fan-out of concurrent database operations.
+    const candidates = new Map<string, { accountSlug: string; productId: number }>();
+    for (const r of live) {
+      const accountSlug = String(r.account_slug ?? "");
+      const lines = ((r as {
+        hygglo_items?: Array<{ product_id?: number; name?: string; type?: string }>;
+      }).hygglo_items) ?? [];
+      for (const line of lines) {
+        if (!isTrackableLine(line) || typeof line.product_id !== "number") continue;
+        candidates.set(`${accountSlug}#${line.product_id}`, {
+          accountSlug,
+          productId: line.product_id,
+        });
       }
     }
 
+    // listing_info_pool components are a resolution signal the dashboard's
+    // resolver already trusts (dashboard.ts:expandedIdsOf step A.5), so a line
+    // covered by the pool is NOT untracked. Flag-gated exactly as there.
+    const candidateSlugs = Array.from(
+      new Set(Array.from(candidates.values()).map((c) => c.accountSlug).filter((s) => s.length > 0)),
+    );
+    const poolEnabledAccounts = candidateSlugs.length > 0
+      ? await infoPoolEnabledAccounts(ctx, candidateSlugs)
+      : new Set<string>();
     const maps: LineResolutionMaps = {
-      overrideByProduct: new Set(
-        overrides.map((r) => `${r.account_slug}#${r.product_id}`),
-      ),
-      infoPoolByProduct: infoPoolKeys,
-      productIndex: new Set(index.map((r) => `${r.account_slug}#${r.product_id}`)),
-      catalogueLinked: new Set(
-        products
-          .filter((p) => p.masterItemId && !(p as { isMarketingOnly?: boolean }).isMarketingOnly)
-          .map((p) => `${p.accountSlug}#${p.productId}`),
-      ),
+      overrideByProduct: new Set(),
+      infoPoolByProduct: new Set(),
+      productIndex: new Set(),
+      catalogueLinked: new Set(),
     };
+    const candidateRows = Array.from(candidates.entries());
+    const LOOKUP_BATCH_SIZE = 4; // ≤16 concurrent indexed reads per batch.
+    for (let offset = 0; offset < candidateRows.length; offset += LOOKUP_BATCH_SIZE) {
+      const batch = candidateRows.slice(offset, offset + LOOKUP_BATCH_SIZE);
+      const lookups = await Promise.all(
+        batch.map(async ([key, candidate]) => {
+          const withPool = poolEnabledAccounts.has(candidate.accountSlug);
+          const [index, override, product, infoPool] = await Promise.all([
+            ctx.db
+              .query("hygglo_product_index")
+              .withIndex("by_account_product", (q) =>
+                q.eq("account_slug", candidate.accountSlug).eq("product_id", candidate.productId),
+              )
+              .first(),
+            ctx.db
+              .query("listing_resolution_override")
+              .withIndex("by_account_product", (q) =>
+                q.eq("account_slug", candidate.accountSlug).eq("product_id", candidate.productId),
+              )
+              .first(),
+            ctx.db
+              .query("hygglo_products")
+              .withIndex("by_account_product", (q) =>
+                q.eq("accountSlug", candidate.accountSlug).eq("productId", candidate.productId),
+              )
+              .first(),
+            withPool
+              ? ctx.db
+                  .query("listing_info_pool")
+                  .withIndex("by_account_product", (q) =>
+                    q.eq("account_slug", candidate.accountSlug).eq("product_id", candidate.productId),
+                  )
+                  .first()
+              : Promise.resolve(null),
+          ]);
+          return { key, index, override, product, infoPool };
+        }),
+      );
+      for (const { key, index, override, product, infoPool } of lookups) {
+        if (index) maps.productIndex.add(key);
+        if (override) maps.overrideByProduct.add(key);
+        if (product?.masterItemId && !product.isMarketingOnly) maps.catalogueLinked.add(key);
+        if (infoPool) {
+          const manual = infoPool.manual_override?.bundle_components;
+          const hasComponent =
+            (manual && manual.length > 0) ||
+            infoPool.bundle_components.some(
+              (component) =>
+                !!component.item_id &&
+                component.source_kind !== "comparison_reference" &&
+                component.source_kind !== "standard_included",
+            );
+          if (hasComponent) maps.infoPoolByProduct.add(key);
+        }
+      }
+    }
 
     const alerts: Array<{
       reservation_id: string;

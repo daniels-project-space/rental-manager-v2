@@ -58,6 +58,8 @@ interface Props {
   onClose: () => void;
   weekStartIso?: string;
   accountSlug?: string;
+  /** Source Convex reservation ID selected from another dashboard widget. */
+  focusedReservationId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,14 +101,15 @@ function viewAnchor(): string {
 const WEEK_AHEAD_CAP = 28;
 const WEEK_BEHIND_CAP = 364;
 
-/** Clamp a window-start ISO into [anchor - ~1 year, +4 weeks]. ISO date strings
- *  compare lexicographically, so string `<`/`>` is a valid date order here. */
-function clampWeek(iso: string): string {
+/** Clamp a window-start ISO into the supplied bounds (or the normal
+ * [anchor - ~1 year, +4 weeks] browse range). ISO date strings compare
+ * lexicographically, so string `<`/`>` is a valid date order here. */
+function clampWeek(iso: string, min?: string, max?: string): string {
   const anchor = viewAnchor();
-  const min = addDays(anchor, -WEEK_BEHIND_CAP);
-  const max = addDays(anchor, WEEK_AHEAD_CAP);
-  if (iso < min) return min;
-  if (iso > max) return max;
+  const lower = min ?? addDays(anchor, -WEEK_BEHIND_CAP);
+  const upper = max ?? addDays(anchor, WEEK_AHEAD_CAP);
+  if (iso < lower) return lower;
+  if (iso > upper) return upper;
   return iso;
 }
 
@@ -216,6 +219,8 @@ function orderStepLabel(step: string | null): string {
 interface ResItem { name: string; image: string | null; }
 interface ResRow {
   reservationId: string;
+  /** All source reservation IDs collapsed into this one logical calendar row. */
+  sourceReservationIds: string[];
   block: Block;            // representative block (dates / renter / status)
   acc: string;             // account color hex
   items: ResItem[];
@@ -324,6 +329,7 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
       : "blue";
     rows.push({
       reservationId: gid,
+      sourceReservationIds: Array.from(g.resIds),
       block: merged,
       acc: accountColor(accColor),
       items: g.items,
@@ -419,6 +425,7 @@ interface BarProps {
   row: ResRow;
   height: number;
   isNext: boolean;     // the immediate next upcoming rental → always pulses
+  isFocused: boolean;
   onSelect: () => void;
   liveProgress: number | null;
   today: string;       // YYYY-MM-DD (London) — for the pickup/return-today glow
@@ -428,7 +435,7 @@ interface BarProps {
 
 // One time-accurate bar per reservation. Left stripe = account color, fill =
 // status, glow + dot = ongoing. The bar physically ends at the return time.
-function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, nowMs, weekStart }: BarProps) {
+function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress, today, nowMs, weekStart }: BarProps) {
   const { block, acc, ongoing } = row;
   // DB Cinema Web rentals read as a distinct emerald bar (not the status palette)
   // so the website channel is unmistakable in the calendar.
@@ -498,9 +505,11 @@ function ReservationBar({ row, height, isNext, onSelect, liveProgress, today, no
         top: (RES_ROW_HEIGHT - height) / 2,
         height,
         background: ss.bg,
-        border: `1px solid ${isNext ? "#fbbf24" : ss.border}`,
+        border: `2px solid ${isFocused ? "#93c5fd" : isNext ? "#fbbf24" : ss.border}`,
         borderLeft: `4px solid ${acc}`,
-        boxShadow: ongoing && !isNext && !todayEvent ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
+        boxShadow: isFocused
+          ? "0 0 0 2px rgba(59,130,246,0.45), 0 0 22px rgba(59,130,246,0.85)"
+          : ongoing && !isNext && !todayEvent ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
       }}
       title={tooltip}
       onClick={onSelect}
@@ -672,8 +681,8 @@ const LABEL_WIDTH = 300; // px for left "renter + thumbnails" column
 const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails)
 const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 
-export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug }: Props): React.ReactElement | null {
-  const [weekStart, setWeekStart] = useState<string>(() => viewAnchor());
+export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug, focusedReservationId }: Props): React.ReactElement | null {
+  const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? viewAnchor());
   const [selectedBlock, setSelectedBlock] = useState<{ block: Block; items: ResItem[]; accent: string } | null>(null);
   // live progress map: reservation_id → computed progress
   const [liveProgress, setLiveProgress] = useState<Record<string, number>>({});
@@ -683,6 +692,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  const focusedRowRef = useRef<HTMLDivElement>(null);
   // W08 search — filter rentals by item name / tag and (lazily) show per-day
   // availability. The query string is debounced before hitting the backend so
   // typing doesn't churn Convex subscriptions.
@@ -719,24 +729,27 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
       : "skip",
   );
 
-  // Anchor the visible week so TODAY is always the 3rd column whenever the
-  // overlay (re)opens. weekStartIso is retained for API compat but the view is
-  // today-anchored now, not strip-week-driven.
+  // A direct rental click supplies a focused date; ordinary opens retain the
+  // normal today-centred seven-day window.
   useEffect(() => {
-    if (open) setWeekStart(viewAnchor());
+    if (open) setWeekStart(weekStartIso ?? viewAnchor());
   }, [open, weekStartIso]);
 
-  // ESC to close; arrow keys step weeks within the [this week, +4 weeks] cap
+  // ESC to close; arrow keys use the same bounds as the visible controls.
   useEffect(() => {
     if (!open) return;
+    const defaultMin = addDays(viewAnchor(), -WEEK_BEHIND_CAP);
+    const defaultMax = addDays(viewAnchor(), WEEK_AHEAD_CAP);
+    const min = weekStartIso && weekStartIso < defaultMin ? weekStartIso : defaultMin;
+    const max = weekStartIso && weekStartIso > defaultMax ? weekStartIso : defaultMax;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") setWeekStart((w) => clampWeek(addDays(w, -7)));
-      if (e.key === "ArrowRight") setWeekStart((w) => clampWeek(addDays(w, 7)));
+      if (e.key === "ArrowLeft") setWeekStart((w) => clampWeek(addDays(w, -7), min, max));
+      if (e.key === "ArrowRight") setWeekStart((w) => clampWeek(addDays(w, 7), min, max));
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, weekStartIso]);
 
   // Lock body scroll while open
   useEffect(() => {
@@ -778,6 +791,17 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   useEffect(() => {
     setSelectedBlock(null);
   }, [weekStart]);
+
+  // A selected row can sit below the fold in a busy week. Bring it into view
+  // after the data-backed row has mounted, without stealing focus from any
+  // other calendar interaction.
+  useEffect(() => {
+    if (!open || !focusedReservationId || !data) return;
+    const frame = requestAnimationFrame(() => {
+      focusedRowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, focusedReservationId, data, weekStart]);
 
   // Measure the grid scroll area so columns fill the available width.
   useEffect(() => {
@@ -866,9 +890,15 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const nowLeft = LABEL_WIDTH + xAt(todayCol + nowBizFrac);
 
   // Nav bounds — disable Prev at ~1 year back, Next at +4 weeks.
-  const minWeek = addDays(viewAnchor(), -WEEK_BEHIND_CAP);
+  // A click-through may target a genuine active booking beyond the calendar's
+  // usual +4-week browse cap. Its focused week remains navigable, while normal
+  // manual browsing keeps the existing bounds.
+  const defaultMinWeek = addDays(viewAnchor(), -WEEK_BEHIND_CAP);
+  const defaultMaxWeek = addDays(viewAnchor(), WEEK_AHEAD_CAP);
+  const minWeek = weekStartIso && weekStartIso < defaultMinWeek ? weekStartIso : defaultMinWeek;
+  const maxWeek = weekStartIso && weekStartIso > defaultMaxWeek ? weekStartIso : defaultMaxWeek;
   const atMinWeek = weekStart <= minWeek;
-  const atMaxWeek = weekStart >= addDays(viewAnchor(), WEEK_AHEAD_CAP);
+  const atMaxWeek = weekStart >= maxWeek;
 
   // When searching, gate on matched inventory; the loading state shows its own
   // message (see empty branch) rather than a premature "no match".
@@ -916,7 +946,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
         >
           <button
             className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-300"
-            onClick={() => setWeekStart((w) => clampWeek(addDays(w, -7)))}
+            onClick={() => setWeekStart((w) => clampWeek(addDays(w, -7), minWeek, maxWeek))}
             disabled={atMinWeek}
           >
             ← Prev Week
@@ -929,7 +959,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
           </button>
           <button
             className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-300"
-            onClick={() => setWeekStart((w) => clampWeek(addDays(w, 7)))}
+            onClick={() => setWeekStart((w) => clampWeek(addDays(w, 7), minWeek, maxWeek))}
             disabled={atMaxWeek}
           >
             Next Week →
@@ -1190,11 +1220,18 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                   const renter = row.block.renter_name && row.block.renter_name.trim() !== "" && row.block.renter_name.trim() !== "?"
                     ? row.block.renter_name.trim()
                     : orderStepLabel(row.block.order_step);
+                  const isFocused = !!focusedReservationId && row.sourceReservationIds.includes(focusedReservationId);
                   return (
                     <div
                       key={row.reservationId}
-                      className="flex"
-                      style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", height: RES_ROW_HEIGHT }}
+                      ref={isFocused ? focusedRowRef : null}
+                      className={`flex${isFocused ? " relative z-20" : ""}`}
+                      style={{
+                        borderBottom: isFocused ? "1px solid rgba(96,165,250,0.9)" : "1px solid rgba(255,255,255,0.04)",
+                        height: RES_ROW_HEIGHT,
+                        background: isFocused ? "rgba(59,130,246,0.16)" : undefined,
+                        boxShadow: isFocused ? "inset 0 0 0 1px rgba(96,165,250,0.65), 0 0 24px rgba(59,130,246,0.22)" : undefined,
+                      }}
                     >
                       {/* Left label — renter + item thumbnails. A bold account-
                           colored band (left bar + fading tint + dot) makes the
@@ -1257,6 +1294,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           row={row}
                           height={BAR_HEIGHT}
                           isNext={row.reservationId === nextUpcomingId}
+                          isFocused={isFocused}
                           onSelect={() => setSelectedBlock({ block: row.block, items: row.items, accent: row.acc })}
                           liveProgress={liveProgress[row.reservationId] ?? null}
                           today={today}

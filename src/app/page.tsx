@@ -25,6 +25,7 @@ import { PANEL_WIDGETS } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { DeferredMount } from "@/lib/dashboard/deferred-mount";
 import { DashboardHydrationProvider } from "@/lib/dashboard/hydration-context";
+import { CalendarOverlayProvider } from "@/lib/dashboard/calendar-overlay-context";
 
 // CRITICAL above-the-fold panels — mount eagerly so they paint in the
 // first frame. These are the operational surfaces the user needs instantly:
@@ -97,7 +98,8 @@ export default function DashboardPage() {
 
   return (
     <DashboardHydrationProvider>
-      <div style={{ background: "#070910", minHeight: "100dvh" }}>
+      <CalendarOverlayProvider>
+        <div style={{ background: "#070910", minHeight: "100dvh" }}>
         <HeaderBar />
         <Suspense fallback={null}>
           <NotificationDeepLink />
@@ -138,7 +140,8 @@ export default function DashboardPage() {
           </DndContext>
         </main>
         <AddWidgetDrawer />
-      </div>
+        </div>
+      </CalendarOverlayProvider>
     </DashboardHydrationProvider>
   );
 }

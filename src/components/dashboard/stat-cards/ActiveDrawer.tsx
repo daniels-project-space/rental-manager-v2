@@ -6,11 +6,14 @@ import { useState, useCallback, type MouseEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { useCalendarOverlay } from "@/lib/dashboard/calendar-overlay-context";
 
 export type Kind = "ongoing" | "upcoming" | "pending";
 
 export interface Rental {
   reservation_id: string;
+  /** Convex reservation document ID used by the full calendar's row data. */
+  calendar_reservation_id?: string | null;
   renter_name: string | null;
   account_slug: string;
   start_date: string | null;
@@ -317,7 +320,10 @@ function TileEditor({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={onClose}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
     >
       <div
         className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-4 shadow-2xl"
@@ -438,6 +444,7 @@ function clampPx(v: number, lo: number, hi: number): number {
 }
 
 export function RentalRow({ r }: { r: Rental }) {
+  const { openCalendar } = useCalendarOverlay();
   const kind: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
   const s = SECTION[kind];
   const pill = ACCOUNT_PILL[r.account_slug] ?? { bg: "bg-slate-800 border border-slate-700", text: "text-slate-300" };
@@ -479,10 +486,25 @@ export function RentalRow({ r }: { r: Rental }) {
     setPreview({ src, name, cx: b.left + b.width / 2, cy: b.top + b.height / 2 });
   };
   const hidePreview = () => setPreview(null);
+  // Pending verification rows intentionally do not enter the operational
+  // calendar: confirmed rentals alone reserve inventory there. Every other
+  // Active Rentals row has a stable Convex ID that lets the overlay find the
+  // exact source booking, including a grouped calendar row.
+  const canOpenCalendar = r.kind !== "pending" && !!r.calendar_reservation_id;
+  const openInCalendar = () => {
+    if (!canOpenCalendar) return;
+    openCalendar({
+      reservationId: r.calendar_reservation_id,
+      focusDate: r.pickup_date ?? r.start_date,
+      accountSlug: r.account_slug,
+    });
+  };
 
   return (
     <div
-      className={`relative flex items-stretch gap-3 rounded-lg border ${isWeb ? "border-emerald-500/30" : s.border} ${s.bg} ${rowRing} px-2.5 py-2`}
+      className={`relative flex items-stretch gap-3 rounded-lg border ${isWeb ? "border-emerald-500/30" : s.border} ${s.bg} ${rowRing} px-2.5 py-2${canOpenCalendar ? " cursor-pointer transition-colors hover:bg-white/[0.06]" : ""}`}
+      onClick={openInCalendar}
+      title={canOpenCalendar ? "Open and highlight in Weekly Calendar" : undefined}
     >
       {/* Master Thumbnail — v1 pattern (one 56x56 photo per rental).
           Rounding lives on the <img> so hover-zoom is not clipped. */}
@@ -687,6 +709,19 @@ export function RentalRow({ r }: { r: Rental }) {
         <div className="text-base font-bold text-emerald-400 tabular-nums">
           {r.net_gbp != null ? "£" + Math.round(r.net_gbp) : "—"}
         </div>
+        {canOpenCalendar && (
+          <button
+            type="button"
+            className="mt-1 rounded px-1.5 py-0.5 text-[9px] font-semibold text-blue-300 transition-colors hover:bg-blue-400/15 hover:text-blue-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              openInCalendar();
+            }}
+            aria-label={`Open ${r.renter_name ?? "booking"} in Weekly Calendar`}
+          >
+            Calendar ↗
+          </button>
+        )}
       </div>
       {preview && typeof window !== "undefined" &&
         createPortal(

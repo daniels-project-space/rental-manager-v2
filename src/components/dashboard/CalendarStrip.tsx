@@ -1,21 +1,11 @@
 "use client";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { api } from "../../../convex/_generated/api";
 import { useAccount } from "@/lib/account-context";
 import { Card } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-
-// Lazy-load the full-week Gantt overlay so it doesn't bloat the initial bundle.
-const CalendarGantt = lazy(() =>
-  import("./CalendarGantt").catch(() => ({
-    default: () => (
-      <div className="p-6 text-center text-[#8b8fa3] text-sm">
-        Weekly Calendar overlay unavailable.
-      </div>
-    ),
-  })),
-);
+import { useCalendarOverlay } from "@/lib/dashboard/calendar-overlay-context";
 
 // ── Types inferred from convex/calendar.ts return shape ─────────────────────
 type ChipData = {
@@ -98,16 +88,6 @@ function TODAY_ISO(): string {
 function addDaysIso(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Monday (YYYY-MM-DD) of the week containing the given date — for the
- *  Gantt handoff, which is Monday-aligned while this strip anchors on today. */
-function mondayOf(ymd: string): string {
-  const d = new Date(ymd + "T00:00:00Z");
-  const day = d.getUTCDay(); // 0=Sun
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setUTCDate(d.getUTCDate() + diff);
   return d.toISOString().slice(0, 10);
 }
 
@@ -995,6 +975,7 @@ function DayDrawer({ day }: { day: DayData }) {
 // ── Main component ────────────────────────────────────────────────────────────
 export function CalendarStrip() {
   const { activeAccountSlug } = useAccount();
+  const { openCalendar } = useCalendarOverlay();
   const today = TODAY_ISO();
 
   // Week navigation: 0 = current week (7-day window anchored on today), capped
@@ -1009,7 +990,6 @@ export function CalendarStrip() {
 
   // Auto-expand today on load so the drawer shows up without a click.
   const [expandedDate, setExpandedDate] = useState<string | null>(today);
-  const [ganttOpen, setGanttOpen] = useState(false);
 
   const data = useStableQuery(api.calendar.getCalendarStrip, {
     accountSlug: activeAccountSlug,
@@ -1047,7 +1027,9 @@ export function CalendarStrip() {
             </span>
           </div>
           <button
-            onClick={() => setGanttOpen(true)}
+            onClick={() => openCalendar({
+              accountSlug: activeAccountSlug,
+            })}
             className="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg transition-all duration-150 hover:bg-blue-500/10 hover:border-blue-400/60 active:scale-95"
             style={{
               border: "1px solid rgba(59,130,246,0.45)",
@@ -1129,18 +1111,6 @@ export function CalendarStrip() {
         <div className="mt-2">
           <DayDrawer day={expandedDay as DayData} />
         </div>
-      )}
-
-      {/* Gantt overlay (lazy) */}
-      {ganttOpen && (
-        <Suspense fallback={<SkeletonBlock className="h-48 mt-3" />}>
-          <CalendarGantt
-            open={ganttOpen}
-            onClose={() => setGanttOpen(false)}
-            weekStartIso={mondayOf(stripStart)}
-            accountSlug={activeAccountSlug ?? undefined}
-          />
-        </Suspense>
       )}
     </Card>
   );

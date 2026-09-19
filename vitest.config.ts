@@ -25,6 +25,7 @@ export default defineConfig({
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_name_match.test.ts",
+      "convex/lib/platform_fallout.test.ts",
       "convex/lib/bundle_description_parse.test.ts",
       "convex/renter_bot_lab_order.test.ts",
       "convex/lib/hygglo_pricing.test.ts",
