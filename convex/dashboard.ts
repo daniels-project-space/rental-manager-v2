@@ -426,6 +426,14 @@ export const getStatsDrawerData = query({
     const allResRaw = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", dashCutoff))
       .collect();
+    // Obsolete orders need their own small indexed read: requests cancelled
+    // today can have a past or absent rental date, so they are not guaranteed
+    // to appear in the start-date revenue window above.
+    let allObsoleteRes = await ctx.db
+      .query("reservations")
+      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
+      .collect();
+    if (accountSlug) allObsoleteRes = allObsoleteRes.filter((r) => r.account_slug === accountSlug);
     // Account-scoped view for per-card numbers (active, earnings, monthly, etc.)
     let allRes = allResRaw;
     if (accountSlug) {
@@ -1546,13 +1554,18 @@ export const getStatsDrawerData = query({
       daysInMonth,
       baseline: monthlyBaseline,
     });
-    // Expected Monthly only shows fallout for rentals scheduled in this revenue
-    // month, using the same effective-date basis as the card's £ totals.
+    // Expected Monthly shows failures that occurred this month, regardless of
+    // the rental's scheduled date. `obsolete_at` is written at the Hygglo
+    // transition; the legacy fallbacks keep imported rows auditable.
+    const monthStartMs = new Date(`${monthStart}T00:00:00.000Z`).getTime();
+    const monthEndExclusiveMs = new Date(`${monthEnd}T23:59:59.999Z`).getTime() + 1;
+    const falloutAt = (r: { obsolete_at?: number; v1_updated_at?: number; _creationTime: number }) =>
+      r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
     const monthlyPlatformFallout = countPlatformFallout(
       dedupRes(
-        allRes.filter((r) => {
-          const scheduledDate = effectiveDateStr(r as ResRow);
-          return scheduledDate !== undefined && scheduledDate >= monthStart && scheduledDate <= monthEnd;
+        allObsoleteRes.filter((r) => {
+          const at = falloutAt(r);
+          return at >= monthStartMs && at < monthEndExclusiveMs;
         }),
       ),
     );
@@ -1829,7 +1842,9 @@ export const getStatsDrawerData = query({
       denialRows,
       reservations: { rows: allResRaw, gteStartDate: dashCutoff },
     });
-    const platformFallout = countPlatformFallout(dedupRes(allRes));
+    const platformFallout = countPlatformFallout(
+      dedupRes(allObsoleteRes.filter((r) => falloutAt(r) >= now.getTime() - 365 * 86_400_000)),
+    );
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({

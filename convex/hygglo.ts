@@ -1146,6 +1146,9 @@ async function upsertOrderImpl(
     // non-obsolete bucket. obsolete_reason is preserved for audit; only
     // the boolean gate flips back.
     const clearObsolete = !isObsoleteUpsert && wasObsolete;
+    // Stamp the transition once. Without this, a request created weeks earlier
+    // but cancelled today is incorrectly assigned to its creation month.
+    const becameObsoleteAt = isObsoleteUpsert && !wasObsolete ? now : undefined;
 
     // ── Conditional write (2026-07-10) — the dominant DB-IO fix ─────────────
     // The poller re-runs this upsert for EVERY order every ~5-min cycle. A
@@ -1168,6 +1171,7 @@ async function upsertOrderImpl(
       ...stepPatch,
       ...obsoleteFields,
       ...(clearObsolete && { is_obsolete: false }),
+      ...(becameObsoleteAt !== undefined && { obsolete_at: becameObsoleteAt }),
       hygglo_items: hyggloItemsUpdate,
     });
     const newPollHash = computePollHash(pollHashInput);
@@ -1192,6 +1196,7 @@ async function upsertOrderImpl(
       ...stepPatch,
       ...obsoleteFields,
       ...(clearObsolete && { is_obsolete: false }),
+      ...(becameObsoleteAt !== undefined && { obsolete_at: becameObsoleteAt }),
       poll_hash: newPollHash,
     });
     if (datesChanged) {
@@ -1280,6 +1285,7 @@ async function upsertOrderImpl(
     ...baseFields,
     ...stepInsert,
     ...obsoleteFields,
+    ...(obsoleteFields.is_obsolete === true && { obsolete_at: now }),
     ...(hintsInsert.length > 0 && { image_hints: hintsInsert }),
     ...(hyggloItemsInsert.length > 0 && { hygglo_items: hyggloItemsInsert }),
     created_at: now,
