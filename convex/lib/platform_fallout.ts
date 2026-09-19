@@ -32,9 +32,11 @@ function isTerminal(row: PlatformFalloutRow): boolean {
 
 /**
  * Classify the two explicitly requested non-revenue outcomes. The Hygglo
- * system signal is the source of truth when present. Older rows are counted
- * only when they retain an equally explicit terminal state; ambiguous legacy
- * `obsolete_reason` values alone do not become a false security-check metric.
+ * system signal is the source of truth when present. Older rows predate the
+ * blue-text signal capture, so `obsolete_reason="verification_failed"` is
+ * retained as the importer’s canonical legacy classification: it is written
+ * only for a Hygglo-obsolete order that stopped at its verified/funds-reserved
+ * verification stage. A conflicting decisive platform signal still wins.
  */
 export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): PlatformFalloutCounts {
   let renter_cancelled_pending_count = 0;
@@ -63,6 +65,7 @@ export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): Platf
     const failedSecurityCheck = hasDecisiveSignal
       ? signal === "verification_failed"
       : row.order_step === "VERIFICATION_FAILED" ||
+        row.obsolete_reason === "verification_failed" ||
         /did not pass our security checks/i.test(row.hygglo_system_signal_text ?? "");
 
     if (failedSecurityCheck) failed_security_checks_count++;

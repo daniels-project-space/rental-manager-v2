@@ -24,8 +24,8 @@ describe("countPlatformFallout", () => {
           is_obsolete: true,
           order_step: "VERIFICATION_FAILED",
         },
-        // This legacy reason is insufficient by itself: it may have been
-        // inferred from a funnel state rather than Hygglo's actual check result.
+        // Legacy polling predates blue-text capture. This is the importer’s
+        // canonical verified-stage failure classification and must still count.
         {
           is_obsolete: true,
           obsolete_reason: "verification_failed",
@@ -37,6 +37,6 @@ describe("countPlatformFallout", () => {
           obsolete_reason: "verification_failed",
         },
       ]),
-    ).toEqual({ renter_cancelled_pending_count: 1, failed_security_checks_count: 1 });
+    ).toEqual({ renter_cancelled_pending_count: 1, failed_security_checks_count: 2 });
   });
 });
