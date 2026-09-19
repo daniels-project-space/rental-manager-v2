@@ -31,6 +31,8 @@ export type PlatformFalloutCounts = {
   failed_security_checks_count: number;
   /** Net value from classified rows with a Hygglo-recorded booking value. */
   expected_rent_lost_gbp: number;
+  /** The recorded booking value specifically lost to failed verification. */
+  failed_security_checks_lost_gbp: number;
 };
 
 function isTerminal(row: PlatformFalloutRow): boolean {
@@ -49,6 +51,7 @@ export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): Platf
   let renter_cancelled_pending_count = 0;
   let failed_security_checks_count = 0;
   let expected_rent_lost_gbp = 0;
+  let failed_security_checks_lost_gbp = 0;
 
   for (const row of rows) {
     if (!isTerminal(row)) continue;
@@ -79,7 +82,9 @@ export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): Platf
 
     if (failedSecurityCheck) {
       failed_security_checks_count++;
-      expected_rent_lost_gbp += bookingValue(row);
+      const value = bookingValue(row);
+      expected_rent_lost_gbp += value;
+      failed_security_checks_lost_gbp += value;
     }
   }
 
@@ -87,6 +92,7 @@ export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): Platf
     renter_cancelled_pending_count,
     failed_security_checks_count,
     expected_rent_lost_gbp: Math.round(expected_rent_lost_gbp * 100) / 100,
+    failed_security_checks_lost_gbp: Math.round(failed_security_checks_lost_gbp * 100) / 100,
   };
 }
 

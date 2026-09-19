@@ -13,6 +13,7 @@ describe("countPlatformFallout", () => {
       renter_cancelled_pending_count: 1,
       failed_security_checks_count: 1,
       expected_rent_lost_gbp: 0,
+      failed_security_checks_lost_gbp: 0,
     });
   });
 
@@ -45,6 +46,7 @@ describe("countPlatformFallout", () => {
       renter_cancelled_pending_count: 1,
       failed_security_checks_count: 2,
       expected_rent_lost_gbp: 0,
+      failed_security_checks_lost_gbp: 0,
     });
   });
 
@@ -59,6 +61,7 @@ describe("countPlatformFallout", () => {
       renter_cancelled_pending_count: 1,
       failed_security_checks_count: 1,
       expected_rent_lost_gbp: 184,
+      failed_security_checks_lost_gbp: 64,
     });
   });
 });

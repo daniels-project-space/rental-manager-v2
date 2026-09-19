@@ -8,7 +8,6 @@ interface Props {
     avg_daily_rate: number;
     missed?: {
       total_count: number;
-      renter_cancelled_pending_count: number;
       failed_security_checks_count: number;
       scheduled_month: string;
     };
@@ -38,16 +37,12 @@ export default function MonthlyDrawer({ data }: Props) {
       {data.missed && (
         <div className="col-span-2 rounded border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
           <div className="text-[10px] uppercase tracking-wider text-rose-300/60">
-            Renter-cancelled / verification failed · {data.missed.scheduled_month}
+            Failed verification · {data.missed.scheduled_month}
           </div>
           <div className="mt-1 text-xs text-rose-200/80">
             {data.missed.total_count === 0
               ? "None this month."
-              : <>
-                  {data.missed.renter_cancelled_pending_count ? `${data.missed.renter_cancelled_pending_count} renter cancellation${data.missed.renter_cancelled_pending_count === 1 ? "" : "s"}` : null}
-                  {data.missed.renter_cancelled_pending_count && data.missed.failed_security_checks_count ? " · " : null}
-                  {data.missed.failed_security_checks_count ? `${data.missed.failed_security_checks_count} failed verification${data.missed.failed_security_checks_count === 1 ? "" : "s"}` : null}
-                </>}
+              : `${data.missed.failed_security_checks_count} failed verification${data.missed.failed_security_checks_count === 1 ? "" : "s"}`}
           </div>
         </div>
       )}

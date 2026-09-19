@@ -412,6 +412,7 @@ export const getStatsDrawerData = query({
     const daysRemaining = daysInMonth - daysElapsed;
     const monthKey = monthStart.slice(0, 7);
     const weeklyFalloutMs = 7 * 86_400_000;
+    const falloutMetricVersion = 2;
     // The obsolete-booking scan is intentionally weekly. It is operational
     // reporting, unlike the live rental cards; preserve the last complete
     // snapshot between weekly checks.
@@ -426,6 +427,9 @@ export const getStatsDrawerData = query({
     const falloutCheckedAt = priorMonthlyMissed?.checked_at;
     const reuseWeeklyFallout =
       priorMonthlyMissed?.scheduled_month === monthKey &&
+      priorMonthlyMissed?.metric_version === falloutMetricVersion &&
+      typeof priorMonthlyMissed?.failed_security_checks_count === "number" &&
+      typeof priorMonthlyMissed?.failed_security_checks_lost_gbp === "number" &&
       typeof falloutCheckedAt === "number" &&
       now.getTime() - falloutCheckedAt < weeklyFalloutMs &&
       priorOperationalFallout?.checked_at === falloutCheckedAt;
@@ -1596,9 +1600,6 @@ export const getStatsDrawerData = query({
           dedupRes(allObsoleteRes.filter((r) => falloutAt(r) >= now.getTime() - 365 * 86_400_000)),
         );
     const checkedAt = reuseWeeklyFallout ? falloutCheckedAt : now.getTime();
-    const monthlyMissedCount =
-      monthlyPlatformFallout.renter_cancelled_pending_count +
-      monthlyPlatformFallout.failed_security_checks_count;
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
       confirmed_revenue: Math.round(monthBookedRevenue * 100) / 100,
@@ -1614,10 +1615,13 @@ export const getStatsDrawerData = query({
       days_elapsed: daysElapsed,
       avg_daily_rate: Math.round(avgDailyRate * 100) / 100,
       missed: {
-        ...monthlyPlatformFallout,
-        total_count: monthlyMissedCount,
+        total_count: monthlyPlatformFallout.failed_security_checks_count,
+        failed_security_checks_count: monthlyPlatformFallout.failed_security_checks_count,
+        expected_rent_lost_gbp: monthlyPlatformFallout.failed_security_checks_lost_gbp,
+        failed_security_checks_lost_gbp: monthlyPlatformFallout.failed_security_checks_lost_gbp,
         scheduled_month: monthKey,
         checked_at: checkedAt,
+        metric_version: falloutMetricVersion,
       },
     };
 
