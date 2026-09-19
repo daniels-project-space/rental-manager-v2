@@ -308,25 +308,8 @@ export function StatsGrid() {
           valueColor="green"
           accentColor="green"
           subtitle={(() => {
-            const missed = data.monthly.missed;
-            const parts = [
-              missed?.renter_cancelled_pending_count
-                ? `${missed.renter_cancelled_pending_count} renter cancelled`
-                : null,
-              missed?.failed_security_checks_count
-                ? `${missed.failed_security_checks_count} security check${missed.failed_security_checks_count === 1 ? "" : "s"} failed`
-                : null,
-            ].filter((part): part is string => part !== null);
-            const missedSummary = parts.length > 0
-              ? parts.join(" · ")
-              : "no cancelled requests or failed security checks";
             return (
-              <div className="space-y-0.5">
-                <div>£{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining}d left</div>
-                <div className="font-medium text-rose-300/75">
-                  Missed (12mo): {missed?.total_count ?? 0} · {missedSummary}
-                </div>
-              </div>
+              <div>£{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining}d left</div>
             );
           })()}
           isExpanded={expandedId === "monthly"}
@@ -345,6 +328,16 @@ export function StatsGrid() {
               <div className="text-[10px] text-slate-500">
                 £{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining} days left in month
               </div>
+              {data.monthly.missed && (
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-md border border-rose-500/30 bg-rose-500/[0.09] px-2 py-1.5 text-[11px] text-rose-200">
+                  <span className="font-bold text-rose-300">
+                    {data.monthly.missed.total_count} missed bookings (12mo)
+                  </span>
+                  <span className="font-semibold text-rose-200">
+                    {fmtGbpFull(data.monthly.missed.expected_rent_lost_gbp)} expected rent lost
+                  </span>
+                </div>
+              )}
             </div>
           }
         >

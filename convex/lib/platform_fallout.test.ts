@@ -9,7 +9,11 @@ describe("countPlatformFallout", () => {
         { is_obsolete: true, hygglo_system_signal: "verification_failed" },
         { status: "confirmed", hygglo_system_signal: "renter_cancelled" },
       ]),
-    ).toEqual({ renter_cancelled_pending_count: 1, failed_security_checks_count: 1 });
+    ).toEqual({
+      renter_cancelled_pending_count: 1,
+      failed_security_checks_count: 1,
+      expected_rent_lost_gbp: 0,
+    });
   });
 
   it("uses legacy structural signals only when Hygglo has no decisive signal", () => {
@@ -37,6 +41,24 @@ describe("countPlatformFallout", () => {
           obsolete_reason: "verification_failed",
         },
       ]),
-    ).toEqual({ renter_cancelled_pending_count: 1, failed_security_checks_count: 2 });
+    ).toEqual({
+      renter_cancelled_pending_count: 1,
+      failed_security_checks_count: 2,
+      expected_rent_lost_gbp: 0,
+    });
+  });
+
+  it("sums only the recorded net booking value for classified fallout", () => {
+    expect(
+      countPlatformFallout([
+        { is_obsolete: true, hygglo_system_signal: "renter_cancelled", net_to_owner_gbp: 120 },
+        { is_obsolete: true, hygglo_system_signal: "verification_failed", gross_paid_gbp: 100 },
+        { is_obsolete: true, hygglo_system_signal: "owner_denied", net_to_owner_gbp: 999 },
+      ]),
+    ).toMatchObject({
+      renter_cancelled_pending_count: 1,
+      failed_security_checks_count: 1,
+      expected_rent_lost_gbp: 184,
+    });
   });
 });

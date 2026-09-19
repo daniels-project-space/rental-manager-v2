@@ -7,6 +7,8 @@
  * valuation model.
  */
 
+import { OWNER_SHARE } from "./revenue_attribution";
+
 export type PlatformFalloutRow = {
   status?: string | null;
   is_obsolete?: boolean | null;
@@ -17,6 +19,9 @@ export type PlatformFalloutRow = {
   order_step?: string | null;
   hygglo_system_signal?: string | null;
   hygglo_system_signal_text?: string | null;
+  /** Actual booking values when Hygglo had reached a priced reservation. */
+  net_to_owner_gbp?: number | null;
+  gross_paid_gbp?: number | null;
 };
 
 export type PlatformFalloutCounts = {
@@ -24,6 +29,8 @@ export type PlatformFalloutCounts = {
   renter_cancelled_pending_count: number;
   /** Hygglo's platform event says the renter did not pass its security checks. */
   failed_security_checks_count: number;
+  /** Net value from classified rows with a Hygglo-recorded booking value. */
+  expected_rent_lost_gbp: number;
 };
 
 function isTerminal(row: PlatformFalloutRow): boolean {
@@ -41,6 +48,7 @@ function isTerminal(row: PlatformFalloutRow): boolean {
 export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): PlatformFalloutCounts {
   let renter_cancelled_pending_count = 0;
   let failed_security_checks_count = 0;
+  let expected_rent_lost_gbp = 0;
 
   for (const row of rows) {
     if (!isTerminal(row)) continue;
@@ -59,6 +67,7 @@ export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): Platf
 
     if (renterCancelled) {
       renter_cancelled_pending_count++;
+      expected_rent_lost_gbp += bookingValue(row);
       continue;
     }
 
@@ -68,8 +77,26 @@ export function countPlatformFallout(rows: readonly PlatformFalloutRow[]): Platf
         row.obsolete_reason === "verification_failed" ||
         /did not pass our security checks/i.test(row.hygglo_system_signal_text ?? "");
 
-    if (failedSecurityCheck) failed_security_checks_count++;
+    if (failedSecurityCheck) {
+      failed_security_checks_count++;
+      expected_rent_lost_gbp += bookingValue(row);
+    }
   }
 
-  return { renter_cancelled_pending_count, failed_security_checks_count };
+  return {
+    renter_cancelled_pending_count,
+    failed_security_checks_count,
+    expected_rent_lost_gbp: Math.round(expected_rent_lost_gbp * 100) / 100,
+  };
+}
+
+/** Uses only a value Hygglo recorded for this reservation—never an estimate. */
+function bookingValue(row: PlatformFalloutRow): number {
+  if (typeof row.net_to_owner_gbp === "number" && row.net_to_owner_gbp > 0) {
+    return row.net_to_owner_gbp;
+  }
+  if (typeof row.gross_paid_gbp === "number" && row.gross_paid_gbp > 0) {
+    return row.gross_paid_gbp * OWNER_SHARE;
+  }
+  return 0;
 }
