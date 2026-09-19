@@ -410,6 +410,25 @@ export const getStatsDrawerData = query({
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const daysElapsed = now.getDate();
     const daysRemaining = daysInMonth - daysElapsed;
+    const monthKey = monthStart.slice(0, 7);
+    const weeklyFalloutMs = 7 * 86_400_000;
+    // The obsolete-booking scan is intentionally weekly. It is operational
+    // reporting, unlike the live rental cards; preserve the last complete
+    // snapshot between weekly checks.
+    const priorStats = _bypassMv
+      ? await ctx.db
+          .query("mv_stats_drawer")
+          .withIndex("by_account", (q) => q.eq("account", accountSlug ?? "all"))
+          .first()
+      : null;
+    const priorMonthlyMissed = (priorStats?.payload as any)?.monthly?.missed;
+    const priorOperationalFallout = (priorStats?.payload as any)?.missed_revenue?.operational_losses;
+    const falloutCheckedAt = priorMonthlyMissed?.checked_at;
+    const reuseWeeklyFallout =
+      priorMonthlyMissed?.scheduled_month === monthKey &&
+      typeof falloutCheckedAt === "number" &&
+      now.getTime() - falloutCheckedAt < weeklyFalloutMs &&
+      priorOperationalFallout?.checked_at === falloutCheckedAt;
 
     // ── Next-30-day window for out-of-stock calc ─────────────────
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
@@ -426,14 +445,6 @@ export const getStatsDrawerData = query({
     const allResRaw = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", dashCutoff))
       .collect();
-    // Obsolete orders need their own small indexed read: requests cancelled
-    // today can have a past or absent rental date, so they are not guaranteed
-    // to appear in the start-date revenue window above.
-    let allObsoleteRes = await ctx.db
-      .query("reservations")
-      .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
-      .collect();
-    if (accountSlug) allObsoleteRes = allObsoleteRes.filter((r) => r.account_slug === accountSlug);
     // Account-scoped view for per-card numbers (active, earnings, monthly, etc.)
     let allRes = allResRaw;
     if (accountSlug) {
@@ -1561,14 +1572,30 @@ export const getStatsDrawerData = query({
     const monthEndExclusiveMs = new Date(`${monthEnd}T23:59:59.999Z`).getTime() + 1;
     const falloutAt = (r: { obsolete_at?: number; v1_updated_at?: number; _creationTime: number }) =>
       r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
-    const monthlyPlatformFallout = countPlatformFallout(
-      dedupRes(
-        allObsoleteRes.filter((r) => {
-          const at = falloutAt(r);
-          return at >= monthStartMs && at < monthEndExclusiveMs;
-        }),
-      ),
-    );
+    let allObsoleteRes: ResRow[] = [];
+    if (!reuseWeeklyFallout) {
+      allObsoleteRes = await ctx.db
+        .query("reservations")
+        .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
+        .collect();
+      if (accountSlug) allObsoleteRes = allObsoleteRes.filter((r) => r.account_slug === accountSlug);
+    }
+    const monthlyPlatformFallout = reuseWeeklyFallout
+      ? priorMonthlyMissed
+      : countPlatformFallout(
+          dedupRes(
+            allObsoleteRes.filter((r) => {
+              const at = falloutAt(r);
+              return at >= monthStartMs && at < monthEndExclusiveMs;
+            }),
+          ),
+        );
+    const platformFallout = reuseWeeklyFallout
+      ? priorOperationalFallout
+      : countPlatformFallout(
+          dedupRes(allObsoleteRes.filter((r) => falloutAt(r) >= now.getTime() - 365 * 86_400_000)),
+        );
+    const checkedAt = reuseWeeklyFallout ? falloutCheckedAt : now.getTime();
     const monthlyMissedCount =
       monthlyPlatformFallout.renter_cancelled_pending_count +
       monthlyPlatformFallout.failed_security_checks_count;
@@ -1589,7 +1616,8 @@ export const getStatsDrawerData = query({
       missed: {
         ...monthlyPlatformFallout,
         total_count: monthlyMissedCount,
-        scheduled_month: monthStart.slice(0, 7),
+        scheduled_month: monthKey,
+        checked_at: checkedAt,
       },
     };
 
@@ -1842,9 +1870,6 @@ export const getStatsDrawerData = query({
       denialRows,
       reservations: { rows: allResRaw, gteStartDate: dashCutoff },
     });
-    const platformFallout = countPlatformFallout(
-      dedupRes(allObsoleteRes.filter((r) => falloutAt(r) >= now.getTime() - 365 * 86_400_000)),
-    );
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({
@@ -1858,6 +1883,7 @@ export const getStatsDrawerData = query({
       operational_losses: {
         ...platformFallout,
         period_days: 365,
+        checked_at: checkedAt,
       },
     };
 
