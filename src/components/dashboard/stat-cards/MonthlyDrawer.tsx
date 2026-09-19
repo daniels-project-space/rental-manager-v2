@@ -10,7 +10,7 @@ interface Props {
       total_count: number;
       renter_cancelled_pending_count: number;
       failed_security_checks_count: number;
-      scheduled_month: string;
+      period_days: number;
     };
   };
 }
@@ -38,11 +38,11 @@ export default function MonthlyDrawer({ data }: Props) {
       {data.missed && (
         <div className="col-span-2 rounded border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
           <div className="text-[10px] uppercase tracking-wider text-rose-300/60">
-            Missed scheduled rentals · {data.missed?.scheduled_month}
+            Missed obsolete bookings · last {data.missed.period_days} days
           </div>
           <div className="mt-1 text-xs text-rose-200/80">
             {data.missed.total_count === 0
-              ? "No renter-cancelled pending requests or failed security checks scheduled this month."
+              ? "No renter-cancelled pending requests or failed security checks in this period."
               : <>
                   {data.missed.renter_cancelled_pending_count ? `${data.missed.renter_cancelled_pending_count} renter-cancelled pending ${data.missed.renter_cancelled_pending_count === 1 ? "request" : "requests"}` : null}
                   {data.missed.renter_cancelled_pending_count && data.missed.failed_security_checks_count ? " · " : null}

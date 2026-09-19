@@ -324,7 +324,7 @@ export function StatsGrid() {
               <div className="space-y-0.5">
                 <div>£{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining}d left</div>
                 <div className="font-medium text-rose-300/75">
-                  Missed: {missed?.total_count ?? 0} · {missedSummary}
+                  Missed (12mo): {missed?.total_count ?? 0} · {missedSummary}
                 </div>
               </div>
             );

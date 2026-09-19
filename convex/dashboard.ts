@@ -1546,23 +1546,15 @@ export const getStatsDrawerData = query({
       daysInMonth,
       baseline: monthlyBaseline,
     });
-    // A miss belongs on the Expected Monthly card when its scheduled rental
-    // falls inside THIS revenue month — not merely because it was cancelled
-    // this month. This mirrors `effectiveDateStr`, the date basis for the
-    // card's earned and booked-remainder components. The classifier only
-    // accepts Hygglo's decisive event (or an equally explicit legacy state),
-    // so an ambiguous obsolete record never masquerades as a failed check.
-    const monthlyPlatformFallout = countPlatformFallout(
-      dedupRes(
-        allRes.filter((r) => {
-          const scheduledDate = effectiveDateStr(r as ResRow);
-          return scheduledDate !== undefined && scheduledDate >= monthStart && scheduledDate <= monthEnd;
-        }),
-      ),
-    );
+    // Surface the real obsolete-booking outcomes beneath Expected Monthly.
+    // This is deliberately a 12-month operational count, not a fictional £
+    // deduction from this month's projection: several genuine cancellations
+    // have rental dates outside the current calendar month and must not vanish
+    // from the manager merely because the month rolled over.
+    const platformFallout = countPlatformFallout(dedupRes(allRes));
     const monthlyMissedCount =
-      monthlyPlatformFallout.renter_cancelled_pending_count +
-      monthlyPlatformFallout.failed_security_checks_count;
+      platformFallout.renter_cancelled_pending_count +
+      platformFallout.failed_security_checks_count;
     const monthly = {
       current_earnings: Math.round(monthTotal * 100) / 100,
       confirmed_revenue: Math.round(monthBookedRevenue * 100) / 100,
@@ -1578,9 +1570,9 @@ export const getStatsDrawerData = query({
       days_elapsed: daysElapsed,
       avg_daily_rate: Math.round(avgDailyRate * 100) / 100,
       missed: {
-        ...monthlyPlatformFallout,
+        ...platformFallout,
         total_count: monthlyMissedCount,
-        scheduled_month: monthStart.slice(0, 7),
+        period_days: 365,
       },
     };
 
@@ -1833,10 +1825,6 @@ export const getStatsDrawerData = query({
       denialRows,
       reservations: { rows: allResRaw, gteStartDate: dashCutoff },
     });
-    // Counts only — these operational losses are intentionally kept out of
-    // every £ aggregate. `allRes` is already account-scoped and the dashboard
-    // uses its indexed 365-day reservation window for this reporting surface.
-    const platformFallout = countPlatformFallout(dedupRes(allRes));
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
       items: missedRevenueResult.lostItems.slice(0, 15).map((it) => ({
