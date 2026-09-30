@@ -3,7 +3,7 @@ import { aptGet, syncEnvVars } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   project: "proj_cdhxwycwcjdmxnsodsmc",
-  runtime: "node",
+  runtime: "node-24",
   logLevel: "log",
   maxDuration: 300,
   // Retry sane defaults — individual tasks can override.
