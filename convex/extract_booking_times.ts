@@ -41,9 +41,9 @@ import {
 import {
   BookingTimeSchema,
   buildBookingTimeMessages,
-  dateWithinTolerance,
-  formatBookingTimeMessageTimestamp,
+  buildBookingTimeTranscript,
   sanitizeTime,
+  validatedBookingDates,
   type ExtractedBookingTimes,
 } from "../src/lib/booking-time-extraction";
 
@@ -86,13 +86,7 @@ export const extractForReservation = action({
       return { ok: true, skipped: "no time content" };
     }
 
-    const transcript = messages
-      .map((m: { sender: string; body_text: string; hygglo_sent_at?: number }) => {
-        const role = m.sender === "owner" ? "Owner" : "Renter";
-        const ts = m.hygglo_sent_at ? ` [${formatBookingTimeMessageTimestamp(m.hygglo_sent_at)}]` : "";
-        return `${role}${ts}: ${m.body_text}`;
-      })
-      .join("\n");
+    const transcript = buildBookingTimeTranscript(messages);
 
     const itemTitle = (r.items ?? []).map((i: { item_name: string }) => i.item_name).join(" + ") || "rental";
     const { system, user } = buildBookingTimeMessages(itemTitle.slice(0, 120), r.start_date, r.end_date, transcript);
@@ -135,15 +129,14 @@ export const extractForReservation = action({
     const sanitizedPickup = sanitizeTime(ext.pickup_time);
     const sanitizedReturn = sanitizeTime(ext.return_time);
 
-    // Validate dates within tolerance.
-    const validPickupDate = dateWithinTolerance(ext.pickup_date, r.start_date) ? ext.pickup_date : undefined;
-    const validReturnDate = dateWithinTolerance(ext.return_date, r.end_date) ? ext.return_date : undefined;
+    const dates = validatedBookingDates(ext.pickup_date, ext.return_date, r.start_date, r.end_date);
+    if (dates.anomaly) console.warn(`[extract_booking_times] impossible handover dates for ${reservation_id}; using booked window`);
 
     const patch: Record<string, string> = {};
     if (sanitizedPickup) patch.pickup_time = sanitizedPickup;
     if (sanitizedReturn) patch.return_time = sanitizedReturn;
-    if (validPickupDate) patch.pickup_date = validPickupDate;
-    if (validReturnDate) patch.return_date = validReturnDate;
+    if (dates.pickup_date) patch.pickup_date = dates.pickup_date;
+    if (dates.return_date) patch.return_date = dates.return_date;
     if (ext.pickup_method && ["delivery", "collection"].includes(ext.pickup_method)) patch.pickup_method = ext.pickup_method;
     if (ext.return_method && ["delivery", "collection"].includes(ext.return_method)) patch.return_method = ext.return_method;
 

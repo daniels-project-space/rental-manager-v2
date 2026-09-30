@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BookingTimeMessage } from "./booking-time-transcript";
 
 /** Normalise common model formats without silently turning 7 PM into 07:00. */
 export function sanitizeTime(value: string | undefined | null): string | undefined {
@@ -89,6 +90,37 @@ export function formatBookingTimeMessageTimestamp(timestamp: number): string {
   }).formatToParts(new Date(timestamp));
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")} Europe/London`;
+}
+
+/** Both extractors must send the same London-dated transcript to the model. */
+export function buildBookingTimeTranscript(messages: BookingTimeMessage[]): string {
+  return messages.map((message) => {
+    const date = message.hygglo_sent_at === undefined
+      ? "London date unavailable"
+      : formatBookingTimeMessageTimestamp(message.hygglo_sent_at);
+    const speaker = message.sender === "owner" ? "Owner" : "Renter";
+    return `[${date}] ${speaker}: ${message.body_text}`;
+  }).join("\n");
+}
+
+/** Keep an implausible model date from moving a live booking into the past. */
+export function validatedBookingDates(
+  pickupDate: string,
+  returnDate: string,
+  startDate: string,
+  endDate: string,
+): { pickup_date?: string; return_date?: string; anomaly: boolean } {
+  const pickupValid = dateWithinTolerance(pickupDate, startDate);
+  const returnValid = dateWithinTolerance(returnDate, endDate);
+  if (returnDate < startDate ||
+      (pickupValid && returnValid && returnDate < pickupDate)) {
+    return { pickup_date: startDate, return_date: endDate, anomaly: true };
+  }
+  return {
+    pickup_date: pickupValid ? pickupDate : undefined,
+    return_date: returnValid ? returnDate : undefined,
+    anomaly: false,
+  };
 }
 
 // Invariant system prompt shared by the immediate Convex lane and the Trigger

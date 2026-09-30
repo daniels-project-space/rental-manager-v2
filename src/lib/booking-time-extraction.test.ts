@@ -3,8 +3,10 @@ import {
   BOOKING_TIME_INSTRUCTIONS,
   BookingTimeSchema,
   buildBookingTimeMessages,
+  buildBookingTimeTranscript,
   formatBookingTimeMessageTimestamp,
   sanitizeTime,
+  validatedBookingDates,
 } from "./booking-time-extraction";
 
 describe("booking time extraction contract", () => {
@@ -15,6 +17,18 @@ describe("booking time extraction contract", () => {
       .toBe("2026-12-28 00:00 Europe/London");
     const prompt = buildBookingTimeMessages("Sony lens", "2026-09-30", "2026-09-30", "tomorrow", new Date("2026-09-28T23:00:00Z"));
     expect(prompt.user).toContain("2026-09-29 00:00 Europe/London");
+    expect(buildBookingTimeTranscript([
+      { sender: "renter", body_text: "Can I pick up tomorrow morning?", hygglo_sent_at: Date.parse("2026-09-28T23:00:00Z") },
+      { sender: "owner", body_text: "Yes", hygglo_sent_at: Date.parse("2026-09-28T23:00:00Z") },
+    ])).toBe("[2026-09-29 00:00 Europe/London] Renter: Can I pick up tomorrow morning?\n[2026-09-29 00:00 Europe/London] Owner: Yes");
+  });
+  it("rejects an extracted return before the booked rental starts", () => {
+    expect(validatedBookingDates("2026-09-29", "2026-09-29", "2026-09-30", "2026-09-30"))
+      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-09-30", anomaly: true });
+    expect(validatedBookingDates("2026-09-30", "2026-10-01", "2026-10-01", "2026-10-01"))
+      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-10-01", anomaly: false });
+    expect(validatedBookingDates("2026-09-27", "2026-09-27", "2026-10-01", "2026-10-01"))
+      .toEqual({ pickup_date: "2026-10-01", return_date: "2026-10-01", anomaly: true });
   });
   it("normalises 12-hour, dotted and compact model output", () => {
     expect(sanitizeTime("7:00 PM")).toBe("19:00");

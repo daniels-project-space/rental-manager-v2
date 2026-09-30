@@ -47,3 +47,5 @@ jobs:
           else
             echo "no test script — skipping"
           fi
+      - name: Guard London booking-time transcripts
+        run: node scripts/check-booking-time-extractors.mjs

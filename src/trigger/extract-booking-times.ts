@@ -23,9 +23,9 @@ import {
 import {
   BookingTimeSchema,
   buildBookingTimeMessages,
-  dateWithinTolerance,
-  formatBookingTimeMessageTimestamp,
+  buildBookingTimeTranscript,
   sanitizeTime,
+  validatedBookingDates,
   type ExtractedBookingTimes,
 } from "../lib/booking-time-extraction";
 
@@ -143,14 +143,7 @@ export const extractBookingTimesTask = schedules.task({
         skipped++;
         continue;
       }
-      const transcript = c.messages
-        .map((m) => {
-          const ts = m.hygglo_sent_at
-            ? formatBookingTimeMessageTimestamp(m.hygglo_sent_at)
-            : "??";
-          return `[${ts}] ${m.sender}: ${m.body_text}`;
-        })
-        .join("\n");
+      const transcript = buildBookingTimeTranscript(c.messages);
 
       let extracted: ExtractedBookingTimes;
       try {
@@ -204,13 +197,15 @@ export const extractBookingTimesTask = schedules.task({
           ? extracted.return_method
           : undefined,
       };
-      // Only persist dates that are within tolerance of the rental window.
-      if (dateWithinTolerance(extracted.pickup_date, c.start_date, 3)) {
-        patch.pickup_date = extracted.pickup_date;
-      }
-      if (dateWithinTolerance(extracted.return_date, c.end_date, 3)) {
-        patch.return_date = extracted.return_date;
-      }
+      const dates = validatedBookingDates(
+        extracted.pickup_date, extracted.return_date, c.start_date, c.end_date,
+      );
+      if (dates.anomaly) logger.warn("extract-booking-times: impossible handover dates; using booked window", {
+        reservation_id: c.id, extracted_pickup: extracted.pickup_date,
+        extracted_return: extracted.return_date, start_date: c.start_date, end_date: c.end_date,
+      });
+      patch.pickup_date = dates.pickup_date;
+      patch.return_date = dates.return_date;
       // Drop empty keys so the mutation patch stays minimal.
       const cleanPatch = Object.fromEntries(
         Object.entries(patch).filter(([, v]) => v !== undefined),
