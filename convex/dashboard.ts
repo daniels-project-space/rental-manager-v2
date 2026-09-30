@@ -23,7 +23,7 @@ import {
   trailingBaseline,
 } from "./lib/month_projection";
 import { passesNameSanityCheck } from "./lib/reservations/itemResolution";
-import { londonToday } from "./lib/effectiveDates";
+import { londonToday, londonTime, pickupIsUpcoming } from "./lib/effectiveDates";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import {
   resolveImageForReservationItem,
@@ -393,6 +393,7 @@ export const getStatsDrawerData = query({
     // money-day boundaries are not silently shifted.
     const activeToday = londonToday();
     const now = new Date();
+    const activeTime = londonTime(now);
 
     // ── Week bounds ──────────────────────────────────────────────
     const dayOfWeek = now.getDay();
@@ -654,8 +655,12 @@ export const getStatsDrawerData = query({
     type ResRow = typeof allRes[number];
     const dedupRes = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
 
-    const ongoingRentals = allRes.filter((r) => isOngoing(r as ResRow, activeToday));
-    const upcomingRentals = allRes.filter((r) => isUpcoming(r as ResRow, activeToday));
+    const isActiveUpcoming = (r: ResRow): boolean =>
+      isConfirmedWithDates(r) && pickupIsUpcoming(r, activeToday, activeTime);
+    const isActiveOngoing = (r: ResRow): boolean =>
+      isOngoing(r, activeToday) && !isActiveUpcoming(r);
+    const ongoingRentals = allRes.filter((r) => isActiveOngoing(r as ResRow));
+    const upcomingRentals = allRes.filter((r) => isActiveUpcoming(r as ResRow));
 
     // "Paid" = live (not cancelled/declined/obsolete). Revenue candidate pool.
     const paidRes = allRes.filter(
@@ -709,8 +714,8 @@ export const getStatsDrawerData = query({
         order_step: (live as { order_step?: string }).order_step,
       } as ResRow;
     });
-    const ongoingGroupRows = mergedActiveRows.filter((r) => isOngoing(r as ReservationRow, activeToday));
-    const upcomingGroupRows = mergedActiveRows.filter((r) => isUpcoming(r as ReservationRow, activeToday));
+    const ongoingGroupRows = mergedActiveRows.filter((r) => isActiveOngoing(r as ResRow));
+    const upcomingGroupRows = mergedActiveRows.filter((r) => isActiveUpcoming(r as ResRow));
 
     // Monthly confirmed bookings (deduped) — confirmed status only, used for the
     // "still going" segments (done-via-date / active / upcoming).

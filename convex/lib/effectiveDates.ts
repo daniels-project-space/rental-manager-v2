@@ -79,3 +79,21 @@ export function displayReturnTime(r: EffectiveDateRow): string | null {
 export function londonToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 }
+
+/** Local wall-clock time for same-day handover status, including BST. */
+export function londonTime(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(now);
+}
+
+/** A same-day pickup remains upcoming until its agreed local handover time. */
+export function pickupIsUpcoming(
+  r: EffectiveDateRow,
+  today: string,
+  nowLondonTime: string,
+): boolean {
+  const pickupDate = displayPickupDate(r);
+  return pickupDate > today ||
+    (pickupDate === today && !!r.pickup_time && r.pickup_time > nowLondonTime);
+}

@@ -19,6 +19,7 @@ import { internalAction, internalMutation, query } from "../_generated/server";
 import { api } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
+import { londonTime } from "../lib/effectiveDates";
 
 /**
  * Standalone refresher — direct invocation path (manual ops, cold-start
@@ -90,23 +91,37 @@ export async function refreshAll(
     // rental flips upcoming→ongoing→completed purely because today's date
     // crossed its start/end, with zero DB writes. So a "clean" but previous-day
     // (or simply old) snapshot is still stale. ONLY consider skipping when the
-    // snapshot is from the same UTC day AND recent; otherwise always rebuild.
+    // snapshot is from the same London day AND recent; otherwise always rebuild.
     // (This is why the MV could sit ~6 days stale: no mutations, so the old
     // mutation-only probe skipped every rebuild indefinitely.)
     const sameDay =
-      new Date(earliestPriorGen).toISOString().slice(0, 10) ===
-      new Date(startedAt).toISOString().slice(0, 10);
+      new Date(earliestPriorGen).toLocaleDateString("en-CA", { timeZone: "Europe/London" }) ===
+      new Date(startedAt).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
     const recent = startedAt - earliestPriorGen < 6 * 60 * 60 * 1000;
     if (sameDay && recent) {
+      // A same-day agreed pickup crosses upcoming -> ongoing without a DB
+      // mutation. Inspect only the small cached drawer arrays before skipping.
+      const todayLondon = new Date(startedAt).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+      const timeLondon = londonTime(new Date(startedAt));
+      type UpcomingRow = { pickup_date?: string | null; start_date?: string | null; pickup_time?: string | null };
+      type CachedRentals = { rentals?: { upcoming?: UpcomingRow[] } } | null;
+      const cachedRentals = await Promise.all(slugs.map(({ key }) =>
+        ctx.runQuery(anyApi.mv.stats_drawer.getRentals, { account: key }) as Promise<CachedRentals>,
+      ));
+      const crossedPickup = cachedRentals.some((row) =>
+        (row?.rentals?.upcoming ?? []).some((r) =>
+          (r.pickup_date ?? r.start_date) === todayLondon &&
+          typeof r.pickup_time === "string" && r.pickup_time <= timeLondon,
+        ),
+      );
       // Same-day & recent: only skip if no reservation mutated since the last
       // write (the indexed max(last_polled_at) probe catches inserts AND status
       // changes on any rental, not just future-dated ones).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const isDirty: boolean = await ctx.runQuery(
         anyApi.mv.stats_drawer.hasReservationMutationsSince,
         { sinceMs: earliestPriorGen },
       );
-      if (!isDirty) {
+      if (!isDirty && !crossedPickup) {
         return { ok: true, written: 0, skipped: slugs.length, durationMs: Date.now() - startedAt };
       }
     }
