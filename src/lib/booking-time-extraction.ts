@@ -80,6 +80,17 @@ export const BookingTimeSchema = z.object({
 
 export type ExtractedBookingTimes = z.infer<typeof BookingTimeSchema>;
 
+/** Chat timestamps are instants, but relative dates in Hygglo chat mean London calendar days. */
+export function formatBookingTimeMessageTimestamp(timestamp: number): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(timestamp));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")} Europe/London`;
+}
+
 // Invariant system prompt shared by the immediate Convex lane and the Trigger
 // recovery lane. Kept as its own message (not concatenated with per-call
 // variable context) so it stays a stable, cacheable prefix across every call.
@@ -97,7 +108,7 @@ INSTRUCTIONS:
 
 DATES:
 - Pickup may be the evening before the nominal start date; return may be the morning after the nominal end date.
-- Use message timestamps to resolve today, tonight, tomorrow and named days.
+- Message timestamps are in Europe/London. Resolve today, tonight, tomorrow and named days from their London calendar date, including during BST.
 - If no specific date context exists, default pickup to start_date and return to end_date.
 
 METHODS:
@@ -120,10 +131,10 @@ export function buildBookingTimeMessages(
   transcript: string,
   now: Date = new Date(),
 ): { system: string; user: string } {
-  const nowText = now.toISOString().replace("T", " ").substring(0, 16);
+  const nowText = formatBookingTimeMessageTimestamp(now.getTime());
   return {
     system: BOOKING_TIME_INSTRUCTIONS,
-    user: `Current date/time: ${nowText} UTC
+    user: `Current date/time: ${nowText}
 Equipment: ${rentalTitle}
 start_date: ${startDate}
 end_date: ${endDate}

@@ -42,6 +42,7 @@ import {
   BookingTimeSchema,
   buildBookingTimeMessages,
   dateWithinTolerance,
+  formatBookingTimeMessageTimestamp,
   sanitizeTime,
   type ExtractedBookingTimes,
 } from "../src/lib/booking-time-extraction";
@@ -88,7 +89,7 @@ export const extractForReservation = action({
     const transcript = messages
       .map((m: { sender: string; body_text: string; hygglo_sent_at?: number }) => {
         const role = m.sender === "owner" ? "Owner" : "Renter";
-        const ts = m.hygglo_sent_at ? ` [${new Date(m.hygglo_sent_at).toISOString().replace("T", " ").substring(0, 16)}]` : "";
+        const ts = m.hygglo_sent_at ? ` [${formatBookingTimeMessageTimestamp(m.hygglo_sent_at)}]` : "";
         return `${role}${ts}: ${m.body_text}`;
       })
       .join("\n");

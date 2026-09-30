@@ -24,6 +24,7 @@ import {
   BookingTimeSchema,
   buildBookingTimeMessages,
   dateWithinTolerance,
+  formatBookingTimeMessageTimestamp,
   sanitizeTime,
   type ExtractedBookingTimes,
 } from "../lib/booking-time-extraction";
@@ -145,7 +146,7 @@ export const extractBookingTimesTask = schedules.task({
       const transcript = c.messages
         .map((m) => {
           const ts = m.hygglo_sent_at
-            ? new Date(m.hygglo_sent_at).toISOString().substring(0, 16).replace("T", " ")
+            ? formatBookingTimeMessageTimestamp(m.hygglo_sent_at)
             : "??";
           return `[${ts}] ${m.sender}: ${m.body_text}`;
         })

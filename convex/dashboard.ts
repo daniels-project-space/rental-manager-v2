@@ -2413,17 +2413,15 @@ export const getNextRentals = query({
     day: v.union(v.literal("today"), v.literal("tomorrow")),
   },
   handler: async (ctx, { accountSlug, day }) => {
-    const now = new Date();
-    const baseToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const target = day === "today" ? baseToday : new Date(baseToday.getTime() + 86400000);
-    const targetDate = target.toISOString().slice(0, 10);
+    const businessToday = londonToday();
+    const targetDate = day === "today"
+      ? businessToday
+      : new Date(Date.parse(`${businessToday}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
     // Indexed read — only need rows whose start_date is within ~30 days
     // of target. Drops ~1767 → ~30.
     const nextCutoff = (() => {
-      const d = new Date();
-      d.setDate(d.getDate() - 30);
-      return d.toISOString().slice(0, 10);
+      return new Date(Date.parse(`${businessToday}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
     })();
     let rows = await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", nextCutoff))
