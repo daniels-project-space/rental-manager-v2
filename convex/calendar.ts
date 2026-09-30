@@ -877,18 +877,15 @@ export async function computeStripLive(
     }
 
     return dates.map((date) => {
-      // For same-day rentals (start === end === date), place in pickups only to avoid double-count.
-      // Placement honors the negotiated pickup date (EITHER direction) so a
-      // rental whose pickup_date differs from the Hygglo start_date moves to the
-      // negotiated day.
+      // Same-day rentals have two distinct handovers. Show both events so the
+      // scheduled return cannot disappear from the day's return category.
+      // Placement follows the negotiated dates in each direction.
       const pickups = mergedReservations
         .filter((r) => displayPickupDate(r) === date)
         .map((r) => buildChip(r, "pickup"));
 
-      // Exclude same-day rentals from returns (already counted in pickups above).
-      const pickupIds = new Set(pickups.map((p) => p.reservationId));
       const returns = mergedReservations
-        .filter((r) => effectiveReturnDate(r) === date && !pickupIds.has(r._id))
+        .filter((r) => effectiveReturnDate(r) === date)
         .map((r) => buildChip(r, "return"));
 
       // "Away" — rental days strictly between pickup and return (V1 parity).

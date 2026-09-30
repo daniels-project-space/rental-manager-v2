@@ -876,8 +876,11 @@ function DayDrawer({ day }: { day: DayData }) {
   const allBookings: ChipData[] = [...day.pickups, ...day.returns, ...away].sort(
     (a, b) => bookingTime(a).localeCompare(bookingTime(b)),
   );
-  const bookingCount = allBookings.length;
-  const totalGross = allBookings.reduce((sum, b) => sum + (b.grossPaidGbp ?? 0), 0);
+  // One same-day rental now has both a pickup and return event. Count its
+  // booking and value once while displaying both handover cards.
+  const uniqueBookings = [...new Map(allBookings.map((b) => [String(b.reservationId), b])).values()];
+  const bookingCount = uniqueBookings.length;
+  const totalGross = uniqueBookings.reduce((sum, b) => sum + (b.grossPaidGbp ?? 0), 0);
   const hasAny = bookingCount + day.holds.length > 0;
 
   return (
