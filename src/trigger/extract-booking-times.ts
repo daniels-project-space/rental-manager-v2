@@ -198,11 +198,14 @@ export const extractBookingTimesTask = schedules.task({
           : undefined,
       };
       const dates = validatedBookingDates(
-        extracted.pickup_date, extracted.return_date, c.start_date, c.end_date,
+        extracted.pickup_date, extracted.return_date, c.start_date, c.end_date, c.messages,
       );
       if (dates.anomaly) logger.warn("extract-booking-times: impossible handover dates; using booked window", {
         reservation_id: c.id, extracted_pickup: extracted.pickup_date,
         extracted_return: extracted.return_date, start_date: c.start_date, end_date: c.end_date,
+      });
+      if (dates.pending_extension) logger.info("extract-booking-times: awaiting owner acceptance of return extension", {
+        reservation_id: c.id, proposed_return: extracted.return_date,
       });
       patch.pickup_date = dates.pickup_date;
       patch.return_date = dates.return_date;

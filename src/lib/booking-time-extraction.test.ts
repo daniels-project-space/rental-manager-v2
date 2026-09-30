@@ -5,6 +5,7 @@ import {
   buildBookingTimeMessages,
   buildBookingTimeTranscript,
   formatBookingTimeMessageTimestamp,
+  hasUnconfirmedReturnExtension,
   sanitizeTime,
   validatedBookingDates,
 } from "./booking-time-extraction";
@@ -24,11 +25,29 @@ describe("booking time extraction contract", () => {
   });
   it("rejects an extracted return before the booked rental starts", () => {
     expect(validatedBookingDates("2026-09-29", "2026-09-29", "2026-09-30", "2026-09-30"))
-      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-09-30", anomaly: true });
+      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-09-30", anomaly: true, pending_extension: false });
     expect(validatedBookingDates("2026-09-30", "2026-10-01", "2026-10-01", "2026-10-01"))
-      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-10-01", anomaly: false });
+      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-10-01", anomaly: false, pending_extension: false });
     expect(validatedBookingDates("2026-09-27", "2026-09-27", "2026-10-01", "2026-10-01"))
-      .toEqual({ pickup_date: "2026-10-01", return_date: "2026-10-01", anomaly: true });
+      .toEqual({ pickup_date: "2026-10-01", return_date: "2026-10-01", anomaly: true, pending_extension: false });
+  });
+  it("does not schedule a requested extension until the owner accepts it", () => {
+    const agreed = [
+      { sender: "renter", body_text: "Can I return it at 8pm today?" },
+      { sender: "owner", body_text: "Yes that works" },
+    ];
+    const requested = [...agreed, {
+      sender: "renter", body_text: "Can I extend the rental to tomorrow please? And drop back tomorrow evening",
+    }];
+    expect(hasUnconfirmedReturnExtension(requested)).toBe(true);
+    expect(validatedBookingDates("2026-09-30", "2026-10-01", "2026-09-30", "2026-09-30", requested))
+      .toEqual({ pickup_date: "2026-09-30", return_date: undefined, anomaly: false, pending_extension: true });
+    const accepted = [...requested, { sender: "owner", body_text: "Yes that works" }];
+    expect(hasUnconfirmedReturnExtension(accepted)).toBe(false);
+    expect(validatedBookingDates("2026-09-30", "2026-10-01", "2026-09-30", "2026-09-30", accepted))
+      .toEqual({ pickup_date: "2026-09-30", return_date: "2026-10-01", anomaly: false, pending_extension: false });
+    expect(hasUnconfirmedReturnExtension([...requested, { sender: "owner", body_text: "No, tomorrow is not okay" }]))
+      .toBe(true);
   });
   it("normalises 12-hour, dotted and compact model output", () => {
     expect(sanitizeTime("7:00 PM")).toBe("19:00");

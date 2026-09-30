@@ -129,8 +129,9 @@ export const extractForReservation = action({
     const sanitizedPickup = sanitizeTime(ext.pickup_time);
     const sanitizedReturn = sanitizeTime(ext.return_time);
 
-    const dates = validatedBookingDates(ext.pickup_date, ext.return_date, r.start_date, r.end_date);
+    const dates = validatedBookingDates(ext.pickup_date, ext.return_date, r.start_date, r.end_date, messages);
     if (dates.anomaly) console.warn(`[extract_booking_times] impossible handover dates for ${reservation_id}; using booked window`);
+    if (dates.pending_extension) console.info(`[extract_booking_times] awaiting owner acceptance of return extension for ${reservation_id}`);
 
     const patch: Record<string, string> = {};
     if (sanitizedPickup) patch.pickup_time = sanitizedPickup;

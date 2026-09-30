@@ -103,23 +103,41 @@ export function buildBookingTimeTranscript(messages: BookingTimeMessage[]): stri
   }).join("\n");
 }
 
+/** A renter's extension request alone does not change the agreed return date. */
+export function hasUnconfirmedReturnExtension(messages: BookingTimeMessage[]): boolean {
+  const request = /\b(?:can|could|may|would)\s+(?:i|we)\b.{0,100}\b(?:extend|return|drop\s+(?:it\s+)?back)\b|\bextend\b.{0,80}\b(?:tomorrow|another|next|please)\b/i;
+  let latestRequest = -1;
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].sender === "renter" && request.test(messages[i].body_text)) latestRequest = i;
+  }
+  if (latestRequest < 0) return false;
+  return !messages.slice(latestRequest + 1).some((message) =>
+    message.sender === "owner" &&
+    /\b(?:yes|yeah|sure|ok|okay|works|fine|agreed|confirmed|approved|updated)\b/i.test(message.body_text) &&
+    !/\b(?:no|not|can't|cannot|won't|unfortunately)\b/i.test(message.body_text),
+  );
+}
+
 /** Keep an implausible model date from moving a live booking into the past. */
 export function validatedBookingDates(
   pickupDate: string,
   returnDate: string,
   startDate: string,
   endDate: string,
-): { pickup_date?: string; return_date?: string; anomaly: boolean } {
+  messages: BookingTimeMessage[] = [],
+): { pickup_date?: string; return_date?: string; anomaly: boolean; pending_extension: boolean } {
   const pickupValid = dateWithinTolerance(pickupDate, startDate);
   const returnValid = dateWithinTolerance(returnDate, endDate);
   if (returnDate < startDate ||
       (pickupValid && returnValid && returnDate < pickupDate)) {
-    return { pickup_date: startDate, return_date: endDate, anomaly: true };
+    return { pickup_date: startDate, return_date: endDate, anomaly: true, pending_extension: false };
   }
+  const pendingExtension = returnValid && returnDate > endDate && hasUnconfirmedReturnExtension(messages);
   return {
     pickup_date: pickupValid ? pickupDate : undefined,
-    return_date: returnValid ? returnDate : undefined,
+    return_date: returnValid && !pendingExtension ? returnDate : undefined,
     anomaly: false,
+    pending_extension: pendingExtension,
   };
 }
 
