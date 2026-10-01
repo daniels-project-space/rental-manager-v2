@@ -4,7 +4,9 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { baseListingProductIds } from "./lib/base_listing_identity";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
-import { describeTiers, rentalQuote, type PriceTier } from "./lib/hygglo_pricing";
+import type { PriceTier } from "./lib/hygglo_pricing";
+import { inclusiveDays, summarise } from "./lib/renter_order_quote";
+export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
 
 /**
@@ -36,14 +38,6 @@ function assertLabThread(threadId: string) {
  * Hygglo counts rental days INCLUSIVELY: a pickup and return on the same date
  * is 1 day, and 23rd→24th is 2. Getting this wrong understates every total.
  */
-export function inclusiveDays(start?: string | null, end?: string | null): number {
-  if (!start || !end) return 1;
-  const a = Date.parse(`${start}T00:00:00Z`);
-  const b = Date.parse(`${end}T00:00:00Z`);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return 1;
-  return Math.max(1, Math.round((b - a) / 86400000) + 1);
-}
-
 type OrderLine = {
   display_name?: string;
   product_id?: number;
@@ -56,34 +50,6 @@ type OrderLine = {
 };
 
 /** Line totals + grand total, so the Lab and the bot quote the same numbers. */
-export function summarise(lines: OrderLine[], start?: string, end?: string) {
-  const days = inclusiveDays(start, end);
-  const priced = lines.map((l) => {
-    // The rate the renter actually pays for THIS length, not the 1-day rate.
-    const quote = rentalQuote(l.price_tiers, l.daily_price_gbp, days, l.qty);
-    const rate = quote?.daily_rate_gbp ?? null;
-    return {
-      ...l,
-      effective_rate_gbp: rate,
-      tiers: describeTiers(l.price_tiers),
-      line_total_gbp: quote?.listed_total_gbp ?? null,
-    };
-  });
-  const known = priced.filter((l) => l.line_total_gbp != null);
-  return {
-    start_date: start ?? null,
-    end_date: end ?? null,
-    days,
-    lines: priced,
-    // Null rather than 0 when a price is missing: a confidently wrong total is
-    // worse than an admitted unknown, and the bot must not quote one.
-    total_gbp: known.length === priced.length
-      ? known.reduce((n, l) => n + (l.line_total_gbp as number), 0)
-      : null,
-    unpriced: priced.filter((l) => l.line_total_gbp == null).map((l) => l.name),
-  };
-}
-
 
 /**
  * Daily price for one item on one account: its own listing (cheapest), else

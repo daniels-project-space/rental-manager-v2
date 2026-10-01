@@ -1,5 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { tierRateForDays, tierTotalForDays, describeTiers, rentalQuote } from "./hygglo_pricing";
+import { tierRateForDays, tierTotalForDays, describeTiers, rentalQuote, inclusiveRentalDays } from "./hygglo_pricing";
+import { summarise } from "./renter_order_quote";
+
+describe("owner and Lab pricing duration", () => {
+  it("includes both calendar dates, including across a DST change", () => {
+    expect(inclusiveRentalDays("2026-10-02", "2026-10-04")).toBe(3);
+    expect(inclusiveRentalDays("2026-03-28", "2026-03-30")).toBe(3);
+    expect(inclusiveRentalDays("2026-10-02", "2026-10-02")).toBe(1);
+  });
+  it("does not manufacture a duration from missing, reversed or normalized invalid dates", () => {
+    for (const [start, end] of [[undefined, undefined], ["2026-10-04", "2026-10-02"], ["2026-02-30", "2026-03-03"]]) expect(inclusiveRentalDays(start, end)).toBeNull();
+  });
+  it("uses the exact line's tiers and quantity without rounding the daily rate first", () => {
+    const order = summarise([{ name: "Exact Blackmagic listing", qty: 2, daily_price_gbp: 60, price_tiers: [{ days: 3, pricePerDay: 43.3333333333 }] }], "2026-10-02", "2026-10-04");
+    expect(order.days).toBe(3);expect(order.total_gbp).toBe(260);
+  });
+  it("does not present a partly priced basket as a complete total", () => {
+    expect(summarise([{ name: "Priced", qty: 1, daily_price_gbp: 60 }, { name: "Unknown", qty: 1 }], "2026-10-02", "2026-10-04").total_gbp).toBeNull();
+  });
+});
 
 /** Real tier table from leo#1172440 ("BMPCC 6k PRO Cinema Kit + tripod"). */
 const TIERS = [

@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
+import { draftReviewValidator } from "./lib/draft_review_validator";
 
 // Phase 1.A schema. Tables with `Empty in this phase` are scaffolding for later phases
 // (renters, reservations, conversations, rules, denial_records).
@@ -734,6 +735,7 @@ const operationalSchema = defineSchema({
     // raised on the draft (auto-fixed leaks + items flagged for owner review).
     ai_draft_confidence: v.optional(v.number()),
     ai_draft_evidence: v.optional(draftEvidenceValidator),
+    ai_draft_review: v.optional(draftReviewValidator),
     ai_draft_flags: v.optional(
       v.array(
         v.object({

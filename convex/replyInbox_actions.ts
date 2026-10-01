@@ -1,4 +1,5 @@
 import type { KitEvidence } from "./lib/kit_claims";
+import { currentDraftReview, type DraftReview } from "./lib/draft_review";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
@@ -18,7 +19,7 @@ import { londonToday } from "./lib/effectiveDates";
  */
 import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
-import type { DraftEvidence } from "./lib/renter_draft_evidence";
+import { normalizeClaimedFacts, type DraftEvidence } from "./lib/renter_draft_evidence";
 import { api, internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
@@ -58,10 +59,12 @@ export const generateDraft = action({
     craft_override: v.optional(v.string()),
     /** Probe-only model swap for adherence bake-offs; route gates it to __probe__ threads. */
     model_override: v.optional(v.string()),
+    /** Explicit operator retry after reviewing/correcting the source facts. */
+    retry_review: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { thread_id, craft_override, model_override },
+    { thread_id, craft_override, model_override, retry_review },
   ): Promise<{
     status: "ok" | "skipped";
     draft?: string;
@@ -85,6 +88,7 @@ export const generateDraft = action({
      * that declined from output we failed to parse.
      */
     reason?: string;
+    review?: DraftReview;
   }> => {
     // Make sure we know the inquiry's listing before drafting — pulls the order
     // detail's items onto conv.inquiry_items (no-op if cached or a reservation
@@ -98,6 +102,15 @@ export const generateDraft = action({
     const c = await ctx.runQuery(internal.replyInbox.getThreadContext, {
       thread_id,
     });
+    const heldReview = currentDraftReview(c.draft_review, { message_id: c.last_message_id,
+      epoch: c.draft_epoch, context_key: c.draft_context_key });
+    if (heldReview && !retry_review) return { status: "skipped", reason: heldReview.reason,
+      flags: heldReview.flags, evidence: heldReview.evidence, review: heldReview, for_message_id: c.last_message_id };
+    const recordReview = async (reason: string, flags: DraftFlag[], evidence?: DraftEvidence) => {
+      if (!c.last_message_id) return { ok: false as const, reason: "stale_inbound" };
+      return ctx.runMutation(internal.replyInbox.setDraftReview, { thread_id, message_id: c.last_message_id,
+        epoch: c.draft_epoch, context_key: c.draft_context_key, stage: c.conversation_stage, reason, flags, evidence });
+    };
 
     // Renter messages (oldest→newest) for negotiation + routing reads.
     const renterMsgs = c.messages
@@ -597,7 +610,7 @@ export const generateDraft = action({
           conversation_stage?: string;
           diagnostic_candidate?: string;
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string }>;
-          factsClaimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string }>;
+          factsClaimed?: unknown;
           needs_human?: boolean;
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
@@ -636,14 +649,14 @@ export const generateDraft = action({
             cost: number | null;
           } | null;
         };
-        generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: (j.factsClaimed ?? []).map((f) => ({ ...f, verified: false })) };
+        generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: normalizeClaimedFacts(j.factsClaimed) };
         if (thread_id.startsWith("__probe__")) generationMeta.diagnostic_candidate = j.diagnostic_candidate;
         generationMeta.evidence = { model_id: j.model_id ?? "unknown", stage: j.conversation_stage ?? "unknown", cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         if (j.needs_human) {
-          // The subscription model deliberately declined an under-grounded or
-          // consequential reply. Keep any earlier preview untouched and tell
-          // Quick Reply this needs Daniel's judgement.
-          return { status: "skipped", reason: `needs_human:${j.needs_human_reason ?? "unknown"}`, ...generationMeta };
+          const reason = `needs_human:${j.needs_human_reason ?? "unknown"}`;
+          const saved = await recordReview(reason, [], generationMeta.evidence);
+          if (!saved.ok) return { status: "skipped", reason: "stale_inbound", ...generationMeta };
+          return { status: "skipped", reason, review: saved.review, ...generationMeta };
         }
         draft = (j.draft ?? "").trim();
         if (draft) {
@@ -887,7 +900,9 @@ export const generateDraft = action({
       // escalation and there was no way to tell WHY a thread never drafted —
       // which is how a 100%-escalation path on not-owned items went unnoticed.
       // Distinct from a route-level escalation: here the GUARD withheld it.
-      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags, ...generationMeta, ...guardCandidate,
+      const saved = await recordReview("needs_human:guard_blocked", unresolvedCriticalFlags, generationMeta.evidence);
+      if (!saved.ok) return { status: "skipped", reason: "stale_inbound", ...generationMeta, ...guardCandidate };
+      return { status: "skipped", reason: "needs_human:guard_blocked", review: saved.review, flags: unresolvedCriticalFlags, ...generationMeta, ...guardCandidate,
         ...(thread_id.startsWith("__probe__") ? { rejectedDraft: checkedDraft } : {}) };
     }
 
@@ -897,6 +912,8 @@ export const generateDraft = action({
       thread_id,
       draft_text: finalDraft,
       message_id: c.last_message_id ?? undefined,
+      epoch: c.draft_epoch,
+      context_key: c.draft_context_key,
       conversation_stage: c.conversation_stage ?? undefined,
       confidence: guard.confidence,
       flags: guard.flags,

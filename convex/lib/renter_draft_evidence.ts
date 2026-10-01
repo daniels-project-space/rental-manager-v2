@@ -12,3 +12,17 @@ export const draftEvidenceValidator = v.object({
   })),
 });
 export type DraftEvidence = Infer<typeof draftEvidenceValidator>;
+
+/** Model self-reports are diagnostics, never independent proof. Empty call id
+ * means attribution was not supplied; do not manufacture a receipt for it. */
+export function normalizeClaimedFacts(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(raw => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    const f = raw as Record<string, unknown>;
+    if (typeof f.kind !== "string" || !f.kind.trim() || typeof f.value !== "string" || !f.value.trim()) return [];
+    return [{ kind: f.kind, value: f.value,
+      sourceTool: typeof f.sourceTool === "string" && f.sourceTool.trim() ? f.sourceTool : "unattributed",
+      sourceCallId: typeof f.sourceCallId === "string" ? f.sourceCallId : "", verified: false }];
+  });
+}

@@ -1,5 +1,7 @@
 "use client";
 import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
+import { draftReviewSummary, type DraftReview } from "../../../convex/lib/draft_review";
+import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
 /**
  * Reply Inbox (2026-06-22 v3) — cross-account "renters waiting on me".
  *
@@ -165,6 +167,7 @@ export interface ReplyTileData {
   ai_draft_confidence: number | null;
   ai_draft_flags: DraftFlag[] | null;
   ai_draft_evidence?: DraftEvidence | null;
+  ai_draft_review?: DraftReview | null;
   ai_draft_stale?: boolean;
   location: TileLocation | null;
 }
@@ -596,12 +599,7 @@ function MoneyHeadline({ tile, compact = false }: { tile: ReplyTileData; compact
 
 /** Rental length in days (matches the estimate convention: same-day = 1). */
 function daysOf(t: ReplyTileData): number | null {
-  if (t.start_date && t.end_date) {
-    const s = new Date(`${t.start_date}T00:00:00`).getTime();
-    const e = new Date(`${t.end_date}T00:00:00`).getTime();
-    if (!isNaN(s) && !isNaN(e) && e >= s) return Math.max(1, Math.round((e - s) / 86400000));
-  }
-  return t.estimate_days;
+  return inclusiveRentalDays(t.start_date, t.end_date) ?? t.estimate_days;
 }
 /** Compact, visually distinct dates + length chip for the overlay meta row. */
 function DatePill({ tile }: { tile: ReplyTileData }) {
@@ -1010,7 +1008,7 @@ function ReplyCard({
           onClick={onOpen}
           className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.06] text-[#cbd5e1] hover:bg-white/[0.12] transition-colors"
         >
-          💬 Reply{tile.has_draft ? " ✨" : ""}
+          💬 Reply{tile.ai_draft_review ? " · Needs review" : tile.has_draft ? " ✨" : ""}
         </button>
         {optimistic ? (
           <span
@@ -1824,25 +1822,24 @@ export function ReplyModal({
   const [text, setText] = useState("");
   // AI draft lives in its OWN preview box (not the compose box). Tap it to copy
   // it into the message box, then edit + Send yourself — never auto-sent.
-  const [draft, setDraft] = useState(tile.ai_draft_text ?? "");
+  const [draft, setDraft] = useState(tile.ai_draft_review || tile.ai_draft_stale ? "" : tile.ai_draft_text ?? "");
   const [draftConfidence, setDraftConfidence] = useState<number | null>(
     tile.ai_draft_confidence ?? null,
   );
   const [draftFlags, setDraftFlags] = useState<DraftFlag[]>(
     tile.ai_draft_flags ?? [],
   );
-  // The list row (mv_reply_queue) no longer carries the AI draft / flags —
-  // they're modal-only, so they're stripped from the re-pushed list payload to
-  // keep it small. Hydrate them once from the full thread fetch (getThreadById →
-  // liveTile) when the modal opens. Guarded so it never clobbers an edit the
-  // user has already started typing.
-  const draftHydratedRef = useRef(false);
+  const [draftReview, setDraftReview] = useState<DraftReview | null>(tile.ai_draft_review ?? null);
+  // The AI preview follows the authoritative thread, including background
+  // results and review invalidation. The owner's compose text is separate.
   useEffect(() => {
-    if (draftHydratedRef.current || !liveTile) return;
-    draftHydratedRef.current = true;
-    setDraft(liveTile.ai_draft_text ?? "");
-    setDraftConfidence(liveTile.ai_draft_confidence ?? null);
-    setDraftFlags(liveTile.ai_draft_flags ?? []);
+    if (!liveTile) return;
+    const review = liveTile.ai_draft_review ?? null;
+    const withheld = !!review || !!liveTile.ai_draft_stale;
+    setDraftReview(review);
+    setDraft(withheld ? "" : liveTile.ai_draft_text ?? "");
+    setDraftConfidence(withheld ? null : liveTile.ai_draft_confidence ?? null);
+    setDraftFlags(withheld ? [] : liveTile.ai_draft_flags ?? []);
   }, [liveTile]);
   const [showFlags, setShowFlags] = useState(false);
   const [drafting, setDrafting] = useState(false);
@@ -1894,35 +1891,16 @@ export function ReplyModal({
     setDrafting(true);
     setNote(null);
     try {
-      const r = await generateDraft({ thread_id: tile.thread_id });
+      const r = await generateDraft({ thread_id: tile.thread_id, retry_review: true });
       if (r.status === "ok" && r.draft) {
+        setDraftReview(null);
         setDraft(r.draft);
         setDraftConfidence(r.confidence ?? null);
         setDraftFlags(r.flags ?? []);
       } else if (r.reason?.startsWith("needs_human")) {
-        // The reason gained a ":why" suffix (needs_human:guard_blocked and so
-        // on) so a withheld draft could be told apart from the agent's own
-        // escalation. This branch still tested exact equality, so every real
-        // escalation fell through to a bare "Draft unavailable." Replaying real
-        // threads put a quarter of them here, each telling Daniel nothing about
-        // why the assistant went quiet. Match the prefix, and say which.
-        const why = r.reason.split(":")[1];
-        const because =
-          why === "guard_blocked"
-            ? " It was about to state a price or availability it could not back up."
-            : why === "model_declined"
-              ? " It judged this one too close to call."
-              : why === "unparseable_model_output"
-                ? " The reply came back malformed, so nothing was kept."
-                : why === "premature_confirmation"
-                  ? " It was about to confirm something that isn't confirmed yet."
-                  : "";
-        setNote(
-          (draft.trim()
-            ? "The draft assistant wants your judgement here, so the previous draft stayed untouched."
-            : "The draft assistant flagged this for your judgement. Write the reply yourself.") +
-            because,
-        );
+        setDraftReview(r.review ?? null);
+        setDraft(""); setDraftConfidence(null); setDraftFlags([]);
+        setNote(r.review ? null : "The reply needs your review. " + draftReviewSummary({ reason: r.reason, flags: r.flags ?? [] }));
       } else if (r.reason === "subscription_unavailable") {
         setNote("The draft assistant is temporarily unavailable.");
       } else setNote("Draft unavailable.");
@@ -2266,6 +2244,14 @@ export function ReplyModal({
 
           {/* AI draft — its OWN box. Tap to copy it into the message box below;
               it never auto-fills the compose box and is never sent on its own. */}
+          {draftReview && <div role="alert" aria-label="Reply needs review" className="rounded-xl border border-amber-400/30 bg-amber-500/[0.08] p-3 text-xs text-amber-100">
+            <p className="font-semibold">Reply needs your review</p>
+            <p className="mt-1">{draftReviewSummary(draftReview)} No reply was saved. Check the facts, write your reply, or retry the assistant.</p>
+            {draftReview.flags.length > 0 && <details className="mt-2">
+              <summary className="cursor-pointer">Why it was withheld</summary>
+              <ul className="mt-1 space-y-1">{draftReview.flags.map((flag, i) => <li key={i}>{flag.detail}</li>)}</ul>
+            </details>}
+          </div>}
           {(draft || drafting) && (
             <div className="rounded-xl border border-violet-400/25 bg-violet-500/[0.07]">
               <div className="flex items-center gap-2 px-3 pt-2 pb-1">
@@ -2382,7 +2368,7 @@ export function ReplyModal({
                 onClick={onGenerate}
                 className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#c5cad3] hover:bg-white/[0.12] disabled:opacity-50"
               >
-                ✨ Draft (AI)
+                {draftReview ? "↻ Retry after review" : "✨ Draft (AI)"}
               </button>
             )}
             <span className="text-[11px] text-[#6b7280] hidden sm:block">Nothing sends until you hit Send</span>

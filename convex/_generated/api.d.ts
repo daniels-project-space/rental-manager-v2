@@ -122,6 +122,8 @@ import type * as lib_double_booking from "../lib/double_booking.js";
 import type * as lib_draft_guard from "../lib/draft_guard.js";
 import type * as lib_draft_listing_grounding from "../lib/draft_listing_grounding.js";
 import type * as lib_draft_playbook from "../lib/draft_playbook.js";
+import type * as lib_draft_review from "../lib/draft_review.js";
+import type * as lib_draft_review_validator from "../lib/draft_review_validator.js";
 import type * as lib_effectiveDates from "../lib/effectiveDates.js";
 import type * as lib_feature_flags_helper from "../lib/feature_flags_helper.js";
 import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
@@ -165,6 +167,7 @@ import type * as lib_renter_bot_tone_scorer from "../lib/renter_bot_tone_scorer.
 import type * as lib_renter_dna from "../lib/renter_dna.js";
 import type * as lib_renter_draft_evidence from "../lib/renter_draft_evidence.js";
 import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
+import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
@@ -411,6 +414,8 @@ declare const fullApi: ApiFromModules<{
   "lib/draft_guard": typeof lib_draft_guard;
   "lib/draft_listing_grounding": typeof lib_draft_listing_grounding;
   "lib/draft_playbook": typeof lib_draft_playbook;
+  "lib/draft_review": typeof lib_draft_review;
+  "lib/draft_review_validator": typeof lib_draft_review_validator;
   "lib/effectiveDates": typeof lib_effectiveDates;
   "lib/feature_flags_helper": typeof lib_feature_flags_helper;
   "lib/gatedGenerate": typeof lib_gatedGenerate;
@@ -454,6 +459,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_dna": typeof lib_renter_dna;
   "lib/renter_draft_evidence": typeof lib_renter_draft_evidence;
   "lib/renter_kit_evidence": typeof lib_renter_kit_evidence;
+  "lib/renter_order_quote": typeof lib_renter_order_quote;
   "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;
   "lib/reservations/accounts": typeof lib_reservations_accounts;

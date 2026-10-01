@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
+import { normalizeClaimedFacts } from "../../convex/lib/renter_draft_evidence";
+
+describe("untrusted claimed-fact diagnostics", () => {
+  it("accepts missing call attribution without manufacturing proof or crashing Lab persistence", () => {
+    expect(normalizeClaimedFacts([{ kind: "item_included", value: "Battery charger, cables", sourceTool: "preloaded_facts" }]))
+      .toEqual([{ kind: "item_included", value: "Battery charger, cables", sourceTool: "preloaded_facts", sourceCallId: "", verified: false }]);
+  });
+  it("rejects malformed rows and overrides model-supplied verification", () => {
+    expect(normalizeClaimedFacts({ kind: "item_included" })).toEqual([]);
+    expect(normalizeClaimedFacts([null, { kind: 1, value: "Bad" }, { kind: "spec", value: 42 }])).toEqual([]);
+    expect(normalizeClaimedFacts([{ kind: "spec", value: "Claim", verified: true, sourceCallId: 7 }]))
+      .toEqual([{ kind: "spec", value: "Claim", sourceTool: "unattributed", sourceCallId: "", verified: false }]);
+  });
+});
 
 const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1, free_units: 1, checked_at: 12345 };
 describe("successful tool receipts", () => {

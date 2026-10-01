@@ -20,6 +20,15 @@ export interface PriceTier {
   price?: number;
 }
 
+/** Calendar dates are inclusive for Hygglo pricing; UTC avoids DST-dependent counts. */
+export function inclusiveRentalDays(start?: string | null, end?: string | null): number | null {
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return null;
+  const a = Date.parse(`${start}T00:00:00Z`), b = Date.parse(`${end}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a
+    || new Date(a).toISOString().slice(0, 10) !== start || new Date(b).toISOString().slice(0, 10) !== end) return null;
+  return Math.round((b - a) / 86400000) + 1;
+}
+
 /**
  * The per-day rate that applies to a rental of `days`.
  *

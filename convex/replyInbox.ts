@@ -20,6 +20,10 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
+import { currentDraftReview, draftContextKey } from "./lib/draft_review";
+import { reviewFlagValidator } from "./lib/draft_review_validator";
+import { inclusiveRentalDays } from "./lib/hygglo_pricing";
+import { summarise } from "./lib/renter_order_quote";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { filterImminentHandoffs, type ImminentHandoffCandidate } from "./lib/imminent_handoffs";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -259,10 +263,8 @@ function computeEstimate(
   end: string | null,
 ): { gbp: number | null; days: number | null } {
   if (!start || !end || items.length === 0) return { gbp: null, days: null };
-  const s = new Date(`${start}T00:00:00`).getTime();
-  const e = new Date(`${end}T00:00:00`).getTime();
-  if (isNaN(s) || isNaN(e) || e < s) return { gbp: null, days: null };
-  const days = Math.max(1, Math.round((e - s) / DAY_MS));
+  const days = inclusiveRentalDays(start, end);
+  if (days === null) return { gbp: null, days: null };
   return { gbp: estimateForDays(index, items, days), days };
 }
 
@@ -502,13 +504,14 @@ function computeAvailability(
 async function assembleTile(
   ctx: QueryCtx,
   conv: Doc<"conversations"> | null,
-  reservation: Doc<"reservations"> | null,
+  reservation: BotBooking | null,
   threadId: string,
   priceIndex?: PriceIndex,
   availCtx?: AvailCtx,
   hub?: HubBook,
   display?: Awaited<ReturnType<typeof listingDisplayCatalog>>,
 ) {
+  const simOrder = await getLabOrder(ctx, threadId);
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
   if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
   if (!slug && reservation?.account_id)
@@ -523,7 +526,8 @@ async function assembleTile(
     .order("desc")
     .first();
 
-  const richItems = buildRichItems(reservation, conv).map(i => ({ ...i, display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
+  const sourceItems: RichItem[] = simOrder ? simOrder.items.map(i => ({ name: i.name, qty: i.qty, product_id: i.product_id, image_url: null })) : buildRichItems(reservation, conv);
+  const richItems = sourceItems.map(i => ({ ...i, display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
   const primaryImage =
     richItems.find((i) => i.image_url)?.image_url ??
     reservation?.photos_urls?.[0] ??
@@ -597,7 +601,10 @@ async function assembleTile(
   //      requested assume one day price for that item").
   let estimateGbp: number | null = null;
   let estimateDays: number | null = null;
-  if (priceIndex && richItems.length > 0 && reservation?.gross_paid_gbp == null) {
+  if (simOrder && reservation?.gross_paid_gbp == null) {
+    estimateDays = inclusiveRentalDays(simOrder.start_date, simOrder.end_date);
+    estimateGbp = estimateDays === null ? null : summarise(simOrder.items, simOrder.start_date, simOrder.end_date).total_gbp;
+  } else if (priceIndex && richItems.length > 0 && reservation?.gross_paid_gbp == null) {
     if (reservation?.start_date && reservation?.end_date) {
       const est = computeEstimate(
         priceIndex,
@@ -634,8 +641,8 @@ async function assembleTile(
     renter_blacklisted: renter?.blacklisted ?? false,
     renter_flagged: renter?.flag_on_request ?? false,
     has_reservation: !!reservation,
-    start_date: reservation?.start_date ?? null,
-    end_date: reservation?.end_date ?? null,
+    start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
+    end_date: simOrder?.end_date ?? reservation?.end_date ?? null,
     return_date: reservation?.return_date ?? null,
     pickup_method: reservation?.pickup_method ?? null,
     status: reservation?.status ?? null,
@@ -667,6 +674,8 @@ async function assembleTile(
     last_activity_at: lastActivityAt,
     last_msg_at: conv?.last_msg_at ?? lastRenterAt,
     preview: latestMsg?.body_text ?? "",
+    ai_draft_review: currentDraftReview(conv?.ai_draft_review, { message_id: latestMsg?.message_id,
+      epoch: hub?.draftEpoch ?? 0, context_key: draftContextKey(reservation, conv?.inquiry_items, simOrder) }),
     has_draft: !!conv?.ai_draft_text,
     ai_draft_text: conv?.ai_draft_text ?? null,
     ai_draft_confidence: conv?.ai_draft_confidence ?? null,
@@ -709,6 +718,7 @@ function leanTile(t: ReplyTile): ReplyTile {
     ai_draft_confidence: null,
     ai_draft_flags: null,
     ai_draft_evidence: null,
+    ai_draft_review: t.ai_draft_review ? { ...t.ai_draft_review, flags: [], evidence: undefined } : null,
     items: t.items.map((i) => ({ name: i.name, qty: i.qty })) as ReplyTile["items"],
   };
 }
@@ -1061,12 +1071,7 @@ export const getThreadById = query({
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
-    const reservation = await ctx.db
-      .query("reservations")
-      .withIndex("by_hygglo_order_id", (q) =>
-        q.eq("hygglo_order_id", thread_id),
-      )
-      .first();
+    const reservation = await getBotBooking(ctx, thread_id);
     if (!conv && !reservation) return null;
     const priceIndex = await loadPriceIndex(ctx);
     const settingsRow = await ctx.db.query("settings").first();
@@ -1621,6 +1626,9 @@ export const getThreadContext = internalQuery({
       location: computeLocation(reservation, slug, await loadHubBook(ctx)),
       renter_id: renterId ?? null,
       conversation_id: conv?._id ?? null,
+      draft_review: conv?.ai_draft_review ?? null,
+      draft_epoch: settingsRow?.draft_epoch ?? 0,
+      draft_context_key: draftContextKey(reservation, conv?.inquiry_items, simOrder),
       conversation_stage,
       renter_dna,
       prior_rentals,
@@ -1726,6 +1734,12 @@ export const threadsNeedingDraft = internalQuery({
     );
     const out: string[] = [];
     for (const c of convs) {
+      if (c.ai_draft_review) {
+        const [latest] = await recentThreadMessages(ctx, c.thread_id, 1);
+        const booking = await getBotBooking(ctx, c.thread_id);
+        if (currentDraftReview(c.ai_draft_review, { message_id: latest?.message_id, epoch,
+          context_key: draftContextKey(booking, c.inquiry_items) })) continue;
+      }
       // No draft, OR a draft from an older draft-logic epoch (stale).
       // No draft, OR epoch-stale, OR a NEW renter message arrived after the
       // draft was generated -> redraft with the new context. (Daniel, 2026-07-03)
@@ -1743,11 +1757,34 @@ export const threadsNeedingDraft = internalQuery({
 
 // ── Draft cache write (called by generateDraft action) ────────────
 
+/** A blocked candidate is never saved as a sendable preview. */
+export const setDraftReview = internalMutation({
+  args: { thread_id: v.string(), message_id: v.string(), epoch: v.number(), context_key: v.string(),
+    reason: v.string(), flags: v.array(reviewFlagValidator), stage: v.string(), evidence: v.optional(draftEvidenceValidator) },
+  handler: async (ctx, { thread_id, message_id, epoch, context_key, reason, flags, stage, evidence }) => {
+    const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", thread_id)).first();
+    if (!conv) return { ok: false as const, reason: "missing_thread" };
+    const [latest] = await recentThreadMessages(ctx, thread_id, 1);
+    const settings = await ctx.db.query("settings").first();
+    const booking = await getBotBooking(ctx, thread_id);
+    const labOrder = await getLabOrder(ctx, thread_id);
+    if (latest?.message_id !== message_id || (settings?.draft_epoch ?? 0) !== epoch
+      || draftContextKey(booking, conv.inquiry_items, labOrder) !== context_key) return { ok: false as const, reason: "stale_inbound" };
+    const review = { for_message_id: message_id, epoch, context_key, reason, flags, stage, evidence, created_at: Date.now() };
+    await ctx.db.patch(conv._id, { ai_draft_review: review, ai_draft_text: undefined,
+      ai_draft_for_message_id: undefined, ai_draft_generated_at: undefined, ai_draft_epoch: undefined,
+      ai_draft_confidence: undefined, ai_draft_flags: undefined, ai_draft_evidence: undefined });
+    return { ok: true as const, review };
+  },
+});
+
 export const setDraft = internalMutation({
   args: {
     thread_id: v.string(),
     draft_text: v.string(),
     message_id: v.optional(v.string()),
+    epoch: v.optional(v.number()),
+    context_key: v.optional(v.string()),
     conversation_stage: v.optional(v.string()),
     confidence: v.optional(v.number()),
     evidence: v.optional(draftEvidenceValidator),
@@ -1773,7 +1810,7 @@ export const setDraft = internalMutation({
   },
   handler: async (
     ctx,
-    { thread_id, draft_text, message_id, conversation_stage, confidence, flags, evidence },
+    { thread_id, draft_text, message_id, epoch, context_key, conversation_stage, confidence, flags, evidence },
   ) => {
     const conv = await ctx.db
       .query("conversations")
@@ -1785,8 +1822,13 @@ export const setDraft = internalMutation({
       if (latest?.message_id !== message_id) return { ok: false, reason: "stale_inbound" };
     }
     const settings = await ctx.db.query("settings").first();
+    if (epoch !== undefined && epoch !== (settings?.draft_epoch ?? 0)) return { ok: false, reason: "stale_context" };
+    if (context_key !== undefined && context_key !== draftContextKey(await getBotBooking(ctx, thread_id), conv.inquiry_items, await getLabOrder(ctx, thread_id))) {
+      return { ok: false, reason: "stale_context" };
+    }
     const patch: Record<string, unknown> = {
       ai_draft_text: draft_text,
+      ai_draft_review: undefined,
       ai_draft_for_message_id: message_id,
       ai_draft_generated_at: Date.now(),
       ai_draft_epoch: settings?.draft_epoch ?? 0,

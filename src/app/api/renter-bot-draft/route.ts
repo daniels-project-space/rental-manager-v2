@@ -3,6 +3,7 @@ import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
+import { normalizeClaimedFacts } from "../../../../convex/lib/renter_draft_evidence";
 import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
@@ -1662,7 +1663,7 @@ export async function POST(req: Request) {
       diagnostic_candidate: diagnosticCandidate,
       conversation_stage: authoritativeStage,
       model_id: modelOverride ?? RENTER_BOT_MODEL_ID,
-      factsClaimed: obj.factsClaimed ?? [],
+      factsClaimed: normalizeClaimedFacts(obj.factsClaimed),
       usedTools,
       resolvedItems,
       // Minus anything a tool answered for during the turn — see
