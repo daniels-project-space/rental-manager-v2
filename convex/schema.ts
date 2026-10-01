@@ -134,7 +134,10 @@ const operationalSchema = defineSchema({
     item_name_canonical: v.string(),
     description: v.string(),
     specs_long: v.optional(v.string()),
-    source: v.string(),                // "v1-handwritten" | "grok-generated-2026-05-08"
+    source: v.string(),                // legacy imports or an explicit verification source
+    source_url: v.optional(v.string()),
+    verified_at: v.optional(v.number()),
+    verified_model: v.optional(v.string()),
     created_at: v.number(),
   }).index("by_item", ["item_id"]).index("by_name", ["item_name_canonical"]),
 

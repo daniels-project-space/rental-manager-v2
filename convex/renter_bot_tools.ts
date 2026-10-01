@@ -1,3 +1,4 @@
+import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 /**
@@ -202,6 +203,7 @@ export const get_listing_context = query({
       let size_note: string | null = null;
       let replacement_cost_gbp: number | null = null;
       let spec_text: string | null = null;
+      let spec_verification: { model: string; source_url: string | null } | null = null;
       // When the renter's wording matches SEVERAL real products (e.g. "BMPCC
       // 6K" fully describes both the 6K Pro and the 6K Full Frame), the bot
       // must ASK which. Detected already by bestMatch's confidence gate, but
@@ -376,8 +378,9 @@ export const get_listing_context = query({
             .query("item_specs")
             .withIndex("by_item", (q) => q.eq("item_id", it._id))
             .first();
-          if (sp)
-            spec_text = `${sp.description ?? ""}`.replace(/\s+/g, " ").slice(0, 400) || null;
+          const verified = verifiedItemSpec(sp, it.name_canonical);
+          spec_text = verified?.text.slice(0, 1000) ?? null;
+          spec_verification = verified ? { model: verified.model, source_url: verified.source_url } : null;
       }
       const inventoryComponents = listingInventory?.components ?? (it ? [{
         item_id: String(it._id), name: it.name_canonical, kind: it.kind,
@@ -404,6 +407,7 @@ export const get_listing_context = query({
         size_note,
         replacement_cost_gbp,
         spec_text,
+        spec_verification,
         ambiguous_with,
         listing_name,
         daily_price_gbp,

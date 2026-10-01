@@ -491,6 +491,7 @@ export async function POST(req: Request) {
    * instruction — which, live, it did not.
    */
   const itemsWithoutKitData: string[] = [];
+  const itemsWithKitData: string[] = [];
   /**
    * Items a TOOL returned real kit text for during the turn, lower-cased.
    *
@@ -720,7 +721,7 @@ export async function POST(req: Request) {
           .map((name) => name.toLowerCase().trim())
           .filter(Boolean),
       );
-      for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; stock_required: boolean }>; name?: string; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -930,6 +931,7 @@ export async function POST(req: Request) {
           ? `${mappedKit} (mapped physical gear; standard accessories from the body record: ${structuredKit ?? "not recorded"}). The inventory mapping and verified specs take precedence over conflicting advertising prose.`
           : it.whats_included?.slice(0, 900) ?? structuredKit ??
             "(NOT LISTED — do not invent kit contents; exact inclusions need owner review.)";
+        if (mappedKit || structuredKit || it.whats_included?.trim()) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
         // Whitelist the prices we are about to HAND the model.
         //
@@ -1640,6 +1642,7 @@ export async function POST(req: Request) {
       itemsWithoutKitData: itemsWithoutKitData.filter(
         (n) => !kitSuppliedByTool.has(n.toLowerCase()),
       ),
+      itemsWithKitData,
       hasPairingData,
       factsEmitted,
       toolStats,

@@ -1,3 +1,4 @@
+import { unknownKitItems } from "./lib/renter_kit_evidence";
 "use node";
 /**
  * Reply Inbox — Node-runtime actions (LLM draft + gated live Hygglo send).
@@ -548,6 +549,7 @@ export const generateDraft = action({
     // Names the draft route resolved but has NO kit text for — see
     // draft_guard KIT_HALLUCINATION.
     let noKitItems: string[] = [];
+    let routeKitItems: string[] = [];
     // Verified not-rentable items reported by the draft route.
     let routeMarketingItems: string[] = [];
     let routeOfferedPrices: number[] = [];
@@ -594,6 +596,7 @@ export const generateDraft = action({
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
           itemsWithoutKitData?: string[];
+          itemsWithKitData?: string[];
           marketingItems?: string[];
           offeredPrices?: number[];
           bookingModified?: boolean;
@@ -652,6 +655,7 @@ export const generateDraft = action({
           usedTools = j.usedTools === true;
           freshInquiryItems = j.resolvedItems ?? [];
           noKitItems = j.itemsWithoutKitData ?? [];
+          routeKitItems = (j.itemsWithKitData ?? []).filter((n): n is string => typeof n === "string" && !!n.trim());
           routeMarketingItems = j.marketingItems ?? [];
           routeOfferedPrices = j.offeredPrices ?? [];
           routeBookingModified = j.bookingModified === true;
@@ -833,16 +837,7 @@ export const generateDraft = action({
             // Items we hold NO "what's included" text for. The agent is told
             // not to invent kit for these; this makes it enforceable rather
             // than advisory (see draft_guard KIT_HALLUCINATION).
-            itemsWithoutKitData: [
-              ...noKitItems,
-              ...listingFacts.filter((f) => !f.description).map((f) => f.name),
-            ].filter(
-              (n, i, arr) =>
-                !!n &&
-                arr.indexOf(n) === i &&
-                // Drop any name that DOES have kit text from another listing.
-                !listingFacts.some((f) => f.name === n && !!f.description),
-            ),
+            itemsWithoutKitData: unknownKitItems(noKitItems, listingFacts, routeKitItems),
           }
         : undefined,
       // Owned identity is not a date/quantity stock verdict. Only actual

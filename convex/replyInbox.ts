@@ -1,3 +1,4 @@
+import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { getBotBooking, getLabOrder, type BotBooking } from "./lib/renter_booking";
 /**
  * Reply Inbox (2026-06-22) — cross-account "renter messages awaiting my reply"
@@ -1461,13 +1462,8 @@ export const getThreadContext = internalQuery({
             .query("item_specs")
             .withIndex("by_item", (q) => q.eq("item_id", idStr as Id<"items">))
             .first();
-          if (spec)
-            specs.push({
-              name,
-              text: `${spec.description}${spec.specs_long ? ` ${spec.specs_long}` : ""}`
-                .replace(/\s+/g, " ")
-                .slice(0, 320),
-            });
+          const verified = verifiedItemSpec(spec, name);
+          if (verified) specs.push({ name, text: verified.text.slice(0, 1000) });
           const sq = squash(name);
           const pr = priceRows.find((r) => {
             const k = squash(r.item_name_canonical);
