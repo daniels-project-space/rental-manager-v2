@@ -1,3 +1,4 @@
+import { renterItemNames } from "../../../../convex/lib/renter_item_names";
 import type { StockRequest } from "../../../../convex/lib/stock_claims";
 import { formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
@@ -960,7 +961,7 @@ export async function POST(req: Request) {
             "(NOT LISTED — do not invent kit contents; exact inclusions need owner review.)";
         if (mappedKit || structuredKit || it.whats_included?.trim()) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
         if (mappedKit || structuredKit || it.whats_included?.trim()) {
-          kitEvidence.push({ names: [it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n),
+          kitEvidence.push({ names: [...new Set([it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n).flatMap(renterItemNames))],
             contents: mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.units_per_listing} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
           groundTruth += `  LISTING TITLE IS ADVERTISING, NOT KIT EVIDENCE: accessories named in the title or comparison models are not included unless recorded in the mapped gear or body inclusions above. Answer exact-kit questions from those records; do not append title accessories.\n`;
           groundTruth += `  PARTIAL KIT RECORD: known inclusions per listing, not an exhaustive manifest. Missing accessories are unverified, not proven absent. Stock mapping completeness does not establish every supplied accessory. Answer the known part and identify exact unrecorded details for owner review.\n`;

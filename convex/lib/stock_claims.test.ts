@@ -12,7 +12,7 @@ describe("scoped stock claims", () => {
     expect(guarded.flags).toContainEqual(expect.objectContaining({ type: "UNGROUNDED_UNAVAILABILITY", severity: "critical" }));
   });
   it("accepts the exact checked subject, preserved camera shorthand and request pronoun", () => {
-    for (const text of ["The Sony FX3 isn't available for those dates.", "The FX3 is unavailable.", "It isn't available for your dates."]) expect(check(text)).toEqual([]);
+    for (const text of ["The Sony FX3 isn't available for those dates.", "The FX3 is unavailable.", "It isn't available for your dates.", "That exact kit isn't available for your dates.", "That requested camera isn't available."]) expect(check(text)).toEqual([]);
   });
   it("rejects wrong date spans for either sign", () => {
     for (const available of [false, true]) {

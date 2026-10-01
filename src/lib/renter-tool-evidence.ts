@@ -1,3 +1,4 @@
+import { renterItemNames } from "../../convex/lib/renter_item_names";
 /** Independent receipts from tool RESULTS, never the model's arguments or prose. */
 export type ToolReceipt = { tool: string; call_id: string; result: Record<string, unknown> };
 
@@ -11,7 +12,7 @@ export function recommendationKitEvidence(receipts: ToolReceipt[]) {
       const a = raw as Record<string, unknown>;
       if (!["physical_mapping_and_inventory", "inventory_record"].includes(String(a.kit_source)) || typeof a.name !== "string" || !Array.isArray(a.kit_contents) || !a.kit_contents.length || !a.kit_contents.every(c => typeof c === "string" && c.trim())) continue;
       const model = a.spec_verification && typeof a.spec_verification === "object" ? (a.spec_verification as Record<string, unknown>).model : null;
-      evidence.push({ names: [a.name, a.listing_name, model].filter((n): n is string => typeof n === "string" && !!n), contents: a.kit_contents as string[] });
+      evidence.push({ names: [...new Set([a.name, a.listing_name, model].filter((n): n is string => typeof n === "string" && !!n).flatMap(renterItemNames))], contents: a.kit_contents as string[] });
     }
   }
   return evidence;

@@ -1,3 +1,4 @@
+import { renterItemNames } from "./renter_item_names";
 import { describe, expect, it } from "vitest";
 import { unsupportedKitClaims } from "./kit_claims";
 const kit = { names: ["Sony A7 V"], contents: ["Sony A7 V", "NP-FZ100 batteries", "256GB card"] };
@@ -58,5 +59,23 @@ describe("per-item included-content claims", () => {
     expect(unsupportedKitClaims(text, [bm])).toEqual([]);
     expect(unsupportedKitClaims("Blackmagic 6K Full Frame includes a 1TB CFexpress Type B card, not a 2TB CFast card.", [bm])).toEqual([]);
     expect(unsupportedKitClaims("Blackmagic 6K Full Frame includes a 2TB CFast card, not a 1TB CFexpress Type B card.", [bm]).map(f => f.content)).toEqual(["card"]);
+  });
+});
+
+
+describe("established camera identity aliases in mixed kits", () => {
+  const ff = { names: renterItemNames("BMPCC 6K Full Frame"), contents: ["NP-F570 batteries 5x", "1x 1TB CFexpress Type B card", "Canon EF-to-L mount adapter"] };
+  const pro = { names: renterItemNames("BMPCC 6K Pro"), contents: ["5x NP-F570 battery", "1x 1TB SSD", "1x camera cage"] };
+  it("accepts the actual Full Frame shorthand with several other kits in context", () => {
+    expect(unsupportedKitClaims("That exact Blackmagic 6K Full Frame kit comes with 5x NP-F570 batteries, a 1TB CFexpress Type B card, and a Canon EF-to-L mount adapter.", [ff, pro])).toEqual([]);
+  });
+  it("keeps the two camera variants' storage and accessories separate", () => {
+    expect(unsupportedKitClaims("Blackmagic 6K Full Frame comes with a 1TB SSD and a camera cage.", [ff, pro])).not.toEqual([]);
+    expect(unsupportedKitClaims("Blackmagic 6K Pro includes a 1TB CFexpress Type B card.", [ff, pro])).not.toEqual([]);
+  });
+  it("never expands a comparison model from advertising prose", () => {
+    const advertising = "BMPCC 6K Full Frame Set (like Canon R5C / Sony FX3)";
+    expect(renterItemNames(advertising)).toEqual([advertising]);
+    expect(renterItemNames("BMPCC 6K Full Frame")).not.toContain("Blackmagic 6K Pro");
   });
 });

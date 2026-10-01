@@ -27,6 +27,7 @@ const units: Record<string, number> = { one: 1, single: 1, two: 2, both: 2, thre
 function subjectOf(prefix: string) {
   let s = prefix.trim().replace(/^(?:but|however|whereas|while)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
+  s = s.replace(/^(?:exact|specific|particular|requested|selected)\s+/i, "");
   const count = /^(\d+|one|single|two|both|three|four)\s*(?:x|×)?\s+/i.exec(s);
   if (count) s = s.slice(count[0].length);
   return { name: s.trim(), quantity: count ? units[count[1].toLowerCase()] ?? Number(count[1]) : undefined };

@@ -166,6 +166,7 @@ import type * as lib_renter_bot_rubric from "../lib/renter_bot_rubric.js";
 import type * as lib_renter_bot_tone_scorer from "../lib/renter_bot_tone_scorer.js";
 import type * as lib_renter_dna from "../lib/renter_dna.js";
 import type * as lib_renter_draft_evidence from "../lib/renter_draft_evidence.js";
+import type * as lib_renter_item_names from "../lib/renter_item_names.js";
 import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
 import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
@@ -460,6 +461,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_tone_scorer": typeof lib_renter_bot_tone_scorer;
   "lib/renter_dna": typeof lib_renter_dna;
   "lib/renter_draft_evidence": typeof lib_renter_draft_evidence;
+  "lib/renter_item_names": typeof lib_renter_item_names;
   "lib/renter_kit_evidence": typeof lib_renter_kit_evidence;
   "lib/renter_order_quote": typeof lib_renter_order_quote;
   "lib/renter_stock": typeof lib_renter_stock;
