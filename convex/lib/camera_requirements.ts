@@ -3,14 +3,39 @@ import { verifiedItemSpec, type SpecRecord } from "./verified_item_spec";
 
 export type CameraRole = "action" | "interchangeable_lens";
 export type SensorFormat = "full_frame" | "super35" | "aps_c" | "small_sensor";
-export type CameraCapabilities = { role: CameraRole; sensor_format: SensorFormat; native_mount?: string; internal_4k: boolean; built_in_nd?: boolean };
-export type CameraRequirements = { role?: CameraRole; sensor_format?: SensorFormat; internal_4k?: boolean; built_in_nd?: boolean };
+export type RecordingMode = {
+  resolution: "uhd_4k";
+  nominal_fps: number[];
+  capture_format: SensorFormat;
+  full_width: boolean;
+  internal: boolean;
+  conditions: string[];
+  verified_model: string;
+  source_url: string;
+  verified_at: number;
+};
+export type RecordingRequirement = { resolution: "uhd_4k"; min_fps: number; capture_format?: SensorFormat; full_width?: boolean; internal?: boolean };
+export type CameraCapabilities = { role: CameraRole; sensor_format: SensorFormat; native_mount?: string; internal_4k: boolean; built_in_nd?: boolean; recording_modes?: RecordingMode[] };
+export type CameraRequirements = { role?: CameraRole; sensor_format?: SensorFormat; internal_4k?: boolean; built_in_nd?: boolean; recording?: RecordingRequirement };
 export type CameraSpec = SpecRecord & { camera_capabilities?: CameraCapabilities & { verified_model?: string; source_url?: string; verified_at?: number } };
 
 export function verifiedCameraCapabilities(spec: CameraSpec | null | undefined, name: string): CameraCapabilities | null {
   const cap = spec?.camera_capabilities;
   if (!cap || !verifiedItemSpec(spec, name) || cap.verified_model !== spec!.verified_model || cap.source_url !== spec!.source_url || !Number.isFinite(cap.verified_at) || cap.verified_at! < spec!.verified_at! || cap.verified_at! <= 0) return null;
-  return cap;
+  // Mode provenance is independent: a sensor profile does not qualify a
+  // recording mode, and an older mode review cannot survive a new model review.
+  return { ...cap, recording_modes: cap.recording_modes?.filter(m =>
+    m.verified_model === spec!.verified_model && /^https:\/\//.test(m.source_url) &&
+    Number.isFinite(m.verified_at) && m.verified_at >= spec!.verified_at! &&
+    m.nominal_fps.length > 0 && m.nominal_fps.every(f => Number.isFinite(f) && f > 0)) };
+}
+
+export function matchesRecordingRequirement(mode: RecordingMode, requirement: RecordingRequirement) {
+  return mode.resolution === requirement.resolution && Number.isFinite(requirement.min_fps) && requirement.min_fps > 0 &&
+    mode.nominal_fps.some(f => f >= requirement.min_fps) &&
+    (requirement.capture_format === undefined || mode.capture_format === requirement.capture_format) &&
+    (requirement.full_width === undefined || mode.full_width === requirement.full_width) &&
+    (requirement.internal === undefined || mode.internal === requirement.internal);
 }
 
 /** Infer the requested equipment ROLE, never technical specs or ownership.
@@ -29,5 +54,6 @@ export function meetsCameraRequirements(capabilities: CameraCapabilities | null,
   for (const key of ["role", "sensor_format", "internal_4k", "built_in_nd"] as const) {
     if (requirements[key] !== undefined && capabilities[key] !== requirements[key]) return false;
   }
+  if (requirements.recording && !capabilities.recording_modes?.some(m => matchesRecordingRequirement(m, requirements.recording!))) return false;
   return !nativeMount || sameMount(capabilities.native_mount, nativeMount);
 }

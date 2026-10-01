@@ -358,7 +358,12 @@ export const findOwnedAlternativesTool = createTool({
       role: z.enum(["action", "interchangeable_lens"]).optional(),
       sensor_format: z.enum(["full_frame", "super35", "aps_c", "small_sensor"]).optional(),
       internal_4k: z.boolean().optional(), built_in_nd: z.boolean().optional(),
-    }).optional().describe("Pass the renter's hard camera requirements. Unknown/unverified capabilities do not qualify. These filters do not verify a specific codec, frame rate or sensor crop in that recording mode; check the exact verified model facts for those."),
+      recording: z.object({
+        resolution: z.literal("uhd_4k"), min_fps: z.number().positive(),
+        capture_format: z.enum(["full_frame", "super35", "aps_c", "small_sensor"]).optional(),
+        full_width: z.boolean().optional(), internal: z.boolean().optional(),
+      }).optional(),
+    }).optional().describe("Pass every hard camera requirement, including recording frame rate, capture format and full_width=true for an uncropped/full-sensor-width request. Physical sensor size does not establish recording capture area. Only source-reviewed modes qualify; read their conditions and explain mandatory settings/crops. Codec and bit-depth claims still require separate exact-model proof."),
     exclude_name: z.string().optional(),
     item_name: z.string().optional().describe("Exact item being replaced, to rank suitable substitutes."),
     start_date: z.string().optional(),

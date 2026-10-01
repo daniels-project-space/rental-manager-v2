@@ -145,6 +145,12 @@ const operationalSchema = defineSchema({
       native_mount: v.optional(v.string()), internal_4k: v.boolean(), built_in_nd: v.optional(v.boolean()),
       // Optional for migration; reader requires these before qualification.
       verified_model: v.optional(v.string()), source_url: v.optional(v.string()), verified_at: v.optional(v.number()),
+      recording_modes: v.optional(v.array(v.object({
+        resolution: v.literal("uhd_4k"), nominal_fps: v.array(v.number()),
+        capture_format: v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor")),
+        full_width: v.boolean(), internal: v.boolean(), conditions: v.array(v.string()),
+        verified_model: v.string(), source_url: v.string(), verified_at: v.number(),
+      }))),
     })),
     created_at: v.number(),
   }).index("by_item", ["item_id"]).index("by_name", ["item_name_canonical"]),

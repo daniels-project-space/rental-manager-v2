@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraCapabilities } from "./camera_requirements";
+import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraCapabilities, type RecordingMode } from "./camera_requirements";
 const full: CameraCapabilities = { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "L", internal_4k: true };
 const action: CameraCapabilities = { role: "action", sensor_format: "small_sensor", internal_4k: true };
 describe("hard camera requirements before stock ranking", () => {
+  const mode = (fps: number, format: "full_frame" | "aps_c", width: boolean): RecordingMode => ({ resolution: "uhd_4k", nominal_fps: [fps], capture_format: format, full_width: width, internal: true, conditions: [], verified_model: "model", source_url: "https://manufacturer.example/modes", verified_at: 1 });
+  it("distinguishes full-frame sensors from capture area and uncropped modes", () => {
+    const a7v = { ...full, recording_modes: [mode(60, "full_frame", true), mode(120, "aps_c", false)] };
+    const fx3 = { ...full, recording_modes: [mode(60, "full_frame", true), mode(120, "full_frame", false)] };
+    const requirement = { recording: { resolution: "uhd_4k" as const, min_fps: 120, capture_format: "full_frame" as const, internal: true } };
+    expect(meetsCameraRequirements(a7v, requirement)).toBe(false);
+    expect(meetsCameraRequirements(fx3, requirement)).toBe(true);
+    expect(meetsCameraRequirements(fx3, { recording: { ...requirement.recording, full_width: true } })).toBe(false);
+    expect(meetsCameraRequirements(a7v, { recording: { ...requirement.recording, min_fps: 60, full_width: true } })).toBe(true);
+    expect(meetsCameraRequirements(full, requirement)).toBe(false);
+  });
+  it("rejects stale or wrong-model mode proof independently of a valid body profile", () => {
+    const spec = { item_name_canonical: "Body", description: "Reviewed", source: "manufacturer-verified", source_url: "https://manufacturer.example/body", verified_model: "model", verified_at: 2,
+      camera_capabilities: { ...full, verified_model: "model", verified_at: 2, source_url: "https://manufacturer.example/body", recording_modes: [mode(120, "aps_c", false), { ...mode(60, "full_frame", true), verified_at: 2 }, { ...mode(120, "full_frame", true), verified_at: 2, verified_model: "other-model" }] } };
+    expect(verifiedCameraCapabilities(spec, "Body")?.recording_modes).toHaveLength(1);
+    expect(verifiedCameraCapabilities(spec, "Body")?.recording_modes?.[0].nominal_fps).toEqual([60]);
+  });
   it("does not substitute action cameras for the actual two-body Pyxis request", () => {
     const role = requestedCameraRole("Blackmagic Pyxis", "camera");
     expect(role).toBe("interchangeable_lens");

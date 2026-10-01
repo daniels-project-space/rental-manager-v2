@@ -110,6 +110,7 @@ import type * as lib_ai_attribution from "../lib/ai_attribution.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_base_listing_identity from "../lib/base_listing_identity.js";
 import type * as lib_bundle_description_parse from "../lib/bundle_description_parse.js";
+import type * as lib_camera_mode_claims from "../lib/camera_mode_claims.js";
 import type * as lib_camera_requirements from "../lib/camera_requirements.js";
 import type * as lib_capacity_gap from "../lib/capacity_gap.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
@@ -397,6 +398,7 @@ declare const fullApi: ApiFromModules<{
   "lib/availability": typeof lib_availability;
   "lib/base_listing_identity": typeof lib_base_listing_identity;
   "lib/bundle_description_parse": typeof lib_bundle_description_parse;
+  "lib/camera_mode_claims": typeof lib_camera_mode_claims;
   "lib/camera_requirements": typeof lib_camera_requirements;
   "lib/capacity_gap": typeof lib_capacity_gap;
   "lib/co_occurrence": typeof lib_co_occurrence;

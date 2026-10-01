@@ -1,4 +1,5 @@
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
+import { unsupportedCameraModeClaims, type CameraEvidence } from "./camera_mode_claims";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -38,6 +39,8 @@ export interface GuardResult {
 }
 
 export interface GuardOpts {
+  /** Reviewed exact-model catalog results, not a tool-use boolean or prose. */
+  cameraEvidence?: CameraEvidence[];
   /** Prior turns, oldest→newest. role is the V2 sender ("owner"/"renter"). */
   history: { role: "owner" | "renter"; content: string }[];
   /** The renter's most recent message (drives time/intent checks). */
@@ -144,6 +147,7 @@ const SHOOT_QUESTION_PATTERN = /\bwhat(?:'s| is) the shoot for\b/i;
 const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
   EMPTY_DRAFT: "critical",
+  CAMERA_MODE_HALLUCINATION: "critical",
   // High, not critical: it misleads but does not create a wrong booking.
   INVENTED_POPULARITY: "high",
   // High: it is a money commitment, but escalating beats withholding the reply.
@@ -1068,6 +1072,9 @@ const ASSERTS_AVAIL_RE =
 
   for (const claim of unsupportedKitClaims(text, factPack?.kitEvidence ?? [])) {
     push("KIT_HALLUCINATION", `Unverified included ${claim.content}: "${claim.sentence.slice(0, 160)}"`, "flagged");
+  }
+  if (opts.cameraEvidence !== undefined) for (const claim of unsupportedCameraModeClaims(text, opts.cameraEvidence)) {
+    push("CAMERA_MODE_HALLUCINATION", `Recording mode lacks matching model/capture-area proof: "${claim.slice(0, 160)}"`, "flagged");
   }
 
   // 17. INCLUDED ACCESSORY CHARGED SEPARATELY — FLAG

@@ -781,6 +781,18 @@ export const check_location = action({
 // The account's OWNED, in-stock items (active, not marketing-only) — optionally
 // filtered to one kind (lens, camera, drone...). Used to offer a REAL substitute
 // when the renter asks for something we don't stock. Works for every account.
+/** Technical evidence only: never an availability or rental-kit verdict. */
+export const get_verified_camera_profiles = query({ args: {}, handler: async ctx => {
+  const items = await ctx.db.query("items").collect();
+  const specs = await ctx.db.query("item_specs").collect();
+  const byItem = new Map(specs.map(s => [String(s.item_id), s]));
+  return items.filter(i => i.kind === "camera" && i.status === "active" && !i.is_marketing_only && i.qty > 0).flatMap(i => {
+    const spec = byItem.get(String(i._id));
+    const capabilities = verifiedCameraCapabilities(spec, i.name_canonical);
+    return capabilities ? [{ names: [i.name_canonical, ...(i.aliases ?? []), spec!.verified_model!], capabilities }] : [];
+  });
+} });
+
 export const find_owned_alternatives = query({
   args: {
     account_slug: v.string(),
@@ -790,6 +802,11 @@ export const find_owned_alternatives = query({
       role: v.optional(v.union(v.literal("action"), v.literal("interchangeable_lens"))),
       sensor_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
       internal_4k: v.optional(v.boolean()), built_in_nd: v.optional(v.boolean()),
+      recording: v.optional(v.object({
+        resolution: v.literal("uhd_4k"), min_fps: v.number(),
+        capture_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
+        full_width: v.optional(v.boolean()), internal: v.optional(v.boolean()),
+      })),
     })),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
@@ -918,7 +935,7 @@ export const find_owned_alternatives = query({
     const exclude = (exclude_name ?? "").toLowerCase().trim();
     const targetLower = (item_name ?? "").toLowerCase().trim();
     const excludedMatch = exclude_name ? bestMatch(exclude_name, allInventory, i => i.name_canonical, i => i.aliases ?? []).match : null;
-    const cameraQuery = normKind(kind) === "camera" || normKind(target?.kind) === "camera";
+    const cameraQuery = camera_requirements !== undefined || normKind(kind) === "camera" || normKind(target?.kind) === "camera";
     const requirements: CameraRequirements = { ...camera_requirements };
     if (cameraQuery && !requirements.role) {
       const exactTarget = allInventory.find(i => i.name_canonical === target?.name);
@@ -930,6 +947,7 @@ export const find_owned_alternatives = query({
     const rejected = { requirements: 0, stock: 0 };
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
+      if (cameraQuery && normKind(it.kind) !== "camera") continue;
       const nameLower = it.name_canonical.toLowerCase();
       // Never offer the very item being replaced back as its own alternative.
       if (String(it._id) === targetId || (excludedMatch && it._id === excludedMatch._id)) continue;
@@ -1003,7 +1021,9 @@ export const find_owned_alternatives = query({
       kind_fell_back: kindFellBack,
       target: target?.name ?? null,
       camera_requirements: cameraQuery ? requirements : null,
-      requirements_match_is_not_mode_verification: true,
+      recording_requirement_checked: !!requirements.recording,
+      // Only the recorded mode properties are checked, never arbitrary codecs.
+      requirements_match_is_not_codec_verification: true,
       rejected,
       count: alternatives.length,
       alternatives,

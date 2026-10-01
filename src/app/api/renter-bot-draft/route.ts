@@ -1310,6 +1310,8 @@ export async function POST(req: Request) {
   //
   // ORDERING IS LOAD-BEARING: a cache prefix must be byte-stable, so anything
   // volatile (dates, ground truth, the renter's message) must come AFTER this.
+  const cameraProfiles = /\b4k\b|\b4k\d{2,3}p\b|\b(?:fps|uncropped)\b/i.test(lastRenter)
+    ? await convex.query(api.renter_bot_tools.get_verified_camera_profiles, {}) : [];
   const baseMessages = [
     {
       role: "system" as const,
@@ -1331,6 +1333,7 @@ export async function POST(req: Request) {
         marketingDirective,
         `TODAY IS ${today} (Europe/London). Compute any relative dates the renter uses from TODAY; never guess a date.`,
         "UNKNOWN stock is neither available nor unavailable. Do not say an unverified item is booked, unavailable or not available for the dates. You can offer a separately verified owned alternative without inventing a negative about the original.",
+        cameraProfiles.length ? `REVIEWED CAMERA RECORDING EVIDENCE (technical facts only; check dated stock and current-duration price separately):\n${JSON.stringify(cameraProfiles)}\nPhysical sensor size is not recording capture area. Use camera_requirements.recording for explicit FPS/capture-area/full-width requirements. Explain mandatory mode settings and reduced angle of view. An unrecorded mode, codec or bit depth is unknown. If an alternative relaxes a requested mode, label it clearly as a compromise rather than saying it meets the original requirement.` : "",
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
         groundTruth ? `\n${headlineAvailability}${groundTruth}` : "",
