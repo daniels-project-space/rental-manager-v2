@@ -1,6 +1,21 @@
 /** Independent receipts from tool RESULTS, never the model's arguments or prose. */
 export type ToolReceipt = { tool: string; call_id: string; result: Record<string, unknown> };
 
+/** Only server-returned recommendation contents can qualify an alternative's kit. */
+export function recommendationKitEvidence(receipts: ToolReceipt[]) {
+  const evidence: Array<{ names: string[]; contents: string[] }> = [];
+  for (const r of receipts) {
+    if (r.tool !== "find_owned_alternatives" || !Array.isArray(r.result.alternatives)) continue;
+    for (const raw of r.result.alternatives) {
+      if (!raw || typeof raw !== "object") continue;
+      const a = raw as Record<string, unknown>;
+      if (!["physical_mapping_and_inventory", "inventory_record"].includes(String(a.kit_source)) || typeof a.name !== "string" || !Array.isArray(a.kit_contents) || !a.kit_contents.length || !a.kit_contents.every(c => typeof c === "string" && c.trim())) continue;
+      evidence.push({ names: [a.name, a.listing_name].filter((n): n is string => typeof n === "string" && !!n), contents: a.kit_contents as string[] });
+    }
+  }
+  return evidence;
+}
+
 export function renterToolReceipts(steps: unknown): ToolReceipt[] {
   const receipts: ToolReceipt[] = [];
   const seen = new Set<unknown>();

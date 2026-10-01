@@ -30,6 +30,7 @@ export default defineConfig({
       "convex/lib/verified_item_spec.test.ts",
       "convex/lib/renter_kit_evidence.test.ts",
       "convex/lib/kit_claims.test.ts",
+      "convex/lib/recommendation_kit.test.ts",
       "convex/lib/lab_lifecycle.test.ts",
       "convex/lib/item_display_name.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",

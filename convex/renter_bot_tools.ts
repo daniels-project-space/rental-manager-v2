@@ -1,3 +1,4 @@
+import { recommendationKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
@@ -904,24 +905,6 @@ export const find_owned_alternatives = query({
       }
     }
 
-    // What each alternative ACTUALLY comes with, resolved by IDENTITY via the
-    // deterministic product_id index — never by matching the listing title.
-    //
-    // Listing titles are SEO keyword-stuffed and actively lie about identity:
-    // the real BMPCC 6K Full Frame listing is titled "...Dual Native ISO)
-    // Bmpcc 6k pro camera cinema", i.e. it contains the RIVAL body's full name.
-    // Any title-similarity lookup (including a Jaccard one) therefore hands
-    // back the wrong body's kit. Identity-only, or nothing.
-    //
-    // Returning null when there is no mapping is deliberate and correct: the
-    // agent must say it will confirm, not invent contents. Inventing is exactly
-    // what produced "comes with cage, 1TB card, and batteries" for a body that
-    // has no listing at all.
-    const describeFor = (itemId: string): { included: string | null; listing: string | null } => {
-      const listing = chooseBaseListing(listings, pidsForItem(itemId));
-      return { included: listing?.description ?? null, listing: listing?.name ?? null };
-    };
-
     const exclude = (exclude_name ?? "").toLowerCase().trim();
     const targetLower = (item_name ?? "").toLowerCase().trim();
     const alternatives: Array<Record<string, unknown>> = [];
@@ -940,7 +923,6 @@ export const find_owned_alternatives = query({
       if (target?.kind && it.kind && normKind(it.kind) !== normKind(target.kind)) continue;
       const stock = stockSources && start_date && end_date ? stockForItem(stockSources, it, { item_name: it.name_canonical, start_date, end_date, quantity, thread_id }) : null;
       if (stock && stock.available !== true) continue;
-      const d = describeFor(String(it._id));
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
@@ -962,6 +944,10 @@ export const find_owned_alternatives = query({
       }
       const quoteDays = start_date && end_date ? Math.round((Date.parse(end_date) - Date.parse(start_date)) / 86400000) + 1 : null;
       const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
+      const mapping = ovAll.find(o => o.account_slug === account_slug && o.product_id === altPid);
+      const kit = recommendationKit(it, mapping, allInventory);
+      const spec = await ctx.db.query("item_specs").withIndex("by_item", q => q.eq("item_id", it._id)).first();
+      const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,
@@ -971,26 +957,14 @@ export const find_owned_alternatives = query({
         lens_mount: it.lens_mount ?? null,
         daily_price_gbp: altOneDay ?? altListing?.daily_price ?? null,
         price_requires_owner_confirmation: !altListing,
-        // TRUNCATED (2026-08-21). `included` is a full Hygglo listing
-        // description — SEO marketing copy that runs 700+ chars each. Times 8
-        // alternatives that made this the largest tool payload in the system
-        // (4.7KB, vs 180B-1.5KB for every other tool), and the agent loop
-        // re-sends every prior tool result on each subsequent step, so the
-        // cost was multiplied by step count.
-        //
-        // The decisive facts for choosing an ALTERNATIVE are its name, price,
-        // mount and whether it ships with glass — `includes_lens` below already
-        // carries the last one. The full kit text for the item actually being
-        // discussed still comes through get_listing_context untruncated, so
-        // nothing is lost for the question that needs it.
-        included: d.included ? d.included.slice(0, 240) : null,
-        listing_name: d.listing,
-        // Does this alternative ship WITH glass? Drives "lens not included,
-        // but I can add one" instead of silently dropping the question.
-        includes_lens:
-          d.included || d.listing
-            ? /\blens|\d{2,3}\s*-?\s*\d{0,3}\s*mm\b/i.test(`${d.included ?? ""} ${d.listing ?? ""}`)
-            : null,
+        included: kit.included,
+        kit_contents: kit.contents,
+        kit_source: kit.source,
+        mapping_complete: kit.mapping_complete,
+        listing_name: altListing?.name ?? null,
+        includes_lens: kit.includes_lens,
+        spec_text: verified?.text ?? null,
+        spec_verification: verified ? { model: verified.model, source_url: verified.source_url } : null,
       });
       // 6, not 8. The route only ever shows the top 5 and the craft rules say
       // to offer ONE (at most two) — the tail was never used, but was re-sent

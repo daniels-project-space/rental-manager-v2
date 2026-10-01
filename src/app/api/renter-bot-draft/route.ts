@@ -1,7 +1,7 @@
 import { formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
-import { renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
+import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
 import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
@@ -743,7 +743,17 @@ export async function POST(req: Request) {
                 kind: it.kind,
                 item_name: it.name ?? undefined,
                 exclude_name: it.name ?? undefined,
+                start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
               });
+              toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-alternatives:${toolReceipts.length}`, result: alts }]));
+              for (const a of alts.alternatives ?? []) {
+                if (a.quote?.listed_total_gbp != null) offeredPrices.push(a.quote.listed_total_gbp);
+                if (a.kit_contents?.length) {
+                  itemsWithKitData.push(a.name);
+                  kitEvidence.push({ names: [a.name, a.listing_name].filter(Boolean), contents: a.kit_contents });
+                }
+                groundTruth += `  OWNED ALTERNATIVE ${a.name}: mount ${a.lens_mount ?? "unknown"}; recorded kit ${a.included ?? "unknown, confirm exact contents"}; verified specs ${a.spec_text ?? "not verified"}; exact-date quote ${a.quote ? JSON.stringify(a.quote) : "requires price confirmation"}; availability ${a.availability ? JSON.stringify(a.availability) : "dates not checked"}. Advertising title does not establish inclusions.\n`;
+              }
               // Ranked by SUBSTITUTABILITY (same category, same lens mount,
               // same product family) — the first entry is the closest real
               // match, not just anything sharing a kind. Carry the mount and
@@ -804,7 +814,7 @@ export async function POST(req: Request) {
               }>).slice(0, 5);
               const mountsNeeded: Array<{ mount: string; body: string }> = [];
               for (const a of offered) {
-                if (!a.lens_mount || a.includes_lens === true) continue;
+                if (!a.lens_mount || a.includes_lens !== false) continue;
                 if (mountsNeeded.some((m) => m.mount === a.lens_mount)) continue;
                 mountsNeeded.push({ mount: a.lens_mount, body: a.name ?? "that body" });
                 if (mountsNeeded.length >= 2) break;
@@ -817,7 +827,9 @@ export async function POST(req: Request) {
                     account_slug: account_slug || "",
                     kind: "lens",
                     lens_mount: need.mount,
+                    start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
                   });
+                  toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-glass:${toolReceipts.length}`, result: g }]));
                   const fits = ((g?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
                     .slice(0, 2)
                     .map((x) => `${x.name}${x.daily_price_gbp != null ? ` (£${x.daily_price_gbp}/day)` : ""}`);
@@ -890,7 +902,9 @@ export async function POST(req: Request) {
               account_slug: account_slug || "",
               kind: "lens",
               lens_mount: it.lens_mount,
+              start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
             });
+            toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-glass:${toolReceipts.length}`, result: glass }]));
             const all = (glass?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>;
             // Split, don't just filter: the renter needs to hear "already
             // included" about kit glass, which is a stronger answer than
@@ -1371,6 +1385,7 @@ export async function POST(req: Request) {
       for (const n of harvestToolKitItems(result?.steps)) kitSuppliedByTool.add(n);
       toolStats = toolTelemetry(result?.steps);
       toolReceipts.push(...renterToolReceipts(result?.steps));
+      kitEvidence.push(...recommendationKitEvidence(toolReceipts));
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
       // cache_control on the way out. All three look identical from outside:
@@ -1520,6 +1535,7 @@ export async function POST(req: Request) {
             usedTools = retryUsedTools;
             harvestToolPrices(retryResult?.steps, offeredPrices);
             toolReceipts.push(...renterToolReceipts(retryResult?.steps));
+            kitEvidence.push(...recommendationKitEvidence(toolReceipts));
             for (const n of harvestToolKitItems(retryResult?.steps)) kitSuppliedByTool.add(n);
           }
         }

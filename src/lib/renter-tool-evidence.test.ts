@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
+import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
 
 const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1, free_units: 1, checked_at: 12345 };
 describe("successful tool receipts", () => {
+  it("carries authoritative alternative kits without accepting call arguments or marketing prose", () => {
+    const a = { name: "BMPCC 6K Full Frame", listing_name: "Misleading SEO title", kit_source: "physical_mapping_and_inventory", kit_contents: ["NP-F570 batteries", "1TB CFexpress Type B"] };
+    const argsOnly = renterToolReceipts([{ payload: { toolName: "find_owned_alternatives", args: { alternatives: [a] } } }]);
+    expect(recommendationKitEvidence(argsOnly)).toEqual([]);
+    const receipts = renterToolReceipts([{ payload: { toolName: "find_owned_alternatives", result: { alternatives: [a, { ...a, name: "Unknown kit", kit_source: "unknown", included: "SEO says charger" }] } } }]);
+    expect(recommendationKitEvidence(receipts)).toEqual([{ names: [a.name, a.listing_name], contents: a.kit_contents }]);
+  });
   it("never grounds a call that has no successful result", () => {
     const receipts = renterToolReceipts([{ toolCalls: [{ payload: { toolName: "check_availability", args: stock } }] }]);
     expect(successfulGrounding(receipts).availability).toBe(false);
