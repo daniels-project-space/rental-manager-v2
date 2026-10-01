@@ -116,8 +116,7 @@ function RentalListingCard({
             )}
           </p>
           <p className="text-[10px] text-[#8b8fa3]">
-            item photo from a past rental — may show a fuller kit. The bot
-            never sees images.
+            Reference photo; kit contents follow the listing.
           </p>
           <p className="text-xs text-[#8b8fa3]">
             {itemCtx?.kind ? `${itemCtx.kind} · ` : ""}
@@ -178,7 +177,7 @@ function RentalListingCard({
       {conflicts.length > 0 && (
         <div className="border-t border-white/10 px-4 py-2">
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8b8fa3]">
-            Currently rented out (real bookings, this is why it&apos;s not free)
+            Existing commitments (included in the stock check)
           </p>
           {conflicts.map((b, i) => (
             // Renter name deliberately not shown — this page has no access
@@ -260,6 +259,7 @@ function RentalListingCard({
 }
 
 function ContextBanner({ context, threadId, accountSlug }: { context: SessionContext; threadId: string; accountSlug: string }) {
+  const order = useQuery(api.renter_bot_lab_order.get, { thread_id: threadId });
   const row = (label: string, value: string) => (
     <div className="flex items-baseline gap-1.5">
       <span className="text-[11px] uppercase tracking-wide text-[#8b8fa3]">
@@ -282,9 +282,9 @@ function ContextBanner({ context, threadId, accountSlug }: { context: SessionCon
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-2 sm:grid-cols-4">
         {row(
           "All items",
-          context.items.length ? context.items.join(", ") : "not set",
+          order?.lines.length ? order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ") : context.items.length ? context.items.join(", ") : "not set",
         )}
-        {row("Scenario dates", context.dates || "not set")}
+        {row("Simulation dates", order?.start_date ? `${order.start_date} → ${order.end_date}` : context.dates || (context.startDate ? `${context.startDate} → ${context.endDate}` : "not set"))}
         {row("Location", context.location || "not set")}
         {row(
           "Seed price",

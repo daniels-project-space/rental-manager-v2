@@ -1,11 +1,12 @@
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
-import { renterToolReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
+import { withRenterToolScope } from "@/lib/renter-tool-scope";
+import { renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
 import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
 import { ConvexHttpClient } from "convex/browser";
-import { makeFunctionReference } from "convex/server";
+import { getFunctionName, makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import {
   getRenterBotAgent,
@@ -347,7 +348,11 @@ export async function POST(req: Request) {
     query: (<T,>(fn: Parameters<typeof rawConvex.query>[0], args: unknown): Promise<T> => {
       let key: string;
       try {
-        key = `${String((fn as { toString(): string }))}|${JSON.stringify(args ?? {})}`;
+        const functionName = getFunctionName(fn);
+        // An agent mutation can change the simulated order during this turn.
+        // Re-read it to prove the action and get its current total.
+        if (functionName === "renter_bot_lab_order:get") return rawConvex.query(fn, args as never) as Promise<T>;
+        key = `${functionName}|${JSON.stringify(args ?? {})}`;
       } catch {
         // Unserialisable args — skip the memo rather than risk a wrong hit.
         return rawConvex.query(fn, args as never) as Promise<T>;
@@ -1320,7 +1325,7 @@ export async function POST(req: Request) {
         ? await getRenterBotAgentForModel(modelOverride)
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await (agent as any).generate(baseMessages, {
+      const result: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug }, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
         // Flash (a reasoning model — thinks before it speaks, same behavior
@@ -1335,7 +1340,7 @@ export async function POST(req: Request) {
         // "512 was enough" baseline from the WallE health probe, sized for
         // this agent's actual multi-field structured JSON output.
         modelSettings: { maxOutputTokens: 4096 },
-      });
+      }));
       text = result?.text ?? "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       usedTools = ((result?.steps ?? []) as any[]).some(
@@ -1469,10 +1474,10 @@ export async function POST(req: Request) {
           ];
           const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await (retryAgent as any).generate(retryMessages, {
+          const retryResult: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug }, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
             modelSettings: { maxOutputTokens: 4096 },
-          });
+          }));
           const retryText: string = retryResult?.text ?? "";
           const retryUsedTools = ((retryResult?.steps ?? []) as any[]).some(
             (st) => (st?.toolCalls?.length ?? 0) > 0,
@@ -1501,6 +1506,7 @@ export async function POST(req: Request) {
       }
     }
 
+    const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;
     // BACKSTOP: never let a draft AFFIRM a phantom item is available. If the
     // marketing item's model token sits near availability/pickup language, the
     // bot is confirming an item we can't rent — blank it and escalate. (We do
@@ -1610,6 +1616,7 @@ export async function POST(req: Request) {
         ? (needsHumanReason ?? "model_declined")
         : null,
       intent: obj.intent ?? null,
+      diagnostic_candidate: diagnosticCandidate,
       conversation_stage: authoritativeStage,
       model_id: modelOverride ?? RENTER_BOT_MODEL_ID,
       factsClaimed: obj.factsClaimed ?? [],
@@ -1650,7 +1657,7 @@ export async function POST(req: Request) {
           successfulGrounding(toolReceipts).price,
         specs: successfulGrounding(toolReceipts).specs,
       },
-      availabilityReceipts: toolReceipts.filter((r) => r.tool === "check_availability").map((r) => ({ call_id: r.call_id, ...r.result })),
+      availabilityReceipts: stockReceipts(toolReceipts).map((r) => ({ call_id: r.call_id, ...r.result })),
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,

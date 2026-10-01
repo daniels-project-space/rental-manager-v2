@@ -20,6 +20,8 @@ import "server-only";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
+import { getFunctionName } from "convex/server";
+import { bindRenterToolArgs } from "@/lib/renter-tool-scope";
 import { api } from "@/../convex/_generated/api";
 // Convex typegen runs against a real deployment via `npx convex dev`.
 // Until the new modules (renter_bot_tools, knowledge, renter_bot_drafts)
@@ -34,7 +36,12 @@ const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
 
 function convex(): ConvexHttpClient {
-  return new ConvexHttpClient(CONVEX_URL);
+  const client = new ConvexHttpClient(CONVEX_URL);
+  for (const method of ["query", "mutation", "action"] as const) {
+    const invoke = client[method].bind(client) as (fn: Parameters<typeof client.query>[0], args: Record<string, unknown>) => Promise<unknown>;
+    Object.assign(client, { [method]: (fn: Parameters<typeof client.query>[0], args: Record<string, unknown> = {}) => invoke(fn, bindRenterToolArgs(getFunctionName(fn), args)) });
+  }
+  return client;
 }
 
 // ── Tool 1: get_renter_context ────────────────────────────────

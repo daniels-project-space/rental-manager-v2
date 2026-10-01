@@ -8,6 +8,7 @@ import { action, internalMutation, mutation } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import type { DraftEvidence } from "./lib/renter_draft_evidence";
 import { bestMatch } from "./lib/item_name_match";
 
 // Exported so other modules (e.g. replyInbox.ts's getReplyQueue) can exclude
@@ -206,7 +207,7 @@ export const run = action({
     /** Model to run this probe on. Probe threads only. */
     model_override: v.optional(v.string()),
   },
-  handler: async (ctx, a): Promise<{ draft?: string; confidence?: number; flags?: unknown }> => {
+  handler: async (ctx, a): Promise<{ status: "ok" | "skipped"; reason?: string; model_id?: string; evidence?: DraftEvidence; diagnostic_candidate?: string; draft?: string; confidence?: number; flags?: unknown }> => {
     // model_override belongs to the DRAFT call, not the seed — passing the
     // whole args object through made seed's validator reject the extra field
     // and every bake-off run returned no draft at all, which then scored as
@@ -217,7 +218,7 @@ export const run = action({
       thread_id: a.thread_id,
       ...(model_override ? { model_override } : {}),
     });
-    return { draft: r.draft, confidence: r.confidence, flags: r.flags };
+    return { status: r.status, reason: r.reason, model_id: r.model_id, evidence: r.evidence, diagnostic_candidate: r.diagnostic_candidate, draft: r.draft, confidence: r.confidence, flags: r.flags };
   },
 });
 
@@ -233,15 +234,9 @@ export const simulateSend = action({
     sent_text: v.string(),
     draft_text: v.optional(v.string()),
   },
-  handler: async (ctx, a): Promise<{ scheduled: true }> => {
+  handler: async (_ctx, a): Promise<{ scheduled: false; reason: string }> => {
     if (!a.thread_id.startsWith(PREFIX)) throw new Error("Lab learning simulation cannot target a real conversation");
-    await ctx.scheduler.runAfter(0, internal.draft_learning_actions.analyzeDivergence, {
-      thread_id: a.thread_id,
-      account_slug: a.account_slug,
-      sent_text: a.sent_text,
-      draft_text: a.draft_text,
-    });
-    return { scheduled: true };
+    return { scheduled: false, reason: "Lab conversations cannot update production drafting lessons" };
   },
 });
 
@@ -251,9 +246,7 @@ export const cleanup = mutation({
     if (thread_id && !thread_id.startsWith(PREFIX)) throw new Error("Only Lab/probe sessions can be removed");
     const matches = (id: string) => id.startsWith(PREFIX) && (!thread_id || id === thread_id);
     let n = 0;
-    const convs = (await ctx.db.query("conversations").collect()).filter((c) =>
-      matches(c.thread_id),
-    );
+    const convs = await ctx.db.query("conversations").withIndex("by_thread", (q) => thread_id ? q.eq("thread_id", thread_id) : q.gte("thread_id", PREFIX).lt("thread_id", `${PREFIX}\uffff`)).collect();
     for (const c of convs) {
       for (const m of await ctx.db
         .query("hygglo_messages")
@@ -271,9 +264,9 @@ export const cleanup = mutation({
       await ctx.db.delete(c._id);
       n++;
     }
-    for (const r of await ctx.db.query("reservations").collect())
+    for (const r of await ctx.db.query("reservations").withIndex("by_hygglo_order_id", (q) => thread_id ? q.eq("hygglo_order_id", thread_id) : q.gte("hygglo_order_id", PREFIX).lt("hygglo_order_id", `${PREFIX}\uffff`)).collect())
       if (r.hygglo_order_id && matches(r.hygglo_order_id)) await ctx.db.delete(r._id);
-    for (const order of await ctx.db.query("renter_bot_lab_orders").collect())
+    for (const order of await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread", (q) => thread_id ? q.eq("thread_id", thread_id) : q.gte("thread_id", PREFIX).lt("thread_id", `${PREFIX}\uffff`)).collect())
       if (matches(order.thread_id)) await ctx.db.delete(order._id);
     return { removed: n };
   },

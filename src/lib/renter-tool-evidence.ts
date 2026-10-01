@@ -17,6 +17,8 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
       const result = output as Record<string, unknown>;
       if (!result.error && result.ok !== false && result.found !== false)
         receipts.push({ tool: payload.toolName, call_id: String(payload.toolCallId ?? "unknown"), result });
+      if (payload.toolName === "modify_booking" && result.ok === true && result.stock_receipt && typeof result.stock_receipt === "object")
+        receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:mutation-stock`, result: result.stock_receipt as Record<string, unknown> });
       if (!result.error && result.ok !== false && result.found !== false && payload.toolName === "find_owned_alternatives" && Array.isArray(result.alternatives)) {
         for (const alternative of result.alternatives) {
           const a = alternative as Record<string, unknown>;
@@ -33,13 +35,21 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
   return receipts;
 }
 
-export function availabilityEvidence(receipts: ToolReceipt[]) {
+export function stockReceipts(receipts: ToolReceipt[]) {
+  const keys = new Set<string>();
   return receipts.filter((r) => r.tool === "check_availability" &&
-    typeof r.result.available === "boolean" &&
+    (typeof r.result.available === "boolean" || r.result.available === null) &&
     typeof r.result.item_name === "string" &&
     typeof r.result.start_date === "string" &&
     typeof r.result.end_date === "string" &&
-    (r.result.available === false || r.result.owned === true));
+    typeof r.result.requested_units === "number" && Number.isInteger(r.result.requested_units) &&
+    typeof r.result.checked_at === "number" &&
+    (typeof r.result.free_units === "number" || r.result.free_units === null))
+    .filter((r) => { const key = `${r.call_id}|${r.result.item_name}|${r.result.start_date}|${r.result.end_date}|${r.result.requested_units}`; if (keys.has(key)) return false; keys.add(key); return true; });
+}
+
+export function availabilityEvidence(receipts: ToolReceipt[]) {
+  return stockReceipts(receipts).filter((r) => typeof r.result.available === "boolean" && (r.result.available === false || r.result.owned === true));
 }
 
 export function successfulGrounding(receipts: ToolReceipt[]) {

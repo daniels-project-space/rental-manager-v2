@@ -60,6 +60,8 @@ export const analyzeDivergence = internalAction({
     draft_text: v.optional(v.string()),
   },
   handler: async (ctx, { thread_id, account_slug, sent_text, draft_text }) => {
+    // Only actual human replies can train the production lesson set.
+    if (thread_id.startsWith("__probe__")) return;
     const draft =
       draft_text ??
       (await ctx.runQuery(internal.draft_learning.getDraftText, { thread_id })) ??

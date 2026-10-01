@@ -63,3 +63,16 @@ Still open: per-claim identity/date/quantity enforcement across free prose; full
 - The time guard falsely flagged an explicit refusal of 8am because a later sentence mentioned conditional booking confirmation. It now examines time-local acceptance/refusal, with tests for both direct and implicit bad agreements.
 - Browser inspection confirmed Lab date changes persist, but mobile had horizontal overflow and the fixed chat height put its input over recent runs. Responsive wrapping, minimum-width constraints and growing chat height fix that surface. The listing card now uses the same account/date-specific price query as the bot rather than a stale catalog range.
 - Probe seeding lacked its own prefix gate and could accept a real conversation id. It now refuses real ids before any writes; simulated-send learning also refuses real thread ids. Learning storage isolation still needs inspection before calling that simulation helper.
+
+## Fourth audit pass
+
+- Live raw evidence showed duplicate/partial Mastra result events being mistaken for stock receipts; a partial `{call_id}` entry caused draft persistence validation to fail. Receipts now require the complete stock shape and are deduplicated, with a second validation boundary in Convex. The real follow-up now saves successfully.
+- Current direct quote and seeded/modified order agree on £176 for one FX3 (£126) plus Sony GM 16–35mm f2.8 (£50) for 2–4 October. The earlier £186/£197 results are historical reproduction evidence; they are not the validated current total.
+- An overdue-return probe reports `RETURN_OVERDUE` but is withheld for a competitor referral. This is an unresolved sales/policy behavior, not a successful readiness case. Probe results now expose status/reason/model/stock evidence and probe-only rejected candidate text so withholding cannot masquerade as a pass.
+- Server tool scope binds account and conversation identity across query/action/mutation calls, including retries. The model cannot switch to a different conversation/account via its arguments. Parallel asynchronous scope isolation has a regression test.
+- The route cache keys now use Convex function names; simulated-order reads bypass caching so mutations are followed by a fresh proof/read of the order. Successful additions return their stock proof as well.
+- Source audit confirmed simulated learning could upsert the **production** lesson set. Test threads now stop before learning; the simulation helper explicitly returns `scheduled:false`. Genuine manual-send learning remains as before.
+- Probe cleanup uses thread-id indexes for conversations, reservations and orders. It never needs to scan all live reservations to close one test.
+- Deployed desktop/mobile Lab checks at SHA `573f898cdf0763042d9e1e6fc794278080b021a3` verified date persistence, no browser errors and no mobile horizontal overflow. The current order now supplies the item/date banner, and overlapping commitments are no longer mislabeled as proof that all units are unavailable.
+
+Next evidence to collect: final alias/UI for this pass; inspect the overdue candidate and fix its root cause; fresh marketing/recommendation/price/stage/negotiation/long-context/injection replays; complete listing/kit and per-item claim authority. Sending remains gated and readiness remains unproven.

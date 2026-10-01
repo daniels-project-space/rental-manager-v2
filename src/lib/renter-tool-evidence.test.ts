@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { renterToolReceipts, successfulGrounding } from "./renter-tool-evidence";
+import { renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
 
-const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1 };
+const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1, free_units: 1, checked_at: 12345 };
 describe("successful tool receipts", () => {
   it("never grounds a call that has no successful result", () => {
     const receipts = renterToolReceipts([{ toolCalls: [{ payload: { toolName: "check_availability", args: stock } }] }]);
@@ -30,5 +30,15 @@ describe("successful tool receipts", () => {
     expect(successfulGrounding(receipts).availability).toBe(true);
     expect(receipts.filter((r) => r.tool === "check_availability")).toHaveLength(1);
     expect(receipts[1].result.requested_units).toBe(2);
+  });
+  it("keeps successful stock proof from a simulated order change", () => {
+    const receipts = renterToolReceipts([{ payload: { toolName: "modify_booking", toolCallId: "change", result: { ok: true, stock_receipt: stock } } }]);
+    expect(successfulGrounding(receipts).availability).toBe(true);
+    expect(receipts[1].call_id).toBe("change:mutation-stock");
+  });
+  it("drops partial telemetry and duplicate receipt events before persistence", () => {
+    const steps = [{ payload: { toolName: "check_availability", toolCallId: "one", result: stock } }, { payload: { toolName: "check_availability", toolCallId: "one", result: { ...stock } } }, { payload: { toolName: "check_availability", toolCallId: "one", result: { toolCallId: "one" } } }];
+    expect(stockReceipts(renterToolReceipts(steps))).toHaveLength(1);
+    expect(successfulGrounding(renterToolReceipts(steps)).availability).toBe(true);
   });
 });

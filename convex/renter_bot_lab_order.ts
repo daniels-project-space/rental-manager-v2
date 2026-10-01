@@ -426,6 +426,7 @@ export const applyChange = mutation({
       ok: true,
       applied: summaryText,
       order: summarise(lines, row.start_date, row.end_date),
+      stock_receipt: { ...stock, start_date: row.start_date, end_date: row.end_date },
     };
   },
 });
