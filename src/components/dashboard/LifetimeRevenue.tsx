@@ -664,7 +664,7 @@ export function LifetimeRevenue() {
                   strokeDasharray="2 5"
                   strokeOpacity={0.65}
                   label={{
-                    value: "after Leo takeover",
+                    value: "Leo",
                     position: "top",
                     fill: "#fb923c",
                     fontSize: 9,
@@ -748,7 +748,7 @@ export function LifetimeRevenue() {
                   strokeDasharray="4 4"
                   strokeOpacity={0.5}
                   label={{
-                    value: "Projected →",
+                    value: "Forecast →",
                     position: "top",
                     fill: "#94a3b8",
                     fontSize: 10,
