@@ -7,6 +7,7 @@ import { api } from "../../../../convex/_generated/api";
 
 export interface SessionContext {
   items: string[];
+  lifecycle?: string;
   productId?: number;
   priceGbp?: number;
   dates?: string;
@@ -298,6 +299,7 @@ function ContextBanner({ context, threadId, accountSlug }: { context: SessionCon
           order?.lines.length ? order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ") : context.items.length ? context.items.join(", ") : "not set",
         )}
         {row("Simulation dates", order?.start_date ? `${order.start_date} → ${order.end_date}` : context.dates || (context.startDate ? `${context.startDate} → ${context.endDate}` : "not set"))}
+        {row("Stage", context.lifecycle?.replace(/_/g, " ") || "inquiry")}
         {row("Location", context.location || "not set")}
         {row(
           "Seed price",

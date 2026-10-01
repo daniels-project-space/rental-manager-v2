@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LAB_LIFECYCLES, type LabLifecycle } from "../../../../convex/lib/lab_lifecycle";
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 
@@ -19,6 +20,7 @@ function scenarioLabel(scenario_type: string): string {
 
 export interface CustomScenarioInput {
   items: string[];
+  lifecycle?: LabLifecycle;
   /** Real Hygglo listing id — its price is what the renter pays. */
   productId?: number;
   priceGbp?: number;
@@ -97,6 +99,7 @@ export function ScenarioPicker({
   const [customEndDate, setCustomEndDate] = useState(inFiveDays);
   const [customLocation, setCustomLocation] = useState("");
   const [productId, setProductId] = useState("");
+  const [lifecycle, setLifecycle] = useState<LabLifecycle>("inquiry");
   // Real listings for the chosen account, so a scenario can be based on what a
   // renter actually sees and pays.
   const listings = useQuery(api.online_listings.list, { account_slug: accountSlug });
@@ -122,7 +125,7 @@ export function ScenarioPicker({
 
   function handleStart() {
     if (fixtureId) {
-      startSession(accountSlug, fixtureId);
+      startSession(accountSlug, fixtureId, { items: [], lifecycle, startDate: customStartDate, endDate: customEndDate });
       return;
     }
     const chosen = listings?.find((l) => String(l.product_id) === productId);
@@ -131,6 +134,7 @@ export function ScenarioPicker({
       // is looking at ONE listing and pays ITS price, so basing the scenario on
       // a listing is the only way the price shown is the price they'd pay.
       productId: chosen ? chosen.product_id : undefined,
+      lifecycle,
       items: chosen
         ? [chosen.name]
         : customItems
@@ -192,6 +196,18 @@ export function ScenarioPicker({
         {!fixtures && (
           <p className="mt-1 text-xs text-[#8b8fa3]">Loading scenarios…</p>
         )}
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-[#8b8fa3]">Simulation stage</label>
+        <select disabled={disabled} value={lifecycle} onChange={e => setLifecycle(e.target.value as LabLifecycle)} className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-2 text-sm text-[#e4e6eb]">
+          {LAB_LIFECYCLES.map(state => <option key={state} value={state}>{state.replace(/_/g, " ")}</option>)}
+        </select>
+        <p className="mt-1 text-[11px] text-[#8b8fa3]">Uses isolated booking facts. Choose the state matching the scenario; presets do not confirm a booking by themselves.</p>
+        {fixtureId && <div className="mt-2 flex gap-2">
+          <label className="text-[11px] text-[#8b8fa3]">Pickup<input type="date" disabled={disabled} value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} className="block w-full rounded bg-black/30 px-2 py-1" /></label>
+          <label className="text-[11px] text-[#8b8fa3]">Return<input type="date" disabled={disabled} value={customEndDate} min={customStartDate} onChange={e => setCustomEndDate(e.target.value)} className="block w-full rounded bg-black/30 px-2 py-1" /></label>
+        </div>}
       </div>
 
       {!fixtureId && (

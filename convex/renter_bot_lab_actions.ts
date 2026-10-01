@@ -1,3 +1,4 @@
+import { labBooking } from "./lib/lab_lifecycle";
 /**
  * renter_bot_lab_actions — the ONE Convex entry point the Lab UI is allowed
  * to call, so auditing "does the Lab import any send path" is one file, not
@@ -164,6 +165,7 @@ export const startLiveSession = action({
     location: v.optional(v.string()),
     /** Real Hygglo listing to base the scenario on (its price is what the renter pays). */
     productId: v.optional(v.number()),
+    lifecycle: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -173,6 +175,7 @@ export const startLiveSession = action({
     context: {
       items: string[];
       productId?: number;
+      lifecycle?: string;
       priceGbp?: number;
       dates?: string;
       startDate?: string;
@@ -205,6 +208,11 @@ export const startLiveSession = action({
       }
     }
 
+    startDate = args.startDate ?? startDate;
+    endDate = args.endDate ?? endDate;
+    const lifecycle = args.lifecycle ?? "inquiry";
+    const booking = labBooking(lifecycle, startDate, endDate);
+
     if (args.productId != null) {
       const listing = await ctx.runQuery(internal.renter_bot_lab_actions.getSelectedListing, {
         account_slug: args.accountSlug, product_id: args.productId,
@@ -218,6 +226,7 @@ export const startLiveSession = action({
       account_slug: args.accountSlug,
       items: itemNames.map((name) => ({ name, ...(args.productId != null ? { product_id: args.productId } : {}) })),
       messages,
+      booking,
     });
     // Simulated Hygglo order for this session, so the bot can genuinely add
     // and remove gear and move dates instead of only talking about it.
@@ -231,7 +240,7 @@ export const startLiveSession = action({
     });
     return {
       threadId,
-      context: { items: itemNames, productId: args.productId, priceGbp, dates, startDate, endDate, location },
+      context: { items: itemNames, productId: args.productId, lifecycle, priceGbp, dates, startDate, endDate, location },
     };
   },
 });

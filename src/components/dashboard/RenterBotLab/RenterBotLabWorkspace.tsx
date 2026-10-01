@@ -37,6 +37,7 @@ export function RenterBotLabWorkspace() {
       endDate: custom?.endDate,
       location: custom?.location,
       productId: custom?.productId,
+      lifecycle: custom?.lifecycle,
     });
     setSession({
       threadId: result.threadId,
