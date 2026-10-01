@@ -5,6 +5,7 @@ describe("per-item included-content claims", () => {
   it("checks the actual multiline inclusion list instead of only its empty heading", () => {
     const text = "Sony A7 V is available.\n\nThe kit includes:\n- NP-FZ100 batteries (plus charger)\n- 256GB card\n\nLet me know if you would like it.";
     expect(unsupportedKitClaims(text, [kit]).map(f => f.content)).toEqual(["charger"]);
+    expect(unsupportedKitClaims(text.replace("includes:\n", "includes:\n\n"), [kit]).map(f => f.content)).toEqual(["charger"]);
     expect(unsupportedKitClaims(text.replace(" (plus charger)", ""), [kit])).toEqual([]);
   });
   it("rejects an unlisted charger even though batteries and a card are known", () => {

@@ -12,7 +12,7 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[]) {
   let subject: KitEvidence[] = [];
   let includedList = false;
   for (const sentence of text.split(/(?<=[.!?])\s+|\n/)) {
-    if (!sentence.trim()) { includedList = false; continue; }
+    if (!sentence.trim()) continue;
     const normalized = normalize(sentence);
     const named = evidence.filter(e => e.names.some(name => name && normalized.includes(normalize(name))));
     if (named.length) subject = named;

@@ -1045,7 +1045,7 @@ const ASSERTS_AVAIL_RE =
     let includedList = false;
     for (const raw of text.split(/(?<=[.!?])\s+|\n/)) {
       const s = raw.trim();
-      if (!s) { includedList = false; continue; }
+      if (!s) continue;
       const named = factPack.itemsWithoutKitData.filter(n => normalized(s).includes(normalized(n)));
       const knownNamed = (factPack.kitEvidence ?? []).some(e => e.names.some(n => n && normalized(s).includes(normalized(n))));
       if (named.length) knownKitSubject = false;
