@@ -38,7 +38,7 @@ export function isTrackableLine(
  */
 export function stripParentheticalComparisons(s: string): string {
   return s.replace(
-    /\([^)]*\b(same|like|equivalent|comparable|as good as|similar|alternative)\b[^)]*\)/gi,
+    /\([^)]*\b(same|like|equivalent|comparable|as good as|similar|alternative)\b[^)]*(?:\)|$)/gi,
     " ",
   );
 }
@@ -47,7 +47,7 @@ export function stripParentheticalComparisons(s: string): string {
 function normalizedModelName(name: string): string {
   return stripParentheticalComparisons(name).toLowerCase()
     .replace(/[–—]/g, "-")
-    .replace(/\b(fx|rs|a|r|mk|bmpcc)\s+(\d+)/g, "$1$2")
+    .replace(/\b(fx|rs|a|r|mk|bmpcc)[\s-]+(\d+)/g, "$1$2")
     .replace(/\b([a-z]+\d+[a-z]*)\s+([ivx]{1,4})\b/g, "$1$2")
     .replace(/\bf\s*\/\s*(\d)/g, "f$1")
     .replace(/(\d)\s*mm\b/g, "$1mm");

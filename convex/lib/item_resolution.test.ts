@@ -13,10 +13,12 @@ describe("item name checks", () => {
     expect(matches("DJI RS3 Pro", "DJI RS4 Pro")).toBe(false);
     expect(matches("Sony A7 III", "Sony A7III camera")).toBe(true);
     expect(matches("Sony FX3", "Sony FX 3 camera")).toBe(true);
+    expect(matches("Sony FX3", "Sony FX-3 camera")).toBe(true);
     expect(matches("Sony FX3", "Sony FX3 24-70mm kit")).toBe(true);
   });
   it("does not borrow identities from comparison copy or other listing lines", () => {
     expect(matches("Sony A7S III", "Sony FX3 (same sensor as A7S III)")).toBe(false);
+    expect(matches("Aputure 600x", "Nanlite 500 LED (like Aputure 600x")).toBe(false);
     expect(passesNameSanityCheck("Sony GM 16-35mm f2.8", [{ name: "16-35mm f4" }, { name: "24-70mm f2.8" }])).toBe(false);
   });
   it("does not label a tripod as a C stand", () => {
