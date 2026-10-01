@@ -24,6 +24,7 @@ import type * as admin_reclassify from "../admin_reclassify.js";
 import type * as admin_reset_account_state from "../admin_reset_account_state.js";
 import type * as admin_verify_camera_specs_20261001 from "../admin_verify_camera_specs_20261001.js";
 import type * as admin_verify_item_specs_20261001 from "../admin_verify_item_specs_20261001.js";
+import type * as admin_verify_ttartisan_20261001 from "../admin_verify_ttartisan_20261001.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
 import type * as archive_to_r2 from "../archive_to_r2.js";
@@ -307,6 +308,7 @@ declare const fullApi: ApiFromModules<{
   admin_reset_account_state: typeof admin_reset_account_state;
   admin_verify_camera_specs_20261001: typeof admin_verify_camera_specs_20261001;
   admin_verify_item_specs_20261001: typeof admin_verify_item_specs_20261001;
+  admin_verify_ttartisan_20261001: typeof admin_verify_ttartisan_20261001;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
   archive_to_r2: typeof archive_to_r2;

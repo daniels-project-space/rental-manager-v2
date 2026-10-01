@@ -31,6 +31,8 @@ describe("shared item presentation identity", () => {
     expect(shortListingTitle("Sigma art 24-70mm f2.8 lens Sony e mount gm gmaster full frame cinema")).toBe("Sigma 24-70mm f/2.8 Art");
     expect(shortListingTitle("Sony a7 IV 4k camera full frame body set Sony a74 a7iv")).toBe("Sony A7 IV");
     expect(shortListingTitle("Sony A7S III camera | like Sony FX3")).toBe("Sony A7S III");
+    expect(shortItemName("Sony 11mm f2.8 fisheye")).toBe("TTArtisan 11mm f/2.8 fisheye (E)");
+    expect(shortItemName("TTArtisan 11mm f2.8 Fisheye (Sony E)")).toBe("TTArtisan 11mm f/2.8 fisheye (E)");
     expect(shortItemName("Sony GM 90mm f2.8")).toBe("Sony 90mm f/2.8 Macro G OSS");
   });
 });

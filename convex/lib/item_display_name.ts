@@ -4,6 +4,8 @@ export type DisplayItem = { _id?: unknown; name_canonical: string; display_name?
 type DisplayMapping = { components: Array<{ item_id: unknown; qty: number }> };
 // Presentation names never replace item IDs, canonical matching or price lookup.
 const NAMES: Record<string, string> = {
+  "Sony 11mm f2.8 fisheye": "TTArtisan 11mm f/2.8 fisheye (E)",
+  "TTArtisan 11mm f2.8 Fisheye (Sony E)": "TTArtisan 11mm f/2.8 fisheye (E)",
   "GoPro 12 Hero": "GoPro HERO12 Black",
   "Sony GM 90mm f2.8": "Sony 90mm f/2.8 Macro G OSS",
   "Sony FE 90mm f2.8 Macro G OSS": "Sony 90mm f/2.8 Macro G OSS",
