@@ -782,4 +782,12 @@ describe("unknown-kit subject attribution", () => {
       expect(guardDraft(text, opts).flags.some(f => f.type === "KIT_HALLUCINATION")).toBe(true);
     }
   });
+  it("requires human review for wrong specific accessory details, while allowing the actual kit", () => {
+    for (const included of ["six NP-F570 batteries", "five LP-E6NH batteries", "a 1TB CFast card", "a 2TB CFexpress Type B card"]) {
+      const result = guardDraft(`BMPCC 6K Full Frame includes ${included}.`, opts);
+      expect(result.flags.some(f => f.type === "KIT_HALLUCINATION" && f.severity === "critical")).toBe(true);
+    }
+    expect(guardDraft("BMPCC 6K Full Frame includes five NP-F570 batteries and a 1TB CFexpress Type B card.", opts)
+      .flags.filter(f => f.type === "KIT_HALLUCINATION")).toEqual([]);
+  });
 });
