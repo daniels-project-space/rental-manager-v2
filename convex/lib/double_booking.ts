@@ -12,6 +12,7 @@ export interface DBRow {
   return_date?: string | null;
   order_step?: string | null;
   status?: string | null;
+  renter_name?: string | null;
   qty: number; // qty of the item this row contributes
 }
 
@@ -109,7 +110,7 @@ export function computeWorstOverlap(
     const overlapping = rows.filter(
       (r) => effStart(r) <= d && effEnd(r, today) >= d,
     );
-    const qtySum = overlapping.reduce((s, r) => s + r.qty, 0);
+    const qtySum = extensionOccupancyQty(overlapping);
     if (qtySum > worstCount) {
       worstCount = qtySum;
       worstDay = d;
@@ -124,4 +125,22 @@ export function computeWorstOverlap(
     .sort()[0] ?? "";
 
   return { worstDay, worstCount, overlapping: overlappingSet, earliestEnd };
+}
+
+/** Count overlapping extension orders once per renter for this inventory item.
+ * The largest quantity remains held; a larger extension still consumes extra
+ * stock. Unknown names stay separate, and callers retain every source order.
+ */
+export function extensionOccupancyQty(rows: Array<{ renter_name?: string | null; qty: number }>): number {
+  const byRenter = new Map<string, number>();
+  let unnamed = 0;
+  for (const row of rows) {
+    const name = row.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+    if (!name || ["unknown", "unknown renter", "?", "—"].includes(name)) {
+      unnamed += row.qty;
+      continue;
+    }
+    byRenter.set(name, Math.max(byRenter.get(name) ?? 0, row.qty));
+  }
+  return unnamed + Array.from(byRenter.values()).reduce((sum, qty) => sum + qty, 0);
 }

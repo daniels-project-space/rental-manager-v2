@@ -43,31 +43,45 @@ export function stripParentheticalComparisons(s: string): string {
   );
 }
 
-/** Model-identifier tokens of a canonical item name (a7iii, fx3, 24-70, mk2…). */
-export function modelTokensOf(name: string): string[] {
-  const out = new Set<string>();
-  const re = /\b([a-z]+\d+\w*|[a-z]+\s*[ivx]{1,4}\b|\d+\.\d+|\d+[a-z]+)/gi;
-  for (const m of name.toLowerCase().matchAll(re)) {
-    out.add(m[1].replace(/\s+/g, ""));
-  }
-  return Array.from(out);
+/** Normalize typographic model variants without erasing model boundaries. */
+function normalizedModelName(name: string): string {
+  return stripParentheticalComparisons(name).toLowerCase()
+    .replace(/[–—]/g, "-")
+    .replace(/\b(fx|rs|a|r|mk|bmpcc)\s+(\d+)/g, "$1$2")
+    .replace(/\b([a-z]+\d+[a-z]*)\s+([ivx]{1,4})\b/g, "$1$2")
+    .replace(/\bf\s*\/\s*(\d)/g, "f$1")
+    .replace(/(\d)\s*mm\b/g, "$1mm");
 }
 
-/**
- * Structural sanity check for an LLM-resolved item name against the listing
- * title(s) it is claimed to describe. Names with no discriminating token are
- * accepted (nothing to contradict).
+/** Model numbers, focal lengths, apertures and explicit generations. */
+export function modelTokensOf(name: string): string[] {
+  const re = /\b(?:\d+-\d+mm|f\d+(?:\.\d+)?|[a-z]+\d+[a-z]*|\d+[a-z]+|[ivx]{1,4}|\d+)\b/g;
+  return Array.from(new Set(normalizedModelName(name).match(re) ?? []));
+}
+
+/** Reject an LLM guess unless one listing supports its full model identity.
+ * Shared apertures, substrings (FX3/FX30) and comparison copy are insufficient.
+ * Manual listing overrides and product mappings remain authoritative.
  */
 export function passesNameSanityCheck(
   canonical: string,
   titles: Array<{ name?: string }>,
 ): boolean {
-  const toks = modelTokensOf(canonical);
-  if (toks.length === 0) return true; // no discriminating tokens — accept
-  const cleaned = titles
-    .map((t) => stripParentheticalComparisons(t.name ?? "").toLowerCase().replace(/\s+/g, ""))
-    .filter((s) => s.length > 0);
-  return toks.some((t) => cleaned.some((c) => c.includes(t)));
+  const tokens = modelTokensOf(canonical);
+  const required = tokens.length > 0 ? tokens : normalizedModelName(canonical)
+    .split(/[^a-z0-9]+/).filter((word) => word && !["kit", "bundle", "camera", "lens"].includes(word));
+  if (required.length === 0) return false;
+  return titles.some(({ name }) => {
+    const title = normalizedModelName(name ?? "");
+    const brands = ["sony", "canon", "nikon", "dji", "nanlite", "aputure", "godox", "gopro", "anker", "pioneer", "jbl"];
+    const canonicalBrand = brands.find((brand) => new RegExp("\\b" + brand + "\\b").test(canonical.toLowerCase()));
+    const listedBrands = brands.filter((brand) => new RegExp("\\b" + brand + "\\b").test(title));
+    if (canonicalBrand && listedBrands.length > 0 && !listedBrands.includes(canonicalBrand)) return false;
+    return required.every((token) => {
+      // Match standalone model identities, never a prefix of another model.
+      return new RegExp("(?<![a-z0-9])" + token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z0-9])").test(title);
+    });
+  });
 }
 
 // ── Per-line "does this resolve to anything?" ───────────────────────────────

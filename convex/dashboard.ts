@@ -31,7 +31,7 @@ import {
   normaliseItemName,
   type ImageHint,
 } from "./lib/imageResolution";
-import { effEnd as effEndImpl, effStart as effStartImpl } from "./lib/double_booking";
+import { effEnd as effEndImpl, effStart as effStartImpl, extensionOccupancyQty } from "./lib/double_booking";
 import { claimHoldsStock } from "./lib/availability";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 // The rental-volume queries now reach it through ./lib/rental_volume.
@@ -821,7 +821,7 @@ export const getStatsDrawerData = query({
     // calls Grok 4.3 with strict instructions to respect II/III/Mk2/Mk3 etc.
     type ExpandedItem = { item_id: string; item_name_canonical: string; qty: number; via_bundle?: string };
     type ResolvedItem = { item_id: string; item_name_canonical: string; confidence: number; qty?: number };
-    type HyggloItemSlim = { name?: string; product_id?: number; qty?: number };
+    type HyggloItemSlim = { name?: string; type?: string; product_id?: number; qty?: number };
     /**
      * Per-reservation item lookup used by conflict / untracked / sell-reco.
      *
@@ -849,6 +849,7 @@ export const getStatsDrawerData = query({
         let allPositionsResolved = true;
         for (let i = 0; i < hItems.length; i++) {
           const h = hItems[i];
+          if (h.type === "INSURANCE") continue;
           const q = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
           // (A.0) Audit override — authoritative per-listing. Empty = marketing
           // (contributes nothing, but the position counts as resolved).
@@ -899,7 +900,8 @@ export const getStatsDrawerData = query({
             // because its name appeared in SOME other listing — double-counting
             // that item (e.g. an FX3 counted once via its own listing and again
             // via a gimbal listing position). Position-scoped check fixes it.
-            if (passesNameSanityCheck(ri.item_name_canonical, [hItems[i]])) {
+            const inventoryName = nameByIdStr.get(String(ri.item_id));
+            if (inventoryName && passesNameSanityCheck(inventoryName, [hItems[i]])) {
               const qty = ri.qty ?? q;
               out.set(String(ri.item_id), (out.get(String(ri.item_id)) ?? 0) + qty);
               continue;
@@ -911,7 +913,7 @@ export const getStatsDrawerData = query({
         if (allPositionsResolved && out.size > 0) return out;
         // Partial coverage: also return what we have. The conflict path
         // tolerates missing items (they fall into the untracked bucket).
-        if (out.size > 0) return out;
+        return out;
       }
 
       // Path B: legacy fallback for rows without hygglo_items[] (v1 imports).
@@ -1051,11 +1053,9 @@ export const getStatsDrawerData = query({
       }
       // Concurrent qty SUM is what matters. A reservation holding 2× of the item
       // counts as 2 toward overlap.
-      const sumQty = (rows: typeof matchingRes): number => {
-        let total = 0;
-        for (const { r } of rows) total += expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0;
-        return total;
-      };
+      const sumQty = (rows: typeof matchingRes): number => extensionOccupancyQty(
+        rows.map(({ r }) => ({ renter_name: r.renter_name, qty: expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0 })),
+      );
       if (sumQty(matchingRes) <= effQty) continue;
 
       // Sweep dates within horizon, count concurrency per day.
@@ -1117,14 +1117,8 @@ export const getStatsDrawerData = query({
         const overlapping = matchingRes.filter(
           (m) => startDT(m.r as ResRow) <= t && endDT(m.r as ResRow) > t,
         );
-        const qtySum = overlapping.reduce(
-          (s, m) => s + (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0),
-          0,
-        );
-        const confirmedSum = overlapping.reduce(
-          (s, m) => s + (m.kind === "pending" ? 0 : (expandedIdsOf(m.r as ResRow).get(itemIdStr) ?? 0)),
-          0,
-        );
+        const qtySum = sumQty(overlapping);
+        const confirmedSum = sumQty(overlapping.filter((m) => m.kind !== "pending"));
         if (qtySum > worstCount) {
           worstCount = qtySum;
           worstInstant = t;
