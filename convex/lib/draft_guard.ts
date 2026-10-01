@@ -1042,16 +1042,19 @@ const ASSERTS_AVAIL_RE =
       /\b(cage|card|cards|sd|cfast|ssd|batter\w*|charger|tripod|mic|microphone|case|bag|filter|rig|monitor|gimbal|adapter)\b/i;
     const normalized = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
     let knownKitSubject = false;
-    for (const raw of text.split(/(?<=[.!?])\s+|\n+/)) {
+    let includedList = false;
+    for (const raw of text.split(/(?<=[.!?])\s+|\n/)) {
       const s = raw.trim();
-      if (!s) continue;
+      if (!s) { includedList = false; continue; }
       const named = factPack.itemsWithoutKitData.filter(n => normalized(s).includes(normalized(n)));
       const knownNamed = (factPack.kitEvidence ?? []).some(e => e.names.some(n => n && normalized(s).includes(normalized(n))));
       if (named.length) knownKitSubject = false;
       else if (knownNamed) knownKitSubject = true;
       const m = CLAIM_VERB.exec(s);
-      if (!m) continue;
-      let after = s.slice(m.index + m[0].length);
+      const bullet = includedList && /^(?:[-•*]\s+|\d+\s*[x×]\s+)/i.test(s);
+      if (!m && !bullet) { includedList = false; continue; }
+      if (m) includedList = /:\s*$/.test(s);
+      let after = m ? s.slice(m.index + m[0].length) : s;
       const neg = after.search(/\b(no|not|without|except|excluding|apart from)\b/i);
       if (neg >= 0) after = after.slice(0, neg);
       if (!KIT_NOUN.test(after)) continue;
@@ -1059,7 +1062,7 @@ const ASSERTS_AVAIL_RE =
       // with") while an unknown-kit item is the subject of the conversation.
       const anaphoric =
         named.length === 0 && !knownKitSubject &&
-        /\b(it|the camera|the body|camera body|the kit|this one|that one)\b/i.test(s);
+        (bullet || /\b(it|the camera|the body|camera body|the kit|this one|that one)\b/i.test(s));
       if (named.length > 0 || anaphoric) {
         const subject = named[0] ?? factPack.itemsWithoutKitData[0];
         push(

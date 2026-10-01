@@ -10,14 +10,19 @@ const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 export function unsupportedKitClaims(text: string, evidence: KitEvidence[]) {
   const failures: { sentence: string; content: string }[] = [];
   let subject: KitEvidence[] = [];
-  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
+  let includedList = false;
+  for (const sentence of text.split(/(?<=[.!?])\s+|\n/)) {
+    if (!sentence.trim()) { includedList = false; continue; }
     const normalized = normalize(sentence);
     const named = evidence.filter(e => e.names.some(name => name && normalized.includes(normalize(name))));
     if (named.length) subject = named;
     const match = /\b(?:comes with|ships with|bundled with|includes?|included)\b/i.exec(sentence);
-    if (!match || /\b(?:does not|doesn't|not|without)\s+(?:come|ship|include)/i.test(sentence)) continue;
-    let claimed = sentence.slice(match.index + match[0].length);
-    if (match[0].toLowerCase() === "included") claimed = sentence;
+    const bullet = includedList && /^\s*(?:[-•*]\s+|\d+\s*[x×]\s+)/i.test(sentence);
+    if (!match && !bullet) { includedList = false; continue; }
+    if (/\b(?:does not|doesn't|not|without)\s+(?:come|ship|include)/i.test(sentence)) { includedList = false; continue; }
+    if (match) includedList = /:\s*$/.test(sentence);
+    let claimed = match ? sentence.slice(match.index + match[0].length) : sentence;
+    if (match?.[0].toLowerCase() === "included") claimed = sentence;
     claimed = claimed.split(/\b(?:but not|except|excluding|without)\b/i)[0];
     const candidates = named.length ? named : subject.length ? subject : evidence;
     if (!candidates.length) continue; // unknown-kit guard handles missing evidence separately

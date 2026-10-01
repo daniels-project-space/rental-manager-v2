@@ -718,7 +718,7 @@ describe("unknown-kit subject attribution", () => {
     expect(result.flags.some(f => f.type === "KIT_HALLUCINATION")).toBe(true);
   });
   it("still blocks unsupported alternative contents and unattributed unknown kits", () => {
-    for (const text of ["BMPCC 6K Full Frame includes a charger.", "It includes a charger and batteries."]) {
+    for (const text of ["BMPCC 6K Full Frame includes a charger.", "It includes a charger and batteries.", "The kit includes:\n- batteries\n- a charger"]) {
       expect(guardDraft(text, opts).flags.some(f => f.type === "KIT_HALLUCINATION")).toBe(true);
     }
   });
