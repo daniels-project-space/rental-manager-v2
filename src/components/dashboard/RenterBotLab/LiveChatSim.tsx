@@ -112,7 +112,7 @@ function RentalListingCard({
         <div className="min-w-0 flex-1 space-y-1.5">
           <p className="text-base font-semibold text-[#e4e6eb]">
             {itemCtx?.name ?? itemName}
-            {itemCtx && !itemCtx.found && (
+            {productId == null && itemCtx && !itemCtx.found && (
               <span className="ml-1.5 text-xs font-normal text-amber-400">
                 (not found in real catalog)
               </span>
@@ -162,22 +162,30 @@ function RentalListingCard({
             >
               {stock === undefined
                 ? "checking…"
-                : !match
-                  ? "no calendar match"
-                  : !match.owned
-                    ? "marketing-only, no stock"
-                    : stock?.available === null
-                      ? "Availability needs clarification"
-                      : rangeFree
-                        ? `Free for these dates (${stock?.free_units} units)`
-                        : "Unavailable for these dates"}
+                : stock.available === null
+                  ? "Availability needs clarification"
+                  : stock.owned === false
+                    ? "Not rentable from owned inventory"
+                    : rangeFree
+                      ? `Free for these dates (${stock.free_units} ${productId != null ? "kits" : "units"})`
+                      : "Unavailable for these dates"}
             </span>
           </div>
           {dateFeedback && <p role="status" className="pt-1 text-[11px] text-[#8b8fa3]">{dateFeedback}</p>}
         </div>
       </div>
 
-      {conflicts.length > 0 && (
+      {stock && "components" in stock && (
+        <div className="border-t border-white/10 px-4 py-2">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8b8fa3]">Kit stock for selected dates</p>
+          {stock.components.map((component, index) => (
+            <p key={index} className="text-xs text-[#e4e6eb]">
+              {component.item_name}: {component.requested_units} required · {component.free_units ?? "unknown"} free
+            </p>
+          ))}
+        </div>
+      )}
+      {productId == null && conflicts.length > 0 && (
         <div className="border-t border-white/10 px-4 py-2">
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8b8fa3]">
             Existing commitments (included in the stock check)
@@ -193,7 +201,7 @@ function RentalListingCard({
           ))}
         </div>
       )}
-      {match?.owned && match.next_free_date && !rangeFree && conflicts.length === 0 && (
+      {productId == null && match?.owned && match.next_free_date && !rangeFree && conflicts.length === 0 && (
         <div className="border-t border-white/10 px-4 py-2 text-xs text-[#8b8fa3]">
           Next confirmed-free date on file: {match.next_free_date}
         </div>
