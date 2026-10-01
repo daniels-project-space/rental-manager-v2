@@ -1,3 +1,4 @@
+import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
 import { query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
@@ -188,7 +189,7 @@ export function buildItemTilesShared(args: {
     if (existing) {
       existing.qty += qty;
     } else {
-      counts.set(dedupKey, { name, image_url: finalUrl, qty });
+      counts.set(dedupKey, { name: shortItemName(name), image_url: finalUrl, qty });
     }
   });
   return Array.from(counts.values());
@@ -478,10 +479,7 @@ export const getStatsDrawerData = query({
     // mapRental.useHygglo to replace SEO-stuffed Hygglo titles with the
     // canonical short form. Missing entries fall back to the raw name.
     const shortNameRows = await ctx.db.query("listing_short_names").collect();
-    const shortNameByProduct = new Map<string, string>();
-    for (const sn of shortNameRows) {
-      shortNameByProduct.set(`${sn.account_slug}#${sn.product_id}`, sn.short_name);
-    }
+
 
     // ── Listing info pool (2026-05-24) ──
     // Per-account opt-in via feature_flag `listing_info_pool:<slug>`.
@@ -610,6 +608,9 @@ export const getStatsDrawerData = query({
     // composition. Wins over the LLM resolver / pool / index in expandedIdsOf so
     // Active Rentals, out-of-stock + overbooking use the corrected items.
     const overrideRows = await ctx.db.query("listing_resolution_override").collect();
+    const displayItems = new Map(allItems.map(i => [String(i._id), i]));
+    const displayMappings = new Map(overrideRows.map(o => [`${o.account_slug}#${o.product_id}`, o]));
+    const manualDisplayNames = new Map(shortNameRows.filter(n => n.derivation_method === "manual").map(n => [`${n.account_slug}#${n.product_id}`, n.short_name]));
     const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
     for (const o of overrideRows) {
       overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
@@ -1367,7 +1368,7 @@ export const getStatsDrawerData = query({
         // tripods / mic etc. live in the override), not just the listing titles.
         const _ru = expandedIdsOf(r as ResRow);
         const _rn: string[] = [];
-        for (const [idStr, qty] of _ru) { if (stdAccIds.has(idStr)) continue; const nm = nameByIdStr.get(idStr); if (nm) _rn.push(qty > 1 ? nm + " ×" + qty : nm); }
+        for (const [idStr, qty] of _ru) { if (stdAccIds.has(idStr)) continue; const nm = nameByIdStr.get(idStr); if (nm) _rn.push(qty > 1 ? shortItemName(nm) + " ×" + qty : shortItemName(nm)); }
         const item_names_resolved = _rn.length > 0 ? _rn.join(", ") : item_names_summary_h;
 
         return {
@@ -1419,10 +1420,9 @@ export const getStatsDrawerData = query({
             const pool = pid != null
               ? infoPoolByProduct.get(`${r.account_slug}#${pid}`)
               : undefined;
-            const sn = pid != null
-              ? shortNameByProduct.get(`${r.account_slug}#${pid}`)
-              : undefined;
-            const displayName = pool ? pool.display_name : (sn ?? t.name);
+            const displayName = pool?.is_manually_overridden ? pool.display_name : pid != null
+              ? listingDisplayName(t.name, displayMappings.get(`${r.account_slug}#${pid}`), displayItems, manualDisplayNames.get(`${r.account_slug}#${pid}`))
+              : shortListingTitle(t.name);
             return {
               name: displayName,
               raw_name: t.name,

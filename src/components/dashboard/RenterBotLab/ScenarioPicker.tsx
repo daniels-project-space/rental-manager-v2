@@ -227,7 +227,7 @@ export function ScenarioPicker({
             {(listings ?? []).map((l) => (
               <option key={l.product_id} value={String(l.product_id)}>
                 {l.daily_price != null ? `£${l.daily_price}/day — ` : ""}
-                {l.name.slice(0, 70)}
+                {l.display_name}
               </option>
             ))}
           </select>

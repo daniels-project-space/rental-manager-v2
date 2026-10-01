@@ -1,3 +1,4 @@
+import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
@@ -732,7 +733,7 @@ export async function computeStripLive(
           const key = img ?? `n:${id}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          out.push({ itemId: id, name: inv?.name_canonical ?? "item", imageUrl: img, qty, resolved: true });
+          out.push({ itemId: id, name: shortItemName(inv?.name_canonical ?? "item"), imageUrl: img, qty, resolved: true });
         }
         // Safety net: never hide a booked listing. resolved_items can be
         // INCOMPLETE — the resolver sometimes maps only part of a multi-listing
@@ -1267,7 +1268,7 @@ export async function computeWeeklyLive(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const [id, qty] of reservationItemUnits(r as any, productIndexW, overrideMapW)) {
         const it = itemByIdW.get(id); if (!it || isStandardAccessory(it.kind, it.name_canonical)) continue;
-        const nm = it.name_canonical; if (nm) names.push(qty > 1 ? nm + " ×" + qty : nm);
+        const nm = it.name_canonical; if (nm) names.push(qty > 1 ? shortItemName(nm) + " ×" + qty : shortItemName(nm));
       }
       if (names.length === 0) for (const i of r.items ?? []) { if (i.item_name) names.push(i.item_name); }
       resolvedNamesByResW.set(String(r._id), names);
@@ -1696,7 +1697,7 @@ export const getGanttWeek = query({
 
       return {
         item_id: (iDoc?._id ?? null) as string | null,
-        item_name: itemName,
+        item_name: shortItemName(iDoc?.name_canonical ?? itemName),
         image_url: ((iDoc && iDoc._id) ? imageByItemId.get(String(iDoc._id)) : null) ?? resolvedImageUrl,
         account_slug: iDoc?.account_slug ?? null,
         account_color: (
@@ -1971,7 +1972,7 @@ export const searchCalendarInventory = query({
           // availability — the UI shows it as "not owned".
           return {
             item_id: idStr,
-            name: it.name_canonical,
+            name: shortItemName(it),
             kind: it.kind ?? null,
             qty: it.qty ?? 0,
             image_url: it.image_url ?? null,
@@ -1999,7 +2000,7 @@ export const searchCalendarInventory = query({
         });
         return {
           item_id: idStr,
-          name: it.name_canonical,
+          name: shortItemName(it),
           kind: it.kind ?? null,
           qty: total,
           image_url: it.image_url ?? null,
@@ -2167,7 +2168,7 @@ export const getItemAvailabilityForChat = query({
       const nextFree = perDay.find((x) => x.free > 0)?.date ?? null;
       const bookings = (bookingsByItem.get(id) ?? []).sort((a, b) => a.pickup.localeCompare(b.pickup));
       return {
-        name: it.name_canonical,
+        name: shortItemName(it),
         kind: it.kind,
         qty: total,
         owned,

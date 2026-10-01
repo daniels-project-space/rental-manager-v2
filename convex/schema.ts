@@ -85,6 +85,7 @@ const operationalSchema = defineSchema({
   // ── Inventory ────────────────────────────────────────────────
   items: defineTable({
     name_canonical: v.string(),
+    display_name: v.optional(v.string()),
     name_input: v.string(),
     slug: v.string(),
     kind: v.string(),                // camera, lens, audio, lighting, grip, gimbal, drone, monitor, transmission, accessory, smoke_fx, dj_audio, power, storage_card, support, motion, stabilizer, video, effects, bundle

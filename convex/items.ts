@@ -1,3 +1,4 @@
+import { shortItemName } from "./lib/item_display_name";
 import { mutation, query } from "./_generated/server";
 import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
@@ -335,7 +336,7 @@ export const getItemCycles = query({
         const qty = item.qty ?? 1;
         return {
           itemId: item._id,
-          name: item.name_canonical,
+          name: shortItemName(item),
           rentalDays,
           idleDays: Math.max(0, days - rentalDays),
           unavailDays: 0,
@@ -584,7 +585,7 @@ export const getOutOfStockItems = query({
     }
     return oos.map((i) => ({
       itemId: i._id,
-      name: i.name_canonical,
+      name: shortItemName(i),
       image: imageByItem.get(String(i._id)) ?? null,
       nextAvailableDate: nextAvailMap.get(i.name_canonical) ?? null,
       activeReservationCount: holdCounts.get(i.name_canonical) ?? 0,
@@ -696,7 +697,7 @@ export const getSellRecommendations = query({
 
         return {
           itemId: g.representative_id,
-          name: g.name_canonical,
+          name: shortItemName(g),
           qty: g.total_qty,
           utilizationPct,
           ageMonths,
@@ -802,7 +803,7 @@ export const listActive = query({
     const items = await ctx.db.query("items").collect();
     return items
       .filter((i) => i.status === "active" && !i.is_marketing_only)
-      .map((i) => ({ id: i._id, name: i.name_canonical }))
+      .map((i) => ({ id: i._id, name: shortItemName(i) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   },
 });
@@ -819,6 +820,7 @@ export const listForReconcile = query({
     return all.map((i) => ({
       _id: i._id as string,
       name: i.name_canonical,
+      display_name: shortItemName(i),
       aliases: i.aliases ?? [],
       qty: i.qty,
     }));
@@ -937,7 +939,7 @@ export const getEquipmentValue = query({
         k.resell_gbp += resellTotal;
         byKind.set(i.kind, k);
         return {
-          name: i.name_canonical,
+          name: shortItemName(i),
           kind: i.kind,
           units: qty,
           acquisition_each: Math.round(acqEach),

@@ -73,7 +73,7 @@ function RentalListingCard({
   }
 
   const itemCtx = useQuery(api.renter_bot_lab_actions.getItemContext, {
-    itemName,
+    itemName, productId, accountSlug,
   });
   // Wide horizon so upcoming_bookings covers whatever range gets picked.
   const avail = useQuery(api.calendar.getItemAvailabilityForChat, {
@@ -113,7 +113,7 @@ function RentalListingCard({
 
         <div className="min-w-0 flex-1 space-y-1.5">
           <p className="text-base font-semibold text-[#e4e6eb]">
-            {itemCtx?.name ?? itemName}
+            {itemCtx?.display_name ?? itemCtx?.name ?? itemName}
             {productId == null && itemCtx && !itemCtx.found && (
               <span className="ml-1.5 text-xs font-normal text-amber-400">
                 (not found in real catalog)
@@ -121,7 +121,7 @@ function RentalListingCard({
             )}
           </p>
           <p className="text-[10px] text-[#8b8fa3]">
-            Reference photo; kit contents follow the listing.
+            Listing photo; confirmed kit contents are shown below.
           </p>
           <p className="text-xs text-[#8b8fa3]">
             {itemCtx?.kind ? `${itemCtx.kind} · ` : ""}
@@ -212,9 +212,10 @@ function RentalListingCard({
       {itemCtx?.found && (
         <details className="border-t border-white/10 px-4 py-2 text-xs">
           <summary className="cursor-pointer text-[#8b8fa3]">
-            Full listing info (real catalog data)
+            Item details
           </summary>
           <div className="mt-2 space-y-1.5 text-[#e4e6eb]">
+            {itemCtx.raw_title && <p><span className="text-[#8b8fa3]">Original listing: </span>{itemCtx.raw_title}</p>}
             {itemCtx.notes && <p>{itemCtx.notes}</p>}
             {itemCtx.qty != null && (
               <p className="text-[#8b8fa3]">
@@ -296,7 +297,7 @@ function ContextBanner({ context, threadId, accountSlug }: { context: SessionCon
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-white/10 bg-black/20 px-4 py-2 sm:grid-cols-4">
         {row(
           "All items",
-          order?.lines.length ? order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ") : context.items.length ? context.items.join(", ") : "not set",
+          order?.lines.length ? order.lines.map((l) => `${l.qty}× ${l.display_name ?? l.name}`).join(", ") : context.items.length ? context.items.join(", ") : "not set",
         )}
         {row("Simulation dates", order?.start_date ? `${order.start_date} → ${order.end_date}` : context.dates || (context.startDate ? `${context.startDate} → ${context.endDate}` : "not set"))}
         {row("Stage", context.lifecycle?.replace(/_/g, " ") || "inquiry")}
@@ -348,7 +349,7 @@ function OrderPanel({ threadId }: { threadId: string }) {
           {order.lines.map((l, i) => (
             <tr key={i} className="text-[#e4e6eb]">
               <td className="py-0.5">
-                {l.qty}× {l.name}
+                {l.qty}× {l.display_name ?? l.name}
                 {l.origin === "added" && (
                   <span className="ml-1.5 rounded bg-emerald-500/20 px-1 text-[10px] text-emerald-300">
                     added by bot

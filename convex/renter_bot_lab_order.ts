@@ -1,3 +1,5 @@
+import { listingDisplayCatalog } from "./lib/listing_display_catalog";
+import { shortItemName } from "./lib/item_display_name";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { baseListingProductIds } from "./lib/base_listing_identity";
@@ -43,6 +45,8 @@ export function inclusiveDays(start?: string | null, end?: string | null): numbe
 }
 
 type OrderLine = {
+  display_name?: string;
+  product_id?: number;
   item_id?: string;
   name: string;
   qty: number;
@@ -179,9 +183,10 @@ export const get = query({
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .unique();
     if (!row) return null;
+    const display = await listingDisplayCatalog(ctx, row.account_slug);
     return {
       ...summarise(
-        row.items.map((i) => ({ ...i, item_id: i.item_id ? String(i.item_id) : undefined })),
+        row.items.map((i) => ({ ...i, display_name: i.product_id != null ? display.name(row.account_slug, i.product_id, i.name) : i.item_id ? shortItemName(display.itemMap.get(String(i.item_id)) ?? i.name) : shortItemName(i.name), item_id: i.item_id ? String(i.item_id) : undefined })),
         row.start_date,
         row.end_date,
       ),

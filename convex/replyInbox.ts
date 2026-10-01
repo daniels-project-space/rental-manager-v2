@@ -1,3 +1,5 @@
+import { listingDisplayCatalog } from "./lib/listing_display_catalog";
+import { shortListingTitle, shortItemName } from "./lib/item_display_name";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { getBotBooking, getLabOrder, type BotBooking } from "./lib/renter_booking";
 /**
@@ -123,7 +125,7 @@ function computeLocation(
   };
 }
 
-type RichItem = { name: string; qty: number; image_url: string | null };
+type RichItem = { name: string; product_id?: number; display_name?: string; qty: number; image_url: string | null };
 
 /**
  * Per-item name + qty + thumbnail for the reply tile / draft context. Image
@@ -143,6 +145,7 @@ function buildRichItems(
   if (!reservation) {
     return (conv?.inquiry_items ?? []).map((i) => ({
       name: i.name,
+      product_id: i.product_id,
       qty: i.qty ?? 1,
       image_url: i.image_url ?? null,
     }));
@@ -155,6 +158,7 @@ function buildRichItems(
   if (hItems.length > 0) {
     return hItems.map((h) => ({
       name: h.name,
+      product_id: h.product_id,
       qty: h.qty ?? 1,
       image_url: h.image_url ?? hintFor(h.name ?? ""),
     }));
@@ -503,6 +507,7 @@ async function assembleTile(
   priceIndex?: PriceIndex,
   availCtx?: AvailCtx,
   hub?: HubBook,
+  display?: Awaited<ReturnType<typeof listingDisplayCatalog>>,
 ) {
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
   if (!slug && conv?.account_id) slug = (await ctx.db.get(conv.account_id))?.slug;
@@ -518,7 +523,7 @@ async function assembleTile(
     .order("desc")
     .first();
 
-  const richItems = buildRichItems(reservation, conv);
+  const richItems = buildRichItems(reservation, conv).map(i => ({ ...i, display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
   const primaryImage =
     richItems.find((i) => i.image_url)?.image_url ??
     reservation?.photos_urls?.[0] ??
@@ -796,6 +801,7 @@ export const getReplyQueue = query({
     const incPending =
       includePending ?? settingsRow?.availability_include_pending ?? false;
     const hub = await loadHubBook(ctx);
+    const display = await listingDisplayCatalog(ctx);
     const availCtx = await loadAvailCtx(ctx, incPending);
 
     // ── Shared reads (PERF, 2026-07-12) ─────────────────────────────────────
@@ -901,7 +907,7 @@ export const getReplyQueue = query({
       const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
       if (recencyTs < cutoff) continue;
       const reservation = await resFor(conv.thread_id);
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub);
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display);
       if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }
 
@@ -938,7 +944,7 @@ export const getReplyQueue = query({
         r._creationTime ?? 0,
       );
       if (reqTs && reqTs < cutoff) continue;
-      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx, hub);
+      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx, hub, display);
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
 
@@ -967,7 +973,7 @@ export const getReplyQueue = query({
           if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
             continue;
         }
-        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub);
+        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display);
         if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
       }
     }
@@ -1074,6 +1080,7 @@ export const getThreadById = query({
       priceIndex,
       availCtx,
       await loadHubBook(ctx),
+      await listingDisplayCatalog(ctx),
     );
   },
 });

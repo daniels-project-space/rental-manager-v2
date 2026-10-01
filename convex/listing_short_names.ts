@@ -35,42 +35,7 @@ export { sha256Hex as _sha256Hex };
  * action per item. Pure JS — no LLM, no I/O. Kept byte-identical to the
  * Node-side version so existing rows produce identical short_names.
  */
-const MARKETING_FLUFF_RE: RegExp[] = [
-  /\bportable\b/gi,
-  /\bpremium\b/gi,
-  /\bpro\s*quality\b/gi,
-  /\bprofessional\b/gi,
-  /\bfull\s+frame\b/gi,
-  /\bfull-frame\b/gi,
-  /\bmirrorless\b/gi,
-  /\bcinema\s*camera\b/gi,
-  /\bvideo\b/gi,
-  /\bphotography\b/gi,
-  /\bbluetooth\b/gi,
-  /\b4k\d*p?\b/gi,
-  /\b\d+mp\b/gi,
-  /\bpair\b/gi,
-  /\bset\b/gi,
-  /\bbundle\b/gi,
-  /\bkit\b/gi,
-  /\blight\s+show\b/gi,
-  /\brgb\b/gi,
-  /\bbass\s+boost\b/gi,
-  /\bweighs?\s+\d+(?:\.\d+)?\s*kg\b/gi,
-  /\b\d+-section\b/gi,
-];
-
-function deriveShortName(rawTitle: string): string {
-  if (!rawTitle) return "";
-  let s = rawTitle;
-  s = s.split("|")[0];
-  s = s.replace(/\([^)]*\)/g, " ");
-  s = s.split("+")[0];
-  for (const re of MARKETING_FLUFF_RE) s = s.replace(re, " ");
-  s = s.replace(/\s+/g, " ").trim();
-  if (s.length > 60) s = s.slice(0, 60).trimEnd();
-  return s;
-}
+import { shortListingTitle as deriveShortName } from "./lib/item_display_name";
 
 export { deriveShortName as _deriveShortName };
 
@@ -136,7 +101,7 @@ export const upsertShortNamesBatch = internalMutation({
           q.eq("account_slug", item.account_slug).eq("product_id", item.product_id),
         )
         .unique();
-      if (existing && existing.raw_title_hash === hash) {
+      if (existing && (existing.derivation_method === "manual" || (existing.raw_title_hash === hash && existing.derivation_method === "display-v2"))) {
         cached++;
         continue;
       }
@@ -146,7 +111,7 @@ export const upsertShortNamesBatch = internalMutation({
           raw_title: item.raw_title,
           raw_title_hash: hash,
           short_name: shortName,
-          derivation_method: "deterministic",
+          derivation_method: "display-v2",
           updated_at: now,
         });
       } else {
@@ -156,7 +121,7 @@ export const upsertShortNamesBatch = internalMutation({
           raw_title: item.raw_title,
           raw_title_hash: hash,
           short_name: shortName,
-          derivation_method: "deterministic",
+          derivation_method: "display-v2",
           derived_at: now,
           updated_at: now,
         });
@@ -215,6 +180,7 @@ export const upsert = internalMutation({
       )
       .unique();
     const now = Date.now();
+    if (existing?.derivation_method === "manual") return existing._id;
     if (existing) {
       await ctx.db.patch(existing._id, {
         raw_title,

@@ -31,6 +31,7 @@ export default defineConfig({
       "convex/lib/renter_kit_evidence.test.ts",
       "convex/lib/kit_claims.test.ts",
       "convex/lib/lab_lifecycle.test.ts",
+      "convex/lib/item_display_name.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",
       "convex/lib/rental_stage.test.ts",
       "src/lib/renter-tool-evidence.test.ts",

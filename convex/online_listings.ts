@@ -13,6 +13,7 @@
  */
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 
 /** All cached listings for one account, newest-name-first is not important —
  *  the picker sorts/filters client-side. Published-only by default. */
@@ -29,16 +30,18 @@ export const list = query({
     const filtered = include_unpublished
       ? rows
       : rows.filter((r) => r.is_published);
+    const display = await listingDisplayCatalog(ctx, account_slug);
     return filtered
       .map((r) => ({
         product_id: r.product_id,
         name: r.name,
+        display_name: display.name(account_slug, r.product_id, r.name),
         image: r.image ?? null,
         daily_price: r.daily_price ?? null,
         is_published: r.is_published,
         public_url: r.public_url ?? null,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.display_name.localeCompare(b.display_name) || a.product_id - b.product_id);
   },
 });
 

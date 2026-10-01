@@ -1,3 +1,5 @@
+import { listingDisplayCatalog } from "./lib/listing_display_catalog";
+import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
 /**
  * renter_bot_lab_actions — the ONE Convex entry point the Lab UI is allowed
@@ -44,12 +46,28 @@ export const listFixtures = query({
 // items/pricing_catalog tables (never invented). Read-only. Used by the Lab
 // UI's context banner so Daniel can see exactly what grounding is real.
 export const getItemContext = query({
-  args: { itemName: v.string() },
-  handler: async (ctx, { itemName }) => {
-    const item = await ctx.db
+  args: { itemName: v.string(), productId: v.optional(v.number()), accountSlug: v.optional(v.string()) },
+  handler: async (ctx, { itemName, productId, accountSlug }) => {
+    let item = await ctx.db
       .query("items")
       .withIndex("by_canonical_name", (q) => q.eq("name_canonical", itemName))
       .first();
+    let listing = null;
+    let displayName = item ? shortItemName(item) : itemName;
+    if (productId != null) {
+      if (!accountSlug) throw new Error("Listing context requires its account");
+      const display = await listingDisplayCatalog(ctx, accountSlug);
+      listing = await ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", accountSlug).eq("product_id", productId)).first();
+      const mapping = display.mappingMap.get(`${accountSlug}#${productId}`);
+      if (mapping) {
+        const candidates = mapping.components.map(c => display.itemMap.get(String(c.item_id))).filter(i => !!i);
+        item = candidates.find(i => i.kind === "camera") ?? candidates.find(i => i.kind === "lens") ?? candidates[0] ?? null;
+      } else {
+        const product = await ctx.db.query("hygglo_products").withIndex("by_account_product", q => q.eq("accountSlug", accountSlug).eq("productId", productId)).first();
+        item = product?.masterItemId ? display.itemMap.get(String(product.masterItemId)) ?? null : null;
+      }
+      displayName = display.name(accountSlug, productId, listing?.name ?? itemName);
+    }
     const pricing = item
       ? await ctx.db
           .query("pricing_catalog")
@@ -59,7 +77,9 @@ export const getItemContext = query({
     return {
       found: !!item,
       name: item?.name_canonical ?? itemName,
-      image_url: item?.image_url,
+      display_name: displayName,
+      raw_title: listing?.name ?? itemName,
+      image_url: listing?.image ?? item?.image_url,
       kind: item?.kind,
       sub_kind: item?.sub_kind,
       notes: item?.notes,

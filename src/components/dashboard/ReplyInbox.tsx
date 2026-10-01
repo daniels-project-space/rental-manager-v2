@@ -1,4 +1,5 @@
 "use client";
+import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
 /**
  * Reply Inbox (2026-06-22 v3) — cross-account "renters waiting on me".
  *
@@ -85,6 +86,7 @@ type OrderEditState = {
   error?: string;
 };
 type OnlineListing = {
+  display_name?: string;
   product_id: number;
   name: string;
   image: string | null;
@@ -95,6 +97,7 @@ type OnlineListing = {
 type WriteOut = { status: "sent" | "skipped" | "failed"; reason?: string; httpStatus?: number; error?: string };
 
 interface RichItem {
+  display_name?: string;
   name: string;
   qty: number;
   image_url: string | null;
@@ -492,20 +495,10 @@ function itemLine(t: ReplyTileData): string {
  * meaningful first half (before the first separator), or literally half the
  * text when there's no separator. Keeps the chat, not the SEO title, in focus.
  */
-function shortListing(name: string): string {
-  const bySep = name.split(/\s*[|–—]\s*| - /)[0].trim();
-  let base = bySep.length >= 6 && bySep.length < name.length ? bySep : name;
-  const cap = Math.max(28, Math.ceil(name.length / 2));
-  if (base.length > cap) {
-    const cut = base.slice(0, cap);
-    const lastSpace = cut.lastIndexOf(" ");
-    base = (lastSpace > 16 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
-  }
-  return base;
-}
+function shortListing(name: string): string { return shortItemName(shortListingTitle(name)); }
 /** Modal item line — shortened listing names (overlay stays compact). */
 function itemLineShort(t: ReplyTileData): string {
-  const names = t.items.map((i) => (i.qty > 1 ? `${i.qty}× ${shortListing(i.name)}` : shortListing(i.name)));
+  const names = t.items.map((i) => (i.qty > 1 ? `${i.qty}× ${(i.display_name ?? shortListing(i.name))}` : (i.display_name ?? shortListing(i.name))));
   const extra = t.item_count > t.items.length ? ` +${t.item_count - t.items.length}` : "";
   return names.join(", ") + extra;
 }
@@ -1257,7 +1250,7 @@ function AddItemPicker({
   }, [onClose]);
   const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
   const filtered = listings
-    .filter((l) => tokens.every((t) => l.name.toLowerCase().includes(t)))
+    .filter((l) => tokens.every((t) => `${l.display_name ?? ""} ${l.name}`.toLowerCase().includes(t)))
     .slice(0, 60);
   // Confined to ReplyModal's own body panel — see ReviewsOverlay for why
   // (not portaled, so it can't cover the modal's header). Single caller
@@ -1294,7 +1287,7 @@ function AddItemPicker({
               <div key={l.product_id} className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] p-2 hover:bg-white/[0.05]">
                 <Thumb src={l.image} accent={accountAccent(accountSlug)} size={40} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[12.5px] text-[#e6e9ef] truncate">{l.name}</div>
+                  <div className="text-[12.5px] text-[#e6e9ef] truncate" title={l.name}>{l.display_name ?? shortListing(l.name)}</div>
                   <div className="text-[11px] text-[#7a8190]">
                     {l.daily_price != null ? `${money(l.daily_price)}/day` : "price n/a"}
                     {!l.is_published && <span className="text-amber-400/80"> · unpublished</span>}
