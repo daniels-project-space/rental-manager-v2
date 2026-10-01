@@ -42,10 +42,12 @@ type PushState =
   | "ios-install" // iPhone Safari tab/bookmark — must Add to Home Screen first
   | "default"
   | "denied"
-  | "enabled";
+  | "enabled"
+  | "inactive";
 
 type PushMode = "all" | "money_only" | "my_share";
 const PUSH_MODES: readonly PushMode[] = ["all", "money_only", "my_share"];
+const PUSH_ENDPOINT_STORAGE_KEY = "rental-manager:push-endpoint";
 const PUSH_MODE_STORAGE_KEY = "rental-manager:push-mode";
 
 function storedPushMode(): PushMode | undefined {
@@ -71,6 +73,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [pushState, setPushState] = useState<PushState>("loading");
   const [pushEndpoint, setPushEndpoint] = useState<string | null>(null);
+  const registrationStatus = useQuery(api.notifications.pushRegistrationStatus, { endpoint: pushEndpoint ?? "" });
   const [pushMode, setPushMode] = useState<PushMode>("all");
   const [modeBusy, setModeBusy] = useState(false);
   // Declared after pushMode: the device mode is an argument, so the listed
@@ -108,7 +111,7 @@ export function NotificationBell() {
         const sub = await reg.pushManager.getSubscription();
         if (sub) {
           setPushEndpoint(sub.endpoint);
-          setPushState("enabled");
+          setPushState("loading");
         }
         else setPushState(Notification.permission === "denied" ? "denied" : "default");
       })
@@ -116,6 +119,12 @@ export function NotificationBell() {
         setPushState(Notification.permission === "denied" ? "denied" : "default"),
       );
   }, []);
+
+  // Native subscription existence alone does not mean the server sends here.
+  useEffect(() => {
+    if (!pushEndpoint || !registrationStatus) return;
+    setPushState(registrationStatus.active ? "enabled" : "inactive");
+  }, [pushEndpoint, registrationStatus]);
 
   // Keep push alive so notifications never silently expire. Re-attach the
   // subscription on load, whenever the dashboard becomes visible again, and
@@ -132,10 +141,14 @@ export function NotificationBell() {
     )
       return;
     let cancelled = false;
+    let refreshing = false;
     const refreshSubscription = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const reg = await navigator.serviceWorker.ready;
         let sub = await reg.pushManager.getSubscription();
+        const previousEndpoint = window.localStorage.getItem(PUSH_ENDPOINT_STORAGE_KEY) ?? sub?.endpoint;
         if (!sub) {
           sub = await reg.pushManager.subscribe({
             userVisibleOnly: true,
@@ -144,8 +157,9 @@ export function NotificationBell() {
         }
         if (cancelled) return;
         const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
-        const result = await save({
+        let result = await save({
           endpoint: sub.endpoint,
+          previous_endpoint: previousEndpoint,
           p256dh: json.keys?.p256dh ?? "",
           auth: json.keys?.auth ?? "",
           // Refreshing an existing subscription must not overwrite a mode the
@@ -155,15 +169,32 @@ export function NotificationBell() {
           // preference.
           user_agent: navigator.userAgent,
         });
+        if (result.status === "renewal_required") {
+          const expiredEndpoint = sub.endpoint;
+          await sub.unsubscribe();
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource });
+          const replacement = sub.toJSON();
+          result = await save({ endpoint: sub.endpoint, previous_endpoint: expiredEndpoint,
+            p256dh: replacement.keys?.p256dh ?? "", auth: replacement.keys?.auth ?? "", user_agent: navigator.userAgent });
+        }
         if (!cancelled) {
           setPushEndpoint(sub.endpoint);
-          setPushMode(result.mode);
-          rememberPushMode(result.mode);
-          setPushState("enabled");
+          setPushState(result.active ? "enabled" : "inactive");
+          if (result.active) {
+            setPushMode(result.mode);
+            rememberPushMode(result.mode);
+            window.localStorage.setItem(PUSH_ENDPOINT_STORAGE_KEY, sub.endpoint);
+            reg.active?.postMessage({ type: "push-registration-saved", endpoint: sub.endpoint });
+            setErr(null);
+          }
         }
       } catch {
-        /* best-effort keep-alive; the manual Enable button is the fallback */
-      }
+        if (!cancelled) {
+          setErr("Could not reconnect notifications. Open the bell and try Enable again.");
+          setPushState("default");
+        }
+      } finally { refreshing = false; }
     };
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void refreshSubscription();
@@ -178,7 +209,7 @@ export function NotificationBell() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.removeEventListener("focus", refreshWhenVisible);
     };
-  }, [vapidKey, save]);
+  }, [vapidKey, save, registrationStatus?.needs_renewal]);
 
   useEffect(() => {
     if (!open) return;
@@ -204,6 +235,10 @@ export function NotificationBell() {
       }
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
+      if (sub && registrationStatus?.needs_renewal && sub.endpoint === pushEndpoint) {
+        await sub.unsubscribe();
+        sub = null;
+      }
       if (!sub) {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
@@ -213,14 +248,18 @@ export function NotificationBell() {
       const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
       const result = await save({
         endpoint: sub.endpoint,
+        activate: true,
         p256dh: json.keys?.p256dh ?? "",
         auth: json.keys?.auth ?? "",
-        mode: storedPushMode(),
+        mode: storedPushMode() ?? "all",
         user_agent: navigator.userAgent,
       });
       setPushEndpoint(sub.endpoint);
       setPushMode(result.mode);
       rememberPushMode(result.mode);
+      if (!result.active) throw new Error("Could not activate notifications on this device.");
+      window.localStorage.setItem(PUSH_ENDPOINT_STORAGE_KEY, sub.endpoint);
+      reg.active?.postMessage({ type: "push-registration-saved", endpoint: sub.endpoint });
       setPushState("enabled");
     } catch (e) {
       setErr((e as Error).message || "Could not enable notifications.");
@@ -294,7 +333,9 @@ export function NotificationBell() {
 
       {open && (
         <div
-          className="absolute right-0 mt-2 w-[330px] max-h-[70vh] overflow-hidden flex flex-col rounded-xl border shadow-2xl z-50"
+          role="dialog"
+          aria-label="Notification menu"
+          className="fixed right-3 top-[52px] w-[calc(100vw-24px)] max-w-[330px] max-h-[70vh] overflow-hidden flex flex-col rounded-xl border shadow-2xl z-50 md:absolute md:right-0 md:top-auto md:mt-2"
           style={{ background: "#101216", borderColor: "rgba(255,255,255,0.1)" }}
         >
           {/* Enable / status banner */}
@@ -312,20 +353,17 @@ export function NotificationBell() {
                     <b>Rentals</b> from your home screen, then tap this bell →{" "}
                     <b>Enable</b>.
                   </p>
-                  <p className="text-[10px] text-emerald-400/90 mt-2 leading-snug">
-                    ✅ Meanwhile you&apos;re already getting these on Telegram —
-                    no install needed.
-                  </p>
+
                 </>
               ) : pushState === "unsupported" ? (
                 <p className="text-[11px] text-[#8b8fa3]">
-                  This browser doesn&apos;t support push. You&apos;re still
-                  getting notifications on Telegram.
+                  This browser doesn&apos;t support push. You can still read
+                  alerts in this bell.
                 </p>
               ) : pushState === "denied" ? (
                 <p className="text-[11px] text-amber-400">
                   Notifications are blocked — enable them for this site in your
-                  browser settings, then reopen. (Telegram still works.)
+                  browser settings, then reopen.
                 </p>
               ) : (
                 <>
@@ -335,10 +373,12 @@ export function NotificationBell() {
                     className="w-full text-xs font-semibold px-3 py-2 rounded-lg text-white disabled:opacity-50"
                     style={{ background: "#a855f7" }}
                   >
-                    {busy ? "Enabling…" : "🔔 Enable phone notifications"}
+                    {busy ? "Enabling…" : "🔔 Enable notifications on this device"}
                   </button>
                   <p className="text-[10px] text-[#6b7280] mt-1.5 leading-snug">
-                    Get a push for every new confirmed booking and new request.
+                    {pushState === "inactive"
+                      ? "Notifications are active on another device. Enable here to move them to this device."
+                      : "Receive the alerts selected below on this device."}
                     {!isInstalledPWA && (
                       <> On iPhone: Share → <b>Add to Home Screen</b> first.</>
                     )}
@@ -352,7 +392,7 @@ export function NotificationBell() {
             <div className="px-3 py-2.5 border-b border-white/10 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-emerald-400">
-                  ✓ Phone notifications on
+                  ✓ Notifications active on this device
                 </span>
                 <button
                   onClick={() => sendTest({}).catch(() => {})}

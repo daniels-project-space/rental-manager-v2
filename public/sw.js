@@ -24,29 +24,62 @@ function urlB64ToUint8Array(base64String) {
   return arr;
 }
 
+// Workers cannot read localStorage. Retain the current opaque endpoint in
+// IndexedDB so rotation can prove it belongs to the selected installation,
+// even when oldSubscription is missing and all app windows are closed.
+function subscriptionEndpoint(value) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("rental-manager-push", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("registration");
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Push registration storage blocked"));
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction("registration", value === undefined ? "readonly" : "readwrite");
+      const store = transaction.objectStore("registration");
+      const operation = value === undefined ? store.get("endpoint") : store.put(value, "endpoint");
+      let result;
+      operation.onsuccess = () => { result = operation.result; };
+      transaction.oncomplete = () => { db.close(); resolve(result); };
+      transaction.onerror = () => { db.close(); reject(transaction.error); };
+      transaction.onabort = () => { db.close(); reject(transaction.error); };
+    };
+  });
+}
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "push-registration-saved" && typeof event.data.endpoint === "string")
+    event.waitUntil(subscriptionEndpoint(event.data.endpoint));
+});
+
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil(
     (async () => {
       try {
+        const previousEndpoint = event.oldSubscription?.endpoint || await subscriptionEndpoint();
         const res = await fetch("/api/push/vapid");
+        if (!res.ok) throw new Error("Could not load push configuration");
         const { key } = await res.json();
         if (!key) return;
-        const sub = await self.registration.pushManager.subscribe({
+        const sub = event.newSubscription || await self.registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlB64ToUint8Array(key),
         });
         const json = sub.toJSON();
-        await fetch("/api/push/save", {
+        const saved = await fetch("/api/push/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             endpoint: sub.endpoint,
+            previous_endpoint: previousEndpoint,
             p256dh: (json.keys && json.keys.p256dh) || "",
             auth: (json.keys && json.keys.auth) || "",
           }),
         });
+        if (!saved.ok) throw new Error("Could not save renewed push registration");
+        const result = await saved.json();
+        if (result.active) await subscriptionEndpoint(sub.endpoint);
       } catch (e) {
-        /* best-effort */
+        console.warn("[push] Subscription renewal failed; foreground recovery will retry");
       }
     })(),
   );
@@ -68,7 +101,8 @@ self.addEventListener("push", (event) => {
     // Badge: OS-tinted monochrome silhouette (Android status bar).
     badge: data.badge || "/icons/notif-badge.png",
     tag: data.tag || undefined,
-    renotify: true,
+    // The Notifications API rejects renotify=true without a non-empty tag.
+    renotify: !!data.tag,
     data: { url: data.url || "/" },
   };
   event.waitUntil(self.registration.showNotification(title, options));

@@ -25,6 +25,7 @@
  *   NOTIF_BASE_URL (optional, defaults to the prod alias)
  */
 import { v } from "convex/values";
+import { ownsPushDestination, validatePushSubscription } from "./lib/push_registration";
 import { makeFunctionReference } from "convex/server";
 import {
   query,
@@ -161,86 +162,51 @@ export const getVapidPublicKey = query({
 
 export const savePushSubscription = mutation({
   args: {
-    endpoint: v.string(),
-    p256dh: v.string(),
-    auth: v.string(),
-    mode: v.optional(pushModeValidator),
-    user_agent: v.optional(v.string()),
+    endpoint: v.string(), p256dh: v.string(), auth: v.string(),
+    mode: v.optional(pushModeValidator), user_agent: v.optional(v.string()),
+    activate: v.optional(v.boolean()), previous_endpoint: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    validatePushSubscription(args);
     const now = Date.now();
-    const existing = await ctx.db
-      .query("push_subscriptions")
-      .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
-      .first();
-
     const subscriptions = await ctx.db.query("push_subscriptions").collect();
-    // An endpoint rotation reaches this mutation as a NEW endpoint with no
-    // explicit mode. Preserve the selected lane from the most recently active
-    // prior endpoint before that row is pruned below. Without this, iOS/Chrome
-    // endpoint rotation recreated the sole subscription as `all`, so a device
-    // configured for My 50% began receiving renter messages again.
-    const previousActive = subscriptions
-      .filter((row) => row.endpoint !== args.endpoint)
-      .sort((a, b) => b.last_seen_at - a.last_seen_at)[0];
-    const mode = resolvePushSubscriptionMode({
-      requested: args.mode,
-      existing: existing?.mode,
-      previousActive: previousActive?.mode,
-    });
+    const existing = subscriptions.find(s => s.endpoint === args.endpoint);
+    const selected = await ctx.db.query("push_registration").withIndex("by_slot", q => q.eq("slot", "primary")).unique();
+    // Migrate the current destination, never whichever tab refreshes next.
+    const legacy = [...subscriptions].sort((a, b) => b.last_seen_at - a.last_seen_at)[0];
+    const currentEndpoint = selected?.endpoint ?? legacy?.endpoint ?? null;
+    // A lane value is not an activation gesture: stale clients may send it
+    // during refresh. Only the explicit new Enable action can move delivery.
+    const activate = args.activate === true;
+    const mode = resolvePushSubscriptionMode({ requested: activate ? args.mode : undefined,
+      existing: existing?.mode, previousActive: selected?.mode ?? legacy?.mode });
+    if (!ownsPushDestination({ ...args, activate }, currentEndpoint)) return { status: "inactive" as const, active: false, mode };
+    const credentialsChanged = !!existing && (existing.p256dh !== args.p256dh || existing.auth !== args.auth);
+    if (selected?.needs_renewal && args.endpoint === selected.endpoint && !credentialsChanged)
+      return { status: "renewal_required" as const, active: false, mode };
 
-    // Single-user dashboard: only one subscription is ever meant to be active
-    // at a time (Daniel, 2026-08-14 — "only one path can be active at a
-    // time"). Browsers/OSes (notably iOS Safari) periodically rotate the push
-    // endpoint for the same device without the old one being cleanly torn
-    // down, so `by_endpoint` alone let stale rows pile up indefinitely — and
-    // dispatchPending sends to every row it finds, so an old registration
-    // that's still technically deliverable produced a real duplicate push
-    // for the same event, independent of the dispatch-race bug fixed in
-    // 9aa4816. Prune every OTHER row on every save/refresh so at most one can
-    // ever receive a push.
-    for (const row of subscriptions) {
-      if (row.endpoint !== args.endpoint) {
-        await ctx.db.delete(row._id);
-      }
-    }
-
+    // One intentional destination. Only its renewal or an explicit Enable
+    // gesture can replace a row; desktop heartbeats cannot delete the phone.
+    for (const row of subscriptions) if (row.endpoint !== args.endpoint) await ctx.db.delete(row._id);
     if (existing) {
-      const credentialsChanged = existing.p256dh !== args.p256dh || existing.auth !== args.auth;
-      const modeChanged = existing.mode !== mode;
-      const metadataChanged = existing.user_agent !== args.user_agent || modeChanged;
-      const refreshDue = now - existing.last_seen_at >= 24 * 60 * 60 * 1000;
-      if (credentialsChanged || metadataChanged || refreshDue) {
-        await ctx.db.patch(existing._id, {
-          p256dh: args.p256dh,
-          auth: args.auth,
-          mode,
-          user_agent: args.user_agent,
-          last_seen_at: now,
-        });
-      }
-      if (credentialsChanged) {
-        await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
-      }
-      return {
-        status: credentialsChanged || metadataChanged ? "updated" as const : "unchanged" as const,
-        mode,
-      };
-    }
-    await ctx.db.insert("push_subscriptions", {
-      endpoint: args.endpoint,
-      p256dh: args.p256dh,
-      auth: args.auth,
-      mode,
-      user_agent: args.user_agent,
-      created_at: now,
-      last_seen_at: now,
-    });
-    // A newly enabled toggle immediately retries any still-pending event.
-    await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
-    return { status: "created" as const, mode };
+      if (credentialsChanged || existing.mode !== mode || existing.user_agent !== args.user_agent || now - existing.last_seen_at >= 24 * 60 * 60 * 1000)
+        await ctx.db.patch(existing._id, { p256dh: args.p256dh, auth: args.auth, mode, user_agent: args.user_agent, last_seen_at: now });
+    } else await ctx.db.insert("push_subscriptions", { endpoint: args.endpoint, p256dh: args.p256dh, auth: args.auth, mode, user_agent: args.user_agent, created_at: now, last_seen_at: now });
+    if (!selected) await ctx.db.insert("push_registration", { slot: "primary", endpoint: args.endpoint, mode, needs_renewal: false, updated_at: now });
+    else if (selected.endpoint !== args.endpoint || selected.mode !== mode || selected.needs_renewal)
+      await ctx.db.patch(selected._id, { endpoint: args.endpoint, mode, needs_renewal: false, updated_at: now });
+    if (!existing || credentialsChanged) await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
+    return { status: existing ? "updated" as const : "created" as const, active: true, mode };
   },
 });
+
+export const pushRegistrationStatus = query({ args: { endpoint: v.string() }, handler: async (ctx, { endpoint }) => {
+  const selected = await ctx.db.query("push_registration").withIndex("by_slot", q => q.eq("slot", "primary")).unique();
+  const existing = await ctx.db.query("push_subscriptions").withIndex("by_endpoint", q => q.eq("endpoint", endpoint)).first();
+  return { active: !!existing && (!selected || (selected.endpoint === endpoint && !selected.needs_renewal)),
+    needs_renewal: selected?.endpoint === endpoint && selected.needs_renewal,
+    mode: existing?.mode ?? (selected?.endpoint === endpoint ? selected.mode : undefined) };
+} });
 
 export const setPushSubscriptionMode = mutation({
   args: {
@@ -255,6 +221,8 @@ export const setPushSubscriptionMode = mutation({
     if (!existing) throw new Error("Enable phone notifications on this device first.");
     if (existing.mode !== mode) {
       await ctx.db.patch(existing._id, { mode, last_seen_at: Date.now() });
+      const selected = await ctx.db.query("push_registration").withIndex("by_slot", q => q.eq("slot", "primary")).unique();
+      if (selected?.endpoint === endpoint) await ctx.db.patch(selected._id, { mode, updated_at: Date.now() });
       // `my_share` and `money_only` deliberately suppress operational alerts.
       // If Daniel moves back to All updates, replay a recently suppressed
       // low-response warning through the normal dispatcher rather than making
@@ -316,6 +284,8 @@ export const removePushSubscription = mutation({
       .withIndex("by_endpoint", (q) => q.eq("endpoint", endpoint))
       .first();
     if (existing) await ctx.db.delete(existing._id);
+    const selected = await ctx.db.query("push_registration").withIndex("by_slot", q => q.eq("slot", "primary")).unique();
+    if (selected?.endpoint === endpoint) await ctx.db.delete(selected._id);
     return { status: "ok" as const };
   },
 });
@@ -569,6 +539,8 @@ export const pruneSubscriptions = internalMutation({
         .withIndex("by_endpoint", (q) => q.eq("endpoint", endpoint))
         .first();
       if (row) await ctx.db.delete(row._id);
+      const selected = await ctx.db.query("push_registration").withIndex("by_slot", q => q.eq("slot", "primary")).unique();
+      if (selected?.endpoint === endpoint) await ctx.db.patch(selected._id, { needs_renewal: true, updated_at: Date.now() });
     }
   },
 });

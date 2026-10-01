@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 // mutation the bell uses (dedups by endpoint), so a rotated subscription keeps
 // receiving notifications without the operator re-enabling the bell.
 export async function POST(req: Request) {
-  let body: { endpoint?: string; p256dh?: string; auth?: string };
+  let body: { endpoint?: string; p256dh?: string; auth?: string; previous_endpoint?: string };
   try {
     body = await req.json();
   } catch {
@@ -24,13 +24,14 @@ export async function POST(req: Request) {
     "https://hearty-oyster-600.convex.cloud";
   try {
     const convex = new ConvexHttpClient(convexUrl);
-    await convex.mutation(api.notifications.savePushSubscription, {
+    const result = await convex.mutation(api.notifications.savePushSubscription, {
       endpoint: body.endpoint,
       p256dh: body.p256dh ?? "",
       auth: body.auth ?? "",
       user_agent: "service-worker-resubscribe",
+      previous_endpoint: body.previous_endpoint,
     });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : String(e) },

@@ -2265,6 +2265,13 @@ const operationalSchema = defineSchema({
   // One row per browser/PWA push endpoint that opted in via the dashboard
   // notification bell. Keyed by endpoint (unique). Dead endpoints (410/404
   // on send) are pruned by the dispatcher.
+  // Selected destination survives a dead/expired subscription. This prevents
+  // a passive desktop tab taking over when the phone endpoint is pruned.
+  push_registration: defineTable({
+    slot: v.literal("primary"), endpoint: v.string(),
+    mode: v.union(v.literal("all"), v.literal("money_only"), v.literal("my_share")),
+    needs_renewal: v.boolean(), updated_at: v.number(),
+  }).index("by_slot", ["slot"]),
   push_subscriptions: defineTable({
     endpoint: v.string(),
     p256dh: v.string(),                      // client public key (base64url)
