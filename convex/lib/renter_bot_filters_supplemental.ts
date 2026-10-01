@@ -90,24 +90,22 @@ export function applySupplementalFilters(
   // all — it grounds pricing via prompt-injected listing facts instead, which
   // this harness has no visibility into. So an EMPTY factsClaimed array is NOT
   // evidence of a fabricated price, just evidence we can't verify either way.
-  // Only a NON-empty factsClaimed that fails to contain a matching price is a
-  // real, confident signal.
+  // Model claims marked unverified are unknown, not contradictory evidence.
   const priceMentions = draft.match(PRICE_PATTERN) ?? [];
   if (priceMentions.length > 0) {
-    if (factsClaimed.length === 0) {
+    const verifiedPriceFacts = factsClaimed.filter((f) => f.kind === "price" && f.verified);
+    if (verifiedPriceFacts.length === 0) {
       for (const m of priceMentions) {
         push(
           "UNVERIFIABLE_PRICE",
           "flag",
           m,
-          "Price mentioned but this run returned no factsClaimed data at all (expected on the fallback generation path) — can't confirm or refute it from here, worth a manual look.",
+          "No independently verified price facts were returned. These claims need review; unverified does not mean false.",
         );
       }
     } else {
       const verifiedPrices = new Set(
-        factsClaimed
-          .filter((f) => f.kind === "price" && f.verified)
-          .map((f) => f.value.replace(/[^0-9.]/g, "")),
+        verifiedPriceFacts.flatMap((f) => (f.value.match(PRICE_PATTERN) ?? (/^\d+(\.\d+)?$/.test(f.value.trim()) ? [f.value] : [])).map((p) => p.replace(/[^0-9.]/g, ""))),
       );
       for (const m of priceMentions) {
         const digits = m.replace(/[^0-9.]/g, "");

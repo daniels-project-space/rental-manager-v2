@@ -103,10 +103,11 @@ export const appendRenterMessage = internalMutation({
       throw new Error("appendRenterMessage only accepts a Lab/probe thread_id");
     }
     const now = Date.now();
+    const messageId = `${args.thread_id}-m${now}-${Math.random().toString(36).slice(2, 10)}`;
     await ctx.db.insert("hygglo_messages", {
       account_slug: args.account_slug,
       thread_id: args.thread_id,
-      message_id: `${args.thread_id}-m${now}`,
+      message_id: messageId,
       sender: "renter",
       sender_name: "Test Renter",
       body_text: args.text,
@@ -170,7 +171,7 @@ export const startLiveSession = action({
       location?: string;
     };
   }> => {
-    const threadId = `${PREFIX}lab-${Date.now()}`;
+    const threadId = `${PREFIX}lab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     let itemNames = args.items ?? [];
     let priceGbp = args.priceGbp;
     let dates = args.dates;
@@ -234,6 +235,8 @@ export const sendTestMessage = action({
     if (!args.threadId.startsWith(PREFIX)) {
       throw new Error("sendTestMessage only accepts a Lab/probe thread_id");
     }
+    const session = await ctx.runQuery(internal.renter_bot_lab_actions.getConversationForThread, { thread_id: args.threadId });
+    if (!session || session.account_slug !== args.accountSlug) throw new Error("Lab session/account mismatch");
 
     await ctx.runMutation(internal.renter_bot_lab_actions.appendRenterMessage, {
       thread_id: args.threadId,
@@ -273,6 +276,7 @@ export const sendTestMessage = action({
         draft_intent: draftResult.draft_intent,
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
         facts_claimed: draftResult.facts_claimed,
+        draft_evidence: draftResult.evidence,
         model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
@@ -303,12 +307,11 @@ export const sendTestMessage = action({
   },
 });
 
-// Sweeps this (and any other lingering) probe/Lab thread. Call when Daniel
-// closes the Lab session.
+// Closing a Lab session must not remove other operators' simulations.
 export const endLiveSession = action({
-  args: {},
-  handler: async (ctx): Promise<{ removed: number }> =>
-    ctx.runMutation(api.renter_bot_probe.cleanup, {}),
+  args: { threadId: v.string() },
+  handler: async (ctx, args): Promise<{ removed: number }> =>
+    ctx.runMutation(api.renter_bot_probe.cleanup, { thread_id: args.threadId }),
 });
 
 export const runFixtureBatch = action({

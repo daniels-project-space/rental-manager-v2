@@ -15,6 +15,8 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
+import { recentThreadMessages } from "./lib/thread_messages";
 import { filterImminentHandoffs, type ImminentHandoffCandidate } from "./lib/imminent_handoffs";
 import type { Doc, Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
@@ -662,6 +664,7 @@ async function assembleTile(
     ai_draft_text: conv?.ai_draft_text ?? null,
     ai_draft_confidence: conv?.ai_draft_confidence ?? null,
     ai_draft_flags: conv?.ai_draft_flags ?? null,
+    ai_draft_evidence: conv?.ai_draft_evidence ?? null,
     // Stale = generated under an older draft-logic epoch → regenerate on open.
     ai_draft_stale:
       !!conv?.ai_draft_text &&
@@ -698,6 +701,7 @@ function leanTile(t: ReplyTile): ReplyTile {
     ai_draft_text: null,
     ai_draft_confidence: null,
     ai_draft_flags: null,
+    ai_draft_evidence: null,
     items: t.items.map((i) => ({ name: i.name, qty: i.qty })) as ReplyTile["items"],
   };
 }
@@ -1193,11 +1197,7 @@ export const getThreadContext = internalQuery({
         .slice(0, 3);
     }
 
-    const msgs = await ctx.db
-      .query("hygglo_messages")
-      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
-      .order("asc")
-      .take(40);
+    const msgs = await recentThreadMessages(ctx, thread_id, 40);
     const recent = msgs.slice(-15).map((m) => ({
       role: m.sender === "owner" ? "owner" : "renter",
       content: m.body_text,
@@ -1748,6 +1748,7 @@ export const setDraft = internalMutation({
     message_id: v.optional(v.string()),
     conversation_stage: v.optional(v.string()),
     confidence: v.optional(v.number()),
+    evidence: v.optional(draftEvidenceValidator),
     flags: v.optional(
       v.array(
         v.object({
@@ -1770,13 +1771,17 @@ export const setDraft = internalMutation({
   },
   handler: async (
     ctx,
-    { thread_id, draft_text, message_id, conversation_stage, confidence, flags },
+    { thread_id, draft_text, message_id, conversation_stage, confidence, flags, evidence },
   ) => {
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
     if (!conv) return { ok: false };
+    if (message_id) {
+      const [latest] = await recentThreadMessages(ctx, thread_id, 1);
+      if (latest?.message_id !== message_id) return { ok: false, reason: "stale_inbound" };
+    }
     const settings = await ctx.db.query("settings").first();
     const patch: Record<string, unknown> = {
       ai_draft_text: draft_text,
@@ -1785,6 +1790,7 @@ export const setDraft = internalMutation({
       ai_draft_epoch: settings?.draft_epoch ?? 0,
       ai_draft_confidence: confidence,
       ai_draft_flags: flags,
+      ai_draft_evidence: evidence,
     };
     if (conversation_stage && conversation_stage !== conv.conversation_stage) {
       patch.conversation_stage = conversation_stage;

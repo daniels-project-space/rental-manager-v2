@@ -244,11 +244,13 @@ export const simulateSend = action({
 });
 
 export const cleanup = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { thread_id: v.optional(v.string()) },
+  handler: async (ctx, { thread_id }) => {
+    if (thread_id && !thread_id.startsWith(PREFIX)) throw new Error("Only Lab/probe sessions can be removed");
+    const matches = (id: string) => id.startsWith(PREFIX) && (!thread_id || id === thread_id);
     let n = 0;
     const convs = (await ctx.db.query("conversations").collect()).filter((c) =>
-      c.thread_id.startsWith(PREFIX),
+      matches(c.thread_id),
     );
     for (const c of convs) {
       for (const m of await ctx.db
@@ -268,7 +270,9 @@ export const cleanup = mutation({
       n++;
     }
     for (const r of await ctx.db.query("reservations").collect())
-      if (r.hygglo_order_id?.startsWith(PREFIX)) await ctx.db.delete(r._id);
+      if (r.hygglo_order_id && matches(r.hygglo_order_id)) await ctx.db.delete(r._id);
+    for (const order of await ctx.db.query("renter_bot_lab_orders").collect())
+      if (matches(order.thread_id)) await ctx.db.delete(order._id);
     return { removed: n };
   },
 });

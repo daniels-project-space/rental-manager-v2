@@ -40,6 +40,8 @@ export function RunResultsPanel() {
               </span>
             </summary>
             <div className="mt-2 space-y-1 text-xs">
+              <p className="text-[#8b8fa3]">{r.model_id}{r.duration_ms != null ? ` · ${(r.duration_ms / 1000).toFixed(1)}s` : ""}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}{r.draft_evidence ? ` · ${r.draft_evidence.stage}` : ""}</p>
+              {r.draft_evidence?.stock.map((s, i) => <p key={i} className="text-[#8b8fa3]">Stock: {s.item} · {s.quantity} requested · {s.start_date}–{s.end_date} · {s.available === true ? "available" : s.available === false ? "unavailable" : "unknown"} · {s.free_units ?? "unknown"} free</p>)}
               <p className="text-[#8b8fa3]">Draft:</p>
               <p className="whitespace-pre-wrap rounded bg-black/30 p-2">
                 {r.draft_text || "(empty)"}

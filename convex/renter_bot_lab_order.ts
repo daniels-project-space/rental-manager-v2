@@ -2,6 +2,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
 import { describeTiers, tierRateForDays, type PriceTier } from "./lib/hygglo_pricing";
+import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
 
 /**
  * The SIMULATED Hygglo order behind a Renter Bot Lab session.
@@ -245,7 +246,7 @@ export const seed = internalMutation({
     if (existing) await ctx.db.delete(existing._id);
 
     const owned = (await ctx.db.query("items").collect()).filter(
-      (i) => i.status === "active" && (i.qty ?? 0) > 0,
+      (i) => i.status === "active" && !i.is_marketing_only && (i.qty ?? 0) > 0,
     );
     const lines = [];
     if (a.base_product_id != null) {
@@ -334,6 +335,8 @@ export const applyChange = mutation({
     if (a.action === "set_dates") {
       if (!a.start_date) return { ok: false, error: "start_date required" };
       const end = a.end_date ?? a.start_date;
+      if (!validIsoDate(a.start_date) || !validIsoDate(end) || end < a.start_date || inclusiveDays(a.start_date, end) > 366)
+        return { ok: false, error: "Use valid pickup and return dates in order, up to 366 rental days" };
       await ctx.db.patch(row._id, {
         start_date: a.start_date,
         end_date: end,
@@ -404,7 +407,13 @@ export const applyChange = mutation({
         error: `could not identify "${a.item_name}" as one specific item we own — ask the renter which exact model they mean`,
       };
     }
-    const qty = Math.max(1, Math.min(a.qty ?? 1, m.match.qty ?? 1));
+    const qty = a.qty ?? 1;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 20) return { ok: false, error: "quantity must be a whole number between 1 and 20" };
+    const already = lines.find((l) => l.item_id === String(m.match!._id));
+    const requested = (already?.qty ?? 0) + qty;
+    if (!row.start_date || !row.end_date) return { ok: false, error: "Ask for pickup and return dates before adding equipment" };
+    const stock = await checkRentalStock(ctx, { item_name: m.match.name_canonical, quantity: requested, start_date: row.start_date, end_date: row.end_date, thread_id: a.thread_id });
+    if (stock.available !== true) return { ok: false, error: `Cannot add ${requested}x ${m.match.name_canonical} for these dates (${stock.reason}); ${stock.free_units ?? "unknown"} units free. Do not claim the change happened.` };
 
     const price = await resolveDailyPrice(
       ctx,
@@ -419,9 +428,8 @@ export const applyChange = mutation({
       ? await tiersForProduct(ctx, row.account_slug, pricedPid)
       : undefined;
 
-    const already = lines.find((l) => l.item_id === String(m.match!._id));
     if (already) {
-      already.qty = Math.min(already.qty + qty, m.match.qty ?? 1);
+      already.qty = requested;
       summaryText = `${already.name} qty -> ${already.qty}`;
     } else {
       lines.push({

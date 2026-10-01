@@ -40,3 +40,17 @@ The lab and human reply inbox must run the same reliable reasoning and checks. R
 9. Inspect deployed lab and human inbox on desktop/mobile and verify exact production alias/backend/Trigger versions. Run repeatable realistic live scenarios through the actual production drafting path before proposing readiness for human-supervised sales.
 
 Completion requires evidence against every requirement above; this foundation release is not a declaration that the bot is ready.
+
+## Second audit pass
+
+- Exact production alias verified at foundation SHA `48329ee515ccf461f868bcab78a1f02b83d42278`; live backend is still `hearty-oyster-600`.
+- Fresh real Lab turns correctly distinguished two unavailable FX3s from one available FX3, retained 2–4 October in the follow-up, and recommended Sony GM 16–35mm f2.8. Live pricing independently returned £42/day and £126 for three days; the proposed camera/lens total was £186. These examples alone do not establish broad sales readiness.
+- The evaluator falsely failed the replies because **unverified model claims were treated as contradictory price facts**, not because a real price check refuted them. It also concatenated all digits in a compound price claim. Both defects are fixed; unknown claims receive review flags instead of fabricated-fact failures.
+- New tool evidence accepts successful result payloads only, distinguishes positive and negative stock verdicts, and retains item, quantity, dates and check time. Tool-call counts cannot authorize a claim. Stock receipts are persisted to the actual conversation and Lab run, and exposed in human review; model `factsClaimed` remain unverified.
+- The human action read the **first** 40 messages and negotiation tool the first 50. Both now take recent chronological messages; late historical imports cannot become the latest inbound. Draft caching rechecks that the same inbound is still latest.
+- Closing one Lab no longer deletes other sessions; its own simulated order is removed too. Session/account mismatch is rejected, ids have collision resistance, and date controls persist through the real simulated-order mutation. Simulated additions cannot silently clamp the requested quantity or add stock unavailable for the dates.
+- The registered legacy workflow has no current cron caller. It now calls the canonical action instead of its own differently grounded agent; the obsolete alternate model/calendar fallback was removed from the human action. Existing send gates remain in place.
+- Alternatives can be date/quantity filtered, exclude unknown lens mounts when a mount was requested, respect authoritative single-unit mappings, and take tiers from the same cheapest listing that supplied the price. Date-less ownership and adapters are explicitly not evidence of availability.
+- Product-id-linked listing context now receives the same real card, battery, dimensions, kit, replacement value and specification fields as name-resolved inquiries.
+
+Still open: per-claim identity/date/quantity enforcement across free prose; full and partial kit-resolution authority; complete basket/tier/negotiation coverage; adapter and kit inclusion accuracy; realistic stages, historical replay, injection and long-turn sales quality; final deployed UI and provider verification. The original end state above remains unchanged.

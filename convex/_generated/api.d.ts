@@ -145,6 +145,7 @@ import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.
 import type * as lib_renter_bot_rubric from "../lib/renter_bot_rubric.js";
 import type * as lib_renter_bot_tone_scorer from "../lib/renter_bot_tone_scorer.js";
 import type * as lib_renter_dna from "../lib/renter_dna.js";
+import type * as lib_renter_draft_evidence from "../lib/renter_draft_evidence.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
@@ -161,6 +162,7 @@ import type * as lib_return_presence from "../lib/return_presence.js";
 import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
 import type * as lib_shadow_compare from "../lib/shadow_compare.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
+import type * as lib_thread_messages from "../lib/thread_messages.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
 import type * as lib_widget_mv from "../lib/widget_mv.js";
 import type * as listing_cache from "../listing_cache.js";
@@ -411,6 +413,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_rubric": typeof lib_renter_bot_rubric;
   "lib/renter_bot_tone_scorer": typeof lib_renter_bot_tone_scorer;
   "lib/renter_dna": typeof lib_renter_dna;
+  "lib/renter_draft_evidence": typeof lib_renter_draft_evidence;
   "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;
   "lib/reservations/accounts": typeof lib_reservations_accounts;
@@ -427,6 +430,7 @@ declare const fullApi: ApiFromModules<{
   "lib/revenue_attribution": typeof lib_revenue_attribution;
   "lib/shadow_compare": typeof lib_shadow_compare;
   "lib/telegram_convex": typeof lib_telegram_convex;
+  "lib/thread_messages": typeof lib_thread_messages;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;
   "lib/widget_mv": typeof lib_widget_mv;
   listing_cache: typeof listing_cache;

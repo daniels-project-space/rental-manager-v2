@@ -48,7 +48,7 @@ export function RenterBotLabWorkspace() {
   async function handleEnd() {
     setEnding(true);
     try {
-      await endLiveSession({});
+      if (session) await endLiveSession({ threadId: session.threadId });
     } finally {
       setSession(null);
       setEnding(false);

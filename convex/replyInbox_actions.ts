@@ -14,12 +14,11 @@
  */
 import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
+import type { DraftEvidence } from "./lib/renter_draft_evidence";
 import { api, internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
-import { tool, stepCountIs } from "ai";
-import { z } from "zod";
 import { dnaSummary } from "./lib/renter_dna";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import {
@@ -69,6 +68,8 @@ export const generateDraft = action({
     draft_intent?: string;
     draft_stage?: string;
     cost_usd?: number;
+    evidence?: DraftEvidence;
+    for_message_id?: string | null;
     facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }>;
     /**
      * "needs_human" now carries WHY after a colon (e.g.
@@ -527,9 +528,8 @@ export const generateDraft = action({
       .filter((l) => l !== null)
       .join("\n");
 
-    // ── PRIMARY BRAIN: the agentic Mastra renter bot. The old single-shot draft
-    // below is now only a FALLBACK for when the Mastra path errors. (Daniel —
-    // "put the old bot down".) Set USE_MASTRA_BOT=0 to force the old bot.
+    // One generation path. An outage requires human review rather than a
+    // different model and calendar rules silently taking over.
     let draft = "";
     let mastraOk = false;
     let usedTools = false;
@@ -542,7 +542,7 @@ export const generateDraft = action({
     // fix shipped, a correctly-answerable fresh inquiry still hard-escalated
     // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
     // still empty.
-    let generationMeta: { model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
+    let generationMeta: { evidence?: DraftEvidence; model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
     // Names the draft route resolved but has NO kit text for — see
     // draft_guard KIT_HALLUCINATION.
@@ -560,7 +560,7 @@ export const generateDraft = action({
       price?: boolean;
       specs?: boolean;
     } = {};
-    if (process.env.USE_MASTRA_BOT !== "0") {
+    { // One canonical generation path for Lab and human-reviewed drafts.
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
         const apiSecret = process.env.RENTER_BOT_API_SECRET;
@@ -585,6 +585,7 @@ export const generateDraft = action({
           model_id?: string;
           intent?: string;
           conversation_stage?: string;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string }>;
           factsClaimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string }>;
           needs_human?: boolean;
           usedTools?: boolean;
@@ -623,6 +624,7 @@ export const generateDraft = action({
           } | null;
         };
         generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: (j.factsClaimed ?? []).map((f) => ({ ...f, verified: false })) };
+        generationMeta.evidence = { model_id: j.model_id ?? "unknown", stage: j.conversation_stage ?? "unknown", cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
           // consequential reply. Keep any earlier preview untouched and tell
@@ -689,52 +691,7 @@ export const generateDraft = action({
       }
     }
 
-    if (!mastraOk) {
-    // Gemini 3.7 Flash is the default draft model — much smarter than the old
-    // deepseek-flash at tracking context and following the grounding, and
-    // cheap/fast enough for every draft. Genuine high-stakes turns (refund,
-    // damage-on-shipped, legal, big-£) still escalate to Sonnet when the master
-    // "Escalate" toggle is on; everything else runs on the same Gemini lane.
-    const useStrongModel = highStakes && c.escalate_to_sonnet !== false;
-    // TOOLS: give the draft a way to ACTUALLY check availability for an item and
-    // its dates, instead of guessing or hedging "let me check". The model calls
-    // it only when it needs to state availability. (Daniel — Mastra wiring)
-    const draftTools = {
-      check_availability: tool({
-        description:
-          "Check whether a specific item is free for the renter's dates. Call this BEFORE you ever say an item is available / free / booked — you do NOT otherwise know availability. Returns each matching unit's free days + upcoming confirmed bookings over the horizon.",
-        inputSchema: z.object({
-          item: z.string().describe("Item to check, e.g. 'DJI Mini 4 Pro' or 'Sony FX3'"),
-          horizon_days: z.number().optional().describe("Days ahead to check (default 21)"),
-        }),
-        execute: async ({ item, horizon_days }: { item: string; horizon_days?: number }) => {
-          try {
-            const r = await ctx.runQuery(api.calendar.getItemAvailabilityForChat, {
-              query: item,
-              horizonDays: horizon_days ?? 21,
-              accountSlug: c.account_slug ?? null,
-            });
-            return JSON.stringify(r);
-          } catch (e) {
-            return `availability check failed: ${e instanceof Error ? e.message : String(e)}`;
-          }
-        },
-      }),
-    };
-    const gen = await gatedGenerateText({
-      model: await getActionLlmModel(useStrongModel ? { strong: true } : { draft: true }),
-      system,
-      prompt,
-      tools: draftTools,
-      stopWhen: stepCountIs(4),
-      bypass: true,
-      context: { source: "replyInbox.generateDraft", tag: "reply_draft" },
-    });
-      if (gen.skipped) return { status: "skipped" };
-      draft = (gen.result.text ?? "").trim();
-      usedTools = ((gen.result as { steps?: Array<{ toolCalls?: unknown[] }> }).steps ?? [])
-        .some((st) => (st.toolCalls?.length ?? 0) > 0);
-    }
+    if (!mastraOk) return { status: "skipped", reason: "canonical_generation_unavailable" };
     if (!draft) return { status: "ok", draft };
 
     // ── Grounded self-check (lever 3) ────────────────────────────
@@ -749,7 +706,7 @@ export const generateDraft = action({
     // usedTools is set above (true for a Mastra draft, or when the fallback
     // called a tool) — so the self-check never hedges a tool-verified answer.
     let checkedDraft = draft;
-    if (!usedTools && routeGrounded.availability !== true && (listingFacts.length === 0 || !isBookedThread)) {
+    if (!routeGrounded.availability && !routeGrounded.unavailability && !routeGrounded.price && (listingFacts.length === 0 || !isBookedThread)) {
       try {
         const groundingForCheck = [listingFactsBlock, factsBlock]
           .filter(Boolean)
@@ -933,19 +890,21 @@ export const generateDraft = action({
       // escalation and there was no way to tell WHY a thread never drafted —
       // which is how a 100%-escalation path on not-owned items went unnoticed.
       // Distinct from a route-level escalation: here the GUARD withheld it.
-      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags };
+      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags, ...generationMeta };
     }
 
     const finalDraft = guard.text.trim() || checkedDraft;
 
-    await ctx.runMutation(internal.replyInbox.setDraft, {
+    const savedDraft = await ctx.runMutation(internal.replyInbox.setDraft, {
       thread_id,
       draft_text: finalDraft,
       message_id: c.last_message_id ?? undefined,
       conversation_stage: c.conversation_stage ?? undefined,
       confidence: guard.confidence,
       flags: guard.flags,
+      evidence: generationMeta.evidence,
     });
+    if (!savedDraft.ok) return { status: "skipped", reason: "stale_inbound", ...generationMeta };
 
     // Persist the RenterDNA + rental counts so the trust read carries across
     // threads (best-effort — never block the draft on it).
@@ -959,6 +918,7 @@ export const generateDraft = action({
     }
     return {
       status: "ok",
+      for_message_id: c.last_message_id,
       draft: finalDraft,
       confidence: guard.confidence,
       flags: guard.flags,

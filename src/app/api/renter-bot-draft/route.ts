@@ -1,4 +1,5 @@
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
+import { renterToolReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
 import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
@@ -467,6 +468,7 @@ export async function POST(req: Request) {
   // send when a genuinely-confirmed booking's lookup fails; failing open leaks
   // Daniel's pickup locations to anyone who asks.
   let bookingConfirmed = false;
+  let authoritativeStage = "UNKNOWN";
   // Structured echo of whatever real facts made it into groundTruth above,
   // for the ORDER-linked path and the fresh-inquiry path below alike.
   // replyInbox_actions.ts's hasItemGrounding / guardDraft's factPack only
@@ -508,7 +510,7 @@ export async function POST(req: Request) {
    * your dates" still needs the dates, so that half of the guard stands.
    */
   let availabilityOutKnown = false;
-  let exactAvailabilityChecked = false;
+  const toolReceipts: ToolReceipt[] = [];
   /**
    * Every price the FACT PACK offers the model as ground truth (lens options,
    * mount adapters, alternatives). The draft guard's PRICE_HALLUCINATION check
@@ -580,6 +582,7 @@ export async function POST(req: Request) {
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
       if (lc.rental_stage) {
+        authoritativeStage = lc.rental_stage.stage;
         groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
       }
 
@@ -693,7 +696,7 @@ export async function POST(req: Request) {
           return `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : " (price on request)"}`;
         });
         if (all.length) {
-          groundTruth += `MOUNT ADAPTERS WE OWN AND RENT: ${all.join("; ")}. These are REAL and in stock. If a lens needs an adapter to fit a body, offer the matching one BY NAME with its price. You must NEVER tell a renter to bring their own adapter, or that we don't have one, when it is on this list.\n`;
+          groundTruth += `MOUNT ADAPTERS WE OWN AND RENT: ${all.join("; ")}. These are real owned items; availability for the requested dates is NOT established. Check exact dates and quantity before offering one as available. If a lens needs an adapter to fit a body, check the matching one BY NAME before offering it.\n`;
         }
       } catch {
         /* best-effort */
@@ -987,7 +990,7 @@ export async function POST(req: Request) {
               : av.available === false
                 ? `NOT AVAILABLE for ${lc.start_date} to ${lc.end_date}: ${av.reason}; ${av.free_units} units free.`
                 : `NOT VERIFIED for these dates (${av.reason}). Do not affirm or deny availability; clarify the exact model or dates.`;
-            if (typeof av.available === "boolean") exactAvailabilityChecked = true;
+            toolReceipts.push({ tool: "check_availability", call_id: `prefetch:${toolReceipts.length}`, result: av });
             if (av.available === false) availabilityOutKnown = true;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict} If the renter changes dates or quantity, call check_availability for the NEW request.\n`;
             factsEmitted.push(`availability:${it.name}:${verdict}`);
@@ -1341,6 +1344,7 @@ export async function POST(req: Request) {
       harvestToolPrices(result?.steps, offeredPrices);
       for (const n of harvestToolKitItems(result?.steps)) kitSuppliedByTool.add(n);
       toolStats = toolTelemetry(result?.steps);
+      toolReceipts.push(...renterToolReceipts(result?.steps));
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
       // minimum, provider ignores the breakpoint, or a framework wrapper drops
       // cache_control on the way out. All three look identical from outside:
@@ -1488,6 +1492,7 @@ export async function POST(req: Request) {
             obj = retryObj;
             usedTools = retryUsedTools;
             harvestToolPrices(retryResult?.steps, offeredPrices);
+            toolReceipts.push(...renterToolReceipts(retryResult?.steps));
             for (const n of harvestToolKitItems(retryResult?.steps)) kitSuppliedByTool.add(n);
           }
         }
@@ -1605,7 +1610,7 @@ export async function POST(req: Request) {
         ? (needsHumanReason ?? "model_declined")
         : null,
       intent: obj.intent ?? null,
-      conversation_stage: obj.conversation_stage ?? null,
+      conversation_stage: authoritativeStage,
       model_id: modelOverride ?? RENTER_BOT_MODEL_ID,
       factsClaimed: obj.factsClaimed ?? [],
       usedTools,
@@ -1633,19 +1638,19 @@ export async function POST(req: Request) {
       // things up — had its answer withheld as ungrounded no matter what came
       // back. Feed the telemetry through instead of printing it.
       groundedDuringTurn: {
-        availability: exactAvailabilityChecked || (toolStats?.byName?.check_availability ?? 0) > 0,
+        availability: successfulGrounding(toolReceipts).availability,
         // Asymmetric on purpose. A negative is grounded by the calendar we
         // already read; a positive "yes, free for your dates" is not grounded
         // until someone checks THOSE dates, and a false yes is how a renter
         // turns up to gear that isn't there.
         unavailability:
-          availabilityOutKnown || (toolStats?.byName?.check_availability ?? 0) > 0,
+          availabilityOutKnown || successfulGrounding(toolReceipts).unavailability,
         price:
           offeredPrices.length > 0 ||
-          (toolStats?.byName?.lookup_pricing ?? 0) > 0 ||
-          (toolStats?.byName?.get_listing_context ?? 0) > 0,
-        specs: (toolStats?.byName?.get_listing_context ?? 0) > 0,
+          successfulGrounding(toolReceipts).price,
+        specs: successfulGrounding(toolReceipts).specs,
       },
+      availabilityReceipts: toolReceipts.filter((r) => r.tool === "check_availability").map((r) => ({ call_id: r.call_id, ...r.result })),
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,

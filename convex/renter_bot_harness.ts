@@ -7,6 +7,7 @@
  */
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { api, internal } from "./_generated/api";
 import { scoreDraft, scoreSkippedGeneration } from "./lib/renter_bot_rubric";
 import { PREFIX } from "./renter_bot_probe";
@@ -47,6 +48,7 @@ const rubricResultValidator = v.object({
 
 export const insertRun = internalMutation({
   args: {
+    draft_evidence: v.optional(draftEvidenceValidator),
     fixture_id: v.optional(v.id("renter_bot_fixtures")),
     session_thread_id: v.optional(v.string()),
     run_batch_id: v.optional(v.string()),
@@ -172,6 +174,7 @@ export const runFixture = action({
         draft_intent: draftResult.draft_intent,
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
         facts_claimed: draftResult.facts_claimed,
+        draft_evidence: draftResult.evidence,
         model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
@@ -329,10 +332,10 @@ export const runMultiTurnScenario = action({
         text,
       });
 
+      const startedAt = Date.now();
       const draftResult = await ctx.runAction(api.replyInbox_actions.generateDraft, {
         thread_id: threadId,
       });
-      const startedAt = Date.now();
 
       if (draftResult.status === "skipped") {
         turnResults.push({
@@ -351,8 +354,8 @@ export const runMultiTurnScenario = action({
       const draftRow = await ctx.runQuery(internal.renter_bot_harness.getDraftByThread, {
         thread_id: threadId,
       });
-      const draftText = draftResult.draft ?? draftRow?.draft_text ?? "";
-      const factsClaimed = (draftRow?.facts_claimed ?? []).map((f) => ({
+      const draftText = draftResult.draft ?? "";
+      const factsClaimed = (draftResult.facts_claimed ?? []).map((f) => ({
         kind: f.kind,
         value: f.value,
         verified: f.verified,
@@ -370,18 +373,21 @@ export const runMultiTurnScenario = action({
         run_batch_id: args.runBatchId,
         account_slug: args.accountSlug,
         draft_text: draftText,
-        draft_intent: draftRow?.draft_intent,
+        draft_intent: draftResult.draft_intent,
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
-        facts_claimed: draftRow?.facts_claimed,
-        model_id: draftRow?.model_id ?? "unknown",
+        facts_claimed: draftResult.facts_claimed,
+        draft_evidence: draftResult.evidence,
+        model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
         overall_status: rubric.overall_status,
         triggered_by: "harness_batch",
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
-        cost_usd: draftRow?.cost_usd,
+        cost_usd: draftResult.cost_usd,
       });
+
+      if (draftText) await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, { thread_id: threadId, account_slug: args.accountSlug, text: draftText, run_id: runId });
 
       turnResults.push({
         turn: i,

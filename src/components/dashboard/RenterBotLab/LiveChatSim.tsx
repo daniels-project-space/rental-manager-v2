@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 
 export interface SessionContext {
@@ -37,10 +37,12 @@ function overlapsBooking(
 // check_availability tool reads — not a mock (Daniel, 2026-08-17).
 function RentalListingCard({
   itemName,
+  threadId,
   initialStartDate,
   initialEndDate,
 }: {
   itemName: string;
+  threadId: string;
   initialStartDate?: string;
   initialEndDate?: string;
 }) {
@@ -48,6 +50,20 @@ function RentalListingCard({
   const [endDate, setEndDate] = useState(
     initialEndDate || initialStartDate || todayIso(),
   );
+  const applyChange = useMutation(api.renter_bot_lab_order.applyChange);
+  const [savingDates, setSavingDates] = useState(false);
+  const [dateFeedback, setDateFeedback] = useState("");
+  async function applyDates() {
+    setSavingDates(true);
+    try {
+      const result = await applyChange({ thread_id: threadId, action: "set_dates", start_date: startDate, end_date: endDate });
+      setDateFeedback(result.ok ? "Simulation dates updated" : result.error ?? "Dates could not be updated");
+    } catch {
+      setDateFeedback("Dates could not be updated");
+    } finally {
+      setSavingDates(false);
+    }
+  }
 
   const itemCtx = useQuery(api.renter_bot_lab_actions.getItemContext, {
     itemName,
@@ -132,6 +148,9 @@ function RentalListingCard({
                 className="mt-0.5 block rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs text-[#e4e6eb]"
               />
             </label>
+            <button type="button" disabled={!rangeValid || savingDates} onClick={applyDates} className="mb-0.5 rounded-md bg-white/10 px-2 py-1 text-[11px] disabled:opacity-40">
+              {savingDates ? "Saving…" : "Apply dates"}
+            </button>
             <span
               className={`mb-0.5 rounded-full px-2 py-1 text-[11px] font-medium ${
                 stock === undefined
@@ -154,6 +173,7 @@ function RentalListingCard({
                         : "Unavailable for these dates"}
             </span>
           </div>
+          {dateFeedback && <p role="status" className="pt-1 text-[11px] text-[#8b8fa3]">{dateFeedback}</p>}
         </div>
       </div>
 
@@ -241,7 +261,7 @@ function RentalListingCard({
   );
 }
 
-function ContextBanner({ context }: { context: SessionContext }) {
+function ContextBanner({ context, threadId }: { context: SessionContext; threadId: string }) {
   const row = (label: string, value: string) => (
     <div className="flex items-baseline gap-1.5">
       <span className="text-[11px] uppercase tracking-wide text-[#8b8fa3]">
@@ -255,6 +275,7 @@ function ContextBanner({ context }: { context: SessionContext }) {
       {context.items[0] && (
         <RentalListingCard
           itemName={context.items[0]}
+          threadId={threadId}
           initialStartDate={context.startDate}
           initialEndDate={context.endDate}
         />
@@ -433,7 +454,7 @@ export function LiveChatSim({
 
   return (
     <div className="flex h-[560px] flex-col rounded-lg border border-white/10 bg-white/[0.03]">
-      <ContextBanner context={session.context} />
+      <ContextBanner context={session.context} threadId={session.threadId} />
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {turns.length === 0 && (
           <p className="text-sm text-[#8b8fa3]">

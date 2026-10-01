@@ -1,0 +1,34 @@
+import { describe, expect, it } from "vitest";
+import { renterToolReceipts, successfulGrounding } from "./renter-tool-evidence";
+
+const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1 };
+describe("successful tool receipts", () => {
+  it("never grounds a call that has no successful result", () => {
+    const receipts = renterToolReceipts([{ toolCalls: [{ payload: { toolName: "check_availability", args: stock } }] }]);
+    expect(successfulGrounding(receipts).availability).toBe(false);
+  });
+  it("reads real Mastra nested and older result shapes", () => {
+    for (const steps of [[{ type: "tool-result", payload: { toolName: "check_availability", toolCallId: "one", result: stock } }], [{ toolResults: [{ toolName: "check_availability", toolCallId: "one", output: stock }] }]]) {
+      expect(renterToolReceipts(steps)[0].call_id).toBe("one");
+      expect(successfulGrounding(renterToolReceipts(steps)).availability).toBe(true);
+    }
+  });
+  it("does not authorize positive claims from errors, unknowns or unowned stock", () => {
+    for (const result of [{ ...stock, error: "timeout" }, { ...stock, available: null }, { ...stock, owned: false }, { ...stock, found: false }])
+      expect(successfulGrounding(renterToolReceipts([{ payload: { toolName: "check_availability", result } }])).availability).toBe(false);
+  });
+  it("a negative verdict never authorizes a positive verdict", () => {
+    const grounded = successfulGrounding(renterToolReceipts([{ payload: { toolName: "check_availability", result: { ...stock, available: false } } }]));
+    expect(grounded).toMatchObject({ availability: false, unavailability: true });
+  });
+  it("knowledge and failed pricing searches are not stock or price evidence", () => {
+    const receipts = renterToolReceipts([{ payload: { toolName: "search_knowledge", result: { price: 20 } } }, { payload: { toolName: "lookup_pricing", result: { found: false } } }]);
+    expect(successfulGrounding(receipts)).toEqual({ availability: false, unavailability: false, price: false, specs: false });
+  });
+  it("keeps date-checked alternatives scoped to the checked option", () => {
+    const receipts = renterToolReceipts([{ payload: { toolName: "find_owned_alternatives", toolCallId: "alternatives", result: { alternatives: [{ name: "Sony FX3", availability: { ...stock, quantity: 2 } }, { name: "Sony A7 III", availability: null }] } } }]);
+    expect(successfulGrounding(receipts).availability).toBe(true);
+    expect(receipts.filter((r) => r.tool === "check_availability")).toHaveLength(1);
+    expect(receipts[1].result.requested_units).toBe(2);
+  });
+});

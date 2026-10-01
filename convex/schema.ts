@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 
 // Phase 1.A schema. Tables with `Empty in this phase` are scaffolding for later phases
 // (renters, reservations, conversations, rules, denial_records).
@@ -715,6 +716,7 @@ export default defineSchema({
     // Output-policing result (Phase 1 draft guard): confidence 0..1 + the flags
     // raised on the draft (auto-fixed leaks + items flagged for owner review).
     ai_draft_confidence: v.optional(v.number()),
+    ai_draft_evidence: v.optional(draftEvidenceValidator),
     ai_draft_flags: v.optional(
       v.array(
         v.object({
@@ -2584,6 +2586,7 @@ export default defineSchema({
   // that fixture plus rubric scoring. Never a live send — no relationship to
   // renter_bot_drafts or any Hygglo write path.
   renter_bot_harness_runs: defineTable({
+    draft_evidence: v.optional(draftEvidenceValidator),
     // Optional: Lab UI live/freeform sessions (triggered_by="lab_ui_manual")
     // aren't always tied to a persisted fixture.
     fixture_id: v.optional(v.id("renter_bot_fixtures")),

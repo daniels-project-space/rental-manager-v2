@@ -47,6 +47,17 @@ describe("renter_bot_rubric.scoreDraft", () => {
     expect(r.filter_violation_categories).toContain("MADE_UP_PRICE");
   });
 
+  it("does not confuse an unverified model claim with contradictory evidence", () => {
+    const r = scoreDraft({ accountSlug: "leo", draftText: "The total is £126.", factsClaimed: [{ kind: "price", value: "£126", verified: false }] });
+    expect(r.results.find((x) => x.category === "pricing_quoting")?.status).toBe("flag");
+    expect(r.filter_violation_categories).not.toContain("MADE_UP_PRICE");
+  });
+
+  it("reads separate currency values instead of concatenating all digits", () => {
+    const r = scoreDraft({ accountSlug: "leo", draftText: "£42/day, £126 total.", factsClaimed: [{ kind: "price", value: "3 days at £42/day, total £126", verified: true }] });
+    expect(r.results.find((x) => x.category === "pricing_quoting")?.status).toBe("pass");
+  });
+
   it("passes pricing_quoting when the price matches a verified fact", () => {
     const r = scoreDraft({
       accountSlug: "leo",

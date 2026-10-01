@@ -1,8 +1,8 @@
 /**
  * Renter-bot draft workflow — Phase 1, READ-ONLY.
  *
- * Inbound trigger: every 10 min cron in `src/trigger/renter-bot-batch.ts`
- * pulls unanswered renter messages and feeds them to this workflow.
+ * Registered legacy batch entry point. No cron caller currently exists.
+ * Uses the same canonical drafting action as Lab and human reply review.
  *
  * Per spec §A:
  *   - Decision 15: dormant in UK quiet hours (02:00–08:30). The whole
@@ -21,18 +21,6 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/../convex/_generated/api";
 import { isWithinUkQuietHours } from "@/lib/quiet-hours";
-import { getLlmModelId } from "@/lib/llm-client";
-import {
-  getRenterBotAgent,
-  RENTER_BOT_OUTPUT_SCHEMA,
-  type RenterBotOutput,
-} from "../agents/renter_bot";
-import {
-  applyRenterBotFilters,
-  buildFilterHint,
-} from "@/../convex/lib/renter_bot_filters";
-import { isOutOfScopeIntent } from "@/../convex/lib/renter_bot_intents";
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const anyApi = api as any;
 
@@ -115,201 +103,47 @@ const agentBatch = createStep({
     }
 
     const c = convex();
-    const agent = await getRenterBotAgent();
-    const modelId = getLlmModelId();
-
-    // Soft proactive nudge (wave 3 vacation-mode): load active vacations once
-    // per batch and surface any starting within the next 14 days as a primer
-    // line, so the bot can weave them in naturally without an extra tool call.
-    let upcomingVacationPrimer = "";
-    try {
-      const activeVacs: Array<{
-        start_date: string;
-        end_date: string;
-        reason?: string;
-      }> = await c.query(anyApi.vacation.getActiveVacations, {});
-      const today = new Date().toISOString().slice(0, 10);
-      const cutoff = new Date(Date.now() + 14 * 86400_000)
-        .toISOString()
-        .slice(0, 10);
-      const soon = (activeVacs ?? []).filter(
-        (v) => v.start_date >= today && v.start_date <= cutoff,
-      );
-      if (soon.length > 0) {
-        upcomingVacationPrimer =
-          "UPCOMING OWNER VACATIONS (next 14 days):\n" +
-          soon
-            .map(
-              (v) =>
-                `- ${v.start_date} → ${v.end_date}${v.reason ? ` (${v.reason})` : ""}`,
-            )
-            .join("\n");
-      }
-    } catch (err) {
-      console.warn(
-        `[renter-bot] failed to load upcoming vacations: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
     let written = 0;
     let skipped = 0;
     let escalations = 0;
-    let regens = 0;
-
     for (const cand of inputData.candidates) {
-      // Expire any prior pending draft for this thread that wasn't keyed
-      // to the current latest inbound. (Idempotency: re-running on the
-      // same trigger does NOT create a duplicate, see writeDraft logic.)
-      await c.mutation(anyApi.renter_bot_drafts.expireOldDrafts, {
-        thread_id: cand.thread_id,
-        keep_last_inbound_message_id: cand.last_inbound_message_id,
-      });
-
-      const baseMessages = [
-        {
-          role: "user" as const,
-          content: [
-            `THREAD: ${cand.thread_id}`,
-            `ACCOUNT: ${cand.account_slug}`,
-            ...(upcomingVacationPrimer ? [upcomingVacationPrimer] : []),
-            `LATEST INBOUND MESSAGE FROM RENTER:`,
-            cand.last_inbound_body,
-          ].join("\n"),
-        },
-      ];
-
-      let output: RenterBotOutput | null = null;
-      let escalated = false;
-      let regenCount = 0;
-      let originalDraft = "";
-      let previousHint = "";
-
-      // Up to 3 attempts: first + 2 filter-driven regens.
-      for (let attempt = 0; attempt <= 2; attempt++) {
-        try {
-          const messages =
-            attempt === 0
-              ? baseMessages
-              : [
-                  ...baseMessages,
-                  {
-                    role: "system" as const,
-                    content: `FILTER VIOLATIONS on your previous draft:\n${previousHint}`,
-                  },
-                ];
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const result: any = await (agent as any).generate(messages, {
-            structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
-          });
-          // Mastra returns the structured object on `object` (legacy) or
-          // `structuredOutput`. We probe both for forward-compat.
-          const obj =
-            (result?.object as RenterBotOutput | undefined) ??
-            (result?.structuredOutput as RenterBotOutput | undefined) ??
-            null;
-          if (!obj) {
-            // No structured output came back — treat as escalation.
-            escalated = true;
-            output = null;
-            break;
-          }
-          if (attempt === 0) originalDraft = obj.draft;
-
-          // Decision 12: out-of-scope intents auto-escalate.
-          if (isOutOfScopeIntent(obj.intent)) {
-            output = { ...obj, draft: "", needs_human: true, needs_human_reason: `out_of_scope:${obj.intent}` };
-            escalated = true;
-            break;
-          }
-          if (obj.needs_human) {
-            output = { ...obj, draft: "" };
-            escalated = true;
-            break;
-          }
-
-          // Hard-filter pass.
-          const filt = applyRenterBotFilters(obj.draft);
-          if (filt.ok) {
-            output = { ...obj, draft: filt.stripped };
-            break;
-          }
-          // Build hint for next attempt.
-          previousHint = buildFilterHint(filt);
-          regens += 1;
-          regenCount += 1;
-          if (attempt === 2) {
-            // Last attempt failed filters → escalate with red banner.
-            output = { ...obj, draft: filt.stripped, red_flags: [
-              ...obj.red_flags,
-              ...filt.violations.map((v) => `FILTER:${v.category}`),
-            ] };
-            escalated = true;
-          }
-        } catch (err) {
-          console.error(`[renter-bot] agent.generate failed thread=${cand.thread_id}: ${err instanceof Error ? err.message : String(err)}`);
-          // Don't write a draft on hard failure — let the next cron pick it up.
-          escalated = false;
-          output = null;
-          break;
+      try {
+        const draft = await c.action(api.replyInbox_actions.generateDraft, { thread_id: cand.thread_id });
+        if (draft.status !== "ok" || !draft.draft || draft.for_message_id !== cand.last_inbound_message_id) {
+          skipped++;
+          if (draft.reason?.startsWith("needs_human:")) escalations++;
+          continue;
         }
+        await c.mutation(anyApi.renter_bot_drafts.expireOldDrafts, {
+          thread_id: cand.thread_id,
+          keep_last_inbound_message_id: cand.last_inbound_message_id,
+        });
+        const writeRes = await c.mutation(anyApi.renter_bot_drafts.writeDraft, {
+          thread_id: cand.thread_id, account_slug: cand.account_slug,
+          last_inbound_message_id: cand.last_inbound_message_id, last_inbound_at: cand.last_inbound_at,
+          draft_text: draft.draft, original_draft: draft.draft,
+          draft_intent: draft.draft_intent ?? "general_question", draft_stage: draft.draft_stage ?? "UNKNOWN",
+          draft_confidence: draft.confidence ?? 0, draft_red_flags: (draft.flags ?? []).map((f) => `${f.type}: ${f.detail}`),
+          facts_claimed: draft.facts_claimed ?? [], needs_human: false,
+          generated_by: "renter-bot-canonical", model_id: draft.model_id ?? "unknown",
+          regeneration_count: 0, escalated: false, cost_usd: draft.cost_usd,
+        });
+        if (writeRes?.action === "inserted") written++; else skipped++;
+      } catch (err) {
+        skipped++;
+        console.error(`[renter-bot] canonical generation failed thread=${cand.thread_id}: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      if (!output) {
-        skipped += 1;
-        continue;
-      }
-
-      const writeRes = await c.mutation(anyApi.renter_bot_drafts.writeDraft, {
-        thread_id: cand.thread_id,
-        account_slug: cand.account_slug,
-        last_inbound_message_id: cand.last_inbound_message_id,
-        last_inbound_at: cand.last_inbound_at,
-        draft_text: output.draft,
-        original_draft: originalDraft || output.draft,
-        draft_intent: output.intent,
-        draft_stage: output.conversation_stage,
-        draft_confidence: 0.7,
-        draft_red_flags: output.red_flags,
-        facts_claimed: groundFacts(output),
-        needs_human: !!output.needs_human,
-        needs_human_reason: output.needs_human_reason,
-        generated_by: "renter-bot-v1",
-        model_id: modelId,
-        regeneration_count: regenCount,
-        escalated,
-      });
-
-      if (writeRes?.action === "inserted") written += 1;
-      else skipped += 1;
-      if (escalated) escalations += 1;
     }
-
     return {
       ...inputData,
       candidates: undefined,
       draftsWritten: written,
       draftsSkipped: skipped,
       escalations,
-      filterRegenerations: regens,
+      filterRegenerations: 0,
     };
   },
 });
-
-/**
- * Phase 1 grounding cross-check is intentionally light: mark every
- * factsClaimed entry as `verified=false` (we don't yet store the agent's
- * raw tool-call history for sourceCallId verification). Phase 1's
- * grounding is structural — the agent MUST emit factsClaimed for every
- * load-bearing claim, and we surface unverified facts as red flags so
- * Daniel sees them when reviewing the Telegram card.
- *
- * Phase 2 will replace this with actual sourceCallId verification against
- * the Mastra tool-call trace.
- */
-function groundFacts(out: RenterBotOutput): RenterBotOutput["factsClaimed"] {
-  return (out.factsClaimed ?? []).map((f) => ({ ...f, verified: false }));
-}
 
 // ── Workflow assembly ──────────────────────────────────────────
 

@@ -15,6 +15,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "../../../convex/_generated/dataModel";
+import type { DraftEvidence } from "../../../convex/lib/renter_draft_evidence";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { accountAccent, accountLabel } from "@/lib/account-theme";
@@ -160,6 +161,7 @@ export interface ReplyTileData {
   ai_draft_text: string | null;
   ai_draft_confidence: number | null;
   ai_draft_flags: DraftFlag[] | null;
+  ai_draft_evidence?: DraftEvidence | null;
   ai_draft_stale?: boolean;
   location: TileLocation | null;
 }
@@ -2316,6 +2318,12 @@ export function ReplyModal({
               )}
               {/* Draft-guard flags: items the AI flagged for my review (amber)
                   and the leaks it auto-cleaned (muted). Never blocks — informs. */}
+              {draft && !drafting && liveTile?.ai_draft_evidence && <details className="px-3 pb-2 text-xs text-slate-400">
+                <summary className="cursor-pointer">Draft evidence · {liveTile.ai_draft_evidence.stage}</summary>
+                <p className="mt-1">Model: {liveTile.ai_draft_evidence.model_id}</p>
+                {liveTile.ai_draft_evidence.stock.map((r, i) => <p key={i}>{r.item} · {r.quantity} requested · {r.start_date}–{r.end_date} · {r.available === true ? "available" : r.available === false ? "unavailable" : "unknown"} · {r.free_units ?? "unknown"} free · checked {new Date(r.checked_at).toLocaleTimeString()}</p>)}
+                <p className="mt-1">Stock results apply only to the item, quantity and dates shown. Review prices, kit and recommendations before sending.</p>
+              </details>}
               {draft && !drafting && draftFlags.length > 0 && (() => {
                 const review = draftFlags.filter((f) => f.action === "flagged");
                 const auto = draftFlags.filter((f) => f.action !== "flagged");

@@ -13,9 +13,10 @@
 import { query, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
-import { checkRentalStock } from "./lib/renter_stock";
+import { checkRentalStock, loadStockSources, stockForItem } from "./lib/renter_stock";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
+import { recentThreadMessages } from "./lib/thread_messages";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
@@ -85,11 +86,7 @@ export const get_renter_context = query({
     // RED Komodo isn't available for those dates" when asked about PRICE.
     // 12 covers a 5-6 turn exchange (renter + owner per turn) and is cheap —
     // chat messages are short, and the static prefix is cached separately.
-    const recentMsgs = await ctx.db
-      .query("hygglo_messages")
-      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
-      .order("desc")
-      .take(12);
+    const recentMsgs = await recentThreadMessages(ctx, thread_id, 12);
 
     const stage =
       conversation?.conversation_stage ??
@@ -111,8 +108,7 @@ export const get_renter_context = query({
           sender_name: m.sender_name ?? m.sender,
           body: m.body_text,
           at: m.hygglo_sent_at ?? m.fetched_at,
-        }))
-        .reverse(),
+        })),
     };
   },
 });
@@ -159,6 +155,7 @@ export const get_listing_context = query({
     // product_id, so no name-guessing. This is the ground truth for what the
     // renter is actually asking about.
     const items: Array<Record<string, unknown>> = [];
+    const allItems = await ctx.db.query("items").collect();
     for (const l of lines) {
       let daily_price_gbp: number | null = null;
       let whats_included: string | null = null;
@@ -227,7 +224,8 @@ export const get_listing_context = query({
             kind = (it as { kind?: string }).kind ?? null;
             owned =
               (it as { status?: string }).status === "active" &&
-              !(it as { is_marketing_only?: boolean }).is_marketing_only;
+              !(it as { is_marketing_only?: boolean }).is_marketing_only &&
+              ((it as { qty?: number }).qty ?? 0) > 0;
             ownership_source = "product_id";
           }
         }
@@ -238,7 +236,6 @@ export const get_listing_context = query({
       // inventory instead of giving up. Ambiguous names stay UNKNOWN rather
       // than guessing a body the renter never specified.
       if (owned === null) {
-        const allItems = await ctx.db.query("items").collect();
         const m = bestMatch(
           l.name,
           allItems,
@@ -249,42 +246,6 @@ export const get_listing_context = query({
           const it = m.match;
           inventory_name = it.name_canonical;
           kind = kind ?? (it.kind ?? null);
-          lens_mount = (it as { lens_mount?: string | null }).lens_mount ?? null;
-          const det = it as {
-            card_type?: string | null;
-            battery_type?: string | null;
-            weight_kg?: number | null;
-            length_cm?: number | null;
-            width_cm?: number | null;
-            height_cm?: number | null;
-            replacement_cost_gbp?: number | null;
-            compatibility?: { included_with_rental?: string[] };
-          };
-          // "N/A" / "N/A (lens)" are placeholders, not answers — a lens has no
-          // card slot, and repeating "N/A" at a renter is worse than silence.
-          const real = (v?: string | null) =>
-            v && !/^n\/?a\b/i.test(v.trim()) ? v : null;
-          card_type = real(det.card_type);
-          battery_type = real(det.battery_type);
-          included_with_rental = det.compatibility?.included_with_rental?.length
-            ? det.compatibility.included_with_rental
-            : null;
-          replacement_cost_gbp = det.replacement_cost_gbp ?? null;
-          if (det.weight_kg != null || det.length_cm != null) {
-            const dims =
-              det.length_cm != null
-                ? `${det.length_cm}x${det.width_cm}x${det.height_cm}cm`
-                : null;
-            size_note = [det.weight_kg != null ? `${det.weight_kg}kg` : null, dims]
-              .filter(Boolean)
-              .join(", ");
-          }
-          const sp = await ctx.db
-            .query("item_specs")
-            .withIndex("by_item", (q) => q.eq("item_id", it._id))
-            .first();
-          if (sp)
-            spec_text = `${sp.description ?? ""}`.replace(/\s+/g, " ").slice(0, 400) || null;
           owned = it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0;
           ownership_source = "name_match";
           // Pull the real kit + price for THIS item via the deterministic
@@ -366,6 +327,47 @@ export const get_listing_context = query({
           listing_name = listing.name ?? null;
           public_url = listing.public_url ?? null;
         }
+      }
+      // Enrich BOTH identity paths. Linked bookings need the same real specs
+      // as name-resolved inquiries; a product id must not hide our item data.
+      const it = inventory_name ? allItems.find((i) => i.name_canonical === inventory_name) : undefined;
+      if (it) {
+          lens_mount = (it as { lens_mount?: string | null }).lens_mount ?? null;
+          const det = it as {
+            card_type?: string | null;
+            battery_type?: string | null;
+            weight_kg?: number | null;
+            length_cm?: number | null;
+            width_cm?: number | null;
+            height_cm?: number | null;
+            replacement_cost_gbp?: number | null;
+            compatibility?: { included_with_rental?: string[] };
+          };
+          // "N/A" / "N/A (lens)" are placeholders, not answers — a lens has no
+          // card slot, and repeating "N/A" at a renter is worse than silence.
+          const real = (v?: string | null) =>
+            v && !/^n\/?a\b/i.test(v.trim()) ? v : null;
+          card_type = real(det.card_type);
+          battery_type = real(det.battery_type);
+          included_with_rental = det.compatibility?.included_with_rental?.length
+            ? det.compatibility.included_with_rental
+            : null;
+          replacement_cost_gbp = det.replacement_cost_gbp ?? null;
+          if (det.weight_kg != null || det.length_cm != null) {
+            const dims =
+              det.length_cm != null
+                ? `${det.length_cm}x${det.width_cm}x${det.height_cm}cm`
+                : null;
+            size_note = [det.weight_kg != null ? `${det.weight_kg}kg` : null, dims]
+              .filter(Boolean)
+              .join(", ");
+          }
+          const sp = await ctx.db
+            .query("item_specs")
+            .withIndex("by_item", (q) => q.eq("item_id", it._id))
+            .first();
+          if (sp)
+            spec_text = `${sp.description ?? ""}`.replace(/\s+/g, " ").slice(0, 400) || null;
       }
       items.push({
         name: l.name,
@@ -715,11 +717,7 @@ export const get_negotiation_stance = query({
     latest_message: v.string(),
   },
   handler: async (ctx, { thread_id, latest_message }) => {
-    const all = await ctx.db
-      .query("hygglo_messages")
-      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
-      .order("asc")
-      .take(50);
+    const all = await recentThreadMessages(ctx, thread_id, 50);
     const renterMsgs = all
       .filter((m) => m.sender !== "owner")
       .map((m) => m.body_text);
@@ -812,8 +810,12 @@ export const find_owned_alternatives = query({
     lens_mount: v.optional(v.string()),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
+    start_date: v.optional(v.string()),
+    end_date: v.optional(v.string()),
+    quantity: v.optional(v.number()),
+    thread_id: v.optional(v.string()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name }) => {
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id }) => {
     // Owned = active + not marketing-only + qty>0 on the SHARED items table
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
@@ -881,10 +883,12 @@ export const find_owned_alternatives = query({
     const pidsForItem = (itemId: string): number[] => {
       const out = idxAll
         .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
+        .filter((r) => { const override = ovAll.find((o) => o.account_slug === account_slug && o.product_id === r.product_id); return !override || (override.components.length === 1 && String(override.components[0].item_id) === itemId && override.components[0].qty === 1); })
         .map((r) => r.product_id);
       for (const o of ovAll) {
         if (o.account_slug !== account_slug) continue;
         if (o.components.length !== 1) continue;
+        if (o.components[0].qty !== 1) continue;
         if (String(o.components[0].item_id) !== itemId) continue;
         if (!out.includes(o.product_id)) out.push(o.product_id);
       }
@@ -987,6 +991,7 @@ export const find_owned_alternatives = query({
     const exclude = (exclude_name ?? "").toLowerCase().trim();
     const targetLower = (item_name ?? "").toLowerCase().trim();
     const alternatives: Array<Record<string, unknown>> = [];
+    const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
       const nameLower = it.name_canonical.toLowerCase();
       // Never offer the very item being replaced back as its own alternative.
@@ -995,15 +1000,17 @@ export const find_owned_alternatives = query({
       // Normalised compare: inventory spells the same mount several ways
       // ("Canon EF mount" vs "EF"), and an exact compare silently filtered out
       // every genuinely-compatible lens.
-      if (lens_mount && it.lens_mount && !sameMount(it.lens_mount, lens_mount)) continue;
+      if (lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
       // With a known target, keep suggestions in the same category. Offering a
       // lens as a substitute for a camera body is never useful.
       if (target?.kind && it.kind && normKind(it.kind) !== normKind(target.kind)) continue;
+      const stock = stockSources && start_date && end_date ? stockForItem(stockSources, it, { item_name: it.name_canonical, start_date, end_date, quantity, thread_id }) : null;
+      if (stock && stock.available !== true) continue;
       const d = describeFor(String(it._id));
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
-      const altPid = pidsForItem(String(it._id))[0];
+      const altPid = pidsForItem(String(it._id)).sort((a, b) => (listingByPid.get(a)?.daily_price ?? Infinity) - (listingByPid.get(b)?.daily_price ?? Infinity))[0];
       let altTiers: string | null = null;
       if (altPid != null) {
         const hp = await ctx.db
@@ -1016,6 +1023,7 @@ export const find_owned_alternatives = query({
       }
       alternatives.push({
         price_tiers: altTiers,
+        availability: stock ? { available: stock.available, start_date, end_date, quantity: quantity ?? 1, free_units: stock.free_units, checked_at: stock.checked_at } : null,
         name: it.name_canonical,
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
