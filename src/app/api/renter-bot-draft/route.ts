@@ -714,11 +714,12 @@ export async function POST(req: Request) {
       // are already paying for reads as either a scam or incompetence, and it
       // buries the bundle's actual selling point.
       const kitNames = new Set(
-        ((lc.items ?? []) as Array<{ name?: string }>)
-          .map((i) => (i.name ?? "").toLowerCase().trim())
+        ((lc.items ?? []) as Array<{ name?: string; inventory_components?: Array<{ name?: string }> }>)
+          .flatMap((i) => [i.name ?? "", ...(i.inventory_components ?? []).map((c) => c.name ?? "")])
+          .map((name) => name.toLowerCase().trim())
           .filter(Boolean),
       );
-      for (const it of (lc.items ?? []).slice(0, 3) as Array<{ name?: string; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; stock_required: boolean }>; name?: string; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -846,6 +847,9 @@ export async function POST(req: Request) {
           groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". ${framing} Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
           continue;
         }
+        if (it.inventory_components?.length) {
+          groundTruth += `  LISTING COMPONENTS (${it.name}, product_id ${it.product_id ?? "none"}): ${it.inventory_components.map((c) => `${c.requested_units} × ${c.name ?? "unmapped"}${c.stock_required ? "" : " (standard included accessory)"}`).join("; ")}. These are included in the listing price; never sell them again as extras. A single component's availability never proves the whole kit. Mapping complete: ${it.mapping_complete === true}.\n`;
+        }
         // owned === null means UNVERIFIED, not "we don't own it". Before the
         // tri-state fix these were indistinguishable and every unverified line
         // took the concealment path above, so the bot told renters that real,
@@ -918,13 +922,13 @@ export async function POST(req: Request) {
         const structuredKit = it.included_with_rental?.length
           ? `${it.included_with_rental.join(", ")} (from our inventory record — accurate)`
           : null;
-        const kitText = it.whats_included
-          // Truncate at INJECTION, not in storage. The stored description is
-          // now full-length so bundle mapping can read the whole component
-          // list; the prompt only needs enough to answer "what's included".
-          ? it.whats_included.slice(0, 900)
-          : (structuredKit ??
-            "(NOT LISTED — you do not know this item's kit. Do NOT invent contents: never claim it comes with, or without, a cage/card/battery/lens unless stated here. If asked what's included, say you'll confirm the exact kit.)");
+        const mappedKit = it.mapping_complete === true && it.inventory_components?.length
+          ? it.inventory_components.map((c) => `${c.requested_units} × ${c.name}`).join(", ")
+          : null;
+        const kitText = mappedKit
+          ? `${mappedKit} (mapped physical gear; standard accessories from the body record: ${structuredKit ?? "not recorded"}). The inventory mapping and verified specs take precedence over conflicting advertising prose.`
+          : it.whats_included?.slice(0, 900) ?? structuredKit ??
+            "(NOT LISTED — do not invent kit contents; exact inclusions need owner review.)";
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
         // Whitelist the prices we are about to HAND the model.
         //
@@ -971,17 +975,18 @@ export async function POST(req: Request) {
         if (it.size_note) detail.push(`${it.size_note} packed`);
         if (structuredKit && it.whats_included) detail.push(`kit per our records: ${it.included_with_rental!.join(", ")}`);
         if (detail.length)
-          groundTruth += `  ${it.name} FACTS (real, from inventory — use them, do not say you'll check): ${detail.join("; ")}.\n`;
+          groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM FACTS (per individual item, not the whole kit — use them, do not say you'll check): ${detail.join("; ")}.\n`;
         if (it.spec_text)
-          groundTruth += `  ${it.name} SPEC (real, verified — you MAY quote these; they are not invented): ${it.spec_text}\n`;
+          groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM SPEC (per individual item, verified): ${it.spec_text}\n`;
         if (it.replacement_cost_gbp != null) offeredPrices.push(it.replacement_cost_gbp);
         if (it.replacement_cost_gbp != null)
-          groundTruth += `  ${it.name} insured replacement value: £${it.replacement_cost_gbp}. Only bring this up if they ask about damage, loss, deposit or insurance — then give the figure plainly rather than dodging, and note cover runs through the platform.\n`;
+          groundTruth += `  ${it.inventory_name ?? it.name} insured replacement value per individual item: £${it.replacement_cost_gbp}. Only bring this up if they ask about damage, loss, deposit or insurance — then give the figure plainly rather than dodging, and note cover runs through the platform.\n`;
         groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day${tierTxt ? ` [Hygglo multi-day rates: ${tierTxt} — quote the rate for the length they asked for, never the 1-day rate times the days]` : ""}. Included: ${kitText}\n`;
         try {
           if (lc.start_date && lc.end_date) {
             const av = await convex.query(api.renter_bot_tools.check_availability, {
               item_name: it.inventory_name ?? it.name ?? "",
+              ...(typeof it.product_id === "number" ? { product_id: it.product_id } : {}),
               start_date: lc.start_date,
               end_date: lc.end_date,
               quantity: it.qty ?? 1,
@@ -996,6 +1001,12 @@ export async function POST(req: Request) {
                 ? `NOT AVAILABLE for ${lc.start_date} to ${lc.end_date}: ${av.reason}; ${av.free_units} units free.`
                 : `NOT VERIFIED for these dates (${av.reason}). Do not affirm or deny availability; clarify the exact model or dates.`;
             toolReceipts.push({ tool: "check_availability", call_id: `prefetch:${toolReceipts.length}`, result: av });
+            if ("components" in av && Array.isArray(av.components)) {
+              for (const component of av.components) {
+                toolReceipts.push({ tool: "check_availability", call_id: `prefetch-component:${toolReceipts.length}`, result: component });
+                groundTruth += `  COMPONENT AVAILABILITY (${component.item_name}): ${component.available === true ? "AVAILABLE" : component.available === false ? "NOT AVAILABLE" : "UNKNOWN"}; requested ${component.requested_units}, free ${component.free_units} for ${lc.start_date} to ${lc.end_date}.\n`;
+              }
+            }
             if (av.available === false) availabilityOutKnown = true;
             groundTruth += `  AVAILABILITY (${it.name}): ${verdict} If the renter changes dates or quantity, call check_availability for the NEW request.\n`;
             factsEmitted.push(`availability:${it.name}:${verdict}`);

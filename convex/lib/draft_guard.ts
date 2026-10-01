@@ -553,31 +553,22 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     }
   }
 
-  // 8b. AVAILABILITY CONTRADICTION (verify.ts) — draft vs the real calendar
+  // 8b. Compare each item's local clause, not unrelated claims elsewhere.
+  // "FX3 is available, but the lens is unavailable" must not let a negative
+  // about the lens erase a false positive about FX3 (or flag a correct split).
   if (opts.availability?.items?.length) {
-    const tl = text.toLowerCase();
-    const saysUnavail =
-      /\b(not available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i.test(
-        text,
-      );
-    const saysAvail =
-      /\b(available|in stock|i'?ve got|i have|free for|ready for|can do|yep,? got)\b/i.test(
-        text,
-      );
+    const clauses = text.split(/[;!?]\s*|\.\s+|\s+(?:but|however|while|whereas)\s+/i);
     for (const it of opts.availability.items) {
-      if (!tl.includes(it.name.toLowerCase())) continue;
-      if (it.available && saysUnavail && !saysAvail)
-        push(
+      for (const clause of clauses) {
+        if (!clause.toLowerCase().includes(it.name.toLowerCase())) continue;
+        const negative = /\b(not available|unavailable|isn'?t available|aren'?t available|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i.test(clause);
+        const positive = !negative && /\b(available|in stock|i'?ve got|i have|free for|ready for|can do|yep,? got)\b/i.test(clause);
+        if ((it.available && negative) || (!it.available && positive)) push(
           "AVAILABILITY_CONTRADICTION",
-          `Draft says ${it.name} is unavailable, but the calendar shows it free for these dates`,
+          `Draft contradicts the checked availability of ${it.name}: "${clause.trim().slice(0, 150)}"`,
           "flagged",
         );
-      if (!it.available && saysAvail && !saysUnavail)
-        push(
-          "AVAILABILITY_CONTRADICTION",
-          `Draft implies ${it.name} is available, but it's booked out for these dates`,
-          "flagged",
-        );
+      }
     }
   }
 

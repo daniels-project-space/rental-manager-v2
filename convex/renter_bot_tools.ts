@@ -1,3 +1,4 @@
+import { loadListingInventory, listingStock } from "./lib/listing_inventory";
 import { getBotBooking } from "./lib/renter_booking";
 /**
  * Convex queries that back the Mastra renter-bot tools (5 of the 7 — the
@@ -324,6 +325,16 @@ export const get_listing_context = query({
           public_url = listing.public_url ?? null;
         }
       }
+      const listingInventory = account_slug && typeof l.product_id === "number"
+        ? await loadListingInventory(ctx, account_slug, l.product_id, l.qty)
+        : null;
+      if (listingInventory) {
+        owned = listingInventory.owned;
+        ownership_source = listingInventory.source;
+        const main = listingInventory.components.find((c) => c.kind === "camera")
+          ?? listingInventory.components.find((c) => c.stock_required);
+        if (main?.name) { inventory_name = main.name; kind = main.kind; }
+      }
       // Enrich BOTH identity paths. Linked bookings need the same real specs
       // as name-resolved inquiries; a product id must not hide our item data.
       const it = inventory_name ? allItems.find((i) => i.name_canonical === inventory_name) : undefined;
@@ -365,7 +376,14 @@ export const get_listing_context = query({
           if (sp)
             spec_text = `${sp.description ?? ""}`.replace(/\s+/g, " ").slice(0, 400) || null;
       }
+      const inventoryComponents = listingInventory?.components ?? (it ? [{
+        item_id: String(it._id), name: it.name_canonical, kind: it.kind,
+        units_per_listing: 1, requested_units: l.qty, stock_required: true,
+        owned: it.status === "active" && !it.is_marketing_only && it.qty > 0,
+      }] : []);
       items.push({
+        inventory_components: inventoryComponents,
+        mapping_complete: listingInventory?.complete ?? !!it,
         name: l.name,
         qty: l.qty,
         product_id: l.product_id,
@@ -637,6 +655,7 @@ export const lookup_pricing = query({
 export const check_availability = query({
   args: {
     item_name: v.string(),
+    product_id: v.optional(v.number()),
     start_date: v.string(),   // ISO YYYY-MM-DD
     end_date: v.string(),      // ISO YYYY-MM-DD
     account_slug: v.optional(v.string()),
@@ -645,8 +664,14 @@ export const check_availability = query({
     return_time: v.optional(v.string()),
     thread_id: v.optional(v.string()),
   },
-  handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id }) => {
-    void account_slug; // Accounts share one physical stock pool.
+  handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id, product_id }) => {
+    if (product_id !== undefined) {
+      if (!account_slug) throw new Error("A listing stock check needs its account");
+      const sources = await loadStockSources(ctx);
+      const listing = await loadListingInventory(ctx, account_slug, product_id, quantity ?? 1, sources);
+      const result = listingStock(sources, listing, { item_name, start_date, end_date, quantity, pickup_time, return_time, thread_id });
+      return { ...result, conflict_count: result.components.filter((c) => c.available === false).length, buffer_violation: false };
+    }
     const result = await checkRentalStock(ctx, { item_name, start_date, end_date, quantity, pickup_time, return_time, thread_id });
     return { ...result, start_date, end_date, conflict_count: result.conflicts.length, buffer_violation: false };
 

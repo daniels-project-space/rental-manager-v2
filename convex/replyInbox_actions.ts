@@ -842,23 +842,13 @@ export const generateDraft = action({
             ),
           }
         : undefined,
-      availability: c.availability || freshInquiryItems.length
-        ? {
-            items: [
-              ...(c.availability?.items ?? []).map((it) => ({
-                name: it.name,
-                available: it.available,
-              })),
-              // freshInquiryItems only ever contains items route.ts already
-              // confirmed owned/not-marketing-only (see its own filter) — the
-              // renter's ACTUAL requested dates are compared by the agent
-              // itself against the booking-dates line in groundTruth, not
-              // here; this just tells guardDraft "this item is real and
-              // resolvable", not "free for any date".
-              ...freshInquiryItems.map((it) => ({ name: it.name, available: true })),
-            ],
-          }
-        : undefined,
+      // Owned identity is not a date/quantity stock verdict. Only actual
+      // successful receipts may supply availability facts to the output guard.
+      availability: generationMeta.evidence ? {
+        items: generationMeta.evidence.stock
+          .filter((r) => typeof r.available === "boolean")
+          .map((r) => ({ name: r.item, available: r.available as boolean })),
+      } : undefined,
     });
     // Hard backstop for ANY unresolved critical-severity guardDraft flag.
     // Live-reproduced repeatedly on a bare first-contact "is X available":

@@ -125,6 +125,7 @@ import type * as lib_item_name_match from "../lib/item_name_match.js";
 import type * as lib_item_taxonomy from "../lib/item_taxonomy.js";
 import type * as lib_knowledge_search from "../lib/knowledge_search.js";
 import type * as lib_listing_equivalence from "../lib/listing_equivalence.js";
+import type * as lib_listing_inventory from "../lib/listing_inventory.js";
 import type * as lib_listing_photo_reference from "../lib/listing_photo_reference.js";
 import type * as lib_marketing_only_requests from "../lib/marketing_only_requests.js";
 import type * as lib_message_reconciliation from "../lib/message_reconciliation.js";
@@ -395,6 +396,7 @@ declare const fullApi: ApiFromModules<{
   "lib/item_taxonomy": typeof lib_item_taxonomy;
   "lib/knowledge_search": typeof lib_knowledge_search;
   "lib/listing_equivalence": typeof lib_listing_equivalence;
+  "lib/listing_inventory": typeof lib_listing_inventory;
   "lib/listing_photo_reference": typeof lib_listing_photo_reference;
   "lib/marketing_only_requests": typeof lib_marketing_only_requests;
   "lib/message_reconciliation": typeof lib_message_reconciliation;

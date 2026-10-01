@@ -1,7 +1,7 @@
 import type { Id } from "../../_generated/dataModel";
 
 type XItem = { item_id?: Id<"items"> | string | null; item_name_canonical?: string; qty?: number };
-type HItem = { name?: string; product_id?: number };
+type HItem = { name?: string; product_id?: number; qty?: number };
 
 export type ResolvableRes = {
   account_slug?: string;
@@ -71,7 +71,7 @@ export function reservationItemUnits(
     for (const h of r.hygglo_items ?? []) {
       const comps = h.product_id != null ? overrideMap.get(`${slug}#${h.product_id}`) : undefined;
       if (!comps) { allOverridden = false; break; }
-      for (const c of comps) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty);
+      for (const c of comps) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty * (h.qty ?? 1));
     }
     // allOverridden with an EMPTY ov = every listing is a marketing/own-nothing
     // override → the reservation has no owned items (drops mis-attributions).

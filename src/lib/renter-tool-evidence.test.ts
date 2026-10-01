@@ -41,4 +41,12 @@ describe("successful tool receipts", () => {
     expect(stockReceipts(renterToolReceipts(steps))).toHaveLength(1);
     expect(successfulGrounding(renterToolReceipts(steps)).availability).toBe(true);
   });
+  it("retains independent stock receipts inside a whole-kit result", () => {
+    const steps = [{ payload: { toolName: "check_availability", toolCallId: "kit", result: { ...stock, item_name: "Two camera kit", available: false, components: [{ ...stock, item_id: "camera", requested_units: 2, available: false }, { ...stock, item_name: "Sony GM 24-70", item_id: "lens", requested_units: 2 }] } } }];
+    const receipts = stockReceipts(renterToolReceipts(steps));
+    expect(receipts).toHaveLength(3);
+    expect(receipts.map((r) => r.result.item_name)).toEqual(["Two camera kit", "Sony FX3", "Sony GM 24-70"]);
+    expect(receipts[1].result.requested_units).toBe(2);
+  });
+
 });

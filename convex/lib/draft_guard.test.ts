@@ -631,3 +631,21 @@ describe("guardDraft — UNGROUNDED_SPEC stops flagging non-claims", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
   });
 });
+
+
+describe("independent availability clauses", () => {
+  const opts = { history: [], lastRenterMessage: "Are both available?", hasItemGrounding: true,
+    availability: { items: [{ name: "Sony FX3", available: false }, { name: "Sony GM 24-70mm", available: true }] } };
+  it("does not let another negative conceal a false positive", () => {
+    const result = guardDraft("Sony FX3 is available, but Sony GM 24-70mm is unavailable.", opts);
+    expect(result.flags.filter((f) => f.type === "AVAILABILITY_CONTRADICTION")).toHaveLength(2);
+  });
+  it("accepts a correct mixed basket answer", () => {
+    const result = guardDraft("Sony FX3 is unavailable, but Sony GM 24-70mm is available.", opts);
+    expect(result.flags.some((f) => f.type === "AVAILABILITY_CONTRADICTION")).toBe(false);
+  });
+  it("does not interpret an explicit refusal as a positive", () => {
+    const result = guardDraft("Sony FX3 isn't available.", opts);
+    expect(result.flags.some((f) => f.type === "AVAILABILITY_CONTRADICTION")).toBe(false);
+  });
+});
