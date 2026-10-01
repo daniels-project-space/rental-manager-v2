@@ -126,6 +126,7 @@ export const lookupPricingTool = createTool({
         "REQUIRED. The account_slug for this thread — it is given to you as ACCOUNT in the prompt, and by get_renter_context. Without it the price comes from a generic estimate instead of THIS account's real Hygglo listing.",
       ),
     days: z.number().int().positive().optional().describe("Rental duration in days. Default 1."),
+    quantity: z.number().int().min(1).max(20).optional().describe("Number of units of this priced item. Default 1; the returned total already includes quantity." ),
     listing_location_non_central: z
       .boolean()
       .optional()

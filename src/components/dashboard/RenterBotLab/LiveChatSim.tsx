@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 
@@ -355,7 +356,7 @@ function OrderPanel({ threadId }: { threadId: string }) {
               <td className="py-0.5 text-right text-[#8b8fa3]">
                 {l.effective_rate_gbp != null ? (
                   <>
-                    £{Math.round(l.effective_rate_gbp)}/day
+                    ~£{formatGbp(l.effective_rate_gbp)}/day
                     {l.tiers && (
                       <span className="ml-1 text-[10px] opacity-70">({l.tiers})</span>
                     )}

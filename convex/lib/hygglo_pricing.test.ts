@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tierRateForDays, tierTotalForDays, describeTiers } from "./hygglo_pricing";
+import { tierRateForDays, tierTotalForDays, describeTiers, rentalQuote } from "./hygglo_pricing";
 
 /** Real tier table from leo#1172440 ("BMPCC 6k PRO Cinema Kit + tripod"). */
 const TIERS = [
@@ -40,6 +40,26 @@ describe("hygglo multi-day tiers", () => {
   });
 
   it("describes the tiers compactly for the prompt", () => {
-    expect(describeTiers(TIERS)).toBe("1 day £80, 3+ days £67/day, 7+ days £50/day");
+    expect(describeTiers(TIERS)).toBe("1 day £80, 3+ days ~£66.67/day (£200 for 3 days), 7+ days ~£50/day (£350 for 7 days)");
+  });
+});
+
+
+describe("shared quotes", () => {
+  it("uses raw rates for totals rather than rounded daily displays", () => {
+    const quote = rentalQuote(TIERS, 80, 3, 2);
+    expect(quote?.daily_rate_gbp).toBe(66.67);
+    expect(quote?.listed_total_gbp).toBe(400);
+    expect(quote?.daily_rate_is_approximate).toBe(true);
+    expect(rentalQuote(TIERS, 80, 4)?.listed_total_gbp).toBe(267);
+  });
+  it("does not use a 3-day band's rate for a 1-day rental", () => {
+    expect(tierRateForDays([{ days: 3, pricePerDay: 36.6666666667 }], 1)).toBeNull();
+    expect(rentalQuote([{ days: 3, pricePerDay: 36.6666666667 }], 40, 1)?.listed_total_gbp).toBe(40);
+  });
+  it("rejects invalid quantity/duration and unknown prices", () => {
+    for (const quantity of [0, -1, 1.5, 21]) expect(rentalQuote(TIERS, 80, 3, quantity)).toBeNull();
+    expect(rentalQuote(TIERS, 80, 367)).toBeNull();
+    expect(rentalQuote([], null, 3)).toBeNull();
   });
 });

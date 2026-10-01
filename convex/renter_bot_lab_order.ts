@@ -2,7 +2,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { baseListingProductIds } from "./lib/base_listing_identity";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
-import { describeTiers, tierRateForDays, type PriceTier } from "./lib/hygglo_pricing";
+import { describeTiers, rentalQuote, type PriceTier } from "./lib/hygglo_pricing";
 import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
 
 /**
@@ -56,13 +56,13 @@ export function summarise(lines: OrderLine[], start?: string, end?: string) {
   const days = inclusiveDays(start, end);
   const priced = lines.map((l) => {
     // The rate the renter actually pays for THIS length, not the 1-day rate.
-    const tiered = tierRateForDays(l.price_tiers, days);
-    const rate = tiered ?? l.daily_price_gbp ?? null;
+    const quote = rentalQuote(l.price_tiers, l.daily_price_gbp, days, l.qty);
+    const rate = quote?.daily_rate_gbp ?? null;
     return {
       ...l,
       effective_rate_gbp: rate,
       tiers: describeTiers(l.price_tiers),
-      line_total_gbp: rate != null ? Math.round(rate * l.qty * days) : null,
+      line_total_gbp: quote?.listed_total_gbp ?? null,
     };
   });
   const known = priced.filter((l) => l.line_total_gbp != null);

@@ -23,7 +23,7 @@ import { recentThreadMessages } from "./lib/thread_messages";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
-import { tierRateForDays, describeTiers, type PriceTier } from "./lib/hygglo_pricing";
+import { tierRateForDays, describeTiers, rentalQuote, type PriceTier } from "./lib/hygglo_pricing";
 
 // ── Tool 1: get_renter_context ───────────────────────────────
 
@@ -443,13 +443,14 @@ export const lookup_pricing = query({
     item_name: v.string(),
     account_slug: v.optional(v.string()),
     days: v.optional(v.number()),
+    quantity: v.optional(v.number()),
     listing_location_non_central: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { item_name, account_slug, days = 1, listing_location_non_central },
+    { item_name, account_slug, days = 1, quantity = 1, listing_location_non_central },
   ) => {
-    if (!Number.isInteger(days) || days < 1 || days > 366) return { found: false as const, item_name, note: "Use a whole rental duration from 1 to 366 days" };
+    if (!Number.isInteger(days) || days < 1 || days > 366 || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return { found: false as const, item_name, note: "Use a whole rental duration from 1 to 366 days" };
     /**
      * Nearest listing TITLES when nothing matched, for the miss return.
      *
@@ -588,19 +589,17 @@ export const lookup_pricing = query({
           .unique();
         const tiers = (hp?.prices ?? []) as PriceTier[];
         const oneDay = tierRateForDays(tiers, 1) ?? best.daily_price;
-        const tierRate = tierRateForDays(tiers, days);
-        const dailyRate = tierRate ?? best.daily_price;
+        const quote = rentalQuote(tiers, best.daily_price, days, quantity);
+        if (!quote) return { found: false as const, item_name, message: "No valid quote for this duration and quantity" };
         return {
           found: true as const,
-          source: tierRate != null ? ("hygglo_tier" as const) : ("hygglo_listing" as const),
+          ...quote,
           item_name,
           matched_listing: best.name,
           // The rate that applies to THIS length — what the renter pays per day.
-          daily_rate_gbp: Math.round(dailyRate * 100) / 100,
           one_day_rate_gbp: Math.round(oneDay * 100) / 100,
           days,
           price_tiers: describeTiers(tiers),
-          listed_total_gbp: Math.round(dailyRate * days * 100) / 100,
           included: best.description ?? null,
           distance_discount_applies: !!listing_location_non_central,
         };
@@ -643,7 +642,8 @@ export const lookup_pricing = query({
       days,
       source: "curated_catalog" as const,
       multi_day_basis: "unknown_no_listing" as const,
-      listed_total_gbp: days === 1 ? dailyRate : null,
+      quantity,
+      listed_total_gbp: days === 1 ? Math.round(dailyRate * quantity * 100) / 100 : null,
       guidance: days > 1 ? "Only a curated daily price is known. No verified duration tier exists; confirm the exact total with the owner. Never invent a discount." : "Curated daily price; no listing tier data available.",
       distance_discount_applies: distanceDiscountApplies,
       // Internal — kept off-limits to renter per disclosure rules.
@@ -851,32 +851,9 @@ export const find_owned_alternatives = query({
     // apart. Only SINGLE-item overrides count: a bundle's price is the
     // bundle's, not the component's.
     const ovAll = await ctx.db.query("listing_resolution_override").collect();
-    const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
     const allInventory = await ctx.db.query("items").collect();
     const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory);
-    // Curated fallback for items with no listing on THIS account — the same
-    // source lookup_pricing falls back to, so the two tools cannot disagree.
-    // Without it, switching to identity-only resolution left most
-    // alternatives with a null price, which stops the bot quoting them at all.
-    const catalog = await ctx.db.query("pricing_catalog").collect();
-    const catalogPrice = new Map<string, number>();
-    for (const row of catalog) {
-      const k = row.item_name_canonical.toLowerCase().trim();
-      const cur = catalogPrice.get(k);
-      if (cur === undefined || row.daily_price_min < cur) catalogPrice.set(k, row.daily_price_min);
-    }
-    const priceFor = (itemId: string, name?: string): number | null => {
-      let best: number | null = null;
-      for (const pid of pidsForItem(itemId)) {
-        const l = listingByPid.get(pid) as { daily_price?: number } | undefined;
-        if (typeof l?.daily_price !== "number") continue;
-        // Among an item's OWN listings prefer the cheapest — that's its base
-        // offering rather than a bundle built around it.
-        if (best === null || l.daily_price < best) best = l.daily_price;
-      }
-      if (best === null && name) best = catalogPrice.get(name.toLowerCase().trim()) ?? null;
-      return best;
-    };
+    // Alternative listing quotes require identity-backed account pricing.
 
     // Rank by SUBSTITUTABILITY, not bare name overlap. A renter asking for a
     // Blackmagic cinema body should be offered the other Blackmagic body (same
@@ -936,16 +913,9 @@ export const find_owned_alternatives = query({
     // agent must say it will confirm, not invent contents. Inventing is exactly
     // what produced "comes with cage, 1TB card, and batteries" for a body that
     // has no listing at all.
-    const describeFor = (
-      itemId: string,
-    ): { included: string | null; listing: string | null } => {
-      for (const pid of pidsForItem(itemId)) {
-        const l = listingByPid.get(pid) as { name?: string; description?: string } | undefined;
-        if (l && (l.description || l.name)) {
-          return { included: l.description ?? null, listing: l.name ?? null };
-        }
-      }
-      return { included: null, listing: null };
+    const describeFor = (itemId: string): { included: string | null; listing: string | null } => {
+      const listing = chooseBaseListing(listings, pidsForItem(itemId));
+      return { included: listing?.description ?? null, listing: listing?.name ?? null };
     };
 
     const exclude = (exclude_name ?? "").toLowerCase().trim();
@@ -970,7 +940,9 @@ export const find_owned_alternatives = query({
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
-      const altPid = chooseBaseListing(listings, pidsForItem(String(it._id)))?.product_id;
+      const altListing = chooseBaseListing(listings, pidsForItem(String(it._id)));
+      const altPid = altListing?.product_id;
+      let altRawTiers: PriceTier[] = [];
       let altTiers: string | null = null;
       let altOneDay: number | null = null;
       if (altPid != null) {
@@ -980,16 +952,21 @@ export const find_owned_alternatives = query({
             q.eq("accountSlug", account_slug).eq("productId", altPid),
           )
           .unique();
-        altTiers = describeTiers((hp?.prices ?? []) as PriceTier[]);
+        altRawTiers = (hp?.prices ?? []) as PriceTier[];
+        altTiers = describeTiers(altRawTiers);
         altOneDay = tierRateForDays((hp?.prices ?? []) as PriceTier[], 1);
       }
+      const quoteDays = start_date && end_date ? Math.round((Date.parse(end_date) - Date.parse(start_date)) / 86400000) + 1 : null;
+      const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
       alternatives.push({
+        quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,
         availability: stock ? { available: stock.available, start_date, end_date, quantity: quantity ?? 1, free_units: stock.free_units, checked_at: stock.checked_at } : null,
         name: it.name_canonical,
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
-        daily_price_gbp: altOneDay ?? priceFor(String(it._id), it.name_canonical),
+        daily_price_gbp: altOneDay ?? altListing?.daily_price ?? null,
+        price_requires_owner_confirmation: !altListing,
         // TRUNCATED (2026-08-21). `included` is a full Hygglo listing
         // description — SEO marketing copy that runs 700+ chars each. Times 8
         // alternatives that made this the largest tool payload in the system

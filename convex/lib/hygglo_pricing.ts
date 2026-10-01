@@ -46,9 +46,8 @@ export function tierRateForDays(
   for (const t of usable) {
     if ((t.days as number) <= days) rate = t.pricePerDay as number;
   }
-  // Shorter than the smallest tier: fall back to that tier's rate rather than
-  // returning nothing, so a 1-day hire still prices when only a 3-day row set.
-  return rate ?? (usable[0].pricePerDay as number);
+  // A longer-hire band is not evidence of a shorter-hire rate.
+  return rate;
 }
 
 /** What the renter pays in total, rounded to whole pounds as Hygglo shows it. */
@@ -61,7 +60,24 @@ export function tierTotalForDays(
   return Math.round(rate * days);
 }
 
-/** Compact "1 day £80, 3+ days £67/day, 7+ days £50/day" for the prompt. */
+/** Display rate precision without turning £36.67/day into £37/day. */
+export function formatGbp(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+/** Shared line arithmetic: the Lab's whole-pound total policy, from raw rates. */
+export function rentalQuote(tiers: PriceTier[] | null | undefined, fallbackRate: number | null | undefined, days: number, quantity = 1) {
+  if (!Number.isInteger(days) || days < 1 || days > 366 || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return null;
+  const tierRate = tierRateForDays(tiers, days);
+  const rate = tierRate ?? fallbackRate;
+  if (rate == null || !Number.isFinite(rate) || rate <= 0) return null;
+  const daily = Math.round(rate * 100) / 100;
+  return { days, quantity, daily_rate_gbp: daily, daily_rate_is_approximate: Math.abs(rate - daily) > 0.000001,
+    listed_total_gbp: Math.round(rate * days * quantity), total_rounding: "whole_pound" as const,
+    source: tierRate != null ? "hygglo_tier" as const : "hygglo_listing" as const };
+}
+
+/** Compact tier facts; a rounded daily display never replaces the total. */
 export function describeTiers(tiers: PriceTier[] | null | undefined): string | null {
   if (!tiers) return null;
   const usable = tiers
@@ -76,8 +92,8 @@ export function describeTiers(tiers: PriceTier[] | null | undefined): string | n
   return usable
     .map((t) =>
       t.days === 1
-        ? `1 day £${Math.round(t.pricePerDay as number)}`
-        : `${t.days}+ days £${Math.round(t.pricePerDay as number)}/day`,
+        ? `1 day £${formatGbp(t.pricePerDay as number)}`
+        : `${t.days}+ days ~£${formatGbp(t.pricePerDay as number)}/day (£${formatGbp(typeof t.price === "number" ? t.price : Math.round((t.pricePerDay as number) * (t.days as number)))} for ${t.days} days)`,
     )
     .join(", ");
 }
