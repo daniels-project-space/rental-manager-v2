@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { scoreDraft } from "./renter_bot_rubric";
+import { scoreDraft, scoreSkippedGeneration } from "./renter_bot_rubric";
+
+describe("generation outcome", () => {
+  it("never passes an upstream failure even for an escalation fixture", () => {
+    expect(scoreSkippedGeneration("subscription_unavailable", true).overall_status).toBe("fail");
+  });
+  it("does not count a normal sales inquiry being withheld as success", () => {
+    expect(scoreSkippedGeneration("needs_human:model_declined", false).overall_status).toBe("fail");
+  });
+  it("passes an explicitly expected policy escalation", () => {
+    expect(scoreSkippedGeneration("needs_human:complaint", true).overall_status).toBe("pass");
+  });
+  it("does not pass an empty or undiagnosed result", () => {
+    expect(scoreSkippedGeneration(undefined, true).overall_status).toBe("fail");
+  });
+});
 
 describe("renter_bot_rubric.scoreDraft", () => {
   it("fails format_integrity on an empty draft", () => {

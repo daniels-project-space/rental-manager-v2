@@ -15,7 +15,7 @@ export const recent = internalQuery({
   handler: async (ctx, { limit }) => {
     const rows = await ctx.db.query("renter_bot_harness_runs").order("desc").take(limit ?? 12);
     return rows.map((r) => ({
-      at: new Date(r._creationTime).toISOString().slice(11, 19),
+      at: new Date(r._creationTime).toISOString(),
       thread: r.session_thread_id ?? "(fixture)",
       account: r.account_slug,
       empty: !r.draft_text,

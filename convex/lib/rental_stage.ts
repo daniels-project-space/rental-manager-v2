@@ -1,0 +1,49 @@
+/** Operational state comes from the current reservation, never an LLM label.
+ * Hygglo order_step is the NEXT action: RETURNED means return is still due.
+ */
+export function rentalStage(row: {
+  status?: string | null;
+  order_step?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  pickup_date?: string | null;
+  return_date?: string | null;
+  is_obsolete?: boolean;
+} | null | undefined, today: string) {
+  const status = row?.status?.toLowerCase();
+  const step = row?.order_step;
+  const end = row?.return_date ?? row?.end_date;
+  const start = row?.pickup_date ?? row?.start_date;
+  let stage: string;
+  let guidance: string;
+  if (!row) {
+    stage = "INQUIRY";
+    guidance = "Answer the current question, establish exact gear, quantity and dates when needed, recommend a relevant owned option using verified facts. Invite booking when they are ready. No exact pickup address or claim that a booking exists.";
+  } else if (row.is_obsolete || ["cancelled", "canceled", "declined"].includes(status ?? "") || ["CANCELED", "VERIFICATION_FAILED"].includes(step ?? "")) {
+    stage = step === "VERIFICATION_FAILED" ? "VERIFICATION_FAILED" : "CANCELLED";
+    guidance = "This order is no longer going ahead. Do not arrange collection or claim it is booked. Help with a new request if they want to try again; any disputed cancellation needs human review.";
+  } else if (status === "completed" || step === "REVIEWED") {
+    stage = "COMPLETED";
+    guidance = "The return is complete. Answer after-rental questions, feedback or a new booking request. Do not arrange collection for this finished rental.";
+  } else if (step === "REQUEST") {
+    stage = "AWAITING_OWNER_APPROVAL";
+    guidance = "The request awaits the owner's acceptance. Do not tell them to pay or verify yet, and do not claim approval happened. Prepare a helpful reply for human review.";
+  } else if (["APPROVED", "FUNDS_RESERVED"].includes(step ?? "")) {
+    stage = "AWAITING_PAYMENT";
+    guidance = "The owner accepted, but the renter has not paid yet. If asked how to proceed, explain completing payment on the platform. Do not say paid, confirmed, or arrange a secured collection.";
+  } else if (step === "VERIFIED") {
+    stage = "AWAITING_VERIFICATION";
+    guidance = "Payment is funded but ID/document verification is still outstanding. Explain the remaining verification step when relevant. Do not claim verification or confirmation is complete.";
+  } else if (step === "RETURNED" || status === "ongoing") {
+    stage = end && end < today ? "RETURN_OVERDUE" : "IN_USE";
+    guidance = "The gear is with the renter and still needs returning. Help with usage, problems, extensions or return arrangements. Never infer it was returned just because the booked end date passed.";
+  } else if (status === "confirmed") {
+    stage = start && start <= today ? "COLLECTION_DUE" : "CONFIRMED_UPCOMING";
+    guidance = "The booking is confirmed. Give the exact account pickup details when asked and make the handover clear. A scheduled pickup date or active DELIVERED step alone does not prove that gear has been collected; do not say they already have it.";
+  } else {
+    stage = "UNCONFIRMED";
+    guidance = "The order exists but its next required action is not verified. Do not invent a payment, approval or verification requirement. Answer from known facts and route consequential uncertainty to the owner.";
+  }
+  const confirmed = ["confirmed", "ongoing", "completed"].includes(status ?? "") && !row?.is_obsolete && !["CANCELED", "VERIFICATION_FAILED", "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"].includes(step ?? "");
+  return { stage, guidance, booking_confirmed: confirmed, can_share_pickup_address: confirmed && !["CANCELLED", "VERIFICATION_FAILED"].includes(stage) };
+}

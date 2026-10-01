@@ -64,7 +64,8 @@ function RentalListingCard({
     overlapsBooking(startDate, endDate, b),
   );
   const rangeValid = startDate && endDate && endDate >= startDate;
-  const rangeFree = rangeValid && match?.owned && conflicts.length === 0;
+  const stock = useQuery(api.renter_bot_tools.check_availability, rangeValid ? { item_name: itemName, start_date: startDate, end_date: endDate } : "skip");
+  const rangeFree = rangeValid && stock?.available === true;
 
   return (
     <div className="border-b border-white/10 bg-black/20">
@@ -133,22 +134,24 @@ function RentalListingCard({
             </label>
             <span
               className={`mb-0.5 rounded-full px-2 py-1 text-[11px] font-medium ${
-                avail === undefined
+                stock === undefined
                   ? "bg-white/10 text-[#8b8fa3]"
                   : rangeFree
                     ? "bg-emerald-500/15 text-emerald-400"
                     : "bg-red-500/15 text-red-400"
               }`}
             >
-              {avail === undefined
+              {stock === undefined
                 ? "checking…"
                 : !match
                   ? "no calendar match"
                   : !match.owned
                     ? "marketing-only, no stock"
-                    : rangeFree
-                      ? "Free for these dates"
-                      : "Conflicts with a real booking"}
+                    : stock?.available === null
+                      ? "Availability needs clarification"
+                      : rangeFree
+                        ? `Free for these dates (${stock?.free_units} units)`
+                        : "Unavailable for these dates"}
             </span>
           </div>
         </div>

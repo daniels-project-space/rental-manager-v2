@@ -65,6 +65,11 @@ export const generateDraft = action({
     confidence?: number;
     flags?: DraftFlag[];
     usedTools?: boolean;
+    model_id?: string;
+    draft_intent?: string;
+    draft_stage?: string;
+    cost_usd?: number;
+    facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }>;
     /**
      * "needs_human" now carries WHY after a colon (e.g.
      * "needs_human:unparseable_model_output"). A bare escalation was
@@ -537,6 +542,7 @@ export const generateDraft = action({
     // fix shipped, a correctly-answerable fresh inquiry still hard-escalated
     // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
     // still empty.
+    let generationMeta: { model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
     // Names the draft route resolved but has NO kit text for — see
     // draft_guard KIT_HALLUCINATION.
@@ -576,6 +582,10 @@ export const generateDraft = action({
         }
         const j = (await resp.json()) as {
           draft?: string;
+          model_id?: string;
+          intent?: string;
+          conversation_stage?: string;
+          factsClaimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string }>;
           needs_human?: boolean;
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
@@ -612,11 +622,12 @@ export const generateDraft = action({
             cost: number | null;
           } | null;
         };
+        generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: (j.factsClaimed ?? []).map((f) => ({ ...f, verified: false })) };
         if (j.needs_human) {
           // The subscription model deliberately declined an under-grounded or
           // consequential reply. Keep any earlier preview untouched and tell
           // Quick Reply this needs Daniel's judgement.
-          return { status: "skipped", reason: `needs_human:${j.needs_human_reason ?? "unknown"}` };
+          return { status: "skipped", reason: `needs_human:${j.needs_human_reason ?? "unknown"}`, ...generationMeta };
         }
         draft = (j.draft ?? "").trim();
         if (draft) {
@@ -738,7 +749,7 @@ export const generateDraft = action({
     // usedTools is set above (true for a Mastra draft, or when the fallback
     // called a tool) — so the self-check never hedges a tool-verified answer.
     let checkedDraft = draft;
-    if (!usedTools && (listingFacts.length === 0 || !isBookedThread)) {
+    if (!usedTools && routeGrounded.availability !== true && (listingFacts.length === 0 || !isBookedThread)) {
       try {
         const groundingForCheck = [listingFactsBlock, factsBlock]
           .filter(Boolean)
@@ -777,7 +788,6 @@ export const generateDraft = action({
     // diogo we→I) and FLAG judgement calls for my review (price/availability
     // claims, premature confirmation, false action claims, out-of-hours times…).
     const guardStage =
-      c.order_step === "RETURNED" ||
       c.order_step === "REVIEWED" ||
       c.status === "completed"
         ? "completed"
@@ -952,6 +962,7 @@ export const generateDraft = action({
       draft: finalDraft,
       confidence: guard.confidence,
       flags: guard.flags,
+      ...generationMeta,
       usedTools, // diagnostic: did the agent actually call a grounding tool this turn
     };
   },

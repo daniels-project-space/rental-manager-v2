@@ -8,7 +8,7 @@
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
-import { scoreDraft } from "./lib/renter_bot_rubric";
+import { scoreDraft, scoreSkippedGeneration } from "./lib/renter_bot_rubric";
 import { PREFIX } from "./renter_bot_probe";
 
 export const getFixture = internalQuery({
@@ -122,27 +122,18 @@ export const runFixture = action({
     let runId: string;
     let overallStatus: string;
     if (draftResult.status === "skipped") {
-      // generateDraft deliberately declined to draft (needs_human escalation,
-      // or the primary/fallback generation path itself errored). That's
-      // correct behavior for complaint/damage/scam-style scenarios, not a
-      // failure — score it as its own thing rather than running an empty
-      // string through the normal rubric and calling it a fail.
-      overallStatus = "pass";
+      const skippedScore = scoreSkippedGeneration(draftResult.reason,
+        ["complaint", "damage_report", "cancellation", "blacklisted"].includes(fixture.scenario_type));
+      overallStatus = skippedScore.overall_status;
       runId = await ctx.runMutation(internal.renter_bot_harness.insertRun, {
         fixture_id: args.fixtureId,
         run_batch_id: args.runBatchId,
         account_slug: fixture.account_slug,
         draft_text: "",
-        model_id: "n/a (skipped)",
-        filter_violations: [],
-        rubric_results: [
-          {
-            category: "escalation",
-            status: "pass",
-            detail: `Bot declined to draft (reason: ${draftResult.reason ?? "unspecified"}) — correct behavior if this is a genuine escalation case, but "subscription_unavailable" can also mean the upstream call itself failed. Worth a manual glance if that reason shows up a lot.`,
-          },
-        ],
-        overall_status: overallStatus as "pass",
+        model_id: draftResult.model_id ?? "unknown (generation failed)",
+        filter_violations: skippedScore.filter_violation_categories,
+        rubric_results: skippedScore.results,
+        overall_status: skippedScore.overall_status,
         triggered_by: args.triggeredBy ?? "harness_batch",
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
@@ -158,8 +149,8 @@ export const runFixture = action({
         { thread_id: threadId },
       );
 
-      const draftText = draftResult.draft ?? draftRow?.draft_text ?? "";
-      const factsClaimed = (draftRow?.facts_claimed ?? []).map((f) => ({
+      const draftText = draftResult.draft ?? "";
+      const factsClaimed = (draftResult.facts_claimed ?? []).map((f) => ({
         kind: f.kind,
         value: f.value,
         verified: f.verified,
@@ -178,17 +169,17 @@ export const runFixture = action({
         run_batch_id: args.runBatchId,
         account_slug: fixture.account_slug,
         draft_text: draftText,
-        draft_intent: draftRow?.draft_intent,
+        draft_intent: draftResult.draft_intent,
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
-        facts_claimed: draftRow?.facts_claimed,
-        model_id: draftRow?.model_id ?? "unknown",
+        facts_claimed: draftResult.facts_claimed,
+        model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
         overall_status: rubric.overall_status,
         triggered_by: args.triggeredBy ?? "harness_batch",
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
-        cost_usd: draftRow?.cost_usd,
+        cost_usd: draftResult.cost_usd,
       });
     }
 

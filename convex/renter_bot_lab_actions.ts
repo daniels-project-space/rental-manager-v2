@@ -127,6 +127,20 @@ export const appendRenterMessage = internalMutation({
   },
 });
 
+/** Test-only owner turn. This writes local simulation history, never sends. */
+export const appendAssistantMessage = internalMutation({
+  args: { thread_id: v.string(), account_slug: v.string(), text: v.string(), run_id: v.string() },
+  handler: async (ctx, args) => {
+    if (!args.thread_id.startsWith(PREFIX)) throw new Error("Only Lab/probe history can be appended");
+    if (!args.text.trim()) return;
+    const messageId = `${args.thread_id}-assistant-${args.run_id}`;
+    const existing = await ctx.db.query("hygglo_messages").withIndex("by_thread", (q) => q.eq("thread_id", args.thread_id)).collect();
+    if (existing.some((m) => m.message_id === messageId)) return;
+    const now = Date.now();
+    await ctx.db.insert("hygglo_messages", { account_slug: args.account_slug, thread_id: args.thread_id, message_id: messageId, sender: "owner", sender_name: "Lab owner", body_text: args.text, hygglo_sent_at: now, fetched_at: now });
+  },
+});
+
 // Starts (or restarts) a live Lab test conversation — from a saved scenario
 // preset, or a blank custom one seeded from location/price/items fields.
 export const startLiveSession = action({
@@ -237,8 +251,8 @@ export const sendTestMessage = action({
       { thread_id: args.threadId },
     );
 
-    const draftText = draftResult.draft ?? draftRow?.draft_text ?? "";
-    const factsClaimed = (draftRow?.facts_claimed ?? []).map((f) => ({
+    const draftText = draftResult.status === "ok" ? draftResult.draft ?? "" : "";
+    const factsClaimed = (draftResult.facts_claimed ?? []).map((f) => ({
       kind: f.kind,
       value: f.value,
       verified: f.verified,
@@ -256,19 +270,25 @@ export const sendTestMessage = action({
         session_thread_id: args.threadId,
         account_slug: args.accountSlug,
         draft_text: draftText,
-        draft_intent: draftRow?.draft_intent,
+        draft_intent: draftResult.draft_intent,
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
-        facts_claimed: draftRow?.facts_claimed,
-        model_id: draftRow?.model_id ?? "unknown",
+        facts_claimed: draftResult.facts_claimed,
+        model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
         overall_status: rubric.overall_status,
         triggered_by: "lab_ui_manual" as const,
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
-        cost_usd: draftRow?.cost_usd,
+        cost_usd: draftResult.cost_usd,
       },
     );
+
+    if (draftText) {
+      await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, {
+        thread_id: args.threadId, account_slug: args.accountSlug, text: draftText, run_id: runId,
+      });
+    }
 
     // Surfaces the REAL production guardDraft() flags (draft_guard.ts) --
     // e.g. UNGROUNDED_UNAVAILABILITY -- not persisted, diagnostic only, so

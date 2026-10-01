@@ -134,6 +134,7 @@ import type * as lib_notification_events from "../lib/notification_events.js";
 import type * as lib_platform_fallout from "../lib/platform_fallout.js";
 import type * as lib_poller_window from "../lib/poller_window.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
+import type * as lib_rental_stage from "../lib/rental_stage.js";
 import type * as lib_rental_volume from "../lib/rental_volume.js";
 import type * as lib_renterLookup from "../lib/renterLookup.js";
 import type * as lib_renter_bot_conversation_rubric from "../lib/renter_bot_conversation_rubric.js";
@@ -144,6 +145,7 @@ import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.
 import type * as lib_renter_bot_rubric from "../lib/renter_bot_rubric.js";
 import type * as lib_renter_bot_tone_scorer from "../lib/renter_bot_tone_scorer.js";
 import type * as lib_renter_dna from "../lib/renter_dna.js";
+import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
 import type * as lib_reservations_hyggloTiles from "../lib/reservations/hyggloTiles.js";
@@ -398,6 +400,7 @@ declare const fullApi: ApiFromModules<{
   "lib/platform_fallout": typeof lib_platform_fallout;
   "lib/poller_window": typeof lib_poller_window;
   "lib/quiet_hours": typeof lib_quiet_hours;
+  "lib/rental_stage": typeof lib_rental_stage;
   "lib/rental_volume": typeof lib_rental_volume;
   "lib/renterLookup": typeof lib_renterLookup;
   "lib/renter_bot_conversation_rubric": typeof lib_renter_bot_conversation_rubric;
@@ -408,6 +411,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_rubric": typeof lib_renter_bot_rubric;
   "lib/renter_bot_tone_scorer": typeof lib_renter_bot_tone_scorer;
   "lib/renter_dna": typeof lib_renter_dna;
+  "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;
   "lib/reservations/accounts": typeof lib_reservations_accounts;
   "lib/reservations/hyggloTiles": typeof lib_reservations_hyggloTiles;

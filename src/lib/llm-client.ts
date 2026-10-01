@@ -87,9 +87,11 @@ export async function getExtractorModel() {
  * lane, see src/lib/ai-models.ts). This deliberately ignores AI_PROVIDER so a
  * legacy xAI setting cannot route Quick Reply away from the low-cost shared
  * account. */
+export const RENTER_BOT_MODEL_ID = "google/gemini-3.7-flash";
+
 export async function getRenterBotModel() {
   const openrouter = await getOpenRouter();
-  return openrouter("google/gemini-3.7-flash");
+  return openrouter(RENTER_BOT_MODEL_ID);
 }
 
 /** Vault-backed model accessor for server-only dashboard widget routes. */

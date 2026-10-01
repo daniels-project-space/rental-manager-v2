@@ -13,6 +13,9 @@
 import { query, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
+import { checkRentalStock } from "./lib/renter_stock";
+import { rentalStage } from "./lib/rental_stage";
+import { londonToday } from "./lib/effectiveDates";
 import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
@@ -97,10 +100,11 @@ export const get_renter_context = query({
       account_slug:
         conversation?.account_id
           ? (await ctx.db.get(conversation.account_id))?.slug ?? "unknown"
-          : reservation?.account_slug ?? "unknown",
+          : conversation?.account_slug ?? reservation?.account_slug ?? "unknown",
       hygglo_order_id: reservation?.hygglo_order_id ?? thread_id,
       renter,
       conversation_stage: stage,
+      rental_stage: rentalStage(reservation, londonToday()),
       last_messages: recentMsgs
         .map((m) => ({
           sender: m.sender === "owner" ? "owner" : "renter",
@@ -177,6 +181,7 @@ export const get_listing_context = query({
       // null = UNKNOWN. Only an explicit false may drive the concealment path.
       let owned: boolean | null = null;
       let kind: string | null = null;
+      let inventory_name: string | null = null;
       let ownership_source: string = "unresolved";
       // The body's mount, so we can offer glass that actually fits even when
       // the listing carries no "what's included" text. Knowing a body is
@@ -218,6 +223,7 @@ export const get_listing_context = query({
         if (mid) {
           const it = await ctx.db.get(mid as never);
           if (it) {
+            inventory_name = (it as { name_canonical?: string }).name_canonical ?? null;
             kind = (it as { kind?: string }).kind ?? null;
             owned =
               (it as { status?: string }).status === "active" &&
@@ -241,6 +247,7 @@ export const get_listing_context = query({
         );
         if (m.match && m.confident) {
           const it = m.match;
+          inventory_name = it.name_canonical;
           kind = kind ?? (it.kind ?? null);
           lens_mount = (it as { lens_mount?: string | null }).lens_mount ?? null;
           const det = it as {
@@ -368,6 +375,7 @@ export const get_listing_context = query({
         // Consumers MUST treat null as "not verified" and never as "not owned".
         owned,
         ownership_source,
+        inventory_name,
         kind,
         lens_mount,
         price_tiers,
@@ -401,10 +409,9 @@ export const get_listing_context = query({
       location: (reservation as { location?: unknown } | null)?.location ?? null,
       order_step: reservation?.order_step ?? null,
       status: reservation?.status ?? null,
+      rental_stage: rentalStage(reservation, londonToday()),
       // A booking is only CONFIRMED (safe to call "booked") in these states.
-      is_confirmed: ["confirmed", "ongoing", "completed"].includes(
-        (reservation?.status as string | undefined) ?? "",
-      ),
+      is_confirmed: rentalStage(reservation, londonToday()).booking_confirmed,
       awaiting_owner_action: (reservation as { awaiting_owner_action?: boolean } | null)?.awaiting_owner_action ?? null,
     };
   },
@@ -687,77 +694,16 @@ export const check_availability = query({
     start_date: v.string(),   // ISO YYYY-MM-DD
     end_date: v.string(),      // ISO YYYY-MM-DD
     account_slug: v.optional(v.string()),
+    quantity: v.optional(v.number()),
+    pickup_time: v.optional(v.string()),
+    return_time: v.optional(v.string()),
+    thread_id: v.optional(v.string()),
   },
-  handler: async (ctx, { item_name, start_date, end_date, account_slug }) => {
-    // Pull reservations overlapping the window via by_start_date index.
-    // start_date index lets us bound the scan; we filter end_date in code.
-    // Window: start_date <= end AND end_date >= start.
-    // We can't compose both sides with a single index, so we scan from
-    // 30 days before start to end (covers any active rental).
-    const windowStart = new Date(start_date);
-    windowStart.setDate(windowStart.getDate() - 30);
-    const windowStartIso = windowStart.toISOString().slice(0, 10);
+  handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id }) => {
+    void account_slug; // Accounts share one physical stock pool.
+    const result = await checkRentalStock(ctx, { item_name, start_date, end_date, quantity, pickup_time, return_time, thread_id });
+    return { ...result, start_date, end_date, conflict_count: result.conflicts.length, buffer_violation: false };
 
-    const candidates = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", windowStartIso))
-      .collect();
-
-    const needle = item_name.toLowerCase();
-    const conflicts: Array<{
-      account_slug: string | null;
-      start_date: string | null;
-      end_date: string | null;
-      hygglo_order_id: string | null;
-      status: string;
-    }> = [];
-    for (const r of candidates) {
-      // account_slug intentionally NOT used to filter conflicts. DANIEL RULE 2
-      // — Cross-Account Stock (knowledge base, priority 10): "Items are
-      // listed multiple times across accounts BUT share the same physical
-      // pool... only the master inventory checklist (cross-account) matters."
-      // Filtering conflicts down to the asking thread's own account would
-      // hide a real booking made under a sibling account for the same
-      // physical item — false "available" on shared stock, exactly what this
-      // rule forbids. Kept as an accepted param (agent still passes it) only
-      // in case a future caller needs it for something other than gating
-      // conflicts — do not reintroduce filtering here.
-      if (!r.start_date || !r.end_date) continue;
-      if (r.is_obsolete) continue;
-      if (r.status === "cancelled" || r.status === "declined") continue;
-      // Date overlap: r.start <= end_date AND r.end >= start_date
-      if (r.start_date > end_date) continue;
-      if (r.end_date < start_date) continue;
-
-      const itemNames = [
-        ...(r.items ?? []).map((i) => i.item_name.toLowerCase()),
-        ...(r.hygglo_items ?? []).map((h) => h.name.toLowerCase()),
-        ...(r.expanded_items ?? []).map((e) => e.item_name_canonical.toLowerCase()),
-      ];
-      const matchesItem = itemNames.some(
-        (n) => n.includes(needle) || needle.includes(n),
-      );
-      if (!matchesItem) continue;
-
-      conflicts.push({
-        account_slug: r.account_slug ?? null,
-        start_date: r.start_date,
-        end_date: r.end_date,
-        hygglo_order_id: r.hygglo_order_id ?? null,
-        status: r.status,
-      });
-    }
-
-    return {
-      item_name,
-      start_date,
-      end_date,
-      available: conflicts.length === 0,
-      conflict_count: conflicts.length,
-      conflicts: conflicts.slice(0, 5),   // never reveal renter names — only date overlap matters
-      // 1-hour buffer rule lives in V1 — Phase 2 will add same-day-edge logic.
-      buffer_violation: false,
-    };
   },
 });
 

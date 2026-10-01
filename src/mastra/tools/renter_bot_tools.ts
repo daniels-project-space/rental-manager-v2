@@ -42,7 +42,7 @@ function convex(): ConvexHttpClient {
 export const getRenterContextTool = createTool({
   id: "get_renter_context",
   description:
-    "Fetch renter + conversation context for a thread. ALWAYS call FIRST. Returns account_slug (for voice), renter profile (incl. blacklist, DNA, lifetime spend, rating), conversation_stage, and the last 3 messages.",
+    "Fetch renter + conversation context for a thread. ALWAYS call FIRST. Returns account_slug (for voice), renter profile (incl. blacklist, DNA, lifetime spend, rating), conversation_stage, and the last 12 messages.",
   inputSchema: z.object({
     thread_id: z.string().describe("Hygglo thread id (= hygglo_order_id)"),
   }),
@@ -52,6 +52,7 @@ export const getRenterContextTool = createTool({
     hygglo_order_id: z.string(),
     renter: z.unknown().nullable(),
     conversation_stage: z.string(),
+    rental_stage: z.unknown(),
     last_messages: z.array(
       z.object({
         sender: z.string(),
@@ -134,9 +135,13 @@ export const lookupPricingTool = createTool({
 export const checkAvailabilityTool = createTool({
   id: "check_availability",
   description:
-    "Check whether an item is available for a date range across active reservations. Call BEFORE confirming availability. Returns boolean + conflict count (without naming other renters — privacy).",
+    "Check whether an item is available for a date range across active reservations. Call BEFORE confirming availability. Returns exact owned-stock capacity, requested quantity, per-day free units and a reason. available:null means unknown/ambiguous/invalid, NEVER available. Honors shared stock, repairs, blackouts, vacation and return buffers. Marketing-only gear always returns available:false.",
   inputSchema: z.object({
     item_name: z.string(),
+    quantity: z.number().int().min(1).max(20).optional().describe("Units the renter actually requests; default 1."),
+    pickup_time: z.string().optional().describe("Agreed London pickup time HH:MM; omit when unknown."),
+    return_time: z.string().optional().describe("Agreed London return time HH:MM; omit when unknown."),
+    thread_id: z.string().optional().describe("Current conversation THREAD, to avoid the booking blocking its own existing units."),
     start_date: z.string().describe("ISO YYYY-MM-DD"),
     end_date: z.string().describe("ISO YYYY-MM-DD"),
     // Required for the same reason as lookup_pricing: optional meant forgotten,
