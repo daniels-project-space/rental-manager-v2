@@ -76,6 +76,7 @@ export const generateDraft = action({
     evidence?: DraftEvidence;
     for_message_id?: string | null;
     diagnostic_candidate?: string;
+    guard_candidate?: string;
     facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }>;
     /**
      * "needs_human" now carries WHY after a colon (e.g.
@@ -766,6 +767,7 @@ export const generateDraft = action({
       start_date: c.start_date, end_date: c.end_date,
       awaiting_owner_action: c.awaiting_owner_action,
     } : null, londonToday()).stage;
+    const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
     const guard = guardDraft(checkedDraft, {
       history: c.messages as { role: "owner" | "renter"; content: string }[],
       lastRenterMessage: lastRenter,
@@ -882,11 +884,11 @@ export const generateDraft = action({
       // escalation and there was no way to tell WHY a thread never drafted —
       // which is how a 100%-escalation path on not-owned items went unnoticed.
       // Distinct from a route-level escalation: here the GUARD withheld it.
-      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags, ...generationMeta,
+      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags, ...generationMeta, ...guardCandidate,
         ...(thread_id.startsWith("__probe__") ? { rejectedDraft: checkedDraft } : {}) };
     }
 
-    const finalDraft = guard.text.trim() || checkedDraft;
+    const finalDraft = guard.text.trim();
 
     const savedDraft = await ctx.runMutation(internal.replyInbox.setDraft, {
       thread_id,
@@ -916,6 +918,7 @@ export const generateDraft = action({
       confidence: guard.confidence,
       flags: guard.flags,
       ...generationMeta,
+      ...guardCandidate,
       usedTools, // diagnostic: did the agent actually call a grounding tool this turn
     };
   },

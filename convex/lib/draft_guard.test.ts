@@ -6,6 +6,44 @@ const baseOpts = {
   lastRenterMessage: "hygglo is asking me to verify my identity before I can book, how does that work",
 };
 
+describe("recommendation cleanup preserves offer content", () => {
+  const opts = { history: [], lastRenterMessage: "Recommend two Sony bodies that record 4K internally and show each three-day price." };
+  it("preserves both offers in the actual Lab candidate with bold model names", () => {
+    const candidate = "For these dates, here are two options:\n\n• **Sony A7 V** — records 4K internally; 3-day total is £110\n• **Sony FX3** — full-frame cinema body recording 4K internally; 3-day total is £126\n\nBoth come with batteries and memory cards included.";
+    const result = guardDraft(candidate, opts);
+    expect(result.text).toContain("Sony A7 V");
+    expect(result.text).toContain("£110");
+    expect(result.text).toContain("Sony FX3");
+    expect(result.text).toContain("£126");
+    expect(result.text).toMatch(/£110\n.*Sony FX3/);
+    expect(result.flags.some(f => f.type === "INTERNAL_ACTION")).toBe(false);
+  });
+  it("keeps monetary totals and legitimate emphasized renter instructions", () => {
+    const result = guardDraft("**Sony FX3 records 4K internally**, with the three-day total coming to £126. *Check your booking dates before requesting.*", opts);
+    expect(result.text).toContain("coming to £126");
+    expect(result.text).toContain("Check your booking dates");
+    expect(result.flags.some(f => ["INTERNAL_ACTION", "PHYSICAL_PRESENCE"].includes(f.type))).toBe(false);
+  });
+  it("removes actual backstage instructions without losing either offer", () => {
+    const result = guardDraft("Sony A7 V: £110.\n*Notify Daniel on Telegram immediately*\nSony FX3: £126.", opts);
+    expect(result.text).toContain("Sony A7 V: £110");
+    expect(result.text).toContain("Sony FX3: £126");
+    expect(result.text).not.toContain("Telegram");
+    expect(result.flags.some(f => f.type === "INTERNAL_ACTION")).toBe(true);
+  });
+  it("removes a real arrival claim while preserving separate offer lines", () => {
+    const result = guardDraft("I'm coming to you now.\nSony A7 V: £110\nSony FX3: £126", opts);
+    expect(result.text).not.toContain("coming to you");
+    expect(result.text).toContain("Sony A7 V: £110\nSony FX3: £126");
+    expect(result.flags.some(f => f.type === "PHYSICAL_PRESENCE")).toBe(true);
+  });
+  it("blocks an emptied draft rather than resurrecting removed content", () => {
+    const result = guardDraft("*Internal note: notify Daniel on Telegram*", opts);
+    expect(result.text.trim()).toBe("");
+    expect(result.flags).toContainEqual(expect.objectContaining({ type: "EMPTY_DRAFT", severity: "critical", action: "flagged" }));
+  });
+});
+
 describe("positive stock does not prove a negative for an unknown request", () => {
   const opts = { history: [], lastRenterMessage: "Do you actually have the Pyxis?", hasItemGrounding: true, groundedDuringTurn: { availability: true, unavailability: false } };
   it("blocks the actual unsupported denial even with a verified alternative", () => {

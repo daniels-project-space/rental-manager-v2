@@ -280,6 +280,7 @@ export const sendTestMessage = action({
     status: string;
     reason?: string;
     rejectedDraft?: string;
+    guard_candidate?: string;
     evidence?: DraftEvidence;
     model_id?: string;
   }> => {
@@ -353,6 +354,7 @@ export const sendTestMessage = action({
       status: draftResult.status,
       reason: draftResult.reason,
       rejectedDraft: draftResult.rejectedDraft,
+      guard_candidate: draftResult.guard_candidate,
       evidence: draftResult.evidence,
       model_id: draftResult.model_id,
       draft: draftText,

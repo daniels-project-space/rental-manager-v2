@@ -143,6 +143,7 @@ const SHOOT_QUESTION_PATTERN = /\bwhat(?:'s| is) the shoot for\b/i;
 
 const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
+  EMPTY_DRAFT: "critical",
   // High, not critical: it misleads but does not create a wrong booking.
   INVENTED_POPULARITY: "high",
   // High: it is a money commitment, but escalating beats withholding the reply.
@@ -282,30 +283,17 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     content: deSmart(m.content),
   }));
 
-  // 1. INTERNAL ACTION LEAK (asterisk-wrapped) — STRIP
-  const internalActionPattern =
-    /\*[^*]*(?:Daniel|Telegram|escalat|internal|notify|alert|inform|immediately|owner|urgent)[^*]*\*/gi;
-  const internalMatches = text.match(internalActionPattern);
-  if (internalMatches) {
-    for (const m of internalMatches) text = text.replace(m, "");
-    push("INTERNAL_ACTION", "Stripped internal action note", "stripped");
-  }
-  const anyAsteriskAction = /\*[^*]{10,}\*/g;
-  const asteriskMatches = text.match(anyAsteriskAction);
-  if (asteriskMatches) {
-    let stripped = false;
-    for (const m of asteriskMatches) {
-      if (
-        /\b(inform|send|notify|check|update|contact|call|text|message|alert|escalat|forward)\b/i.test(
-          m,
-        )
-      ) {
-        text = text.replace(m, "");
-        stripped = true;
-      }
-    }
-    if (stripped) push("INTERNAL_ACTION", "Stripped asterisk action", "stripped");
-  }
+  // Markdown emphasis is not a stage direction. Match a complete same-line
+  // emphasis span, then require explicit backstage language. In particular,
+  // "internally" in a recording spec must never delete an offer between bullets.
+  let strippedInternalNote = false;
+  text = text.replace(/(\*{1,2})([^*\n]+)\1/g, (span, _marker, content: string) => {
+    const internalNote = /\b(?:internal|owner|team)\s*(?:note|memo|action|only)\b|\b(?:notify|inform|alert|contact|message|send|forward|escalat\w*)\b[^.!?\n]*\b(?:Daniel|Telegram|owner|team)\b/i.test(content);
+    if (!internalNote) return span;
+    strippedInternalNote = true;
+    return "";
+  });
+  if (strippedInternalNote) push("INTERNAL_ACTION", "Stripped internal action note", "stripped");
 
   // 1b. PLAIN-TEXT INTERNAL LEAKS — STRIP
   const internalPlainPatterns = [
@@ -434,7 +422,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     /\bI'?ve got (the|your) (gear|kit|equipment|lens|camera) (here|ready|with me)\b/i,
     /\bdon'?t have a phone with me\b/i,
     /\bI'?m (bringing|carrying) (the|your|it)\b/i,
-    /\b(on my way|heading (to |over|there)|coming over|coming (to|now))\b/i,
+    /\bon my way\b|\bI(?:\'m| am|\'ll| will) (?:heading (?:to|over|there)|coming (?:over|to|now))\b/i,
     /\bbe with you in\b/i,
     /\bI'?ll (be there|meet you|wait for you|come to you)\b/i,
     /\bI'?m (at|by|near|outside|waiting|here)\b/i,
@@ -445,10 +433,10 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   ];
   for (const p of physicalPresencePatterns) {
     if (p.test(text)) {
-      const sentences = text.split(/(?<=[.!?])\s+/);
-      const cleaned = sentences.filter((s) => !p.test(s));
-      if (cleaned.length < sentences.length && cleaned.length > 0) {
-        text = cleaned.join(" ").replace(/\n{3,}/g, "\n\n").trim();
+      const sentences = text.split(/(\n+|(?<=[.!?])\s+)/);
+      const cleaned = sentences.map((s) => p.test(s) ? "" : s).join("").trim();
+      if (cleaned && cleaned !== text.trim()) {
+        text = cleaned.replace(/\n{3,}/g, "\n\n");
         push("PHYSICAL_PRESENCE", "Stripped physical-presence claim", "stripped");
       } else {
         push("PHYSICAL_PRESENCE", "Physical-presence claim detected", "flagged");
@@ -1365,6 +1353,8 @@ const ASSERTS_AVAIL_RE =
     for (const v of contract.violations)
       push(`CONTRACT:${v.label}`, v.detail, "flagged");
   }
+
+  if (!text.trim()) push("EMPTY_DRAFT", "Cleanup left no renter-facing reply", "flagged");
 
   // Dedup identical flags (the same issue can match more than one pattern).
   const seen = new Set<string>();
