@@ -936,6 +936,7 @@ export async function POST(req: Request) {
         if (mappedKit || structuredKit || it.whats_included?.trim()) {
           kitEvidence.push({ names: [it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n),
             contents: mappedKit ? [...(it.inventory_components ?? []).map(c => c.name ?? ""), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
+          groundTruth += `  LISTING TITLE IS ADVERTISING, NOT KIT EVIDENCE: accessories named in the title or comparison models are not included unless recorded in the mapped gear or body inclusions above. Answer exact-kit questions from those records; do not append title accessories.\n`;
           groundTruth += `  INCLUDED-CONTENTS LIMIT: state only the recorded contents above. A charger, case or other customary accessory is NOT established merely because this is a camera rental. Do not add customary items to the list.\n`;
         }
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
