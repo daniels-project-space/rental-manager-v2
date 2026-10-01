@@ -1,5 +1,5 @@
 import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
-import { recommendationKit } from "./lib/recommendation_kit";
+import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
@@ -161,7 +161,6 @@ export const get_listing_context = query({
     const allItems = await ctx.db.query("items").collect();
     for (const l of lines) {
       let daily_price_gbp: number | null = null;
-      let whats_included: string | null = null;
       let listing_name: string | null = null;
       let public_url: string | null = null;
       // OWNERSHIP IS TRI-STATE (2026-08-21). Previously this was a bare
@@ -253,10 +252,9 @@ export const get_listing_context = query({
           kind = kind ?? (it.kind ?? null);
           owned = it.status === "active" && !it.is_marketing_only && (it.qty ?? 0) > 0;
           ownership_source = "name_match";
-          // Pull the real kit + price for THIS item via the deterministic
-          // product_id index, so an alternative/inquiry line still gets true
-          // "what's included" text instead of the agent inventing one.
-          if (account_slug && (daily_price_gbp === null || whats_included === null)) {
+          // Resolve the base listing price and identity through the deterministic
+          // product index. Kit contents come from inventory records below.
+          if (account_slug && (daily_price_gbp === null || listing_name === null)) {
             const idxRows = await ctx.db
               .query("hygglo_product_index")
               .withIndex("by_item_id", (q) => q.eq("item_id", it._id))
@@ -300,7 +298,6 @@ export const get_listing_context = query({
                 price_tiers = describeTiers((hp?.prices ?? []) as PriceTier[]);
               }
               daily_price_gbp = daily_price_gbp ?? bestListing.daily_price ?? null;
-              whats_included = whats_included ?? bestListing.description ?? null;
               listing_name = listing_name ?? bestListing.name ?? null;
               public_url = public_url ?? bestListing.public_url ?? null;
             }
@@ -327,7 +324,6 @@ export const get_listing_context = query({
           .first();
         if (listing) {
           daily_price_gbp = listing.daily_price ?? null;
-          whats_included = listing.description ?? null;
           listing_name = listing.name ?? null;
           public_url = listing.public_url ?? null;
         }
@@ -389,7 +385,15 @@ export const get_listing_context = query({
         units_per_listing: 1, requested_units: l.qty, stock_required: true,
         owned: it.status === "active" && !it.is_marketing_only && it.qty > 0,
       }] : []);
+      // Stock mapping proves physical identity, not an exhaustive accessory kit.
+      const kit = recordedKit(
+        inventoryComponents.map(c => ({ name: c.name, qty: c.units_per_listing })),
+        included_with_rental ?? [],
+      );
       items.push({
+        kit_contents: kit.contents,
+        kit_completeness: kit.completeness,
+        kit_source: kit.source,
         inventory_components: inventoryComponents,
         mapping_complete: listingInventory?.complete ?? !!it,
         name: l.name,
@@ -413,7 +417,7 @@ export const get_listing_context = query({
         ambiguous_with,
         listing_name,
         daily_price_gbp,
-        whats_included,
+        whats_included: kit.included,
         public_url,
       });
     }

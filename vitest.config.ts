@@ -33,6 +33,7 @@ export default defineConfig({
       "convex/lib/draft_review.test.ts",
       "convex/replyInbox.review.test.ts",
       "convex/lib/recommendation_kit.test.ts",
+      "convex/seed/kit_source_repair.test.ts",
       "convex/lib/camera_requirements.test.ts",
       "convex/lib/camera_mode_claims.test.ts",
       "convex/lib/push_registration.test.ts",

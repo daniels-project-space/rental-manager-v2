@@ -723,7 +723,7 @@ export async function POST(req: Request) {
           .map((name) => name.toLowerCase().trim())
           .filter(Boolean),
       );
-      for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
           let altText = "";
@@ -941,17 +941,18 @@ export async function POST(req: Request) {
           ? `${it.included_with_rental.join(", ")} (from our inventory record — accurate)`
           : null;
         const mappedKit = it.mapping_complete === true && it.inventory_components?.length
-          ? it.inventory_components.map((c) => `${c.requested_units} × ${c.name}`).join(", ")
+          ? it.inventory_components.map((c) => `${c.units_per_listing} × ${c.name}`).join(", ")
           : null;
         const kitText = mappedKit
-          ? `${mappedKit} (mapped physical gear; standard accessories from the body record: ${structuredKit ?? "not recorded"}). The inventory mapping and verified specs take precedence over conflicting advertising prose.`
-          : it.whats_included?.slice(0, 900) ?? structuredKit ??
+          ? `${mappedKit} (per listing mapped physical gear; standard accessories from the body record: ${structuredKit ?? "not recorded"}). The inventory mapping and verified specs take precedence over conflicting advertising prose.`
+          : structuredKit ?? it.whats_included ??
             "(NOT LISTED — do not invent kit contents; exact inclusions need owner review.)";
         if (mappedKit || structuredKit || it.whats_included?.trim()) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
         if (mappedKit || structuredKit || it.whats_included?.trim()) {
           kitEvidence.push({ names: [it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n),
-            contents: mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.requested_units} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
+            contents: mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.units_per_listing} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
           groundTruth += `  LISTING TITLE IS ADVERTISING, NOT KIT EVIDENCE: accessories named in the title or comparison models are not included unless recorded in the mapped gear or body inclusions above. Answer exact-kit questions from those records; do not append title accessories.\n`;
+          groundTruth += `  PARTIAL KIT RECORD: known inclusions per listing, not an exhaustive manifest. Missing accessories are unverified, not proven absent. Stock mapping completeness does not establish every supplied accessory. Answer the known part and identify exact unrecorded details for owner review.\n`;
           groundTruth += `  INCLUDED-CONTENTS LIMIT: state only the recorded contents above. A charger, case or other customary accessory is NOT established merely because this is a camera rental. Do not add customary items to the list.\n`;
           groundTruth += `  INCLUDED-QUANTITY LIMIT: duplicate descriptions of a component are not additional units. A battery "set" does not establish an individual battery count. State exact types, storage capacities and individual counts only where explicitly recorded for that component; otherwise explain that the exact detail needs checking.\n`;
         }

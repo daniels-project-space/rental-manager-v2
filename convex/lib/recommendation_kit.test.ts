@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recommendationKit } from "./recommendation_kit";
+import { recommendationKit, recordedKit } from "./recommendation_kit";
 const body = { _id: "body", name_canonical: "BMPCC 6K Full Frame", kind: "camera", compatibility: { included_with_rental: ["5× NP-F570 batteries", "1TB CFexpress Type B"] } };
 const lens = { _id: "lens", name_canonical: "Native L lens", kind: "lens" };
 describe("recommendation kit provenance", () => {
@@ -18,5 +18,23 @@ describe("recommendation kit provenance", () => {
   });
   it("does not treat a standalone lens as a camera kit with included glass", () => {
     expect(recommendationKit(lens, { components: [{ item_id: "lens", qty: 1 }] }, [lens]).includes_lens).toBe(null);
+  });
+});
+
+describe("selected kit source boundary", () => {
+  it("keeps a physical mapping partial, with no inferred charger or cable", () => {
+    const kit = recordedKit([{ name: body.name_canonical, qty: 1 }], body.compatibility.included_with_rental);
+    expect(kit.completeness).toBe("partial");
+    expect(kit.contents).toEqual(["1 × BMPCC 6K Full Frame", "5× NP-F570 batteries", "1TB CFexpress Type B"]);
+    expect(kit.included).not.toMatch(/LP-E6|charger|cable|3×/i);
+  });
+  it("retains set wording without inventing individual counts", () => {
+    expect(recordedKit([], ["NP-FZ100 batteries 2×sets"]).included).toBe("NP-FZ100 batteries 2×sets");
+    expect(recordedKit([], []).completeness).toBe("unknown");
+  });
+  it("deduplicates records and does not turn invalid mapping quantities into contents", () => {
+    const kit = recordedKit([{ name: "body", qty: 0 }, { name: null, qty: 1 }], [" charger ", "charger", ""]);
+    expect(kit.contents).toEqual(["charger"]);
+    expect(kit.source).toBe("inventory_record");
   });
 });

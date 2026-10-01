@@ -312,10 +312,10 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     "Smoke machines can set off smoke alarms. Renter is responsible for venue permission + ventilation.",
     tags: ["faq", "smoke", "fx"], priority: 6 },
   { scope: "faq", title: "FAQ: BMPCC Battery Life", content:
-    "Real-world ~40-50 min per LP-E6NH battery. Kit includes 5× LP-E6NH plus charger. Recommend USB-C wall power for long takes.",
+    "The owned Blackmagic 6K Pro and Cinema Camera 6K Full Frame kits use native NP-F570 batteries. Use the selected inventory kit for supplied counts and accessories; battery runtime and external-power compatibility require verified exact-model specifications, not a generic BMPCC assumption.",
     tags: ["faq", "battery", "bmpcc"], priority: 6 },
   { scope: "faq", title: "FAQ: BMPCC 6K Full Frame Storage", content:
-    "This kit does NOT include an SSD — that's the 6K Pro variant only. The Full Frame kit is a Canon EF-to-L mount adapter + 5× LP-E6NH batteries plus charger. Answer confidently from these two facts; there is nothing else confirmed in this kit.",
+    "The Blackmagic Cinema Camera 6K Full Frame kit supplies a 1TB CFexpress Type B card and native NP-F570 batteries. Use the current selected kit inventory for battery counts, adapters and other accessories. External USB-C storage support is a capability, not proof an SSD is supplied. Unrecorded accessories need checking; do not assert they are included or excluded.",
     tags: ["faq", "bmpcc", "storage", "6k-full-frame"], priority: 6 },
   { scope: "faq", title: "FAQ: Delivery", content:
     "Only quote delivery when renter asks. Request postcode → courier quote (Addison Lee). DJ deck + speakers together = mandatory delivery.",
