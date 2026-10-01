@@ -1,3 +1,4 @@
+import { getBotBooking } from "./lib/renter_booking";
 /**
  * Convex queries that back the Mastra renter-bot tools (5 of the 7 — the
  * other two are `search` (in convex/knowledge.ts) and `getTemplate`
@@ -33,10 +34,7 @@ export const get_renter_context = query({
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
 
-    const reservation = await ctx.db
-      .query("reservations")
-      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
-      .first();
+    const reservation = await getBotBooking(ctx, thread_id);
 
     let renter: { _id: string; display_name?: string; hygglo_rating?: number; total_rentals_count?: number; total_spend_gbp?: number; blacklisted?: boolean; blacklist?: boolean; blacklist_reason?: string; renter_dna?: unknown } | null = null;
     if (conversation?.renter_id) {
@@ -119,10 +117,7 @@ export const get_renter_context = query({
 export const get_listing_context = query({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
-    const reservation = await ctx.db
-      .query("reservations")
-      .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
-      .first();
+    const reservation = await getBotBooking(ctx, thread_id);
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))

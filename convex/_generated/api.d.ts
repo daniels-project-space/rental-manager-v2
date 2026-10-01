@@ -138,6 +138,7 @@ import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_rental_stage from "../lib/rental_stage.js";
 import type * as lib_rental_volume from "../lib/rental_volume.js";
 import type * as lib_renterLookup from "../lib/renterLookup.js";
+import type * as lib_renter_booking from "../lib/renter_booking.js";
 import type * as lib_renter_bot_conversation_rubric from "../lib/renter_bot_conversation_rubric.js";
 import type * as lib_renter_bot_filters from "../lib/renter_bot_filters.js";
 import type * as lib_renter_bot_filters_supplemental from "../lib/renter_bot_filters_supplemental.js";
@@ -407,6 +408,7 @@ declare const fullApi: ApiFromModules<{
   "lib/rental_stage": typeof lib_rental_stage;
   "lib/rental_volume": typeof lib_rental_volume;
   "lib/renterLookup": typeof lib_renterLookup;
+  "lib/renter_booking": typeof lib_renter_booking;
   "lib/renter_bot_conversation_rubric": typeof lib_renter_bot_conversation_rubric;
   "lib/renter_bot_filters": typeof lib_renter_bot_filters;
   "lib/renter_bot_filters_supplemental": typeof lib_renter_bot_filters_supplemental;

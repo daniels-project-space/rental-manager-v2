@@ -1,3 +1,4 @@
+import { getBotBooking, type BotBooking } from "./lib/renter_booking";
 /**
  * Reply Inbox (2026-06-22) — cross-account "renter messages awaiting my reply"
  * queue for the dashboard widget.
@@ -74,7 +75,7 @@ async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
  * derived LIVE so they follow each account's hub without rewriting reservations.
  */
 function computeLocation(
-  reservation: Doc<"reservations"> | null,
+  reservation: BotBooking | null,
   slug: string | undefined,
   hubBook: HubBook | null,
 ) {
@@ -135,7 +136,7 @@ type RichItem = { name: string; qty: number; image_url: string | null };
  * no-reservation fallback.
  */
 function buildRichItems(
-  reservation: Doc<"reservations"> | null,
+  reservation: BotBooking | null,
   conv?: Doc<"conversations"> | null,
 ): RichItem[] {
   if (!reservation) {
@@ -423,7 +424,7 @@ async function loadAvailCtx(
 }
 
 function computeAvailability(
-  reservation: Doc<"reservations"> | null,
+  reservation: BotBooking | null,
   av?: AvailCtx,
 ): TileAvailability | null {
   if (!av || !reservation) return null;
@@ -1086,12 +1087,7 @@ export const getThreadContext = internalQuery({
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
 
-    const reservation = await ctx.db
-      .query("reservations")
-      .withIndex("by_hygglo_order_id", (q) =>
-        q.eq("hygglo_order_id", thread_id),
-      )
-      .first();
+    const reservation = await getBotBooking(ctx, thread_id);
 
     let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
     let accountId = reservation?.account_id ?? conv?.account_id ?? undefined;

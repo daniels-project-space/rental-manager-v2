@@ -320,6 +320,14 @@ export const applyChange = mutation({
         ],
         updated_at: Date.now(),
       });
+      const booking = await ctx.db.query("renter_bot_lab_bookings")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", a.thread_id)).first();
+      if (booking) await ctx.db.patch(booking._id, {
+        start_date: a.start_date,
+        end_date: end,
+        pickup_date: undefined,
+        return_date: undefined,
+      });
       return {
         ok: true,
         applied: `dates set to ${a.start_date} – ${end}`,

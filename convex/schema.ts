@@ -5,7 +5,7 @@ import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 // Phase 1.A schema. Tables with `Empty in this phase` are scaffolding for later phases
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
-export default defineSchema({
+const operationalSchema = defineSchema({
   // ── To-Do lists (owner personal checklists) ──────────────────
   todo_lists: defineTable({
     name: v.string(),
@@ -2635,4 +2635,12 @@ export default defineSchema({
     .index("by_account", ["account_slug"])
     .index("by_overall_status", ["overall_status"])
     .index("by_run_at", ["run_at"]),
+});
+
+// Keep identical validated lifecycle facts in a physically separate test table.
+// Production stock, calendars, revenue and return workflows only read reservations.
+export default defineSchema({
+  ...operationalSchema.tables,
+  renter_bot_lab_bookings: defineTable(operationalSchema.tables.reservations.validator)
+    .index("by_hygglo_order_id", ["hygglo_order_id"]),
 });
