@@ -67,7 +67,6 @@ import { computeItemRoiRanking } from "./item_roi_rankings";
 import { refreshAll as refreshStatsDrawer } from "./stats_drawer";
 import { refreshAll as refreshMissedDeniedByCategory } from "./missed_denied_by_category";
 import { refreshAll as refreshRentalVolumeKindBreakdown } from "./rental_volume_kind_breakdown";
-import { refreshAll as refreshLifetimeRevenue } from "./lifetime_revenue";
 import { refreshAll as refreshInvestmentScorecard } from "./investment_scorecard";
 import { refreshAll as refreshConversionFunnel } from "./conversion_funnel";
 import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_category";
@@ -605,9 +604,7 @@ export const refreshSlow = internalAction({
 
     // Pass 11 (2026-05-25): 4 additional wrap-and-cache MVs to eliminate
     // the gigabyte-scale per-call bandwidth on heavy aggregation queries.
-    results.push(await safeStep(ctx, "lifetime_revenue", async () => {
-      await refreshLifetimeRevenue(ctx);
-    }));
+    // Lifetime history has its own once-daily reporting-boundary cron.
     results.push(await safeStep(ctx, "investment_scorecard", async () => {
       await refreshInvestmentScorecard(ctx);
     }));

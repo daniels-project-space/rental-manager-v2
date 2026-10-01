@@ -16,11 +16,10 @@ import {
   logicalGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
+import { realisedMonthRevenue, rentalMonthProjectionInputs } from "./lib/reservations/monthRevenue";
 import {
   pctOfTarget,
   projectCurrentMonth,
-  trailingBaseline,
 } from "./lib/month_projection";
 import { passesNameSanityCheck } from "./lib/reservations/itemResolution";
 import { londonToday, londonTime, pickupIsUpcoming } from "./lib/effectiveDates";
@@ -50,6 +49,7 @@ import {
   labelFor,
   loadRentalVolumeWindow,
 } from "./lib/rental_volume";
+import { loadMonthlyVerificationLosses } from "./lib/monthly_verification";
 import { countPlatformFallout } from "./lib/platform_fallout";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -413,7 +413,6 @@ export const getStatsDrawerData = query({
     const daysRemaining = daysInMonth - daysElapsed;
     const monthKey = monthStart.slice(0, 7);
     const weeklyFalloutMs = 7 * 86_400_000;
-    const falloutMetricVersion = 2;
     // The obsolete-booking scan is intentionally weekly. It is operational
     // reporting, unlike the live rental cards; preserve the last complete
     // snapshot between weekly checks.
@@ -423,17 +422,12 @@ export const getStatsDrawerData = query({
           .withIndex("by_account", (q) => q.eq("account", accountSlug ?? "all"))
           .first()
       : null;
-    const priorMonthlyMissed = (priorStats?.payload as any)?.monthly?.missed;
     const priorOperationalFallout = (priorStats?.payload as any)?.missed_revenue?.operational_losses;
-    const falloutCheckedAt = priorMonthlyMissed?.checked_at;
-    const reuseWeeklyFallout =
-      priorMonthlyMissed?.scheduled_month === monthKey &&
-      priorMonthlyMissed?.metric_version === falloutMetricVersion &&
-      typeof priorMonthlyMissed?.failed_security_checks_count === "number" &&
-      typeof priorMonthlyMissed?.failed_security_checks_lost_gbp === "number" &&
-      typeof falloutCheckedAt === "number" &&
-      now.getTime() - falloutCheckedAt < weeklyFalloutMs &&
-      priorOperationalFallout?.checked_at === falloutCheckedAt;
+    const falloutCheckedAt = priorOperationalFallout?.checked_at;
+    // Only the annual operational-loss summary remains on a weekly cadence.
+    // The monthly failed-verification card is read independently on every update.
+    const reuseWeeklyFallout = priorOperationalFallout?.metric_version === 3 &&
+      typeof falloutCheckedAt === "number" && now.getTime() - falloutCheckedAt < weeklyFalloutMs;
 
     // ── Next-30-day window for out-of-stock calc ─────────────────
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
@@ -800,19 +794,6 @@ export const getStatsDrawerData = query({
 
     // Month projection (net)
     const avgDailyRate = daysElapsed > 0 ? monthTotal / daysElapsed : 0;
-    const bookedFutureUniq = dedupRes(
-      confirmedWithDates.filter((r) => {
-        const d = r.start_date as string;
-        return d > today && d >= monthStart && d <= monthEnd;
-      }),
-    );
-    const bookedFuture = bookedFutureUniq.reduce((s, r) => s + netOf(r), 0);
-    // The month projection itself now lives with the `monthly` card below and
-    // is computed by convex/lib/month_projection.ts. The old one-liner here
-    // (monthTotal + bookedFuture + avgDailyRate * daysRemaining) collapsed to
-    // just `bookedFuture` at the start of every month, because avgDailyRate is
-    // monthTotal/daysElapsed and nothing has been picked up yet on day 1–2.
-
     // ── card: active ─────────────────────────────────────────────
     // V1 PARITY: count unique rentals; expose ongoing/upcoming/pending split
     // for segmented bar visualisation.
@@ -1559,26 +1540,12 @@ export const getStatsDrawerData = query({
     // to `projected`, which made pct_of_target read exactly 100% forever and
     // made Expected Monthly a duplicate of Month Confirmed at the start of
     // every month. See convex/lib/month_projection.ts for the full write-up.
-    const trailingMonthKeys = [1, 2, 3].map((back) =>
-      new Date(now.getFullYear(), now.getMonth() - back, 1).toISOString().slice(0, 7),
-    );
-    const monthlyBaseline = trailingBaseline(
-      trailingMonthKeys.map(
-        (m) => realisedMonthRevenue(allRes as unknown as ResRow[], m, accountSlug ?? null).netGbp,
-      ),
-    );
-    const monthProjection = projectCurrentMonth({
-      realisedToDate: monthTotal,
-      bookedRemainder: bookedFuture,
-      daysElapsed,
-      daysInMonth,
-      baseline: monthlyBaseline,
-    });
+    const projectionInputs = rentalMonthProjectionInputs(allRes as ResRow[], today, accountSlug);
+    const monthlyBaseline = projectionInputs.baseline;
+    const monthProjection = projectCurrentMonth(projectionInputs);
     // Expected Monthly shows failures that occurred this month, regardless of
     // the rental's scheduled date. `obsolete_at` is written at the Hygglo
     // transition; the legacy fallbacks keep imported rows auditable.
-    const monthStartMs = new Date(`${monthStart}T00:00:00.000Z`).getTime();
-    const monthEndExclusiveMs = new Date(`${monthEnd}T23:59:59.999Z`).getTime() + 1;
     const falloutAt = (r: { obsolete_at?: number; v1_updated_at?: number; _creationTime: number }) =>
       r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
     let allObsoleteRes: ResRow[] = [];
@@ -1600,16 +1567,7 @@ export const getStatsDrawerData = query({
       ];
       if (accountSlug) allObsoleteRes = allObsoleteRes.filter((r) => r.account_slug === accountSlug);
     }
-    const monthlyPlatformFallout = reuseWeeklyFallout
-      ? priorMonthlyMissed
-      : countPlatformFallout(
-          dedupRes(
-            allObsoleteRes.filter((r) => {
-              const at = falloutAt(r);
-              return at >= monthStartMs && at < monthEndExclusiveMs;
-            }),
-          ),
-        );
+    const monthlyLosses = await loadMonthlyVerificationLosses(ctx, monthKey, accountSlug);
     const platformFallout = reuseWeeklyFallout
       ? priorOperationalFallout
       : countPlatformFallout(
@@ -1630,15 +1588,12 @@ export const getStatsDrawerData = query({
       days_in_month: daysInMonth,
       days_elapsed: daysElapsed,
       avg_daily_rate: Math.round(avgDailyRate * 100) / 100,
-      missed: {
-        total_count: monthlyPlatformFallout.failed_security_checks_count,
-        failed_security_checks_count: monthlyPlatformFallout.failed_security_checks_count,
-        expected_rent_lost_gbp: monthlyPlatformFallout.failed_security_checks_lost_gbp,
-        failed_security_checks_lost_gbp: monthlyPlatformFallout.failed_security_checks_lost_gbp,
-        scheduled_month: monthKey,
-        checked_at: checkedAt,
-        metric_version: falloutMetricVersion,
-      },
+      committed_gbp: monthProjection.committed,
+      expected_additional_gbp: Math.max(0, monthProjection.projected - monthBookedRevenue),
+      completed_days: projectionInputs.daysElapsed,
+      booked_by_account: Object.fromEntries(ACCOUNT_SLUGS.map((slug) => [slug,
+        realisedMonthRevenue(allRes as ResRow[], monthKey, slug).netGbp])),
+      missed: monthlyLosses,
     };
 
     // ── card: confirmed ──────────────────────────────────────────
@@ -1904,6 +1859,7 @@ export const getStatsDrawerData = query({
         ...platformFallout,
         period_days: 365,
         checked_at: checkedAt,
+        metric_version: 3,
       },
     };
 
@@ -2846,4 +2802,10 @@ export const getRentalVolumeOtherSubKinds = query({
       totals,
     };
   },
+});
+
+/** Small reactive reader for failure events in the requested reporting month. */
+export const getMonthlyVerificationLosses = query({
+  args: { accountSlug: v.union(v.string(), v.null()), month: v.string() },
+  handler: async (ctx, { accountSlug, month }) => loadMonthlyVerificationLosses(ctx, month, accountSlug),
 });

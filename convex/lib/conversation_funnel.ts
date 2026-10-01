@@ -214,6 +214,7 @@ export type FunnelPayload = {
   generated_at: number;
   /** PROGRESSION — strictly monotonic: inquiries >= requests >= booked. */
   inquiries: number;
+  excluded_marketing_only: number;
   requests: number;
   booked: number;
   booked_net_gbp: number;
@@ -238,6 +239,7 @@ export type FunnelPayload = {
 export type FunnelInput = {
   threads: ThreadContact[];
   reservationsByOrderId: Map<string, ReservationLite>;
+  marketingOnlyRequestIds?: ReadonlySet<string>;
   now: number;
   days: number;
   accountSlug: string | null;
@@ -259,6 +261,7 @@ export function computeConversationFunnel(input: FunnelInput): FunnelPayload {
 
   const counts = Object.fromEntries(OUTCOME_KEYS.map((k) => [k, 0])) as Record<OutcomeKey, number>;
   let inquiries = 0;
+  let excludedMarketingOnly = 0;
   let requests = 0;
   let booked = 0;
   let bookedNet = 0;
@@ -271,6 +274,10 @@ export function computeConversationFunnel(input: FunnelInput): FunnelPayload {
   for (const t of threads) {
     if (t.firstRenterAt < cutoff) continue;
     if (accountSlug && t.accountSlug !== accountSlug) continue;
+    if (input.marketingOnlyRequestIds?.has(`${t.accountSlug}#${t.threadId}`)) {
+      excludedMarketingOnly++;
+      continue;
+    }
     inquiries++;
 
     // ── service axis ──────────────────────────────────────────────
@@ -320,6 +327,7 @@ export function computeConversationFunnel(input: FunnelInput): FunnelPayload {
     account_slug: accountSlug,
     generated_at: now,
     inquiries,
+    excluded_marketing_only: excludedMarketingOnly,
     requests,
     booked,
     booked_net_gbp: Math.round(bookedNet * 100) / 100,

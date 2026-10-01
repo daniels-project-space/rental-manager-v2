@@ -36,12 +36,9 @@ const SERIES = [
   { key: "dbcinemaOrganic",     label: "DB Cinema",               color: "#6366f1", fill: "url(#grad-dbcinema)",    roundTop: false },
   { key: "leoOrganic",          label: "Leo Adams",               color: "#a855f7", fill: "url(#grad-leo)",         roundTop: false },
   { key: "diogoOrganic",        label: "Diogo Valdivieso",        color: "#f97316", fill: "url(#grad-diogo)",       roundTop: false },
-  { key: "aiBoost",             label: "AI Boost",                color: "#22c55e", fill: "url(#grad-ai)",          roundTop: true  },
   { key: "damageClaims",        label: "Claims",                  color: "#ffffff", fill: "url(#grad-damage)",      roundTop: true  },
-  { key: "bookedNext",          label: "Booked (next mo)",        color: "#94a3b8", fill: "url(#grad-booked)",      roundTop: true  },
-  { key: "awaitingPaymentNext", label: "Awaiting payment (next mo)", color: "#fb923c", fill: "url(#awaiting-stripe)",  roundTop: true  },
-  { key: "pendingNext",         label: "Pending (next mo)",       color: "#eab308", fill: "url(#pending-stripe)",   roundTop: true  },
-  { key: "predictedRemainder",  label: "Projected",               color: "#94a3b8", fill: "url(#grad-predicted)",   roundTop: true  },
+  { key: "bookedNext",          label: "Confirmed ahead",        color: "#94a3b8", fill: "url(#grad-booked)",      roundTop: true  },
+  { key: "predictedRemainder",  label: "Expected additional bookings",               color: "#94a3b8", fill: "url(#grad-predicted)",   roundTop: true  },
 ] as const;
 
 
@@ -75,7 +72,6 @@ const ACTUAL_KEYS = [
   "dbcinemaOrganic",
   "leoOrganic",
   "diogoOrganic",
-  "aiBoost",
   "damageClaims",
   "bookedNext",
 ] as const;
@@ -83,6 +79,7 @@ const ACTUAL_KEYS = [
 export function LifetimeRevenue() {
   const { activeAccountSlug } = useAccount();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const [chartWindow, setChartWindow] = useState<"recent" | "all">("recent");
   const [chartMode, setChartMode] = useState<"bars" | "lines">("bars");
   // Pass 11a (2026-05-25): MV-back returns v.any() so useQuery infers
   // any — cast to a permissive Record shape so callbacks pick up
@@ -106,62 +103,53 @@ export function LifetimeRevenue() {
 
   const toggle = (key: string) => setHidden((h) => ({ ...h, [key]: !h[key] }));
 
-  // The current-month ghost bar uses the SAME target as Expected Monthly (single
-  // source of truth) and is also gated on day-of-month >= 7. Future months keep
-  // using the lifetime forecast so the chart still projects ahead.
-  const todayDayOfMonth = new Date().getDate();
-  const showCurrentMonthPrediction = todayDayOfMonth >= 7 && expectedMonthlyTarget > 0;
-  const rawCurrentMonth = (raw as { currentMonth?: string } | undefined)?.currentMonth;
+  const monthlyStats = (stats as { monthly?: {
+    projected?: number; confirmed_revenue?: number; booked_by_account?: Record<string, number>;
+    baseline_gbp?: number;
+  } } | undefined)?.monthly;
+  const rawCurrentMonth = raw?.currentMonth;
+  const forecast = raw?.forecast.map((entry: RawRow) => entry.month === rawCurrentMonth && monthlyStats?.projected !== undefined
+    ? { ...entry, value: monthlyStats.projected, committed: monthlyStats.confirmed_revenue,
+        low: Math.min(entry.low ?? entry.value, monthlyStats.projected),
+        high: Math.max(entry.high ?? entry.value, monthlyStats.projected) }
+    : entry) ?? [];
 
   const rawData = useMemo(() => raw?.months.map((row: RawRow) => {
-    const fc = raw.forecast.find((forecast: RawRow) => forecast.month === row.month);
+    const fc = raw.forecast.find((entry: RawRow) => entry.month === row.month);
     const r = { ...row } as Record<string, number | undefined>;
-    // Pre-AI months: zero out aiBoost client-side so no green sliver renders
-    // for months earlier than settings.ai_active_from. String compare on YYYY-MM
-    // is sound since the format is fixed-width.
     if (row.month < aiActiveFrom) r.aiBoost = 0;
-    const realised = ACTUAL_KEYS.reduce((sum, key) => sum + (r[key] ?? 0), 0);
-    // For the CURRENT month, use the Expected Monthly target (dashboard.ts) so the
-    // ghost bar and the target marker reference the same number. For other future
-    // months, fall back to the lifetime forecast.
-    let predictedRemainder = 0;
-    if (row.month === rawCurrentMonth) {
-      predictedRemainder = showCurrentMonthPrediction
-        ? Math.max(0, expectedMonthlyTarget - realised)
-        : 0;
-    } else if (fc) {
-      predictedRemainder = Math.max(0, fc.value - realised);
+    // Current confirmed rentals follow the hourly stat snapshot, while the
+    // historical chart remains a daily aggregate. Do not re-scan history per tab.
+    if (row.month === raw.currentMonth && monthlyStats?.booked_by_account) {
+      const by = monthlyStats.booked_by_account;
+      r.dbcinemaOrganic = (by.dbcinema ?? 0) + (by.dbcinema_web ?? 0);
+      r.leoOrganic = by.leo ?? 0;
+      r.diogoOrganic = by.diogo ?? 0;
     }
-    return {
-      ...r,
-      month: String(row.month),
-      label: fmtMonth(String(row.month)),
-      forecastLine: fc ? fc.value : null,
-      predictedRemainder,
+    const rentalCommitted = ACTUAL_KEYS.filter((key) => key !== "damageClaims")
+      .reduce((sum, key) => sum + (r[key] ?? 0), 0);
+    const estimate = row.month === raw.currentMonth ? monthlyStats?.projected ?? fc?.value : fc?.value;
+    return { ...r, month: String(row.month), label: fmtMonth(String(row.month)),
+      rentalEstimate: estimate,
+      forecastLine: estimate !== undefined ? estimate + (r.damageClaims ?? 0) : null,
+      forecastLow: fc?.low, forecastHigh: fc?.high,
+      predictedRemainder: estimate !== undefined ? Math.max(0, estimate - rentalCommitted) : 0,
     };
-  }) ?? [], [
-    aiActiveFrom,
-    expectedMonthlyTarget,
-    raw,
-    rawCurrentMonth,
-    showCurrentMonthPrediction,
-  ]);
+  }) ?? [], [aiActiveFrom, raw, monthlyStats]);
 
   const seriesTotals = useMemo(() => {
     const out: Record<string, number> = {};
     for (const s of SERIES) out[s.key] = 0;
-    for (const row of raw?.months ?? []) {
+    for (const row of rawData) {
       const r = row as unknown as Record<string, number | undefined>;
       for (const s of SERIES) {
         if (s.key === "predictedRemainder") continue;
-        // For aiBoost, respect ai_active_from (pre-AI months contribute 0).
-        if (s.key === "aiBoost" && row.month < aiActiveFrom) continue;
         out[s.key] += r[s.key] ?? 0;
       }
     }
-    out.predictedRemainder = rawData.reduce((a, row) => a + (row.predictedRemainder ?? 0), 0);
+    // Forecasts are displayed per month rather than summed into a false total.
     return out;
-  }, [raw, rawData, aiActiveFrom]);
+  }, [rawData]);
 
   // To get elegant fade animations on legend toggles, we ZERO OUT hidden
   // series instead of using Recharts' instant <Bar hide />. Bars then animate
@@ -174,20 +162,26 @@ export function LifetimeRevenue() {
     return rawData.reduce<ChartRow[]>((rows, row) => {
       const r = row as unknown as Record<string, number | undefined>;
       const out: Record<string, unknown> = { ...row };
+      if (chartMode === "lines" && row.month > (rawCurrentMonth ?? "9999-12")) {
+        for (const key of ACTUAL_KEYS) if (key !== "bookedNext") out[key] = null;
+      }
       for (const s of SERIES) {
         if (hidden[s.key]) out[s.key] = 0;
       }
+      if (hidden.predictedRemainder) out.forecastLine = null;
       let monthSum = 0;
       for (const k of ACTUAL_KEYS) {
         if (!hidden[k]) monthSum += r[k] ?? 0;
       }
-      const previous = rows.length > 0
-        ? Number(rows[rows.length - 1].cumulative ?? 0)
-        : 0;
-      out.cumulative = previous + monthSum;
+      const previous = rows.length > 0 ? Number(rows[rows.length - 1].cumulative ?? 0) : 0;
+      out.cumulative = row.month <= (rawCurrentMonth ?? "9999-12") ? previous + monthSum : null;
       return [...rows, out as ChartRow];
-    }, []);
-  }, [rawData, hidden]);
+    }, []).filter((row) => {
+      if (chartWindow === "all" || !rawCurrentMonth) return true;
+      const [year, month] = rawCurrentMonth.split("-").map(Number);
+      return row.month >= new Date(Date.UTC(year, month - 13, 1)).toISOString().slice(0, 7);
+    });
+  }, [rawData, hidden, chartWindow, rawCurrentMonth, chartMode]);
 
   // Stats bar reacts to legend toggles: filter ACTUAL_KEYS by visibility,
   // then recompute totals/avg/best/weakest/boost from the visible-only sums.
@@ -201,13 +195,13 @@ export function LifetimeRevenue() {
     leoTakeover,
   } = useMemo(() => {
     const visibleActualKeys = ACTUAL_KEYS.filter((k) => !hidden[k]);
-    const months = raw?.months ?? [];
+    const months = rawData;
     const perMonth = months.map((row) => {
       const r = row as unknown as Record<string, number | undefined>;
       const sum = visibleActualKeys.reduce((acc, k) => acc + (r[k] ?? 0), 0);
       return { month: row.month, sum };
     });
-    const total = perMonth.reduce((acc, m) => acc + m.sum, 0);
+    const total = perMonth.filter((m) => m.month <= (rawCurrentMonth ?? "9999-12")).reduce((acc, m) => acc + m.sum, 0);
 
     // Trailing-window boundaries relative to today (auto-shifts each month).
     const now = new Date();
@@ -242,8 +236,8 @@ export function LifetimeRevenue() {
     if (!hidden.aiBoost && total > 0) {
       sumAiBoostGbp = months.reduce((acc, row) => {
         if (row.month < aiActiveFrom) return acc;
-        const r = row as unknown as Record<string, number | undefined>;
-        return acc + (r.aiBoost ?? 0);
+        const original = raw?.months.find((r) => r.month === row.month);
+        return acc + Number(original?.aiBoost ?? 0);
       }, 0);
       boost = Math.round((sumAiBoostGbp / total) * 100);
     }
@@ -259,7 +253,7 @@ export function LifetimeRevenue() {
         currentMonthKey,
       ),
     };
-  }, [raw, hidden, aiActiveFrom]);
+  }, [rawData, raw, hidden, aiActiveFrom, rawCurrentMonth]);
 
   // hiddenDelta = (sum of ALL ACTUAL_KEYS across months) − (sum of VISIBLE
   // ACTUAL_KEYS, i.e. totalRevenue). Computed client-side from seriesTotals
@@ -267,7 +261,8 @@ export function LifetimeRevenue() {
   // raw.totalRevenue may include legacy series (e.g. pendingNext) that the
   // stats bar no longer counts, which would otherwise leave a permanent
   // positive delta even with nothing hidden.
-  const lifetimeActualsTotal = ACTUAL_KEYS.reduce((a, k) => a + (seriesTotals[k] ?? 0), 0);
+  const lifetimeActualsTotal = rawData.filter((r) => r.month <= (rawCurrentMonth ?? "9999-12"))
+    .reduce((sum, r) => sum + ACTUAL_KEYS.reduce((n, key) => n + ((r as unknown as Record<string, number>)[key] ?? 0), 0), 0);
   const hiddenDelta = Math.max(0, lifetimeActualsTotal - totalRevenue);
   const hasLeoTakeoverBoundary = data.some((row) => row.month === LEO_TAKEOVER_MONTH) &&
     data.some((row) => row.month < LEO_TAKEOVER_MONTH);
@@ -330,7 +325,7 @@ export function LifetimeRevenue() {
                 `Excludes assisted and baseline. Lifetime AI credit: £${Math.round(sumAiBoostGbp).toLocaleString("en-GB")}.`;
               return (
                 <span title={tooltip} className="inline-flex items-center gap-1 cursor-help">
-                  AI Boost: <b style={{ color: "#22c55e" }}>{boostPct}%</b>
+                  AI-attributed (included): <b style={{ color: "#22c55e" }}>{boostPct}%</b>
                   <span style={{ color: "#22c55e" }}>(£{Math.round(sumAiBoostGbp).toLocaleString("en-GB")})</span>
                   <span
                     aria-label="AI Boost details"
@@ -342,8 +337,26 @@ export function LifetimeRevenue() {
           </div>
         )}
 
+        {raw && <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {forecast.map((entry: RawRow) => <div key={entry.month} className="rounded-lg border border-slate-700/60 bg-slate-900/50 px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">{fmtMonth(entry.month)} · rental estimate</div>
+            <div className="mt-1 text-lg font-semibold text-slate-200">{fmtGbp(entry.value)}</div>
+            <div className="text-[10px] text-emerald-300">{fmtGbp(entry.committed ?? 0)} confirmed</div>
+            <div className="text-[10px] text-slate-500">Recent range {fmtGbp(entry.low ?? entry.value)}–{fmtGbp(entry.high ?? entry.value)}</div>
+            {(() => { const pipeline = raw.months.find((r) => r.month === entry.month); return <>
+              {Number(pipeline?.pendingNext ?? 0) > 0 && <div className="mt-1 text-[10px] text-amber-400">{fmtGbp(pipeline!.pendingNext)} awaiting verification</div>}
+              {Number(pipeline?.awaitingPaymentNext ?? 0) > 0 && <div className="text-[10px] text-orange-400">{fmtGbp(pipeline!.awaitingPaymentNext)} awaiting payment</div>}
+            </>; })()}
+          </div>)}
+          <div className="col-span-2 text-[10px] leading-relaxed text-slate-500 md:col-span-4">
+            <p>Confirmed bookings are the minimum; dashed sections show expected additional bookings. Pending payments, verification and claims are excluded from the estimate.</p>
+            <details className="mt-1"><summary className="cursor-pointer text-slate-400">How estimates work</summary><p className="mt-1">The last 3 completed months set the usual month. Pace uses completed days, stabilised with 14 days of historical revenue; inferred new demand is capped at twice the usual daily rate. The range shows recent historical variation, rather than a guaranteed outcome.</p></details>
+          </div>
+        </div>}
+
         {/* Chart mode toggle */}
         <div className="flex gap-1 mb-2">
+          <button onClick={() => setChartWindow((w) => w === "recent" ? "all" : "recent")} className="mr-2 rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] text-slate-300">{chartWindow === "recent" ? "Last 12 months · show all" : "All history · show recent"}</button>
           <button
             onClick={() => setChartMode("bars")}
             className="text-[11px] px-2.5 py-0.5 rounded-full transition-all hover:opacity-90"
@@ -375,7 +388,7 @@ export function LifetimeRevenue() {
         <div className="flex flex-wrap gap-1 mb-3 max-h-[80px] overflow-y-auto">
           {SERIES.map((s) => {
             const isHidden = hidden[s.key] ?? false;
-            const amount = fmtGbp(seriesTotals[s.key] ?? 0);
+            const amount = s.key === "predictedRemainder" ? "by month" : fmtGbp(seriesTotals[s.key] ?? 0);
             return (
               <button
                 key={s.key}
@@ -435,7 +448,7 @@ export function LifetimeRevenue() {
           {expectedMonthlyTarget > 0 && (
             <button
               onClick={() => toggle("target")}
-              title={`Target · ${fmtGbp(expectedMonthlyTarget)}`}
+              title={`Usual month · ${fmtGbp(expectedMonthlyTarget)}`}
               className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full transition-all hover:opacity-90"
               style={{
                 border: "1px solid " + (hidden.target ? "#3a3f4b" : "#eab30880"),
@@ -454,7 +467,7 @@ export function LifetimeRevenue() {
                 }}
               />
               <span className="flex flex-col items-start leading-tight">
-                <span>Target</span>
+                <span>Usual month</span>
                 <span className="text-[9px] opacity-70 tabular-nums">{fmtGbp(expectedMonthlyTarget)}</span>
               </span>
             </button>
@@ -624,7 +637,7 @@ export function LifetimeRevenue() {
                           p.name === "cumulative" ? "Cumulative" :
                           p.name === "cumulative-area" ? null :
                           p.name === "forecastLine" ? "Forecast" :
-                          p.name === "predictedRemainder" ? "Predicted remainder" :
+                          p.name === "predictedRemainder" ? "Expected additional bookings" :
                           series?.label ?? String(p.name);
                         if (niceLabel === null) return null;
                         const dotColor = series?.color ?? (p.name === "cumulative" ? "#22c55e" : "#94a3b8");
@@ -711,8 +724,8 @@ export function LifetimeRevenue() {
                 <Area
                   yAxisId="right"
                   type="monotone"
-                  dataKey="predictedRemainder"
-                  name="predictedRemainder"
+                  dataKey="forecastLine"
+                  name="forecastLine"
                   stroke="#94a3b8"
                   strokeWidth={2}
                   strokeDasharray="5 5"
@@ -792,15 +805,9 @@ export function LifetimeRevenue() {
                 animationEasing="ease-out"
                 hide={hidden.cumulative ?? false}
               />
-              {/* Current-month expected ceiling: small dashed T-marker drawn at the
-                  projected total. Lets you see at-a-glance whether realised + booked
-                  + pending has already reached target. */}
+              {/* Usual-month baseline is a separate reference from the estimate. */}
               {raw && expectedMonthlyTarget > 0 && !hidden.target && (() => {
-                // Target marker only appears once the current month is ≥7 days in
-                // — before that there isn't enough month-to-date data to make the
-                // projection meaningful, and the marker would be misleading.
-                const dayOfMonth = new Date().getDate();
-                if (dayOfMonth < 7) return null;
+
                 const rawWithMonth = raw as typeof raw & { currentMonth?: string };
                 const target = expectedMonthlyTarget;
                 const currentLabel = data.find((d) => d.month === rawWithMonth.currentMonth)?.label;
@@ -827,11 +834,11 @@ export function LifetimeRevenue() {
                           <line x1={cx - w} x2={cx - w} y1={cy - 3} y2={cy + 3} stroke="#facc15" strokeWidth={2} />
                           <line x1={cx + w} x2={cx + w} y1={cy - 3} y2={cy + 3} stroke="#facc15" strokeWidth={2} />
                           <text
-                            x={cx + w + 5} y={cy + 3}
+                            x={cx - w - 5} y={cy + 3} textAnchor="end"
                             fill="#facc15" fontSize={9.5} fontWeight={700}
                             style={{ filter: "drop-shadow(0 0 3px rgba(0,0,0,0.6))" }}
                           >
-                            target {fmtTarget}
+                            usual {fmtTarget}
                           </text>
                         </g>
                       );

@@ -98,7 +98,9 @@ export async function refreshAll(
       new Date(earliestPriorGen).toLocaleDateString("en-CA", { timeZone: "Europe/London" }) ===
       new Date(startedAt).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
     const recent = startedAt - earliestPriorGen < 6 * 60 * 60 * 1000;
-    if (sameDay && recent) {
+    const sameRevenueDay = new Date(earliestPriorGen).toISOString().slice(0, 10) ===
+      new Date(startedAt).toISOString().slice(0, 10);
+    if (sameDay && sameRevenueDay && recent) {
       // A same-day agreed pickup crosses upcoming -> ongoing without a DB
       // mutation. Inspect only the small cached drawer arrays before skipping.
       const todayLondon = new Date(startedAt).toLocaleDateString("en-CA", { timeZone: "Europe/London" });

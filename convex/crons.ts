@@ -58,6 +58,24 @@ crons.daily(
   {},
 );
 
+// Refresh every account just after the UTC reporting-day boundary. This keeps
+// month/week/day cards aligned without waiting for the 6-hour account cadence.
+crons.daily(
+  "mv_refresh_stats_day_boundary",
+  { hourUTC: 0, minuteUTC: 2 },
+  internal.mv.stats_drawer.refresh,
+  { scope: "both" },
+);
+
+// Lifetime history needs one daily scan; move it to the reporting boundary
+// instead of leaving the chart on the previous month until the 04:00 batch.
+crons.daily(
+  "mv_refresh_lifetime_day_boundary",
+  { hourUTC: 0, minuteUTC: 5 },
+  internal.mv.lifetime_revenue.refresh,
+  {},
+);
+
 // Cached listing prices, re-synced from the catalog cache. WEEKLY — owners
 // change prices in occasional bulk edits, and the job is a Convex-only diff
 // that writes nothing on a week where nothing moved.

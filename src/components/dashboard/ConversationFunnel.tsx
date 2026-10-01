@@ -19,6 +19,7 @@ type Outcome = {
 type FunnelData = {
   window_days: number;
   inquiries: number;
+  excluded_marketing_only?: number;
   requests: number;
   booked: number;
   booked_net_gbp: number;
@@ -101,6 +102,7 @@ export function ConversationFunnel() {
         }
       />
 
+      {data !== undefined && (data.excluded_marketing_only ?? 0) > 0 && <p className="mb-3 text-[10px] text-slate-500">{data.excluded_marketing_only} marketing-only requests excluded from this funnel.</p>}
       {data === undefined ? (
         <SkeletonBlock className="h-56 w-full" />
       ) : data.inquiries === 0 ? (

@@ -2,9 +2,9 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
 import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
-import { realisedMonthRevenue, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
+import { realisedMonthRevenue, rentalMonthProjectionInputs, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
-import { projectCurrentMonth, trailingBaseline } from "./lib/month_projection";
+import { projectCurrentMonth, previousMonthKeys, trailingBaseline } from "./lib/month_projection";
 import { isPaid, isAwaitingPayment } from "./order_step_semantics";
 import { computeMissedRevenue, OWNER_SHARE } from "./lib/missed_revenue";
 import {
@@ -411,23 +411,19 @@ export const getLifetimeByMonth = query({
       }
     }
 
-    const nextMonthKey = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-      .toISOString()
-      .slice(0, 7);
-
     const dbGross = new Map<string, number>();
     const leoGross = new Map<string, number>();
     // diogo — live-only account (no v1 / historical_revenue rows). Its realised
     // gross flows purely through this map (mirrors leoGross), keeping diogo's
     // revenue out of the dbcinema bucket (the `else` fallback below).
     const diogoGross = new Map<string, number>();
-    let bookedNextTotal = 0;
-    let pendingNextTotal = 0;
+    const bookedByMonth = new Map<string, number>();
+    const pendingByMonth = new Map<string, number>();
     // "Awaiting payment" = owner-accepted but renter not-yet-paid (APPROVED |
     // FUNDS_RESERVED). Surfaced separately from bookedNext so commitments
     // are visible without inflating realised/booked revenue. See
     // order_step_semantics.ts REVENUE-SUM CANON.
-    let awaitingPaymentNextTotal = 0;
+    const awaitingPaymentByMonth = new Map<string, number>();
 
     // Dedup by canonical logical-rental key (hygglo_order_id > v1_rental_id
     // > renter+dates+account composite). Collisions keep the row with the
@@ -457,13 +453,14 @@ export const getLifetimeByMonth = query({
       // them into the next-month overlay bucket lets the lifetime chart
       // surface the same forward-looking pending revenue figure.
       if (isPending) {
-        pendingNextTotal = r2(pendingNextTotal + amount);
+        const mo = dateStr.slice(0, 7);
+        pendingByMonth.set(mo, r2((pendingByMonth.get(mo) ?? 0) + amount));
         continue;
       }
 
       if (isFutureRes) {
-        const futureMo = (res.start_date ?? dateStr).slice(0, 7);
-        if (futureMo === nextMonthKey) {
+        const futureMo = dateStr.slice(0, 7);
+        {
           // REVENUE-SUM CANON: only paid rows count as booked revenue.
           // APPROVED / FUNDS_RESERVED rows have poller-populated prices but
           // the renter has not funded escrow yet — surface them in the
@@ -471,9 +468,9 @@ export const getLifetimeByMonth = query({
           // inflating booked / realised totals. (incident 2026-05-23: June
           // 2026 dbcinema showed £970 booked vs only £281 actually paid.)
           if (isPaid(res.order_step)) {
-            bookedNextTotal = r2(bookedNextTotal + amount);
+            bookedByMonth.set(futureMo, r2((bookedByMonth.get(futureMo) ?? 0) + amount));
           } else if (isAwaitingPayment(res.order_step)) {
-            awaitingPaymentNextTotal = r2(awaitingPaymentNextTotal + amount);
+            awaitingPaymentByMonth.set(futureMo, r2((awaitingPaymentByMonth.get(futureMo) ?? 0) + amount));
           }
           // REQUEST / null / dead rows: deliberately dropped (no commitment).
         }
@@ -516,7 +513,8 @@ export const getLifetimeByMonth = query({
       const perSlug = Object.fromEntries(
         ACCOUNT_SLUGS.map((slug) => [slug, realisedMonthRevenue(filtered as any, currentMonth, slug)]),
       ) as Record<(typeof ACCOUNT_SLUGS)[number], ReturnType<typeof realisedMonthRevenue>>;
-      if (perSlug.dbcinema.netGbp > 0) dbGross.set(currentMonth, r2(perSlug.dbcinema.netGbp));
+      const dbCurrent = perSlug.dbcinema.netGbp + (perSlug.dbcinema_web?.netGbp ?? 0);
+      if (dbCurrent > 0) dbGross.set(currentMonth, r2(dbCurrent));
       if (perSlug.leo.netGbp > 0) leoGross.set(currentMonth, r2(perSlug.leo.netGbp));
       if (perSlug.diogo.netGbp > 0) diogoGross.set(currentMonth, r2(perSlug.diogo.netGbp));
       // daniel/vertus realised current-month buckets are derived elsewhere
@@ -588,7 +586,6 @@ export const getLifetimeByMonth = query({
       const [yr, mIdx] = mo.split("-").map(Number);
       const label = MONTH_NAMES[mIdx - 1] + " " + String(yr).slice(2);
       const isFuture = mo > currentMonth;
-      const isNextMo = mo === nextMonthKey;
 
       let dbOrganic = 0;
       let leoOrganic = 0;
@@ -726,14 +723,14 @@ export const getLifetimeByMonth = query({
           dbOrganic = histVertus; // surface hist column; live polling is retired
           leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         }
-      } else if (isNextMo) {
-        bookedNextVal = bookedNextTotal;
-        pendingNextVal = pendingNextTotal;
-        awaitingPaymentNextVal = awaitingPaymentNextTotal;
+      } else {
+        bookedNextVal = bookedByMonth.get(mo) ?? 0;
       }
+      pendingNextVal = pendingByMonth.get(mo) ?? 0;
+      awaitingPaymentNextVal = awaitingPaymentByMonth.get(mo) ?? 0;
 
-      const monthTotal = dbOrganic + leoOrganic + diogoOrganic + danielOrganic + vertusOrganic + aiBoost + damageClaims + bookedNextVal + pendingNextVal;
-      cumulative = r2(cumulative + monthTotal);
+      const monthTotal = dbOrganic + leoOrganic + diogoOrganic + danielOrganic + vertusOrganic + damageClaims + bookedNextVal;
+      if (!isFuture) cumulative = r2(cumulative + monthTotal);
 
       const count = !isFuture
         ? dedupedFiltered.filter((r) => {
@@ -781,11 +778,11 @@ export const getLifetimeByMonth = query({
     const completedRows = rows.filter(
       (row) =>
         row.month <= currentMonth &&
-        row.dbcinemaOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.aiBoost + row.damageClaims > 0
+        row.dbcinemaOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.damageClaims > 0
     );
 
     const monthRev = (row: MonthRow) =>
-      row.dbcinemaOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.aiBoost + row.damageClaims;
+      row.dbcinemaOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.damageClaims;
 
     const totalRevenue = r2(completedRows.reduce((s, row) => s + monthRev(row), 0));
     const avgMonthly =
@@ -800,143 +797,30 @@ export const getLifetimeByMonth = query({
         ? completedRows.reduce((worst, row) => (monthRev(row) < monthRev(worst) ? row : worst))
         : null;
 
-    // ============================================================
-    // Smart forecast: blend month-to-date pace + seasonality (same
-    // month in prior years) + recent 3-month moving average.
-    // Current month is INCLUDED in the forecast array so the client
-    // can render an expected-ceiling marker on top of in-progress bars.
-    // ============================================================
-
-    // Lookup of historical revenue by month for seasonality scans.
-    const revByMonth = new Map<string, number>();
-    for (const r of rows) revByMonth.set(r.month, monthRev(r));
-
-    const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const dayOfMonth = now.getDate();
-    const currentRow = rows.find((r) => r.month === currentMonth);
-    const currentMonthSoFar = currentRow ? monthRev(currentRow) : 0;
-
-    // Split the current month's booked total into "already earned" vs "booked
-    // for later this month". The old `paceProjection` divided the WHOLE month
-    // (currentMonthSoFar, which includes bookings dated later in the month) by
-    // dayOfMonth — treating future bookings as already earned. On 2026-09-02
-    // that turned £835.20 into £835.20 / 2 * 30 = £12,528, and the blend below
-    // published £11,546 as September's target for a ~£3,342/mo business.
+    // Recurring rental forecasts use only the three completed calendar months,
+    // with the exact same predicate/net values as Expected Monthly. Claims and
+    // a partly-complete current month never enter the historical baseline.
     const todayStr = now.toISOString().slice(0, 10);
-    let currentRealisedToDate = 0;
-    for (const res of dedupedFiltered) {
-      if (res.is_obsolete) continue;
-      if (res.status === "cancelled" || res.status === "declined") continue;
-      if (isPendingVerification(res as any)) continue;
-      const d = effectiveDate(res as any);
-      if (!d || d.slice(0, 7) !== currentMonth || d > todayStr) continue;
-      currentRealisedToDate += res.net_to_owner_gbp ?? 0;
-    }
-    const currentBookedRemainder = Math.max(0, currentMonthSoFar - currentRealisedToDate);
-
-    // Same month in up to 3 prior years; year-over-year growth factor applied
-    // when 2+ samples are available. Clamped 0.7x-1.5x to absorb outliers.
-    function seasonalProjection(targetMonth: string): { value: number; sampleYears: number } {
-      const parts = targetMonth.split("-");
-      const targetYear = parseInt(parts[0], 10);
-      const mm = parts[1];
-      const samples: number[] = [];
-      for (let y = 1; y <= 3; y++) {
-        const past = String(targetYear - y) + "-" + mm;
-        const v = revByMonth.get(past);
-        if (v !== undefined && v > 0) samples.push(v);
-      }
-      if (samples.length === 0) return { value: 0, sampleYears: 0 };
-      let projected = samples.reduce((a, b) => a + b, 0) / samples.length;
-      if (samples.length >= 2 && samples[1] > 0) {
-        const yoy = samples[0] / samples[1];
-        const clampedYoy = Math.max(0.7, Math.min(1.5, yoy));
-        projected = samples[0] * clampedYoy;
-      }
-      return { value: Math.round(projected), sampleYears: samples.length };
-    }
-
-    // Recent 3-month weighted moving average (existing logic kept as fallback).
-    const recent3 = completedRows.slice(-3);
-    let movingAvg = avgMonthly;
-    if (recent3.length === 3) {
-      movingAvg = Math.round(
-        monthRev(recent3[2]) * 0.5 + monthRev(recent3[1]) * 0.3 + monthRev(recent3[0]) * 0.2,
-      );
-    } else if (recent3.length === 2) {
-      movingAvg = Math.round(monthRev(recent3[1]) * 0.6 + monthRev(recent3[0]) * 0.4);
-    } else if (recent3.length === 1) {
-      movingAvg = Math.round(monthRev(recent3[0]));
-    }
-
-    type ForecastEntry = {
-      month: string;
-      value: number;
-      basis: "pace" | "seasonal" | "ma" | "blend";
-    };
-    const forecast: ForecastEntry[] = [];
-
-    // Current month: the SINGLE canonical definition, shared byte-for-byte with
-    // the Expected Monthly stat card (convex/dashboard.ts) via
-    // convex/lib/month_projection.ts. Seasonality is deliberately excluded here
-    // — dashboard.ts reads only the last 365 days of reservations and cannot see
-    // prior-year Septembers, so including it would guarantee the tile and the
-    // chart disagree again. Seasonality still drives the FUTURE months below,
-    // which only the chart draws and no tile mirrors.
-    {
-      const projection = projectCurrentMonth({
-        realisedToDate: currentRealisedToDate,
-        bookedRemainder: currentBookedRemainder,
-        daysElapsed: dayOfMonth,
-        daysInMonth: daysInCurrentMonth,
-        baseline: trailingBaseline(
-          completedRows.slice(-3).reverse().map((r) => monthRev(r)),
-        ),
-      });
-      forecast.push({
-        month: currentMonth,
-        // Never project below what is already on the books — projectCurrentMonth
-        // floors at `committed`, so this is belt-and-braces for the case where
-        // currentMonthSoFar counts rows the projection inputs did not.
-        value: Math.max(projection.projected, Math.round(currentMonthSoFar)),
-        basis: "blend",
-      });
-    }
-
-    // MoM growth rate from up to last 6 completed months (geometric mean).
-    // Used so future-month MA fallbacks aren't flat — each month differs.
-    const last6 = completedRows.slice(-6);
-    let momGrowth = 0;
-    if (last6.length >= 2) {
-      const oldest = monthRev(last6[0]);
-      const latest = monthRev(last6[last6.length - 1]);
-      if (oldest > 0 && latest > 0) {
-        const periods = last6.length - 1;
-        const raw = Math.pow(latest / oldest, 1 / periods) - 1;
-        momGrowth = Math.max(-0.15, Math.min(0.2, raw));
-      }
-    }
-
-    // Future months: blend per-month seasonal with MoM-grown moving avg.
-    // Each future month gets a different growth multiplier i → i+1 → i+2.
-    for (let i = 1; i <= 3; i++) {
-      const fd = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      const targetMonth = fd.toISOString().slice(0, 7);
-      const seasonal = seasonalProjection(targetMonth);
-      const grownMa = Math.round(movingAvg * Math.pow(1 + momGrowth, i));
-      let value: number;
-      let basis: ForecastEntry["basis"];
-      if (seasonal.sampleYears >= 1) {
-        value = Math.round(seasonal.value * 0.65 + grownMa * 0.35);
-        basis = "blend";
-      } else {
-        value = grownMa;
-        basis = "ma";
-      }
-      forecast.push({ month: targetMonth, value, basis });
-    }
-
-    const currentMonthTarget = forecast[0]?.value ?? movingAvg;
+    const inputs = rentalMonthProjectionInputs(filtered as any, todayStr, accountSlug);
+    const currentProjection = projectCurrentMonth(inputs);
+    const recent = previousMonthKeys(currentMonth).map((month) =>
+      realisedMonthRevenue(filtered as any, month, accountSlug).netGbp);
+    const baseline = trailingBaseline(recent);
+    const forecast = Array.from({ length: 4 }, (_, offset) => {
+      const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
+      const month = date.toISOString().slice(0, 7);
+      const days = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+      const committed = offset === 0 ? currentProjection.committed : (bookedByMonth.get(month) ?? 0);
+      const value = offset === 0 ? currentProjection.projected : Math.max(Math.round(baseline * days / inputs.daysInMonth), Math.ceil(committed));
+      // A historical spread, not a statistical confidence interval.
+      const low = offset === 0 ? projectCurrentMonth({ ...inputs, baseline: Math.min(...recent) }).projected
+        : Math.max(Math.round(Math.min(...recent) * days / inputs.daysInMonth), Math.ceil(committed));
+      const high = offset === 0 ? projectCurrentMonth({ ...inputs, baseline: Math.max(...recent) }).projected
+        : Math.max(Math.round(Math.max(...recent) * days / inputs.daysInMonth), Math.ceil(committed));
+      return { month, value, low: Math.min(low, value), high: Math.max(high, value), committed,
+        basis: offset === 0 ? currentProjection.basis : "baseline", historyMonths: recent.length };
+    });
+    const currentMonthTarget = currentProjection.target;
 
     return {
       months: rows,

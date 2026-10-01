@@ -10,6 +10,8 @@ interface Props {
       total_count: number;
       failed_security_checks_count: number;
       scheduled_month: string;
+      expected_rent_lost_gbp?: number;
+      unvalued_count?: number;
     };
   };
 }
@@ -42,8 +44,10 @@ export default function MonthlyDrawer({ data }: Props) {
           <div className="mt-1 text-xs text-rose-200/80">
             {data.missed.total_count === 0
               ? "None this month."
-              : `${data.missed.failed_security_checks_count} failed verification${data.missed.failed_security_checks_count === 1 ? "" : "s"}`}
+              : `${data.missed.failed_security_checks_count} failed verification${data.missed.failed_security_checks_count === 1 ? "" : "s"} · ${gbp(data.missed.expected_rent_lost_gbp ?? 0)} recorded booking value lost`}
+            {(data.missed.unvalued_count ?? 0) > 0 && <span> · {data.missed.unvalued_count} with no recorded price</span>}
           </div>
+          <div className="mt-1 text-[10px] text-slate-500">Counts the failure date, even if the rental was scheduled for another month. Updates when Hygglo syncs.</div>
         </div>
       )}
     </div>

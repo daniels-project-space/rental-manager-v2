@@ -9,6 +9,8 @@ import {
   indexReservationsByOrderId,
 } from "./conversation_funnel";
 
+import { marketingOnlyRequestIds } from "./marketing_only_requests";
+
 const NOW = Date.parse("2026-09-02T12:00:00Z");
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -254,5 +256,46 @@ describe("regression guards for the old funnel's defects", () => {
     const d30 = run(m, r, 30);
     expect(d7.inquiries).toBe(d30.inquiries);
     expect(d7.outcomes).toEqual(d30.outcomes);
+  });
+});
+
+
+describe("marketing-only requests", () => {
+  const items = [{ _id: "owned", name_canonical: "Sony FX3", is_marketing_only: false },
+    { _id: "marketing", name_canonical: "Canon EOS R5", is_marketing_only: true }];
+  it("excludes only explicitly labelled inventory and scopes product mappings by account", () => {
+    const excluded = marketingOnlyRequestIds([
+      { hygglo_order_id: "one", account_slug: "leo", resolved_items: [{ item_id: "marketing" }] },
+      { hygglo_order_id: "two", account_slug: "leo", hygglo_items: [{ product_id: 1 }] },
+      { hygglo_order_id: "three", account_slug: "diogo", hygglo_items: [{ product_id: 1 }] },
+      { hygglo_order_id: "unknown", account_slug: "leo", items: [{ item_name: "Unknown item" }] },
+      { hygglo_order_id: "named", account_slug: "leo", items: [{ item_name: "Canon EOS R5 Camera" }] },
+      { hygglo_order_id: "partial", account_slug: "leo", resolved_items: [{ item_id: "owned" }], hygglo_items: [{ name: "Canon EOS R5" }] },
+      { hygglo_order_id: "mixed", account_slug: "leo", resolved_items: [{ item_id: "owned" }, { item_id: "marketing" }] },
+    ], items, new Map([["leo#1", "marketing"], ["diogo#1", "owned"]]));
+    expect([...excluded].sort()).toEqual(["leo#mixed", "leo#named", "leo#one", "leo#partial", "leo#two"]);
+  });
+  it("respects authoritative overrides over stale LLM item matches", () => {
+    expect(marketingOnlyRequestIds([
+      { hygglo_order_id: "corrected", account_slug: "leo", hygglo_items: [{ product_id: 1 }],
+        resolved_items: [{ item_id: "marketing" }] },
+    ], items, new Map(), new Map([["leo#1", [{ item_id: "owned", qty: 1 }]]])).size).toBe(0);
+  });
+  it("removes excluded requests from every denominator and outcome without hiding unknown inquiries", () => {
+    const output = computeConversationFunnel({
+      threads: ["marketing", "owned", "unknown"].map((threadId) => ({ threadId, accountSlug: "leo", firstRenterAt: NOW - 2 * DAY })),
+      reservationsByOrderId: indexReservationsByOrderId([
+        { hygglo_order_id: "marketing", status: "declined", hygglo_system_signal: "owner_denied" },
+        { hygglo_order_id: "owned", status: "confirmed", net_to_owner_gbp: 100 },
+      ]), marketingOnlyRequestIds: new Set(["leo#marketing"]), now: NOW, days: 30, accountSlug: null,
+    });
+    expect(output.excluded_marketing_only).toBe(1);
+    expect(output.inquiries).toBe(2);
+    expect(output.requests).toBe(1);
+    expect(output.booked).toBe(1);
+    expect(output.book_rate_of_requests).toBe(1);
+    expect(output.reply.eligible).toBe(2);
+    expect(output.outcomes.reduce((sum, o) => sum + o.count, 0)).toBe(2);
+    expect(output.outcomes.some((o) => o.key === "owner_denied")).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { loadMarketingOnlyRequestIds } from "./lib/marketing_only_requests";
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import {
@@ -396,6 +397,7 @@ async function computeFunnelLive(
   return computeConversationFunnel({
     threads: buildThreadContacts(messages),
     reservationsByOrderId: indexReservationsByOrderId(reservations),
+    marketingOnlyRequestIds: await loadMarketingOnlyRequestIds(ctx, reservations),
     now: Date.now(),
     days,
     accountSlug,
@@ -412,6 +414,7 @@ export const computeConversionFunnelMatrix = internalQuery({
   handler: async (ctx, { accounts, windows }) => {
     const messages = await ctx.db.query("hygglo_messages").collect(); // check-patterns:ok — see computeFunnelLive
     const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — see computeFunnelLive
+    const marketingOnlyRequestIds = await loadMarketingOnlyRequestIds(ctx, reservations);
     const threads = buildThreadContacts(messages);
     const reservationsByOrderId = indexReservationsByOrderId(reservations);
     const now = Date.now();
@@ -424,6 +427,7 @@ export const computeConversionFunnelMatrix = internalQuery({
           payload: computeConversationFunnel({
             threads,
             reservationsByOrderId,
+            marketingOnlyRequestIds,
             now,
             days,
             accountSlug,

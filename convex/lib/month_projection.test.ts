@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   pctOfTarget,
+  previousMonthKeys,
   projectCurrentMonth,
   trailingBaseline,
 } from "./month_projection";
+import { rentalMonthProjectionInputs } from "./reservations/monthRevenue";
 
 // Real numbers from hearty-oyster-600 on 2026-09-02, the day the dashboard was
 // reported broken. Completed months, most recent first.
@@ -130,5 +132,55 @@ describe("pctOfTarget", () => {
 
   it("returns 0 rather than Infinity when there is no target", () => {
     expect(pctOfTarget(500, 0)).toBe(0);
+  });
+});
+
+
+describe("shared rental projection inputs", () => {
+  const rental = (extra: Record<string, unknown>) => ({
+    _id: "rental", _creationTime: 1, status: "confirmed", account_slug: "leo",
+    start_date: "2026-10-01", end_date: "2026-10-02", net_to_owner_gbp: 100,
+    ...extra,
+  });
+  it("uses completed months and excludes today's partial revenue from pace", () => {
+    const input = rentalMonthProjectionInputs([
+      rental({ _id: "sept", start_date: "2026-09-01", net_to_owner_gbp: 3000 }),
+      rental({ _id: "today", net_to_owner_gbp: 9000 }),
+      rental({ _id: "future", start_date: "2026-10-20", net_to_owner_gbp: 500 }),
+      rental({ _id: "pending", status: "pending_review", net_to_owner_gbp: 9999 }),
+    ], "2026-10-01", "leo");
+    expect(input.daysElapsed).toBe(0);
+    expect(input.realisedToDate).toBe(0);
+    expect(input.bookedRemainder).toBe(9500);
+    expect(input.baseline).toBe(1500); // zero-revenue completed calendar months count
+    expect(projectCurrentMonth(input).projected).toBe(9500);
+  });
+  it("uses negotiated pickup dates, deduplicates and respects account scope", () => {
+    const input = rentalMonthProjectionInputs([
+      rental({ _id: "a", hygglo_order_id: "same", pickup_date: "2026-10-03", net_to_owner_gbp: 100 }),
+      rental({ _id: "b", hygglo_order_id: "same", pickup_date: "2026-10-03", net_to_owner_gbp: 120 }),
+      rental({ _id: "other", account_slug: "diogo", net_to_owner_gbp: 5000 }),
+      rental({ _id: "shifted", pickup_date: "2026-11-01", net_to_owner_gbp: 800 }),
+    ], "2026-10-04", "leo");
+    expect(input.realisedToDate).toBe(120);
+    expect(input.bookedRemainder).toBe(0);
+    expect(input.daysElapsed).toBe(3);
+  });
+  it("does not add booked remainder on top of expected future demand", () => {
+    const result = projectCurrentMonth({ realisedToDate: 1000, bookedRemainder: 1800,
+      daysElapsed: 10, daysInMonth: 30, baseline: 3000 });
+    expect(result.projected).toBe(3000);
+    expect(result.committed).toBe(2800);
+  });
+  it("is stable before any complete day and never forecasts unpaid requests", () => {
+    const result = projectCurrentMonth({ realisedToDate: 0, bookedRemainder: 500,
+      daysElapsed: 0, daysInMonth: 31, baseline: 4606 });
+    expect(result.projected).toBe(4606);
+    expect(result.basis).toBe("baseline");
+  });
+  it("handles calendar rollover and non-finite inputs", () => {
+    expect(previousMonthKeys("2027-01")).toEqual(["2026-12", "2026-11", "2026-10"]);
+    expect(projectCurrentMonth({ realisedToDate: Infinity, bookedRemainder: NaN,
+      daysElapsed: NaN, daysInMonth: 31, baseline: Infinity }).projected).toBe(0);
   });
 });

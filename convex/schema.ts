@@ -559,6 +559,8 @@ export default defineSchema({
     // full table on every call. Indexed lookup reduces row reads ~30x.
     .index("by_is_obsolete", ["is_obsolete"])
     .index("by_is_obsolete_start_date", ["is_obsolete", "start_date"])
+    // Failure-event month lookup, including legacy updated/created-date fallbacks.
+    .index("by_fallout_dates", ["obsolete_at", "v1_updated_at"])
     .index("by_demand_loss_class", ["demand_loss_class"])
     // Phase 7a (2026-05-24) — composite for audit_qty_drift + dashboard
     // status-scoped queries. Cuts unindexed full-table scans down to the

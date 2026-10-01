@@ -44,6 +44,8 @@
  * is for the LIVE month only.
  */
 
+import { previousMonthKeys, trailingBaseline } from "../month_projection";
+
 import {
   type ReservationRow,
   dedupByLogicalRental,
@@ -86,4 +88,25 @@ export function realisedMonthRevenue<T extends ReservationRow>(
   const deduped = dedupByLogicalRental(filtered);
   const netGbp = deduped.reduce((s, r) => s + netOf(r), 0);
   return { rentals: deduped, netGbp: Math.round(netGbp * 100) / 100 };
+}
+
+/** Shared projection inputs use the same confirmed-rental predicate and net values. */
+export function rentalMonthProjectionInputs<T extends ReservationRow>(
+  rows: T[], today: string, accountSlug?: AccountScope,
+) {
+  const month = today.slice(0, 7);
+  const [year, monthNumber, day] = today.split("-").map(Number);
+  const current = realisedMonthRevenue(rows, month, accountSlug);
+  const realisedToDate = current.rentals
+    .filter((r) => (effectiveDate(r) ?? today) < today)
+    .reduce((sum, r) => sum + netOf(r), 0);
+  const recent = previousMonthKeys(month).map((key) =>
+    realisedMonthRevenue(rows, key, accountSlug).netGbp);
+  return {
+    realisedToDate,
+    bookedRemainder: Math.max(0, current.netGbp - realisedToDate),
+    daysElapsed: day - 1,
+    daysInMonth: new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(),
+    baseline: trailingBaseline(recent),
+  };
 }

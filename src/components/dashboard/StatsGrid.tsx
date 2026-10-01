@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useState, type ReactElement } from "react";
+import { useReportingMonth } from "@/lib/dashboard/use-reporting-month";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import {
   DndContext,
@@ -182,6 +183,10 @@ export function StatsGrid() {
   const rawData = useStableQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
+  const reportingMonth = useReportingMonth();
+  const verificationLosses = useStableQuery(api.dashboard.getMonthlyVerificationLosses, {
+    accountSlug: activeAccountSlug, month: reportingMonth,
+  });
   // Rented gear with no inventory mapping. Small, live, and deliberately NOT
   // folded into getStatsDrawerData — that payload comes from an hourly MV, and
   // stock that is out while reading as available must not sit behind a cache.
@@ -223,6 +228,7 @@ export function StatsGrid() {
     };
     const data = {
       ...rawData,
+      monthly: { ...rawAsAny.monthly, missed: verificationLosses ?? rawAsAny.monthly.missed },
       active: { ...rawAsAny.active, rentals: pickRentals("active") },
       ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
       upcoming: { ...rawAsAny.upcoming, rentals: pickRentals("upcoming") },
@@ -321,12 +327,12 @@ export function StatsGrid() {
                   Confirmed: <span className="text-emerald-300 font-semibold">{fmtGbpFull(data.monthly.confirmed_revenue)}</span>
                 </span>
                 <span className="text-slate-400">
-                  <span className="text-emerald-300 font-semibold">{data.monthly.pct_of_target}%</span> of target
+                  <span className="text-emerald-300 font-semibold">{data.monthly.pct_of_target}%</span> of usual month
                 </span>
               </div>
               <ProgressBar pct={data.monthly.pct_of_target} />
               <div className="text-[10px] text-slate-500">
-                £{Math.round(data.monthly.avg_daily_rate)}/day avg · {data.monthly.days_remaining} days left in month
+                {fmtGbpFull(data.monthly.expected_additional_gbp ?? Math.max(0, data.monthly.projected - data.monthly.confirmed_revenue))} additional bookings expected
               </div>
               {data.monthly.missed && (
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-md border border-rose-500/30 bg-rose-500/[0.09] px-2 py-1.5 text-[11px] text-rose-200">
@@ -334,7 +340,8 @@ export function StatsGrid() {
                     {data.monthly.missed.failed_security_checks_count} failed verification
                   </span>
                   <span className="font-semibold text-rose-200">
-                    {fmtGbpFull(data.monthly.missed.expected_rent_lost_gbp)} lost
+                    {fmtGbpFull(data.monthly.missed.expected_rent_lost_gbp)} {data.monthly.missed.unvalued_count > 0 ? "known value lost" : "booking value lost"}
+                    {data.monthly.missed.unvalued_count > 0 && <span className="block text-[9px] font-normal">{data.monthly.missed.unvalued_count} price unavailable</span>}
                   </span>
                 </div>
               )}
@@ -684,7 +691,7 @@ export function StatsGrid() {
       walle: <WallE accountSlug={activeAccountSlug} />,
       todos: <TodoWidget />,
     };
-  }, [rawData, rentalsRow, scannerLive, expandedId, activeAccountSlug, catVolExpanded]);
+  }, [rawData, rentalsRow, scannerLive, verificationLosses, expandedId, activeAccountSlug, catVolExpanded]);
 
   if (!cards) return <StatsGridSkeleton />;
 
