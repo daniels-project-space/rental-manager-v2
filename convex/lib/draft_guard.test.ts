@@ -703,3 +703,23 @@ describe("quantity-aware sales replies", () => {
     expect(r.text).toContain("Which BMPCC 6K");
   });
 });
+
+describe("unknown-kit subject attribution", () => {
+  const opts = { history: [], lastRenterMessage: "What does the alternative include?", factPack: {
+    itemsWithoutKitData: ["Blackmagic Pyxis"],
+    kitEvidence: [{ names: ["BMPCC 6K Full Frame", "Blackmagic Cinema Camera 6K"], contents: ["NP-F570 batteries 5x", "1TB CFexpress Type B card", "EF-to-L mount adapter"] }],
+  } };
+  it("accepts the actual alternative reply without borrowing its kit for the unknown original", () => {
+    const result = guardDraft("The Pyxis is unavailable. I can offer the Blackmagic Cinema Camera 6K Full Frame. In terms of power and storage, it includes 5x NP-F570 batteries and a 1TB CFexpress Type B card.", opts);
+    expect(result.flags.filter(f => f.type === "KIT_HALLUCINATION")).toEqual([]);
+  });
+  it("still blocks an explicit switch back to the unknown original", () => {
+    const result = guardDraft("BMPCC 6K Full Frame includes batteries. Blackmagic Pyxis includes batteries and a card.", opts);
+    expect(result.flags.some(f => f.type === "KIT_HALLUCINATION")).toBe(true);
+  });
+  it("still blocks unsupported alternative contents and unattributed unknown kits", () => {
+    for (const text of ["BMPCC 6K Full Frame includes a charger.", "It includes a charger and batteries."]) {
+      expect(guardDraft(text, opts).flags.some(f => f.type === "KIT_HALLUCINATION")).toBe(true);
+    }
+  });
+});

@@ -10,7 +10,8 @@ export function recommendationKitEvidence(receipts: ToolReceipt[]) {
       if (!raw || typeof raw !== "object") continue;
       const a = raw as Record<string, unknown>;
       if (!["physical_mapping_and_inventory", "inventory_record"].includes(String(a.kit_source)) || typeof a.name !== "string" || !Array.isArray(a.kit_contents) || !a.kit_contents.length || !a.kit_contents.every(c => typeof c === "string" && c.trim())) continue;
-      evidence.push({ names: [a.name, a.listing_name].filter((n): n is string => typeof n === "string" && !!n), contents: a.kit_contents as string[] });
+      const model = a.spec_verification && typeof a.spec_verification === "object" ? (a.spec_verification as Record<string, unknown>).model : null;
+      evidence.push({ names: [a.name, a.listing_name, model].filter((n): n is string => typeof n === "string" && !!n), contents: a.kit_contents as string[] });
     }
   }
   return evidence;
