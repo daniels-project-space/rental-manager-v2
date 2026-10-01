@@ -1,3 +1,4 @@
+import type { StockRequest } from "../../../../convex/lib/stock_claims";
 import { formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
@@ -518,6 +519,7 @@ export async function POST(req: Request) {
    * Only the NEGATIVE direction is unlocked. A positive "yes, it's free for
    * your dates" still needs the dates, so that half of the guard stands.
    */
+  let stockRequest: StockRequest = { items: [] };
   let availabilityOutKnown = false;
   const toolReceipts: ToolReceipt[] = [];
   /**
@@ -723,6 +725,15 @@ export async function POST(req: Request) {
           .map((name) => name.toLowerCase().trim())
           .filter(Boolean),
       );
+      stockRequest = { start_date: lc.start_date, end_date: lc.end_date,
+        items: (lc.items ?? []).map((i: { name: string; qty?: number; inventory_name?: string; listing_name?: string; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; stock_required: boolean }> }) => ({
+          name: i.inventory_name ?? i.name, quantity: i.qty ?? 1,
+          aliases: [i.name, i.inventory_name, i.listing_name].filter((n): n is string => !!n),
+          complete: i.mapping_complete,
+          components: (i.inventory_components ?? []).filter(c => c.stock_required && !!c.name)
+            .map(c => ({ name: c.name!, quantity: c.requested_units })),
+        })) };
+      groundTruth += `STOCK CLAIM SCOPE: each availability statement must match the exact checked item, date span and quantity. A free body does not prove its whole mapped kit is free. If a kit component is booked, identify that component rather than calling the free body booked. Alternative offers need the requested quantity; explicitly state any smaller quantity you can supply.\n`;
       for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           marketingItems.push(it.name ?? "that item");
@@ -1705,6 +1716,7 @@ export async function POST(req: Request) {
         specs: successfulGrounding(toolReceipts).specs,
       },
       availabilityReceipts: stockReceipts(toolReceipts).map((r) => ({ call_id: r.call_id, ...r.result })),
+      stockRequest,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,

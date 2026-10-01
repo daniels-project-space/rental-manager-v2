@@ -184,6 +184,7 @@ import type * as lib_return_presence from "../lib/return_presence.js";
 import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
 import type * as lib_reviewed_camera_specs from "../lib/reviewed_camera_specs.js";
 import type * as lib_shadow_compare from "../lib/shadow_compare.js";
+import type * as lib_stock_claims from "../lib/stock_claims.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_thread_messages from "../lib/thread_messages.js";
 import type * as lib_verified_item_spec from "../lib/verified_item_spec.js";
@@ -477,6 +478,7 @@ declare const fullApi: ApiFromModules<{
   "lib/revenue_attribution": typeof lib_revenue_attribution;
   "lib/reviewed_camera_specs": typeof lib_reviewed_camera_specs;
   "lib/shadow_compare": typeof lib_shadow_compare;
+  "lib/stock_claims": typeof lib_stock_claims;
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/thread_messages": typeof lib_thread_messages;
   "lib/verified_item_spec": typeof lib_verified_item_spec;

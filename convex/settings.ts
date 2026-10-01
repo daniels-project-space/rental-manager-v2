@@ -100,6 +100,7 @@ export const update = mutation({
     hub_max_km: v.optional(v.number()),
     minimum_rental_gbp: v.optional(v.number()),
     draft_epoch: v.optional(v.number()),
+    invalidate_drafts: v.optional(v.boolean()),
   },
   handler: async (ctx, fields) => {
     if (fields.ALLOW_HYGGLO_SEND === true) {
@@ -148,7 +149,7 @@ export const update = mutation({
       "ai_boost_rate",
       "ai_active_from",
     ];
-    if (fields.draft_epoch === undefined && DRAFT_FIELDS.some((f) => fields[f] !== undefined)) {
+    if (fields.invalidate_drafts === true || (fields.draft_epoch === undefined && DRAFT_FIELDS.some((f) => fields[f] !== undefined))) {
       patch.draft_epoch = ((existing as { draft_epoch?: number }).draft_epoch ?? 0) + 1;
     }
 

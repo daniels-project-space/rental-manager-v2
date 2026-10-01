@@ -1,3 +1,4 @@
+import { unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, type CameraEvidence } from "./camera_mode_claims";
 /**
@@ -39,6 +40,8 @@ export interface GuardResult {
 }
 
 export interface GuardOpts {
+  stockEvidence?: StockReceipt[];
+  stockRequest?: StockRequest;
   /** Reviewed exact-model catalog results, not a tool-use boolean or prose. */
   cameraEvidence?: CameraEvidence[];
   /** Prior turns, oldest→newest. role is the V2 sender ("owner"/"renter"). */
@@ -566,7 +569,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   // 8b. Compare each item's local clause, not unrelated claims elsewhere.
   // "FX3 is available, but the lens is unavailable" must not let a negative
   // about the lens erase a false positive about FX3 (or flag a correct split).
-  if (opts.availability?.items?.length) {
+  if (opts.stockEvidence === undefined && opts.availability?.items?.length) {
     const clauses = text.split(/[;!?]\s*|\.\s+|\s+(?:but|however|while|whereas|as the)\s+/i);
     for (const it of opts.availability.items) {
       for (const clause of clauses) {
@@ -610,6 +613,12 @@ const ASSERTS_AVAIL_RE =
   });
   if ((opts.groundedDuringTurn !== undefined || opts.hasItemGrounding === false) && assertsUnavailable && !opts.groundedDuringTurn?.unavailability) {
     push("UNGROUNDED_UNAVAILABILITY", "Asserts unavailability without a negative stock verdict; available alternatives and unknown stock do not prove the requested item is unavailable", "flagged");
+  }
+
+  if (opts.stockEvidence !== undefined) {
+    for (const failure of unsupportedStockClaims(text, opts.stockEvidence, opts.stockRequest ?? { items: [] })) {
+      push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
+    }
   }
 
   // 8c. UNGROUNDED AVAILABILITY / PRICE — FLAG (the inquiry-fabrication bug)
