@@ -160,6 +160,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   FABRICATED_QUOTE: "critical",
   UNFULFILLABLE_BOOKING: "critical",
   UNGROUNDED_AVAILABILITY: "critical",
+  UNGROUNDED_UNAVAILABILITY: "critical",
   UNGROUNDED_PRICE: "critical",
   VERIFICATION_CIRCUMVENTION: "critical",
   LOCATION_ASK_FOR_DISCOUNT: "high",
@@ -601,6 +602,24 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
 const ASSERTS_AVAIL_RE =
   /\b(?:it'?s|that'?s|they'?re|these are|those are)\s+(?:all\s+)?(?:available|free|in stock)\b|\byeah,?\s*(?:it'?s|that'?s|they'?re|we'?ve got|i'?ve got)\b|\bavailable\s+(?:for|from|on|today|tomorrow|those|that|this|the\s+\d)\b|\bin stock\b|\b(?:we'?ve|i'?ve)\s+got\s+\d|\bfree\s+for\s+(?:those|that|the|today|tomorrow|your)\b/i;
 
+  // A positive result for an alternative cannot authorize a false negative
+  // about the requested item. Check actual assertions even with price/spec
+  // grounding, and treat negative claims as equally consequential.
+  const negativeStock = /\b(?:(?:isn'?t|aren'?t|is not|are not|not)\s+available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available)|don'?t have (?:that|it|one)|can'?t get (?:that|it|one))\b/i;
+  const assertsUnavailable = text.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas)\s+/i).some(sentence => {
+    if (/\b(?:check|verify|confirm|know|unsure|uncertain|not sure)\b[^.!?]{0,70}\b(?:whether|if)\b/i.test(sentence)) return false;
+    const match = negativeStock.exec(sentence);
+    if (!match) return false;
+    const subject = sentence.slice(0, match.index);
+    // Equipment stock is separate from a recording feature or pickup policy.
+    // "4K isn't available on the A7 II" is not a claim that its body is out.
+    if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*(?:is|are)?\s*$/i.test(subject) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(subject)) return false;
+    return assertsOutsideConditional(sentence, negativeStock);
+  });
+  if ((opts.groundedDuringTurn !== undefined || opts.hasItemGrounding === false) && assertsUnavailable && !opts.groundedDuringTurn?.unavailability) {
+    push("UNGROUNDED_UNAVAILABILITY", "Asserts unavailability without a negative stock verdict; available alternatives and unknown stock do not prove the requested item is unavailable", "flagged");
+  }
+
   // 8c. UNGROUNDED AVAILABILITY / PRICE — FLAG (the inquiry-fabrication bug)
   // When we have no item-level grounding, the draft must ASK, not assert. Catch
   // confident "yeah it's available" / "we've got 3" / "£5/day" with no basis.
@@ -626,22 +645,6 @@ const ASSERTS_AVAIL_RE =
         "flagged",
       );
     }
-    // Symmetric counterpart (2026-08-17, real bug: bot confidently told a
-    // renter Sony A7 V "isn't available" for dates it was actually free for
-    // — check_availability was never called this turn, but the confident
-    // NEGATIVE claim wasn't caught because only the positive case was
-    // guarded here). A false "no" costs a real booking just as much as a
-    // false "yes" costs a false promise — both need grounding to assert.
-    const assertsUnavail =
-      /\b(not available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available)|don'?t have (?:that|it|one)|can'?t get (?:that|it|one))\b/i.test(
-        text,
-      );
-    if (assertsUnavail && !g.unavailability && !g.availability)
-      push(
-        "UNGROUNDED_UNAVAILABILITY",
-        "Asserts UNavailability with no item grounding (never called check_availability this turn) — should say I'll check, not guess",
-        "flagged",
-      );
     // A price the bot FETCHED is grounded, whatever the up-front context held.
     //
     // `hasItemGrounding` is computed before the agent runs, from prefetched

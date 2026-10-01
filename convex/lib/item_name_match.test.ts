@@ -85,6 +85,10 @@ describe("bestMatch confidence gate", () => {
 });
 
 describe("substitutionScore — stop cross-brand nonsense", () => {
+  it("ranks normalized native-mount affinity above a different mount", () => {
+    const target = { name: "Body", kind: "camera", lens_mount: "Leica L-mount (native)" };
+    expect(substitutionScore(target, { name: "Alternative", kind: "camera", lens_mount: "L" })).toBeGreaterThan(substitutionScore(target, { name: "Alternative", kind: "camera", lens_mount: "Canon EF mount" }));
+  });
   const target = ITEMS[0]; // BMPCC 6K Pro, Canon EF
 
   it("prefers the sibling Blackmagic body over a Sony body", () => {

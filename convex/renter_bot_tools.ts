@@ -1,3 +1,4 @@
+import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock } from "./lib/listing_inventory";
@@ -785,6 +786,11 @@ export const find_owned_alternatives = query({
     account_slug: v.string(),
     kind: v.optional(v.string()),
     lens_mount: v.optional(v.string()),
+    camera_requirements: v.optional(v.object({
+      role: v.optional(v.union(v.literal("action"), v.literal("interchangeable_lens"))),
+      sensor_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
+      internal_4k: v.optional(v.boolean()), built_in_nd: v.optional(v.boolean()),
+    })),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
     start_date: v.optional(v.string()),
@@ -792,7 +798,7 @@ export const find_owned_alternatives = query({
     quantity: v.optional(v.number()),
     thread_id: v.optional(v.string()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id }) => {
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements }) => {
     // Owned = active + not marketing-only + qty>0 on the SHARED items table
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
@@ -857,6 +863,8 @@ export const find_owned_alternatives = query({
     // bundle's, not the component's.
     const ovAll = await ctx.db.query("listing_resolution_override").collect();
     const allInventory = await ctx.db.query("items").collect();
+    const specs = await ctx.db.query("item_specs").collect();
+    const specsByItem = new Map(specs.map(spec => [String(spec.item_id), spec]));
     const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory);
     // Alternative listing quotes require identity-backed account pricing.
 
@@ -869,6 +877,7 @@ export const find_owned_alternatives = query({
     let matchedBy = kind ? "kind" : "all";
     // The item being replaced — needed for mount/family affinity scoring.
     const targetName = item_name ?? exclude_name ?? null;
+    let targetId: string | null = null;
     let target: { name: string; kind?: string | null; lens_mount?: string | null } | null = null;
     if (targetName) {
       // Resolve against the FULL catalog, not just owned: the item being
@@ -878,6 +887,7 @@ export const find_owned_alternatives = query({
       const allForTarget = await ctx.db.query("items").collect();
       const tm = bestMatch(targetName, allForTarget, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
       if (tm.match) {
+        targetId = String(tm.match._id);
         target = {
           name: tm.match.name_canonical,
           kind: tm.match.kind ?? null,
@@ -907,22 +917,37 @@ export const find_owned_alternatives = query({
 
     const exclude = (exclude_name ?? "").toLowerCase().trim();
     const targetLower = (item_name ?? "").toLowerCase().trim();
+    const excludedMatch = exclude_name ? bestMatch(exclude_name, allInventory, i => i.name_canonical, i => i.aliases ?? []).match : null;
+    const cameraQuery = normKind(kind) === "camera" || normKind(target?.kind) === "camera";
+    const requirements: CameraRequirements = { ...camera_requirements };
+    if (cameraQuery && !requirements.role) {
+      const exactTarget = allInventory.find(i => i.name_canonical === target?.name);
+      const targetCapabilities = exactTarget ? verifiedCameraCapabilities(specsByItem.get(String(exactTarget._id)), exactTarget.name_canonical) : null;
+      const role = targetCapabilities?.role ?? requestedCameraRole(target?.name ?? targetName, kind ?? target?.kind);
+      if (role) requirements.role = role;
+    }
     const alternatives: Array<Record<string, unknown>> = [];
+    const rejected = { requirements: 0, stock: 0 };
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
       const nameLower = it.name_canonical.toLowerCase();
       // Never offer the very item being replaced back as its own alternative.
+      if (String(it._id) === targetId || (excludedMatch && it._id === excludedMatch._id)) continue;
       if (exclude && nameLower === exclude) continue;
       if (targetLower && nameLower === targetLower) continue;
       // Normalised compare: inventory spells the same mount several ways
       // ("Canon EF mount" vs "EF"), and an exact compare silently filtered out
       // every genuinely-compatible lens.
-      if (lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
+      const spec = specsByItem.get(String(it._id));
+      const capabilities = verifiedCameraCapabilities(spec, it.name_canonical);
+      if (cameraQuery && !meetsCameraRequirements(capabilities, requirements, lens_mount)) { rejected.requirements++; continue; }
+      if (!cameraQuery && lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
       // With a known target, keep suggestions in the same category. Offering a
       // lens as a substitute for a camera body is never useful.
-      if (target?.kind && it.kind && normKind(it.kind) !== normKind(target.kind)) continue;
+      const requiredKind = normKind(target?.kind ?? kind);
+      if (requiredKind && normKind(it.kind) !== requiredKind) continue;
       const stock = stockSources && start_date && end_date ? stockForItem(stockSources, it, { item_name: it.name_canonical, start_date, end_date, quantity, thread_id }) : null;
-      if (stock && stock.available !== true) continue;
+      if (stock && stock.available !== true) { rejected.stock++; continue; }
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
@@ -946,7 +971,6 @@ export const find_owned_alternatives = query({
       const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
       const mapping = ovAll.find(o => o.account_slug === account_slug && o.product_id === altPid);
       const kit = recommendationKit(it, mapping, allInventory);
-      const spec = await ctx.db.query("item_specs").withIndex("by_item", q => q.eq("item_id", it._id)).first();
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
@@ -954,7 +978,8 @@ export const find_owned_alternatives = query({
         availability: stock ? { available: stock.available, start_date, end_date, quantity: quantity ?? 1, free_units: stock.free_units, checked_at: stock.checked_at } : null,
         name: it.name_canonical,
         kind: it.kind,
-        lens_mount: it.lens_mount ?? null,
+        lens_mount: capabilities?.native_mount ?? it.lens_mount ?? null,
+        camera_capabilities: capabilities,
         daily_price_gbp: altOneDay ?? altListing?.daily_price ?? null,
         price_requires_owner_confirmation: !altListing,
         included: kit.included,
@@ -977,6 +1002,9 @@ export const find_owned_alternatives = query({
       matched_by: matchedBy,
       kind_fell_back: kindFellBack,
       target: target?.name ?? null,
+      camera_requirements: cameraQuery ? requirements : null,
+      requirements_match_is_not_mode_verification: true,
+      rejected,
       count: alternatives.length,
       alternatives,
     };

@@ -347,13 +347,18 @@ export const checkLocationTool = createTool({
 export const findOwnedAlternativesTool = createTool({
   id: "find_owned_alternatives",
   description:
-    "Find owned alternatives in the same equipment category and confirmed compatible lens mount. Pass start_date, end_date, quantity and current thread_id when known: only options available for that request are returned. Without dates, ownership does NOT prove availability; check_availability before promising an option. Returns account prices and tier tables. Look up the selected option's exact multi-day total before quoting it.",
+    "Find owned alternatives that meet the requested role, sensor format, internal 4K, built-in ND and native mount before checking stock. Pass camera_requirements for every explicit hard requirement. Cinema/interchangeable-lens bodies must not be replaced with action cameras. Pass start_date, end_date, quantity and current thread_id when known: only options available for that request are returned. Without dates, ownership does NOT prove availability; check_availability before promising an option. Returns account prices and tier tables. Look up the selected option's exact multi-day total before quoting it.",
   inputSchema: z.object({
     account_slug: z.string(),
     kind: z
       .string()
       .describe("REQUIRED — camera|lens|drone|gimbal|monitor|audio|lighting|grip|... — the SAME kind as the item that's unavailable"),
-    lens_mount: z.string().optional().describe("e.g. E, RF, EF — match the renter camera mount for lenses"),
+    lens_mount: z.string().optional().describe("Native mount required, e.g. E, RF, EF or L; applies to bodies and lenses. An adapter does not establish a native mount."),
+    camera_requirements: z.object({
+      role: z.enum(["action", "interchangeable_lens"]).optional(),
+      sensor_format: z.enum(["full_frame", "super35", "aps_c", "small_sensor"]).optional(),
+      internal_4k: z.boolean().optional(), built_in_nd: z.boolean().optional(),
+    }).optional().describe("Pass the renter's hard camera requirements. Unknown/unverified capabilities do not qualify. These filters do not verify a specific codec, frame rate or sensor crop in that recording mode; check the exact verified model facts for those."),
     exclude_name: z.string().optional(),
     item_name: z.string().optional().describe("Exact item being replaced, to rank suitable substitutes."),
     start_date: z.string().optional(),

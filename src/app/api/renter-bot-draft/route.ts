@@ -1330,6 +1330,7 @@ export async function POST(req: Request) {
       content: [
         marketingDirective,
         `TODAY IS ${today} (Europe/London). Compute any relative dates the renter uses from TODAY; never guess a date.`,
+        "UNKNOWN stock is neither available nor unavailable. Do not say an unverified item is booked, unavailable or not available for the dates. You can offer a separately verified owned alternative without inventing a negative about the original.",
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
         groundTruth ? `\n${headlineAvailability}${groundTruth}` : "",

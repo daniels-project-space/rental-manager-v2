@@ -6,6 +6,29 @@ const baseOpts = {
   lastRenterMessage: "hygglo is asking me to verify my identity before I can book, how does that work",
 };
 
+describe("positive stock does not prove a negative for an unknown request", () => {
+  const opts = { history: [], lastRenterMessage: "Do you actually have the Pyxis?", hasItemGrounding: true, groundedDuringTurn: { availability: true, unavailability: false } };
+  it("blocks the actual unsupported denial even with a verified alternative", () => {
+    for (const text of ["The Pyxis isn't available for those dates, but the BMPCC 6K Full Frame is available.", "The Pyxis isn’t available for those dates.", "The Pyxis is unavailable.", "If the Sony is unavailable, the Pyxis is unavailable for your dates."]) {
+      expect(guardDraft(text, opts).flags.some(f => f.type === "UNGROUNDED_UNAVAILABILITY" && f.severity === "critical")).toBe(true);
+    }
+  });
+  it("allows honest uncertainty and conditional planning", () => {
+    for (const text of ["I cannot verify the Pyxis for these dates. BMPCC 6K Full Frame is available.", "If the Pyxis is unavailable, I can offer a verified alternative.", "I'll check whether the Pyxis is unavailable."]) {
+      expect(guardDraft(text, opts).flags.some(f => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
+    }
+  });
+  it("does not confuse recording features and pickup policy with equipment stock", () => {
+    for (const text of ["4K isn't available on the A7 II.", "That pickup slot isn't available. The camera is available."]) {
+      expect(guardDraft(text, opts).flags.some(f => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
+    }
+    expect(guardDraft("The Sony A7 II 4K camera isn't available for those dates.", opts).flags.some(f => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(true);
+  });
+  it("accepts a real negative receipt", () => {
+    expect(guardDraft("The Pyxis isn't available for those dates.", { ...opts, groundedDuringTurn: { availability: false, unavailability: true } }).flags.some(f => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
+  });
+});
+
 describe("authoritative booking transitions", () => {
   const opts = { history: [], lastRenterMessage: "Has my request been accepted?", stage: "AWAITING_OWNER_APPROVAL" };
   it("blocks the live false promise that acceptance alone confirms a rental", () => {
@@ -498,12 +521,11 @@ describe("guardDraft — grounding established DURING the turn", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
   });
 
-  it("allows a NEGATIVE availability claim when check_availability ran", () => {
-    // A false "no" costs a booking exactly as a false "yes" costs a promise,
-    // so this rule is symmetric — and so is the fix.
+  it("allows a negative claim when the stock result is negative", () => {
+    // The tool must return a negative verdict, not merely run.
     const r = guardDraft("Sorry, that one's fully booked those days.", {
       ...noPrefetch,
-      groundedDuringTurn: { availability: true },
+      groundedDuringTurn: { unavailability: true },
     });
     expect(r.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);
   });
@@ -576,14 +598,14 @@ describe("guardDraft — availability grounding is asymmetric", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(true);
   });
 
-  it("a checked-dates signal grounds BOTH directions", () => {
+  it("checked stock verdicts ground their own direction", () => {
     const pos = guardDraft("Yes, it's available for those dates.", {
       ...noDates,
       groundedDuringTurn: { availability: true },
     });
     const neg = guardDraft("Sorry, it's fully booked then.", {
       ...noDates,
-      groundedDuringTurn: { availability: true },
+      groundedDuringTurn: { unavailability: true },
     });
     expect(pos.flags.some((f) => f.type === "UNGROUNDED_AVAILABILITY")).toBe(false);
     expect(neg.flags.some((f) => f.type === "UNGROUNDED_UNAVAILABILITY")).toBe(false);

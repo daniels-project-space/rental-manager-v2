@@ -163,7 +163,7 @@ export function substitutionScore(
   // Same category is the floor requirement.
   if (target.kind && candidate.kind && target.kind === candidate.kind) s += 3;
   // Same lens mount means their existing glass still fits — very high value.
-  if (target.lens_mount && candidate.lens_mount && target.lens_mount === candidate.lens_mount) s += 4;
+  if (target.lens_mount && candidate.lens_mount && sameMount(target.lens_mount, candidate.lens_mount)) s += 4;
   // Shared brand/family tokens (BMPCC↔BMPCC, Sony↔Sony) — the strongest
   // signal that it "feels like" the same product line to the renter.
   const a = tokenize(target.name);
