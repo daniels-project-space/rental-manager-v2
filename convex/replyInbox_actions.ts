@@ -847,7 +847,7 @@ export const generateDraft = action({
       availability: generationMeta.evidence ? {
         items: generationMeta.evidence.stock
           .filter((r) => typeof r.available === "boolean")
-          .map((r) => ({ name: r.item, available: r.available as boolean })),
+          .map((r) => ({ name: r.item, available: r.available as boolean, quantity: r.quantity, free_units: r.free_units })),
       } : undefined,
     });
     // Hard backstop for ANY unresolved critical-severity guardDraft flag.

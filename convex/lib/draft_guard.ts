@@ -78,7 +78,7 @@ export interface GuardOpts {
     itemsWithoutKitData?: string[];
   };
   /** Real per-item availability for the rental dates (verify.ts cross-check). */
-  availability?: { items: { name: string; available: boolean }[] };
+  availability?: { items: { name: string; available: boolean; quantity?: number; free_units?: number | null }[] };
   /** True once the owner has actually approved the booking — so an accurate
    *  "I've approved your request" is not mis-flagged as a false action claim. */
   ownerApproved?: boolean;
@@ -557,13 +557,21 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   // "FX3 is available, but the lens is unavailable" must not let a negative
   // about the lens erase a false positive about FX3 (or flag a correct split).
   if (opts.availability?.items?.length) {
-    const clauses = text.split(/[;!?]\s*|\.\s+|\s+(?:but|however|while|whereas)\s+/i);
+    const clauses = text.split(/[;!?]\s*|\.\s+|\s+(?:but|however|while|whereas|as the)\s+/i);
     for (const it of opts.availability.items) {
       for (const clause of clauses) {
-        if (!clause.toLowerCase().includes(it.name.toLowerCase())) continue;
+        const nameIndex = clause.toLowerCase().indexOf(it.name.toLowerCase());
+        if (nameIndex < 0) continue;
+        const unitsMatch = clause.slice(0, nameIndex).match(/\b(\d+|one|two|three|four|both|single)\s*(?:x|×)?\s*$/i);
+        const words: Record<string, number> = { one: 1, single: 1, two: 2, both: 2, three: 3, four: 4 };
+        const statedUnits = unitsMatch ? words[unitsMatch[1].toLowerCase()] ?? Number(unitsMatch[1]) : undefined;
+        // A failed two-unit request can still prove one unit free. Repairs,
+        // blackouts and vacation are already deducted from the receipt capacity.
+        const checkedAvailable = statedUnits != null && typeof it.free_units === "number"
+          ? it.free_units >= statedUnits : it.available;
         const negative = /\b(not available|unavailable|isn'?t available|aren'?t available|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i.test(clause);
         const positive = !negative && /\b(available|in stock|i'?ve got|i have|free for|ready for|can do|yep,? got)\b/i.test(clause);
-        if ((it.available && negative) || (!it.available && positive)) push(
+        if ((checkedAvailable && negative) || (!checkedAvailable && positive)) push(
           "AVAILABILITY_CONTRADICTION",
           `Draft contradicts the checked availability of ${it.name}: "${clause.trim().slice(0, 150)}"`,
           "flagged",
@@ -1472,9 +1480,11 @@ const CONTRACTS: Partial<Record<DraftIntent, Contract>> = {
   PRICING_INQUIRY: { must: [{ pattern: /£\d+/, label: "price-figure" }], mustNot: [] },
   COMPLAINT: { mustNot: [...UPSELL_PATTERNS] },
   NEGOTIATION: { mustNot: [...UPSELL_PATTERNS.filter((p) => p.label !== "upsell-language"), ...QUESTION_PATTERNS] },
-  GENERAL: { mustNot: [...QUESTION_PATTERNS] },
-  AVAILABILITY_CHECK: { mustNot: [...UPSELL_PATTERNS, ...QUESTION_PATTERNS] },
-  EQUIPMENT_QUESTION: { mustNot: [...QUESTION_PATTERNS] },
+  GENERAL: { mustNot: [] },
+  // Relevant substitutions and necessary clarification are part of answering
+  // availability. The stock/price/marketing guards still validate their facts.
+  AVAILABILITY_CHECK: { mustNot: [] },
+  EQUIPMENT_QUESTION: { mustNot: [] },
 };
 
 interface ContractOutcome {

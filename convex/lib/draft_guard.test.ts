@@ -649,3 +649,27 @@ describe("independent availability clauses", () => {
     expect(result.flags.some((f) => f.type === "AVAILABILITY_CONTRADICTION")).toBe(false);
   });
 });
+
+
+describe("quantity-aware sales replies", () => {
+  const opts = { history: [], lastRenterMessage: "Are two Sony FX3 cameras available?", hasItemGrounding: true,
+    availability: { items: [{ name: "Sony FX3", available: false, quantity: 2, free_units: 1 }] } };
+  it("allows a truthful offer of the one remaining camera", () => {
+    const r = guardDraft("I only have 1 Sony FX3 free for those dates. Would one camera work for your shoot?", opts);
+    expect(r.flags.some((f) => f.type === "AVAILABILITY_CONTRADICTION")).toBe(false);
+    expect(r.text).toContain("Would one camera work");
+  });
+  it("still catches falsely offering both cameras", () => {
+    const r = guardDraft("Both Sony FX3 cameras are available for those dates.", opts);
+    expect(r.flags.some((f) => f.type === "AVAILABILITY_CONTRADICTION")).toBe(true);
+  });
+  it("does not strip a grounded alternative from an availability answer", () => {
+    const r = guardDraft("Sony FX3 is unavailable. I can pair the remaining camera with a Sony A7 III. Would that work?", opts);
+    expect(r.text).toContain("Sony A7 III");
+    expect(r.text).toContain("Would that work");
+  });
+  it("keeps a model clarification when the equipment identity is ambiguous", () => {
+    const r = guardDraft("Which BMPCC 6K model do you mean, the Pro or the Full Frame?", { ...opts, lastRenterMessage: "Does the BMPCC 6K take EF lenses?" });
+    expect(r.text).toContain("Which BMPCC 6K");
+  });
+});

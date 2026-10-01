@@ -22,6 +22,7 @@ try {
   const expected = independent.some((r) => r.available === false) ? false : independent.every((r) => r.available === true) ? true : null;
   assert.equal(kit.available, expected, "Kit verdict disagrees with independently checked components");
   const draft = run("replyInbox_actions:generateDraft", { thread_id: thread });
+  if (draft.status !== "ok") console.error(JSON.stringify(draft, null, 2));
   assert.equal(draft.status, "ok", `Real kit reply withheld: ${draft.reason}`);
   assert(draft.draft?.trim());
   for (const component of independent) assert(draft.evidence?.stock.some((r) => r.item === component.item_name && r.quantity === 2 && r.start_date === start && r.end_date === end && r.available === component.available), `Draft did not check two ${component.item_name}`);
