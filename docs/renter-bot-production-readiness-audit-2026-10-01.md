@@ -54,3 +54,12 @@ Completion requires evidence against every requirement above; this foundation re
 - Product-id-linked listing context now receives the same real card, battery, dimensions, kit, replacement value and specification fields as name-resolved inquiries.
 
 Still open: per-claim identity/date/quantity enforcement across free prose; full and partial kit-resolution authority; complete basket/tier/negotiation coverage; adapter and kit inclusion accuracy; realistic stages, historical replay, injection and long-turn sales quality; final deployed UI and provider verification. The original end state above remains unchanged.
+
+## Third audit pass
+
+- A third real follow-up exposed a £186 → £197 drift after adding the lens: Lab seeds omitted the camera's tier table. New seeds carry the actual listing tiers. Live FX3 quote, alternatives and seeded order now agree: £49 one-day, £42/day for three days, £126 total.
+- A shared base-listing identity helper allows standard bundled cards/batteries but excludes independent lenses, multi-body sets, unknown components and empty marketing overrides. It is used by direct pricing, listing context, alternatives, adapters and simulated-order prices. This fixes both stale bundle rates and dropping a genuine base camera listing just because it includes a card.
+- Removed the catalog fallback's invented 0.7/0.5/0.4 multi-day discount curve. Unknown duration tiers produce no exact total; catalog identity must resolve to owned active inventory.
+- The time guard falsely flagged an explicit refusal of 8am because a later sentence mentioned conditional booking confirmation. It now examines time-local acceptance/refusal, with tests for both direct and implicit bad agreements.
+- Browser inspection confirmed Lab date changes persist, but mobile had horizontal overflow and the fixed chat height put its input over recent runs. Responsive wrapping, minimum-width constraints and growing chat height fix that surface. The listing card now uses the same account/date-specific price query as the bot rather than a stale catalog range.
+- Probe seeding lacked its own prefix gate and could accept a real conversation id. It now refuses real ids before any writes; simulated-send learning also refuses real thread ids. Learning storage isolation still needs inspection before calling that simulation helper.

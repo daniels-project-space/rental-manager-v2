@@ -74,7 +74,7 @@ export function RenterBotLabWorkspace() {
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 p-6 lg:grid-cols-[320px_1fr]">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 p-4 sm:p-6 lg:grid-cols-[320px_minmax(0,1fr)]">
         <div className="space-y-4">
           <ScenarioPicker
             fixtures={fixtures}
@@ -92,7 +92,7 @@ export function RenterBotLabWorkspace() {
           )}
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {session ? (
             <LiveChatSim session={session} />
           ) : (

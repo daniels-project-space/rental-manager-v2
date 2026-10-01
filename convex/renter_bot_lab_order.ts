@@ -1,5 +1,6 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { baseListingProductIds } from "./lib/base_listing_identity";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
 import { describeTiers, tierRateForDays, type PriceTier } from "./lib/hygglo_pricing";
 import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
@@ -101,22 +102,8 @@ async function listingPidForItem(
     .collect();
   const idx = await ctx.db.query("hygglo_product_index").collect();
   const ov = await ctx.db.query("listing_resolution_override").collect();
-  const pids: number[] = [
-    ...idx
-      .filter(
-        (r: { item_id: unknown; account_slug: string }) =>
-          String(r.item_id) === itemId && r.account_slug === accountSlug,
-      )
-      .map((r: { product_id: number }) => r.product_id),
-    ...ov
-      .filter(
-        (o: { account_slug: string; components: Array<{ item_id: unknown }> }) =>
-          o.account_slug === accountSlug &&
-          o.components.length === 1 &&
-          String(o.components[0].item_id) === itemId,
-      )
-      .map((o: { product_id: number }) => o.product_id),
-  ];
+  const inventory = await ctx.db.query("items").collect();
+  const pids = baseListingProductIds(accountSlug, itemId, idx, ov, inventory);
   let best: { pid: number; price: number } | null = null;
   for (const pid of pids) {
     const l = listings.find((x: { product_id: number }) => x.product_id === pid) as
@@ -143,22 +130,8 @@ async function resolveDailyPrice(
     .collect();
   const idx = await ctx.db.query("hygglo_product_index").collect();
   const ov = await ctx.db.query("listing_resolution_override").collect();
-  const pids: number[] = [
-    ...idx
-      .filter(
-        (r: { item_id: unknown; account_slug: string; product_id: number }) =>
-          String(r.item_id) === itemId && r.account_slug === accountSlug,
-      )
-      .map((r: { product_id: number }) => r.product_id),
-    ...ov
-      .filter(
-        (o: { account_slug: string; components: Array<{ item_id: unknown }>; product_id: number }) =>
-          o.account_slug === accountSlug &&
-          o.components.length === 1 &&
-          String(o.components[0].item_id) === itemId,
-      )
-      .map((o: { product_id: number }) => o.product_id),
-  ];
+  const inventory = await ctx.db.query("items").collect();
+  const pids = baseListingProductIds(accountSlug, itemId, idx, ov, inventory);
   let price: number | undefined;
   for (const pid of pids) {
     const l = listings.find((x: { product_id: number }) => x.product_id === pid) as
@@ -281,6 +254,7 @@ export const seed = internalMutation({
         daily_price_gbp: hit
           ? await resolveDailyPrice(ctx, a.account_slug, String(hit._id), hit.name_canonical)
           : undefined,
+        price_tiers: hit ? await (async () => { const pid = await listingPidForItem(ctx, a.account_slug, String(hit._id)); return pid != null ? await tiersForProduct(ctx, a.account_slug, pid) : undefined; })() : undefined,
         origin: "seed",
       });
     }

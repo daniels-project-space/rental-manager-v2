@@ -14,6 +14,7 @@ import { query, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { checkRentalStock, loadStockSources, stockForItem } from "./lib/renter_stock";
+import { baseListingProductIds } from "./lib/base_listing_identity";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { recentThreadMessages } from "./lib/thread_messages";
@@ -216,6 +217,7 @@ export const get_listing_context = query({
             q.eq("accountSlug", account_slug).eq("productId", l.product_id as number),
           )
           .first();
+        price_tiers = describeTiers((prod?.prices ?? []) as PriceTier[]);
         const mid = (prod as { masterItemId?: unknown } | null)?.masterItemId;
         if (mid) {
           const it = await ctx.db.get(mid as never);
@@ -266,9 +268,8 @@ export const get_listing_context = query({
             // (the body + 24-70mm bundle). Quoting the bundle as "the FX3"
             // overstates the base rate, and whichever tool the agent happened
             // to use decided the number the renter saw.
-            const pids = idxRows
-              .filter((r) => r.account_slug === account_slug)
-              .map((r) => r.product_id);
+            const overrides = await ctx.db.query("listing_resolution_override").withIndex("by_account_product", (q) => q.eq("account_slug", account_slug)).collect();
+            const pids = baseListingProductIds(account_slug, String(it._id), idxRows, overrides, allItems);
             let bestListing: { daily_price?: number; description?: string; name?: string; public_url?: string } | null = null;
             for (const pid of pids) {
               const listing = await ctx.db
@@ -432,6 +433,7 @@ export const lookup_pricing = query({
     ctx,
     { item_name, account_slug, days = 1, listing_location_non_central },
   ) => {
+    if (!Number.isInteger(days) || days < 1 || days > 366) return { found: false as const, item_name, note: "Use a whole rental duration from 1 to 366 days" };
     /**
      * Nearest listing TITLES when nothing matched, for the miss return.
      *
@@ -497,26 +499,7 @@ export const lookup_pricing = query({
             .query("hygglo_product_index")
             .withIndex("by_item_id", (q2) => q2.eq("item_id", im.match!._id))
             .collect();
-          const pids = new Set(
-            idxRows.filter((r) => r.account_slug === account_slug).map((r) => r.product_id),
-          );
-          // Overrides are audit-authoritative and are where hand-mapped
-          // listings land, so identity resolution must read BOTH tables.
-          // Reading only the index meant a listing mapped via an override was
-          // invisible here: the 2026-08-22 Blackmagic body mappings resolved
-          // correctly for holds and get_listing_context but not for pricing,
-          // which silently fell back to the curated catalog.
-          const ovrForItem = await ctx.db
-            .query("listing_resolution_override")
-            .withIndex("by_account_product", (q2) => q2.eq("account_slug", account_slug))
-            .collect();
-          for (const o of ovrForItem) {
-            // Single-item mappings only: a bundle's price is the BUNDLE's
-            // price, not this item's, so it must not set the item's rate.
-            if (o.components.length === 1 && String(o.components[0].item_id) === String(im.match!._id)) {
-              pids.add(o.product_id);
-            }
-          }
+          const pids = new Set(baseListingProductIds(account_slug, String(im.match._id), idxRows, ovrRows, allItems));
           // Among this item's own listings prefer the CHEAPEST — that's the
           // base offering rather than an add-on bundle built around it.
           for (const l of listings) {
@@ -611,27 +594,13 @@ export const lookup_pricing = query({
         };
       }
     }
-    // Normalise: lowercase + trim. pricing_catalog stores `item_name_canonical`
-    // which is usually lowercase already.
-    const needle = item_name.toLowerCase().trim();
-
-    // 1. Try exact match on canonical name (indexed).
-    const exact = await ctx.db
-      .query("pricing_catalog")
-      .withIndex("by_name", (q) => q.eq("item_name_canonical", needle))
-      .collect();
-
-    let rows = exact;
-    // 2. Fallback: substring scan over the whole table (~80-100 rows).
-    if (rows.length === 0) {
-      const all = await ctx.db.query("pricing_catalog").collect();
-      rows = all.filter(
-        (r) =>
-          r.item_name_canonical.toLowerCase().includes(needle) ||
-          needle.includes(r.item_name_canonical.toLowerCase()),
-      );
-    }
-
+    // A catalog row cannot invent identity, ownership or a multi-day tier.
+    const inventory = await ctx.db.query("items").collect();
+    const resolved = bestMatch(item_name, inventory, (i) => i.name_canonical, (i) => i.aliases ?? []);
+    if (!resolved.match || !resolved.confident || resolved.match.status !== "active" || resolved.match.is_marketing_only || resolved.match.qty < 1)
+      return { found: false as const, item_name, did_you_mean: nearMisses, message: "No verified rentable identity for this price request" };
+    const catalog = await ctx.db.query("pricing_catalog").collect();
+    const rows = catalog.filter((r) => !r.marketing_only && !r.is_bundle && r.item_name_canonical.toLowerCase().trim() === resolved.match!.name_canonical.toLowerCase().trim());
     if (rows.length === 0) {
       return {
         found: false as const,
@@ -651,21 +620,8 @@ export const lookup_pricing = query({
     rows.sort((a, b) => a.daily_price_min - b.daily_price_min);
     const top = rows[0];
 
-    // Multi-day soft discount: Hygglo applies ~50% on day 3, more on 7+.
-    // Per appendix §C.6 — INTERNAL. We surface only the listed-total
-    // estimate; never reveal % to the renter.
     const dailyRate = top.daily_price_min;
-    const multiDayMult =
-      days >= 30 ? 0.4 :
-      days >= 7  ? 0.5 :
-      days >= 3  ? 0.7 :
-      1.0;
-    const listedTotal = dailyRate * days * multiDayMult;
-
-    // Distance discount: 10% if listing was non-central. Single-discount
-    // rule (per appendix §B `One Discount Only`) — caller picks one.
     const distanceDiscountApplies = !!listing_location_non_central;
-
     return {
       found: true as const,
       item_name,
@@ -673,13 +629,10 @@ export const lookup_pricing = query({
       daily_rate_gbp: dailyRate,
       daily_rate_max_gbp: top.daily_price_max,
       days,
-      // ESTIMATED, not from Hygglo. This is the curated-catalog fallback for
-      // an item with no matched listing, so there is no real tier table to
-      // read; the multiplier is our own guess. Flagged so the agent (and the
-      // guard) can tell it apart from a hygglo_tier quote, which is exact.
-      multi_day_multiplier: multiDayMult,
-      multi_day_basis: "estimated_no_listing" as const,
-      listed_total_gbp: Math.round(listedTotal * 100) / 100,
+      source: "curated_catalog" as const,
+      multi_day_basis: "unknown_no_listing" as const,
+      listed_total_gbp: days === 1 ? dailyRate : null,
+      guidance: days > 1 ? "Only a curated daily price is known. No verified duration tier exists; confirm the exact total with the owner. Never invent a discount." : "Curated daily price; no listing tier data available.",
       distance_discount_applies: distanceDiscountApplies,
       // Internal — kept off-limits to renter per disclosure rules.
       is_bundle: !!top.is_bundle,
@@ -880,20 +833,8 @@ export const find_owned_alternatives = query({
     // bundle's, not the component's.
     const ovAll = await ctx.db.query("listing_resolution_override").collect();
     const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
-    const pidsForItem = (itemId: string): number[] => {
-      const out = idxAll
-        .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
-        .filter((r) => { const override = ovAll.find((o) => o.account_slug === account_slug && o.product_id === r.product_id); return !override || (override.components.length === 1 && String(override.components[0].item_id) === itemId && override.components[0].qty === 1); })
-        .map((r) => r.product_id);
-      for (const o of ovAll) {
-        if (o.account_slug !== account_slug) continue;
-        if (o.components.length !== 1) continue;
-        if (o.components[0].qty !== 1) continue;
-        if (String(o.components[0].item_id) !== itemId) continue;
-        if (!out.includes(o.product_id)) out.push(o.product_id);
-      }
-      return out;
-    };
+    const allInventory = await ctx.db.query("items").collect();
+    const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory);
     // Curated fallback for items with no listing on THIS account — the same
     // source lookup_pricing falls back to, so the two tools cannot disagree.
     // Without it, switching to identity-only resolution left most
@@ -1012,6 +953,7 @@ export const find_owned_alternatives = query({
       // the 1-day one.
       const altPid = pidsForItem(String(it._id)).sort((a, b) => (listingByPid.get(a)?.daily_price ?? Infinity) - (listingByPid.get(b)?.daily_price ?? Infinity))[0];
       let altTiers: string | null = null;
+      let altOneDay: number | null = null;
       if (altPid != null) {
         const hp = await ctx.db
           .query("hygglo_products")
@@ -1020,6 +962,7 @@ export const find_owned_alternatives = query({
           )
           .unique();
         altTiers = describeTiers((hp?.prices ?? []) as PriceTier[]);
+        altOneDay = tierRateForDays((hp?.prices ?? []) as PriceTier[], 1);
       }
       alternatives.push({
         price_tiers: altTiers,
@@ -1027,7 +970,7 @@ export const find_owned_alternatives = query({
         name: it.name_canonical,
         kind: it.kind,
         lens_mount: it.lens_mount ?? null,
-        daily_price_gbp: priceFor(String(it._id), it.name_canonical),
+        daily_price_gbp: altOneDay ?? priceFor(String(it._id), it.name_canonical),
         // TRUNCATED (2026-08-21). `included` is a full Hygglo listing
         // description — SEO marketing copy that runs 700+ chars each. Times 8
         // alternatives that made this the largest tool payload in the system
@@ -1083,7 +1026,8 @@ export const get_mount_adapters = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
     const ADAPTER_RE = /^\s*([a-z0-9 ]+?)\s+to\s+([a-z0-9 ]+?)\s*mount\s*$/i;
-    const items = (await ctx.db.query("items").collect()).filter(
+    const inventory = await ctx.db.query("items").collect();
+    const items = inventory.filter(
       (i) =>
         i.status === "active" &&
         !i.is_marketing_only &&
@@ -1112,18 +1056,7 @@ export const get_mount_adapters = query({
     // the index alone misses adapters that are only mapped by an override, and
     // the price silently degrades to null or a stale catalog row.
     const ovAll = await ctx.db.query("listing_resolution_override").collect();
-    const pidsFor = (itemId: string): number[] => {
-      const out = idxAll
-        .filter((r) => String(r.item_id) === itemId && r.account_slug === account_slug)
-        .map((r) => r.product_id);
-      for (const o of ovAll) {
-        if (o.account_slug !== account_slug) continue;
-        if (o.components.length !== 1) continue;
-        if (String(o.components[0].item_id) !== itemId) continue;
-        if (!out.includes(o.product_id)) out.push(o.product_id);
-      }
-      return out;
-    };
+    const pidsFor = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, inventory);
     const priceFor = (itemId: string, name: string): number | null => {
       let best: number | null = null;
       for (const pid of pidsFor(itemId)) {
@@ -1137,7 +1070,7 @@ export const get_mount_adapters = query({
     return {
       adapters: await Promise.all(items.map(async (i) => {
         const m = i.name_canonical.match(ADAPTER_RE);
-        const pid = pidsFor(String(i._id))[0];
+        const pid = pidsFor(String(i._id)).sort((a, b) => (listingByPid.get(a)?.daily_price ?? Infinity) - (listingByPid.get(b)?.daily_price ?? Infinity))[0];
         const hp = pid == null ? null : await ctx.db
           .query("hygglo_products")
           .withIndex("by_account_product", (q) =>

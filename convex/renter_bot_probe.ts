@@ -71,6 +71,7 @@ export const seed = internalMutation({
     ),
   },
   handler: async (ctx, { thread_id, account_slug, stage, items, messages, confirmed_booking, booking }) => {
+    if (!thread_id.startsWith(PREFIX)) throw new Error("Probe seeding cannot touch a real conversation");
     const acc = (await ctx.db.query("accounts").collect()).find(
       (a) => a.slug === account_slug,
     );
@@ -233,6 +234,7 @@ export const simulateSend = action({
     draft_text: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<{ scheduled: true }> => {
+    if (!a.thread_id.startsWith(PREFIX)) throw new Error("Lab learning simulation cannot target a real conversation");
     await ctx.scheduler.runAfter(0, internal.draft_learning_actions.analyzeDivergence, {
       thread_id: a.thread_id,
       account_slug: a.account_slug,

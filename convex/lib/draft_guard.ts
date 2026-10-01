@@ -746,10 +746,11 @@ const ASSERTS_AVAIL_RE =
     if (rt) {
       const t = parseTimeToMinutes(rt[0]);
       if (t != null && !inAnyWindow(t, ranges)) {
-        const accept =
-          /\b(works|sounds good|perfect|great|confirmed|booked|see you|arranged|sorted|no problem|can do|that'?s fine|sure|ok|okay|delivery at|pickup at|collect at)\b/i.test(
-            text,
-          );
+        const mentions = [...text.matchAll(/\b\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b/gi)]
+          .filter((m) => parseTimeToMinutes(m[0]) === t)
+          .map((m) => text.slice(Math.max(0, m.index! - 55), m.index! + m[0].length + 55));
+        const rejected = mentions.some((s) => /\b(can'?t|cannot|won'?t|not able|unable|outside|not possible|don'?t|doesn'?t)\b/i.test(s));
+        const accept = !rejected && (mentions.some((s) => /\b(works|sounds good|perfect|confirmed|see you|arranged|can do|that'?s fine|collect at|pickup at)\b/i.test(s)) || /^\s*(sure|ok(?:ay)?|sounds good|perfect|no problem)\b/i.test(text));
         if (accept)
           push(
             "INVALID_TIME_ACCEPTED",

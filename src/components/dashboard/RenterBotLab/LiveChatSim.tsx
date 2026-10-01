@@ -38,11 +38,13 @@ function overlapsBooking(
 function RentalListingCard({
   itemName,
   threadId,
+  accountSlug,
   initialStartDate,
   initialEndDate,
 }: {
   itemName: string;
   threadId: string;
+  accountSlug: string;
   initialStartDate?: string;
   initialEndDate?: string;
 }) {
@@ -82,11 +84,13 @@ function RentalListingCard({
   const rangeValid = startDate && endDate && endDate >= startDate;
   const stock = useQuery(api.renter_bot_tools.check_availability, rangeValid ? { item_name: itemName, start_date: startDate, end_date: endDate } : "skip");
   const rangeFree = rangeValid && stock?.available === true;
+  const days = rangeValid ? Math.round((Date.parse(endDate) - Date.parse(startDate)) / 86400000) + 1 : 0;
+  const quote = useQuery(api.renter_bot_tools.lookup_pricing, days > 0 && days <= 366 ? { item_name: itemName, account_slug: accountSlug, days } : "skip");
 
   return (
     <div className="border-b border-white/10 bg-black/20">
-      <div className="flex gap-4 p-4">
-        <div className="h-32 w-32 shrink-0 overflow-hidden rounded-md bg-white/[0.06]">
+      <div className="flex gap-3 p-4">
+        <div className="h-20 w-20 shrink-0 overflow-hidden rounded-md bg-white/[0.06] sm:h-32 sm:w-32">
           {itemCtx?.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -102,7 +106,7 @@ function RentalListingCard({
           )}
         </div>
 
-        <div className="flex-1 space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <p className="text-base font-semibold text-[#e4e6eb]">
             {itemCtx?.name ?? itemName}
             {itemCtx && !itemCtx.found && (
@@ -117,18 +121,12 @@ function RentalListingCard({
           </p>
           <p className="text-xs text-[#8b8fa3]">
             {itemCtx?.kind ? `${itemCtx.kind} · ` : ""}
-            {itemCtx?.daily_price_min != null
-              ? `£${itemCtx.daily_price_min}${
-                  itemCtx.daily_price_max &&
-                  itemCtx.daily_price_max !== itemCtx.daily_price_min
-                    ? `–£${itemCtx.daily_price_max}`
-                    : ""
-                }/day`
-              : "no real price on file"}
-            {" · real pricing_catalog + items rate"}
+            {quote === undefined ? "Checking price…" : quote?.found && "daily_rate_gbp" in quote
+              ? `£${quote.daily_rate_gbp}/day${quote.listed_total_gbp != null ? ` · £${quote.listed_total_gbp} for ${days} days` : " · total needs confirmation"}`
+              : "Price needs confirmation"}
           </p>
 
-          <div className="flex items-end gap-2 pt-1">
+          <div className="flex flex-wrap items-end gap-2 pt-1">
             <label className="text-[11px] text-[#8b8fa3]">
               Pickup
               <input
@@ -261,7 +259,7 @@ function RentalListingCard({
   );
 }
 
-function ContextBanner({ context, threadId }: { context: SessionContext; threadId: string }) {
+function ContextBanner({ context, threadId, accountSlug }: { context: SessionContext; threadId: string; accountSlug: string }) {
   const row = (label: string, value: string) => (
     <div className="flex items-baseline gap-1.5">
       <span className="text-[11px] uppercase tracking-wide text-[#8b8fa3]">
@@ -276,6 +274,7 @@ function ContextBanner({ context, threadId }: { context: SessionContext; threadI
         <RentalListingCard
           itemName={context.items[0]}
           threadId={threadId}
+          accountSlug={accountSlug}
           initialStartDate={context.startDate}
           initialEndDate={context.endDate}
         />
@@ -453,9 +452,9 @@ export function LiveChatSim({
           : "text-[#8b8fa3]";
 
   return (
-    <div className="flex h-[560px] flex-col rounded-lg border border-white/10 bg-white/[0.03]">
-      <ContextBanner context={session.context} threadId={session.threadId} />
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+    <div className="flex min-h-[560px] flex-col rounded-lg border border-white/10 bg-white/[0.03]">
+      <ContextBanner context={session.context} threadId={session.threadId} accountSlug={session.accountSlug} />
+      <div className="max-h-[420px] min-h-[120px] flex-1 space-y-3 overflow-y-auto p-4">
         {turns.length === 0 && (
           <p className="text-sm text-[#8b8fa3]">
             Type as a renter below. Every reply is the real production draft

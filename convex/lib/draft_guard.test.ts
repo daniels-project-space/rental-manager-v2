@@ -6,6 +6,22 @@ const baseOpts = {
   lastRenterMessage: "hygglo is asking me to verify my identity before I can book, how does that work",
 };
 
+describe("pickup time acceptance", () => {
+  const opts = { history: [], lastRenterMessage: "Can I collect at 8am?", pickupWindows: [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }] };
+  it("does not flag an explicit refusal with a conditional confirmation later", () => {
+    const r = guardDraft("I won't be able to do 8:00am. My pickup windows are 10:00 to 12:00 and 19:00 to 21:00. I'll send the address once your booking is confirmed.", opts);
+    expect(r.flags.some((f) => f.type === "INVALID_TIME_ACCEPTED")).toBe(false);
+  });
+  it("flags direct agreement to the requested closed time", () => {
+    const r = guardDraft("Sure, 8am works. See you then.", opts);
+    expect(r.flags.some((f) => f.type === "INVALID_TIME_ACCEPTED")).toBe(true);
+  });
+  it("flags an implicit agreement without repeating the time", () => {
+    const r = guardDraft("Sure, see you then.", opts);
+    expect(r.flags.some((f) => f.type === "INVALID_TIME_ACCEPTED")).toBe(true);
+  });
+});
+
 describe("guardDraft — VERIFICATION_CIRCUMVENTION", () => {
   it("strips advice to use someone else's verified account to sidestep the hold", () => {
     const draft =
