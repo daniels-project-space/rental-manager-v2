@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { baseListingProductIds } from "./base_listing_identity";
+import { baseListingProductIds, chooseBaseListing } from "./base_listing_identity";
 const items = [{ _id: "body", name_canonical: "Sony FX3", kind: "camera" }, { _id: "card", name_canonical: "CFexpress card", kind: "storage_card" }, { _id: "lens", name_canonical: "Sony 24-70mm", kind: "lens" }];
 const index = [{ account_slug: "leo", product_id: 1, item_id: "body" }];
 const ids = (components: Array<{ item_id: string; qty: number }>, target = "body") => baseListingProductIds("leo", target, index, [{ account_slug: "leo", product_id: 1, components }], items);
 describe("base listing identity", () => {
+  it("breaks equal-price ties consistently when stored rows arrive in either order", () => {
+    const a = { product_id: 1172744, daily_price: 20, total_three_days: 60 };
+    const b = { product_id: 1115113, daily_price: 20, total_three_days: 50 };
+    for (const rows of [[a, b], [b, a]]) expect(chooseBaseListing(rows, [a.product_id, b.product_id])?.total_three_days).toBe(50);
+  });
   it("includes standard bundled cards without losing the real camera rate", () => expect(ids([{ item_id: "body", qty: 1 }, { item_id: "card", qty: 1 }])).toEqual([1]));
   it("does not price a camera from a body/lens bundle", () => expect(ids([{ item_id: "body", qty: 1 }, { item_id: "lens", qty: 1 }])).toEqual([]));
   it("does not use a two-body set as a single camera rate", () => expect(ids([{ item_id: "body", qty: 2 }])).toEqual([]));

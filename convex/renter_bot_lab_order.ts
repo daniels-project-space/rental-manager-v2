@@ -110,7 +110,7 @@ async function listingPidForItem(
       | { daily_price?: number }
       | undefined;
     if (typeof l?.daily_price !== "number") continue;
-    if (!best || l.daily_price < best.price) best = { pid, price: l.daily_price };
+    if (!best || l.daily_price < best.price || (l.daily_price === best.price && pid < best.pid)) best = { pid, price: l.daily_price };
   }
   return best?.pid;
 }

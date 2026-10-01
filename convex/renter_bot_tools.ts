@@ -14,7 +14,7 @@ import { query, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { checkRentalStock, loadStockSources, stockForItem } from "./lib/renter_stock";
-import { baseListingProductIds } from "./lib/base_listing_identity";
+import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_identity";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { recentThreadMessages } from "./lib/thread_messages";
@@ -270,7 +270,7 @@ export const get_listing_context = query({
             // to use decided the number the renter saw.
             const overrides = await ctx.db.query("listing_resolution_override").withIndex("by_account_product", (q) => q.eq("account_slug", account_slug)).collect();
             const pids = baseListingProductIds(account_slug, String(it._id), idxRows, overrides, allItems);
-            let bestListing: { daily_price?: number; description?: string; name?: string; public_url?: string } | null = null;
+            let bestListing: { product_id?: number; daily_price?: number; description?: string; name?: string; public_url?: string } | null = null;
             for (const pid of pids) {
               const listing = await ctx.db
                 .query("online_listings")
@@ -281,7 +281,7 @@ export const get_listing_context = query({
               if (!listing) continue;
               const p = listing.daily_price;
               const bp = bestListing?.daily_price;
-              if (!bestListing || (typeof p === "number" && (typeof bp !== "number" || p < bp))) {
+              if (!bestListing || (typeof p === "number" && (typeof bp !== "number" || p < bp || (p === bp && listing.product_id < (bestListing.product_id ?? Infinity))))) {
                 bestListing = listing;
               }
             }
@@ -502,11 +502,7 @@ export const lookup_pricing = query({
           const pids = new Set(baseListingProductIds(account_slug, String(im.match._id), idxRows, ovrRows, allItems));
           // Among this item's own listings prefer the CHEAPEST — that's the
           // base offering rather than an add-on bundle built around it.
-          for (const l of listings) {
-            if (!pids.has(l.product_id)) continue;
-            if (typeof l.daily_price !== "number") continue;
-            if (!best || l.daily_price < (best.daily_price as number)) best = l;
-          }
+          best = chooseBaseListing(listings, [...pids]);
           if (best) bestScore = 1;
         }
       }
@@ -951,7 +947,7 @@ export const find_owned_alternatives = query({
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
-      const altPid = pidsForItem(String(it._id)).sort((a, b) => (listingByPid.get(a)?.daily_price ?? Infinity) - (listingByPid.get(b)?.daily_price ?? Infinity))[0];
+      const altPid = chooseBaseListing(listings, pidsForItem(String(it._id)))?.product_id;
       let altTiers: string | null = null;
       let altOneDay: number | null = null;
       if (altPid != null) {
@@ -1070,7 +1066,7 @@ export const get_mount_adapters = query({
     return {
       adapters: await Promise.all(items.map(async (i) => {
         const m = i.name_canonical.match(ADAPTER_RE);
-        const pid = pidsFor(String(i._id)).sort((a, b) => (listingByPid.get(a)?.daily_price ?? Infinity) - (listingByPid.get(b)?.daily_price ?? Infinity))[0];
+        const pid = chooseBaseListing(listings, pidsFor(String(i._id)))?.product_id;
         const hp = pid == null ? null : await ctx.db
           .query("hygglo_products")
           .withIndex("by_account_product", (q) =>

@@ -76,3 +76,10 @@ Still open: per-claim identity/date/quantity enforcement across free prose; full
 - Deployed desktop/mobile Lab checks at SHA `573f898cdf0763042d9e1e6fc794278080b021a3` verified date persistence, no browser errors and no mobile horizontal overflow. The current order now supplies the item/date banner, and overlapping commitments are no longer mislabeled as proof that all units are unavailable.
 
 Next evidence to collect: final alias/UI for this pass; inspect the overdue candidate and fix its root cause; fresh marketing/recommendation/price/stage/negotiation/long-context/injection replays; complete listing/kit and per-item claim authority. Sending remains gated and readiness remains unproven.
+
+## Fifth audit pass
+
+- Fourth-pass release is verified on the exact production alias at SHA `3c15d64e6bf731b5e922a1d3cefcb1ba802cff96`.
+- Independent lens pricing still disagreed with the basket after earlier apparent agreement. Root cause: two published, currently synced Leo listings both charge £20 for one day but charge **£50 versus £60 for three days**. Different DB iteration orders picked different equal-price rows. The shared selector now breaks equal-day-price ties by product id; all canonical item quotes select the same base listing. An explicitly selected listing retains its own price. Live direct lens pricing now returns £50 for three days, matching the basket's £176 total.
+- A further overdue replay returned a useful same-account return plan and no competitor, with physical-presence wording removed by the guard. This is one stochastic success following a failure, not proof the behavior is reliable; retain the failed case in the suite.
+- Stage audit found the explicit `awaiting_owner_action` flag was omitted from the new lifecycle helper. It now takes precedence over `APPROVED` when the owner's approval is still required; a regression test covers that source-state combination.

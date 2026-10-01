@@ -12,6 +12,11 @@ describe("authoritative rental stages", () => {
     expect(stage.stage).toBe("AWAITING_PAYMENT");
     expect(stage.booking_confirmed).toBe(false);
   });
+  it("respects the explicit owner-action flag even when the next step says APPROVED", () => {
+    const stage = rentalStage({ status: "pending_review", order_step: "APPROVED", awaiting_owner_action: true }, today);
+    expect(stage.stage).toBe("AWAITING_OWNER_APPROVAL");
+    expect(stage.booking_confirmed).toBe(false);
+  });
   it("REQUEST awaits owner approval, VERIFIED awaits renter verification", () => {
     expect(rentalStage({ status: "pending_review", order_step: "REQUEST" }, today).stage).toBe("AWAITING_OWNER_APPROVAL");
     expect(rentalStage({ status: "pending_review", order_step: "VERIFIED" }, today).stage).toBe("AWAITING_VERIFICATION");

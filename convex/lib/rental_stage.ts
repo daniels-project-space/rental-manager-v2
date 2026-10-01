@@ -9,6 +9,7 @@ export function rentalStage(row: {
   pickup_date?: string | null;
   return_date?: string | null;
   is_obsolete?: boolean;
+  awaiting_owner_action?: boolean;
 } | null | undefined, today: string) {
   const status = row?.status?.toLowerCase();
   const step = row?.order_step;
@@ -25,7 +26,7 @@ export function rentalStage(row: {
   } else if (status === "completed" || step === "REVIEWED") {
     stage = "COMPLETED";
     guidance = "The return is complete. Answer after-rental questions, feedback or a new booking request. Do not arrange collection for this finished rental.";
-  } else if (step === "REQUEST") {
+  } else if (row.awaiting_owner_action === true || step === "REQUEST") {
     stage = "AWAITING_OWNER_APPROVAL";
     guidance = "The request awaits the owner's acceptance. Do not tell them to pay or verify yet, and do not claim approval happened. Prepare a helpful reply for human review.";
   } else if (["APPROVED", "FUNDS_RESERVED"].includes(step ?? "")) {
@@ -44,6 +45,6 @@ export function rentalStage(row: {
     stage = "UNCONFIRMED";
     guidance = "The order exists but its next required action is not verified. Do not invent a payment, approval or verification requirement. Answer from known facts and route consequential uncertainty to the owner.";
   }
-  const confirmed = ["confirmed", "ongoing", "completed"].includes(status ?? "") && !row?.is_obsolete && !["CANCELED", "VERIFICATION_FAILED", "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"].includes(step ?? "");
+  const confirmed = ["confirmed", "ongoing", "completed"].includes(status ?? "") && !row?.is_obsolete && row?.awaiting_owner_action !== true && !["CANCELED", "VERIFICATION_FAILED", "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"].includes(step ?? "");
   return { stage, guidance, booking_confirmed: confirmed, can_share_pickup_address: confirmed && !["CANCELLED", "VERIFICATION_FAILED"].includes(stage) };
 }

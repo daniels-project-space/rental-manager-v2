@@ -3,6 +3,14 @@ import { isStandardAccessory } from "./reservations/itemUnits";
 type Inventory = { _id: unknown; kind?: string; name_canonical: string };
 type Mapping = { account_slug: string; product_id: number; components: Array<{ item_id: unknown; qty: number }> };
 
+/** Equal daily prices can have different tiers. Stable id breaks the tie so
+ * every caller uses the SAME listing rather than database iteration order. */
+export function chooseBaseListing<T extends { product_id: number; daily_price?: number }>(listings: T[], productIds: number[]): T | null {
+  const ids = new Set(productIds);
+  return listings.filter((l) => ids.has(l.product_id) && typeof l.daily_price === "number" && l.daily_price > 0)
+    .sort((a, b) => a.daily_price! - b.daily_price! || a.product_id - b.product_id)[0] ?? null;
+}
+
 /** A base camera listing can include its cards/batteries, but not another
  * independently rented item or two bodies. A manual mapping wins over index. */
 export function baseListingProductIds(account: string, itemId: string,
