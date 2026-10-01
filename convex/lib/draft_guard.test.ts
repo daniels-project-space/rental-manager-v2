@@ -6,6 +6,18 @@ const baseOpts = {
   lastRenterMessage: "hygglo is asking me to verify my identity before I can book, how does that work",
 };
 
+describe("authoritative booking transitions", () => {
+  const opts = { history: [], lastRenterMessage: "Has my request been accepted?", stage: "AWAITING_OWNER_APPROVAL" };
+  it("blocks the live false promise that acceptance alone confirms a rental", () => {
+    const result = guardDraft("It's awaiting approval on my end. Once accepted, the booking will be confirmed and I'll share the exact pickup address.", opts);
+    expect(result.flags.some(f => f.type === "PREMATURE_CONFIRMATION" && f.severity === "critical")).toBe(true);
+  });
+  it("allows waiting for actual platform confirmation without promising acceptance", () => {
+    const result = guardDraft("The request is still awaiting my approval. I'll share the address once the platform confirms the booking.", opts);
+    expect(result.flags.some(f => f.type === "PREMATURE_CONFIRMATION")).toBe(false);
+  });
+});
+
 describe("pickup time acceptance", () => {
   const opts = { history: [], lastRenterMessage: "Can I collect at 8am?", pickupWindows: [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }] };
   it("does not flag an explicit refusal with a conditional confirmation later", () => {

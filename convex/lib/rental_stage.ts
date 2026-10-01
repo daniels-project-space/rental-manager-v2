@@ -28,10 +28,10 @@ export function rentalStage(row: {
     guidance = "The return is complete. Answer after-rental questions, feedback or a new booking request. Do not arrange collection for this finished rental.";
   } else if (row.awaiting_owner_action === true || step === "REQUEST") {
     stage = "AWAITING_OWNER_APPROVAL";
-    guidance = "The request awaits the owner's acceptance. Do not tell them to pay or verify yet, and do not claim approval happened. Prepare a helpful reply for human review.";
+    guidance = "The request awaits the owner's acceptance. Do not tell them to pay or verify yet, and do not claim approval happened. Owner acceptance alone does not establish a confirmed booking: the platform still determines payment and verification completion. Do not promise 'once accepted, your booking will be confirmed' or promise the exact pickup address immediately on acceptance. Share the address only after the platform reports confirmation. Prepare a helpful reply for human review.";
   } else if (["APPROVED", "FUNDS_RESERVED"].includes(step ?? "")) {
     stage = "AWAITING_PAYMENT";
-    guidance = "The owner accepted, but the renter has not paid yet. If asked how to proceed, explain completing payment on the platform. Do not say paid, confirmed, or arrange a secured collection.";
+    guidance = "The owner accepted, but the renter has not paid yet. If asked how to proceed, explain completing payment on the platform. Payment alone does not establish confirmation: verification and platform confirmation must also be complete. Do not say paid, confirmed, or arrange a secured collection.";
   } else if (step === "VERIFIED") {
     stage = "AWAITING_VERIFICATION";
     guidance = "Payment is funded but ID/document verification is still outstanding. Explain the remaining verification step when relevant. Do not claim verification or confirmation is complete.";

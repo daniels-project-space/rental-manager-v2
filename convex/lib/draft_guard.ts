@@ -1122,7 +1122,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 20. VAGUE CONFIRMED LOCATION — FLAG (don't inject a possibly-stale address)
-  const postBooking = ["confirmed", "completed", "booked", "ongoing", "upcoming", "active"];
+  const postBooking = ["confirmed", "confirmed_upcoming", "collection_due", "in_use", "return_overdue", "completed", "booked", "ongoing", "upcoming", "active"];
   if (stage && postBooking.includes(stage)) {
     const vague =
       (account === "leo" &&
@@ -1142,7 +1142,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 21. PREMATURE BOOKING CONFIRMATION — FLAG
-  if (stage === "booked") {
+  if (["booked", "awaiting_verification", "awaiting_payment", "awaiting_owner_approval"].includes(stage ?? "")) {
     if (
       /\b(?:gone through|it'?s? (?:been |now )?(?:confirmed|accepted|approved|verified|sorted|done|processed|all good|locked in|secured)|booking (?:is |has been )?(?:confirmed|accepted|approved|live|active)|you'?re (?:all )?(?:confirmed|booked|sorted|good to go|locked in|set))\b/i.test(
         text,
@@ -1153,6 +1153,16 @@ const ASSERTS_AVAIL_RE =
         "Claims the booking is confirmed but verification is still pending",
         "flagged",
       );
+  }
+
+  // Future promises also have to respect the remaining platform steps.
+  // A conditional clause must not bypass confirmation checks by treating
+  // owner acceptance as payment/verification/confirmation all at once.
+  if (stage === "awaiting_owner_approval" &&
+    /\b(?:once|when|after|as soon as)\b.{0,60}\b(?:accepted|accept|approval|approved)\b/i.test(text) &&
+    /\b(?:will|automatically|then)\b.{0,20}\b(?:confirmed|booked)\b/i.test(text) &&
+    !/\b(?:payment|paid|verification|verified|platform confirms|platform confirmation)\b/i.test(text)) {
+    push("PREMATURE_CONFIRMATION", "Promises confirmation on owner acceptance alone, without the remaining platform payment/verification steps", "flagged");
   }
 
   // 21b. UNFULFILLABLE BOOKING — FLAG (confirms gear we don't own)

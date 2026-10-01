@@ -1,5 +1,7 @@
 import type { KitEvidence } from "./lib/kit_claims";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
+import { rentalStage } from "./lib/rental_stage";
+import { londonToday } from "./lib/effectiveDates";
 "use node";
 /**
  * Reply Inbox — Node-runtime actions (LLM draft + gated live Hygglo send).
@@ -758,18 +760,11 @@ export const generateDraft = action({
     // (internal leaks, leaked reasoning, "Hygglo", timestamps, markdown, Leo/
     // diogo we→I) and FLAG judgement calls for my review (price/availability
     // claims, premature confirmation, false action claims, out-of-hours times…).
-    const guardStage =
-      c.order_step === "REVIEWED" ||
-      c.status === "completed"
-        ? "completed"
-        : c.order_step === "BOOKED_AFTER_VERIFIED" ||
-            c.order_step === "DELIVERED" ||
-            c.status === "confirmed" ||
-            c.status === "ongoing"
-          ? "confirmed"
-          : c.order_step === "VERIFIED"
-            ? "booked"
-            : undefined;
+    const guardStage = rentalStage(c.has_reservation ? {
+      status: c.status, order_step: c.order_step,
+      start_date: c.start_date, end_date: c.end_date,
+      awaiting_owner_action: c.awaiting_owner_action,
+    } : null, londonToday()).stage;
     const guard = guardDraft(checkedDraft, {
       history: c.messages as { role: "owner" | "renter"; content: string }[],
       lastRenterMessage: lastRenter,
