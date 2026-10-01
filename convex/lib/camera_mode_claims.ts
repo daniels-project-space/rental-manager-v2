@@ -30,7 +30,13 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       const clauseNamed = evidence.filter(e => e.names.some(n => n && mentionsCamera(clause, n)));
       if (clauseNamed.length) subject = clauseNamed;
       else if (explicitCameraModel.test(clause)) subject = [];
-      if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check)\b|^\s*(?:none of|neither\b)/i.test(clause)) continue;
+      // A comma between adjectives ("uncropped, full-width 4K120") does not
+      // start a new assertion. A named camera/new predicate after a comma
+      // does, so a preceding conditional/negative cannot license that promise.
+      const independentAssertion = clauseNamed.length > 0 || explicitCameraModel.test(clause) ||
+        /\b(?:records?|shoots?|supports?|achieves?|can|does|is|has|offers?|tops\s*out|requires?)\b/i.test(clause.slice(0, match.index! - start));
+      const polarityScope = start > 0 && sentence[start - 1] === "," && !independentAssertion ? sentence.slice(0, end) : clause;
+      if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check)\b|^\s*(?:none of|neither\b)/i.test(polarityScope)) continue;
       const fps = Number(match[1] ?? match[2] ?? match[3]);
       const nominalFps = fps === 119 ? 120 : fps === 59 ? 60 : fps === 29 ? 30 : fps === 23 ? 24 : fps;
       const hasApsc = /\b(?:aps.c|super\s*35)\b/i.test(clause) &&
