@@ -52,4 +52,11 @@ describe("per-item included-content claims", () => {
     expect(unsupportedKitClaims("Sony A7 III includes NP-FZ100 batteries.", [older, newer])).toEqual([]);
     expect(unsupportedKitClaims("Sony A7 II includes NP-FZ100 batteries.", [older, newer]).map(f => f.content)).toEqual(["battery"]);
   });
+  it("preserves actual-kit clarification without treating excluded types as inclusions", () => {
+    const bm = { names: ["Blackmagic 6K Full Frame"], contents: ["5 × NP-F570 batteries", "1 × 1TB CFexpress Type B card"] };
+    const text = "Blackmagic 6K Full Frame comes with 5x NP-F570 batteries (the native battery type for this camera, not LP-E6) and 1x 1TB CFexpress Type B card (the 6K FF uses CFexpress Type B rather than CFast).";
+    expect(unsupportedKitClaims(text, [bm])).toEqual([]);
+    expect(unsupportedKitClaims("Blackmagic 6K Full Frame includes a 1TB CFexpress Type B card, not a 2TB CFast card.", [bm])).toEqual([]);
+    expect(unsupportedKitClaims("Blackmagic 6K Full Frame includes a 2TB CFast card, not a 1TB CFexpress Type B card.", [bm]).map(f => f.content)).toEqual(["card"]);
+  });
 });

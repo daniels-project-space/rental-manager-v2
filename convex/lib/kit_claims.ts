@@ -12,19 +12,22 @@ function namesItem(text: string, name: string) {
 }
 type ComponentDetails = { types: string[]; capacities: string[]; quantity?: number };
 const numbers: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+const positiveDetail = (text: string, index: number) => !/\b(?:not|no|without|rather than|instead of)\s+(?:(?:an?|the)\s+)?$/i.test(text.slice(0, index));
 /** Interpret only explicit component facts. A set is not an individual-unit count. */
 function details(text: string, category: string, pattern: RegExp): ComponentDetails {
   const types: string[] = [];
   if (category === "battery") {
-    for (const m of text.matchAll(/\b(?:NP[\s-]*(?:FZ100|FW50|F\d+)|LP[\s-]*E\d+[A-Z]*)\b/gi)) types.push(normalize(m[0]).replace(/ /g, ""));
+    for (const m of text.matchAll(/\b(?:NP[\s-]*(?:FZ100|FW50|F\d+)|LP[\s-]*E\d+[A-Z]*)\b/gi)) {
+      if (positiveDetail(text, m.index!)) types.push(normalize(m[0]).replace(/ /g, ""));
+    }
   }
   if (category === "card") {
     for (const m of text.matchAll(/\b(?:cf\s*express(?:\s+(?:type\s+)?[ab])?|cfast|micro\s*sd|sd(?:hc|xc)?)\b/gi)) {
-      types.push(normalize(m[0]).replace(/ /g, "").replace(/^cfexpress([ab])$/, "cfexpresstype$1"));
+      if (positiveDetail(text, m.index!)) types.push(normalize(m[0]).replace(/ /g, "").replace(/^cfexpress([ab])$/, "cfexpresstype$1"));
     }
   }
   const capacities = category === "card" || category === "ssd"
-    ? [...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(GB|TB)\b/gi)].map(m => `${Number(m[1])}${m[2].toLowerCase()}`) : [];
+    ? [...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(GB|TB)\b/gi)].filter(m => positiveDetail(text, m.index!)).map(m => `${Number(m[1])}${m[2].toLowerCase()}`) : [];
   const noun = pattern.exec(text);
   const prefix = noun ? text.slice(0, noun.index) : "";
   // Ignore model/capacity digits; only a separate quantity or explicit × marker counts.
@@ -62,7 +65,7 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[]) {
     const candidates = named.length ? named : subject.length ? subject : evidence;
     if (!candidates.length) continue; // unknown-kit guard handles missing evidence separately
     for (const [content, pattern] of categories) {
-      const claims = componentParts(claimed).filter(c => pattern.test(c)).map(c => details(c, content, pattern));
+      const claims = componentParts(claimed).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c)).map(c => details(c, content, pattern));
       if (claims.length && !candidates.every(e => claims.every(c => e.contents.some(entry =>
         componentParts(entry).some(part => pattern.test(part) && supports(c, details(part, content, pattern))))))) {
         failures.push({ sentence: sentence.trim(), content });
