@@ -558,6 +558,7 @@ export default defineSchema({
     // filter to them. Unindexed `.filter(is_obsolete=true)` was scanning the
     // full table on every call. Indexed lookup reduces row reads ~30x.
     .index("by_is_obsolete", ["is_obsolete"])
+    .index("by_is_obsolete_start_date", ["is_obsolete", "start_date"])
     .index("by_demand_loss_class", ["demand_loss_class"])
     // Phase 7a (2026-05-24) — composite for audit_qty_drift + dashboard
     // status-scoped queries. Cuts unindexed full-table scans down to the

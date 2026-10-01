@@ -1583,10 +1583,21 @@ export const getStatsDrawerData = query({
       r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
     let allObsoleteRes: ResRow[] = [];
     if (!reuseWeeklyFallout) {
-      allObsoleteRes = await ctx.db
+      // COLLECT 1 already loaded every row starting on/after dashCutoff.
+      // Re-reading the full obsolete set at month rollover duplicated ~6.5 MB
+      // and pushed the all-accounts refresh past Convex's 16 MB read limit.
+      // The indexed complement includes undated legacy rows (undefined sorts
+      // before strings), preserving fallout for old bookings that failed later.
+      const olderObsoleteRes = await ctx.db
         .query("reservations")
-        .withIndex("by_is_obsolete", (q) => q.eq("is_obsolete", true))
+        .withIndex("by_is_obsolete_start_date", (q) =>
+          q.eq("is_obsolete", true).lt("start_date", dashCutoff),
+        )
         .collect();
+      allObsoleteRes = [
+        ...allResRaw.filter((r) => r.is_obsolete === true),
+        ...olderObsoleteRes,
+      ];
       if (accountSlug) allObsoleteRes = allObsoleteRes.filter((r) => r.account_slug === accountSlug);
     }
     const monthlyPlatformFallout = reuseWeeklyFallout
