@@ -789,7 +789,9 @@ export const get_verified_camera_profiles = query({ args: {}, handler: async ctx
   return items.filter(i => i.kind === "camera" && i.status === "active" && !i.is_marketing_only && i.qty > 0).flatMap(i => {
     const spec = byItem.get(String(i._id));
     const capabilities = verifiedCameraCapabilities(spec, i.name_canonical);
-    return capabilities ? [{ names: [i.name_canonical, ...(i.aliases ?? []), spec!.verified_model!], capabilities }] : [];
+    return capabilities ? [{ names: [i.name_canonical, ...(i.aliases ?? []), spec!.verified_model!,
+      // Manufacturer can be omitted in ordinary replies ("the FX3", "A7 V").
+      ...(i.name_canonical.startsWith("Sony ") ? [i.name_canonical.slice(5)] : [])], capabilities }] : [];
   });
 } });
 
