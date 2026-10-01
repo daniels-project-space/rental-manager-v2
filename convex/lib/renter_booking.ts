@@ -13,3 +13,10 @@ export async function getBotBooking(ctx: QueryCtx, threadId: string): Promise<Bo
   return ctx.db.query("reservations")
     .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId)).first();
 }
+
+/** Current editable test basket; never consult it for a real renter thread. */
+export async function getLabOrder(ctx: QueryCtx, threadId: string) {
+  if (!threadId.startsWith(LAB_THREAD_PREFIX)) return null;
+  return ctx.db.query("renter_bot_lab_orders")
+    .withIndex("by_thread", (q) => q.eq("thread_id", threadId)).first();
+}

@@ -232,6 +232,7 @@ export const seed = internalMutation({
       if (listing) {
         lines.push({
           item_id: undefined,
+          product_id: a.base_product_id,
           // The listing IS the line, exactly as on Hygglo.
           name: (listing.name ?? "listing").slice(0, 70),
           qty: 1,

@@ -1,5 +1,5 @@
 import { loadListingInventory, listingStock } from "./lib/listing_inventory";
-import { getBotBooking } from "./lib/renter_booking";
+import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 /**
  * Convex queries that back the Mastra renter-bot tools (5 of the 7 — the
  * other two are `search` (in convex/knowledge.ts) and `getTemplate`
@@ -119,6 +119,7 @@ export const get_listing_context = query({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
     const reservation = await getBotBooking(ctx, thread_id);
+    const simOrder = await getLabOrder(ctx, thread_id);
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -131,7 +132,9 @@ export const get_listing_context = query({
     // reservation (authoritative once booked) or the inquiry (before that).
     type Line = { name: string; qty: number; product_id: number | null };
     let lines: Line[] = [];
-    if (reservation?.hygglo_items?.length) {
+    if (simOrder) {
+      lines = simOrder.items.map((i) => ({ name: i.name, qty: i.qty, product_id: i.product_id ?? null }));
+    } else if (reservation?.hygglo_items?.length) {
       lines = reservation.hygglo_items.map((h) => ({
         name: h.name,
         qty: h.qty ?? 1,
@@ -416,8 +419,8 @@ export const get_listing_context = query({
       account_slug,
       items,
       // The request itself: dates, pickup/return time, what they pay, location.
-      start_date: reservation?.start_date ?? null,
-      end_date: reservation?.end_date ?? null,
+      start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
+      end_date: simOrder?.end_date ?? reservation?.end_date ?? null,
       pickup_time: reservation?.pickup_time ?? null,
       return_time: reservation?.return_time ?? null,
       gross_paid_gbp: reservation?.gross_paid_gbp ?? null,

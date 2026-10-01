@@ -2522,6 +2522,7 @@ const operationalSchema = defineSchema({
     items: v.array(
       v.object({
         item_id: v.optional(v.id("items")),
+        product_id: v.optional(v.number()),
         name: v.string(),
         qty: v.number(),
         daily_price_gbp: v.optional(v.number()),

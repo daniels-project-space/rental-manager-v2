@@ -6,6 +6,7 @@ import { api } from "../../../../convex/_generated/api";
 
 export interface SessionContext {
   items: string[];
+  productId?: number;
   priceGbp?: number;
   dates?: string;
   startDate?: string;
@@ -37,12 +38,14 @@ function overlapsBooking(
 // check_availability tool reads — not a mock (Daniel, 2026-08-17).
 function RentalListingCard({
   itemName,
+  productId,
   threadId,
   accountSlug,
   initialStartDate,
   initialEndDate,
 }: {
   itemName: string;
+  productId?: number;
   threadId: string;
   accountSlug: string;
   initialStartDate?: string;
@@ -82,7 +85,7 @@ function RentalListingCard({
     overlapsBooking(startDate, endDate, b),
   );
   const rangeValid = startDate && endDate && endDate >= startDate;
-  const stock = useQuery(api.renter_bot_tools.check_availability, rangeValid ? { item_name: itemName, start_date: startDate, end_date: endDate } : "skip");
+  const stock = useQuery(api.renter_bot_tools.check_availability, rangeValid ? { item_name: itemName, product_id: productId, account_slug: accountSlug, thread_id: threadId, quantity: 1, start_date: startDate, end_date: endDate } : "skip");
   const rangeFree = rangeValid && stock?.available === true;
   const days = rangeValid ? Math.round((Date.parse(endDate) - Date.parse(startDate)) / 86400000) + 1 : 0;
   const quote = useQuery(api.renter_bot_tools.lookup_pricing, days > 0 && days <= 366 ? { item_name: itemName, account_slug: accountSlug, days } : "skip");
@@ -273,6 +276,7 @@ function ContextBanner({ context, threadId, accountSlug }: { context: SessionCon
       {context.items[0] && (
         <RentalListingCard
           itemName={context.items[0]}
+          productId={context.productId}
           threadId={threadId}
           accountSlug={accountSlug}
           initialStartDate={context.startDate}
@@ -424,7 +428,7 @@ export function LiveChatSim({
           // run row the whole time. Show it.
           text:
             result.draft ||
-            `⚠ Reply withheld by the production guard — ${blockReason(result.productionGuardFlags)}`,
+            `⚠ Reply withheld — ${result.reason ?? blockReason(result.productionGuardFlags)}`,
           overallStatus: result.overall_status,
           runId: result.runId,
         },

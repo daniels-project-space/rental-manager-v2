@@ -579,7 +579,8 @@ export const generateDraft = action({
           }),
         });
         if (!resp.ok) {
-          return { status: "skipped", reason: "subscription_unavailable" };
+          console.warn(`[generateDraft] canonical generation HTTP ${resp.status}`);
+          return { status: "skipped", reason: `canonical_generation_http_${resp.status}` };
         }
         const j = (await resp.json()) as {
           draft?: string;
@@ -689,8 +690,10 @@ export const generateDraft = action({
             );
           }
         }
-      } catch {
-        return { status: "skipped", reason: "subscription_unavailable" };
+      } catch (error) {
+        const kind = error instanceof Error ? error.name.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase() : "unknown";
+        console.warn(`[generateDraft] canonical generation failed (${kind})`);
+        return { status: "skipped", reason: `canonical_generation_error_${kind}` };
       }
     }
 

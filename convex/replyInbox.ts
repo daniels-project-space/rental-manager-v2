@@ -1,4 +1,4 @@
-import { getBotBooking, type BotBooking } from "./lib/renter_booking";
+import { getBotBooking, getLabOrder, type BotBooking } from "./lib/renter_booking";
 /**
  * Reply Inbox (2026-06-22) — cross-account "renter messages awaiting my reply"
  * queue for the dashboard widget.
@@ -1088,6 +1088,7 @@ export const getThreadContext = internalQuery({
       .first();
 
     const reservation = await getBotBooking(ctx, thread_id);
+    const simOrder = await getLabOrder(ctx, thread_id);
 
     let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
     let accountId = reservation?.account_id ?? conv?.account_id ?? undefined;
@@ -1261,7 +1262,7 @@ export const getThreadContext = internalQuery({
             : "INQUIRY";
     }
 
-    const richItems = buildRichItems(reservation, conv);
+    const richItems = simOrder ? simOrder.items.map((i) => ({ name: i.name, qty: i.qty, image_url: null })) : buildRichItems(reservation, conv);
 
     // Phase 0 unblock: resolve the requested items to real inventory units and
     // compute live availability for the rental dates — the SAME engine the queue
@@ -1291,7 +1292,9 @@ export const getThreadContext = internalQuery({
       product_id?: number | null;
       product_id_exact: boolean;
     }[] =
-      reservation
+      simOrder
+        ? simOrder.items.map((i) => ({ name: i.name, product_id: i.product_id, product_id_exact: typeof i.product_id === "number" }))
+        : reservation
         ? (reservation.hygglo_items ?? []).map((h) => ({
             name: h.name,
             product_id: h.product_id,
@@ -1663,8 +1666,8 @@ export const getThreadContext = internalQuery({
       low_reviews,
       has_reservation: !!reservation,
       items: richItems.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name)),
-      start_date: reservation?.start_date ?? null,
-      end_date: reservation?.end_date ?? null,
+      start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
+      end_date: simOrder?.end_date ?? reservation?.end_date ?? null,
       return_date: reservation?.return_date ?? null,
       pickup_method: reservation?.pickup_method ?? null,
       status: reservation?.status ?? null,

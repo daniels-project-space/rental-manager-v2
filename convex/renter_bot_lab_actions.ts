@@ -15,6 +15,7 @@ import {
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { scoreDraft } from "./lib/renter_bot_rubric";
+import type { DraftEvidence } from "./lib/renter_draft_evidence";
 import { PREFIX } from "./renter_bot_probe";
 
 export const listFixtures = query({
@@ -142,6 +143,13 @@ export const appendAssistantMessage = internalMutation({
   },
 });
 
+/** The selected SKU is resolved on the server, not guessed from UI text. */
+export const getSelectedListing = internalQuery({
+  args: { account_slug: v.string(), product_id: v.number() },
+  handler: async (ctx, a) => ctx.db.query("online_listings")
+    .withIndex("by_account_product", (q) => q.eq("account_slug", a.account_slug).eq("product_id", a.product_id)).first(),
+});
+
 // Starts (or restarts) a live Lab test conversation — from a saved scenario
 // preset, or a blank custom one seeded from location/price/items fields.
 export const startLiveSession = action({
@@ -164,6 +172,7 @@ export const startLiveSession = action({
     threadId: string;
     context: {
       items: string[];
+      productId?: number;
       priceGbp?: number;
       dates?: string;
       startDate?: string;
@@ -196,10 +205,18 @@ export const startLiveSession = action({
       }
     }
 
+    if (args.productId != null) {
+      const listing = await ctx.runQuery(internal.renter_bot_lab_actions.getSelectedListing, {
+        account_slug: args.accountSlug, product_id: args.productId,
+      });
+      if (!listing) throw new Error("Selected listing is not present on this account");
+      itemNames = [listing.name];
+    }
+
     await ctx.runMutation(internal.renter_bot_probe.seed, {
       thread_id: threadId,
       account_slug: args.accountSlug,
-      items: itemNames.map((name) => ({ name })),
+      items: itemNames.map((name) => ({ name, ...(args.productId != null ? { product_id: args.productId } : {}) })),
       messages,
     });
     // Simulated Hygglo order for this session, so the bot can genuinely add
@@ -214,7 +231,7 @@ export const startLiveSession = action({
     });
     return {
       threadId,
-      context: { items: itemNames, priceGbp, dates, startDate, endDate, location },
+      context: { items: itemNames, productId: args.productId, priceGbp, dates, startDate, endDate, location },
     };
   },
 });
@@ -231,6 +248,10 @@ export const sendTestMessage = action({
     overall_status: string;
     runId: string;
     productionGuardFlags: unknown;
+    status: string;
+    reason?: string;
+    evidence?: DraftEvidence;
+    model_id?: string;
   }> => {
     if (!args.threadId.startsWith(PREFIX)) {
       throw new Error("sendTestMessage only accepts a Lab/probe thread_id");
@@ -299,6 +320,10 @@ export const sendTestMessage = action({
     // Daniel/I can see directly whether the actual production safety net
     // caught something, not just this harness's own rubric.
     return {
+      status: draftResult.status,
+      reason: draftResult.reason,
+      evidence: draftResult.evidence,
+      model_id: draftResult.model_id,
       draft: draftText,
       overall_status: rubric.overall_status,
       runId,
