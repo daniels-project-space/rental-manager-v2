@@ -1,3 +1,4 @@
+import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -76,6 +77,7 @@ export interface GuardOpts {
      * instruction is not enforcement; this is.
      */
     itemsWithoutKitData?: string[];
+    kitEvidence?: KitEvidence[];
   };
   /** Real per-item availability for the rental dates (verify.ts cross-check). */
   availability?: { items: { name: string; available: boolean; quantity?: number; free_units?: number | null }[] };
@@ -1050,6 +1052,10 @@ const ASSERTS_AVAIL_RE =
         break;
       }
     }
+  }
+
+  for (const claim of unsupportedKitClaims(text, factPack?.kitEvidence ?? [])) {
+    push("KIT_HALLUCINATION", `Unverified included ${claim.content}: "${claim.sentence.slice(0, 160)}"`, "flagged");
   }
 
   // 17. INCLUDED ACCESSORY CHARGED SEPARATELY — FLAG

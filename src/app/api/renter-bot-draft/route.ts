@@ -492,6 +492,7 @@ export async function POST(req: Request) {
    */
   const itemsWithoutKitData: string[] = [];
   const itemsWithKitData: string[] = [];
+  const kitEvidence: Array<{ names: string[]; contents: string[] }> = [];
   /**
    * Items a TOOL returned real kit text for during the turn, lower-cased.
    *
@@ -932,6 +933,11 @@ export async function POST(req: Request) {
           : it.whats_included?.slice(0, 900) ?? structuredKit ??
             "(NOT LISTED — do not invent kit contents; exact inclusions need owner review.)";
         if (mappedKit || structuredKit || it.whats_included?.trim()) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
+        if (mappedKit || structuredKit || it.whats_included?.trim()) {
+          kitEvidence.push({ names: [it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n),
+            contents: mappedKit ? [...(it.inventory_components ?? []).map(c => c.name ?? ""), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
+          groundTruth += `  INCLUDED-CONTENTS LIMIT: state only the recorded contents above. A charger, case or other customary accessory is NOT established merely because this is a camera rental. Do not add customary items to the list.\n`;
+        }
         const tierTxt = (it as { price_tiers?: string | null }).price_tiers;
         // Whitelist the prices we are about to HAND the model.
         //
@@ -1430,6 +1436,7 @@ export async function POST(req: Request) {
           usedTools,
           resolvedItems,
           itemsWithoutKitData,
+          kitEvidence,
           offeredPrices: [...new Set(offeredPrices)],
           marketingItems,
         });
@@ -1643,6 +1650,7 @@ export async function POST(req: Request) {
         (n) => !kitSuppliedByTool.has(n.toLowerCase()),
       ),
       itemsWithKitData,
+      kitEvidence,
       hasPairingData,
       factsEmitted,
       toolStats,

@@ -1,3 +1,4 @@
+import type { KitEvidence } from "./lib/kit_claims";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
 "use node";
 /**
@@ -550,6 +551,7 @@ export const generateDraft = action({
     // draft_guard KIT_HALLUCINATION.
     let noKitItems: string[] = [];
     let routeKitItems: string[] = [];
+    let routeKitEvidence: KitEvidence[] = [];
     // Verified not-rentable items reported by the draft route.
     let routeMarketingItems: string[] = [];
     let routeOfferedPrices: number[] = [];
@@ -597,6 +599,7 @@ export const generateDraft = action({
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
           itemsWithoutKitData?: string[];
           itemsWithKitData?: string[];
+          kitEvidence?: KitEvidence[];
           marketingItems?: string[];
           offeredPrices?: number[];
           bookingModified?: boolean;
@@ -656,6 +659,7 @@ export const generateDraft = action({
           freshInquiryItems = j.resolvedItems ?? [];
           noKitItems = j.itemsWithoutKitData ?? [];
           routeKitItems = (j.itemsWithKitData ?? []).filter((n): n is string => typeof n === "string" && !!n.trim());
+          routeKitEvidence = (j.kitEvidence ?? []).filter(e => Array.isArray(e.names) && Array.isArray(e.contents) && e.names.every(n => typeof n === "string") && e.contents.every(c => typeof c === "string"));
           routeMarketingItems = j.marketingItems ?? [];
           routeOfferedPrices = j.offeredPrices ?? [];
           routeBookingModified = j.bookingModified === true;
@@ -838,6 +842,7 @@ export const generateDraft = action({
             // not to invent kit for these; this makes it enforceable rather
             // than advisory (see draft_guard KIT_HALLUCINATION).
             itemsWithoutKitData: unknownKitItems(noKitItems, listingFacts, routeKitItems),
+            kitEvidence: routeKitEvidence,
           }
         : undefined,
       // Owned identity is not a date/quantity stock verdict. Only actual
