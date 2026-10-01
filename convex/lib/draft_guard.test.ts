@@ -18,6 +18,24 @@ describe("authoritative booking transitions", () => {
   });
 });
 
+describe("owner approval assertions", () => {
+  const opts = { history: [], lastRenterMessage: "Is my booking approved?", ownerApproved: false, stage: "awaiting_owner_approval" };
+  it.each([
+    "Your request has not been accepted yet. It is still awaiting approval.",
+    "Once the platform has fully confirmed your booking, I will share the address.",
+    "I'll share the address once your booking is confirmed.",
+  ])("does not block a negative or conditional statement: %s", text => {
+    expect(guardDraft(text, opts).flags.some(f => f.action === "flagged" && ["FALSE_ACTION_CLAIM", "PREMATURE_CONFIRMATION"].includes(f.type))).toBe(false);
+  });
+  it.each([
+    "Your request is accepted.",
+    "I've accepted your request.",
+    "I'll share the address once your booking is confirmed. Your request is accepted.",
+  ])("still blocks an actual unapproved assertion: %s", text => {
+    expect(guardDraft(text, opts).flags.some(f => f.type === "FALSE_ACTION_CLAIM")).toBe(true);
+  });
+});
+
 describe("pickup time acceptance", () => {
   const opts = { history: [], lastRenterMessage: "Can I collect at 8am?", pickupWindows: [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }] };
   it("does not flag an explicit refusal with a conditional confirmation later", () => {

@@ -45,13 +45,16 @@ export function isValidIntent(intent: string): intent is RenterBotIntent {
 }
 
 /** 7 conversation stages — gate which prompts/actions fire downstream. */
+import { RENTAL_STAGES } from "./rental_stage";
+
+// Operational stages share one enum with the booking resolver. Retain legacy
+// conversation labels for persisted records; they never override booking facts.
 export const CONVERSATION_STAGES = [
-  "INQUIRY",
+  ...RENTAL_STAGES,
   "INTERESTED",
   "READY_TO_BOOK",
   "BOOKED",
   "CONFIRMED",
-  "COMPLETED",
   "DEAD",
 ] as const;
 

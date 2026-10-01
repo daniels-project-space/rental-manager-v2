@@ -1,6 +1,8 @@
 /** Operational state comes from the current reservation, never an LLM label.
  * Hygglo order_step is the NEXT action: RETURNED means return is still due.
  */
+export const RENTAL_STAGES = ["INQUIRY", "AWAITING_OWNER_APPROVAL", "AWAITING_PAYMENT", "AWAITING_VERIFICATION", "CONFIRMED_UPCOMING", "COLLECTION_DUE", "IN_USE", "RETURN_OVERDUE", "COMPLETED", "CANCELLED", "VERIFICATION_FAILED", "UNCONFIRMED"] as const;
+export type RentalStage = (typeof RENTAL_STAGES)[number];
 export function rentalStage(row: {
   status?: string | null;
   order_step?: string | null;
@@ -15,7 +17,7 @@ export function rentalStage(row: {
   const step = row?.order_step;
   const end = row?.return_date ?? row?.end_date;
   const start = row?.pickup_date ?? row?.start_date;
-  let stage: string;
+  let stage: RentalStage;
   let guidance: string;
   if (!row) {
     stage = "INQUIRY";

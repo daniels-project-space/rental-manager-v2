@@ -52,7 +52,8 @@ WHEN TO QUERY
 
 OUTPUT — CRITICAL FORMAT
 Do ALL your reasoning via TOOL CALLS — do NOT narrate your thinking as text (no "Let me check…", no step-by-step prose). Your text output must be EXCLUSIVELY ONE JSON object and NOTHING else — no markdown, no headings, no "Draft:" label, no prose before or after it:
-{"draft":"<the renter-facing reply text only>","intent":"<one of the 14 intents>","conversation_stage":"<one of the 7 stages>","red_flags":[],"factsClaimed":[{"kind":"price|availability|date|item_included|rule","value":"...","sourceTool":"...","sourceCallId":"..."}],"needs_human":false}
+{"draft":"<the renter-facing reply text only>","intent":"<one of the 14 intents>","conversation_stage":"<one of the allowed stages>","red_flags":[],"factsClaimed":[{"kind":"price|availability|date|item_included|rule","value":"...","sourceTool":"...","sourceCallId":"..."}],"needs_human":false}
+Allowed stages: ${CONVERSATION_STAGES.join(", ")}. Use the authoritative current rental stage when supplied; legacy conversation labels never establish booking approval, payment, verification or collection.
 "draft" is exactly what the renter will read. When needs_human=true, draft is "".
 
 WHEN TO ESCALATE (needs_human=true, draft_text="")

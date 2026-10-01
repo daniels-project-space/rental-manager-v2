@@ -67,6 +67,7 @@ export const generateDraft = action({
     draft?: string;
     confidence?: number;
     flags?: DraftFlag[];
+    rejectedDraft?: string;
     usedTools?: boolean;
     model_id?: string;
     draft_intent?: string;
@@ -881,7 +882,8 @@ export const generateDraft = action({
       // escalation and there was no way to tell WHY a thread never drafted —
       // which is how a 100%-escalation path on not-owned items went unnoticed.
       // Distinct from a route-level escalation: here the GUARD withheld it.
-      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags, ...generationMeta };
+      return { status: "skipped", reason: "needs_human:guard_blocked", flags: unresolvedCriticalFlags, ...generationMeta,
+        ...(thread_id.startsWith("__probe__") ? { rejectedDraft: checkedDraft } : {}) };
     }
 
     const finalDraft = guard.text.trim() || checkedDraft;

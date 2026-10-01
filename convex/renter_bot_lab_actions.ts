@@ -279,6 +279,7 @@ export const sendTestMessage = action({
     productionGuardFlags: unknown;
     status: string;
     reason?: string;
+    rejectedDraft?: string;
     evidence?: DraftEvidence;
     model_id?: string;
   }> => {
@@ -351,6 +352,7 @@ export const sendTestMessage = action({
     return {
       status: draftResult.status,
       reason: draftResult.reason,
+      rejectedDraft: draftResult.rejectedDraft,
       evidence: draftResult.evidence,
       model_id: draftResult.model_id,
       draft: draftText,

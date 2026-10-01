@@ -228,6 +228,21 @@ function parseTimeToMinutes(timeStr: string): number | null {
 
 // ── Main entry ────────────────────────────────────────────────────
 
+/** Mentions of acceptance are not assertions that it happened. Evaluate each
+ * sentence so a valid conditional cannot excuse a separate false assertion. */
+function claimsCurrentOwnerApproval(text: string): boolean {
+  const assertion = /\b(?:(?:(?:your|the|this)\s+)?(?:booking|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:approved|accepted|confirmed)\b|\bI(?:'ve|’ve| have)\s+(?:just\s+)?(?:approved|accepted|confirmed)\b|\b(?:accepted|approved|confirmed)\s+(?:your|the)\s+(?:booking|request|order)\b/i;
+  return assertsOutsideConditional(text, assertion);
+}
+
+function assertsOutsideConditional(text: string, assertion: RegExp): boolean {
+  return text.split(/(?<=[.!?])\s+|\n+/).some(sentence => {
+    const match = assertion.exec(sentence);
+    if (!match) return false;
+    return !/\b(?:once|when|after|if|until|as soon as|the moment|the second)\b[^,;:]{0,100}$/i.test(sentence.slice(0, match.index));
+  });
+}
+
 export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   const flags: DraftFlag[] = [];
   let text = draft;
@@ -1142,7 +1157,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 21. PREMATURE BOOKING CONFIRMATION — FLAG
-  if (["booked", "awaiting_verification", "awaiting_payment", "awaiting_owner_approval"].includes(stage ?? "")) {
+  if (stage === "booked") {
     if (
       /\b(?:gone through|it'?s? (?:been |now )?(?:confirmed|accepted|approved|verified|sorted|done|processed|all good|locked in|secured)|booking (?:is |has been )?(?:confirmed|accepted|approved|live|active)|you'?re (?:all )?(?:confirmed|booked|sorted|good to go|locked in|set))\b/i.test(
         text,
@@ -1153,6 +1168,11 @@ const ASSERTS_AVAIL_RE =
         "Claims the booking is confirmed but verification is still pending",
         "flagged",
       );
+  }
+
+  if (["awaiting_verification", "awaiting_payment", "awaiting_owner_approval"].includes(stage ?? "") &&
+    assertsOutsideConditional(text, /\b(?:(?:(?:your|the|this)\s+)?(?:booking|rental|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:confirmed|booked|secured|locked in|all set)\b|\byou(?:'re|’re| are)\s+(?:all\s+)?(?:booked|confirmed|set|good to go|locked in)\b|\b(?:confirmed|booked)\s+(?:your|the|this)\s+(?:booking|request|order|rental)\b/i)) {
+    push("PREMATURE_CONFIRMATION", "Claims confirmation before the platform's remaining booking steps are complete", "flagged");
   }
 
   // Future promises also have to respect the remaining platform steps.
@@ -1244,9 +1264,10 @@ const ASSERTS_AVAIL_RE =
       );
   }
 
+  const adminActionText = text.replace(/[’‘]/g, "\'");
   const selfAdminAction =
-    /\bjust (?:approved|accepted|confirmed) (?:your|the|this)\b/i.test(text) ||
-    /\bI(?:'?ve| have| just)? (?:approved|accepted|confirmed) (?:it|your|the|this)\b/i.test(text) ||
+    /\bjust (?:approved|accepted|confirmed) (?:your|the|this)\b/i.test(adminActionText) ||
+    /\bI(?:'?ve| have| just)? (?:approved|accepted|confirmed) (?:it|your|the|this)\b/i.test(adminActionText) ||
     // "confirm" is only an admin claim when its OBJECT is the booking. Bare
     // "let me confirm what's in the kit" / "I can confirm the 100mm is
     // available" are ordinary English for "I'll check" — and the fact pack
@@ -1254,11 +1275,11 @@ const ASSERTS_AVAIL_RE =
     // data is missing. Blocking that made the system contradict itself and
     // withhold the entire reply: live-caught on "yes please, and what's
     // included in the bmpcc kit?", which returned an empty draft.
-    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get it |have it )?(?:accept|approve)(?:ed)?\b/i.test(text) ||
-    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get |have )?(?:it |the |your |this )?(?:accept|approve|confirm)(?:ed)?\s+(?:your |the |this )?(?:booking|request|order|reservation|rental)\b/i.test(text) ||
-    /\b(?:I'?ll|let me|I can|I'?ve|just|I'?m) (?:going to )?mark(?:ing|ed)? (?:it|the|your|this)?\s*(?:as )?(?:picked up|collected|returned|complete)\b/i.test(text) ||
-    /\bprocess(?:ed|ing)? the return\b/i.test(text) ||
-    /\bI'?m (?:accepting|confirming|approving)\b/i.test(text);
+    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get it |have it )?(?:accept(?:ed)?|approv(?:e|ed))\b/i.test(adminActionText) ||
+    /\b(?:I'?ll|let me|I can|I'?ve|just) (?:get |have )?(?:it |the |your |this )?(?:accept|approve|confirm)(?:ed)?\s+(?:your |the |this )?(?:booking|request|order|reservation|rental)\b/i.test(adminActionText) ||
+    /\b(?:I'?ll|let me|I can|I'?ve|just|I'?m) (?:going to )?mark(?:ing|ed)? (?:it|the|your|this)?\s*(?:as )?(?:picked up|collected|returned|complete)\b/i.test(adminActionText) ||
+    /\bprocess(?:ed|ing)? the return\b/i.test(adminActionText) ||
+    /\bI'?m (?:accepting|confirming|approving)\b/i.test(adminActionText);
   if (selfAdminAction)
     push(
       "FALSE_ACTION_CLAIM",
@@ -1274,13 +1295,7 @@ const ASSERTS_AVAIL_RE =
   // this false positive was tripping the hard-escalation backstop on an
   // otherwise-correct draft, forcing an unnecessary escalation.
   else if (
-    !opts.ownerApproved &&
-    /\b(?:your |the |it'?s )?(?:booking|request|order)?\s*(?:is |has been |'?s )?(?:approved|accepted|confirmed)\b/i.test(
-      text,
-    ) &&
-    !/\b(?:the moment|once|when|as soon as|the second)\s+(?:your |the |it'?s )?(?:booking|request|order)?\s*(?:is |has been |'?s )?(?:approved|accepted|confirmed)\b/i.test(
-      text,
-    )
+    !opts.ownerApproved && claimsCurrentOwnerApproval(text)
   )
     push(
       "FALSE_ACTION_CLAIM",

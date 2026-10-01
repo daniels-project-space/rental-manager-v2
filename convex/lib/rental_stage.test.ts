@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { rentalStage } from "./rental_stage";
+import { rentalStage, RENTAL_STAGES } from "./rental_stage";
+import { isValidStage } from "./renter_bot_intents";
 
 const today = "2026-10-01";
 describe("authoritative rental stages", () => {
+  it("can serialize every authoritative booking state through the bot output contract", () => {
+    for (const stage of RENTAL_STAGES) expect(isValidStage(stage), stage).toBe(true);
+    expect(isValidStage("invented_approved_state")).toBe(false);
+  });
   it("keeps a fresh inquiry unconfirmed", () => {
     expect(rentalStage(null, today).stage).toBe("INQUIRY");
     expect(rentalStage(null, today).can_share_pickup_address).toBe(false);
