@@ -87,3 +87,12 @@ it("carries the alternative's native item kind into stock evidence without borro
  const noKind=renterToolReceipts([{payload:{toolName:"find_owned_alternatives",toolCallId:"unknown",args:{kind:"lens"},result:{alternatives:[{name:"Unknown item",availability:{...stock,quantity:1}}]}}}]);
  expect(stockReceipts(noKind)[0].result.kind).toBeUndefined();
 });
+
+it("retains Native failed recommendation basket checks without a positive alternative",()=>{
+  const stock={source:"shared_inventory_confirmed_rentals",item_id:"pro",item_name:"BMPCC 6K Pro",kind:"camera",available:false,owned:true,requested_units:2,free_units:1,start_date:"2026-10-20",end_date:"2026-10-21",checked_at:123};
+  const result={count:0,alternatives:[],rejected_stock_options:[{name:"BMPCC 6K Pro",booking_use:"additional",stock_receipts:[stock]}]};
+  const receipts=renterToolReceipts([{toolName:"find_owned_alternatives",toolCallId:"recommend",result}]);
+  expect(stockReceipts(receipts).map(r=>r.result)).toEqual([stock]);
+  expect(successfulGrounding(receipts)).toMatchObject({availability:false,unavailability:true});
+  expect(renterToolReceipts([{toolName:"find_owned_alternatives",args:result}])).toEqual([]);
+});

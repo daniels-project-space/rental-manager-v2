@@ -351,7 +351,7 @@ export const checkLocationTool = createTool({
 export const findOwnedAlternativesTool = createTool({
   id: "find_owned_alternatives",
   description:
-    "Find owned alternatives that meet the requested role, sensor format, internal 4K, built-in ND and native mount before checking stock. Pass camera_requirements for every explicit hard requirement. Cinema/interchangeable-lens bodies must not be replaced with action cameras. Pass start_date, end_date, quantity and current thread_id when known: only options available for that request are returned. Without dates, ownership does NOT prove availability; check_availability before promising an option. Returns account prices and tier tables. Look up the selected option's exact multi-day total before quoting it.",
+    "Find owned alternatives that meet the requested role, sensor format, internal 4K, built-in ND and native mount before checking stock. Pass camera_requirements for every explicit hard requirement. Cinema/interchangeable-lens bodies must not be replaced with action cameras. Pass start_date, end_date, quantity and current thread_id when known: only options available for that request are returned. Without dates, ownership does NOT prove availability; check_availability before promising an option. For a current confirmed booking, pass booking_use=additional to retain the existing basket, or replacement plus its exact replace_product_id to remove the selected listing before checking the proposed basket. A replacement removes that listing’s kit contents; explain the difference. Never use standalone to bypass an existing booking. Unknown context cannot prove availability. Returns account prices and tier tables. Look up the selected option's exact multi-day total before quoting it.",
   inputSchema: z.object({
     account_slug: z.string(),
     kind: z
@@ -375,6 +375,9 @@ export const findOwnedAlternativesTool = createTool({
     end_date: z.string().optional(),
     quantity: z.number().int().min(1).max(20).optional(),
     thread_id: z.string().optional(),
+    booking_use: z.enum(["standalone","additional","replacement"]).optional().describe("standalone for a new inquiry; additional retains the existing basket; replacement removes exact listing units, including their kit contents. Required to verify stock in a confirmed booking."),
+    replace_product_id: z.number().int().positive().optional().describe("Exact current booking listing being replaced, from get_listing_context or current_booking_listings. Never guess a physical item's product ID."),
+    replace_quantity: z.number().int().min(1).max(20).optional().describe("Number of units of that existing listing to replace. Defaults to suggested quantity; untouched units remain booked."),
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {

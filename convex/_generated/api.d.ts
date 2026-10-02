@@ -163,6 +163,7 @@ import type * as lib_poller_window from "../lib/poller_window.js";
 import type * as lib_price_claims from "../lib/price_claims.js";
 import type * as lib_push_registration from "../lib/push_registration.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
+import type * as lib_recommendation_basket from "../lib/recommendation_basket.js";
 import type * as lib_recommendation_kit from "../lib/recommendation_kit.js";
 import type * as lib_rental_stage from "../lib/rental_stage.js";
 import type * as lib_rental_volume from "../lib/rental_volume.js";
@@ -473,6 +474,7 @@ declare const fullApi: ApiFromModules<{
   "lib/price_claims": typeof lib_price_claims;
   "lib/push_registration": typeof lib_push_registration;
   "lib/quiet_hours": typeof lib_quiet_hours;
+  "lib/recommendation_basket": typeof lib_recommendation_basket;
   "lib/recommendation_kit": typeof lib_recommendation_kit;
   "lib/rental_stage": typeof lib_rental_stage;
   "lib/rental_volume": typeof lib_rental_volume;

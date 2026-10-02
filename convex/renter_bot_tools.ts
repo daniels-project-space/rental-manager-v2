@@ -1,3 +1,5 @@
+import { explicitRecommendationUse, recommendationBasket, type RecommendationLine } from "./lib/recommendation_basket";
+import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { renterItemNames } from "./lib/renter_item_names";
 import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
@@ -864,8 +866,11 @@ export const find_owned_alternatives = query({
     end_date: v.optional(v.string()),
     quantity: v.optional(v.number()),
     thread_id: v.optional(v.string()),
+    booking_use: v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
+    replace_product_id: v.optional(v.number()),
+    replace_quantity: v.optional(v.number()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lower_value_only }) => {
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lower_value_only, booking_use, replace_product_id, replace_quantity }) => {
     // Owned = active + not marketing-only + qty>0 on the SHARED items table
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
@@ -996,8 +1001,24 @@ export const find_owned_alternatives = query({
       const role = targetCapabilities?.role ?? requestedCameraRole(target?.name ?? targetName, kind ?? target?.kind);
       if (role) requirements.role = role;
     }
+    const booking = thread_id ? await getBotBooking(ctx,thread_id) : null;
+    const labOrder = thread_id ? await getLabOrder(ctx,thread_id) : null;
+    if ((booking?.account_slug && booking.account_slug !== account_slug) || (labOrder?.account_slug && labOrder.account_slug !== account_slug))
+      return {count:0,alternatives:[],error:"The current booking belongs to a different account"};
+    const stage = rentalStage(booking,londonToday()).stage;
+    const closed = ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
+    const requiresBookingContext = ["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
+    const existingLines: RecommendationLine[] = labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
+      : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id}))
+      : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
+    const recent = requiresBookingContext && thread_id ? await recentThreadMessages(ctx,thread_id,12) : [];
+    const latestRenter = recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "";
+    const expectedUse = requiresBookingContext ? explicitRecommendationUse(latestRenter) : undefined;
+    const basketContext = {requires_booking_context:requiresBookingContext,open_basket:!closed && existingLines.length>0,
+      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expectedUse,replace_product_id,replace_quantity};
     const alternatives: Array<Record<string, unknown>> = [];
     const rejected = { requirements: 0, stock: 0 };
+    const rejectedStockOptions: Array<Record<string,unknown>> = [];
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
       // Replacement value, never the daily hire rate, determines this filter.
@@ -1019,8 +1040,7 @@ export const find_owned_alternatives = query({
       // lens as a substitute for a camera body is never useful.
       const requiredKind = normKind(target?.kind ?? kind);
       if (requiredKind && normKind(it.kind) !== requiredKind) continue;
-      const stock = stockSources && start_date && end_date ? stockForRentalItem(stockSources, it, { item_name: it.name_canonical, start_date, end_date, quantity, thread_id }) : null;
-      if (stock && stock.available !== true) { rejected.stock++; continue; }
+
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
@@ -1033,6 +1053,18 @@ export const find_owned_alternatives = query({
       });
       const altListing = chooseBaseListing(verifiedListings, candidatePids);
       const altPid = altListing?.product_id;
+      const basket = recommendationBasket(existingLines,{name:it.name_canonical,qty:quantity ?? 1,item_id:String(it._id),product_id:altPid},basketContext);
+      const check = stockSources && start_date && end_date && basket.ok
+        ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,thread_id ?? "",stockSources) : null;
+      if (check && check.available !== true) {
+        rejected.stock++;
+        if (rejectedStockOptions.length<8) rejectedStockOptions.push({name:it.name_canonical,kind:it.kind,booking_use:basket.use,
+          reason:check.reason,stock_receipts:check.receipts});
+        continue;
+      }
+      const stock = stockSources && start_date && end_date ? {available:check?.available ?? null,
+        start_date,end_date,quantity:quantity ?? 1,free_units:basket.use==="standalone" ? check?.receipts.find(r=>r.item_id===String(it._id))?.free_units ?? null : null,
+        checked_at:Date.now(),basis:basket.use ?? "unresolved_booking_context",reason:basket.ok ? check?.reason ?? "dates_required" : basket.reason} : null;
       let altRawTiers: PriceTier[] = [];
       let altTiers: string | null = null;
       let altOneDay: number | null = null;
@@ -1055,7 +1087,12 @@ export const find_owned_alternatives = query({
       alternatives.push({
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,
-        availability: stock ? { available: stock.available, start_date, end_date, quantity: quantity ?? 1, free_units: stock.free_units, checked_at: stock.checked_at } : null,
+        availability: stock,
+        stock_receipts: check?.receipts ?? [],
+        booking_use: basket.use ?? null,
+        stock_context_reason: basket.ok ? null : basket.reason,
+        replacement_removed_listings: basket.removed,
+        replacement_changes_kit_contents: basket.removed.length>0,
         name: it.name_canonical,
         kind: it.kind,
         replacement_cost_gbp: it.replacement_cost_gbp ?? null,
@@ -1079,6 +1116,13 @@ export const find_owned_alternatives = query({
     }
     void account_slug;
     return {
+      rental_stage:stage,
+      booking_context_required:requiresBookingContext,
+      current_booking_listings:existingLines,
+      booking_use:booking_use ?? expectedUse ?? (requiresBookingContext ? null : "standalone"),
+      message_booking_use:expectedUse ?? null,
+      rejected_stock_options:rejectedStockOptions,
+      stock_guidance:"Availability applies only to the returned booking_use. For a confirmed booking, choose additional or replacement with the exact current replace_product_id. Replacement removes that entire listing's specified units, including its kit contents; explain what changes. In-use replacements require return confirmation. Unknown context or missing dates cannot prove availability. Prices are for each suggested offering, not a combined booking total. No booking was changed.",
       kind: kind ?? null,
       matched_by: matchedBy,
       kind_fell_back: kindFellBack,

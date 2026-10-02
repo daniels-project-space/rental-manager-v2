@@ -6,8 +6,8 @@ import { withDefaultAdapters } from "./default_adapter_units";
 type Line = { name: string; qty: number; item_id?: string; product_id?: number };
 /** Check the candidate basket in the mutation's database snapshot. Shared kit
  * components are counted together; independent per-line successes are unsafe. */
-export async function checkOrderRentalStock(ctx: QueryCtx, account: string, lines: Line[], start: string, end: string, thread: string) {
-  const sources = await loadStockSources(ctx);
+export async function checkOrderRentalStock(ctx: QueryCtx, account: string, lines: Line[], start: string, end: string, thread: string, preloadedSources?: Awaited<ReturnType<typeof loadStockSources>>) {
+  const sources = preloadedSources ?? await loadStockSources(ctx);
   const required = new Map<string, number>();
   for (const line of lines) {
     if (!Number.isInteger(line.qty) || line.qty < 1 || line.qty > 20) return { available: null, reason: "invalid_quantity", receipts: [] };
