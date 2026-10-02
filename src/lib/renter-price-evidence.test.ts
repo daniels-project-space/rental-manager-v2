@@ -51,6 +51,17 @@ it("binds a complete read-only proposal to its thread, base basket, addition, da
  const proof=renterPriceEvidence([receipt("quote_booking_addition",native)],[],native.thread_id);
  const claim="One extra Sony 28-70mm would bring your booking total to £92.";
  expect(unsupportedPriceClaims(claim,proof,scope)).toEqual([]);
+ const nativeLens={found:true,matched_canonical:"Sony 28-70mm",days:2,quantity:1,daily_rate_gbp:18,listed_total_gbp:36,source:"hygglo_tier",start_date:quote.start_date,end_date:quote.end_date};
+ const actual="An extra Sony 28-70mm lens would cost £36 for the 2 days (6 to 7 October). Adding it would bring your complete booking total to £92.";
+ const fullProof=[...proof,...renterPriceEvidence([receipt("lookup_pricing",nativeLens)])];
+ expect(unsupportedPriceClaims(actual,fullProof,scope)).toEqual([]);
+ const declined="Adding that 1 extra Sony 28-70mm lens would bring the total to £92 for the 2 days.";
+ expect(unsupportedPriceClaims(declined,proof,scope)).toEqual([]);
+ expect(unsupportedPriceClaims(declined,[{...proof[0],proposal:undefined,items:base,total_gbp:56}],scope)).toHaveLength(1);
+ expect(unsupportedPriceClaims(declined.replace("£92","£56"),[{...proof[0],proposal:undefined,items:base,total_gbp:56}],scope)).toHaveLength(1);
+
+ expect(unsupportedPriceClaims(actual.replace("would bring","brings"),fullProof,scope)).toHaveLength(1);
+
  for(const text of [claim.replace("would bring","brings"),claim.replace("One extra","Two extra"),claim.replace("Sony 28-70mm","Sony GM 24-70mm"),claim.replace("£92","£100")])expect(unsupportedPriceClaims(text,proof,scope),text).toHaveLength(1);
  expect(unsupportedPriceClaims(claim,proof,{...scope,items:[{name:"Sony A7 III",quantity:1}]})).toHaveLength(1);
  expect(unsupportedPriceClaims(claim,proof,{...scope,end_date:"2026-10-08"})).toHaveLength(1);

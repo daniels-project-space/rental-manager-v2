@@ -498,3 +498,8 @@ Typed proposal evidence is bound to the actual thread, existing base basket, exa
 
 
 The live native quote check used the real Leo A7 II kit and current inventory/prices for 6–7 October. Two extras were refused; one extra returned a complete £92 proposal with no edit transition, identical before/after orders and unchanged native context key. Own probe cleaned. `/root/rental-proposal-native-proof.json`. Final Next build and explicit backend deployment/typecheck passed. Exact production rollout and managed reply qualification follow separately; this native check alone does not prove model tool use or owner preview acceptance.
+
+
+The initial proposal release `49aff5239deff33485673a99fc3ddff61a9f086b` reached READY at `dpl_23cD9G6EFNGsF99UJxVTJ52n15zU`, exact alias matched. Both fresh managed requests used the native quote tool and preserved booking/context, but were held on legitimate proposal wording: quote-only “your complete booking total” and refused-addition “would bring the total”. Native £92 proposal evidence and its exact base/addition members persisted successfully; the holds were amount-subject classification failures rather than missing quotes. Both own probes cleaned. `/root/rental-proposal-quote-only-managed-live-proof.json`, `/root/rental-proposal-denied-managed-live-proof.json`.
+
+The exact candidates are now guard regressions. Complete/full booking totals and conditional “would bring the total” resolve to their typed basket scope. A conditional addition total requires proposal evidence: even an unchanged current-basket £56 receipt cannot license saying the addition would yield £56. Missing proposal/base/addition/quantity/date checks still reject the claim. Final validation and fresh production qualification follow separately.
