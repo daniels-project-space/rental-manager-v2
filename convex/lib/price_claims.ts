@@ -29,6 +29,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   const duration = inclusiveRentalDays(request.start_date, request.end_date);
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];
   let subjectQuantity: number | undefined;
+  let pendingProposalTotal = false;
   let consumed = 0;
   for (const m of text.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/g)) {
     const pos = m.index!;
@@ -98,7 +99,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
     const amount = Number(m[1].replace(/,/g, ""));
     const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised|complete|full)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:(?:complete|full)\s+)?(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
-    const proposalTotal = /\b(?:would|could)\s+(?:bring|take|make|increase|raise)\b[^£.!?]{0,60}\b(?:the|your|our|my)\s+(?:(?:new|updated|revised|complete|full)\s+)?total\b/i.test(segment);
+    const conditionalTotal = /\b(?:would|could)\s+(?:bring|take|make|increase|raise)\b[^£.!?]{0,90}\btotal\b/i.test(segment);
+    const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
+    const proposalTotal = conditionalTotal && !baselineTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
+    pendingProposalTotal = baselineTotal;
     const basket = proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const candidates = evidence.filter(e => !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
@@ -111,7 +115,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         const membersMatch=(a:Array<{names:string[];quantity:number}>,b:Array<{name:string;quantity:number}>)=>a.length===b.length && a.every(c=>b.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity));
         if (e.proposal) {
           // A proposal never certifies an already-applied total or an unrelated basket.
-          if (!/\b(?:would|could)\b/i.test(segment) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
+          if ((!proposalTotal && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
           if (e.proposal.added_items.length!==1 || !same(subject,[e.proposal.added_items[0].name]) ||
               (declaredQuantity??subjectQuantity??1)!==e.proposal.added_items[0].quantity) return false;
         }

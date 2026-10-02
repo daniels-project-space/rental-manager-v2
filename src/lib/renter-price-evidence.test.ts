@@ -51,6 +51,15 @@ it("binds a complete read-only proposal to its thread, base basket, addition, da
  const proof=renterPriceEvidence([receipt("quote_booking_addition",native)],[],native.thread_id);
  const claim="One extra Sony 28-70mm would bring your booking total to £92.";
  expect(unsupportedPriceClaims(claim,proof,scope)).toEqual([]);
+ const baseProof={...proof[0],proposal:undefined,items:base,total_gbp:56};
+ const fromTo="One extra Sony 28-70mm would bring your booking total from £56 to £92.";
+ expect(unsupportedPriceClaims(fromTo,[baseProof,...proof],scope)).toEqual([]);
+ expect(unsupportedPriceClaims(fromTo,[baseProof],scope)).toHaveLength(1);
+ expect(unsupportedPriceClaims(fromTo.replace("£56","£55"),[baseProof,...proof],scope)).toHaveLength(1);
+
+ const unchanged={...proof[0],proposal:undefined,items:base,total_gbp:56};
+ expect(unsupportedPriceClaims(claim.replace("£92","£56"),[unchanged],scope)).toHaveLength(1);
+
  const nativeLens={found:true,matched_canonical:"Sony 28-70mm",days:2,quantity:1,daily_rate_gbp:18,listed_total_gbp:36,source:"hygglo_tier",start_date:quote.start_date,end_date:quote.end_date};
  const actual="An extra Sony 28-70mm lens would cost £36 for the 2 days (6 to 7 October). Adding it would bring your complete booking total to £92.";
  const fullProof=[...proof,...renterPriceEvidence([receipt("lookup_pricing",nativeLens)])];
