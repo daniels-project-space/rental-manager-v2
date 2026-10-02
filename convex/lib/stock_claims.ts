@@ -57,9 +57,20 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   let previousSubjects: StockRequest["items"] = [];
   for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
     if (/\b(?:check|verify|confirm|know|unsure|uncertain|not sure)\b[^.!?]{0,70}\b(?:whether|if)\b/i.test(clause)) continue;
-    const match = /\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b/i.exec(clause);
+    // "Your booked kit" is a booking reference, not a claim that stock is
+    // unavailable. Keep character positions and continue scanning for any
+    // actual availability verdict later in the same clause.
+    const availabilityClause = clause.replace(/\b(?:already\s+)?booked\b/gi, (word, offset: number) => {
+      const before = clause.slice(0, offset);
+      const after = clause.slice(offset + word.length);
+      const adjective = /\b(?:your|my|our|the|this|that|their)\s*$/i.test(before);
+      const ownerConfirmation = /\byour\b[^.!?]{0,70}\b(?:is|are)\s*$/i.test(before)
+        || /^\s+for\s+you\b/i.test(after);
+      return (adjective || ownerConfirmation) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;
+    });
+    const match = /\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b/i.exec(availabilityClause);
     if (!match) continue;
-    const prefix = clause.slice(0, match.index);
+    const prefix = availabilityClause.slice(0, match.index);
     if (/\b(?:once|when|after|if|until|as soon as)\b[^,;:]{0,100}$/i.test(prefix)) continue;
     // Recording capabilities and handoff slots aren't equipment-stock claims.
     if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*$/i.test(prefix) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(prefix)) continue;

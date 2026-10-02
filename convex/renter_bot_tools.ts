@@ -2,7 +2,7 @@ import { renterItemNames } from "./lib/renter_item_names";
 import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
-import { loadListingInventory, listingStock } from "./lib/listing_inventory";
+import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 /**
  * Convex queries that back the Mastra renter-bot tools (5 of the 7 — the
@@ -986,7 +986,14 @@ export const find_owned_alternatives = query({
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
-      const altListing = chooseBaseListing(listings, pidsForItem(String(it._id)));
+      const candidatePids = pidsForItem(String(it._id));
+      const verifiedListings = listings.filter(listing => {
+        if (!candidatePids.includes(listing.product_id)) return false;
+        const mapping = ovAll.find(row => row.account_slug === account_slug && row.product_id === listing.product_id);
+        const contents = resolveListingComponents(allInventory, mapping?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})), String(it._id), quantity ?? 1, listing.description);
+        return contents.complete && contents.owned === true;
+      });
+      const altListing = chooseBaseListing(verifiedListings, candidatePids);
       const altPid = altListing?.product_id;
       let altRawTiers: PriceTier[] = [];
       let altTiers: string | null = null;

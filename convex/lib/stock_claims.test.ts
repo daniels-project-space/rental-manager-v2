@@ -156,3 +156,20 @@ it("treats an extension through a new return date as the retained pickup span",(
  expect(check("The Sony FX3 is fully booked on 8 October.",[receipt],scope)).toHaveLength(1);
  expect(check("I can't extend the Sony FX3 through 9 October as it's fully booked for that period.",[receipt],scope)).toHaveLength(1);
 });
+
+
+describe("booked-kit references versus negative stock claims", () => {
+  const request={items:[{name:"Canon EF 24-105mm f4",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+  it("allows the exact affirmative kit answer found in managed generation", () => {
+    expect(unsupportedStockClaims("Yes, your booked kit already includes the Canon EF 24-105mm f4 lens (along with the Canon EF-to-L mount adapter).",[],request)).toEqual([]);
+    expect(unsupportedStockClaims("Your already booked kit includes the Canon lens.",[],request)).toEqual([]);
+    expect(unsupportedStockClaims("Your Canon EF 24-105mm f4 is booked for you.",[],request)).toEqual([]);
+  });
+  it("still checks a later negative availability verdict after a booking adjective", () => {
+    expect(unsupportedStockClaims("Your booked kit is unavailable.",[],request)).toHaveLength(1);
+  });
+  it("still requires a negative receipt for actual bookings consuming stock", () => {
+    for(const claim of ["Canon EF 24-105mm f4 is already booked.","Canon EF 24-105mm f4 is booked.","Your Canon EF 24-105mm f4 is booked out.","Your Canon EF 24-105mm f4 is booked-out.","My Canon EF 24-105mm f4 is booked.","Our Canon EF 24-105mm f4 is booked.","Your Canon EF 24-105mm f4 is booked by another customer."])
+      expect(unsupportedStockClaims(claim,[],request)).toHaveLength(1);
+  });
+});

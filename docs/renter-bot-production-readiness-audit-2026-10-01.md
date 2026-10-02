@@ -522,3 +522,26 @@ The preceding proposed-addition quote phase also passed three actual managed cas
 ### Lab booking panel routing — 2 October
 
 Production screenshot review during copied-draft qualification exposed a 422 response: the shared inbox rendered the external Hygglo order editor for simulated Lab threads. Lab threads now render a reactive read-only booking panel backed by `renter_bot_lab_order:get`, showing canonical item names, quantities, dated line prices and the native total. Simulated order management remains in Rental Bot Lab. This removes an inappropriate provider fetch and avoids presenting real-provider editing controls for a simulated order. Production browser qualification checks £56 before and £92 after a native one-lens addition, including the £36 added line, at desktop and phone widths.
+
+
+### Full physical kit coverage and existing-map repair — 2 October
+
+Native reproduction on `064d5ca` proved that Leo's Full Frame + Canon 24–105 kit accepted an additional Canon 24–105 while the full-order receipt required only one zoom against one owned. The existing override mapped the body alone. This was a real Native Lab write, then cleaned; no external booking or message was changed.
+
+Root causes: contents parsing removed Unicode bullets and multiplication signs before detecting structured lists; the old repair fell back to a body-only mapping; mapped listings were skipped on subsequent runs. Counts were capped to stock capacity, and unowned/marketing components were filtered out of the candidate catalogue, so neither a shortage nor an unfulfillable component could survive into the mapping. The parser now preserves boundaries and declared counts. A shared resolver keeps known marketed components, respects explicit mount differences and ambiguous identities, and reports unresolved equipment. Standard supplied power/media remain grounded in the owner inventory record. A valid body-only override cannot certify an advertised whole kit, and alternative listing prices are checked against full contents coverage.
+
+Reviewed Native repairs: Leo `1122324`, `1172435`, `1172450`, `1172452`, `1172805`; Diogo `1173311`. They restore the declared Great Joy lens members, RS3 Pro, Canon zoom and Vespid set as applicable. No public Hygglo listing was edited. Repairs require an explicit account/product scope and matching reviewed before/after identities; a deliberately changed proposal was rejected without a write. Later repair writes invalidate drafts atomically; an identical replay leaves both the mapping and epoch unchanged. Epoch 26→27 invalidated the first repair batch; Diogo's repair qualified atomic 27→28 invalidation and a no-op replay at 28. Automatic renter sending remained disabled.
+
+After repair, the same extra-Canon operation requires two zooms against one owned and refuses it with zero booking changes. Full tests: 1,024 passed, 14 skipped across 85 files. Blackmagic photo-reference metadata also now respects owner-confirmed NP-F570 and the Full Frame's 1TB CFexpress Type B storage.
+
+**Recommendation qualification is still open.** The actual managed extra-zoom scenario understood the stock shortage, but its proposed PL-mount alternative quoted a PL-to-E listing as a PL-to-L adapter and omitted that required adapter from the quoted combined total. The existing price guard withheld the reply; no text was accepted or sent and no booking changed. This is evidence for the next adapter identity/pricing and complete-accessory proposal audit, not a passing sales scenario. Artifacts: `/root/rental-kit-managed-live-proof.json` and `/root/rental-partial-kit-after-live-proof.json`.
+
+A broader Native scan surfaced 12 further parsable mapping differences, 25 differing proposals needing review, and 46 listings without a confidently resolved camera body. These are not automatically approved. Owner clarification is pending for Leo `1172597`: its description states two Canon 16–35 lenses plus one 24–105, while the current physical mapping has one of each. Do not overwrite either count on inference alone.
+
+
+### Booking-reference language in stock validation — 2 October
+
+A separate actual managed factual-kit question answered the included Canon zoom, NP-F570 batteries and 1TB CFexpress Type B card correctly but was withheld as `UNGROUNDED_UNAVAILABILITY`. The stock parser treated the adjective in “your booked kit” as a negative stock verdict. It now masks ordinary booking-reference words before scanning for availability claims, while keeping any later genuine verdict and explicit “booked out”/another-customer predicates. Tests retain checks for actual owner stock statements such as “my/our Canon is booked”. Full suite after this change: 1,027 passed, 14 skipped across 85 files. Live acceptance is qualified separately after deployment; the earlier withheld candidate is not counted as a pass.
+
+
+The booked-kit language correction also has a separate approval invariant: “your booked kit” and “your lens is booked for you” require current owner approval. A conditional future booking remains a conditional. Confirmed kit references pass without requiring a fictitious negative-stock receipt; unapproved inquiries still receive `FALSE_ACTION_CLAIM`. Final suite for this release: 1,030 passed, 14 skipped across 85 files; Next build and explicit Convex typecheck/deployment passed.

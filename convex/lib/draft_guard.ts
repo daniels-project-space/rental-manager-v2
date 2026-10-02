@@ -251,7 +251,7 @@ function parseTimeToMinutes(timeStr: string): number | null {
 /** Mentions of acceptance are not assertions that it happened. Evaluate each
  * sentence so a valid conditional cannot excuse a separate false assertion. */
 function claimsCurrentOwnerApproval(text: string): boolean {
-  const assertion = /\b(?:(?:(?:your|the|this)\s+)?(?:booking|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:approved|accepted|confirmed)\b|\bI(?:'ve|’ve| have)\s+(?:just\s+)?(?:approved|accepted|confirmed)\b|\b(?:accepted|approved|confirmed)\s+(?:your|the)\s+(?:booking|request|order)\b/i;
+  const assertion = /\byour\s+(?:already\s+)?booked\s+(?:kit|rental|booking|order|camera|lens|gear)\b|\byour\b[^.!?]{0,90}\b(?:is|has been)\s+(?:(?:now|already|fully)\s+)*booked\b(?!\s*(?:[-–—]\s*)?out\b|\s+by\s+(?:another|someone else))|\b(?:it|that)(?: is|\'s|’s)\s+booked\s+for\s+you\b|\b(?:(?:(?:your|the|this)\s+)?(?:booking|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:approved|accepted|confirmed)\b|\bI(?:'ve|’ve| have)\s+(?:just\s+)?(?:approved|accepted|confirmed)\b|\b(?:accepted|approved|confirmed)\s+(?:your|the)\s+(?:booking|request|order)\b/i;
   return assertsOutsideConditional(text, assertion);
 }
 

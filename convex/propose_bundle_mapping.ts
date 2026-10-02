@@ -1,7 +1,6 @@
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { bestMatch } from "./lib/item_name_match";
 
 /**
  * Map Blackmagic BUNDLE listings from their real "Included in this rental"
@@ -15,27 +14,18 @@ import { bestMatch } from "./lib/item_name_match";
  *     BMPCC 6K Pro        -> Canon EF mount, Super 35
  *     BMPCC 6K Full Frame -> Leica L mount, full frame
  *
- * Safety rules, all deliberate:
- *  - every component is resolved with the confidence-gated matcher; anything
- *    that is not a confident match is DROPPED and reported, never guessed
- *  - a bundle is only proposed if its CAMERA BODY resolved. Without the body
- *    we do not know what the listing fundamentally is, and a partial mapping
- *    would hold the accessories while leaving the camera free to double-book
- *  - gear we do not own (BMPCC 4K, Great Joy anamorphics, GVM panels) simply
- *    fails to match and is dropped — DANIEL RULE 18 by construction
- *  - a component qty is never allowed to exceed what master inventory holds
+ * Structured contents preserve declared units independently of stock. Known
+ * marketing items remain in the mapping so a bundle cannot borrow ownership
+ * from its body. Partial or unstructured repairs are reported for review.
  */
 
-import { extractComponents } from "./lib/bundle_description_parse";
+import { resolveBundleMapping } from "./lib/bundle_mapping";
 
 export const propose = internalQuery({
-  args: {},
-  handler: async (ctx) => {
+  args: { include_mapped: v.optional(v.boolean()), account_slug: v.optional(v.string()), product_ids: v.optional(v.array(v.number())) },
+  handler: async (ctx, args) => {
     const RE = /blackmagic|bmpcc|bmpc\b|pocket cinema/i;
     const allItems = await ctx.db.query("items").collect();
-    const ownable = allItems.filter(
-      (i) => i.status === "active" && !i.is_marketing_only && (i.qty ?? 0) > 0,
-    );
 
     const [listings, index, overrides] = await Promise.all([
       ctx.db.query("online_listings").collect(),
@@ -53,89 +43,13 @@ export const propose = internalQuery({
       const title = (l.name ?? "");
       if (!RE.test(title) || /pyxis/i.test(title)) continue;
       const key = `${l.account_slug}#${l.product_id}`;
-      if (mapped.has(key)) continue;
+      if (args.account_slug && l.account_slug !== args.account_slug) continue;
+      if (args.product_ids && !args.product_ids.includes(l.product_id)) continue;
+      if (mapped.has(key) && !args.include_mapped) continue;
       const desc = l.description ?? "";
       if (!desc) continue;
 
-      const { components: comps, usedBullets } = extractComponents(desc);
-      const resolved: Array<{
-        item_id: string;
-        name: string;
-        qty: number;
-        kind: string;
-      }> = [];
-      const unmatched: string[] = [];
-      for (const c of comps) {
-        // ASYMMETRIC MATCH: a kit line CONTAINS the item name plus extra words
-        // ("Sennheiser MKE 600 shotgun mic", "Canon 24-105mm f4 Lens"), so the
-        // right test is item-tokens ⊆ line-tokens, not the reverse.
-        //
-        // bestMatch's confidence gate requires the QUERY's tokens to be
-        // covered, which is correct for "which product does the renter mean?"
-        // but wrong here — it dropped genuinely-owned components over the
-        // words "shotgun", "mic" and "Lens". Mount tokens (ef/l/rf/e) are
-        // tolerated as missing since kit lines routinely omit them.
-        const lineToks = new Set(
-          (c.name.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((t) =>
-            t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t,
-          ),
-        );
-        const MOUNT_TOKS = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
-        let picked: (typeof ownable)[number] | null = null;
-        let pickedSpecificity = 0;
-        for (const it of ownable) {
-          const itemToks = (it.name_canonical.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(
-            (t) => (t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t),
-          );
-          // Mount tokens are tolerated as missing because kit lines omit them
-          // -- but ONLY when enough signal survives. "PL to EF mount" is
-          // ENTIRELY mount tokens, so stripping them left the single token
-          // "to", which matched the phrase "ready-to-shoot" in a marketing
-          // sentence and proposed a mount adapter for a kit that has none.
-          // Below 2 surviving tokens the tolerance is dropped and the full
-          // item name must appear.
-          const stripped = itemToks.filter((t) => !MOUNT_TOKS.has(t));
-          const required = stripped.length >= 2 ? stripped : itemToks;
-          if (required.length === 0) continue;
-          if (!required.every((t) => lineToks.has(t))) continue;
-          // Prefer the most specific item that fits, so "BMPCC 6K Full Frame"
-          // wins over a hypothetical shorter "BMPCC" entry.
-          if (required.length > pickedSpecificity) {
-            picked = it;
-            pickedSpecificity = required.length;
-          }
-        }
-        // Fall back to the strict matcher for lines that are just a bare name.
-        const m = picked
-          ? { match: picked, confident: true }
-          : bestMatch(
-              c.name,
-              ownable,
-              (i) => i.name_canonical,
-              (i) => (i.aliases ?? []) as string[],
-            );
-        if (!m.match || !m.confident) {
-          unmatched.push(`${c.qty}x ${c.name}`);
-          continue;
-        }
-        const cap = m.match.qty ?? 1;
-        const qty = Math.min(c.qty, cap);
-        const seen = resolved.find((r) => r.item_id === String(m.match!._id));
-        // MAX, not SUM. Two lines resolving to the same item almost always
-        // means the item was MENTIONED twice (intro prose plus the bullet),
-        // not that there are two of them: diogo#1173794 lists "1x Variable ND
-        // filter" once and describes it once, and summing proposed 2x. Max
-        // errs toward under-holding, which is the safe direction -- an
-        // over-count marks real stock as rented when it is on the shelf.
-        if (seen) seen.qty = Math.min(Math.max(seen.qty, qty), cap);
-        else
-          resolved.push({
-            item_id: String(m.match._id),
-            name: m.match.name_canonical,
-            qty,
-            kind: m.match.kind,
-          });
-      }
+      const { components: resolved, unmatched, structured: usedBullets } = resolveBundleMapping(desc, allItems);
 
       // The body must be an actual CAMERA, checked by inventory kind.
       // Matching /bmpcc/i on the NAME accepted "BMPCC battery pack" as the
@@ -148,24 +62,12 @@ export const propose = internalQuery({
         continue;
       }
 
-      // TWO TIERS, by how trustworthy the description's structure is.
-      //
-      // Quantities are only believed when the description used real bullet
-      // delimiters. Each bullet carries its own count, so a number cannot leak
-      // across items -- the failure that turned "1x DJI RS 3 Pro Gimbal" into
-      // a phantom "3x" (splitting at the "3" in "RS 3") is impossible there.
-      //
-      // Everything else falls back to the numeric split, which is NOT safe for
-      // counts, so those listings map the CAMERA BODY ONLY at qty 1. The body
-      // is the scarce, expensive item and the one that actually double-books;
-      // there is exactly one per listing, so it carries no count ambiguity.
-      // Their accessories stay unmapped and read as free -- today's behaviour,
-      // not a regression.
+      // Unstructured proposals remain visible for diagnosis but cannot be
+      // applied as a verified full-kit mapping.
       const useFull = usedBullets;
       const chosen = useFull
         ? resolved
         : [{ item_id: body.item_id, name: body.name, qty: 1 }];
-      const bodyOnly = chosen;
       const notMapped = useFull
         ? []
         : resolved
@@ -178,11 +80,13 @@ export const propose = internalQuery({
         product_id: l.product_id,
         price: l.daily_price ?? null,
         title: title.replace(/[^\x20-\x7E]/g, "").slice(0, 70),
-        components: bodyOnly.map((r) => `${r.qty}x ${r.name}`),
-        component_ids: bodyOnly,
+        components: chosen.map((r) => `${r.qty}x ${r.name}`),
+        component_ids: chosen,
         source: useFull ? "bulleted-description" : "body-only-fallback",
         accessories_seen_but_not_mapped: notMapped,
-        dropped: unmatched.slice(0, 6),
+        dropped: unmatched,
+        requires_review: !usedBullets || unmatched.length > 0,
+        previous_components: overrides.find(row => row.account_slug === l.account_slug && row.product_id === l.product_id)?.components ?? null,
       });
     }
     return {
@@ -195,40 +99,69 @@ export const propose = internalQuery({
 });
 
 export const apply = internalMutation({
-  args: { confirm: v.boolean() },
-  handler: async (ctx, { confirm }) => {
+  args: { confirm: v.boolean(), include_mapped: v.optional(v.boolean()), account_slug: v.optional(v.string()), product_ids: v.optional(v.array(v.number())),
+    expected: v.optional(v.array(v.object({product_id:v.number(),before:v.union(v.null(),v.array(v.object({item_id:v.string(),qty:v.number()}))),after:v.array(v.object({item_id:v.string(),qty:v.number()}))}))) },
+  handler: async (ctx, { confirm, expected, ...scope }) => {
     if (!confirm) return ["not confirmed"];
-    const res = (await ctx.runQuery(internal.propose_bundle_mapping.propose, {})) as unknown as {
+    if (scope.include_mapped && (!scope.account_slug || !scope.product_ids?.length || scope.product_ids.length > 50))
+      throw new Error("Existing mapping repairs require an explicit account and 1–50 reviewed product IDs");
+    const res = (await ctx.runQuery(internal.propose_bundle_mapping.propose, scope)) as unknown as {
       proposals?: Array<{
         account_slug: string;
         product_id: number;
         source: string;
+        requires_review: boolean;
         component_ids: Array<{ item_id: string; name: string; qty: number }>;
       }>;
     };
+    const fingerprint = (components: Array<{item_id:unknown;qty:number}> | null) => components === null ? "absent"
+      : JSON.stringify(components.map(c => ({item_id:String(c.item_id),qty:c.qty})).sort((a,b)=>a.item_id.localeCompare(b.item_id)||a.qty-b.qty));
+    if (scope.include_mapped) {
+      for (const product_id of scope.product_ids!) {
+        const reviewed = expected?.find(row=>row.product_id===product_id);
+        const proposal = res.proposals?.find(row=>row.product_id===product_id);
+        if (!reviewed || !proposal || proposal.requires_review || fingerprint(reviewed.after)!==fingerprint(proposal.component_ids))
+          throw new Error(`Mapping proposal changed or needs review: ${scope.account_slug}#${product_id}`);
+      }
+    }
     const log: string[] = [];
+    let changed = 0;
     for (const p of res.proposals ?? []) {
+      if (p.requires_review) { log.push(`${p.account_slug}#${p.product_id}: withheld — contents need review`); continue; }
       const existing = await ctx.db
         .query("listing_resolution_override")
         .withIndex("by_account_product", (q) =>
           q.eq("account_slug", p.account_slug).eq("product_id", p.product_id),
         )
         .first();
-      if (existing) continue;
-      await ctx.db.insert("listing_resolution_override", {
+      if (existing && !scope.include_mapped) continue;
+      const reviewed = expected?.find(row=>row.product_id===p.product_id);
+      if (scope.include_mapped && fingerprint(existing?.components ?? null)!==fingerprint(reviewed!.before))
+        throw new Error(`Mapping changed after review: ${p.account_slug}#${p.product_id}`);
+      if (existing && fingerprint(existing.components) === fingerprint(p.component_ids)) {
+        log.push(`${p.account_slug}#${p.product_id}: unchanged`); continue;
+      }
+      const patch = {
         account_slug: p.account_slug,
         product_id: p.product_id,
         components: p.component_ids.map((c) => ({
           item_id: c.item_id as unknown as never,
           qty: c.qty,
         })),
-        note: `fix:2026-08-22 from listing description [${p.source}]: ${p.component_ids
+        note: `${existing?.note ? `${existing.note}\n` : ""}fix:2026-10-02 verified structured listing description [${p.source}]: ${p.component_ids
           .map((c) => `${c.qty}x ${c.name}`)
           .join(", ")}`,
         source: "manual_audit",
         updated_at: Date.now(),
-      });
+      };
+      if (existing) await ctx.db.patch(existing._id, patch);
+      else await ctx.db.insert("listing_resolution_override", patch);
+      changed++;
       log.push(`${p.account_slug}#${p.product_id} -> ${p.component_ids.length} components`);
+    }
+    if (changed) {
+      const settings = await ctx.db.query("settings").first();
+      if (settings) await ctx.db.patch(settings._id, {draft_epoch:(settings.draft_epoch ?? 0)+1});
     }
     return log;
   },

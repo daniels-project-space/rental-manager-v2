@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { resolveBundleMapping } from "./bundle_mapping";
 import { extractComponents } from "./bundle_description_parse";
 
 /**
@@ -95,4 +96,64 @@ describe("extractComponents", () => {
   it("returns nothing for an empty description rather than throwing", () => {
     expect(extractComponents("").components).toEqual([]);
   });
+});
+
+
+describe("actual Unicode catalogue contents", () => {
+  it("keeps Unicode bullet boundaries and multiplication quantities", () => {
+    const result = extractComponents("📦 Included in this rental: • 1× Blackmagic 6K Full Frame • 2× Canon 24-105mm lenses • 1× Carrying bag 🚀 About this kit Optional extras: 1x DJI RS3 Pro gimbal");
+    expect(result.usedBullets).toBe(true);
+    expect(result.components).toEqual([{qty:1,name:"Blackmagic BMPCC 6K Full Frame"},{qty:2,name:"Canon 24-105mm lenses"}]);
+  });
+  it("trusts two explicit bullets without requiring a third accessory", () => {
+    const result = extractComponents("In this kit: • 1x BMPCC 6K Pro • 1x DJI RS 3 Pro Gimbal");
+    expect(result.usedBullets).toBe(true);
+    expect(result.components.map(c=>c.name)).toEqual(["BMPCC 6K Pro","DJI RS3 Pro Gimbal"]);
+  });
+  it("preserves an explicit shortage rather than reducing the listed units", () => {
+    expect(extractComponents("Included in this rental: • 12× RGB lights • 1× Camera").components[0].qty).toBe(12);
+  });
+});
+
+
+describe("inventory mapping from structured contents", () => {
+  const camera = {_id:"body",name_canonical:"BMPCC 6K Full Frame",kind:"camera",qty:1,lens_mount:"L mount"};
+  const lens = {_id:"zoom",name_canonical:"Canon EF 24-105mm f4",kind:"lens",qty:1,lens_mount:"Canon EF mount"};
+  it("maps the whole actual Unicode kit instead of its body alone", () => {
+    const result=resolveBundleMapping("⭐ Included in this rental: • 1x Blackmagic 6k Full frame cinema camera • 1x 24-105mm Cannon Zoom lens L series • 1x Carrying bag 🚀 About this kit",[camera,lens]);
+    expect(result.structured).toBe(true);expect(result.unmatched).toEqual([]);
+    expect(result.components.map(c=>[c.item_id,c.qty])).toEqual([["body",1],["zoom",1]]);
+  });
+  it("keeps required quantities higher than stock, including repeated explicit units", () => {
+    const result=resolveBundleMapping("Included in this rental: • 1x BMPCC 6K Full Frame • 1x Canon EF 24-105mm f4 • 2x Canon EF 24-105mm f4",[camera,lens]);
+    expect(result.components.find(c=>c.item_id==="zoom")?.qty).toBe(3);
+  });
+  it("retains a marketed component so the whole bundle cannot be falsely owned", () => {
+    const marketed={_id:"market",name_canonical:"Anamorphic Great Joy lens 35mm",aliases:["Great Joy 35mm"],kind:"lens",qty:0};
+    const result=resolveBundleMapping("Included in this kit: • 1x BMPCC 6K Full Frame • 1x Great Joy 35mm",[camera,marketed]);
+    expect(result.components.some(c=>c.item_id==="market")).toBe(true);
+  });
+  it("does not substitute EF inventory for an explicitly RF lens", () => {
+    const result=resolveBundleMapping("Included in this kit: • 1x BMPCC 6K Full Frame • 1x Canon RF 24-105mm f4",[camera,lens]);
+    expect(result.components.some(c=>c.item_id==="zoom")).toBe(false);expect(result.unmatched).toHaveLength(1);
+  });
+  it("does not drop a gimbal because its component line also mentions a battery", () => {
+    const gimbal={_id:"gimbal",name_canonical:"DJI RS3 Pro gimbal",kind:"gimbal",qty:2};
+    const result=resolveBundleMapping("Included in this kit: • 1x BMPCC 6K Full Frame • 1x DJI RS3 Pro gimbal with battery",[camera,gimbal]);
+    expect(result.components.some(c=>c.item_id==="gimbal")).toBe(true);
+  });
+});
+
+
+it("resolves compact BMPCC names and CFexpress media in actual listings", () => {
+  const camera={_id:"pro",name_canonical:"BMPCC 6K Pro",kind:"camera",qty:1};
+  const result=resolveBundleMapping("Included in this rental: • 1x BMPCC6k Pro • 1x 1TB Lexar Professional CFexpress Type-B card • 1x Camera cage",[camera]);
+  expect(result.components.map(c=>c.item_id)).toEqual(["pro"]);expect(result.unmatched).toEqual([]);
+});
+
+
+it("requires clarification when a contents line omits an aperture shared by two models", () => {
+  const lenses=[{_id:"f4",name_canonical:"Canon EF 24-105mm f4",kind:"lens",qty:1},{_id:"f28",name_canonical:"Canon EF 24-105mm f2.8",kind:"lens",qty:1}];
+  const result=resolveBundleMapping("Included in this kit: • 1x Canon 24-105mm lens • 1x Carrying bag",lenses);
+  expect(result.components).toEqual([]);expect(result.unmatched).toHaveLength(1);
 });

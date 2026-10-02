@@ -819,3 +819,19 @@ describe("unknown-kit subject attribution", () => {
       .flags.filter(f => f.type === "KIT_HALLUCINATION")).toEqual([]);
   });
 });
+
+
+describe("booked-kit references still require the current owner approval", () => {
+  const common={history:[],lastRenterMessage:"Does my kit include the Canon lens?",stockRequest:{items:[{name:"Canon EF 24-105mm f4",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"},stockEvidence:[]};
+  it("accepts the exact kit reference after confirmation and blocks it before approval", () => {
+    const text="Your booked kit includes the Canon EF 24-105mm f4 lens.";
+    expect(guardDraft(text,{...common,stage:"confirmed",ownerApproved:true}).flags.some(f=>f.type==="UNGROUNDED_UNAVAILABILITY"||f.type==="FALSE_ACTION_CLAIM")).toBe(false);
+    expect(guardDraft(text,{...common,stage:"inquiry",ownerApproved:false}).flags.some(f=>f.type==="FALSE_ACTION_CLAIM")).toBe(true);
+  });
+  it("checks customer booking predicates independently from equipment stock", () => {
+    expect(guardDraft("Your Canon EF 24-105mm f4 is booked for you.",{...common,stage:"inquiry",ownerApproved:false}).flags.some(f=>f.type==="FALSE_ACTION_CLAIM")).toBe(true);
+  });
+  it("does not describe a conditional future booking as an approval that happened", () => {
+    expect(guardDraft("Once your kit is booked, I can confirm the collection details.",{...common,stage:"inquiry",ownerApproved:false}).flags.some(f=>f.type==="FALSE_ACTION_CLAIM")).toBe(false);
+  });
+});

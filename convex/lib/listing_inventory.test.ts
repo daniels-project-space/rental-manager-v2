@@ -67,3 +67,22 @@ describe("whole listing inventory and stock", () => {
     for (const c of result.components) expect(c).toMatchObject({ owned: true, start_date: request.start_date, end_date: request.end_date, requested_units: 2, checked_at: expect.any(Number) });
   });
 });
+
+
+describe("declared kit coverage", () => {
+  const desc="Included in this rental: • 1x Sony FX3 • 1x Sony GM 24-70mm f2.8";
+  it("does not prove a whole kit from a valid body-only override", () => {
+    const listing={...resolveListingComponents(inventory,[{item_id:"camera",qty:1}],undefined,1,desc),product_id:1,listing_name:"FX3 kit"};
+    expect(listing.complete).toBe(false);expect(listing.owned).toBeNull();
+    expect(listing.coverage?.missing).toEqual([{item_id:"lens",name:"Sony GM 24-70mm f2.8",qty:1}]);
+    expect(listingStock(sources(),listing,request).available).toBeNull();
+  });
+  it("accepts the full identity mapping and still checks the lens stock", () => {
+    const listing={...resolveListingComponents(inventory,[{item_id:"camera",qty:1},{item_id:"lens",qty:1}],undefined,1,desc),product_id:1,listing_name:"FX3 kit"};
+    expect(listing.complete).toBe(true);expect(listingStock(sources(),listing,request).available).toBe(true);
+  });
+  it("keeps unfamiliar required equipment unresolved rather than ignoring it", () => {
+    const listing=resolveListingComponents(inventory,[{item_id:"camera",qty:1}],undefined,1,"Included in this kit: • 1x Sony FX3 • 1x Mystery cinema lens");
+    expect(listing.complete).toBe(false);expect(listing.coverage?.unresolved).toHaveLength(1);
+  });
+});

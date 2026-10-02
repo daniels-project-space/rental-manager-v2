@@ -16,10 +16,10 @@
  * 2. Sony NPF 970 batteries are a SEPARATE rental item for monitors/lights — only listed when explicitly present
  * 3. 128GB SD cards come WITH cameras — not a separate rental item unless 256GB+
  * 4. XLR handles come WITH Sony FX3 — not a separate item
- * 5. LP-E6NH batteries come WITH BMPCC cameras — not a separate rental item
+ * 5. Owner-confirmed NP-F570 batteries come WITH our 6K Pro / 6K Full Frame kits — not a separate rental item
  * 6. DJI Intelligent Flight Batteries come WITH drone Fly More kits — not a separate item
  * 7. "DJI gimbal battery" refers ONLY to DJI RS3 Pro gimbal batteries — NOT drone batteries
- * 8. Samsung SSD comes WITH BMPCC rentals as recording media — not a separate item
+ * 8. Recording media comes WITH these kits: the Full Frame supplies owner-confirmed 1TB CFexpress Type B; Pro uses its inventory record — not a separate item
  * 9. Lens identification: GM = orange G badge + large barrel; 28-70mm = "FE 3.5-5.6/28-70" + no G badge + smaller
  */
 
@@ -392,7 +392,7 @@ export const LISTING_PHOTO_REFERENCE: Record<string, ListingPhotoEntry> = {
       { item: 'Canon EF 24-105mm f4', qty: 1 },
       { item: 'DJI RS3 Pro gimbal', qty: 1 },
     ],
-    included: ['5x LP-E6NH batteries', 'Samsung SSD', 'cage'],
+    included: ['5x NP-F570 batteries', '1TB CFexpress Type B card', 'cage'],
     notes: 'BMPCC 6K FF + Canon 24-105mm + gimbal.',
     photoFile: '/tmp/listing-images/3732945.jpg',
   },
@@ -403,7 +403,7 @@ export const LISTING_PHOTO_REFERENCE: Record<string, ListingPhotoEntry> = {
     items: [
       { item: 'BMPCC 6K Full Frame', qty: 1 },
     ],
-    included: ['5x LP-E6NH batteries', '1TB Lexar CFexpress Type B card', 'cage'],
+    included: ['5x NP-F570 batteries', '1TB CFexpress Type B card', 'cage'],
     notes: 'BMPCC 6K FF body only. Card is CFexpress Type B NOT Type A. Parsed_items had wrong card type.',
     photoFile: '/tmp/listing-images/3731877.jpg',
   },
@@ -414,7 +414,7 @@ export const LISTING_PHOTO_REFERENCE: Record<string, ListingPhotoEntry> = {
     items: [
       { item: 'BMPCC 6K Pro', qty: 1 },
     ],
-    included: ['5x LP-E6NH batteries', 'Samsung SSD', 'cage'],
+    included: ['5x NP-F570 batteries', 'Samsung SSD', 'cage'],
     notes: 'BMPCC 6K Pro body only.',
     photoFile: '/tmp/listing-images/3730218.jpg',
   },
@@ -1078,7 +1078,7 @@ export const LISTING_PHOTO_REFERENCE: Record<string, ListingPhotoEntry> = {
       { item: 'BMPCC 6K Pro', qty: 1 },
       { item: 'Canon EF 24-105mm f4', qty: 1 },
     ],
-    included: ['6x LP-E6NH batteries', 'Samsung SSD', 'cage', 'hard case with cables'],
+    included: ['NP-F570 batteries (quantity from inventory record)', 'Samsung SSD', 'cage', 'hard case with cables'],
     notes: 'BMPCC 6K Pro + Canon 24-105mm. NO C-stand, NO NPF 970, NO V-mount in photo.',
     photoFile: '/tmp/listing-images/3731758.jpg',
   },

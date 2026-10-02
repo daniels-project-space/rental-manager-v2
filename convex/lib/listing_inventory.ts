@@ -3,8 +3,10 @@ import type { QueryCtx } from "../_generated/server";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { loadStockSources, stockForItem, type StockRequest } from "./renter_stock";
 
+import { resolveBundleMapping } from "./bundle_mapping";
+
 type Component = { item_id: string; qty: number };
-export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1) {
+export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
   const quantities = new Map<string, number>();
   for (const c of override ?? (primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
@@ -17,20 +19,28 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
       stock_required: !item || !isStandardAccessory(item.kind, item.name_canonical),
       owned: !item || !valid ? null : item.status === "active" && !item.is_marketing_only && item.qty > 0 };
   });
-  const complete = override !== undefined && validQuantity && components.every((c) => c.owned !== null);
+  const declared = description ? resolveBundleMapping(description, items) : null;
+  const coverage = declared?.explicit ? {
+    missing: declared.components.filter(c => (quantities.get(c.item_id) ?? 0) < c.qty).map(c => ({item_id:c.item_id,name:c.name,qty:c.qty})),
+    unresolved: declared.unmatched,
+    structured: declared.structured || (declared.components.length === 1 && declared.components[0].qty === 1),
+  } : null;
+  const coverageComplete = !coverage || (coverage.structured && !coverage.missing.length && !coverage.unresolved.length);
+  const complete = coverageComplete && override !== undefined && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
-  return { components, complete, owned, valid_quantity: validQuantity, source: override === undefined ? "primary_item_only" : "listing_override" };
+  return { components, complete, owned, valid_quantity: validQuantity, source: override === undefined ? "primary_item_only" : "listing_override", coverage };
 }
 
 export async function loadListingInventory(ctx: QueryCtx, account: string, productId: number, quantity = 1,
   sources?: Awaited<ReturnType<typeof loadStockSources>>) {
-  const [override, product] = await Promise.all([
+  const [override, product, listing] = await Promise.all([
     ctx.db.query("listing_resolution_override").withIndex("by_account_product", (q) => q.eq("account_slug", account).eq("product_id", productId)).first(),
     ctx.db.query("hygglo_products").withIndex("by_account_product", (q) => q.eq("accountSlug", account).eq("productId", productId)).first(),
+    ctx.db.query("online_listings").withIndex("by_account_product", (q) => q.eq("account_slug", account).eq("product_id", productId)).first(),
   ]);
   const inventory = sources?.items ?? await ctx.db.query("items").collect();
-  return { ...resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity),
+  return { ...resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity, listing?.description),
     product_id: productId, listing_name: product?.name ?? null };
 }
 

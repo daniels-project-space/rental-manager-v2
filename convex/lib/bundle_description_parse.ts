@@ -23,8 +23,12 @@ const NOISE_RE =
 export function extractComponents(desc: string): {
   components: Array<{ qty: number; name: string }>;
   usedBullets: boolean;
+  hasContentsSection: boolean;
 } {
-  const clean = desc.replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ");
+  // Preserve structural Unicode before the ASCII cleanup. Removing bullets
+  // here made every real “• 1× …” kit look unstructured to callers.
+  const clean = desc.replace(/[•‣●]/g, " * ").replace(/×/g, "x")
+    .replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ");
   // Where does the component list actually start? Owners phrase this several
   // ways. Missing the marker leaves the marketing intro in the list, and an
   // intro sentence parsed as a component is how "I'm offering a
@@ -57,6 +61,8 @@ export function extractComponents(desc: string): {
   // cannon lens" failed the confidence gate against "Canon EF 24-105mm f4"
   // purely because of "cannon".
   body = body
+    .replace(/\b(bmpcc|bmpc)\s*(\d+k)\s*(pro)\b/gi, "$1 $2 $3")
+    .replace(/\b(bmpcc|bmpc)(\d+k)\b/gi, "$1 $2")
     .replace(/\bcannon\b/gi, "Canon")
     .replace(/\bannamorphic\b/gi, "anamorphic")
     .replace(/\bsenheiser\b/gi, "Sennheiser")
@@ -97,10 +103,10 @@ export function extractComponents(desc: string): {
     .map((s) => s.trim())
     .filter(Boolean);
   const parts =
-    bulletParts.length >= 3
+    bulletParts.length >= 2
       ? bulletParts
       : body.split(/(?=(?<![\d.])\b\d{1,2}\s*x?\s+(?!(?:tb|gb|mb|mm|k)\b)[A-Za-z])/i);
-  const usedBullets = bulletParts.length >= 3;
+  const usedBullets = bulletParts.length >= 2;
   const out: Array<{ qty: number; name: string }> = [];
   for (const raw of parts) {
     const p = raw.trim().replace(/^(?:my|a|an|the)\s+/i, "");
@@ -109,7 +115,7 @@ export function extractComponents(desc: string): {
     // Pocket Cinema Camera 6K Pro" and "My Blackmagic Pocket Cinema Camera
     // 6K Full Frame". A bullet with no number is exactly one of that thing.
     const q = p.match(/^(\d{1,2})\s*x?\s+(.*)$/);
-    const qty = q ? Math.max(1, Math.min(10, parseInt(q[1], 10))) : 1;
+    const qty = q ? parseInt(q[1], 10) : 1;
     let name = (q ? q[2] : p).trim().replace(/[.,;]+$/, "");
     if (!usedBullets) {
       // Numeric-split fallback only: a name can otherwise run into the next
@@ -122,5 +128,5 @@ export function extractComponents(desc: string): {
     if (!name || NOISE_RE.test(name) || ADDON_RE.test(name)) continue;
     out.push({ qty, name: name.slice(0, 60) });
   }
-  return { components: out, usedBullets };
+  return { components: out, usedBullets, hasContentsSection: !!m };
 }

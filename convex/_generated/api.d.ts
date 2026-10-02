@@ -110,6 +110,7 @@ import type * as lib_ai_attribution from "../lib/ai_attribution.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_base_listing_identity from "../lib/base_listing_identity.js";
 import type * as lib_bundle_description_parse from "../lib/bundle_description_parse.js";
+import type * as lib_bundle_mapping from "../lib/bundle_mapping.js";
 import type * as lib_camera_mode_claims from "../lib/camera_mode_claims.js";
 import type * as lib_camera_requirements from "../lib/camera_requirements.js";
 import type * as lib_camera_sensor_comparisons from "../lib/camera_sensor_comparisons.js";
@@ -411,6 +412,7 @@ declare const fullApi: ApiFromModules<{
   "lib/availability": typeof lib_availability;
   "lib/base_listing_identity": typeof lib_base_listing_identity;
   "lib/bundle_description_parse": typeof lib_bundle_description_parse;
+  "lib/bundle_mapping": typeof lib_bundle_mapping;
   "lib/camera_mode_claims": typeof lib_camera_mode_claims;
   "lib/camera_requirements": typeof lib_camera_requirements;
   "lib/camera_sensor_comparisons": typeof lib_camera_sensor_comparisons;

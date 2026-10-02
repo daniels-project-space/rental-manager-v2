@@ -21,9 +21,7 @@ export const audit = internalQuery({
       )
       .unique();
     if (!row) return { error: "no such listing" };
-    const desc = (row.description ?? "")
-      .replace(/[^\x20-\x7E]/g, " ")
-      .replace(/\s+/g, " ");
+    const desc = row.description ?? "";
     const { components, usedBullets } = extractComponents(desc);
 
     const items = (await ctx.db.query("items").collect()).filter(
