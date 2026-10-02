@@ -65,6 +65,20 @@ describe("rankByName — the lookup_pricing bundle false-match", () => {
 });
 
 describe("bestMatch confidence gate", () => {
+  it("distinguishes adapter destination mounts, including one-letter names", () => {
+    const adapters = ["PL to Sony E mount", "PL to EF mount", "PL to RF mount", "PL to L mount"].map(name => ({ name }));
+    for (const name of adapters.map(a => a.name)) {
+      const result = bestMatch(name, adapters, a => a.name);
+      expect(result.confident).toBe(true);
+      expect(result.match?.name).toBe(name);
+    }
+    for (const query of ["PL mount", "PL mount adapter"])
+      expect(bestMatch(query, adapters, a => a.name).confident).toBe(false);
+    for (const query of ["PL to L adapter", "PL → L adapter"])
+      expect(bestMatch(query, adapters, a => a.name)).toMatchObject({confident:true,match:{name:"PL to L mount"}});
+    for (const name of ["PL to L mount", "PL-L mount", "PL → L mount"])
+      expect(rankByName(name, [{name:"Pl to e mount adapter for cinema lenses"}], a => a.name)[0].coverage).toBeLessThan(1);
+  });
   it("is confident on a fully-covered unique match", () => {
     const r = bestMatch("BMPCC 6K Pro", ITEMS, (i) => i.name);
     expect(r.match?.name).toBe("BMPCC 6K Pro");

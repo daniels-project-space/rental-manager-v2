@@ -6,6 +6,19 @@ const request:StockRequest={start_date:"2026-10-02",end_date:"2026-10-04",items:
 const prices:PriceEvidence[]=[{names:["BMPCC 6K Pro"],kind:"rental",days:3,quantity:1,daily_rate_gbp:30,base_rate_gbp:35,total_gbp:90,start_date:"2026-10-02",end_date:"2026-10-04",call_id:"real-alt",source:"hygglo_tier"},
 {names:["BMPCC 6K Full Frame"],kind:"rental",days:3,quantity:1,daily_rate_gbp:43.33,base_rate_gbp:50,total_gbp:130,call_id:"selected",source:"hygglo_tier"}];
 const check=(text:string, evidence=prices,scope=request)=>unsupportedPriceClaims(text,evidence,scope);
+describe("receipted lens shorthand",()=>{
+ const scope:StockRequest={items:[{name:"BMPCC 6K Full Frame + Canon EF 24-105mm f4",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+ const lens:PriceEvidence={names:["Canon EF 16-35mm f2.8"],kind:"rental",days:2,quantity:1,daily_rate_gbp:20,total_gbp:40,call_id:"native-lens",source:"hygglo_tier"};
+ const basket:PriceEvidence={names:[],kind:"basket",items:[...scope.items,{name:lens.names[0],quantity:1}],proposal:{base_items:scope.items,added_items:[{name:lens.names[0],quantity:1}]},days:2,total_gbp:164,call_id:"native-proposal",source:"native_lab_proposal"};
+ const text="We have a compatible Canon EF 16-35mm f2.8 wide-angle zoom. Adding the 16-35mm would be £40 for the 2 days (£20/day), which would bring your total booking to £164.";
+ it("accepts a unique focal-range shorthand without losing the proposed basket scope",()=>expect(unsupportedPriceClaims(text,[lens,basket],scope)).toEqual([]));
+ it("still refuses ambiguous ranges, wrong prices, dates and quantities",()=>{
+  const other={...lens,names:["Sony E 16-35mm f2.8"],call_id:"other-lens"};
+  expect(unsupportedPriceClaims(text,[lens,other,basket],scope)).not.toEqual([]);
+  for (const changed of [text.replace("£40","£50"),text.replace("£164","£124"),text.replace("Adding the","Adding two"),text.replace("2 days","3 days"),text.replace("16-35mm would","16-50mm would")])
+   expect(unsupportedPriceClaims(changed,[lens,basket],scope),changed).not.toEqual([]);
+ });
+});
 describe("original booking and proposed alternative prices",()=>{
  const original:StockRequest={start_date:"2026-10-06",end_date:"2026-10-07",items:[{name:"Sony FX3",quantity:1}]};
  const ledger:PriceEvidence[]=[{names:["Sony FX3"],kind:"rental",days:2,quantity:1,total_gbp:98,start_date:"2026-10-06",end_date:"2026-10-07",call_id:"original",source:"lab_order_quote"},

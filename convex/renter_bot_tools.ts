@@ -478,10 +478,6 @@ export const lookup_pricing = query({
     // daily price + description/kit), matched by name against OWNED-backed
     // listings. Falls back to the curated pricing_catalog below. (Daniel)
     if (account_slug) {
-      const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
-      const toks = (str: string) =>
-        Array.from(new Set((str.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-          (t) => (t.length > 1 || /^[0-9]$/.test(t)) && !STOP.has(t))));
       // "Owned" = the index, CORRECTED by the audit-authoritative override.
       // The index alone let the bot quote gear the audit had already ruled
       // marketing-only (DANIEL RULE 18: not on the master list = not in stock),
@@ -517,6 +513,8 @@ export const lookup_pricing = query({
       let best: (typeof listings)[number] | null = null;
       let bestScore = 0;
       let matchedCanonical: string | undefined;
+      let resolvedCanonical: string | undefined;
+      let ambiguousNames: string[] = [];
       if (product_id != null) {
         best = listings.find(l => l.product_id === product_id) ?? null;
         if (!best) return { found: false as const, item_name, message: "No verified owned listing for this exact product" };
@@ -531,6 +529,7 @@ export const lookup_pricing = query({
           (i) => (i.aliases ?? []) as string[],
         );
         if (im.match && im.confident) {
+          resolvedCanonical = im.match.name_canonical;
           const idxRows = await ctx.db
             .query("hygglo_product_index")
             .withIndex("by_item_id", (q2) => q2.eq("item_id", im.match!._id))
@@ -540,6 +539,8 @@ export const lookup_pricing = query({
           // base offering rather than an add-on bundle built around it.
           best = chooseBaseListing(listings, [...pids]);
           if (best) { bestScore = 1; matchedCanonical = im.match.name_canonical; }
+        } else if (im.match && im.ambiguousWith.length) {
+          ambiguousNames = [im.match, ...im.ambiguousWith].map(i => i.name_canonical);
         }
       }
       // EXACT TITLE FAST PATH — identity, not similarity.
@@ -557,7 +558,7 @@ export const lookup_pricing = query({
       // Comparing normalised FULL strings is an identity test, so it cannot
       // quote one listing's price for another — the failure the Jaccard path
       // exists to prevent.
-      if (!best) {
+      if (!best && !resolvedCanonical) {
         const exact = exactTitleMatch(
           item_name,
           listings.filter((l) => typeof l.daily_price === "number"),
@@ -571,7 +572,7 @@ export const lookup_pricing = query({
       // Fallback: Jaccard over listing names (penalises the extra tokens a fat
       // bundle carries, unlike the old coverage score) with FULL query
       // coverage required, so every word the renter said must be present.
-      if (!best) {
+      if (!best && !resolvedCanonical && !ambiguousNames.length) {
         const ranked = rankByName(item_name, listings, (l) => l.name ?? "");
         const top = ranked.find(
           (r) => r.coverage === 1 && typeof r.item.daily_price === "number",
@@ -591,6 +592,8 @@ export const lookup_pricing = query({
             .map((r) => r.item.name ?? "")
             .filter(Boolean);
       }
+      if (!best && ambiguousNames.length) return {found:false as const,item_name,
+        ambiguous_with:ambiguousNames,message:"Specify the exact model or adapter destination mount before quoting a price."};
       if (best && bestScore >= 0.3 && typeof best.daily_price === "number") {
         // REAL Hygglo tiers, not a guessed curve.
         //

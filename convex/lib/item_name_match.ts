@@ -44,6 +44,9 @@ const ROMAN: Record<string, string> = {
  */
 export function normToken(raw: string): string {
   const t = raw.toLowerCase();
+  // Inventory says "PL to L mount", display aliases say "PL → L adapter".
+  // Keep the category token while treating these two surfaces consistently.
+  if (t === "adapter" || t === "adapters") return "mount";
   if (ROMAN[t]) return ROMAN[t];
   if (t.length > 3 && t.endsWith("s")) return t.slice(0, -1);
   return t;
@@ -56,8 +59,9 @@ export function tokenize(str: string): Set<string> {
     if (raw.length < 1) continue;
     const t = normToken(raw);
     if (!t || STOP.has(t)) continue;
-    // Single letters are almost always noise ("a", "x") EXCEPT digits.
-    if (t.length === 1 && !/^[0-9]$/.test(t)) continue;
+    // E and L distinguish incompatible lens/adapter mounts. Dropping them
+    // makes "PL to L" and "PL to E" the same price/stock identity.
+    if (t.length === 1 && !/^[0-9el]$/.test(t)) continue;
     out.add(t);
   }
   return out;

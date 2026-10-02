@@ -1,6 +1,7 @@
 import { internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { baseListingProductIds } from "./lib/base_listing_identity";
 
 /**
  * Which rentable items have NO resolvable price on an account?
@@ -16,8 +17,8 @@ import { v } from "convex/values";
  * then the curated pricing_catalog. Read-only.
  */
 export const check = internalQuery({
-  args: { account_slug: v.string() },
-  handler: async (ctx, { account_slug }) => {
+  args: { account_slug: v.string(), item_names: v.optional(v.array(v.string())) },
+  handler: async (ctx, { account_slug, item_names }) => {
     const items = (await ctx.db.query("items").collect()).filter(
       (i) => i.status === "active" && !i.is_marketing_only && (i.qty ?? 0) > 0,
     );
@@ -38,20 +39,19 @@ export const check = internalQuery({
     const missing: Array<{ name: string; qty: number; kind: string }> = [];
     let viaListing = 0;
     let viaCatalog = 0;
+    const details = [];
     for (const it of items) {
-      const pids = [
-        ...idx
-          .filter((r) => String(r.item_id) === String(it._id) && r.account_slug === account_slug)
-          .map((r) => r.product_id),
-        ...ov
-          .filter(
-            (o) =>
-              o.account_slug === account_slug &&
-              o.components.length === 1 &&
-              String(o.components[0].item_id) === String(it._id),
-          )
-          .map((o) => o.product_id),
-      ];
+      const pids = baseListingProductIds(account_slug, String(it._id), idx, ov, items);
+      if (item_names?.includes(it.name_canonical)) details.push({
+        name: it.name_canonical,
+        listings: pids.map(pid => ({ product_id: pid, title: listings.find(l => l.product_id === pid)?.name,
+          daily_price: priceByPid.get(pid),
+          mapping: ov.find(o => o.account_slug === account_slug && o.product_id === pid)?.components.map(c => ({
+            name: items.find(i => String(i._id) === String(c.item_id))?.name_canonical, qty:c.qty
+          })) })),
+        catalog: cat.filter(c => !c.marketing_only && !c.is_bundle && c.item_name_canonical === it.name_canonical)
+          .map(c => ({daily_price_min:c.daily_price_min,daily_price_max:c.daily_price_max})),
+      });
       let best: number | null = null;
       for (const pid of pids) {
         const p = priceByPid.get(pid);
@@ -74,12 +74,13 @@ export const check = internalQuery({
       priced_from_catalog: viaCatalog,
       unpriceable: missing.length,
       missing: missing.sort((a, b) => a.kind.localeCompare(b.kind)).slice(0, 40),
+      details,
     };
   },
 });
 
 export default internalAction({
-  args: { account_slug: v.string() },
+  args: { account_slug: v.string(), item_names: v.optional(v.array(v.string())) },
   handler: async (ctx, a): Promise<unknown> =>
     ctx.runQuery(internal.diag_price_coverage.check, a),
 });

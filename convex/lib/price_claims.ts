@@ -24,8 +24,23 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   const known = [...request.items.map(i => ({ names: [i.name, ...(i.aliases ?? [])], quantity: i.quantity })),
     ...evidence.filter(e => e.kind !== "basket").map(e => ({ names: e.names, quantity: undefined })),
     ...evidence.flatMap(e=>(e.proposal?.added_items??[]).map(i=>({names:[i.name],quantity:undefined})))];
-  const names = [...new Set(known.flatMap(k => aliases(k.names)))].filter(Boolean).sort((a,b) => b.length-a.length);
   const same = samePriceNames;
+  // Ordinary replies shorten a receipted "Canon EF 16-35mm f2.8" to
+  // "16-35mm". Resolve that shorthand only when every matching native name
+  // identifies the same item; two brands/mounts with that range remain ambiguous.
+  const focalSubjects = new Map<string, string[]>();
+  const focalOwners = new Map<string, typeof known>();
+  for (const entry of known) for (const name of entry.names) {
+    for (const match of name.matchAll(/\b(\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*mm)\b/gi)) {
+      const key = norm(match[1]);
+      const owners = focalOwners.get(key) ?? [];
+      if (!owners.includes(entry)) owners.push(entry);
+      focalOwners.set(key, owners);
+    }
+  }
+  for (const [key, owners] of focalOwners)
+    if (owners.every(entry => same(entry.names, owners[0].names))) focalSubjects.set(key, owners[0].names);
+  const names = [...new Set([...known.flatMap(k => aliases(k.names)), ...focalSubjects.keys()])].filter(Boolean).sort((a,b) => b.length-a.length);
   const duration = inclusiveRentalDays(request.start_date, request.end_date);
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];
   let subjectQuantity: number | undefined;
@@ -39,7 +54,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       const at = (` ${before} `).lastIndexOf(` ${n} `);
       if (at >= 0 && (at+n.length > lastEnd || (at+n.length === lastEnd && n.length > lastName.length))) { lastAt = at; lastEnd = at+n.length; lastName = n; }
     }
-    if (lastAt >= 0) subject = [lastName];
+    if (lastAt >= 0) subject = focalSubjects.get(lastName) ?? [lastName];
     // Explicit unknown camera identities must not inherit the previous quote.
     const models = [...before.matchAll(/\b(?:pyxis(?:\s+\d+k)?|fx\s*\d+[a-z]*|a7\s*(?:iii|ii|iv|v|\d+)|(?:canon\s+)?(?:r5c?|r6|c70)|(?:blackmagic|bmpcc)\s+[^£.!?]{0,55})\b/g)];
     const unknown = models.at(-1);
