@@ -462,3 +462,15 @@ The shared lifecycle classifier exposed five further terminal editing gaps: canc
 
 
 Final removal/lifecycle validation passed 998 tests, with 14 skipped across 85 files, the Next build and explicit backend typecheck/deployment. `/root/rental-cart-removal-release-tests.log`, `/root/rental-cart-removal-release-build.log`, `/root/rental-cart-removal-release-backend.log`. Graph refresh and exact production rollout precede native and managed replay qualification.
+
+
+The removal/lifecycle rollout `f2b43ef5b69c6dbd970a19333c3a10d8cc71e096` reached READY at `dpl_GHrq6j7coYwGraBsfCo8kwkZkmNz`, exact production alias matched. Four real managed cases qualified: A7 II removed with A7 III retained at £40; one of two FX3 bodies removed with one retained at £98; unknown Pyxis request left the A7 III booking unchanged and did not fabricate kit membership; a completed 29–30 September rental remained unchanged while a fresh A7 III inquiry for 6–7 October used an independently checked positive October stock receipt and current two-day catalogue rate £20/day. All own probes cleaned and previews were current. `/root/rental-cart-removal-final-production-qualification.json`. Draft epoch 21→22, sending false. `/root/rental-cart-removal-final-runtime-proof.json`.
+
+## Addition stock checks include existing kit components
+
+A native selected A7 II kit (leo/product 1172846) required one Sony 28–70mm lens. Two lenses were free for 6–7 October. Adding two extra lenses succeeded because the addition path checked only that separate line. The identical-date amendment then correctly rejected the resulting complete basket: three lenses required, two free. `/root/rental-cart-shared-component-before-native-proof.json`; own probe cleaned. This was inconsistent physical allocation between mutation paths, not a fabricated calendar or a displayed total issue.
+
+Three registered native tests failed before correction: over-allocation, missing aggregate positive receipts and adding to an unmapped existing kit. `/root/rental-basket-before-tests.log`. Additions now check the entire proposed physical basket atomically before writes, using the same complete native listing mappings and aggregate component quantities as date changes. Failed additions return genuine combined-quantity stock receipts and leave all items/prices unchanged; the error distinguishes combined basket capacity from a statement that a particular additional unit is booked. Successful additions retain both their direct item check and native full-basket receipts. Final build/backend/graph and managed production qualification follow separately.
+
+
+Full basket validation passed 1,001 tests, with 14 skipped across 85 files, Next build and explicit backend deployment/typecheck. `/root/rental-basket-final-tests.log`, `/root/rental-basket-build.log`, `/root/rental-basket-backend.log`. Exact rollout and real declined/accepted addition qualification follow this source change; a passing isolated line check alone is no longer sufficient to mutate a basket.

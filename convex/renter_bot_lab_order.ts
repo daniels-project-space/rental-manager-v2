@@ -428,6 +428,15 @@ export const applyChange = mutation({
       summaryText = `added ${qty}x ${m.match.name_canonical}${price != null ? ` at £${price}/day` : ""}`;
     }
 
+    const basketStock = await checkOrderRentalStock(ctx, row.account_slug, lines, row.start_date, row.end_date, a.thread_id);
+    if (basketStock.available !== true) {
+      const constraints = basketStock.receipts.filter(r => r.available !== true)
+        .map(r => `${r.item_name}: the complete basket needs ${r.requested_units}, ${r.free_units ?? "unknown"} free`).join("; ");
+      return { ok: false, error_code: "basket_stock_unavailable_or_unknown",
+        error: `Cannot add this item to the complete basket for ${row.start_date} – ${row.end_date}: ${constraints || basketStock.reason}. Kit contents already consume stock. No items or prices were changed. Explain the basket capacity; do not call the extra item itself booked or unavailable based only on a larger combined-quantity check.`,
+        stock_receipts: basketStock.receipts };
+    }
+
     await ctx.db.patch(row._id, {
       items: lines.map((l) => ({ ...l, item_id: l.item_id as never })),
       changes: [...row.changes, { at: Date.now(), summary: summaryText }],
@@ -438,6 +447,7 @@ export const applyChange = mutation({
       applied: summaryText,
       order: summarise(lines, row.start_date, row.end_date),
       stock_receipt: { ...stock, start_date: row.start_date, end_date: row.end_date },
+      stock_receipts: basketStock.receipts,
       context_transition: await transition(),
     };
   },

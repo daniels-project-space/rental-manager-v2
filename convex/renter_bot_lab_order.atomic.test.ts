@@ -26,6 +26,34 @@ function fixture() {
 const extend = (ctx: any) => (applyChange as any)._handler(ctx, { thread_id: "__probe__atomic", action: "set_dates", start_date: "2026-10-06", end_date: "2026-10-08" });
 const remove = (ctx: any, item_name: string, qty?: number) => (applyChange as any)._handler(ctx,
   { thread_id: "__probe__atomic", action: "remove_item", item_name, ...(qty === undefined ? {} : {qty}) });
+describe("additions check the complete physical basket",()=>{
+  const setup=()=>{
+    const f=fixture();
+    f.tables.items.push({_id:"lens",name_canonical:"Sony 28-70mm",status:"active",is_marketing_only:false,qty:2,kind:"lens",aliases:[]});
+    f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
+    f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1},{item_id:"lens",qty:1}]}];
+    f.tables.pricing_catalog=[{item_name_canonical:"Sony 28-70mm",daily_price_min:18}];
+    return f;
+  };
+  const add=(ctx:any,qty:number)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
+  it("rejects two extras when the kit already needs one of the two free lenses",async()=>{
+    const {tables,ctx}=setup();const before=structuredClone(tables);
+    const result=await add(ctx,2);
+    expect(result).toMatchObject({ok:false,stock_receipts:[expect.anything(),expect.objectContaining({item_name:"Sony 28-70mm",requested_units:3,free_units:2,available:false})]});
+    expect(tables).toEqual(before);
+  });
+  it("accepts one extra with native aggregate evidence for both physical lenses",async()=>{
+    const {tables,ctx}=setup();const result=await add(ctx,1);
+    expect(result).toMatchObject({ok:true,stock_receipts:[expect.anything(),expect.objectContaining({item_name:"Sony 28-70mm",requested_units:2,free_units:2,available:true})]});
+    expect(tables.renter_bot_lab_orders[0].items).toHaveLength(2);
+    expect(tables.renter_bot_lab_orders[0].items[1]).toMatchObject({item_id:"lens",qty:1});
+  });
+  it("does not add a free extra to an existing unmapped kit",async()=>{
+    const {tables,ctx}=setup();tables.listing_resolution_override=[];
+    tables.hygglo_products=[{accountSlug:"leo",productId:1,masterItemId:"camera",name:"Unmapped kit"}];
+    const before=structuredClone(tables);expect(await add(ctx,1)).toMatchObject({ok:false});expect(tables).toEqual(before);
+  });
+});
 describe("item removals preserve exact identity and quantity", () => {
   it("removes A7 II without removing A7 III", async () => {
     const { tables, ctx } = fixture();
