@@ -642,6 +642,14 @@ export const lookup_pricing = query({
         // A kit price cannot become a component price when another component
         // is unavailable. Expose exact base titles for a separate Native quote.
         const selectedContents = await loadListingInventory(ctx, account_slug, best.product_id);
+        // A stale nonempty mapping is not ownership proof. Explicitly inactive,
+        // marketing-only or zero-inventory components make the offering
+        // unrentable even when the imported listing still carries a price.
+        if (selectedContents.owned === false) return {
+          found: false as const, item_name, product_id: best.product_id,
+          reason: "not_rentable" as const,
+          message: "This listing contains an item that is not owned rentable inventory. Do not quote or recommend this offering; use a separately verified owned alternative.",
+        };
         const componentBaseOfferings: Array<{name:string;listing_name:string;product_id:number}> = [];
         if (!matchedCanonical && selectedContents.complete && selectedContents.owned === true) {
           const inventory = await ctx.db.query("items").collect();
