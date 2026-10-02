@@ -1192,7 +1192,6 @@ export async function POST(req: Request) {
     const settings = await convex.query(api.settings.get, {});
     commercialContext = minimumRentalContext(authoritativeStage, settings?.minimum_rental_gbp ?? 40,
       currentPriceEvidence(),priceRequest);
-    groundTruth += minimumRentalPrompt(commercialContext)+"\n";
   } catch { /* Unknown commercial totals never imply a small rental. */ }
 
   // Per-account PICKUP location — share ONLY after the booking is confirmed.
@@ -1338,6 +1337,7 @@ export async function POST(req: Request) {
             },
           }),
     },
+    ...(commercialContext ? [{role: "system" as const, content: minimumRentalPrompt(commercialContext)}] : []),
     {
       role: "user" as const,
       content: [
