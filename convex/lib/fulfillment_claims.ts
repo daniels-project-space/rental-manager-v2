@@ -26,9 +26,10 @@ export function forbiddenFulfillmentClaims(text:string, forbidden:string[], know
       // Equal positions select the longest exact identity, then the blocked one.
       const lastAt=preceding.at(-1)?.at;
       const named=lastAt===undefined?undefined:preceding.find(m=>m.at===lastAt);
-      const following=!named && /^(?:i|we|you|go ahead|feel free|book |rent )/.test(assertion[0]) ? mentions.find(m=>m.at>=at+assertion[0].length && m.at-at<70):undefined;
-      const current=named??following??subject;
-      const wholeBooking=!named && /\b(?:your|the|this|that) (?:booking|rental|request|order) (?:is|has been|will be)\s*$/.test(prefix);
+      const following=/^(?:i|we|you|go ahead|feel free|book |rent )/.test(assertion[0]) ? mentions.find(m=>m.at>=at+assertion[0].length && m.at-at<70 &&
+        clause.slice(at+assertion[0].length,m.at).trim().split(/\s+/).every(w=>!w || ["the","a","an","my","our","another","you","also","instead"].includes(w))):undefined;
+      const current=following??named??subject;
+      const wholeBooking=/\b(?:your|the|this|that) (?:booking|rental|request|order) (?:is|has been|will be)\s*$/.test(prefix);
       if(current.blocked || wholeBooking)hits.add(current.blocked?current.name:forbidden[0]);
     }
     if(mentions.length){const lastAt=mentions.at(-1)!.at;subject=mentions.find(m=>m.at===lastAt)!;}

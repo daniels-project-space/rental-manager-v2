@@ -7,6 +7,7 @@ describe("item-scoped fulfillment assertions",()=>{
   "The RED Komodo is not available. I've got the Sony FX3 if that works.",
   "The RED Komodo isn't available. Feel free to book the Sony FX3 instead.",
   "The RED Komodo isn't available. I can rent the Sony FX3 instead.",
+  "The RED Komodo isn't available, I can offer you the Sony FX3 instead.",
   "The RED Komodo isn't available. The Sony FX3 is available; that one is ready for you.",
   "The RED Komodo is unavailable. I don't have it for those dates.",
  ])("preserves an independently checked alternative or decline: %s",text=>expect(forbiddenFulfillmentClaims(text,blocked,known)).toEqual([]));
@@ -18,6 +19,7 @@ describe("item-scoped fulfillment assertions",()=>{
   "I can rent the RED Komodo for those dates.",
   "Feel free to book the RED Komodo.",
   "The RED Komodo isn't available. The Sony FX3 is available. Your booking is confirmed.",
+  "The RED Komodo isn't available, the Sony FX3 is available, your booking is confirmed.",
  ])("catches explicit and generic false fulfilment: %s",text=>expect(forbiddenFulfillmentClaims(text,blocked,known)).toContain("RED Komodo"));
  it("preserves exact variants and decimal lens models",()=>{
   expect(forbiddenFulfillmentClaims("The Sony FX3 is available.",["Sony FX30"],["Sony FX3"])).toEqual([]);
