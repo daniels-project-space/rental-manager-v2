@@ -1,0 +1,9 @@
+# Kit subject binding for shortened camera names — 2 October 2026
+
+An actual Native Lab reply accurately stated that the owner-confirmed Blackmagic 6K Full Frame kit includes a 1TB CFexpress Type B card. The reply first discussed a 6K Pro, then called the other kit “the 6K Full Frame kit.” Kit validation did not recognize that shortened subject and checked the card against the previously named Pro. The draft was withheld as KIT_HALLUCINATION; the order stayed £124 and the owned test thread was cleaned.
+
+Established Blackmagic identities now provide the exact variant aliases “6K Pro,” “6K Full Frame” and “6K FF.” Kit validation expands identities at its boundary, including callers that supply unexpanded canonical names. Only complete established model names generate aliases; advertising prose remains literal. Contents, format, capacity and quantity validation remain unchanged. Tests accept the actual shortened Full Frame claim and reject the same card assigned to the Pro or changed to 2TB. Price and fulfillment callers share the identity aliases; their regressions also pass.
+
+Validation: 1,140 tests passed, 14 skipped; Next build and Convex typecheck/deployment passed; Graphify updated with the existing audit_qty_drift_data.ts partial AST warning. An exact receipt-name assertion needed updating for the two new Full Frame aliases; its source/provenance restrictions remain covered. Initial fresh-model failure: /root/rental-shared-pool-kit-model-live-proof.json. Fresh release acceptance is recorded separately in /root/rental-kit-card-model-live-proof.json and /root/rental-kit-card-final-proof.json when run.
+
+This fixes a demonstrated false refusal; it does not prove complete natural-language subject binding or joint availability for arbitrary multiple proposed kits. Real Hygglo activation remains disabled pending explicit written consent, and the broader audit remains active.

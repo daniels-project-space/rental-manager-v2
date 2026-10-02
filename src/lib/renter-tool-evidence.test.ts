@@ -22,7 +22,7 @@ describe("successful tool receipts", () => {
     const argsOnly = renterToolReceipts([{ payload: { toolName: "find_owned_alternatives", args: { alternatives: [a] } } }]);
     expect(recommendationKitEvidence(argsOnly)).toEqual([]);
     const receipts = renterToolReceipts([{ payload: { toolName: "find_owned_alternatives", result: { alternatives: [a, { ...a, name: "Unknown kit", kit_source: "unknown", included: "SEO says charger" }] } } }]);
-    expect(recommendationKitEvidence(receipts)).toEqual([{ names: ["BMPCC 6K Full Frame", "Blackmagic 6K Full Frame", "Blackmagic Pocket Cinema Camera 6K Full Frame", "Blackmagic Cinema Camera 6K Full Frame", "BMPCC 6K FF", "Blackmagic 6K FF", a.listing_name], contents: a.kit_contents }]);
+    expect(recommendationKitEvidence(receipts)).toEqual([{ names: ["BMPCC 6K Full Frame", "6K Full Frame", "Blackmagic 6K Full Frame", "Blackmagic Pocket Cinema Camera 6K Full Frame", "Blackmagic Cinema Camera 6K Full Frame", "BMPCC 6K FF", "Blackmagic 6K FF", "6K FF", a.listing_name], contents: a.kit_contents }]);
     expect(recommendationKitEvidence([{...receipts[0],result:{alternatives:[{...a,kind:"camera"}]}}])[0].kind).toBe("camera");
   });
   it("never grounds a call that has no successful result", () => {

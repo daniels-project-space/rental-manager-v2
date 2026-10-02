@@ -1,3 +1,5 @@
+import { renterItemNames } from "./renter_item_names";
+
 export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; kind?: string };
 const categories = [
   ["charger", /\bchargers?\b/i], ["battery", /\bbatter(?:y|ies)\b/i], ["card", /\b(?:cards?|sd|cfast|cf\s*express)\b/i],
@@ -91,6 +93,7 @@ function inclusionOwners(text: string, evidence: KitEvidence[]) {
 }
 /** Negative/optional offers are not claims of included contents. Preserve item attribution. */
 export function unsupportedKitClaims(text: string, evidence: KitEvidence[], initialNames: string[] = []) {
+  evidence = evidence.map(e => ({...e, names: [...new Set(e.names.flatMap(renterItemNames))]}));
   const failures: { sentence: string; content: string }[] = [];
   const selected = evidence.filter(e => e.names.some(n => initialNames.some(i => normalize(i) === normalize(n))));
   let subject: KitEvidence[] = selected.length === 1 ? selected : [];

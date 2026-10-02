@@ -143,10 +143,19 @@ describe("established camera identity aliases in mixed kits", () => {
     expect(unsupportedKitClaims("Blackmagic 6K Full Frame comes with a 1TB SSD and a camera cage.", [ff, pro])).not.toEqual([]);
     expect(unsupportedKitClaims("Blackmagic 6K Pro includes a 1TB CFexpress Type B card.", [ff, pro])).not.toEqual([]);
   });
+  it("switches from a named Pro to the shortened Full Frame subject in the actual live reply", () => {
+    const reply = "The Blackmagic Pocket Cinema Camera 6K Pro kit is available. Both cameras can go out with five native NP-F570 batteries each. For storage, the 6K Full Frame kit includes a 1TB CFexpress Type B card.";
+    expect(unsupportedKitClaims(reply, [ff, pro], ["BMPCC 6K Full Frame"])).toEqual([]);
+    expect(unsupportedKitClaims(reply, [{...ff,names:["BMPCC 6K Full Frame"]},{...pro,names:["BMPCC 6K Pro"]}], ["BMPCC 6K Full Frame"])).toEqual([]);
+    expect(unsupportedKitClaims(reply.replace("the 6K Full Frame kit", "the 6K Pro kit"), [ff, pro]).map(f=>f.content)).toEqual(["card"]);
+    expect(unsupportedKitClaims(reply.replace("1TB CFexpress Type B", "2TB CFexpress Type B"), [ff, pro]).map(f=>f.content)).toEqual(["card"]);
+  });
   it("never expands a comparison model from advertising prose", () => {
     const advertising = "BMPCC 6K Full Frame Set (like Canon R5C / Sony FX3)";
     expect(renterItemNames(advertising)).toEqual([advertising]);
     expect(renterItemNames("BMPCC 6K Full Frame")).not.toContain("Blackmagic 6K Pro");
+    expect(renterItemNames("BMPCC 6K Full Frame")).not.toContain("6K Pro");
+    expect(renterItemNames(advertising)).not.toContain("6K Full Frame");
   });
 });
 

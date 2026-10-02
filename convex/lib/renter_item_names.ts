@@ -7,9 +7,10 @@ export function renterItemNames(name: string): string[] {
   const bm = /^(?:BMPCC|Blackmagic(?:\s+Pocket\s+Cinema\s+Camera|\s+Cinema\s+Camera)?)\s+6K\s+(Pro|Full\s+Frame|FF)$/i.exec(name.trim());
   if (bm) {
     const variant = /^pro$/i.test(bm[1]) ? "Pro" : "Full Frame";
+    names.push(`6K ${variant}`);
     for (const prefix of ["BMPCC", "Blackmagic", "Blackmagic Pocket Cinema Camera", "Blackmagic Cinema Camera"])
       names.push(`${prefix} 6K ${variant}`);
-    if (variant === "Full Frame") names.push("BMPCC 6K FF", "Blackmagic 6K FF");
+    if (variant === "Full Frame") names.push("BMPCC 6K FF", "Blackmagic 6K FF", "6K FF");
   }
   return [...new Set(names.filter(Boolean))];
 }
