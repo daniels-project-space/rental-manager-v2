@@ -61,6 +61,14 @@ describe("scoped stock claims", () => {
     expect(check("The kit is available for your dates.", receipts.map(r => ({ ...r, available: true })), scope)).toEqual([]);
     expect(check("The kit is available for your dates.", receipts.slice(0, 1), scope)).toHaveLength(1);
   });
+  it("resolves exact body references without borrowing failed kit-component verdicts", () => {
+    const scope: StockRequest = { ...request, items: [{ name: "Sony FX3", quantity: 1, complete: true, aliases: ["FX3 rental kit"],
+      components: [{ name: "Sony FX3", quantity: 1 }, { name: "Sony GM 24-70", quantity: 1 }] }] };
+    expect(check("That exact body isn't available.", [stock], scope)).toEqual([]);
+    expect(check("That exact body isn't available.", [{ ...stock, available: true }, { ...stock, item: "Sony GM 24-70" }, { ...stock, item: "FX3 rental kit" }], scope)).toHaveLength(1);
+    expect(check("That exact body is available.", [{ ...stock, available: true }, { ...stock, item: "Sony GM 24-70" }], scope)).toEqual([]);
+    expect(check("That exact body isn't available.", [{ ...stock, start_date: "2026-10-05" }], scope)).toHaveLength(1);
+  });
   it("does not confirm an incompletely mapped kit", () => {
     expect(check("The kit is available.", [{ ...stock, available: true }], { ...request, items: [{ ...request.items[0], complete: false }] })).toHaveLength(1);
   });

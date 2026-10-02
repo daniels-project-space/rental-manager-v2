@@ -50,7 +50,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const subject = subjectOf(prefix.replace(/\s+(?:is|are)\s*$/i, ""));
     const namedKit = /\s+(?:kit|set)\s*$/i.test(subject.name);
     if (namedKit) subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
-    const generic = /^(?:it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
+    const bodyOnly = /^body$/i.test(subject.name);
+    const generic = /^(?:body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
     let targets = request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     if (generic) targets = previousSubjects.length ? previousSubjects : request.items;
     else if (!targets.length) {
@@ -63,14 +64,14 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const end = explicitDates?.[1] ?? request.end_date;
     const proven = targets.length > 0 && targets.every(target => {
       if (!negative && target.complete === false) return false;
-      const required = target.components?.length && (!negative || generic || namedKit)
+      const required = !bodyOnly && target.components?.length && (!negative || generic || namedKit)
         ? target.components : [target];
       const qualifies = (component: { name: string; quantity: number }) => {
         const quantity = subject.quantity === undefined ? component.quantity
           : component.quantity * subject.quantity / target.quantity;
         if (!Number.isInteger(quantity) || quantity <= 0) return false;
         return receipts.some(r => {
-          const names = component === target ? [target.name, ...(target.aliases ?? [])] : [component.name];
+          const names = component === target ? [target.name, ...(bodyOnly ? [] : target.aliases ?? [])] : [component.name];
           if (!r.call_id || !Number.isFinite(r.checked_at) || typeof r.available !== "boolean" ||
             !names.some(n => sameItem(n, r.item)) ||
             (start && r.start_date !== start) || (end && r.end_date !== end)) return false;
