@@ -69,3 +69,19 @@ describe("reviewed intrinsic ND rather than physical accessories", () => {
     expect(unsupportedBuiltInNDClaims("It has built-in ND filters.", [ff, pro], ["BMPCC 6K Full Frame"])).toHaveLength(1);
   });
 });
+
+
+describe("ND stock declines are not camera feature assertions",()=>{
+  const ff={names:["BMPCC 6K Full Frame","Blackmagic 6K Full Frame"],capabilities:{role:"interchangeable_lens" as const,sensor_format:"full_frame" as const,internal_4k:true,built_in_nd:false}};
+  const pro={names:["BMPCC 6K Pro","Blackmagic 6K Pro"],capabilities:{role:"interchangeable_lens" as const,sensor_format:"super35" as const,internal_4k:true,built_in_nd:true}};
+  it("preserves the actual additional-camera decline regardless of prior subject",()=>{
+    for(const initial of [[],["BMPCC 6K Pro"],["BMPCC 6K Full Frame"]])
+      expect(unsupportedBuiltInNDClaims("I don't have another cinema camera with built-in ND available alongside your current booking.",[ff,pro],initial)).toEqual([]);
+    expect(unsupportedBuiltInNDClaims("No additional bodies with internal ND are available.",[ff,pro])).toEqual([]);
+  });
+  it("still blocks named incorrect and unknown features after a generic decline",()=>{
+    expect(unsupportedBuiltInNDClaims("I don't have another camera with built-in ND available. Blackmagic 6K Full Frame has built-in ND.",[ff,pro])).toHaveLength(1);
+    expect(unsupportedBuiltInNDClaims("I don't have Canon C70 with built-in ND available.",[ff,pro])).toHaveLength(1);
+    expect(unsupportedBuiltInNDClaims("Blackmagic 6K Pro has no internal ND.",[ff,pro])).toHaveLength(1);
+  });
+});

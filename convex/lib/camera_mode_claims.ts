@@ -68,6 +68,12 @@ export function unsupportedBuiltInNDClaims(text: string, evidence: CameraEvidenc
     const claim = /\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.exec(clause);
     if (!claim) continue;
     const prefix = clause.slice(0, claim.index);
+    // A generic inventory decline describes the requested class of gear,
+    // not the intrinsic features of the prior camera subject. Stock guards
+    // still require a real negative availability result for that decline.
+    const inventoryDecline = /\b(?:don't|do not|cannot|can't)\s+(?:have|supply|provide|offer|find)\b[^.!?]{0,110}$/i.test(prefix) ||
+      /\b(?:no|none|not any)\b[^.!?]{0,70}\b(?:camera|body|bodies|kit)s?\b[^.!?]{0,45}$/i.test(prefix);
+    if (!named.length && !explicitCameraModel.test(clause) && inventoryDecline) continue;
     if (/\b(?:if|whether|check|verify|confirm)\b[^,;:]{0,100}$/i.test(prefix) || /\b(?:want|need|require|prefer|looking for)\b[^,;:]{0,45}$/i.test(prefix)) continue;
     const negative = /\b(?:no|not|without|isn't|aren't|doesn't|does not|lack|lacks)\b[^,;:()]{0,45}$/i.test(prefix);
     if (!subject.length || !subject.every(e => e.capabilities.built_in_nd === !negative)) failures.push(clause.trim());
