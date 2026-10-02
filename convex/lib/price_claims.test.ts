@@ -87,3 +87,18 @@ it("keeps duration-qualified generic totals tied to the actual subject",()=>{
  expect(unsupportedPriceClaims("The total for the 4-day rental is £56.",evidence,scope)).toHaveLength(1);
  expect(unsupportedPriceClaims("The total for the Pyxis is £56.",evidence,scope)).toHaveLength(1);
 });
+it("qualifies a revised total against the amended native quote without borrowing another model",()=>{
+ const scope:StockRequest={start_date:"2026-09-30",end_date:"2026-10-03",items:[{name:"Sony A7 V",quantity:1}]};
+ const evidence:PriceEvidence[]=[{names:["Sony A7 V"],kind:"rental",days:4,quantity:1,total_gbp:147,start_date:scope.start_date!,end_date:scope.end_date!,source:"lab_order_quote",call_id:"post-amendment"}];
+ const text="I've updated the booking dates to 30 September to 3 October (4 days). The new total is £147.";
+ expect(unsupportedPriceClaims(text,evidence,scope)).toEqual([]);
+ expect(unsupportedPriceClaims(text.replace("£147","£148"),evidence,scope)).toHaveLength(1);
+ expect(unsupportedPriceClaims("The updated total for the Pyxis is £147.",evidence,scope)).toHaveLength(1);
+ expect(unsupportedPriceClaims("The revised total for 3 days is £147.",evidence,scope)).toHaveLength(1);
+});
+it("requires the revised basket total to have the same native members",()=>{
+ const scope:StockRequest={start_date:"2026-10-06",end_date:"2026-10-08",items:[{name:"Sony A7 V",quantity:1},{name:"Sony GM 24-70mm f2.8",quantity:1}]};
+ const basket:PriceEvidence={names:[],kind:"basket",items:scope.items,days:3,total_gbp:170,source:"lab_order_quote",call_id:"native"};
+ expect(unsupportedPriceClaims("The updated total is £170.",[basket],scope)).toEqual([]);
+ expect(unsupportedPriceClaims("The updated total is £170.",[{...basket,items:[scope.items[0]]}],scope)).toHaveLength(1);
+});

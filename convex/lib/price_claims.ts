@@ -53,7 +53,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       const scopedNamed=named.replace(/^for\s+(?:the\s+)?\d+\s+days?\s+(?:the\s+)?/i, "");
       const datedSubject = segmentDates.matched_text ? scopedNamed.replace(norm(segmentDates.matched_text), "dates") : scopedNamed;
       bookingSubject = /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
-      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(scopedNamed);
+      const genericNamed = scopedNamed.replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "");
+      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
       if (!generic && !bookingSubject && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !names.includes(named)) {
         pairedItems=[];
@@ -92,7 +93,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const declaredQuantity = count ? ({one:1,two:2,both:2,three:3,four:4} as Record<string,number>)[count[1]] ?? Number(count[1]) : undefined;
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
     const amount = Number(m[1].replace(/,/g, ""));
-    const basket = !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking)|your\s+total)\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+total\b/i.test(local));
+    const basket = !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking)|your\s+total)\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(local));
     const candidates = evidence.filter(e => !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
       if (!dateScope.valid || explicitDays && scopedDuration != null && days !== scopedDuration) return false;
