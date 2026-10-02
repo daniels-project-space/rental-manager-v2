@@ -1,0 +1,9 @@
+# Separate component offering recovery — 2 October 2026
+
+A fresh Lab conversation after e3adc22 recognized that the Pro+Canon kit could not coexist with the confirmed Full Frame+Canon booking, but offered the Pro body using the full kit’s £90 price. The guard rejected that price; no draft was saved and the booking remained unchanged. The preserved model failure is `/root/rental-exact-addition-model-live-proof.json`.
+
+Native pricing now provides exact base listing identities for independently rentable components of a fully mapped owned kit. These names are not prices or promises. Following a failed read-only Lab basket preview, the production adapter retrieves each component listing’s own account price, checks that exact product in the existing basket, and returns separately labelled component quotes. Their receipts pass through the existing price and stock validation. A failed lookup or product mismatch supplies no substitute proof. Real threads do not invoke these Lab previews. The bot must explain that the component offering has different contents and cannot reuse the refused kit’s price.
+
+Native test `/root/rental-component-recovery-native-proof.json` proves the selected Pro+Canon listing is refused (two Canon lenses required, one available); Pro body listing 1172895 separately supplies £70 additional / £194 proposed total and ten NP-F570 units in the combined basket. The confirmed order remains £124 and all owned Lab fixtures were cleaned. This is real Native data through the local production adapter, not a model acceptance result. Full tests: 1,154 passed, 14 skipped across 88 files. A fresh deployed model conversation remains required.
+
+This is one part of the ongoing audit. Multi-option recommendation stock, arbitrary multiple additions, wider consent semantics, confidence calibration and device push acceptance remain incomplete. Real Hygglo generation and sends stay gated pending Daniel’s explicit written consent.

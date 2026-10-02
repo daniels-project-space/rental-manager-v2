@@ -5,6 +5,7 @@ export async function withBookingAdditionPreview(
   pricing: unknown,
   scope: RenterScope | undefined,
   preview: (args: Record<string, unknown>) => Promise<unknown>,
+  lookupBase?: (args: Record<string, unknown>) => Promise<unknown>,
 ) {
   if (!pricing || typeof pricing !== "object" || Array.isArray(pricing)) return pricing;
   const result = pricing as Record<string, unknown>;
@@ -27,5 +28,19 @@ export async function withBookingAdditionPreview(
     proposal = {ok:false,error_code:"proposal_quote_unavailable",
       error:"The combined booking quote could not be verified. No changes were made. Do not offer a combined total or confirm the proposed basket."};
   }
-  return {...result,booking_addition_preview:proposal};
+  const response: Record<string, unknown> = {...result,booking_addition_preview:proposal};
+  if (lookupBase && proposal && typeof proposal === "object" && (proposal as Record<string, unknown>).ok === false && Array.isArray(result.component_base_offerings)) {
+    const options = result.component_base_offerings.filter((raw): raw is Record<string, unknown> =>
+      !!raw && typeof raw === "object" && typeof raw.listing_name === "string" &&
+      typeof raw.product_id === "number" && Number.isInteger(raw.product_id) && raw.product_id > 0 && raw.product_id !== result.product_id).slice(0,4);
+    const quotes = await Promise.allSettled(options.map(async option => {
+      const base = await lookupBase({item_name:option.listing_name,product_id:option.product_id,
+        account_slug:scope.accountSlug,days:result.days,quantity:result.quantity});
+      if (!base || typeof base !== "object" || (base as Record<string, unknown>).product_id !== option.product_id) return null;
+      return await withBookingAdditionPreview(base,scope,preview);
+    }));
+    response.component_base_offering_quotes = quotes.flatMap(q => q.status === "fulfilled" && q.value ? [q.value] : []);
+    response.component_quote_guidance = "These are separately priced component offerings, with different contents from the selected kit. Offer only an option whose booking_addition_preview.ok is true, using that option's price and exact contents. Never reuse the refused kit price for a body-only option. No booking changes were made.";
+  }
+  return response;
 }

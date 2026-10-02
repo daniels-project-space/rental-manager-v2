@@ -49,4 +49,35 @@ describe("pricing with a Native booking preview",()=>{
     expect(received.product_id).toBe(bundle.product_id);
     expect(result.booking_addition_preview.ok).toBe(true);
   });
+  it("recovers a separately priced body after a full-kit conflict and routes its own Native receipts",async()=>{
+    const selected={...pricing,product_id:1107037,matched_canonical:undefined,matched_listing:"Pro + Canon kit",days:2,listed_total_gbp:90,
+      component_base_offerings:[{name:"BMPCC 6K Pro",listing_name:"Pro body kit",product_id:1172895}]};
+    const lookups:unknown[]=[]; const previews:unknown[]=[];
+    const result:any=await withBookingAdditionPreview(selected,scope,async args=>{
+      previews.push(args);
+      return args.product_id===1107037 ? {ok:false,error:"Only one Canon lens"} :
+        {ok:true,additional_cost_gbp:70,quote:{total_gbp:194},addition_quote:{lines:[{product_id:1172895,qty:1}]}};
+    },async args=>{lookups.push(args);return {...pricing,days:2,matched_listing:"Pro body kit"};});
+    expect(lookups).toEqual([{item_name:"Pro body kit",product_id:1172895,account_slug:"leo",days:2,quantity:1}]);
+    expect(previews).toHaveLength(2);
+    expect(result.listed_total_gbp).toBe(90);
+    expect(result.booking_addition_preview.ok).toBe(false);
+    expect(result.component_base_offering_quotes[0]).toMatchObject({product_id:1172895,listed_total_gbp:70,booking_addition_preview:{ok:true,additional_cost_gbp:70}});
+    const receipts=renterToolReceipts([{toolName:"lookup_pricing",toolCallId:"kit",result}]);
+    expect(receipts).toContainEqual(expect.objectContaining({tool:"lookup_pricing",call_id:"kit:component-base:0",result:expect.objectContaining({listed_total_gbp:70})}));
+    expect(receipts).toContainEqual(expect.objectContaining({tool:"quote_booking_addition",call_id:"kit:component-base:0:booking-preview"}));
+    expect(renterToolReceipts([{toolName:"lookup_pricing",args:result}])).toEqual([]);
+  });
+  it("does not recover on a real thread, or accept another product or a failed lookup",async()=>{
+    let lookups=0;
+    const kit={...pricing,component_base_offerings:[{listing_name:"Body",product_id:999}]};
+    expect(await withBookingAdditionPreview(kit,{...scope,threadId:"real"},async()=>({ok:false}),async()=>{lookups++;return pricing;})).toEqual(kit);
+    expect(lookups).toBe(0);
+    const result:any=await withBookingAdditionPreview(kit,scope,async()=>({ok:false}),async()=>pricing);
+    expect(result.component_base_offering_quotes).toEqual([]);
+    const unavailable:any=await withBookingAdditionPreview(kit,scope,async()=>({ok:false}),async()=>{throw Error("offline");});
+    expect(unavailable.component_base_offering_quotes).toEqual([]);
+    expect(unavailable.booking_addition_preview.ok).toBe(false);
+  });
+
 });

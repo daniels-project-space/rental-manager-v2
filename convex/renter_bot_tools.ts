@@ -623,9 +623,28 @@ export const lookup_pricing = query({
         const oneDay = tierRateForDays(tiers, 1) ?? best.daily_price;
         const quote = rentalQuote(tiers, best.daily_price, days, quantity);
         if (!quote) return { found: false as const, item_name, message: "No valid quote for this duration and quantity" };
+        // A kit price cannot become a component price when another component
+        // is unavailable. Expose exact base titles for a separate Native quote.
+        const selectedContents = await loadListingInventory(ctx, account_slug, best.product_id);
+        const componentBaseOfferings: Array<{name:string;listing_name:string;product_id:number}> = [];
+        if (!matchedCanonical && selectedContents.complete && selectedContents.owned === true) {
+          const inventory = await ctx.db.query("items").collect();
+          for (const component of selectedContents.components) {
+            if (!component.stock_required || component.owned !== true) continue;
+            const item = inventory.find(i => String(i._id) === component.item_id);
+            if (!item || !["camera", "camera_body", "lens", "drone", "gimbal", "monitor", "audio", "lighting", "grip"].includes(item.kind ?? "")) continue;
+            const candidate = chooseBaseListing(listings, baseListingProductIds(account_slug, component.item_id, idxRows, ovrRows, inventory));
+            if (!candidate || candidate.product_id === best.product_id || !candidate.name) continue;
+            const contents = await loadListingInventory(ctx, account_slug, candidate.product_id);
+            if (!contents.complete || contents.owned !== true) continue;
+            componentBaseOfferings.push({name:item.name_canonical,listing_name:candidate.name,product_id:candidate.product_id});
+            if (componentBaseOfferings.length >= 4) break;
+          }
+        }
         return {
           found: true as const,
           ...quote,
+          component_base_offerings: componentBaseOfferings,
           item_name,
           matched_listing: best.name,
           matched_canonical: matchedCanonical,

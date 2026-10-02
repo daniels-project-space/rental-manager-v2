@@ -99,7 +99,7 @@ export const getListingContextTool = createTool({
 export const lookupPricingTool = createTool({
   id: "lookup_pricing",
   description:
-    "If booking_addition_preview is returned, use its addition_quote/additional_cost_gbp for the extra and quote.total_gbp for the proposed COMPLETE booking total. Its dates and combined stock check belong to the current booking; the standalone price below can use a different requested duration. This is a read-only proposal, never an edit. If the preview fails, do not calculate a combined total or promise the added basket from standalone prices. " +
+    "If booking_addition_preview is returned, use its addition_quote/additional_cost_gbp for the extra and quote.total_gbp for the proposed COMPLETE booking total. Its dates and combined stock check belong to the current booking; the standalone price below can use a different requested duration. This is a read-only proposal, never an edit. If the preview fails, do not calculate a combined total or promise the added basket from standalone prices. component_base_offering_quotes can provide separate body/component alternatives: use only their own successful preview and price, explain their different contents, and never transfer the refused kit price to them. " +
     // The 'one retry, using did_you_mean' clause is the point. Measured, this
     // tool was called with progressively shortened invented names — "Blazar
     // Remus full frame 33mm t1.8 1.5x anamorphic", then "Blazar Remus 33mm",
@@ -138,7 +138,7 @@ export const lookupPricingTool = createTool({
   execute: async (input) => {
     const client = convex();
     const pricing = await client.query(anyApi.renter_bot_tools.lookup_pricing, input);
-    return await withBookingAdditionPreview(pricing, currentRenterToolScope(), args => client.mutation(anyApi.renter_bot_lab_order.applyChange, args));
+    return await withBookingAdditionPreview(pricing, currentRenterToolScope(), args => client.mutation(anyApi.renter_bot_lab_order.applyChange, args), args => client.query(anyApi.renter_bot_tools.lookup_pricing, args));
   },
 });
 

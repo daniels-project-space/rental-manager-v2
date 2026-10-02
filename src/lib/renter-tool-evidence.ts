@@ -37,6 +37,8 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
       // quote tool, including negative shared-stock receipts from refusals.
       if (payload.toolName === "lookup_pricing" && result.found === true && result.booking_addition_preview && typeof result.booking_addition_preview === "object")
         visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:booking-preview`,result:result.booking_addition_preview});
+      if (payload.toolName === "lookup_pricing" && result.found === true && Array.isArray(result.component_base_offering_quotes))
+        result.component_base_offering_quotes.forEach((quote, i) => visit({toolName:"lookup_pricing",toolCallId:`${String(payload.toolCallId ?? "unknown")}:component-base:${i}`,result:quote}));
       if (!result.error && result.ok !== false && result.found !== false)
         receipts.push({ tool: payload.toolName, call_id: String(payload.toolCallId ?? "unknown"), result });
       if (!result.error && result.ok !== false && payload.toolName === "check_availability" && Array.isArray(result.components)) {
