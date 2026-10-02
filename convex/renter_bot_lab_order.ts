@@ -11,6 +11,7 @@ import { inclusiveDays, summarise } from "./lib/renter_order_quote";
 export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
+import { loadListingInventory } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
 import type { QueryCtx } from "./_generated/server";
@@ -288,6 +289,7 @@ export const applyChange = mutation({
     /** Bound by the canonical server tool scope, never chosen by the model. */
     request_message_id: v.optional(v.string()),
     item_name: v.optional(v.string()),
+    product_id: v.optional(v.number()),
     qty: v.optional(v.number()),
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
@@ -311,10 +313,24 @@ export const applyChange = mutation({
     const messageId = a.request_message_id ?? latestMessage?.message_id;
     const nativeItems = a.action === "set_dates" ? [] : await ctx.db.query("items").collect();
     const identity = a.item_name ? bestMatch(a.item_name, nativeItems, i=>i.name_canonical, i=>i.aliases ?? []) : null;
-    const itemKey = identity?.confident && identity.match ? String(identity.match._id) : a.item_name?.trim().toLowerCase();
+    if (a.product_id != null && (!Number.isInteger(a.product_id) || a.product_id < 1)) return {ok:false,error:"Use an exact listing product ID."};
+    let itemKey = a.product_id != null ? `product:${a.product_id}` : identity?.confident && identity.match ? String(identity.match._id) : a.item_name?.trim().toLowerCase();
+    if (a.product_id == null && a.action === "add_item" && identity?.confident && identity.match) {
+      const pid = await listingPidForItem(ctx,row.account_slug,String(identity.match._id));
+      if (pid != null) itemKey = `product:${pid}`;
+    }
+    if (a.product_id == null && a.action === "remove_item" && a.item_name) {
+      const candidates = row.items.map(line=>({line,native:nativeItems.find(i=>String(i._id)===String(line.item_id))}));
+      const selected = bestMatch(a.item_name,candidates,c=>c.native?.name_canonical ?? c.line.name,c=>c.native?.aliases ?? []);
+      if (selected.confident && selected.match?.line.product_id != null) itemKey = `product:${selected.match.line.product_id}`;
+    }
     const requestKey = messageId && !a.preview_only ? JSON.stringify([messageId,a.action,
       ...(a.action === "set_dates" ? [a.start_date,a.end_date ?? a.start_date] : [itemKey,a.qty ?? 1])]) : undefined;
-    const previous = requestKey ? row.changes.find(change => change.request_key === requestKey) : undefined;
+    // Existing Lab ledgers used physical identity before exact offering keys.
+    // Upgrading must not replay an already-applied inbound request.
+    const legacyKey = messageId && !a.preview_only && a.action !== "set_dates" && identity?.confident && identity.match
+      ? JSON.stringify([messageId,a.action,String(identity.match._id),a.qty ?? 1]) : undefined;
+    const previous = requestKey ? row.changes.find(change => change.request_key === requestKey || legacyKey !== undefined && change.request_key === legacyKey) : undefined;
     if (previous) return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,
       note:"This request was applied previously. NO new edit was made. Describe the CURRENT order below, using already set to or already contains where appropriate; never say I moved, added or removed it this time. A later edit may have changed the order since that earlier action.",
       order:summarise(row.items,row.start_date,row.end_date)};
@@ -385,7 +401,8 @@ export const applyChange = mutation({
       const candidates = lines.map(line => ({ line, native: inventory.find(i => String(i._id) === line.item_id) }));
       // Physical identity and reviewed aliases outrank advertising-title prose.
       // A7 II is not A7 III; an FX3 title mentioning A7S III is still an FX3.
-      const match = bestMatch(a.item_name, candidates,
+      const exact = a.product_id != null ? candidates.filter(c => c.line.product_id === a.product_id) : [];
+      const match = a.product_id != null ? {match:exact.length === 1 ? exact[0] : null,confident:exact.length === 1} : bestMatch(a.item_name, candidates,
         c => c.native?.name_canonical ?? c.line.name, c => c.native?.aliases ?? []);
       if (!match.match || !match.confident)
         return {
@@ -426,7 +443,7 @@ export const applyChange = mutation({
       };
     }
     const m = bestMatch(a.item_name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
-    if (!m.match || !m.confident) {
+    if (a.product_id == null && (!m.match || !m.confident)) {
       // Refusing beats guessing: adding the wrong lens to a booking is exactly
       // the silent error this whole system is built to avoid.
       return {
@@ -440,39 +457,50 @@ export const applyChange = mutation({
     // preliminary check concerns only the requested extra physical units.
     const requested = qty;
     if (!row.start_date || !row.end_date) return { ok: false, error: "Ask for pickup and return dates before adding equipment" };
-    const stock = await checkRentalStock(ctx, { item_name: m.match.name_canonical, quantity: requested, start_date: row.start_date, end_date: row.end_date, thread_id: a.thread_id });
-    if (stock.available !== true) return { ok: false, error: `Cannot add ${requested}x ${m.match.name_canonical} for these dates (${stock.reason}); ${stock.free_units ?? "unknown"} units free. Do not claim the change happened.` };
-
-    const price = await resolveDailyPrice(
-      ctx,
-      row.account_slug,
-      String(m.match._id),
-      m.match.name_canonical,
-    );
-    // Multi-day tiers for the listing this item was priced from, so an added
-    // lens gets the same length discount the renter would get on Hygglo.
-    const pricedPid = await listingPidForItem(ctx, row.account_slug, String(m.match._id));
-    const tiers = pricedPid != null
-      ? await tiersForProduct(ctx, row.account_slug, pricedPid)
-      : undefined;
-
-    // One physical ID can be sold as a body or as several different kits.
-    // Merge only the same commercial offering with identical captured terms.
-    const already = lines.find(l => l.item_id === String(m.match!._id) &&
-      (pricedPid != null ? l.product_id === pricedPid : l.product_id == null && l.pricing_basis === "catalog") &&
-      l.daily_price_gbp === price && JSON.stringify(l.price_tiers ?? []) === JSON.stringify(tiers ?? []));
-    const additionLine: OrderLine = {
-      item_id: String(m.match._id), name: already?.name ?? m.match.name_canonical, qty,
-      ...(pricedPid != null ? {product_id:pricedPid} : {}),
-      daily_price_gbp:price, pricing_basis:pricedPid != null ? "listing" : "catalog",
-      price_tiers:tiers, origin:"added",
-    };
+    let additionLine: OrderLine;
+    let stock: Record<string, unknown>;
+    if (a.product_id != null) {
+      const listing = await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",row.account_slug).eq("product_id",a.product_id!)).first();
+      const inventory = await loadListingInventory(ctx,row.account_slug,a.product_id,qty);
+      if (!listing || typeof listing.daily_price !== "number" || listing.daily_price <= 0 || !inventory.complete || inventory.owned !== true)
+        return {ok:false,error:"The exact listing lacks a complete verified owned mapping or price. No items or prices changed."};
+      const catalog = await listingDisplayCatalog(ctx,row.account_slug);
+      const name = catalog.name(row.account_slug,a.product_id,listing.name ?? inventory.listing_name ?? a.item_name);
+      additionLine = {name,qty,product_id:a.product_id,daily_price_gbp:listing.daily_price,
+        pricing_basis:"listing",price_tiers:await tiersForProduct(ctx,row.account_slug,a.product_id),origin:"added"};
+      const standalone = await checkOrderRentalStock(ctx,row.account_slug,[additionLine],row.start_date,row.end_date,a.thread_id);
+      if (standalone.available !== true) return {ok:false,error:"The selected listing is unavailable or has unknown component stock for these dates. No items or prices changed.",stock_receipts:standalone.receipts};
+      stock = standalone.receipts[0];
+    } else {
+      const item = m.match!;
+      const checked = await checkRentalStock(ctx, { item_name: item.name_canonical, quantity: requested, start_date: row.start_date, end_date: row.end_date, thread_id: a.thread_id });
+      if (checked.available !== true) return { ok: false, error: `Cannot add ${requested}x ${item.name_canonical} for these dates (${checked.reason}); ${checked.free_units ?? "unknown"} units free. Do not claim the change happened.` };
+      stock = checked;
+      const price = await resolveDailyPrice(
+        ctx, row.account_slug, String(item._id), item.name_canonical,
+      );
+      // Capture the same listing's multi-day terms with its standalone price.
+      const pricedPid = await listingPidForItem(ctx, row.account_slug, String(item._id));
+      const tiers = pricedPid != null ? await tiersForProduct(ctx, row.account_slug, pricedPid) : undefined;
+      additionLine = {
+        item_id: String(item._id), name: item.name_canonical, qty,
+        ...(pricedPid != null ? {product_id:pricedPid} : {}),
+        daily_price_gbp:price, pricing_basis:pricedPid != null ? "listing" : "catalog",
+        price_tiers:tiers, origin:"added",
+      };
+    }
+    // A body and its kits share physical IDs; merge only identical offerings
+    // with the same captured commercial terms.
+    const already = lines.find(l => (additionLine.product_id != null ? l.product_id === additionLine.product_id :
+      l.item_id === additionLine.item_id && l.product_id == null && l.pricing_basis === "catalog") &&
+      l.daily_price_gbp === additionLine.daily_price_gbp && JSON.stringify(l.price_tiers ?? []) === JSON.stringify(additionLine.price_tiers ?? []));
+    if (already) { additionLine.name = already.name; additionLine.item_id = already.item_id; }
     if (already) {
       already.qty += qty;
       summaryText = `${already.name} qty -> ${already.qty}`;
     } else {
       lines.push(additionLine);
-      summaryText = `added ${qty}x ${m.match.name_canonical}${price != null ? ` at £${price}/day` : ""}`;
+      summaryText = `added ${qty}x ${additionLine.name}${additionLine.daily_price_gbp != null ? ` at £${additionLine.daily_price_gbp}/day` : ""}`;
     }
 
     const basketStock = await checkOrderRentalStock(ctx, row.account_slug, lines, row.start_date, row.end_date, a.thread_id);

@@ -10,7 +10,7 @@ describe("pricing with a Native booking preview",()=>{
     let received:unknown;
     const proposal={ok:true,source:"native_lab_proposal",preview_only:true,thread_id:scope.threadId,additional_cost_gbp:70,quote:{total_gbp:194},addition_quote:{lines:[{product_id:1172895,qty:1}]}};
     const result=await withRenterToolScope(scope,()=>withBookingAdditionPreview(pricing,currentRenterToolScope(),async args=>{received=args;return proposal;}));
-    expect(received).toEqual({thread_id:scope.threadId,request_message_id:scope.requestMessageId,action:"add_item",item_name:"BMPCC 6K Pro",qty:1,preview_only:true});
+    expect(received).toEqual({thread_id:scope.threadId,request_message_id:scope.requestMessageId,action:"add_item",item_name:"BMPCC 6K Pro",product_id:1172895,qty:1,preview_only:true});
     expect(result).toEqual({...pricing,booking_addition_preview:proposal});
     expect(renterToolReceipts([{toolName:"lookup_pricing",toolCallId:"price",result}])).toContainEqual({tool:"quote_booking_addition",call_id:"price:booking-preview",result:proposal});
   });
@@ -40,5 +40,13 @@ describe("pricing with a Native booking preview",()=>{
       expect(result.booking_addition_preview).toMatchObject({ok:false,error_code:"offering_requires_exact_quote"});
       expect(result.booking_addition_preview.quote).toBeUndefined();
     }
+  });
+  it("quotes a copied bundle title with its exact Native product rather than a guessed primary body",async()=>{
+    let received:any;
+    const bundle={...pricing,matched_canonical:undefined,matched_listing:"Selected camera and lens kit"};
+    const result:any=await withBookingAdditionPreview(bundle,scope,async args=>{received=args;return {ok:true,addition_quote:{lines:[{product_id:1172895,qty:1}]}};});
+    expect(received.item_name).toBe(bundle.matched_listing);
+    expect(received.product_id).toBe(bundle.product_id);
+    expect(result.booking_addition_preview.ok).toBe(true);
   });
 });

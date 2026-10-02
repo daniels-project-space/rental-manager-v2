@@ -399,7 +399,7 @@ export const findOwnedAlternativesTool = createTool({
 export const quoteBookingAdditionTool = createTool({
   id: "quote_booking_addition",
   description: "Read-only Renter Bot Lab quote: price the COMPLETE existing booking plus an exact extra item, checking kit component stock and current duration tiers. Use before offering a combined new total, especially a smaller available alternative after an addition fails. Use addition_quote / additional_cost_gbp for the extra units and quote.total_gbp for the new complete total; a merged two-unit line is not the cost of one extra unit. This never adds or reserves anything. A successful quote is a proposal: say would bring the total to, never say added or booked. Real bookings require owner confirmation.",
-  inputSchema: z.object({thread_id:z.string(),item_name:z.string().describe("Exact owned model to add to the proposed basket."),qty:z.number().int().min(1).max(20).default(1)}),
+  inputSchema: z.object({thread_id:z.string(),item_name:z.string().describe("Exact owned model or selected listing to add to the proposed basket."),product_id:z.number().int().positive().optional().describe("Exact listing ID from the Native price or listing result; preserves the selected kit and its component stock."),qty:z.number().int().min(1).max(20).default(1)}),
   outputSchema: z.unknown(),
   execute: async (input) => {
     if (!input.thread_id.startsWith("__probe__")) return {ok:false,error:"Combined booking proposals require an owner quote for real bookings."};
@@ -417,6 +417,7 @@ export const modifyBookingTool = createTool({
       .enum(["add_item", "remove_item", "set_dates"])
       .describe("What to do to the booking."),
     item_name: z.string().optional().describe("Exact item name for add_item/remove_item."),
+    product_id: z.number().int().positive().optional().describe("Exact Native listing ID when selecting a specific priced kit or booked offering. Preserves its components and chooses the correct line."),
     qty: z.number().optional().describe("Units to add or remove (defaults to 1). To remove all units of a model, read get_lab_order and pass that exact booked quantity. Never guess a quantity or remove a different model."),
     start_date: z.string().optional().describe("YYYY-MM-DD, for set_dates."),
     end_date: z.string().optional().describe("YYYY-MM-DD, for set_dates. Same as start for a one-day rental."),

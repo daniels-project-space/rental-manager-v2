@@ -1212,10 +1212,14 @@ const ASSERTS_AVAIL_RE =
   // on the order. Past/present tense only: "I can add X for £20/day" is an
   // offer and must stay allowed, since that is the upsell we want.
   if (!opts.bookingModified) {
-    const claimedEdit =
-      /\bI(?:'?ve| have)?\s*(?:just\s+)?(?:added|removed|taken off|put)\s+(?:the|it|that|those|them)\b/i.test(text) ||
-      /\b(?:added|removed|updated|changed|moved)\s+(?:it|the|your|this)\s*(?:booking|order|dates?|reservation)\b/i.test(text) ||
-      /\byour (?:booking|order) (?:now )?(?:includes|has been updated|is updated)\b/i.test(text);
+    const editPatterns = [
+      /\bI(?:'?ve| have)?\s*(?:just\s+)?(?:added|removed|taken off|put)\s+(?:the|it|that|those|them)\b/gi,
+      /\b(?:added|removed|updated|changed|moved)\s+(?:it|the|your|this)\s*(?:booking|order|dates?|reservation)\b/gi,
+      /\byour (?:booking|order) (?:now )?(?:includes|has been updated|is updated)\b/gi,
+    ];
+    const claimedEdit = editPatterns.some(pattern => [...text.matchAll(pattern)].some(match =>
+      !/\b(?:have not|haven't|has not|hasn't|did not|didn't|do not|don't|not|never|without)\s+(?:(?:yet|just|actually|already|ever)\s+)*$/i
+        .test(text.slice(Math.max(0, match.index! - 75), match.index).replace(/[’‘]/g, "'"))));
     if (claimedEdit)
       push(
         "FALSE_ACTION_CLAIM",

@@ -39,6 +39,46 @@ describe("additions check the complete physical basket",()=>{
     return f;
   };
   const add=(ctx:any,qty:number)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
+  const exactSetup=()=>{
+    const f=setup();f.tables.items[0].qty=3;
+    f.tables.online_listings.push({account_slug:"leo",product_id:3,name:"Sony FX3 and 28-70mm kit",daily_price:60},{account_slug:"leo",product_id:4,name:"Sony FX3 body",daily_price:45});
+    f.tables.hygglo_product_index.push({account_slug:"leo",product_id:4,item_id:"camera"});
+    f.tables.listing_resolution_override.push({account_slug:"leo",product_id:3,components:[{item_id:"camera",qty:1},{item_id:"lens",qty:1}]},{account_slug:"leo",product_id:4,components:[{item_id:"camera",qty:1}]});
+    return f;
+  };
+  it("preserves the exact selected kit price and both physical components in a read-only quote",async()=>{
+    const {tables,ctx}=exactSetup();const before=structuredClone(tables);
+    const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3 and 28-70mm kit",product_id:3,qty:1,preview_only:true});
+    expect(result).toMatchObject({ok:true,additional_cost_gbp:120,quote:{total_gbp:200},addition_quote:{lines:[expect.objectContaining({product_id:3,qty:1,daily_price_gbp:60})]}});
+    expect(result.stock_receipts).toEqual(expect.arrayContaining([expect.objectContaining({item_name:"Sony FX3",requested_units:2}),expect.objectContaining({item_name:"Sony 28-70mm",requested_units:2})]));
+    expect(tables).toEqual(before);
+  });
+  it("rejects the exact kit when its shared lens is already consumed by the current booking",async()=>{
+    const {tables,ctx}=exactSetup();tables.items.find(i=>i._id==="lens").qty=1;const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false,stock_receipts:expect.arrayContaining([expect.objectContaining({item_name:"Sony 28-70mm",requested_units:2,available:false})])});
+    expect(tables).toEqual(before);
+  });
+  it("does not quote another account's listing or an unowned mapping",async()=>{
+    const {tables,ctx}=exactSetup();const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:999,preview_only:true})).toMatchObject({ok:false});
+    expect(tables).toEqual(before);
+    tables.listing_resolution_override.find(r=>r.product_id===3).components=[];
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false});
+  });
+  it("does not replay a body addition when a retry switches between canonical name and exact product ID",async()=>{
+    const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"one-request",sender:"renter",body_text:"Please add one extra Sony FX3 body."}];
+    const args={thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1,request_message_id:"one-request"};
+    expect(await (applyChange as any)._handler(ctx,args)).toMatchObject({ok:true,action_performed:true});
+    expect(await (applyChange as any)._handler(ctx,{...args,product_id:4})).toMatchObject({ok:true,already_applied:true,action_performed:false});
+    expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  });
+  it("recognizes a request already recorded by the previous physical-ID ledger format",async()=>{
+    const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"legacy-request",sender:"renter",body_text:"Please add one extra Sony FX3 body."}];
+    tables.renter_bot_lab_orders[0].changes=[{at:1,summary:"added 1x Sony FX3",request_key:JSON.stringify(["legacy-request","add_item","camera",1])}];
+    const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",product_id:4,qty:1,request_message_id:"legacy-request"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
+    expect(tables).toEqual(before);
+  });
   it("quotes one extra with the full native basket and no writes or edit transition",async()=>{
     const {tables,ctx}=setup();const before=structuredClone(tables);
     const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true});

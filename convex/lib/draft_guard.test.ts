@@ -398,6 +398,12 @@ describe("FALSE_ACTION_CLAIM — booking edits", () => {
     expect(fired("I've added the 100mm to your booking.", false)).toBe(true);
     expect(fired("I’ve added the adapter — your booking now includes both.", false)).toBe(true);
   });
+  it("accepts a denial of editing but still catches a separate affirmative edit claim",()=>{
+    for(const denial of ["I haven't changed your booking.","I haven’t changed your booking.","I have not updated your booking.","I didn't move your dates."])
+      expect(fired(denial,false)).toBe(false);
+    expect(fired("I haven't changed your booking dates, but I've added the extra camera.",false)).toBe(true);
+    expect(fired("I haven't changed your booking. I moved your dates to tomorrow.",false)).toBe(true);
+  });
 
   it("allows a current-state acknowledgement while a replay still cannot claim a new edit",()=>{
     expect(fired("Your dates are already set to 22–23 October.",false)).toBe(false);

@@ -10,12 +10,12 @@ export async function withBookingAdditionPreview(
   const result = pricing as Record<string, unknown>;
   if (!scope?.threadId.startsWith("__probe__") || result.found !== true ||
       result.account_slug !== scope.accountSlug || !["hygglo_tier", "hygglo_listing"].includes(String(result.source)) ||
-      typeof result.matched_canonical !== "string" || !result.matched_canonical.trim() ||
+      !(typeof result.matched_canonical === "string" && result.matched_canonical.trim() || typeof result.matched_listing === "string" && result.matched_listing.trim()) ||
       typeof result.product_id !== "number" || !Number.isInteger(result.quantity) || Number(result.quantity) < 1) return pricing;
   let proposal: unknown;
   try {
     proposal = await preview({thread_id:scope.threadId,request_message_id:scope.requestMessageId ?? "",
-      action:"add_item",item_name:result.matched_canonical,qty:result.quantity,preview_only:true});
+      action:"add_item",item_name:result.matched_canonical ?? result.matched_listing,product_id:result.product_id,qty:result.quantity,preview_only:true});
     if (proposal && typeof proposal === "object" && (proposal as Record<string, unknown>).ok === true) {
       const addition = (proposal as Record<string, unknown>).addition_quote as Record<string, unknown> | undefined;
       const lines = addition?.lines;
