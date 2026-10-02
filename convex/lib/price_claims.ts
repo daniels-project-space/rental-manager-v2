@@ -4,6 +4,7 @@ import { renterItemNames } from "./renter_item_names";
 import { shortItemName } from "./item_display_name";
 import type { StockRequest } from "./stock_claims";
 import { lensClaimReferences } from "./lens_claim_references";
+import { claimedRentalDays, withoutDurationReference } from "./claim_duration";
 
 /** Server-returned quotes. A number alone is never a receipt. */
 export type PriceEvidence = {
@@ -67,8 +68,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       const scopedNamed=named.replace(/^for\s+(?:the\s+)?\d+\s+days?\s+(?:the\s+)?/i, "");
       const datedSubject = segmentDates.matched_text ? scopedNamed.replace(norm(segmentDates.matched_text), "dates") : scopedNamed;
       bookingSubject ||= /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
-      const genericNamed = scopedNamed.replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
-        .replace(/^adding\s+(?=(?:it|this|that)\b)/i, "");
+      const genericNamed = withoutDurationReference(scopedNamed.replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
+        .replace(/^adding\s+(?=(?:it|this|that)\b)/i, ""));
       const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
       if (!generic && !bookingSubject && !exactOffering && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !exactOffering && !names.includes(named)) {
@@ -105,9 +106,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
       : /\b(?:delivery|courier|postage)\b/i.test(local) ? "delivery" : "rental";
     const dateScope = claimDateScope(segment + m[0] + after, request.start_date);
-    const explicitDays = /\b(?:for|across|over|total\s+for)\s+(?:(?:the|these|those)\s+)?(\d+)[ -]+days?\b/i.exec(local);
+    const explicitDays = claimedRentalDays(local);
     const scopedDuration = dateScope.explicit && dateScope.valid ? inclusiveRentalDays(dateScope.start_date, dateScope.end_date) : null;
-    const days = explicitDays ? Number(explicitDays[1]) : scopedDuration ?? duration;
+    const days = explicitDays !== null ? explicitDays : scopedDuration ?? duration;
     const requested = request.items.find(i => same(subject, [i.name, ...(i.aliases ?? [])]));
     const count = lastAt >= 0 ? /\b(\d+|one|two|both|three|four)\s*(?:(?:extra|additional)\s*)?(?:x\s*)?$/.exec(before.slice(0,Math.max(0,lastAt-1)).trim()) : null;
     const declaredQuantity = count ? ({one:1,two:2,both:2,three:3,four:4} as Record<string,number>)[count[1]] ?? Number(count[1]) : undefined;
@@ -122,7 +123,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const basket = proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const candidates = evidence.filter(e => !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
-      if (!dateScope.valid || explicitDays && scopedDuration != null && days !== scopedDuration) return false;
+      if (Number.isNaN(days) || !dateScope.valid || explicitDays !== null && scopedDuration != null && days !== scopedDuration) return false;
       if (purpose === "deposit" || purpose === "delivery") return false; // No verified fee source is held today.
       if (purpose === "replacement") return e.kind === "replacement" && e.total_gbp != null && cents(e.total_gbp) === cents(amount);
       if (e.kind === "replacement") return false;
@@ -138,8 +139,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         const claimed=pairedItems??(e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;
       }
-      const start = dateScope.start_date ?? (explicitDays ? undefined : request.start_date);
-      const end = dateScope.end_date ?? (explicitDays ? undefined : request.end_date);
+      const start = dateScope.start_date ?? (explicitDays !== null ? undefined : request.start_date);
+      const end = dateScope.end_date ?? (explicitDays !== null ? undefined : request.end_date);
       if (!base && ((start && e.start_date && e.start_date !== start) || (end && e.end_date && e.end_date !== end))) return false;
       if (daily && base) return e.base_rate_gbp != null && cents(e.base_rate_gbp) === cents(amount);
       if (days != null && e.days !== days) return false;

@@ -5,6 +5,7 @@ import type { StockRequest } from "./lib/stock_claims";
 import type { KitEvidence } from "./lib/kit_claims";
 import { amendedDraftContext, currentDraftReview, type DraftContextTransition, type DraftReview } from "./lib/draft_review";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
+import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/canonical_generation_error";
 "use node";
 /**
  * Reply Inbox — Node-runtime actions (LLM draft + gated live Hygglo send).
@@ -91,6 +92,7 @@ export const generateDraft = action({
      * that declined from output we failed to parse.
      */
     reason?: string;
+    generation_error?: CanonicalGenerationError;
     review?: DraftReview;
   }> => {
     // Make sure we know the inquiry's listing before drafting — pulls the order
@@ -607,8 +609,9 @@ export const generateDraft = action({
           }),
         });
         if (!resp.ok) {
-          console.warn(`[generateDraft] canonical generation HTTP ${resp.status}`);
-          return { status: "skipped", reason: `canonical_generation_http_${resp.status}` };
+          const generation_error = await canonicalGenerationError(resp);
+          console.warn("[generateDraft] canonical generation failed", generation_error);
+          return { status: "skipped", reason: `canonical_generation_http_${resp.status}`, generation_error };
         }
         const j = (await resp.json()) as {
           draft?: string;

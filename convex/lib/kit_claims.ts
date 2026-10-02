@@ -1,4 +1,4 @@
-export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean };
+export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; kind?: string };
 const categories = [
   ["charger", /\bchargers?\b/i], ["battery", /\bbatter(?:y|ies)\b/i], ["card", /\b(?:cards?|sd|cfast|cf\s*express)\b/i],
   ["cage", /\bcages?\b/i], ["tripod", /\btripods?\b/i], ["microphone", /\b(?:mics?|microphones?)\b/i],
@@ -54,9 +54,14 @@ function supports(claim: ComponentDetails, proof: ComponentDetails) {
 const componentParts = (s: string) => s.split(/[,;()]|\balong\s+with\b|\bwith\b|\band\b|\bplus\b/gi);
 function ownersForReference(owner: string, evidence: KitEvidence[]) {
   const explicit = evidence.filter(e => e.names.some(n => n && namesItem(owner, n)));
-  if (explicit.length) return /\byour\b/i.test(owner) ? explicit.filter(e => e.booked_camera) : explicit;
-  return /^\s*your\s+(?:(?:booked|confirmed|rental|camera)\s+)*(?:camera|kit|booking)\b/i.test(owner)
-    ? evidence.filter(e => e.booked_camera) : [];
+  const booked = evidence.filter(e => e.booked_item === true || e.booked_camera === true);
+  if (explicit.length) return /\byour\b/i.test(owner) ? explicit.filter(e => booked.includes(e)) : explicit;
+  const reference = normalize(owner).replace(/\s+(?:already|still|currently)$/, "");
+  const match = /^your\s+(?:(?:booked|confirmed|rental)\s+)*(camera(?:\s+kit)?|lens(?:\s+kit)?|kit|booking|setup|package|order)$/.exec(reference);
+  if (!match) return [];
+  if (/^lens/.test(match[1])) return booked.filter(e => e.kind === "lens");
+  const cameras = booked.filter(e => e.booked_camera === true);
+  return cameras.length || /^camera/.test(match[1]) ? cameras : booked;
 }
 /** Bind each passive inclusion to its owner before splitting component lists.
  * A named adapter or alternative lens isn't itself the camera kit's owner. */
@@ -100,7 +105,7 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     // For active "X includes Y", only X owns the claimed contents. Names
     // inside Y must not lend their own kit facts to X.
     const activeReference = match && match[0].toLowerCase() !== "included" ? sentence.slice(0, match.index) : null;
-    const hasActiveOwner = activeReference !== null && (/^\s*your\s+(?:(?:booked|confirmed|rental|camera)\s+)*(?:camera|kit|booking)\b/i.test(activeReference)
+    const hasActiveOwner = activeReference !== null && (/^\s*your\b/i.test(activeReference)
       || evidence.some(e => e.names.some(n => n && namesItem(activeReference, n))));
     const candidates = hasActiveOwner ? ownersForReference(activeReference!, evidence)
       : named.length ? named : subject.length ? subject : evidence;

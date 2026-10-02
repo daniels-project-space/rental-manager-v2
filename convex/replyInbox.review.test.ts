@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft } from "./replyInbox";
 import { generateDraft } from "./replyInbox_actions";
 import { draftContextKey } from "./lib/draft_review";
+import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
 // Registered handlers, with an in-memory adapter. Managed persistence is checked separately in the Lab.
 function database() {
@@ -21,6 +22,20 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+describe("canonical generation failure diagnostics",()=>{
+ it("preserves upstream timeout identity without exposing request bodies or headers",async()=>{
+  const failure=generationFailure({cause:{statusCode:504,isRetryable:true,requestBodyValues:{messages:["private"]},responseHeaders:{authorization:"private"}}},"agent");
+  expect(failure).toMatchObject({error:"agent_failed",error_code:"upstream_timeout",upstream_status:504,transient:true});
+  const result=await canonicalGenerationError(new Response(JSON.stringify({...failure,detail:"private"}),{status:503,headers:{"x-vercel-id":"iad1::request-one"}}));
+  expect(result).toEqual({http_status:503,error_code:"upstream_timeout",upstream_status:504,transient:true,request_id:"iad1::request-one"});
+  expect(JSON.stringify(result)).not.toContain("private");
+ });
+ it("handles HTML failures and never trusts arbitrary returned error codes",async()=>{
+  expect(await canonicalGenerationError(new Response("<html>private</html>",{status:502}))).toMatchObject({http_status:502,error_code:"http_failure",transient:false});
+  expect(await canonicalGenerationError(new Response(JSON.stringify({error_code:"private",upstream_status:200,detail:"private"}),{status:500}))).toMatchObject({error_code:"http_failure",upstream_status:undefined});
+  expect(generationFailure({statusCode:401,isRetryable:false},"agent")).toMatchObject({error_code:"upstream_authorization",transient:false});
+ });
+});
 async function setup() {
   const fixture = database(); const { db } = fixture.ctx; const now = Date.now(); const thread_id = "review-test";
   const convId = await db.insert("conversations", { thread_id, last_sender: "renter", last_msg_at: now, last_renter_msg_at: now, ai_draft_text: "Old preview" });

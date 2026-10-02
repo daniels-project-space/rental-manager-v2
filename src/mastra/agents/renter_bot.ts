@@ -20,6 +20,7 @@ import "server-only";
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
 import { getRenterBotModel, getVaultOpenRouterModel } from "@/lib/llm-client";
+import { RENTER_MODEL_RETRIES } from "@/lib/renter-model-policy";
 import {
   RENTER_BOT_INTENTS,
   CONVERSATION_STAGES,
@@ -173,7 +174,7 @@ export async function getRenterBotAgentForModel(modelId: string): Promise<Agent>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     model: model as any,
     tools: RENTER_BOT_TOOLS,
-    maxRetries: 1,
+    maxRetries: RENTER_MODEL_RETRIES,
   });
 }
 
@@ -187,7 +188,7 @@ export async function getRenterBotAgent(): Promise<Agent> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     model: model as any,
     tools: RENTER_BOT_TOOLS,
-    maxRetries: 1,
+    maxRetries: RENTER_MODEL_RETRIES,
   });
   return _agent;
 }

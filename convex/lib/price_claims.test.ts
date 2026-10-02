@@ -35,6 +35,13 @@ describe("receipted lens shorthand",()=>{
   expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that"),[lens,basket],scope)).toEqual([]);
   expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that").replace("£164","£124"),[lens,basket],scope)).not.toEqual([]);
  });
+ it("keeps duration-qualified pronouns bound to their item and validates spelled-out durations",()=>{
+  for(const phrase of ["Adding that for the 2 days","Adding it for two days","Adding this for your two-day hire"])
+   expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm",phrase),[lens,basket],scope),phrase).toEqual([]);
+  for(const days of ["three","twenty one","twenty-one","zero","one hundred","a few","2-3"])
+   expect(unsupportedPriceClaims(`Canon EF 16-35mm f2.8 is £40 for ${days} days.`,[lens],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that for three days"),[lens,basket],scope)).not.toEqual([]);
+ });
  it("shares brand and mount disambiguation without borrowing a kit's price",()=>{
   const shorthand="Canon 16-35mm is £40 for the 2 days.";
   expect(unsupportedPriceClaims(shorthand,[lens],scope)).toEqual([]);

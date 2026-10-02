@@ -18,6 +18,16 @@ describe("inclusion owner scopes in actual booked-kit replies", () => {
   expect(unsupportedKitClaims("Your booked kit comes with 1 EF-to-L adapter.",[{...camera,booked_camera:false}])).not.toEqual([]);
   expect(unsupportedKitClaims("Your booked kit comes with an EF-to-L adapter.",[{...camera,contents:["2 EF-to-L adapters"]}])).toEqual([]);
   expect(unsupportedKitClaims("Your booked kit comes with 1 EF-to-L adapter.",[{...camera,contents:["EF-to-L adapters"]}])).not.toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your setup.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the PL-to-L adapter included in your setup.",evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your camera lens.",evidence)).not.toEqual([]);
+ });
+ it("uses confirmed item kind for a booked lens rather than borrowing camera contents",()=>{
+  const bookedLens={...lens,kind:"lens",booked_item:true,contents:["case"]};
+  expect(unsupportedKitClaims("Your lens comes with a case.",[camera,bookedLens])).toEqual([]);
+  expect(unsupportedKitClaims("Your lens comes with an EF-to-L adapter.",[camera,bookedLens])).not.toEqual([]);
+  expect(unsupportedKitClaims("Your lens comes with a case.",[camera,{...bookedLens,booked_item:false}])).not.toEqual([]);
+  expect(unsupportedKitClaims("Your lens comes with a case.",[camera,{...bookedLens,booked_item:"true" as any}])).not.toEqual([]);
  });
  it("does not authorize unbooked cameras, another camera's adapter, or extra quantities",()=>{
   expect(unsupportedKitClaims(reply,[{...camera,booked_camera:false},lens,adapter])).not.toEqual([]);

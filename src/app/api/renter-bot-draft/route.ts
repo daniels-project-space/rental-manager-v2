@@ -1,4 +1,5 @@
 import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
+import { generationFailure } from "../../../../convex/lib/canonical_generation_error";
 import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-price-evidence";
 import type { PriceEvidence } from "../../../../convex/lib/price_claims";
 import { sensorComparisonInstruction } from "../../../../convex/lib/camera_sensor_comparisons";
@@ -271,7 +272,7 @@ function extractItemQuery(message: string): string {
 }
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 /**
  * Production draft path — the agentic Mastra renter bot. Given a thread, it pulls
@@ -460,9 +461,10 @@ export async function POST(req: Request) {
       /* windows stay empty; the verdict falls back to a date */
     }
   } catch (e) {
+    const failure = generationFailure(e, "context");
     return NextResponse.json(
-      { ok: false, error: "context_failed", detail: e instanceof Error ? e.message : String(e) },
-      { status: 500 },
+      { ok: false, ...failure },
+      { status: failure.transient ? 503 : 500 },
     );
   }
 
@@ -507,7 +509,7 @@ export async function POST(req: Request) {
    */
   const itemsWithoutKitData: string[] = [];
   const itemsWithKitData: string[] = [];
-  const kitEvidence: Array<{ names: string[]; contents: string[]; booked_camera?: boolean }> = [];
+  const kitEvidence: Array<{ names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; kind?: string }> = [];
   /**
    * Items a TOOL returned real kit text for during the turn, lower-cased.
    *
@@ -1000,6 +1002,8 @@ export async function POST(req: Request) {
         if (mappedKit || structuredKit || it.whats_included?.trim()) {
           kitEvidence.push({ names: [...new Set([it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n).flatMap(renterItemNames))],
             booked_camera: lc.is_confirmed === true && /^camera(?:_body)?$/.test(it.kind ?? ""),
+            booked_item: lc.is_confirmed === true,
+            kind: it.kind ?? undefined,
             contents: mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.units_per_listing} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
           groundTruth += `  LISTING TITLE IS ADVERTISING, NOT KIT EVIDENCE: accessories named in the title or comparison models are not included unless recorded in the mapped gear or body inclusions above. Answer exact-kit questions from those records; do not append title accessories.\n`;
           groundTruth += `  PARTIAL KIT RECORD: known inclusions per listing, not an exhaustive manifest. Missing accessories are unverified, not proven absent. Stock mapping completeness does not establish every supplied accessory. Answer the known part and identify exact unrecorded details for owner review.\n`;
@@ -1748,9 +1752,10 @@ export async function POST(req: Request) {
       marketingItems,
     });
   } catch (e) {
+    const failure = generationFailure(e, "agent");
     return NextResponse.json(
-      { ok: false, error: "agent_failed", detail: e instanceof Error ? e.message : String(e) },
-      { status: 500 },
+      { ok: false, ...failure },
+      { status: failure.transient ? 503 : 500 },
     );
   }
 }
