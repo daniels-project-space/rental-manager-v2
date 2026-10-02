@@ -102,3 +102,11 @@ it("requires the revised basket total to have the same native members",()=>{
  expect(unsupportedPriceClaims("The updated total is £170.",[basket],scope)).toEqual([]);
  expect(unsupportedPriceClaims("The updated total is £170.",[{...basket,items:[scope.items[0]]}],scope)).toHaveLength(1);
 });
+
+it("keeps an explicit current booking total separate from the preceding extra-item quote",()=>{
+ const scope:StockRequest={start_date:"2026-10-06",end_date:"2026-10-07",items:[{name:"Sony A7 II",quantity:1}]};
+ const evidence:PriceEvidence[]=[{names:["Sony 28-70mm"],kind:"rental",total_gbp:36,daily_rate_gbp:18,days:2,quantity:1,source:"native",call_id:"lens"},{names:[],items:scope.items,kind:"basket",total_gbp:56,days:2,start_date:scope.start_date!,end_date:scope.end_date!,source:"native_order",call_id:"current"}];
+ const failures=unsupportedPriceClaims("The Sony 28-70mm is £36 for the 2 days (£18/day), which would bring your booking total from £56 to £92.",evidence,scope);
+ expect(failures, JSON.stringify(failures)).toHaveLength(1);expect(failures[0]).toContain("£92");
+ expect(unsupportedPriceClaims("The Pyxis booking total is £56.",evidence,scope)).toHaveLength(1);
+});
