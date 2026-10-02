@@ -34,12 +34,12 @@ export function extractComponents(desc: string): {
   // intro sentence parsed as a component is how "I'm offering a
   // comprehensive, ready-to-shoot cinema kit" became a PL-to-EF mount.
   const START_RE =
-    /(?:included in th(?:is|e)[^:]*|in th(?:is|e) (?:kit|rental|bundle|package)|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
+    /(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:])*|in th(?:is|e) (?:kit|rental|bundle|package)|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
   const m = clean.match(START_RE);
   let body = m ? m[1] : clean;
   // Everything after "About this ..." is marketing prose, not contents.
   body = body.split(
-    /\bAbout th(?:is|e)\b|\bA quick note\b|\bPlease note\b|\bI do my best\b|\busually available\b/i,
+    /\bAbout th(?:is|e)\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
   )[0];
   // STOP AT THE ADD-ON SECTION. Several listings follow the kit list with a
   // long menu of PAID extras ("Direct Add-on Upgrades:", "ADD-ONS"). Those are
@@ -125,7 +125,7 @@ export function extractComponents(desc: string): {
     // A fragment with no letters or digits is a leftover delimiter, not a
     // component: a lone "*" survived the numeric-split fallback.
     if (!/[a-z0-9]/i.test(name)) continue;
-    if (!name || NOISE_RE.test(name) || ADDON_RE.test(name)) continue;
+    if (!name || NOISE_RE.test(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
     out.push({ qty, name: name.slice(0, 60) });
   }
   return { components: out, usedBullets, hasContentsSection: !!m };

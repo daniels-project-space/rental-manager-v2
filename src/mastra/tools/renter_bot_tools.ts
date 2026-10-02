@@ -394,7 +394,7 @@ export const findOwnedAlternativesTool = createTool({
  */
 export const quoteBookingAdditionTool = createTool({
   id: "quote_booking_addition",
-  description: "Read-only Renter Bot Lab quote: price the COMPLETE existing booking plus an exact extra item, checking kit component stock and current duration tiers. Use before offering a combined new total, especially a smaller available alternative after an addition fails. This never adds or reserves anything. A successful quote is a proposal: say would bring the total to, never say added or booked. Real bookings require owner confirmation.",
+  description: "Read-only Renter Bot Lab quote: price the COMPLETE existing booking plus an exact extra item, checking kit component stock and current duration tiers. Use before offering a combined new total, especially a smaller available alternative after an addition fails. Use addition_quote / additional_cost_gbp for the extra units and quote.total_gbp for the new complete total; a merged two-unit line is not the cost of one extra unit. This never adds or reserves anything. A successful quote is a proposal: say would bring the total to, never say added or booked. Real bookings require owner confirmation.",
   inputSchema: z.object({thread_id:z.string(),item_name:z.string().describe("Exact owned model to add to the proposed basket."),qty:z.number().int().min(1).max(20).default(1)}),
   outputSchema: z.unknown(),
   execute: async (input) => {

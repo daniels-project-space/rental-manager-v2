@@ -1344,7 +1344,15 @@ const ASSERTS_AVAIL_RE =
 
   // ── CONTRACT (intent-based must/mustNot) ────────────────────────
   const intent = classifyDraftIntent(message);
-  const hasPricing = !!factPack?.pricing?.itemPrices?.length;
+  // Booking prices do not require inventing a quote for an unavailable extra.
+  // This only suppresses a review annotation; stock and currency guards above
+  // still validate every claim independently.
+  const declineOnly = /\b(?:can['’]t|cannot|don['’]t have|do not have|not available|unavailable|unable to (?:provide|offer|supply))\b/i.test(text) &&
+    !/\b(?:(?:is|are) available|(?:can|could) (?:offer|provide|supply|recommend)|(?:recommend|suggest) (?:the|an?|our|my))\b/i.test(text) &&
+    (opts.stockEvidence ?? []).some(r => r.available === false && r.call_id && Number.isFinite(r.checked_at) &&
+      r.start_date === opts.stockRequest?.start_date && r.end_date === opts.stockRequest?.end_date &&
+      text.toLowerCase().includes(r.item.toLowerCase()));
+  const hasPricing = !!factPack?.pricing?.itemPrices?.length && !declineOnly;
   const contract = enforceContract(text, intent, hasPricing);
   if (contract.blockPatterns.length) {
     const fixed = surgicalContractFix(text, contract.blockPatterns);

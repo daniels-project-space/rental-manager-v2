@@ -9,6 +9,7 @@ import { claimedRentalDays, withoutDurationReference } from "./claim_duration";
 /** Server-returned quotes. A number alone is never a receipt. */
 export type PriceEvidence = {
   names: string[]; kind: "rental" | "basket" | "replacement";
+  quote_role?: "base" | "proposed_line" | "addition";
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
@@ -126,7 +127,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const proposalTotal = conditionalTotal && !baselineTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
     const basket = proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
-    const candidates = evidence.filter(e => !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) : e.kind !== "basket" && same(subject,e.names)));
+    const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
+      !/\b(?:would|could|add|adding)\b/i.test(segment);
+    const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);
+    const candidates = evidence.filter(e => (!additionPrice || basket ||
+      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
       if (Number.isNaN(days) || !dateScope.valid || explicitDays !== null && scopedDuration != null && days !== scopedDuration) return false;
       if (purpose === "deposit" || purpose === "delivery") return false; // No verified fee source is held today.

@@ -6,7 +6,7 @@ type Inventory = { _id: unknown; name_canonical: string; kind: string; qty: numb
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
 const tokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
-const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|camera cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
+const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
 
 /** Contents identity and stated quantities, independently of whether we own them. */
 export function resolveBundleMapping(description: string, items: Inventory[]) {

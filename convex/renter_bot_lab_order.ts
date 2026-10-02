@@ -431,8 +431,9 @@ export const applyChange = mutation({
     }
     const qty = a.qty ?? 1;
     if (!Number.isInteger(qty) || qty < 1 || qty > 20) return { ok: false, error: "quantity must be a whole number between 1 and 20" };
-    const already = lines.find((l) => l.item_id === String(m.match!._id));
-    const requested = (already?.qty ?? 0) + qty;
+    // The complete basket check below counts existing kit components. This
+    // preliminary check concerns only the requested extra physical units.
+    const requested = qty;
     if (!row.start_date || !row.end_date) return { ok: false, error: "Ask for pickup and return dates before adding equipment" };
     const stock = await checkRentalStock(ctx, { item_name: m.match.name_canonical, quantity: requested, start_date: row.start_date, end_date: row.end_date, thread_id: a.thread_id });
     if (stock.available !== true) return { ok: false, error: `Cannot add ${requested}x ${m.match.name_canonical} for these dates (${stock.reason}); ${stock.free_units ?? "unknown"} units free. Do not claim the change happened.` };
@@ -450,19 +451,22 @@ export const applyChange = mutation({
       ? await tiersForProduct(ctx, row.account_slug, pricedPid)
       : undefined;
 
+    // One physical ID can be sold as a body or as several different kits.
+    // Merge only the same commercial offering with identical captured terms.
+    const already = lines.find(l => l.item_id === String(m.match!._id) &&
+      (pricedPid != null ? l.product_id === pricedPid : l.product_id == null && l.pricing_basis === "catalog") &&
+      l.daily_price_gbp === price && JSON.stringify(l.price_tiers ?? []) === JSON.stringify(tiers ?? []));
+    const additionLine: OrderLine = {
+      item_id: String(m.match._id), name: already?.name ?? m.match.name_canonical, qty,
+      ...(pricedPid != null ? {product_id:pricedPid} : {}),
+      daily_price_gbp:price, pricing_basis:pricedPid != null ? "listing" : "catalog",
+      price_tiers:tiers, origin:"added",
+    };
     if (already) {
-      already.qty = requested;
+      already.qty += qty;
       summaryText = `${already.name} qty -> ${already.qty}`;
     } else {
-      lines.push({
-        item_id: String(m.match._id),
-        name: m.match.name_canonical,
-        qty,
-        daily_price_gbp: price,
-        pricing_basis: pricedPid != null ? "listing" : "catalog",
-        price_tiers: tiers,
-        origin: "added",
-      });
+      lines.push(additionLine);
       summaryText = `added ${qty}x ${m.match.name_canonical}${price != null ? ` at £${price}/day` : ""}`;
     }
 
@@ -477,11 +481,15 @@ export const applyChange = mutation({
 
     if (a.preview_only) {
       const quote = summarise(lines, row.start_date, row.end_date);
-      if (quote.total_gbp == null) return {ok:false,error:"The complete proposed basket has unpriced items. Ask the owner for a quote; no items or prices changed."};
+      const baseQuote = summarise(row.items, row.start_date, row.end_date);
+      const additionQuote = summarise([additionLine], row.start_date, row.end_date);
+      if (quote.total_gbp == null || baseQuote.total_gbp == null || additionQuote.total_gbp == null) return {ok:false,error:"The complete proposed basket has unpriced items. Ask the owner for a quote; no items or prices changed."};
       return {ok:true, action_performed:false, preview_only:true, source:"native_lab_proposal" as const,
         thread_id:a.thread_id, account_slug:row.account_slug,
         base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),
-        added_items:[{name:m.match.name_canonical,quantity:qty}], quote,
+        added_items:[{name:additionLine.name,quantity:qty}], quote,
+        base_quote:baseQuote, addition_quote:additionQuote,
+        additional_cost_gbp:quote.total_gbp-baseQuote.total_gbp,
         stock_receipt:{...stock,start_date:row.start_date,end_date:row.end_date},
         stock_receipts:basketStock.receipts};
     }

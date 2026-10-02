@@ -8,12 +8,12 @@ export type PriceListingIdentity = {account_slug:string;product_id:number;names:
 /** Whitelisted actual tool results, excluding arguments, errors and arbitrary numeric keys. */
 export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceListingIdentity[] = [], threadId?: string): PriceEvidence[] {
   const out: PriceEvidence[] = [];
-  const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown) => {
+  const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown, role?: PriceEvidence["quote_role"]) => {
     const days=number(r.days), quantity=number(r.quantity);
     const source=string(r.source);
     if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day","native_lab_proposal"].includes(source))return;
     if (!names.length || !days || !Number.isInteger(days) || !quantity || !Number.isInteger(quantity)) return;
-    out.push({names,kind:"rental",daily_rate_gbp:r.multi_day_basis === "unknown_no_listing" && days !== 1 ? undefined : number(r.daily_rate_gbp),base_rate_gbp:number(base),total_gbp:number(r.listed_total_gbp),days,quantity,
+    out.push({names,kind:"rental",...(role ? {quote_role:role} : {}),daily_rate_gbp:r.multi_day_basis === "unknown_no_listing" && days !== 1 ? undefined : number(r.daily_rate_gbp),base_rate_gbp:number(base),total_gbp:number(r.listed_total_gbp),days,quantity,
       start_date:string(r.start_date),end_date:string(r.end_date),call_id:call,source});
   };
   const latestOrder=receipts.filter(r=>r.tool==="get_lab_order").at(-1);
@@ -56,7 +56,39 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
             Math.abs(rate*(q.days as number)*l.qty-l.line_total_gbp)>0.011) continue;
           const aliases=listings.filter(i=>i.account_slug===r.account_slug && i.product_id===l.product_id).flatMap(i=>i.names);
           const names=[...new Set([l.name,...aliases])];
-          quote({days:q.days,quantity:l.qty,daily_rate_gbp:rate,listed_total_gbp:l.line_total_gbp,start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},names,`${call_id}:line:${l.item_id??l.product_id}`,base);
+          quote({days:q.days,quantity:l.qty,daily_rate_gbp:rate,listed_total_gbp:l.line_total_gbp,start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},names,`${call_id}:line:${l.item_id??l.product_id}`,base,
+            r.added_items.some(i=>i.name.trim().toLowerCase()===l.name.trim().toLowerCase()&&i.quantity===l.qty) &&
+            !r.base_items.some(i=>i.name.trim().toLowerCase()===l.name.trim().toLowerCase()) ? "addition" : "proposed_line");
+        }
+        // Marginal amounts need their own native receipt. A combined line for
+        // two cameras cannot prove what the one extra camera costs.
+        const completeLines=q.lines;
+        const baseQuote=r.base_quote as Record<string,unknown> | undefined;
+        const additionQuote=r.addition_quote as Record<string,unknown> | undefined;
+        const validPart=(part:Record<string,unknown>|undefined, expected:Array<{name:string;quantity:number}>) => {
+          if (!part || part.days!==q.days || part.start_date!==q.start_date || part.end_date!==q.end_date ||
+            !Array.isArray(part.lines) || !number(part.total_gbp) || !part.lines.length) return false;
+          if (!part.lines.every(l=>l && string(l.name) && number(l.qty) && Number.isInteger(l.qty) &&
+            number(l.line_total_gbp) && (string(l.item_id)||number(l.product_id)) && number(l.effective_rate_gbp) && number(l.daily_price_gbp) &&
+            Math.abs(l.effective_rate_gbp*(q.days as number)*l.qty-l.line_total_gbp)<0.011 &&
+            completeLines.some(full=>full.name===l.name && full.item_id===l.item_id && full.product_id===l.product_id &&
+              full.effective_rate_gbp===l.effective_rate_gbp && full.daily_price_gbp===l.daily_price_gbp))) return false;
+          const actual=members(part.lines.map(l=>({name:l.name,quantity:l.qty})));
+          const required=members(expected);
+          return actual.size===required.size && [...required].every(([name,qty])=>actual.get(name)===qty) &&
+            Math.abs(part.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(part.total_gbp as number))<0.011;
+        };
+        if (validPart(baseQuote,r.base_items) && validPart(additionQuote,r.added_items) &&
+          number(r.additional_cost_gbp) &&
+          Math.abs((q.total_gbp as number)-(baseQuote!.total_gbp as number)-(additionQuote!.total_gbp as number))<0.011 &&
+          Math.abs((r.additional_cost_gbp as number)-(additionQuote!.total_gbp as number))<0.011) {
+          for(const l of additionQuote!.lines as Array<Record<string,unknown>>) {
+            const name=string(l.name); if (!name) continue;
+            const aliases=listings.filter(i=>i.account_slug===r.account_slug && i.product_id===l.product_id).flatMap(i=>i.names);
+            quote({days:q.days,quantity:l.qty,daily_rate_gbp:l.effective_rate_gbp,listed_total_gbp:l.line_total_gbp,
+              start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},[...new Set([name,...aliases])],
+              `${call_id}:addition:${l.item_id??l.product_id}`,l.daily_price_gbp,"addition");
+          }
         }
       }
     }

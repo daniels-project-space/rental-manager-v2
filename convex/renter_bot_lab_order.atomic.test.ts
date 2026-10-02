@@ -249,3 +249,31 @@ it("replay history cannot claim that a removed item was added again",async()=>{
  expect(replay.applied).toBeUndefined();expect(replay.context_transition).toBeUndefined();
  expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(2);
 });
+
+
+describe("commercial offering identity and marginal quotes",()=>{
+ const setup=()=>{
+  const f=fixture();f.tables.items[0].qty=3;
+  f.tables.items.push({_id:"lens",name_canonical:"Sony 28-70mm",status:"active",is_marketing_only:false,qty:1,kind:"lens"});
+  f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
+  f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1},{item_id:"lens",qty:1}]},{account_slug:"leo",product_id:3,components:[{item_id:"camera",qty:1}]}];
+  f.tables.hygglo_product_index=[{account_slug:"leo",product_id:3,item_id:"camera"}];
+  f.tables.online_listings=[{account_slug:"leo",product_id:3,name:"Sony FX3 body",daily_price:20}];
+  return f;
+ };
+ const preview=(ctx:any)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1,preview_only:true});
+ it("adds a body separately instead of multiplying the already-booked lens kit",async()=>{
+  const {ctx,tables}=setup();const before=structuredClone(tables);const p=await preview(ctx);
+  expect(p).toMatchObject({ok:true,additional_cost_gbp:40,base_quote:{total_gbp:80},addition_quote:{total_gbp:40},quote:{total_gbp:120,lines:[{product_id:1,qty:1,daily_price_gbp:40},{product_id:3,qty:1,daily_price_gbp:20}]}});
+  expect(p.stock_receipts.find((r:any)=>r.item_name==="Sony 28-70mm")).toMatchObject({requested_units:1});expect(tables).toEqual(before);
+ });
+ it("proves one extra's marginal cost even when an identical body line merges",async()=>{
+  const {ctx,tables}=setup();Object.assign(tables.renter_bot_lab_orders[0].items[0],{product_id:3,daily_price_gbp:20});
+  const before=structuredClone(tables);const p=await preview(ctx);
+  expect(p).toMatchObject({ok:true,additional_cost_gbp:40,base_quote:{total_gbp:40},addition_quote:{total_gbp:40,lines:[{qty:1}]},quote:{total_gbp:80,lines:[{product_id:3,qty:2}]}});expect(tables).toEqual(before);
+ });
+ it("keeps a booked rate intact while pricing the extra from current native terms",async()=>{
+  const {ctx,tables}=setup();Object.assign(tables.renter_bot_lab_orders[0].items[0],{product_id:3,daily_price_gbp:30});
+  const p=await preview(ctx);expect(p).toMatchObject({ok:true,additional_cost_gbp:40,base_quote:{total_gbp:60},quote:{total_gbp:100,lines:[{qty:1,daily_price_gbp:30},{qty:1,daily_price_gbp:20}]}});
+ });
+});

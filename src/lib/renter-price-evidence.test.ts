@@ -119,3 +119,41 @@ describe("native proposed line prices survive the evidence handoff",()=>{
   ]){const n=native();mutate(n);const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);expect(proof.some(p=>p.kind==="rental"&&p.names.includes("Canon EF 16-35mm f2.8"))).toBe(false);}
  });
 });
+
+describe("same-item marginal proposal evidence",()=>{
+ const thread="__probe__marginal";
+ const line={name:"Sony FX3",item_id:"native-camera",product_id:3,qty:1,daily_price_gbp:40,effective_rate_gbp:40,line_total_gbp:80};
+ const dated={days:2,start_date:"2026-10-20",end_date:"2026-10-21"};
+ const native=()=>({ok:true,preview_only:true,source:"native_lab_proposal",thread_id:thread,account_slug:"leo",
+  base_items:[{name:line.name,quantity:1}],added_items:[{name:line.name,quantity:1}],
+  quote:{...dated,lines:[{...line,qty:2,line_total_gbp:160}],total_gbp:160},
+  base_quote:{...dated,lines:[{...line}],total_gbp:80},addition_quote:{...dated,lines:[{...line}],total_gbp:80},additional_cost_gbp:80});
+ const scope={items:[{name:line.name,quantity:1}],start_date:dated.start_date,end_date:dated.end_date};
+ const claim="One extra Sony FX3 would cost £80 for 2 days. Adding it would bring your booking total to £160.";
+ it("proves the additional unit, not just the combined two-unit line",()=>{
+  const n=native();const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);
+  expect(proof).toContainEqual(expect.objectContaining({quote_role:"addition",quantity:1,total_gbp:80}));
+  expect(unsupportedPriceClaims(claim,proof,scope)).toEqual([]);
+  for(const bad of [claim.replace("£80","£160"),claim.replace("£80","£81"),claim.replace("One extra","Two extra")])expect(unsupportedPriceClaims(bad,proof,scope),bad).not.toEqual([]);
+ });
+ it("does not use the current booked price or combined line as the extra's price",()=>{
+  const n=native();const booked=renterPriceEvidence([receipt("get_lab_order",{...n.base_quote})]);
+  const combined={...n,base_quote:undefined,addition_quote:undefined,additional_cost_gbp:undefined};
+  expect(unsupportedPriceClaims(claim,[...booked,...renterPriceEvidence([receipt("quote_booking_addition",combined)],[],thread)],scope)).not.toEqual([]);
+ });
+ it("still quotes an already booked extra from the current order receipt",()=>{
+  const n=native();const proof=renterPriceEvidence([receipt("get_lab_order",n.base_quote)]);
+  expect(unsupportedPriceClaims("Your booked extra Sony FX3 costs £80 for 2 days.",proof,scope)).toEqual([]);
+  expect(unsupportedPriceClaims("An extra Sony FX3 would cost £80 for 2 days, like your already booked one.",proof,scope)).not.toEqual([]);
+ });
+ it("rejects forged deltas, line identities, periods, members and rates",()=>{
+  for(const change of [
+   (n:ReturnType<typeof native>)=>{n.additional_cost_gbp=81;},
+   (n:ReturnType<typeof native>)=>{n.addition_quote.lines[0].item_id="other-camera";},
+   (n:ReturnType<typeof native>)=>{n.addition_quote.start_date="2026-10-19";},
+   (n:ReturnType<typeof native>)=>{n.addition_quote.lines[0].qty=2;},
+   (n:ReturnType<typeof native>)=>{n.addition_quote.lines[0].daily_price_gbp=45;},
+   (n:ReturnType<typeof native>)=>{n.base_quote.total_gbp=70;},
+  ]){const n=native();change(n);const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);expect(proof.some(p=>p.quote_role==="addition")).toBe(false);expect(unsupportedPriceClaims(claim,proof,scope)).not.toEqual([]);}
+ });
+});

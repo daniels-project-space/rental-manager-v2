@@ -842,3 +842,19 @@ describe("booked-kit references still require the current owner approval", () =>
     expect(guardDraft("Once your kit is booked, I can confirm the collection details.",{...common,stage:"inquiry",ownerApproved:false}).flags.some(f=>f.type==="FALSE_ACTION_CLAIM")).toBe(false);
   });
 });
+
+
+describe("pricing review on unavailable additions",()=>{
+ const opts={history:[],lastRenterMessage:"Could you quote a second Canon EF 24-105mm f4?",factPack:{pricing:{itemPrices:[{name:"BMPCC 6K Full Frame",min:62,max:62}]}},stockRequest:{start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Canon EF 24-105mm f4",quantity:2}]},stockEvidence:[{item:"Canon EF 24-105mm f4",available:false,quantity:2,free_units:1,start_date:"2026-10-20",end_date:"2026-10-21",checked_at:100,call_id:"native-check"}]};
+ const flag=(text:string,extra:Partial<typeof opts>={})=>guardDraft(text,{...opts,...extra}).flags.some(f=>f.type==="CONTRACT:price-figure");
+ it("does not request a price on a natively checked unavailable extra",()=>{
+  expect(flag("I can't provide a second Canon EF 24-105mm f4 for those dates. I don't have another suitable telephoto zoom.")).toBe(false);
+ });
+ it("still requires a price when offering an alternative in the same reply",()=>{
+  expect(flag("The Canon EF 24-105mm f4 is not available, but I can offer the Sony FX3 instead.")).toBe(true);
+ });
+ it("does not use another item, dates, failed check or model boolean to excuse missing pricing",()=>{
+  const text="I can't provide a second Canon EF 24-105mm f4 for those dates.";
+  for(const change of [{stockEvidence:[]},{stockEvidence:[{...opts.stockEvidence[0],item:"Different lens"}]},{stockEvidence:[{...opts.stockEvidence[0],end_date:"2026-10-22"}]},{stockEvidence:[{...opts.stockEvidence[0],call_id:""}]},{stockEvidence:[{...opts.stockEvidence[0],available:true}]}]) expect(flag(text,change)).toBe(true);
+ });
+});

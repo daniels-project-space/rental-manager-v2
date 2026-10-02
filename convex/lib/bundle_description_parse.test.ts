@@ -157,3 +157,16 @@ it("requires clarification when a contents line omits an aperture shared by two 
   const result=resolveBundleMapping("Included in this kit: • 1x Canon 24-105mm lens • 1x Carrying bag",lenses);
   expect(result.components).toEqual([]);expect(result.unmatched).toHaveLength(1);
 });
+
+
+it("retains the live FX3 body list when its heading has no colon before a later policy note",()=>{
+ const desc="The mighty Sony FX3 is the smallest netflix approved camera commercially avaliable on the market right now. ⭐️Included in this rental ⭐️ 1x Sony Fx3 Camera 1x 128gb V90 SD card 1x Cage 3x Batteries 1x carrying case Please kindly note: We always provide chargers with the equipment but only supply the needed cable if it is proprietary.";
+ expect(extractComponents(desc).components).toContainEqual({qty:1,name:"Sony Fx3 Camera"});
+ const inventory=[{_id:"fx3",name_canonical:"Sony FX3",kind:"camera",qty:4}];
+ expect(resolveBundleMapping(desc,inventory)).toMatchObject({explicit:true,components:[{item_id:"fx3",qty:1}],unmatched:[]});
+});
+it("does not turn the live optional Sony XLR handle into mandatory kit stock",()=>{
+ const desc="📦 Included in this Sony FX3 + 24–70 GM Rental Set Camera & Lens: • 1× Sony FX3 full-frame cinema camera • 1× Sony 24–70mm f/2.8 GM / G Master lens • 1× 256GB SanDisk Extreme Pro SD card Power: • 3× NP-FZ100 batteries • 1× dual battery charger Audio: • 1× Sony XLR top handle (built-in XLR audio interface) ( optional ) 🚀 About this FX3 Cinema Package This is a high-end, all-round cinema setup";
+ expect(names(desc).join(" ")).not.toMatch(/XLR|About this/i);
+ expect(names(desc).join(" ")).toMatch(/Sony FX3/);
+});
