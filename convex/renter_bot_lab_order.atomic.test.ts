@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyChange } from "./renter_bot_lab_order";
+import { amendedDraftContext, draftContextKey } from "./lib/draft_review";
+import { setDraft } from "./replyInbox";
 
 function fixture() {
   const tables: Record<string, any[]> = {
@@ -32,10 +34,13 @@ describe("date amendments validate stock before writing", () => {
   });
   it("commits an available date change with a real stock receipt and preserves pickup facts", async () => {
     const { tables, ctx } = fixture();
+    const beforeKey = draftContextKey(tables.renter_bot_lab_bookings[0], [], tables.renter_bot_lab_orders[0]);
     const result = await extend(ctx);
     expect(result).toMatchObject({ ok: true, order: { days: 3, total_gbp: 120 }, stock_receipts: [{ available: true, start_date: "2026-10-06", end_date: "2026-10-08", requested_units: 1 }] });
     expect(tables.renter_bot_lab_orders[0].end_date).toBe("2026-10-08");
     expect(tables.renter_bot_lab_bookings[0]).toMatchObject({ end_date: "2026-10-08", pickup_date: "2026-10-06" });
+    const afterKey = draftContextKey(tables.renter_bot_lab_bookings[0], [], tables.renter_bot_lab_orders[0]);
+    expect(amendedDraftContext(beforeKey, "__probe__atomic", [result.context_transition])).toBe(afterKey);
   });
   it("aggregates shared physical components across separately rentable kit lines", async () => {
     const { tables, ctx } = fixture();
@@ -63,5 +68,34 @@ describe("date amendments validate stock before writing", () => {
     tables.renter_bot_lab_bookings[0].return_date = "2026-10-07";
     expect(await extend(ctx)).toMatchObject({ ok: false });
     expect(tables.renter_bot_lab_orders[0].changes).toEqual([]);
+  });
+});
+
+describe("amended drafts retain atomic cache safety", () => {
+  const setup = async () => {
+    const f = fixture();
+    f.tables.conversations = [{ _id: "conversation", thread_id: "__probe__atomic" }];
+    f.tables.settings = [{ _id: "settings", draft_epoch: 20 }];
+    f.tables.hygglo_messages = [{ message_id: "renter-1", thread_id: "__probe__atomic", fetched_at: 1, _creationTime: 1 }];
+    const before = draftContextKey(f.tables.renter_bot_lab_bookings[0], [], f.tables.renter_bot_lab_orders[0]);
+    const result = await extend(f.ctx);
+    const key = amendedDraftContext(before, "__probe__atomic", [result.context_transition]);
+    return { ...f, args: { thread_id: "__probe__atomic", message_id: "renter-1", epoch: 20,
+      context_key: key, draft_text: "Your new total is £120." } };
+  };
+  it("saves the reply against the actual native amended order", async () => {
+    const { tables, ctx, args } = await setup();
+    expect(await (setDraft as any)._handler(ctx, args)).toMatchObject({ ok: true });
+    expect(tables.conversations[0]).toMatchObject({ ai_draft_text: args.draft_text, ai_draft_context_key: args.context_key });
+  });
+  it.each(["inbound", "epoch", "owner-date", "owner-quantity", "owner-price"])("rejects an intervening %s change", async (change) => {
+    const { tables, ctx, args } = await setup();
+    if (change === "inbound") tables.hygglo_messages.push({ message_id: "renter-2", thread_id: "__probe__atomic", fetched_at: 2, _creationTime: 2 });
+    if (change === "epoch") tables.settings[0].draft_epoch++;
+    if (change === "owner-date") tables.renter_bot_lab_orders[0].end_date = "2026-10-09";
+    if (change === "owner-quantity") tables.renter_bot_lab_orders[0].items[0].qty = 2;
+    if (change === "owner-price") tables.renter_bot_lab_orders[0].items[0].daily_price_gbp = 60;
+    expect(await (setDraft as any)._handler(ctx, args)).toMatchObject({ ok: false });
+    expect(tables.conversations[0].ai_draft_text).toBeUndefined();
   });
 });

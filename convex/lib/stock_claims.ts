@@ -64,7 +64,10 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // Recording capabilities and handoff slots aren't equipment-stock claims.
     if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*$/i.test(prefix) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(prefix)) continue;
     const negative = !!match[1] || /^(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available))$/i.test(match[0]);
-    const subject = subjectOf(prefix.replace(/\s+(?:is|are)\s*$/i, ""));
+    const dateScope = claimDateScope(clause, request.start_date);
+    const datedPrefix = dateScope.matched_text ? prefix.replace(dateScope.matched_text, "__stock_date__") : prefix;
+    const extensionSubject = /^I\s+(?:can't|cannot|can not|am not able to)\s+extend\s+(.+?)\s+(?:through|until|to)\s+__stock_date__\s+(?:as|because)\s+(?:it's|it is)\s*$/i.exec(datedPrefix.trim());
+    const subject = subjectOf(extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
     const kitParts=subject.name.split(/\s+with\s+/i);
     const modifiers=kitParts.slice(1).flatMap(p=>p.split(/\s+(?:and|plus)\s+/i));
     subject.name=kitParts[0];
@@ -80,7 +83,6 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       targets = [{ name: subject.name, quantity: subject.quantity ?? (requestedCounts.length === 1 ? requestedCounts[0] : NaN) }];
     }
     if (!generic) previousSubjects = targets;
-    const dateScope = claimDateScope(clause, request.start_date);
     const start = dateScope.start_date ?? request.start_date;
     const end = dateScope.end_date ?? request.end_date;
     if (negative && supportsRentalEligibilityDecline(clause, { ...request, items: targets }, ineligibleItems)) continue;

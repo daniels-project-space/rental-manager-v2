@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentDraftReview, draftContextKey, draftReviewSummary, type DraftReview } from "./draft_review";
+import { amendedDraftContext, currentDraftReview, draftContextKey, draftReviewSummary, type DraftContextTransition, type DraftReview } from "./draft_review";
 const booking = { start_date: "2026-10-02", end_date: "2026-10-04", status: "PENDING", items: [{ name: "Sony FX3", qty: 1 }] };
 const review: DraftReview = { reason: "needs_human:guard_blocked", flags: [{ type: "KIT_HALLUCINATION", detail: "Unverified charger", severity: "critical", action: "flagged" }],
   for_message_id: "renter-1", epoch: 2, context_key: draftContextKey(booking), stage: "INQUIRY", created_at: 1 };
@@ -36,5 +36,34 @@ describe("message-scoped human review", () => {
   it("explains the actual category instead of calling every block a price issue", () => {
     expect(draftReviewSummary(review)).toBe("Kit contents need verification.");
     expect(draftReviewSummary({ reason: "needs_human:model_declined", flags: [] })).toContain("judgement");
+  });
+});
+
+describe("generation-owned native context transitions", () => {
+  const t = (before: string, after: string, revision = 0): DraftContextTransition => ({
+    source: "native_lab_amendment", thread_id: "__probe__context", before_context_key: before,
+    after_context_key: after, before_revision: revision, after_revision: revision + 1,
+  });
+  it("adopts the exact changed native context, including a changed lifecycle stage", () => {
+    const before = draftContextKey({ ...booking, status: "ongoing", end_date: "2026-10-01" }, [], null, "2026-10-02");
+    const after = draftContextKey({ ...booking, status: "ongoing" }, [], null, "2026-10-02");
+    expect(JSON.parse(before).stage).not.toBe(JSON.parse(after).stage);
+    expect(amendedDraftContext(before, "__probe__context", [t(before, after)])).toBe(after);
+  });
+  it("requires the original generation snapshot, rather than accepting a fresh context by itself", () => {
+    expect(amendedDraftContext("original", "__probe__context", [t("owner-edited", "after")])).toBeNull();
+    expect(amendedDraftContext("original", "__probe__context", [])).toBeNull();
+  });
+  it("rejects foreign threads, production mutations and untrusted source labels", () => {
+    for (const changed of [{ thread_id: "__probe__different" }, { source: "model_prose" }])
+      expect(amendedDraftContext("before", "__probe__context", [{ ...t("before", "after"), ...changed } as DraftContextTransition])).toBeNull();
+    expect(amendedDraftContext("before", "real-order", [t("before", "after")])).toBeNull();
+  });
+  it("supports successive tool writes regardless of trace traversal order", () => {
+    expect(amendedDraftContext("before", "__probe__context", [t("middle", "after", 1), t("before", "middle")])).toBe("after");
+  });
+  it("rejects an intervening owner write and a missing native revision", () => {
+    expect(amendedDraftContext("before", "__probe__context", [t("before", "middle"), t("owner-edited", "after", 1)])).toBeNull();
+    expect(amendedDraftContext("before", "__probe__context", [t("before", "middle"), t("middle", "after", 2)])).toBeNull();
   });
 });

@@ -9,6 +9,14 @@ import { inclusiveDays, summarise } from "./lib/renter_order_quote";
 export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
+import { getBotBooking, getLabOrder } from "./lib/renter_booking";
+import { draftContextKey } from "./lib/draft_review";
+import type { QueryCtx } from "./_generated/server";
+
+async function amendmentContext(ctx: QueryCtx, threadId: string) {
+  const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", threadId)).first();
+  return draftContextKey(await getBotBooking(ctx, threadId), conv?.inquiry_items, await getLabOrder(ctx, threadId));
+}
 
 /**
  * The SIMULATED Hygglo order behind a Renter Bot Lab session.
@@ -273,6 +281,13 @@ export const applyChange = mutation({
       .unique();
     if (!row) return { ok: false, error: "no simulated order for this session" };
 
+    const beforeContext = await amendmentContext(ctx, a.thread_id);
+    const beforeRevision = row.changes.length;
+    const transition = async () => ({ source: "native_lab_amendment" as const,
+      thread_id: a.thread_id, before_context_key: beforeContext,
+      after_context_key: await amendmentContext(ctx, a.thread_id),
+      before_revision: beforeRevision, after_revision: beforeRevision + 1 });
+
     const lines: OrderLine[] = row.items.map((i) => ({
       ...i,
       item_id: i.item_id ? String(i.item_id) : undefined,
@@ -311,6 +326,7 @@ export const applyChange = mutation({
         applied: `dates set to ${a.start_date} – ${end}`,
         order: summarise(lines, a.start_date, end),
         stock_receipts: stock.receipts,
+        context_transition: await transition(),
       };
     }
 
@@ -343,6 +359,7 @@ export const applyChange = mutation({
         ok: true,
         applied: summaryText,
         order: summarise(kept, row.start_date, row.end_date),
+        context_transition: await transition(),
       };
     }
 
@@ -414,6 +431,7 @@ export const applyChange = mutation({
       applied: summaryText,
       order: summarise(lines, row.start_date, row.end_date),
       stock_receipt: { ...stock, start_date: row.start_date, end_date: row.end_date },
+      context_transition: await transition(),
     };
   },
 });

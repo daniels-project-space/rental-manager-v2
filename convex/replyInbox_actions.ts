@@ -1,9 +1,9 @@
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
-import type { MinimumRentalContext } from "./lib/minimum_rental";
+import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
 import type { StockRequest } from "./lib/stock_claims";
 import type { KitEvidence } from "./lib/kit_claims";
-import { currentDraftReview, type DraftReview } from "./lib/draft_review";
+import { amendedDraftContext, currentDraftReview, type DraftContextTransition, type DraftReview } from "./lib/draft_review";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
 "use node";
 /**
@@ -101,7 +101,7 @@ export const generateDraft = action({
       /* best-effort grounding */
     }
 
-    const c = await ctx.runQuery(internal.replyInbox.getThreadContext, {
+    let c = await ctx.runQuery(internal.replyInbox.getThreadContext, {
       thread_id,
     });
     const heldReview = currentDraftReview(c.draft_review, { message_id: c.last_message_id,
@@ -630,6 +630,7 @@ export const generateDraft = action({
           priceRequest?: StockRequest;
           commercialContext?: MinimumRentalContext;
           bookingModified?: boolean;
+          bookingContextTransitions?: DraftContextTransition[];
           hasPairingData?: boolean;
           /** Which classes of fact a TOOL supplied this turn — see draft_guard. */
           groundedDuringTurn?: {
@@ -661,11 +662,22 @@ export const generateDraft = action({
         };
         generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: normalizeClaimedFacts(j.factsClaimed) };
         if (thread_id.startsWith("__probe__")) generationMeta.diagnostic_candidate = j.diagnostic_candidate;
+        if (j.bookingContextTransitions?.length) {
+          const amendedKey = amendedDraftContext(c.draft_context_key, thread_id, j.bookingContextTransitions);
+          if (amendedKey === null) return { status: "skipped", reason: "stale_context", ...generationMeta };
+          const fresh = await ctx.runQuery(internal.replyInbox.getThreadContext, { thread_id });
+          if (fresh.draft_context_key !== amendedKey || fresh.draft_epoch !== c.draft_epoch
+            || fresh.last_message_id !== c.last_message_id)
+            return { status: "skipped", reason: "stale_context", ...generationMeta };
+          c = fresh;
+          generationMeta.draft_stage = c.rental_stage.stage;
+        }
         routeStockRequest = j.stockRequest;
         routePriceEvidence = j.priceEvidence;
         routePriceRequest = j.priceRequest;
-        routeCommercialContext = j.commercialContext;
-        generationMeta.evidence = { camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: j.conversation_stage ?? "unknown", cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        routeCommercialContext = j.commercialContext ? minimumRentalContext(c.rental_stage.stage,
+          j.commercialContext.threshold_gbp, j.priceEvidence ?? [], j.priceRequest ?? {items:[]}) : undefined;
+        generationMeta.evidence = { camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         if (j.needs_human) {
           const reason = `needs_human:${j.needs_human_reason ?? "unknown"}`;
           const saved = await recordReview(reason, [], generationMeta.evidence);

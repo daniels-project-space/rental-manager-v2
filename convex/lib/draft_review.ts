@@ -11,6 +11,32 @@ export type DraftReview = {
   context_key: string; created_at: number; stage: string; evidence?: DraftEvidence;
 };
 
+export type DraftContextTransition = {
+  source: "native_lab_amendment"; thread_id: string;
+  before_context_key: string; after_context_key: string;
+  before_revision: number; after_revision: number;
+};
+
+/** Follow only the native writes made in this generation, never a fresh key alone. */
+export function amendedDraftContext(initial: string, threadId: string, transitions: DraftContextTransition[]): string | null {
+  if (!threadId.startsWith("__probe__") || !Array.isArray(transitions) || !transitions.length
+    || transitions.some(t => !t || typeof t !== "object")) return null;
+  const ordered = [...transitions].sort((a, b) => a.before_revision - b.before_revision);
+  let key = initial;
+  let revision: number | undefined;
+  for (const t of ordered) {
+    if (t.source !== "native_lab_amendment" || t.thread_id !== threadId
+      || typeof t.before_context_key !== "string" || typeof t.after_context_key !== "string"
+      || !Number.isInteger(t.before_revision) || t.before_revision < 0
+      || t.after_revision !== t.before_revision + 1
+      || (revision !== undefined && t.before_revision !== revision)
+      || t.before_context_key !== key) return null;
+    key = t.after_context_key;
+    revision = t.after_revision;
+  }
+  return key;
+}
+
 /** Order facts, not polling timestamps. Reordered item arrays are equivalent. */
 export function draftContextKey(booking: unknown, inquiryItems: unknown = [], labOrder: unknown = null, today = londonToday()) {
   const b = booking && typeof booking === "object" ? booking as Record<string, unknown> : {};
@@ -24,6 +50,11 @@ export function draftContextKey(booking: unknown, inquiryItems: unknown = [], la
     status: b.status ?? null, booking_status: b.booking_status ?? null, step: b.order_step ?? null,
     pending: b.awaiting_owner_action ?? false, pickup: b.pickup_method ?? null,
     gross: b.gross_paid_gbp ?? null,
+    lab_prices: Array.isArray(lab.items) ? lab.items.map(item => {
+      const i = item as Record<string, unknown>;
+      return JSON.stringify({ name: i.name ?? null, id: i.item_id ?? null,
+        daily: i.daily_price_gbp ?? null, tiers: i.price_tiers ?? null });
+    }).sort() : null,
     items: (Array.isArray(items) ? items : []).map(item => {
       if (!item || typeof item !== "object") return String(item);
       const i = item as Record<string, unknown>;

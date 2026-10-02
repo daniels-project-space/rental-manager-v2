@@ -37,6 +37,12 @@ export function claimDateScope(text: string, contextStart?: string | null, today
   if (points.length) {
     const m = points[0], y = m[3] ? Number(m[3]) : year;
     const date = y ? iso(y, monthNumber(m[2]), m[1]) : "";
+    // An extension "through 8 October" describes the retained pickup-to-
+    // return span. "Booked on 8 October" is still an independent point claim.
+    const prefix = text.slice(0, m.index);
+    if (contextStart && validIsoDate(contextStart)
+      && /\bextend(?:ed|ing)?\b[^.!?;]{0,100}\b(?:through|until|to)\s*$/i.test(prefix))
+      return y ? scope(contextStart, date, m[0]) : { explicit: true, valid: false };
     return y ? scope(date, date, m[0]) : { explicit: true, valid: false };
   }
   const relative = /\b(?:available|booked|for|from|on|through|until)\s+(today|tomorrow)\b/i.exec(text);

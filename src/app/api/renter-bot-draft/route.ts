@@ -1665,8 +1665,10 @@ export async function POST(req: Request) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const after: any = await convex.query(api.renter_bot_lab_order.get, { thread_id });
-        bookingModified = ((after?.changes ?? []).length as number) > orderChangesBefore;
+        bookingModified = toolReceipts.some(r => r.tool === "modify_booking" && r.result.ok === true
+          && !!r.result.context_transition) && ((after?.changes ?? []).length as number) > orderChangesBefore;
         if (bookingModified && Array.isArray(after?.lines)) {
+          stockRequest = { ...stockRequest, start_date: after.start_date, end_date: after.end_date };
           priceRequest = {start_date:after.start_date,end_date:after.end_date,items:after.lines.map((l: {name:string;qty:number})=>({name:l.name,quantity:l.qty}))};
           priceSources.push({tool:"get_lab_order",call_id:"post-amendment:lab-order",result:after});
         }
@@ -1734,6 +1736,8 @@ export async function POST(req: Request) {
       commercialContext,
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
+      bookingContextTransitions: toolReceipts.filter(r => r.tool === "modify_booking" && r.result.ok === true)
+        .map(r => r.result.context_transition).filter(t => !!t),
       tokenUsage,
       // Verified NOT-rentable items. Registering the alternatives above turns
       // hasItemGrounding on, which disables the blanket ungrounded-assertion

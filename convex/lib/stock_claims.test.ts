@@ -148,3 +148,11 @@ it("resolves a selected kit's named lens without borrowing another manufacturer'
  expect(check("The Sony A7 II kit with the 28-70mm lens is available.",[{...receipts[0]},{...receipts[1],available:false}],scope)).toHaveLength(1);
  expect(check("The Sony A7 II body is available.",[{...receipts[0]},{...receipts[1],available:false}],scope)).toEqual([]);
 });
+
+it("treats an extension through a new return date as the retained pickup span",()=>{
+ const scope:StockRequest={...request,start_date:"2026-10-06",end_date:"2026-10-07"};
+ const receipt={...stock,start_date:"2026-10-06",end_date:"2026-10-08",available:false};
+ expect(check("I can't extend the Sony FX3 through 8 October as it's fully booked for that period.",[receipt],scope)).toEqual([]);
+ expect(check("The Sony FX3 is fully booked on 8 October.",[receipt],scope)).toHaveLength(1);
+ expect(check("I can't extend the Sony FX3 through 9 October as it's fully booked for that period.",[receipt],scope)).toHaveLength(1);
+});
