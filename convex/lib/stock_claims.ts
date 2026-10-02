@@ -1,5 +1,6 @@
 import { shortItemName } from "./item_display_name";
 import { claimDateScope } from "./claim_date_scope";
+import { lensClaimReferences } from "./lens_claim_references";
 export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
   available: boolean | null; free_units: number | null;
@@ -29,7 +30,8 @@ function subjectOf(prefix: string) {
   let s = prefix.trim().replace(/^(?:but|however|whereas|while|so|therefore)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
   s = s.replace(/^(?:exact|specific|particular|requested|selected)\s+/i, "");
-  if (/^second\s+one$/i.test(s)) return {name:"one",quantity:2};
+  const ordinal = /^(second|third|fourth|2nd|3rd|4th)\s+/i.exec(s);
+  if (ordinal) return {name:s.slice(ordinal[0].length).trim(),quantity:({second:2,third:3,fourth:4,"2nd":2,"3rd":3,"4th":4} as Record<string,number>)[ordinal[1].toLowerCase()]};
   const count = /^(\d+|one|single|two|both|three|four)\s*(?:x|×)?\s+/i.exec(s);
   if (count) s = s.slice(count[0].length);
   return { name: s.trim(), quantity: count ? units[count[1].toLowerCase()] ?? Number(count[1]) : undefined };
@@ -60,6 +62,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   for (const receipt of receipts)
     if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
       knownSubjects.push({name:receipt.item,quantity:1});
+  const references = lensClaimReferences(knownSubjects.map(item => ({names:[item.name,...(item.aliases??[])],item})),
+    (a,b) => a.some(left => b.some(right => sameItem(left,right))));
   for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
     // Remember an exact native item reference even when that clause merely
     // describes kit contents. "A second one" still needs a two-unit receipt.
@@ -105,10 +109,11 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     subject.name=kitParts[0];
     const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|set)\s*$/i.test(subject.name);
     subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
+    const reference = references.get(identity(subject.name.replace(/\s+lens(?:es)?$/i,"")));
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
     const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
-    let targets = request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
+    let targets = reference ? [reference.item] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
     else if (!targets.length) {
       const requestedCounts = [...new Set(request.items.map(i => i.quantity))];

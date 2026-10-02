@@ -9,6 +9,23 @@ describe("references to an additional booked-kit lens",()=>{
  const lens:StockReceipt={...stock,item:"Canon EF 24-105mm f4",start_date:scope.start_date!,end_date:scope.end_date!,quantity:2,available:false,free_units:1};
  const text="We only have the one Canon EF 24-105mm f4 in total (which is already included in your kit), so a second one isn't available for those dates.";
  it("keeps an exact item reference through a non-stock kit description and checks two physical units",()=>expect(unsupportedStockClaims(text,[lens],scope)).toEqual([]));
+ it("resolves a uniquely receipted ordinal focal range and brand shorthand",()=>{
+  for(const name of ["a second 24-105mm","a second Canon 24-105mm lens","a 2nd Canon EF 24–105mm"])
+   expect(unsupportedStockClaims(text.replace("a second one",name),[lens],scope),name).toEqual([]);
+  expect(unsupportedStockClaims(text.replace("a second one","a third 24-105mm"),[{...lens,quantity:3}],scope)).toEqual([]);
+ });
+ it("does not borrow kit stock or guess among mounts and brands",()=>{
+  const shorthand=text.replace("a second one","a second 24-105mm");
+  expect(unsupportedStockClaims(shorthand,[{...lens,item:scope.items[0].name}],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(shorthand,[{...lens,item:"Canon EF 24-105mm adapter"}],scope)).not.toEqual([]);
+  for(const item of ["Canon RF 24-105mm f4","Sony E 24-105mm f4"])
+   expect(unsupportedStockClaims(shorthand,[lens,{...lens,item}],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(text.replace("a second one","a second Canon 24-105mm"),[lens,{...lens,item:"Sony E 24-105mm f4"}],scope)).toEqual([]);
+  expect(unsupportedStockClaims(text.replace("a second one","a second Canon 24-105mm"),[lens,{...lens,item:"Canon RF 24-105mm f4"}],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(text.replace("a second one","a second Canon EF 24-105mm"),[lens,{...lens,item:"Canon RF 24-105mm f4"}],scope)).toEqual([]);
+  for(const r of [{...lens,end_date:"2026-10-22"},{...lens,quantity:1,available:true,free_units:null},{...lens,quantity:2,available:true,free_units:2}])
+   expect(unsupportedStockClaims(shorthand,[r],scope)).not.toEqual([]);
+ });
  it("cannot borrow the receipt for another model, dates, unknown capacity, or an unspecified first unit",()=>{
   for (const r of [{...lens,item:"Canon EF 16-35mm f2.8"},{...lens,end_date:"2026-10-22"},{...lens,quantity:1,available:true,free_units:null},{...lens,free_units:2,available:true}])
    expect(unsupportedStockClaims(text,[r],scope)).not.toEqual([]);

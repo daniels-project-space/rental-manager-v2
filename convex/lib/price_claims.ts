@@ -3,6 +3,7 @@ import { claimDateScope } from "./claim_date_scope";
 import { renterItemNames } from "./renter_item_names";
 import { shortItemName } from "./item_display_name";
 import type { StockRequest } from "./stock_claims";
+import { lensClaimReferences } from "./lens_claim_references";
 
 /** Server-returned quotes. A number alone is never a receipt. */
 export type PriceEvidence = {
@@ -28,18 +29,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   // Ordinary replies shorten a receipted "Canon EF 16-35mm f2.8" to
   // "16-35mm". Resolve that shorthand only when every matching native name
   // identifies the same item; two brands/mounts with that range remain ambiguous.
-  const focalSubjects = new Map<string, string[]>();
-  const focalOwners = new Map<string, typeof known>();
-  for (const entry of known) for (const name of entry.names) {
-    for (const match of name.matchAll(/\b(\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*mm)\b/gi)) {
-      const key = norm(match[1]);
-      const owners = focalOwners.get(key) ?? [];
-      if (!owners.includes(entry)) owners.push(entry);
-      focalOwners.set(key, owners);
-    }
-  }
-  for (const [key, owners] of focalOwners)
-    if (owners.every(entry => same(entry.names, owners[0].names))) focalSubjects.set(key, owners[0].names);
+  const focalSubjects = new Map([...lensClaimReferences(known, same)].map(([key, entry]) => [key, entry.names]));
   const names = [...new Set([...known.flatMap(k => aliases(k.names)), ...focalSubjects.keys()])].filter(Boolean).sort((a,b) => b.length-a.length);
   const duration = inclusiveRentalDays(request.start_date, request.end_date);
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];

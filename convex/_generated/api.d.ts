@@ -143,6 +143,7 @@ import type * as lib_item_taxonomy from "../lib/item_taxonomy.js";
 import type * as lib_kit_claims from "../lib/kit_claims.js";
 import type * as lib_knowledge_search from "../lib/knowledge_search.js";
 import type * as lib_lab_lifecycle from "../lib/lab_lifecycle.js";
+import type * as lib_lens_claim_references from "../lib/lens_claim_references.js";
 import type * as lib_listing_display_catalog from "../lib/listing_display_catalog.js";
 import type * as lib_listing_equivalence from "../lib/listing_equivalence.js";
 import type * as lib_listing_inventory from "../lib/listing_inventory.js";
@@ -446,6 +447,7 @@ declare const fullApi: ApiFromModules<{
   "lib/kit_claims": typeof lib_kit_claims;
   "lib/knowledge_search": typeof lib_knowledge_search;
   "lib/lab_lifecycle": typeof lib_lab_lifecycle;
+  "lib/lens_claim_references": typeof lib_lens_claim_references;
   "lib/listing_display_catalog": typeof lib_listing_display_catalog;
   "lib/listing_equivalence": typeof lib_listing_equivalence;
   "lib/listing_inventory": typeof lib_listing_inventory;

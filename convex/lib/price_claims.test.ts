@@ -35,6 +35,14 @@ describe("receipted lens shorthand",()=>{
   expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that"),[lens,basket],scope)).toEqual([]);
   expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that").replace("£164","£124"),[lens,basket],scope)).not.toEqual([]);
  });
+ it("shares brand and mount disambiguation without borrowing a kit's price",()=>{
+  const shorthand="Canon 16-35mm is £40 for the 2 days.";
+  expect(unsupportedPriceClaims(shorthand,[lens],scope)).toEqual([]);
+  expect(unsupportedPriceClaims(shorthand,[lens,{...lens,names:["Sony E 16-35mm f2.8"]}],scope)).toEqual([]);
+  expect(unsupportedPriceClaims(shorthand,[lens,{...lens,names:["Canon RF 16-35mm f2.8"]}],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims("16-35mm is £40 for the 2 days.",[{...lens,names:["Sony FX3 + Canon EF 16-35mm f2.8 kit"]}],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims("16-35mm is £40 for the 2 days.",[{...lens,names:["Canon EF 16-35mm filter"]}],scope)).not.toEqual([]);
+ });
  it("still refuses ambiguous ranges, wrong prices, dates and quantities",()=>{
   const other={...lens,names:["Sony E 16-35mm f2.8"],call_id:"other-lens"};
   expect(unsupportedPriceClaims(text,[lens,other,basket],scope)).not.toEqual([]);
