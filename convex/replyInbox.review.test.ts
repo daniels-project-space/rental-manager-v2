@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration } from "./replyInbox";
-import { generateDraft } from "./replyInbox_actions";
+import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
+import { generateDraft, sendRenterReply } from "./replyInbox_actions";
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -22,6 +22,65 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+describe("copied bot replies use current Native stock before send",()=>{
+ async function stockDraft() {
+  const f=await setup();await f.ctx.db.patch(f.convId,{account_slug:"leo"});
+  const itemId=await f.ctx.db.insert("items",{name_canonical:"Sony FX3",qty:1,status:"active",is_marketing_only:false});
+  const text="Sony FX3 is available for 2 to 4 October.";
+  const scope={start_date:"2026-10-02",end_date:"2026-10-04",items:[{name:"Sony FX3",quantity:1}]};
+  const evidence={model_id:"native-test",stage:"INQUIRY",stock_request:scope,stock:[{item:"Sony FX3",start_date:scope.start_date,end_date:scope.end_date,quantity:1,available:true,free_units:1,checked_at:1,call_id:"original-native"}]};
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
+  const approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  return {...f,itemId,text,approval,evidence};
+ }
+ const recheck=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval.draft_approval});
+ it("rejects a competing confirmed booking created after a previously available draft",async()=>{
+  const f=await stockDraft();expect(await recheck(f)).toMatchObject({ok:true});
+  await f.ctx.db.insert("reservations",{hygglo_order_id:"competing-rental",status:"confirmed",start_date:"2026-10-02",end_date:"2026-10-04",expanded_items:[{item_id:f.itemId,qty:1}]});
+  expect(await recheck(f)).toMatchObject({ok:false,reason:"stock_unverified"});
+  expect(await recheck(f,"I can offer the Sony FX3 for 2 to 4 October.")).toMatchObject({ok:false,reason:"stock_unverified"});
+  expect(await recheck(f,"Thanks for checking. I'll review the options and get back to you.")).toMatchObject({ok:true});
+ });
+ it("rechecks catalogue changes and does not borrow old free capacity or changed dates",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{is_marketing_only:true});
+  expect(await recheck(f)).toMatchObject({ok:false});
+  await f.ctx.db.patch(f.itemId,{is_marketing_only:false});
+  expect(await recheck(f,f.text.replace("2 to 4","5 to 7"))).toMatchObject({ok:false});
+  expect(await recheck(f,f.text.replace("Sony FX3","Two Sony FX3 cameras"))).toMatchObject({ok:false});
+ });
+ it("excludes the requesting booking's own allocation and refreshes negative verdicts too",async()=>{
+  const f=await stockDraft();
+  await f.ctx.db.insert("reservations",{hygglo_order_id:f.args.thread_id,status:"confirmed",start_date:"2026-10-02",end_date:"2026-10-04",expanded_items:[{item_id:f.itemId,qty:1}]});
+  expect(await recheck(f)).toMatchObject({ok:true});
+  await f.ctx.db.patch(f.convId,{ai_draft_evidence:{...f.evidence,stock:[{...f.evidence.stock[0],available:false,free_units:0}]}});
+  expect(await recheck(f,"Sony FX3 is not available for 2 to 4 October.")).toMatchObject({ok:false});
+ });
+ it("revalidates inbound/epoch approval inside the stock snapshot",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.settingsId,{draft_epoch:3});
+  expect(await recheck(f)).toMatchObject({ok:false,reason:"stale_draft"});
+ });
+ it("does not qualify stock from a legacy draft without the Native request scope",async()=>{
+  const f=await stockDraft();const {stock_request,...legacy}=f.evidence;
+  await f.ctx.db.patch(f.convId,{ai_draft_evidence:legacy});
+  expect(await recheck(f)).toMatchObject({ok:false});
+  expect(await recheck(f,"Thank you. I'll check the options.")).toMatchObject({ok:true});
+ });
+ it("checks copied stock before even dry-run success and fails closed when the check errors",async()=>{
+  const f=await stockDraft();
+  for(const result of [{ok:false,reason:"stock_unverified"},{ok:true}]) {
+   const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockResolvedValueOnce(result)};
+   expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,draft_approval:f.approval.draft_approval,dryRun:true})).toMatchObject(result.ok?{status:"sent",reason:"DRY_RUN"}:{status:"failed",reason:"stock_unverified"});
+   expect(ctx.runQuery).toHaveBeenCalledTimes(2);
+  }
+  const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockRejectedValueOnce(new Error("Native check unavailable"))};
+  expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,dryRun:true})).toMatchObject({status:"failed",reason:"stock_recheck_failed"});
+ });
+ it("does not attach old bot stock claims to a manually authored reply",async()=>{
+  const f=await stockDraft();const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval)};
+  expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:"I'll personally check the alternatives.",dryRun:true})).toMatchObject({status:"sent",reason:"DRY_RUN"});
+  expect(ctx.runQuery).toHaveBeenCalledTimes(1);
+ });
+});
 describe("canonical generation failure diagnostics",()=>{
  it("preserves upstream timeout identity without exposing request bodies or headers",async()=>{
   const failure=generationFailure({cause:{statusCode:504,isRetryable:true,requestBodyValues:{messages:["private"]},responseHeaders:{authorization:"private"}}},"agent");

@@ -23,11 +23,19 @@ export const draftEvidenceValidator = v.object({
     proposal:v.optional(v.object({base_items:v.array(v.object({name:v.string(),quantity:v.number()})),added_items:v.array(v.object({name:v.string(),quantity:v.number()}))})),
     call_id:v.string(),source:v.string(),
   }))),
+  /** Native request identity used by the guard, retained for send-time stock checks. */
+  stock_request: v.optional(v.object({
+    start_date: v.optional(v.union(v.string(),v.null())), end_date: v.optional(v.union(v.string(),v.null())),
+    items: v.array(v.object({name:v.string(),quantity:v.number(),aliases:v.optional(v.array(v.string())),complete:v.optional(v.boolean()),
+      components:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),
+    })),
+  })),
   stock: v.array(v.object({
     item: v.string(), start_date: v.string(), end_date: v.string(),
     quantity: v.number(), available: v.union(v.boolean(), v.null()),
     free_units: v.union(v.number(), v.null()),
     checked_at: v.number(), call_id: v.string(),
+    kind: v.optional(v.string()),
   })),
 });
 export type DraftEvidence = Infer<typeof draftEvidenceValidator>;

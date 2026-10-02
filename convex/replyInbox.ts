@@ -22,7 +22,9 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
-import { currentDraftApproval, currentDraftReview, draftContextKey } from "./lib/draft_review";
+import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
+import { loadStockSources, resolveStockItem, stockForRentalItem } from "./lib/renter_stock";
+import { unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
 import { reviewFlagValidator } from "./lib/draft_review_validator";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { summarise } from "./lib/renter_order_quote";
@@ -2132,5 +2134,45 @@ export const getDraftApprovalContext = query({
       stored_draft_text: conv?.ai_draft_text ?? null,
       draft_approval: currentDraftApproval(conv, scope),
     };
+  },
+});
+
+/** Recheck the copied text and approval in one database snapshot. Old model
+ * receipts identify what to check; only current Native stock proves a claim. */
+export const recheckCopiedDraftStock = internalQuery({
+  args: {thread_id:v.string(),account_slug:v.string(),text:v.string(),
+    draft_approval:v.object({message_id:v.string(),context_key:v.string(),epoch:v.number(),generated_at:v.number()})},
+  handler: async (ctx,{thread_id,account_slug,text,draft_approval}) => {
+    const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).first();
+    const [latest]=await recentThreadMessages(ctx,thread_id,1);
+    const settings=await ctx.db.query("settings").first();
+    const booking=await getBotBooking(ctx,thread_id);
+    const current=currentDraftApproval(conv,{message_id:latest?.message_id,epoch:settings?.draft_epoch??0,
+      context_key:draftContextKey(booking,conv?.inquiry_items,await getLabOrder(ctx,thread_id))});
+    if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
+      return {ok:false,reason:"stale_draft"};
+    const evidence=conv?.ai_draft_evidence;
+    const request=evidence?.stock_request??{items:[]};
+    // Missing legacy scope cannot qualify a stock assertion, but a human's
+    // edited reply with no such assertion does not need old stock receipts.
+    if (!evidence?.stock_request) return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
+    const sources=await loadStockSources(ctx);
+    const receipts:StockReceipt[]=[];
+    const checked=new Set<string>();
+    for(const old of evidence.stock) {
+      const key=JSON.stringify([old.item,old.start_date,old.end_date,old.quantity]);
+      if(checked.has(key))continue;
+      checked.add(key);
+      const item=resolveStockItem(old.item,sources.items);
+      if(!item.confident||!item.match)continue;
+      const fresh=stockForRentalItem(sources,item.match,{item_name:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,thread_id});
+      receipts.push({item:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,
+        available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,call_id:`send-recheck:${receipts.length}`});
+    }
+    const excluded=(evidence.rental_eligibility?.ineligible_items??[]).filter(name=>{
+      const item=resolveStockItem(name,sources.items);
+      return item.confident&&!!item.match&&(item.match.is_marketing_only===true||item.match.status!=="active"||item.match.qty<=0);
+    });
+    return {ok:unsupportedStockClaims(text,receipts,request,excluded).length===0,reason:"stock_unverified",checked_at:Date.now()};
   },
 });

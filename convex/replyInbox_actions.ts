@@ -623,7 +623,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
-          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string }>;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
           needs_human?: boolean;
@@ -686,6 +686,11 @@ export const generateDraft = action({
         routeCommercialContext = j.commercialContext ? minimumRentalContext(c.rental_stage.stage,
           j.commercialContext.threshold_gbp, j.priceEvidence ?? [], j.priceRequest ?? {items:[]}) : undefined;
         generationMeta.evidence = { camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        generationMeta.evidence.stock_request = routeStockRequest;
+        generationMeta.evidence.stock.forEach(receipt=>{
+          const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
+          if(typeof native?.kind === "string")receipt.kind=native.kind;
+        });
         if (j.needs_human) {
           const reason = `needs_human:${j.needs_human_reason ?? "unknown"}`;
           const saved = await recordReview(reason, [], generationMeta.evidence);
@@ -1050,6 +1055,14 @@ export const sendRenterReply = action({
     if (draft_approval || legacyDraftCopy) {
       if (approvalContext.account_slug!==account_slug || !approvalContext.draft_approval || (draft_approval && !sameDraftApproval(draft_approval,approvalContext.draft_approval)))
         return {status:"failed",reason:"stale_draft",error:"This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."};
+      try {
+        const stock = await ctx.runQuery(internal.replyInbox.recheckCopiedDraftStock,{thread_id,account_slug,text:body,draft_approval:approvalContext.draft_approval});
+        if (!stock.ok) return {status:"failed",reason:stock.reason,error:stock.reason === "stale_draft"
+          ? "This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."
+          : "Availability in this reply could not be verified against current stock. Review it and redraft, or remove the availability claim before sending."};
+      } catch {
+        return {status:"failed",reason:"stock_recheck_failed",error:"Current stock could not be checked. Your reply has been kept; try again before sending."};
+      }
     }
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
 

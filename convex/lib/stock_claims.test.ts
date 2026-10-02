@@ -50,6 +50,32 @@ describe("references to an additional booked-kit lens",()=>{
   expect(unsupportedStockClaims("A second one isn't available for those dates.",[lens],scope)).not.toEqual([]);
  });
 });
+describe("equipment offers are stock promises",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Sony FX3",quantity:1}]};
+ const lens:StockReceipt={...stock,item:"Canon EF 16-35mm f2.8",kind:"lens",start_date:scope.start_date!,end_date:scope.end_date!,quantity:1,available:true,free_units:1};
+ it("requires a matching current receipt for offer/supply/provide and retains dates/counts",()=>{
+  for(const verb of ["offer","supply","provide"]) {
+   const reply=`I can ${verb} the Canon EF 16-35mm f2.8 for 20 to 21 October.`;
+   expect(unsupportedStockClaims(reply,[lens],scope)).toEqual([]);
+   for(const receipts of [[],[{...lens,available:false,free_units:0}],[{...lens,end_date:"2026-10-22"}]])
+    expect(unsupportedStockClaims(reply,receipts,scope)).not.toEqual([]);
+   expect(unsupportedStockClaims(reply.replace("the Canon","two Canon"),[lens],scope)).not.toEqual([]);
+   expect(unsupportedStockClaims(reply.replace("Canon EF","Canon RF"),[lens],scope)).not.toEqual([]);
+  }
+ });
+ it("checks an undated alternative offer and does not classify service offers or conditional checks as stock",()=>{
+  expect(unsupportedStockClaims("I can offer the Canon EF 16-35mm f2.8 zoom lens.",[lens],scope)).toEqual([]);
+  expect(unsupportedStockClaims("I can offer the Canon EF 16-35mm f2.8 zoom lens.",[],scope)).not.toEqual([]);
+  for(const reply of ["I can offer a refund.","I can provide some advice.","I can offer delivery for 20 October.","I could supply the Canon EF 16-35mm if it is available.","I can offer the Canon EF 16-35mm once I have checked availability."])
+   expect(unsupportedStockClaims(reply,[],scope),reply).toEqual([]);
+ });
+ it("uses Native lens kind for descriptors without lending camera or wrong-mount stock",()=>{
+  const prime={...lens,item:"Canon EF 50mm f1.8"};
+  expect(unsupportedStockClaims("I can offer the Canon EF 50mm f1.8 lens at £20/day.",[prime],scope)).toEqual([]);
+  expect(unsupportedStockClaims("I can offer the Canon RF 50mm f1.8 lens.",[prime],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("I can offer the Sony FX3 lens.",[{...lens,item:"Sony FX3",kind:"camera"}],scope)).not.toEqual([]);
+ });
+});
 describe("amendment date claims", () => {
   const original = { start_date: "2026-10-06", end_date: "2026-10-07", items: [{ name: "Sony FX3", quantity: 1 }] };
   const proposed = { ...stock, start_date: "2026-10-06", end_date: "2026-10-08" };

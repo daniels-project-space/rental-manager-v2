@@ -5,6 +5,7 @@ export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
   available: boolean | null; free_units: number | null;
   checked_at: number; call_id: string;
+  kind?: string;
 };
 export type StockRequest = {
   start_date?: string | null; end_date?: string | null;
@@ -64,7 +65,16 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       knownSubjects.push({name:receipt.item,quantity:1});
   const references = lensClaimReferences(knownSubjects.map(item => ({names:[item.name,...(item.aliases??[])],item})),
     (a,b) => a.some(left => b.some(right => sameItem(left,right))));
-  for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+  for (const rawClause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+    // An unconditional equipment offer is an availability promise. Keep the
+    // object, counts and dates intact; service offers and conditional checks
+    // do not assert that physical equipment is currently free.
+    const offer = /^\s*(?:I|we)\s+(?:can|could|am able to|are able to)\s+(?:offer|supply|provide)\s+(.+?)\s*[.!]?$/i.exec(rawClause);
+    const service = offer && /^(?:(?:an?|the|your|some)\s+)?(?:refund|discount|delivery|pickup|collection|help|advice|guidance|support|quote|price|information|assistance)\b/i.test(offer[1]);
+    const conditionalOffer = offer && /\b(?:if|once|when|after|subject to)\b/i.test(offer[1]);
+    const clause = offer && !service && !conditionalOffer
+      ? `${offer[1].replace(/\s+(?=(?:for|from|on|at)\b)/i, " is available ")}${/\b(?:for|from|on|at)\b/i.test(offer[1]) ? "" : " is available"}`
+      : rawClause;
     // Remember an exact native item reference even when that clause merely
     // describes kit contents. "A second one" still needs a two-unit receipt.
     const mentionText = ` ${identity(clause)} `;
@@ -109,6 +119,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     subject.name=kitParts[0];
     const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|set)\s*$/i.test(subject.name);
     subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
+    const lensName=subject.name.replace(/\s+(?:(?:wide[ -]angle|standard|telephoto)\s+)?(?:zoom\s+)?lens(?:es)?$/i, "");
+    if (receipts.some(r=>r.kind === "lens" && sameItem(lensName,r.item))) subject.name=lensName;
     const reference = references.get(identity(subject.name.replace(/\s+lens(?:es)?$/i,"")));
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
