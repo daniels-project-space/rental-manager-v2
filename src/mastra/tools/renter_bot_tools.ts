@@ -12,8 +12,8 @@
  *   - outputSchema — Zod (helps the agent reason about the return type)
  *   - execute      — calls Convex via ConvexHttpClient
  *
- * READ-ONLY: every tool here calls a Convex `query()`, not a mutation.
- * Failing closed: no Hygglo write API is reachable from a tool.
+ * Native reads plus guarded Lab booking mutations. Combined quote previews
+ * never write an order. No real Hygglo write API is reachable from a tool.
  */
 import "server-only";
 
@@ -21,7 +21,8 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { getFunctionName } from "convex/server";
-import { bindRenterToolArgs } from "@/lib/renter-tool-scope";
+import { bindRenterToolArgs, currentRenterToolScope } from "@/lib/renter-tool-scope";
+import { withBookingAdditionPreview } from "@/lib/renter-pricing-preview";
 import { api } from "@/../convex/_generated/api";
 // Convex typegen runs against a real deployment via `npx convex dev`.
 // Until the new modules (renter_bot_tools, knowledge, renter_bot_drafts)
@@ -98,6 +99,7 @@ export const getListingContextTool = createTool({
 export const lookupPricingTool = createTool({
   id: "lookup_pricing",
   description:
+    "If booking_addition_preview is returned, use its addition_quote/additional_cost_gbp for the extra and quote.total_gbp for the proposed COMPLETE booking total. Its dates and combined stock check belong to the current booking; the standalone price below can use a different requested duration. This is a read-only proposal, never an edit. If the preview fails, do not calculate a combined total or promise the added basket from standalone prices. " +
     // The 'one retry, using did_you_mean' clause is the point. Measured, this
     // tool was called with progressively shortened invented names — "Blazar
     // Remus full frame 33mm t1.8 1.5x anamorphic", then "Blazar Remus 33mm",
@@ -134,7 +136,9 @@ export const lookupPricingTool = createTool({
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {
-    return await convex().query(anyApi.renter_bot_tools.lookup_pricing, input);
+    const client = convex();
+    const pricing = await client.query(anyApi.renter_bot_tools.lookup_pricing, input);
+    return await withBookingAdditionPreview(pricing, currentRenterToolScope(), args => client.mutation(anyApi.renter_bot_lab_order.applyChange, args));
   },
 });
 

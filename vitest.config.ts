@@ -31,6 +31,7 @@ export default defineConfig({
       "convex/lib/price_claims.test.ts",
       "convex/lib/minimum_rental.test.ts",
       "src/lib/renter-price-evidence.test.ts",
+      "src/lib/renter-pricing-preview.test.ts",
       "convex/settings.draft-epoch.test.ts",
       "convex/lib/listing_inventory.test.ts",
       "convex/lib/verified_item_spec.test.ts",

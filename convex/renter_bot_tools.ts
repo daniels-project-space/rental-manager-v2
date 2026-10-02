@@ -596,6 +596,15 @@ export const lookup_pricing = query({
       if (!best && ambiguousNames.length) return {found:false as const,item_name,
         ambiguous_with:ambiguousNames,message:"Specify the exact model or adapter destination mount before quoting a price."};
       if (best && bestScore >= 0.3 && typeof best.daily_price === "number") {
+        // Exact copied titles can bypass name resolution. Recover a canonical
+        // identity only if this is an authoritative base offering for one item;
+        // a bundle title must never become a body-only addition quote.
+        if (!matchedCanonical) {
+          const inventory = await ctx.db.query("items").collect();
+          const identities = inventory.filter(i => i.status === "active" && !i.is_marketing_only &&
+            baseListingProductIds(account_slug, String(i._id), idxRows, ovrRows, inventory).includes(best!.product_id));
+          if (identities.length === 1) matchedCanonical = identities[0].name_canonical;
+        }
         // REAL Hygglo tiers, not a guessed curve.
         //
         // This used a hardcoded multiplier (0.7 at 3 days, 0.5 at 7) that has

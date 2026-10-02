@@ -32,6 +32,11 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
     if (typeof payload.toolName === "string" && output && typeof output === "object" && !Array.isArray(output) && !handledOutputs.has(output)) {
       handledOutputs.add(output);
       const result = output as Record<string, unknown>;
+      // The pricing adapter performs a real read-only Native proposal check.
+      // Harvest its result through the same validation path as an explicit
+      // quote tool, including negative shared-stock receipts from refusals.
+      if (payload.toolName === "lookup_pricing" && result.found === true && result.booking_addition_preview && typeof result.booking_addition_preview === "object")
+        visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:booking-preview`,result:result.booking_addition_preview});
       if (!result.error && result.ok !== false && result.found !== false)
         receipts.push({ tool: payload.toolName, call_id: String(payload.toolCallId ?? "unknown"), result });
       if (!result.error && result.ok !== false && payload.toolName === "check_availability" && Array.isArray(result.components)) {

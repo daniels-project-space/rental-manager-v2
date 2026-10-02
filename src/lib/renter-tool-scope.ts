@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string };
+export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string };
 const storage = new AsyncLocalStorage<RenterScope>();
 export const withRenterToolScope = <T>(scope: RenterScope, run: () => T): T => storage.run(scope, run);
+export const currentRenterToolScope = () => storage.getStore();
 
 /** The model chooses dates/items; server context owns thread and account. */
 export function bindRenterToolArgs(functionName: string, args: Record<string, unknown>, scope = storage.getStore()) {
