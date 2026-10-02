@@ -270,6 +270,7 @@ export const applyChange = mutation({
       v.literal("remove_item"),
       v.literal("set_dates"),
     ),
+    preview_only: v.optional(v.boolean()),
     item_name: v.optional(v.string()),
     qty: v.optional(v.number()),
     start_date: v.optional(v.string()),
@@ -277,6 +278,7 @@ export const applyChange = mutation({
   },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
+    if (a.preview_only && a.action !== "add_item") return {ok:false,error:"Read-only proposals only support adding one exact item."};
     const row = await ctx.db
       .query("renter_bot_lab_orders")
       .withIndex("by_thread", (q) => q.eq("thread_id", a.thread_id))
@@ -435,6 +437,17 @@ export const applyChange = mutation({
       return { ok: false, error_code: "basket_stock_unavailable_or_unknown",
         error: `Cannot add this item to the complete basket for ${row.start_date} – ${row.end_date}: ${constraints || basketStock.reason}. Kit contents already consume stock. No items or prices were changed. Explain the basket capacity; do not call the extra item itself booked or unavailable based only on a larger combined-quantity check.`,
         stock_receipts: basketStock.receipts };
+    }
+
+    if (a.preview_only) {
+      const quote = summarise(lines, row.start_date, row.end_date);
+      if (quote.total_gbp == null) return {ok:false,error:"The complete proposed basket has unpriced items. Ask the owner for a quote; no items or prices changed."};
+      return {ok:true, preview_only:true, source:"native_lab_proposal" as const,
+        thread_id:a.thread_id, account_slug:row.account_slug,
+        base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),
+        added_items:[{name:m.match.name_canonical,quantity:qty}], quote,
+        stock_receipt:{...stock,start_date:row.start_date,end_date:row.end_date},
+        stock_receipts:basketStock.receipts};
     }
 
     await ctx.db.patch(row._id, {

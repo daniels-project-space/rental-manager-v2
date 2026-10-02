@@ -391,6 +391,17 @@ export const findOwnedAlternativesTool = createTool({
  * real conversation it returns ok:false with an instruction to say the renter
  * should make the change on Hygglo.
  */
+export const quoteBookingAdditionTool = createTool({
+  id: "quote_booking_addition",
+  description: "Read-only Renter Bot Lab quote: price the COMPLETE existing booking plus an exact extra item, checking kit component stock and current duration tiers. Use before offering a combined new total, especially a smaller available alternative after an addition fails. This never adds or reserves anything. A successful quote is a proposal: say would bring the total to, never say added or booked. Real bookings require owner confirmation.",
+  inputSchema: z.object({thread_id:z.string(),item_name:z.string().describe("Exact owned model to add to the proposed basket."),qty:z.number().int().min(1).max(20).default(1)}),
+  outputSchema: z.unknown(),
+  execute: async (input) => {
+    if (!input.thread_id.startsWith("__probe__")) return {ok:false,error:"Combined booking proposals require an owner quote for real bookings."};
+    return await convex().mutation(anyApi.renter_bot_lab_order.applyChange,{...input,action:"add_item",preview_only:true});
+  },
+});
+
 export const modifyBookingTool = createTool({
   id: "modify_booking",
   description:
@@ -423,6 +434,7 @@ export const RENTER_BOT_TOOLS = {
   check_location: checkLocationTool,
   get_order_edit_state: getOrderEditStateTool,
   modify_booking: modifyBookingTool,
+  quote_booking_addition: quoteBookingAdditionTool,
   get_renter_context: getRenterContextTool,
   get_listing_context: getListingContextTool,
   lookup_pricing: lookupPricingTool,

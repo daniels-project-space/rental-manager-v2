@@ -10,6 +10,7 @@ export type PriceEvidence = {
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
+  proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>};
   call_id: string; source: string;
 };
 const norm = (s: string) => s.toLowerCase().replace(/’/g, "'").replace(/[^a-z0-9]+/g, " ").trim();
@@ -21,19 +22,21 @@ const cents = (n: number) => Math.round(n * 100);
 export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest) {
   const failures: string[] = [];
   const known = [...request.items.map(i => ({ names: [i.name, ...(i.aliases ?? [])], quantity: i.quantity })),
-    ...evidence.filter(e => e.kind !== "basket").map(e => ({ names: e.names, quantity: undefined }))];
+    ...evidence.filter(e => e.kind !== "basket").map(e => ({ names: e.names, quantity: undefined })),
+    ...evidence.flatMap(e=>(e.proposal?.added_items??[]).map(i=>({names:[i.name],quantity:undefined})))];
   const names = [...new Set(known.flatMap(k => aliases(k.names)))].filter(Boolean).sort((a,b) => b.length-a.length);
   const same = samePriceNames;
   const duration = inclusiveRentalDays(request.start_date, request.end_date);
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];
+  let subjectQuantity: number | undefined;
   let consumed = 0;
   for (const m of text.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/g)) {
     const pos = m.index!;
     const before = norm(text.slice(consumed, pos));
-    let lastName = "", lastAt = -1;
+    let lastName = "", lastAt = -1, lastEnd = -1;
     for (const n of names) {
       const at = (` ${before} `).lastIndexOf(` ${n} `);
-      if (at > lastAt || (at === lastAt && n.length > lastName.length)) { lastAt = at; lastName = n; }
+      if (at >= 0 && (at+n.length > lastEnd || (at+n.length === lastEnd && n.length > lastName.length))) { lastAt = at; lastEnd = at+n.length; lastName = n; }
     }
     if (lastAt >= 0) subject = [lastName];
     // Explicit unknown camera identities must not inherit the previous quote.
@@ -89,8 +92,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const scopedDuration = dateScope.explicit && dateScope.valid ? inclusiveRentalDays(dateScope.start_date, dateScope.end_date) : null;
     const days = explicitDays ? Number(explicitDays[1]) : scopedDuration ?? duration;
     const requested = request.items.find(i => same(subject, [i.name, ...(i.aliases ?? [])]));
-    const count = lastAt >= 0 ? /\b(\d+|one|two|both|three|four)\s*(?:x\s*)?$/.exec(before.slice(0,Math.max(0,lastAt-1)).trim()) : null;
+    const count = lastAt >= 0 ? /\b(\d+|one|two|both|three|four)\s*(?:(?:extra|additional)\s*)?(?:x\s*)?$/.exec(before.slice(0,Math.max(0,lastAt-1)).trim()) : null;
     const declaredQuantity = count ? ({one:1,two:2,both:2,three:3,four:4} as Record<string,number>)[count[1]] ?? Number(count[1]) : undefined;
+    if (lastAt >= 0) subjectQuantity = declaredQuantity ?? requested?.quantity ?? 1;
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
     const amount = Number(m[1].replace(/,/g, ""));
     const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
@@ -102,7 +106,15 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       if (purpose === "replacement") return e.kind === "replacement" && e.total_gbp != null && cents(e.total_gbp) === cents(amount);
       if (e.kind === "replacement") return false;
       if (e.kind === "basket") {
-        const claimed=pairedItems??request.items.map(i=>({names:[i.name,...(i.aliases??[])],quantity:i.quantity}));
+        const requestedItems=request.items.map(i=>({names:[i.name,...(i.aliases??[])],quantity:i.quantity}));
+        const membersMatch=(a:Array<{names:string[];quantity:number}>,b:Array<{name:string;quantity:number}>)=>a.length===b.length && a.every(c=>b.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity));
+        if (e.proposal) {
+          // A proposal never certifies an already-applied total or an unrelated basket.
+          if (!/\b(?:would|could)\b/i.test(segment) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
+          if (e.proposal.added_items.length!==1 || !same(subject,[e.proposal.added_items[0].name]) ||
+              (declaredQuantity??subjectQuantity??1)!==e.proposal.added_items[0].quantity) return false;
+        }
+        const claimed=pairedItems??(e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;
       }
       const start = dateScope.start_date ?? (explicitDays ? undefined : request.start_date);

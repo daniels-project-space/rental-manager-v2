@@ -39,11 +39,11 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           if (component && typeof component === "object") receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:component:${String(component.item_id ?? component.item_name)}`, result: component });
         }
       }
-      if (payload.toolName === "modify_booking" && result.ok === true && result.stock_receipt && typeof result.stock_receipt === "object")
+      if ((payload.toolName === "modify_booking" || payload.toolName === "quote_booking_addition") && result.ok === true && result.stock_receipt && typeof result.stock_receipt === "object")
         receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:mutation-stock`, result: result.stock_receipt as Record<string, unknown> });
       // A rejected amendment can still carry a genuine negative calendar
       // check. Retain that check, never turn the failed write into a success.
-      if (payload.toolName === "modify_booking" && Array.isArray(result.stock_receipts)) {
+      if ((payload.toolName === "modify_booking" || payload.toolName === "quote_booking_addition") && Array.isArray(result.stock_receipts)) {
         for (const raw of result.stock_receipts) {
           if (raw && typeof raw === "object" && (raw as Record<string, unknown>).source === "shared_inventory_confirmed_rentals") {
             const r = raw as Record<string, unknown>;

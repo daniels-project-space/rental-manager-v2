@@ -36,6 +36,21 @@ describe("additions check the complete physical basket",()=>{
     return f;
   };
   const add=(ctx:any,qty:number)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
+  it("quotes one extra with the full native basket and no writes or edit transition",async()=>{
+    const {tables,ctx}=setup();const before=structuredClone(tables);
+    const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true});
+    expect(result).toMatchObject({ok:true,preview_only:true,source:"native_lab_proposal",base_items:[{name:"Sony FX3",quantity:1}],added_items:[{name:"Sony 28-70mm",quantity:1}],quote:{total_gbp:116,days:2,lines:[expect.anything(),expect.objectContaining({name:"Sony 28-70mm",qty:1,line_total_gbp:36})]}});
+    expect(result.context_transition).toBeUndefined();expect(tables).toEqual(before);
+  });
+  it("rejects an overallocated proposal without writes",async()=>{
+    const {tables,ctx}=setup();const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:2,preview_only:true})).toMatchObject({ok:false});expect(tables).toEqual(before);
+  });
+  it("rejects a partial priced proposal and a preview flag on another action",async()=>{
+    const {tables,ctx}=setup();delete tables.renter_bot_lab_orders[0].items[0].daily_price_gbp;const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",preview_only:true})).toMatchObject({ok:false});
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"remove_item",item_name:"Sony FX3",preview_only:true})).toMatchObject({ok:false});expect(tables).toEqual(before);
+  });
   it("rejects two extras when the kit already needs one of the two free lenses",async()=>{
     const {tables,ctx}=setup();const before=structuredClone(tables);
     const result=await add(ctx,2);

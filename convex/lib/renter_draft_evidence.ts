@@ -20,6 +20,7 @@ export const draftEvidenceValidator = v.object({
     daily_rate_gbp:v.optional(v.number()),base_rate_gbp:v.optional(v.number()),total_gbp:v.optional(v.number()),
     days:v.optional(v.number()),quantity:v.optional(v.number()),start_date:v.optional(v.string()),end_date:v.optional(v.string()),
     items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),
+    proposal:v.optional(v.object({base_items:v.array(v.object({name:v.string(),quantity:v.number()})),added_items:v.array(v.object({name:v.string(),quantity:v.number()}))})),
     call_id:v.string(),source:v.string(),
   }))),
   stock: v.array(v.object({

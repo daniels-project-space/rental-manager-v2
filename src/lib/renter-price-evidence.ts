@@ -5,7 +5,7 @@ const string = (s: unknown) => typeof s === "string" && s.trim() ? s : undefined
 /** Aliases from native owned listing context, never model arguments or title tokens. */
 export type PriceListingIdentity = {account_slug:string;product_id:number;names:string[]};
 /** Whitelisted actual tool results, excluding arguments, errors and arbitrary numeric keys. */
-export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceListingIdentity[] = []): PriceEvidence[] {
+export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceListingIdentity[] = [], threadId?: string): PriceEvidence[] {
   const out: PriceEvidence[] = [];
   const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown) => {
     const days=number(r.days), quantity=number(r.quantity);
@@ -31,6 +31,13 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
       const names=[a.name,a.listing_name].filter((n):n is string=>!!string(n));
       if(a.quote && typeof a.quote==="object") quote(a.quote as Record<string,unknown>,names,`${call_id}:${a.name}`,a.daily_price_gbp);
       else if(number(a.daily_price_gbp)) quote({daily_rate_gbp:a.daily_price_gbp,listed_total_gbp:a.daily_price_gbp,days:1,quantity:1,source:"owned_listing_one_day"},names,`${call_id}:${a.name}`,a.daily_price_gbp);
+    }
+    if (tool === "quote_booking_addition" && !!threadId && r.thread_id===threadId && r.preview_only===true && r.source==="native_lab_proposal" && r.quote && typeof r.quote==="object") {
+      const q=r.quote as Record<string,unknown>;
+      const validMembers=(a:unknown):a is Array<{name:string;quantity:number}>=>Array.isArray(a)&&a.length>0&&a.every(i=>i&&typeof i==="object"&&string(i.name)&&number(i.quantity)&&Number.isInteger(i.quantity));
+      if (validMembers(r.base_items)&&validMembers(r.added_items)&&r.added_items.length===1&&Array.isArray(q.lines)&&q.lines.length>0&&number(q.total_gbp)&&number(q.days)&&string(q.start_date)&&string(q.end_date)&&q.lines.every(l=>l&&typeof l==="object"&&string(l.name)&&number(l.qty)&&Number.isInteger(l.qty)&&number(l.line_total_gbp))) {
+        out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal:{base_items:r.base_items,added_items:r.added_items},total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
+      }
     }
     if (tool === "get_lab_order" && Array.isArray(r.lines)) {
       for(const raw of r.lines) {

@@ -42,3 +42,19 @@ describe("server price receipt adapters",()=>{
   const got=renterPriceEvidence([old,next]);expect(got).toHaveLength(2);expect(got.every(g=>g.days===4)).toBe(true);expect(got.find(g=>g.kind==="basket")?.total_gbp).toBe(240);
  });
 });
+
+it("binds a complete read-only proposal to its thread, base basket, addition, dates and conditional claim",()=>{
+ const base=[{name:"Sony A7 II",quantity:1}], added=[{name:"Sony 28-70mm",quantity:1}];
+ const quote={days:2,start_date:"2026-10-06",end_date:"2026-10-07",lines:[{name:"Sony A7 II",qty:1,line_total_gbp:56},{name:"Sony 28-70mm",qty:1,line_total_gbp:36}],total_gbp:92};
+ const native={ok:true,preview_only:true,source:"native_lab_proposal",thread_id:"__probe__quote",base_items:base,added_items:added,quote};
+ const scope={items:base,start_date:quote.start_date,end_date:quote.end_date};
+ const proof=renterPriceEvidence([receipt("quote_booking_addition",native)],[],native.thread_id);
+ const claim="One extra Sony 28-70mm would bring your booking total to £92.";
+ expect(unsupportedPriceClaims(claim,proof,scope)).toEqual([]);
+ for(const text of [claim.replace("would bring","brings"),claim.replace("One extra","Two extra"),claim.replace("Sony 28-70mm","Sony GM 24-70mm"),claim.replace("£92","£100")])expect(unsupportedPriceClaims(text,proof,scope),text).toHaveLength(1);
+ expect(unsupportedPriceClaims(claim,proof,{...scope,items:[{name:"Sony A7 III",quantity:1}]})).toHaveLength(1);
+ expect(unsupportedPriceClaims(claim,proof,{...scope,end_date:"2026-10-08"})).toHaveLength(1);
+ expect(renterPriceEvidence([receipt("quote_booking_addition",native)],[],"__probe__other")).toEqual([]);
+ expect(renterPriceEvidence([receipt("quote_booking_addition",{...native,ok:false})],[],native.thread_id)).toEqual([]);
+ expect(renterPriceEvidence([receipt("quote_booking_addition",{...native,quote:{...quote,lines:[quote.lines[0],{...quote.lines[1],line_total_gbp:null}]}})],[],native.thread_id)).toEqual([]);
+});
