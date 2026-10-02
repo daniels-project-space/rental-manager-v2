@@ -13,3 +13,13 @@ it("invalidates drafts atomically without rewriting unrelated configuration", as
   await expect(invoke({ ALLOW_HYGGLO_SEND: true, invalidate_drafts: true })).rejects.toThrow("SAFETY_RAIL");
   expect(row.draft_epoch).toBe(6);
 });
+it("validates minimum-value settings and invalidates cached commercial advice", async () => {
+  const row: any = {_id:"settings",draft_epoch:10,minimum_rental_gbp:40};
+  const ctx={db:{query:()=>({first:async()=>row}),patch:async (_id:string,patch:any)=>Object.assign(row,patch)}};
+  const invoke=(args:any)=>(update as any)._handler(ctx,args);
+  await expect(invoke({minimum_rental_gbp:-1})).rejects.toThrow("non-negative");
+  await expect(invoke({minimum_rental_gbp:Infinity})).rejects.toThrow("finite");
+  expect(row.draft_epoch).toBe(10);
+  await invoke({minimum_rental_gbp:0});expect(row.minimum_rental_gbp).toBe(0);expect(row.draft_epoch).toBe(11);
+  await invoke({minimum_rental_gbp:35.5});expect(row.draft_epoch).toBe(12);
+});

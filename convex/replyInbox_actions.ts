@@ -1,3 +1,4 @@
+import type { MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
 import type { StockRequest } from "./lib/stock_claims";
 import type { KitEvidence } from "./lib/kit_claims";
@@ -577,6 +578,7 @@ export const generateDraft = action({
     let routeOfferedPrices: number[] = [];
     let routePriceEvidence: PriceEvidence[] | undefined;
     let routePriceRequest: StockRequest | undefined;
+    let routeCommercialContext: MinimumRentalContext | undefined;
     let routeBookingModified = false;
     let routeHasPairingData = false;
     // Which classes of fact the agent actually established this turn. Empty
@@ -627,6 +629,7 @@ export const generateDraft = action({
           offeredPrices?: number[];
           priceEvidence?: PriceEvidence[];
           priceRequest?: StockRequest;
+          commercialContext?: MinimumRentalContext;
           bookingModified?: boolean;
           hasPairingData?: boolean;
           /** Which classes of fact a TOOL supplied this turn — see draft_guard. */
@@ -662,7 +665,8 @@ export const generateDraft = action({
         routeStockRequest = j.stockRequest;
         routePriceEvidence = j.priceEvidence;
         routePriceRequest = j.priceRequest;
-        generationMeta.evidence = { prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: j.conversation_stage ?? "unknown", cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        routeCommercialContext = j.commercialContext;
+        generationMeta.evidence = { commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: j.conversation_stage ?? "unknown", cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         if (j.needs_human) {
           const reason = `needs_human:${j.needs_human_reason ?? "unknown"}`;
           const saved = await recordReview(reason, [], generationMeta.evidence);
@@ -800,6 +804,7 @@ export const generateDraft = action({
       stockRequest: routeStockRequest,
       priceEvidence: routePriceEvidence,
       priceRequest: routePriceRequest,
+      commercialContext: routeCommercialContext,
       history: c.messages as { role: "owner" | "renter"; content: string }[],
       lastRenterMessage: lastRenter,
       account: c.account_slug ?? undefined,

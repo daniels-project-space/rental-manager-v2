@@ -13,6 +13,7 @@ export type PriceEvidence = {
 };
 const norm = (s: string) => s.toLowerCase().replace(/’/g, "'").replace(/[^a-z0-9]+/g, " ").trim();
 const aliases = (names: string[]) => [...new Set(names.flatMap(n => renterItemNames(n).flatMap(a => [norm(a), norm(shortItemName(a)), norm(a.replace(/^Sony\s+(?=(?:FX\d+|A7)\b)/i, ""))])))];
+export const samePriceNames = (a: string[], b: string[]) => aliases(a).some(n => aliases(b).includes(n));
 const cents = (n: number) => Math.round(n * 100);
 
 /** Checks recognised currency claims against their subject, purpose and scope. */
@@ -21,7 +22,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   const known = [...request.items.map(i => ({ names: [i.name, ...(i.aliases ?? [])], quantity: i.quantity })),
     ...evidence.filter(e => e.kind !== "basket").map(e => ({ names: e.names, quantity: undefined }))];
   const names = [...new Set(known.flatMap(k => aliases(k.names)))].filter(Boolean).sort((a,b) => b.length-a.length);
-  const same = (a: string[], b: string[]) => aliases(a).some(n => aliases(b).includes(n));
+  const same = samePriceNames;
   const duration = inclusiveRentalDays(request.start_date, request.end_date);
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];
   let consumed = 0;

@@ -1,3 +1,4 @@
+import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
 import { renterPriceEvidence } from "@/lib/renter-price-evidence";
 import type { PriceEvidence } from "../../../../convex/lib/price_claims";
 import { renterItemNames } from "../../../../convex/lib/renter_item_names";
@@ -531,6 +532,7 @@ export async function POST(req: Request) {
    */
   let stockRequest: StockRequest = { items: [] };
   let priceRequest: StockRequest = {items:[]};
+  let commercialContext: MinimumRentalContext | undefined;
   let availabilityOutKnown = false;
   const toolReceipts: ToolReceipt[] = [];
   /**
@@ -551,6 +553,10 @@ export async function POST(req: Request) {
    * production is free to invent an action.
    */
   let bookingModified = false;
+  const currentPriceEvidence = () => {
+    const prices=[...fixedPriceEvidence.filter(e=>!bookingModified || e.kind!=="basket"),...renterPriceEvidence([...priceSources,...toolReceipts])];
+    return [...prices,...requestedBasketEvidence(prices,priceRequest)];
+  };
   /**
    * Length of the simulated order's change log BEFORE this turn. Comparing it
    * afterwards is how we know a booking edit really happened.
@@ -1082,31 +1088,8 @@ export async function POST(req: Request) {
           factsEmitted.push(`availability-error:${it.name}`);
         }
       }
-      // RULE 10 — Minimum Rental Value. Nudge small bookings up (add-ons first,
-      // then adjust the total) WITHOUT ever revealing a threshold.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const settings: any = await convex.query(api.settings.get, {});
-        const minGbp = typeof settings?.minimum_rental_gbp === "number" ? settings.minimum_rental_gbp : 40;
-        let total = typeof lc.gross_paid_gbp === "number" ? lc.gross_paid_gbp : 0;
-        if (!total) {
-          let days = 1;
-          if (lc.start_date && lc.end_date) {
-            const dd = (new Date(lc.end_date).getTime() - new Date(lc.start_date).getTime()) / 86400000;
-            if (dd >= 1) days = Math.round(dd);
-          }
-          for (const it of (lc.items ?? []) as Array<{ owned?: boolean; daily_price_gbp?: number }>) {
-            if (it.owned !== false && typeof it.daily_price_gbp === "number") total += it.daily_price_gbp * days;
-          }
-        }
-        if (total > 0 && total < minGbp) {
-          groundTruth += `BOOKING TOTAL is only ~£${Math.round(total)} — this is a small booking. DANIEL RULE 10 (Minimum Rental Value): FIRST naturally suggest a relevant add-on or two that we OWN (an extra lens, a gimbal, a monitor, lighting, extra batteries/cards) to lift the total; if they decline, warmly offer to adjust the booking total (e.g. a slightly longer hire). NEVER reveal there is a minimum, NEVER name a threshold or the words "minimum rental value", NEVER mention revenue or earnings.\n`;
-        }
-      } catch {
-        /* best-effort */
-      }
       groundTruth +=
-        "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the facts show the booking is already PAID/confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — confirm availability warmly, then invite them to lock it in by completing the booking. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
+        "Use these facts for price, kit, dates and availability — do NOT assert availability/price beyond them. IMPORTANT: unless the platform facts show the booking is confirmed, do NOT say \"it's all set\", \"confirmed\", \"it's yours\", or talk as if it's locked in — follow the authoritative stage and its actual next action. For an inquiry, invite booking when they are ready; awaiting owner approval is not a payment instruction. Payment or owner acceptance alone does not establish confirmation. And NEVER refer the renter to another lender, rental company, or competitor — keep every renter with us.\n";
     } else {
       // FRESH INQUIRY — no linked reservation yet (the common case for a
       // renter's very first "is X available" message, before any order
@@ -1193,28 +1176,7 @@ export async function POST(req: Request) {
           }
           groundTruth +=
             "Check exact dates and quantity through check_availability before making any availability claim. Only quote the item price given above or from lookup_pricing.\n";
-          // RULE 10 — Minimum Rental Value, extended to fresh inquiries
-          // (Daniel, 2026-08-18): previously this nudge only fired in the
-          // order-linked branch above, so it never ran during a renter's
-          // first "is X available" message — the exact moment a small
-          // booking is still being decided, arguably more useful than
-          // nudging after an order already exists. No real dates yet here,
-          // so use the single-day rate as a conservative "at least this
-          // small" signal rather than guessing a duration.
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const settings: any = await convex.query(api.settings.get, {});
-            const minGbp = typeof settings?.minimum_rental_gbp === "number" ? settings.minimum_rental_gbp : 40;
-            const singleDayTotal = resolvedItems.reduce(
-              (sum, it) => sum + (typeof it.dailyRateGbp === "number" ? it.dailyRateGbp : 0),
-              0,
-            );
-            if (singleDayTotal > 0 && singleDayTotal < minGbp) {
-              groundTruth += `RESOLVED ITEM(S) ABOVE total only ~£${Math.round(singleDayTotal)}/day — likely a small booking. DANIEL RULE 10 (Minimum Rental Value): FIRST naturally suggest a relevant add-on or two that we OWN (an extra lens, a gimbal, a monitor, lighting, extra batteries/cards) to lift the total; if they decline, warmly offer to adjust the booking total (e.g. a slightly longer hire). NEVER reveal there is a minimum, NEVER name a threshold or the words "minimum rental value", NEVER mention revenue or earnings.\n`;
-            }
-          } catch {
-            /* best-effort */
-          }
+
         }
       } catch {
         /* best-effort — if this fails, groundTruth just stays empty as before */
@@ -1223,6 +1185,13 @@ export async function POST(req: Request) {
   } catch {
     /* best-effort ground truth */
   }
+
+  try {
+    const settings = await convex.query(api.settings.get, {});
+    commercialContext = minimumRentalContext(authoritativeStage, settings?.minimum_rental_gbp ?? 40,
+      currentPriceEvidence(),priceRequest);
+    groundTruth += minimumRentalPrompt(commercialContext)+"\n";
+  } catch { /* Unknown commercial totals never imply a small rental. */ }
 
   // Per-account PICKUP location — share ONLY after the booking is confirmed.
   try {
@@ -1497,9 +1466,10 @@ export async function POST(req: Request) {
           resolvedItems,
           itemsWithoutKitData,
           kitEvidence,
-          priceEvidence: [...fixedPriceEvidence,...renterPriceEvidence([...priceSources,...toolReceipts])],
+          priceEvidence: currentPriceEvidence(),
           stockRequest,
           priceRequest,
+          commercialContext,
           offeredPrices: [...new Set(offeredPrices)],
           marketingItems,
         });
@@ -1694,6 +1664,7 @@ export async function POST(req: Request) {
         /* leave false — a claim without proof stays a false claim */
       }
     }
+    if (commercialContext) commercialContext=minimumRentalContext(authoritativeStage,commercialContext.threshold_gbp,currentPriceEvidence(),priceRequest);
     return NextResponse.json({
       ok: true,
       draft: obj.draft ?? "",
@@ -1748,8 +1719,9 @@ export async function POST(req: Request) {
       availabilityReceipts: stockReceipts(toolReceipts).map((r) => ({ call_id: r.call_id, ...r.result })),
       stockRequest,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
-      priceEvidence: [...fixedPriceEvidence.filter(e => !bookingModified || e.kind !== "basket"),...renterPriceEvidence([...priceSources,...toolReceipts])],
+      priceEvidence: currentPriceEvidence(),
       priceRequest,
+      commercialContext,
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
       tokenUsage,

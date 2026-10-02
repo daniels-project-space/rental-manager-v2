@@ -1,3 +1,4 @@
+import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
 import { unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
@@ -44,6 +45,7 @@ export interface GuardOpts {
   stockEvidence?: StockReceipt[];
   priceEvidence?: PriceEvidence[];
   priceRequest?: StockRequest;
+  commercialContext?: MinimumRentalContext;
   stockRequest?: StockRequest;
   /** Reviewed exact-model catalog results, not a tool-use boolean or prose. */
   cameraEvidence?: CameraEvidence[];
@@ -187,6 +189,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   NON_INVENTORY_ADDON: "high",
   TIMING_CAPITULATION: "high",
   LOW_VALUE_BLOCK: "high",
+  MINIMUM_POLICY_DISCLOSURE: "critical",
   PLATFORM_LEAK: "medium",
   PROACTIVE_DELIVERY: "medium",
   QUALIFY_QUESTION_SPAM: "medium",
@@ -1337,8 +1340,8 @@ const ASSERTS_AVAIL_RE =
     push("GEAR_RECEIPT_CONFIRMED", "Confirms gear received back — inspect before confirming", "flagged");
 
   // 24. LOW-VALUE RENTAL ACCEPTED WITHOUT UPSELL — FLAG (factPack-gated)
-  if (factPack?.lowValueInstruction) {
-    const accepts =
+  if (opts.commercialContext?.status === "below" || (opts.commercialContext === undefined && factPack?.lowValueInstruction)) {
+    const accepts = !/\b(?:not available|isn't available|unavailable|booked out)\b/i.test(text) &&
       /\b(available|free for|sorted|confirmed|all set|booked for you|good to go|locked in|reserved for you)\b/i.test(
         text,
       );
@@ -1347,7 +1350,11 @@ const ASSERTS_AVAIL_RE =
         text,
       );
     if (accepts && !hasUpsell)
-      push("LOW_VALUE_BLOCK", "Accepts a sub-minimum booking without an upsell/minimum note", "flagged");
+      push("LOW_VALUE_BLOCK", "Offers a prospective low-value booking without a relevant optional add-on", "flagged");
+  }
+
+  if (opts.commercialContext && /\b(?:minimum\s+(?:rental\s+value|booking\s+(?:value|amount)|(?:rental|hire|order)\s+(?:value|amount|charge)|spend)|(?:booking|rental|hire|order)\s+minimum)\b|\bminimum\s*(?:(?:rental|booking|order|hire|spend|charge|fee|amount|value)\s*)?(?:is|of|:)?\s*£|£\s*\d+(?:\.\d{1,2})?\s*(?:(?:booking|rental|hire|order|spend)\s+)?minimum\b/i.test(text)) {
+    push("MINIMUM_POLICY_DISCLOSURE", "Discloses an internal commercial threshold or minimum policy", "flagged");
   }
 
   // 25. FORMATTING CLEANUP — STRIP

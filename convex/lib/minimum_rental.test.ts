@@ -1,0 +1,56 @@
+import {describe,it,expect} from "vitest";
+import {minimumRentalContext,minimumRentalPrompt,requestedBasketEvidence} from "./minimum_rental";
+import {RENTAL_STAGES} from "./rental_stage";
+import {guardDraft} from "./draft_guard";
+import type {PriceEvidence} from "./price_claims";
+import type {StockRequest} from "./stock_claims";
+const request:StockRequest={start_date:"2026-10-02",end_date:"2026-10-03",items:[{name:"Sony FX3",quantity:2}]};
+const price:PriceEvidence={names:["Sony FX3"],kind:"rental",days:2,quantity:2,daily_rate_gbp:15,total_gbp:60,source:"hygglo_tier",call_id:"native"};
+const context=(prices=[price],req=request,stage="INQUIRY")=>minimumRentalContext(stage,40,prices,req);
+describe("prospective minimum-value context",()=>{
+ it("uses inclusive dates and exact quantity/tier total",()=>{
+  expect(context()).toMatchObject({status:"meets",total_gbp:60,basis:"complete_requested_quote"});
+  expect(context([{...price,quantity:1,total_gbp:30}],{...request,items:[{name:"Sony FX3",quantity:1}]})).toMatchObject({status:"below",total_gbp:30});
+ });
+ it("does not classify partial baskets, unknown dates or mismatched scope",()=>{
+  const mixed={...request,items:[...request.items,{name:"Sony A7 V",quantity:1}]};
+  for(const [p,r] of [[[price],mixed],[[price],{...request,end_date:undefined}],[[{...price,quantity:1}],request],[[{...price,start_date:"2026-10-04"}],request]] as Array<[PriceEvidence[],StockRequest]>)expect(context(p,r).status).toBe("unknown");
+ });
+ it("requires independently attributed quote data",()=>{
+  expect(context([{...price,call_id:""}]).status).toBe("unknown");
+  expect(context([{...price,source:""}]).status).toBe("unknown");
+ });
+ it("does not treat alternative prices as missing requested gear",()=>{
+  expect(context([{...price,names:["Sony A7 V"]}]).status).toBe("unknown");
+  expect(context([price,{...price,total_gbp:70}]).status).toBe("unknown");
+ });
+ it.each(RENTAL_STAGES)("applies policy only before acceptance: %s",stage=>{
+  const got=context([{...price,total_gbp:30}],request,stage);
+  expect(got.status).toBe(["INQUIRY","AWAITING_OWNER_APPROVAL"].includes(stage)?"below":"not_applicable");
+ });
+ it("preserves an authoritative current booking amount over catalogue estimates",()=>{
+  const basket:PriceEvidence={names:[],items:request.items,kind:"basket",days:2,total_gbp:35,source:"booking_gross_amount",call_id:"booking"};
+  expect(context([price,basket])).toMatchObject({status:"below",total_gbp:35,basis:"current_booking"});
+ });
+ it("does not manufacture a basket receipt from a partial request",()=>{
+  const mixed={...request,items:[...request.items,{name:"Sony A7 V",quantity:1}]};
+  expect(requestedBasketEvidence([price],mixed)).toEqual([]);
+  const receipt=requestedBasketEvidence([price],request);expect(receipt[0]).toMatchObject({total_gbp:60,items:request.items,days:2,source:"complete_requested_quote"});
+  const guard=guardDraft("The combined total is £60 for 2 days.",{history:[],lastRenterMessage:"Total?",hasItemGrounding:true,priceRequest:request,priceEvidence:[price,...receipt]});
+  expect(guard.flags.filter(f=>f.type==="PRICE_HALLUCINATION")).toEqual([]);
+ });
+ it("allows zero to disable the policy and omits private threshold from model instructions",()=>{
+  expect(minimumRentalContext("INQUIRY",0,[price],request).status).toBe("disabled");
+  const below=context([{...price,total_gbp:30}]);expect(minimumRentalPrompt(below)).not.toContain("£40");
+  expect(minimumRentalPrompt(context([],request))).not.toContain("likely a small");
+ });
+ it("wires the prospective nudge and prevents threshold disclosure without reopening later stages",()=>{
+  const opts={history:[],lastRenterMessage:"Available?",hasItemGrounding:true,commercialContext:context([{...price,total_gbp:30}])};
+  expect(guardDraft("It is available for those dates.",opts).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
+  expect(guardDraft("It isn't available for those dates.",opts).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
+  expect(guardDraft("The minimum rental value is £40.",opts).flags).toContainEqual(expect.objectContaining({type:"MINIMUM_POLICY_DISCLOSURE",severity:"critical"}));
+  expect(guardDraft("There is a £40 booking minimum.",opts).flags.some(f=>f.type==="MINIMUM_POLICY_DISCLOSURE")).toBe(true);
+  expect(guardDraft("Minimum focus distance is 30cm, and the kit is £60.",opts).flags.some(f=>f.type==="MINIMUM_POLICY_DISCLOSURE")).toBe(false);
+  expect(guardDraft("It is available for those dates.",{...opts,commercialContext:context([price],request,"CONFIRMED_UPCOMING")}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
+ });
+});

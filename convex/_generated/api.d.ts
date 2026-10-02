@@ -144,6 +144,7 @@ import type * as lib_listing_inventory from "../lib/listing_inventory.js";
 import type * as lib_listing_photo_reference from "../lib/listing_photo_reference.js";
 import type * as lib_marketing_only_requests from "../lib/marketing_only_requests.js";
 import type * as lib_message_reconciliation from "../lib/message_reconciliation.js";
+import type * as lib_minimum_rental from "../lib/minimum_rental.js";
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_month_projection from "../lib/month_projection.js";
 import type * as lib_monthly_verification from "../lib/monthly_verification.js";
@@ -440,6 +441,7 @@ declare const fullApi: ApiFromModules<{
   "lib/listing_photo_reference": typeof lib_listing_photo_reference;
   "lib/marketing_only_requests": typeof lib_marketing_only_requests;
   "lib/message_reconciliation": typeof lib_message_reconciliation;
+  "lib/minimum_rental": typeof lib_minimum_rental;
   "lib/missed_revenue": typeof lib_missed_revenue;
   "lib/month_projection": typeof lib_month_projection;
   "lib/monthly_verification": typeof lib_monthly_verification;

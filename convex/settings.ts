@@ -130,7 +130,10 @@ export const update = mutation({
     if (fields.availability_include_pending !== undefined)
       patch.availability_include_pending = fields.availability_include_pending;
     if (fields.pickup_hours !== undefined) patch.pickup_hours = validatePickupHours(fields.pickup_hours);
-    if (fields.minimum_rental_gbp !== undefined) patch.minimum_rental_gbp = fields.minimum_rental_gbp;
+    if (fields.minimum_rental_gbp !== undefined) {
+      if (!Number.isFinite(fields.minimum_rental_gbp) || fields.minimum_rental_gbp < 0) throw new Error("Minimum rental value must be a finite non-negative GBP amount");
+      patch.minimum_rental_gbp = fields.minimum_rental_gbp;
+    }
     if (fields.hub_heavy_max_km !== undefined) patch.hub_heavy_max_km = fields.hub_heavy_max_km;
     if (fields.hub_max_km !== undefined) patch.hub_max_km = fields.hub_max_km;
     if (fields.draft_epoch !== undefined) patch.draft_epoch = fields.draft_epoch;
@@ -141,6 +144,7 @@ export const update = mutation({
     // drafts are cached, so they need this nudge). Skip if the caller is itself
     // setting draft_epoch, or only changed poll/gate fields the draft ignores.
     const DRAFT_FIELDS: (keyof typeof fields)[] = [
+      "minimum_rental_gbp",
       "pickup_hours",
       "escalate_to_sonnet",
       "availability_include_pending",
