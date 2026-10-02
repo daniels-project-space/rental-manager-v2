@@ -34,4 +34,9 @@ describe("manufacturer reviewed sensor comparisons", () => {
     expect(guardDraft("The FX3 and FX30 have the same sensor.", { history: [], lastRenterMessage: "Are those cameras the same?" }).flags)
       .toContainEqual(expect.objectContaining({ type: "CAMERA_COMPARISON_HALLUCINATION", severity: "critical", action: "flagged" }));
   });
+  it("does not let an unrelated decline or stock check excuse a sensor assertion", () => {
+    expect(unsupportedSensorIdentityClaims("The A7S III isn't available and the FX30 has the same sensor as the FX3.")).toHaveLength(1);
+    expect(unsupportedSensorIdentityClaims("I'll check the dates; the FX30 has the same sensor as the FX3.")).toHaveLength(1);
+    expect(unsupportedSensorIdentityClaims("I'll check stock and the FX30 has the same sensor as the FX3.")).toHaveLength(1);
+  });
 });

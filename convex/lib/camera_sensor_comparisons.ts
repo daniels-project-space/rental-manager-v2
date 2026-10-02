@@ -26,7 +26,9 @@ export function unsupportedSensorIdentityClaims(text: string, initialNames: stri
     const claim = /\b(?:same|identical)\s+(?:(?:full[ -]?frame|image|imaging|CMOS)\s+)*sensors?\b|\bshares?\s+(?:(?:its|the|a|full[ -]?frame|image|imaging|CMOS)\s+)*sensors?\s+with\b|\buses?\s+(?:the\s+)?[^,;.!?]{1,45}'s\s+(?:image\s+)?sensor\b/i.exec(clause);
     if (!claim || /^\s*(?:size|format|dimensions?|resolution|type)\b/i.test(clause.slice(claim.index + claim[0].length))) continue;
     const prefix = clause.slice(0, claim.index);
-    if (/\b(?:no|not|without|don't|doesn't|do not|does not|isn't|aren't|can't|cannot|if|whether|check|verify|confirm|unsure)\b[^.!?]{0,90}$/i.test(prefix) || /\?\s*$/.test(clause)) continue;
+    const negatesComparison = /\b(?:no|not|without|don't|doesn't|do not|does not|isn't|aren't|can't|cannot)\s+(?:(?:have|has|use|uses|share|shares|using|sharing|exactly|precisely|necessarily|the|a|an)\s+)*$/i.test(prefix);
+    const conditionalComparison = /\b(?:if|whether)\b[^,;.!?]{0,90}$/i.test(prefix);
+    if (negatesComparison || conditionalComparison || /\?\s*$/.test(clause)) continue;
     const supported = subjects.length === 2 && verifiedSensorComparisons.some(c => {
       const pair = c.models.flatMap(modelIds);
       return subjects.every(s => pair.includes(s));
