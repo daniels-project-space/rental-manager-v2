@@ -414,10 +414,12 @@ export async function POST(req: Request) {
   let alreadySaidUnavailable = false;
   /** Hygglo moderation banner seen in this thread, if any. */
   let platformNotice: string | null = null;
+  let requestMessageId: string | undefined;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rc: any = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id });
     account_slug = rc?.account_slug ?? "";
+    requestMessageId = typeof rc?.last_message_id === "string" ? rc.last_message_id : undefined;
     const msgs = (rc?.last_messages ?? []) as Array<{ sender?: string; body?: string }>;
     // Skip Hygglo's own moderation banners when deciding what the renter
     // "just said". Stored with sender "renter", they made the platform the
@@ -1386,7 +1388,7 @@ export async function POST(req: Request) {
         ? await getRenterBotAgentForModel(modelOverride)
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug }, () => (agent as any).generate(baseMessages, {
+      const result: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
         // Flash (a reasoning model — thinks before it speaks, same behavior
@@ -1541,7 +1543,7 @@ export async function POST(req: Request) {
           ];
           const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug }, () => (retryAgent as any).generate(retryMessages, {
+          const retryResult: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
             modelSettings: { maxOutputTokens: 4096 },
           }));

@@ -72,6 +72,25 @@ describe("additions check the complete physical basket",()=>{
     expect(tables.renter_bot_lab_orders[0].items).toHaveLength(2);
     expect(tables.renter_bot_lab_orders[0].items[1]).toMatchObject({item_id:"lens",qty:1});
   });
+  it("replays an addition once per inbound across reviewed aliases, while a new request can add more",async()=>{
+    const {tables,ctx}=setup();tables.items.find(i=>i._id==="lens").qty=3;
+    tables.items.find(i=>i._id==="lens").aliases=["Sony 28 70"];
+    tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
+    expect(await add(ctx,1)).toMatchObject({ok:true});
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28 70",qty:1,request_message_id:"renter-1"})).toMatchObject({ok:true,already_applied:true});
+    expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+    expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(1);
+    tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-2",fetched_at:2,_creationTime:2});
+    expect(await add(ctx,1)).toMatchObject({ok:true});
+    expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(2);
+    expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(2);
+  });
+  it("never lets a delayed tool change the order after another inbound",async()=>{
+    const {tables,ctx}=setup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"new",fetched_at:2,_creationTime:2}];
+    const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",request_message_id:"old"})).toMatchObject({ok:false,error_code:"stale_inbound"});
+    expect(tables).toEqual(before);
+  });
   it("does not add a free extra to an existing unmapped kit",async()=>{
     const {tables,ctx}=setup();tables.listing_resolution_override=[];
     tables.hygglo_products=[{accountSlug:"leo",productId:1,masterItemId:"camera",name:"Unmapped kit"}];
@@ -200,4 +219,19 @@ describe("amended drafts retain atomic cache safety", () => {
     expect(await (setDraft as any)._handler(ctx, args)).toMatchObject({ ok: false });
     expect(tables.conversations[0].ai_draft_text).toBeUndefined();
   });
+});
+
+it("replayed removals cannot decrement the quantity twice",async()=>{
+ const {tables,ctx}=fixture();tables.items[0].aliases=["FX 3"];
+ tables.renter_bot_lab_orders[0].items[0].qty=3;
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
+ expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:true});
+ expect(await remove(ctx,"FX 3",1)).toMatchObject({ok:true,already_applied:true,order:{lines:[expect.objectContaining({qty:2})]}});
+ expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+});
+it("unchanged dates create no extra revision even without a message key",async()=>{
+ const {tables,ctx}=fixture();
+ expect(await extend(ctx)).toMatchObject({ok:true});
+ expect(await extend(ctx)).toMatchObject({ok:true,already_applied:true});
+ expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
 });

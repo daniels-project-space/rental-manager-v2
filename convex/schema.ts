@@ -723,6 +723,9 @@ const operationalSchema = defineSchema({
     account_slug: v.optional(v.string()),          // denormalised for filtering/colour
     // Cached AI draft reply (lazy, generated on tile expand). Invalidated when
     // a newer renter message arrives (ai_draft_for_message_id mismatch).
+    /** Only one managed agent execution may operate on a thread at a time. */
+    ai_draft_generation_token: v.optional(v.string()),
+    ai_draft_generation_until: v.optional(v.number()),
     ai_draft_text: v.optional(v.string()),
     ai_draft_for_message_id: v.optional(v.string()),
     ai_draft_generated_at: v.optional(v.number()),
@@ -2569,7 +2572,7 @@ const operationalSchema = defineSchema({
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
     /** Append-only trail of what the bot did, for the Lab's overview panel. */
-    changes: v.array(v.object({ at: v.number(), summary: v.string() })),
+    changes: v.array(v.object({ at: v.number(), summary: v.string(), request_key: v.optional(v.string()) })),
     updated_at: v.number(),
   }).index("by_thread", ["thread_id"]),
 

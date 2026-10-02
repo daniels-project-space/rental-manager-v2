@@ -95,6 +95,10 @@ export const generateDraft = action({
     generation_error?: CanonicalGenerationError;
     review?: DraftReview;
   }> => {
+    const generationToken = crypto.randomUUID();
+    const claim = await ctx.runMutation(internal.replyInbox.claimDraftGeneration, { thread_id, token: generationToken });
+    if (!claim.ok) return { status: "skipped", reason: claim.reason };
+    try {
     // Make sure we know the inquiry's listing before drafting — pulls the order
     // detail's items onto conv.inquiry_items (no-op if cached or a reservation
     // already carries the items). This is what stops "I don't know which item."
@@ -972,6 +976,14 @@ export const generateDraft = action({
       ...guardCandidate,
       usedTools, // diagnostic: did the agent actually call a grounding tool this turn
     };
+    } finally {
+      try {
+        await ctx.runMutation(internal.replyInbox.releaseDraftGeneration, { thread_id, token: generationToken });
+      } catch {
+        // Leave the lease closed until expiry if the database is temporarily unavailable.
+        console.warn("[generateDraft] generation lease release failed");
+      }
+    }
   },
 });
 

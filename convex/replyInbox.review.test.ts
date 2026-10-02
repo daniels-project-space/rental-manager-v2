@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { setDraftReview, setDraft, threadsNeedingDraft } from "./replyInbox";
+import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration } from "./replyInbox";
 import { generateDraft } from "./replyInbox_actions";
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
@@ -97,10 +97,37 @@ describe("durable review mutations and automatic queue", () => {
   it("returns the saved review on another generation call without invoking a model", async () => {
     const f = await setup(); const saved = await invoke(setDraftReview, f.ctx, f.args);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("provider must not be called"));
-    const ctx = { runAction: vi.fn().mockResolvedValue({}), runQuery: vi.fn().mockResolvedValue({ draft_review: saved.review, draft_epoch: 2, draft_context_key: f.args.context_key, last_message_id: f.args.message_id }), runMutation: vi.fn() };
+    const ctx = { runAction: vi.fn().mockResolvedValue({}), runQuery: vi.fn().mockResolvedValue({ draft_review: saved.review, draft_epoch: 2, draft_context_key: f.args.context_key, last_message_id: f.args.message_id }), runMutation: vi.fn().mockResolvedValue({ok:true}) };
     try {
       expect(await invoke(generateDraft, ctx, { thread_id: f.args.thread_id })).toMatchObject({ status: "skipped", review: saved.review, flags: f.args.flags });
-      expect(fetchSpy).not.toHaveBeenCalled(); expect(ctx.runMutation).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled(); expect(ctx.runMutation).toHaveBeenCalledTimes(2);
     } finally { fetchSpy.mockRestore(); }
+  });
+});
+
+
+describe("managed generation ownership", () => {
+  it("rejects overlap and an expired owner's release cannot remove its replacement", async () => {
+    const f = await setup();
+    expect(await invoke(claimDraftGeneration, f.ctx, {thread_id:f.args.thread_id,token:"first"})).toEqual({ok:true});
+    expect(await invoke(claimDraftGeneration, f.ctx, {thread_id:f.args.thread_id,token:"second"})).toMatchObject({ok:false,reason:"generation_in_progress"});
+    await f.ctx.db.patch(f.convId,{ai_draft_generation_until:Date.now()-1});
+    expect(await invoke(claimDraftGeneration,f.ctx,{thread_id:f.args.thread_id,token:"replacement"})).toEqual({ok:true});
+    expect(await invoke(releaseDraftGeneration,f.ctx,{thread_id:f.args.thread_id,token:"first"})).toEqual({ok:false});
+    expect(f.rows.get(f.convId).ai_draft_generation_token).toBe("replacement");
+    expect(await invoke(releaseDraftGeneration,f.ctx,{thread_id:f.args.thread_id,token:"replacement"})).toEqual({ok:true});
+    expect(await invoke(claimDraftGeneration,f.ctx,{thread_id:f.args.thread_id,token:"third"})).toEqual({ok:true});
+  });
+  it("does not resolve context or call a model when another generation owns the thread", async () => {
+    const ctx={runMutation:vi.fn().mockResolvedValue({ok:false,reason:"generation_in_progress"}),runQuery:vi.fn(),runAction:vi.fn()};
+    expect(await invoke(generateDraft,ctx,{thread_id:"busy-thread"})).toMatchObject({status:"skipped",reason:"generation_in_progress"});
+    expect(ctx.runQuery).not.toHaveBeenCalled();expect(ctx.runAction).not.toHaveBeenCalled();expect(ctx.runMutation).toHaveBeenCalledTimes(1);
+  });
+  it("releases its own claim after a context failure so a corrected retry can run", async () => {
+    const failure=new Error("context unavailable");
+    const ctx={runMutation:vi.fn().mockResolvedValue({ok:true}),runQuery:vi.fn().mockRejectedValue(failure),runAction:vi.fn().mockResolvedValue({})};
+    await expect(invoke(generateDraft,ctx,{thread_id:"failure-thread"})).rejects.toThrow("context unavailable");
+    expect(ctx.runMutation).toHaveBeenCalledTimes(2);
+    expect(ctx.runMutation.mock.calls[1][1]).toEqual(ctx.runMutation.mock.calls[0][1]);
   });
 });

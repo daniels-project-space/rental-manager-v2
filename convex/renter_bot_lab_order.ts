@@ -13,6 +13,7 @@ import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
 import type { QueryCtx } from "./_generated/server";
 import { rentalStage } from "./lib/rental_stage";
+import { recentThreadMessages } from "./lib/thread_messages";
 import { londonToday } from "./lib/effectiveDates";
 
 async function amendmentContext(ctx: QueryCtx, threadId: string) {
@@ -276,6 +277,8 @@ export const applyChange = mutation({
       v.literal("set_dates"),
     ),
     preview_only: v.optional(v.boolean()),
+    /** Bound by the canonical server tool scope, never chosen by the model. */
+    request_message_id: v.optional(v.string()),
     item_name: v.optional(v.string()),
     qty: v.optional(v.number()),
     start_date: v.optional(v.string()),
@@ -289,6 +292,20 @@ export const applyChange = mutation({
       .withIndex("by_thread", (q) => q.eq("thread_id", a.thread_id))
       .unique();
     if (!row) return { ok: false, error: "no simulated order for this session" };
+
+    const [latestMessage] = await recentThreadMessages(ctx, a.thread_id, 1);
+    if (a.request_message_id !== undefined && a.request_message_id !== latestMessage?.message_id)
+      return { ok:false, error_code:"stale_inbound", error:"A newer message arrived. No booking changes were made; regenerate using the current conversation." };
+    const messageId = a.request_message_id ?? latestMessage?.message_id;
+    const nativeItems = a.action === "set_dates" ? [] : await ctx.db.query("items").collect();
+    const identity = a.item_name ? bestMatch(a.item_name, nativeItems, i=>i.name_canonical, i=>i.aliases ?? []) : null;
+    const itemKey = identity?.confident && identity.match ? String(identity.match._id) : a.item_name?.trim().toLowerCase();
+    const requestKey = messageId && !a.preview_only ? JSON.stringify([messageId,a.action,
+      ...(a.action === "set_dates" ? [a.start_date,a.end_date ?? a.start_date] : [itemKey,a.qty ?? 1])]) : undefined;
+    const previous = requestKey ? row.changes.find(change => change.request_key === requestKey) : undefined;
+    if (previous) return {ok:true,already_applied:true,applied:previous.summary,
+      note:"This request was applied previously. No new edit was made; use the current order below as the source of truth.",
+      order:summarise(row.items,row.start_date,row.end_date)};
 
     const beforeContext = await amendmentContext(ctx, a.thread_id);
     const beforeRevision = row.changes.length;
@@ -314,6 +331,8 @@ export const applyChange = mutation({
         return { ok: false, error: "Use valid pickup and return dates in order, up to 366 rental days" };
       if ((booking?.pickup_date || booking?.status === "ongoing") && a.start_date !== row.start_date)
         return { ok: false, error: "The rental has already been collected. Keep its original pickup date when extending the return." };
+      if (a.start_date === row.start_date && end === row.end_date)
+        return {ok:true,already_applied:true,applied:`dates already ${a.start_date} – ${end}`,order:summarise(lines,row.start_date,row.end_date)};
       const stock = await checkOrderRentalStock(ctx, row.account_slug, lines, a.start_date, end, a.thread_id);
       if (stock.available !== true) return { ok: false, error_code: "stock_unavailable_or_unknown",
         error: `Cannot change this basket to ${a.start_date} – ${end}: ${stock.reason}. No dates or prices were changed. Use the checked full date span for the refusal; a failed range check alone does not prove which individual day is booked.`, stock_receipts: stock.receipts };
@@ -322,7 +341,7 @@ export const applyChange = mutation({
         end_date: end,
         changes: [
           ...row.changes,
-          { at: Date.now(), summary: `dates -> ${a.start_date} to ${end}` },
+          { at: Date.now(), summary: `dates -> ${a.start_date} to ${end}`, ...(requestKey ? {request_key:requestKey} : {}) },
         ],
         updated_at: Date.now(),
       });
@@ -347,7 +366,7 @@ export const applyChange = mutation({
         return { ok: false, error: "quantity must be a whole number between 1 and 20" };
       if (isGenericItemQuery(a.item_name))
         return { ok: false, error: `"${a.item_name}" names a category. Ask which exact booked model to remove; no items or prices changed.` };
-      const inventory = await ctx.db.query("items").collect();
+      const inventory = nativeItems;
       const candidates = lines.map(line => ({ line, native: inventory.find(i => String(i._id) === line.item_id) }));
       // Physical identity and reviewed aliases outrank advertising-title prose.
       // A7 II is not A7 III; an FX3 title mentioning A7S III is still an FX3.
@@ -366,7 +385,7 @@ export const applyChange = mutation({
       summaryText = `removed ${qty}x ${match.match.native?.name_canonical ?? selected.name}`;
       await ctx.db.patch(row._id, {
         items: kept.map((l) => ({ ...l, item_id: l.item_id as never })),
-        changes: [...row.changes, { at: Date.now(), summary: summaryText }],
+        changes: [...row.changes, { at: Date.now(), summary: summaryText, ...(requestKey ? {request_key:requestKey} : {}) }],
         updated_at: Date.now(),
       });
       return {
@@ -378,7 +397,7 @@ export const applyChange = mutation({
     }
 
     // add_item
-    const owned = (await ctx.db.query("items").collect()).filter(
+    const owned = nativeItems.filter(
       (i) => i.status === "active" && !i.is_marketing_only && (i.qty ?? 0) > 0,
     );
     // A category is not a product. "a lens" resolved to a DZOFilm Vespid
@@ -458,7 +477,7 @@ export const applyChange = mutation({
 
     await ctx.db.patch(row._id, {
       items: lines.map((l) => ({ ...l, item_id: l.item_id as never })),
-      changes: [...row.changes, { at: Date.now(), summary: summaryText }],
+      changes: [...row.changes, { at: Date.now(), summary: summaryText, ...(requestKey ? {request_key:requestKey} : {}) }],
       updated_at: Date.now(),
     });
     return {

@@ -1766,6 +1766,29 @@ export const threadsNeedingDraft = internalQuery({
 // ── Draft cache write (called by generateDraft action) ────────────
 
 /** A blocked candidate is never saved as a sendable preview. */
+/** Fail closed while a managed generation is active; abandoned actions eventually expire. */
+export const claimDraftGeneration = internalMutation({
+  args: { thread_id: v.string(), token: v.string() },
+  handler: async (ctx, { thread_id, token }) => {
+    const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", thread_id)).first();
+    if (!conv) return { ok: false as const, reason: "missing_thread" };
+    if (conv.ai_draft_generation_token && (conv.ai_draft_generation_until ?? 0) > Date.now())
+      return { ok: false as const, reason: "generation_in_progress" };
+    await ctx.db.patch(conv._id, { ai_draft_generation_token: token, ai_draft_generation_until: Date.now() + 15 * 60_000 });
+    return { ok: true as const };
+  },
+});
+
+export const releaseDraftGeneration = internalMutation({
+  args: { thread_id: v.string(), token: v.string() },
+  handler: async (ctx, { thread_id, token }) => {
+    const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", thread_id)).first();
+    if (!conv || conv.ai_draft_generation_token !== token) return { ok: false as const };
+    await ctx.db.patch(conv._id, { ai_draft_generation_token: undefined, ai_draft_generation_until: undefined });
+    return { ok: true as const };
+  },
+});
+
 export const setDraftReview = internalMutation({
   args: { thread_id: v.string(), message_id: v.string(), epoch: v.number(), context_key: v.string(),
     reason: v.string(), flags: v.array(reviewFlagValidator), stage: v.string(), evidence: v.optional(draftEvidenceValidator) },

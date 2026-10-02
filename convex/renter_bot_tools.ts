@@ -106,6 +106,7 @@ export const get_renter_context = query({
       renter,
       conversation_stage: stage,
       rental_stage: rentalStage(reservation, londonToday()),
+      last_message_id: recentMsgs.at(-1)?.message_id ?? null,
       last_messages: recentMsgs
         .map((m) => ({
           sender: m.sender === "owner" ? "owner" : "renter",

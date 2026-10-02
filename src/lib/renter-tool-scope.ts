@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-type RenterScope = { threadId: string; accountSlug: string };
+type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string };
 const storage = new AsyncLocalStorage<RenterScope>();
 export const withRenterToolScope = <T>(scope: RenterScope, run: () => T): T => storage.run(scope, run);
 
@@ -10,5 +10,6 @@ export function bindRenterToolArgs(functionName: string, args: Record<string, un
   const bound = { ...args };
   if ("account_slug" in args || functionName === "renter_bot_tools:lookup_pricing") bound.account_slug = scope.accountSlug;
   if ("thread_id" in args || functionName === "renter_bot_tools:check_availability") bound.thread_id = scope.threadId;
+  if (functionName === "renter_bot_lab_order:applyChange") bound.request_message_id = scope.requestMessageId ?? "";
   return bound;
 }

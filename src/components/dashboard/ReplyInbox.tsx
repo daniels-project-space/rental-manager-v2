@@ -1937,6 +1937,8 @@ export function ReplyModal({
         setDraftReview(r.review ?? null);
         setDraft(""); setDraftConfidence(null); setDraftFlags([]);
         setNote(r.review ? null : "The reply needs your review. " + draftReviewSummary({ reason: r.reason, flags: r.flags ?? [] }));
+      } else if (r.reason === "generation_in_progress") {
+        setNote("A reply is already being drafted. It will appear here when ready.");
       } else if (r.reason === "subscription_unavailable") {
         setNote("The draft assistant is temporarily unavailable.");
       } else setNote("Draft unavailable.");
