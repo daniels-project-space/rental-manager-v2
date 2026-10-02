@@ -2,8 +2,10 @@ import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { ToolReceipt } from "./renter-tool-evidence";
 const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
 const string = (s: unknown) => typeof s === "string" && s.trim() ? s : undefined;
+/** Aliases from native owned listing context, never model arguments or title tokens. */
+export type PriceListingIdentity = {account_slug:string;product_id:number;names:string[]};
 /** Whitelisted actual tool results, excluding arguments, errors and arbitrary numeric keys. */
-export function renterPriceEvidence(receipts: ToolReceipt[]): PriceEvidence[] {
+export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceListingIdentity[] = []): PriceEvidence[] {
   const out: PriceEvidence[] = [];
   const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown) => {
     const days=number(r.days), quantity=number(r.quantity);
@@ -19,7 +21,8 @@ export function renterPriceEvidence(receipts: ToolReceipt[]): PriceEvidence[] {
     if(tool==="get_lab_order" && receipt!==latestOrder)continue;
     if (!call_id || r.error || r.ok===false || r.found===false) continue;
     if (tool === "lookup_pricing" && r.found===true) {
-      const names=[r.matched_canonical,r.matched_listing,...(Array.isArray(r.verified_price_names)?r.verified_price_names:[])].filter((n):n is string=>!!string(n));
+      const aliases=listings.filter(l=>l.product_id===r.product_id && l.account_slug===r.account_slug).flatMap(l=>l.names);
+      const names=[...new Set([r.matched_canonical,r.matched_listing,...aliases,...(Array.isArray(r.verified_price_names)?r.verified_price_names:[])].filter((n):n is string=>!!string(n)))];
       quote(r,names,call_id,r.one_day_rate_gbp??(r.days===1 || r.source==="curated_catalog" ? r.daily_rate_gbp:undefined));
     }
     if (tool === "find_owned_alternatives" && Array.isArray(r.alternatives)) for(const raw of r.alternatives) {

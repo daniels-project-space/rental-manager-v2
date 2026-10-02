@@ -1,5 +1,5 @@
 import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
-import { renterPriceEvidence } from "@/lib/renter-price-evidence";
+import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-price-evidence";
 import type { PriceEvidence } from "../../../../convex/lib/price_claims";
 import { renterItemNames } from "../../../../convex/lib/renter_item_names";
 import type { StockRequest } from "../../../../convex/lib/stock_claims";
@@ -351,6 +351,7 @@ export async function POST(req: Request) {
    */
   const priceSources: ToolReceipt[] = [];
   const fixedPriceEvidence: PriceEvidence[] = [];
+  const priceListingIdentities: PriceListingIdentity[] = [];
   const recordPriceQuery = (functionName: string, promise: Promise<unknown>) => promise.then(value => {
     const tool = ({ "renter_bot_tools:lookup_pricing": "lookup_pricing", "renter_bot_tools:find_owned_alternatives": "find_owned_alternatives", "renter_bot_lab_order:get": "get_lab_order" } as Record<string,string>)[functionName];
     if (tool && value && typeof value === "object" && !Array.isArray(value)) priceSources.push({tool,call_id:`server-price:${priceSources.length}`,result:value as Record<string,unknown>});
@@ -554,7 +555,7 @@ export async function POST(req: Request) {
    */
   let bookingModified = false;
   const currentPriceEvidence = () => {
-    const prices=[...fixedPriceEvidence.filter(e=>!bookingModified || e.kind!=="basket"),...renterPriceEvidence([...priceSources,...toolReceipts])];
+    const prices=[...fixedPriceEvidence.filter(e=>!bookingModified || e.kind!=="basket"),...renterPriceEvidence([...priceSources,...toolReceipts],priceListingIdentities)];
     return [...prices,...requestedBasketEvidence(prices,priceRequest)];
   };
   /**
@@ -753,10 +754,11 @@ export async function POST(req: Request) {
       priceRequest = stockRequest;
       const quoteDays = inclusiveRentalDays(lc.start_date, lc.end_date) ?? 1;
       await Promise.all((lc.items ?? []).filter((it: {owned?: boolean; name?: string; ambiguous_with?: unknown[]}) => it.owned === true && it.name && !it.ambiguous_with?.length).map(async (it: {name: string; inventory_name?: string; listing_name?: string; product_id?: number; qty?: number; replacement_cost_gbp?: number}) => {
+        const names=[it.name,it.inventory_name,it.listing_name].filter((n):n is string=>!!n);
+        if(account_slug && typeof it.product_id==="number")priceListingIdentities.push({account_slug,product_id:it.product_id,names});
         try {
           const quote = await convex.query(api.renter_bot_tools.lookup_pricing, {item_name:it.name,product_id:typeof it.product_id === "number" ? it.product_id : undefined,account_slug:account_slug||undefined,days:quoteDays,quantity:it.qty??1}) as Record<string,unknown>;
           if(quote.found===true) {
-            const names=[it.name,it.inventory_name,it.listing_name].filter((n):n is string=>!!n);
             priceSources.push({tool:"lookup_pricing",call_id:`selected-price:${priceSources.length}`,result:{...quote,verified_price_names:names,start_date:lc.start_date,end_date:lc.end_date}});
             groundTruth += `EXACT RENTAL QUOTE for ${it.name}: ${JSON.stringify({source:quote.source,product_id:quote.product_id,days:quote.days,quantity:quote.quantity,daily_rate_gbp:quote.daily_rate_gbp,one_day_rate_gbp:quote.one_day_rate_gbp,listed_total_gbp:quote.listed_total_gbp,multi_day_basis:quote.multi_day_basis})}. Its daily_rate_gbp applies to ${quoteDays} days; one_day_rate_gbp is a separate base rate. Prefer listed_total_gbp; do not present the base rate as this hire's rate.\n`;
           }

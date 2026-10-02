@@ -345,13 +345,16 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
     // rewrite was silently corrupting text: "goes really well" became
     // "goes really I'll", and any past-tense "were" became "I'm". Reproduced
     // live: a real draft shipped with exactly this corruption.
-    text = text.replace(/\bwe've\b/gi, "I've");
+    text = text.replace(/\bwe['’]ve\b/gi, "I've");
+    text = text.replace(/\bwe aren['’]t\b/gi, "I'm not");
+    text = text.replace(/\bwe are\b/gi, "I am");
+    text = text.replace(/\bwe['’]d\b/gi, "I'd");
     text = text.replace(
-      /\bwe're (separate|different|independent|distinct|two|not the same|not related)\b/gi,
+      /\bwe['’]re (separate|different|independent|distinct|two|not the same|not related)\b/gi,
       "they're $1",
     );
-    text = text.replace(/\bwe're\b/gi, "I'm");
-    text = text.replace(/\bwe'll\b/gi, "I'll");
+    text = text.replace(/\bwe['’]re\b/gi, "I'm");
+    text = text.replace(/\bwe['’]ll\b/gi, "I'll");
     text = text.replace(
       /\bwe (have|can|do|offer|provide|also|stock|carry|include|don'?t|did|are|get|will|should|could|would|need)\b/gi,
       "I $1",

@@ -1,8 +1,22 @@
 import {describe,it,expect} from "vitest";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import type {ToolReceipt} from "./renter-tool-evidence";
+import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
 const receipt=(tool:string,result:Record<string,unknown>,call_id="call"):ToolReceipt=>({tool,result,call_id});
 describe("server price receipt adapters",()=>{
+ it("binds an exact quote's short name only to the verified account and listing",()=>{
+  const listing="Sony A7 ii mirrorless Camera full frame digital cinema + 28-70mm Zoom FE Sony lens + 128gb sd card Sony a7ii";
+  const native={found:true,matched_listing:listing,product_id:1172846,account_slug:"leo",days:2,quantity:1,daily_rate_gbp:28,listed_total_gbp:56,source:"hygglo_tier"};
+  const identities=[{account_slug:"leo",product_id:1172846,names:["Sony A7 II",listing]}];
+  const request={items:[{name:"Sony A7 II",quantity:1}]};
+  const claim="Yes, the Sony A7 II kit is available for the 6th to the 7th of October. For the 2 days, the total comes to £56.";
+  expect(unsupportedPriceClaims(claim,renterPriceEvidence([receipt("lookup_pricing",native)],identities),request)).toEqual([]);
+  for(const changed of [{...native,product_id:1172847},{...native,account_slug:"diogo"},{...native,account_slug:undefined}]){
+   const proof=renterPriceEvidence([receipt("lookup_pricing",changed)],identities);
+   expect(proof[0].names).not.toContain("Sony A7 II");
+   expect(unsupportedPriceClaims(claim,proof,request)).not.toEqual([]);
+  }
+ });
  it("keeps exact alternative duration, quantity and base separate",()=>{
   const result=renterPriceEvidence([receipt("find_owned_alternatives",{alternatives:[{name:"BMPCC 6K Pro",daily_price_gbp:35,quote:{days:3,quantity:2,daily_rate_gbp:30,listed_total_gbp:180,source:"hygglo_tier",start_date:"2026-10-02",end_date:"2026-10-04"}}]})]);
   expect(result[0]).toMatchObject({names:["BMPCC 6K Pro"],days:3,quantity:2,daily_rate_gbp:30,base_rate_gbp:35,total_gbp:180,start_date:"2026-10-02"});

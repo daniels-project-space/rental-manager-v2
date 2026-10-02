@@ -617,6 +617,7 @@ export const lookup_pricing = query({
           matched_listing: best.name,
           matched_canonical: matchedCanonical,
           product_id: best.product_id,
+          account_slug,
           // The rate that applies to THIS length — what the renter pays per day.
           one_day_rate_gbp: Math.round(oneDay * 100) / 100,
           days,

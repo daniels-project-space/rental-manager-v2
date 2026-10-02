@@ -83,6 +83,21 @@ describe("authoritative booking transitions", () => {
   });
 });
 
+describe("first-person agreement",()=>{
+ it("preserves the verification-failure meaning when rewriting the owner's voice",()=>{
+  const result=guardDraft("We aren't able to release the collection address without a confirmed booking.",{history:[],lastRenterMessage:"Verification failed, can I collect?",stage:"VERIFICATION_FAILED",firstPerson:true});
+  expect(result.text).toBe("I'm not able to release the collection address without a confirmed booking.");
+ });
+ it("handles written-out and typographic contractions without corrupting well or were",()=>{
+  const result=guardDraft("We are happy to help. We’re happy it went well when you were shooting. We’d recommend the recorded battery.",{history:[],lastRenterMessage:"Thanks",firstPerson:true});
+  expect(result.text).toBe("I am happy to help. I'm happy it went well when you were shooting. I'd recommend the recorded battery.");
+ });
+ it("retains plural accounts' wording",()=>{
+  const text="We aren't able to release the collection address without a confirmed booking.";
+  expect(guardDraft(text,{history:[],lastRenterMessage:"Verification failed",firstPerson:false}).text).toBe(text);
+ });
+});
+
 describe("owner approval assertions", () => {
   const opts = { history: [], lastRenterMessage: "Is my booking approved?", ownerApproved: false, stage: "awaiting_owner_approval" };
   it.each([
