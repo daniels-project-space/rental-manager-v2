@@ -506,3 +506,14 @@ The exact candidates are now guard regressions. Complete/full booking totals and
 
 
 Conditional total scoping also covers booking/order nouns without borrowing an unchanged booking quote for the new cost. For “would bring your booking total from £56 to £92”, the baseline £56 is checked against the current basket and the destination £92 against the native proposal. Wrong baseline amounts and absent proposals reject independently. The regression preserves the original accurate baseline acceptance; it does not widen allowed amounts. Final scope validation and managed replay follow separately.
+
+
+### Copied-draft human approval — 2 October
+
+A native Lab reproduction on `e340bd4` found that an owner-copied AI quote still passed the manual-send dry run after a real booking amendment. The preview correctly became stale, but the independent compose buffer had no provenance and the sender did not check it. No renter message was sent in this reproduction.
+
+The compose buffer now retains the accepted draft's message ID, booking context, logic epoch and generation timestamp through owner edits. Reactive booking/message changes disable Send and show a warning while keeping the owner's text. Clearing the buffer restores ordinary owner-written replies. Copying another draft cannot relabel old copied text with a fresh approval stamp. The backend independently verifies the original approval before either dry-run or real transport; an unchanged exact draft from older clients is also checked.
+
+Native managed generation plus a real Lab addition qualified: current copy accepted in dry run; stale stamped copy rejected; stale exact legacy copy rejected; unrelated owner-written reply accepted. All own probe rows were cleaned. Full suite: 1,011 passed, 14 skipped across 85 files; Next production build passed. This scopes approval to the current inbound, booking and draft generation; global inventory/catalogue changes and external-send races require separate qualification. Automatic renter sending remains disabled.
+
+The preceding proposed-addition quote phase also passed three actual managed cases: read-only additional-lens quote with no booking writes; refused two-lens addition with a verified smaller available proposal; and an accepted one-lens addition with the updated native total. Production `e340bd4` was verified READY on the exact alias, and old cached drafts were invalidated at epoch 25.

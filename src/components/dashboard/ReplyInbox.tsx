@@ -1,6 +1,6 @@
 "use client";
 import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
-import { draftReviewSummary, type DraftReview } from "../../../convex/lib/draft_review";
+import { draftReviewSummary, sameDraftApproval, type DraftApproval, type DraftReview } from "../../../convex/lib/draft_review";
 import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
 /**
  * Reply Inbox (2026-06-22 v3) — cross-account "renters waiting on me".
@@ -167,6 +167,7 @@ export interface ReplyTileData {
   ai_draft_confidence: number | null;
   ai_draft_flags: DraftFlag[] | null;
   ai_draft_evidence?: DraftEvidence | null;
+  ai_draft_approval?: DraftApproval | null;
   ai_draft_review?: DraftReview | null;
   ai_draft_stale?: boolean;
   location: TileLocation | null;
@@ -1820,6 +1821,8 @@ export function ReplyModal({
   const decline = useAction(api.replyInbox_actions.declineOrder);
 
   const [text, setText] = useState("");
+  const [composeApproval,setComposeApproval] = useState<DraftApproval|null>(null);
+  const copiedDraftStale = !!composeApproval && !sameDraftApproval(composeApproval,liveTile?.ai_draft_approval);
   // AI draft lives in its OWN preview box (not the compose box). Tap it to copy
   // it into the message box, then edit + Send yourself — never auto-sent.
   const [draft, setDraft] = useState(tile.ai_draft_review || tile.ai_draft_stale ? "" : tile.ai_draft_text ?? "");
@@ -1876,6 +1879,12 @@ export function ReplyModal({
 
   // Paste a snippet into the compose box (never sends). Appends with a blank
   // line if there's already text, so you can stack delivery + bank + your own.
+  function copyAIDraft() {
+    const approval=liveTile?.ai_draft_approval;
+    if (!approval || liveTile?.ai_draft_text!==draft) {setNote("Waiting for the latest draft. Try again in a moment.");return;}
+    if (composeApproval && !sameDraftApproval(composeApproval,approval)) {setNote("Clear the previous copied reply before copying the latest draft. Your text has been kept.");return;}
+    setComposeApproval(approval);pasteText(draft);
+  }
   function pasteText(snippet: string) {
     setText((t) => (t.trim() ? `${t.trimEnd()}\n\n${snippet}` : snippet));
     setNote(null);
@@ -1924,11 +1933,11 @@ export function ReplyModal({
     setSending(true);
     setNote(null);
     try {
-      const r = await sendReply({ thread_id: tile.thread_id, account_slug: tile.account_slug, text: body.trim(), dryRun });
+      const r = await sendReply({ thread_id: tile.thread_id, account_slug: tile.account_slug, text: body.trim(), dryRun, ...(clearBox && composeApproval ? {draft_approval:composeApproval} : {}) });
       if (r.status === "sent") {
         // Keep the chat OPEN so you can also approve/decline or keep texting.
         if (r.reason === "DRY_RUN") setDryRunSentMsgs((p) => [...p, body.trim()]);
-        if (clearBox) setText("");
+        if (clearBox) {setText("");setComposeApproval(null);}
         setNote(r.reason === "DRY_RUN" ? "✓ Reply OK (test — nothing sent)" : null);
         return true;
       }
@@ -2286,7 +2295,7 @@ export function ReplyModal({
               {draft && (
                 <button
                   type="button"
-                  onClick={() => pasteText(draft)}
+                  onClick={copyAIDraft}
                   title="Copy this draft into the message box"
                   className={`block w-full text-left px-3 pb-2.5 ${
                     draft.length > 400 ? "text-[12px]" : draft.length > 240 ? "text-[13px]" : "text-sm"
@@ -2353,9 +2362,12 @@ export function ReplyModal({
             </div>
           )}
 
+          {copiedDraftStale && <div role="alert" className="mb-2 rounded-lg border border-amber-400/30 bg-amber-500/10 p-2 text-xs text-amber-100">
+            The copied AI reply is out of date. Your text is kept. Clear it to write your reply, or clear it and copy a fresh draft.
+          </div>}
           <textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}}
             placeholder="Write a reply…"
             rows={3}
             // text-[16px]: iOS Safari zooms the page when a focused input is
@@ -2374,7 +2386,7 @@ export function ReplyModal({
             <span className="text-[11px] text-[#6b7280] hidden sm:block">Nothing sends until you hit Send</span>
             <button
               onClick={onSend}
-              disabled={sending || !text.trim()}
+              disabled={sending || !text.trim() || copiedDraftStale}
               className="ml-auto text-[13px] font-semibold px-6 py-2 rounded-lg text-white disabled:opacity-40 transition-transform active:scale-[0.98]"
               style={{ background: accent, boxShadow: `0 4px 14px -4px ${accent}99` }}
             >

@@ -86,3 +86,34 @@ export function draftReviewSummary(review: Pick<DraftReview, "reason" | "flags">
     : why === "unparseable_model_output" ? "The generated reply could not be read safely."
     : "The assistant needs your judgement before replying.";
 }
+
+/** The accepted preview the owner copied, not a fresh token at send time. */
+export type DraftApproval = {
+  message_id: string;
+  context_key: string;
+  epoch: number;
+  generated_at: number;
+};
+export function sameDraftApproval(a: DraftApproval | null | undefined, b: DraftApproval | null | undefined) {
+  return !!a && !!b && a.message_id === b.message_id && a.context_key === b.context_key &&
+    a.epoch === b.epoch && a.generated_at === b.generated_at;
+}
+export function currentDraftApproval(
+  source: {
+    ai_draft_text?: string;
+    ai_draft_for_message_id?: string;
+    ai_draft_context_key?: string;
+    ai_draft_epoch?: number;
+    ai_draft_generated_at?: number;
+    ai_draft_review?: DraftReview;
+  } | null | undefined,
+  scope: { message_id: string | null | undefined; context_key: string; epoch: number },
+): DraftApproval | null {
+  if (!source?.ai_draft_text?.trim() || !scope.message_id ||
+    source.ai_draft_for_message_id !== scope.message_id || source.ai_draft_context_key !== scope.context_key ||
+    (source.ai_draft_epoch ?? 0) !== scope.epoch || typeof source.ai_draft_generated_at !== "number" ||
+    !Number.isFinite(source.ai_draft_generated_at) || source.ai_draft_generated_at <= 0 ||
+    currentDraftReview(source.ai_draft_review, scope)) return null;
+  return { message_id: scope.message_id, context_key: scope.context_key, epoch: scope.epoch,
+    generated_at: source.ai_draft_generated_at };
+}

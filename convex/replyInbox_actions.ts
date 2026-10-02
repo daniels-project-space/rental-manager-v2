@@ -25,6 +25,7 @@ import { normalizeClaimedFacts, type DraftEvidence } from "./lib/renter_draft_ev
 import { api, internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
+import { sameDraftApproval } from "./lib/draft_review";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
 import { dnaSummary } from "./lib/renter_dna";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
@@ -1016,10 +1017,11 @@ export const sendRenterReply = action({
     // TEST MODE: simulate the whole flow without sending anything to Hygglo or
     // touching the thread state. Lets the operator exercise the UI safely.
     dryRun: v.optional(v.boolean()),
+    draft_approval: v.optional(v.object({message_id:v.string(),context_key:v.string(),epoch:v.number(),generated_at:v.number()})),
   },
   handler: async (
     ctx,
-    { thread_id, account_slug, text, dryRun },
+    { thread_id, account_slug, text, dryRun, draft_approval },
   ): Promise<{
     status: "sent" | "skipped" | "failed";
     reason?: string;
@@ -1028,6 +1030,12 @@ export const sendRenterReply = action({
   }> => {
     const body = text.trim();
     if (!body) return { status: "failed", error: "Empty message" };
+    const approvalContext = await ctx.runQuery(api.replyInbox.getDraftApprovalContext,{thread_id});
+    const legacyDraftCopy = body === approvalContext.stored_draft_text?.trim();
+    if (draft_approval || legacyDraftCopy) {
+      if (approvalContext.account_slug!==account_slug || !approvalContext.draft_approval || (draft_approval && !sameDraftApproval(draft_approval,approvalContext.draft_approval)))
+        return {status:"failed",reason:"stale_draft",error:"This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."};
+    }
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
 
     // Grab the draft that was shown BEFORE recordSentReply clears/rotates it, so

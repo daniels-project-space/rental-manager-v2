@@ -22,7 +22,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
-import { currentDraftReview, draftContextKey } from "./lib/draft_review";
+import { currentDraftApproval, currentDraftReview, draftContextKey } from "./lib/draft_review";
 import { reviewFlagValidator } from "./lib/draft_review_validator";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { summarise } from "./lib/renter_order_quote";
@@ -629,6 +629,7 @@ async function assembleTile(
 
   // Double-booking check for dated reservations/requests (null otherwise).
   const availability = computeAvailability(reservation, availCtx);
+  const draftApproval = currentDraftApproval(conv,{message_id:latestMsg?.message_id,epoch:hub?.draftEpoch??0,context_key:draftContextKey(reservation,conv?.inquiry_items,simOrder)});
 
   return {
     thread_id: threadId,
@@ -683,12 +684,9 @@ async function assembleTile(
     ai_draft_confidence: conv?.ai_draft_confidence ?? null,
     ai_draft_flags: conv?.ai_draft_flags ?? null,
     ai_draft_evidence: conv?.ai_draft_evidence ?? null,
-    // Stale = generated under an older draft-logic epoch → regenerate on open.
-    ai_draft_stale:
-      !!conv?.ai_draft_text &&
-      ((conv?.ai_draft_epoch ?? 0) !== (hub?.draftEpoch ?? 0) ||
-        conv?.ai_draft_context_key !== draftContextKey(reservation, conv?.inquiry_items, simOrder) ||
-        (conv?.ai_draft_generated_at ?? 0) < (conv?.last_renter_msg_at ?? 0)),
+    ai_draft_approval: draftApproval,
+    // The preview belongs to an exact message, booking context and logic epoch.
+    ai_draft_stale: !!conv?.ai_draft_text && !draftApproval,
     location: computeLocation(reservation, slug, hub ?? null),
   };
 }
@@ -721,6 +719,7 @@ function leanTile(t: ReplyTile): ReplyTile {
     ai_draft_confidence: null,
     ai_draft_flags: null,
     ai_draft_evidence: null,
+    ai_draft_approval: null,
     ai_draft_review: t.ai_draft_review ? { ...t.ai_draft_review, flags: [], evidence: undefined } : null,
     items: t.items.map((i) => ({ name: i.name, qty: i.qty })) as ReplyTile["items"],
   };
@@ -2088,5 +2087,26 @@ export const getImminentHandoffs = query({
       }
     }
     return filterImminentHandoffs(candidates, nowDate, nowHM, windowMin, accountSlug);
+  },
+});
+
+/** Lightweight final check for owner approval; no catalogue/LLM/provider calls. */
+export const getDraftApprovalContext = query({
+  args: { thread_id: v.string() },
+  handler: async (ctx, { thread_id }) => {
+    const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", thread_id)).first();
+    const [latest] = await recentThreadMessages(ctx, thread_id, 1);
+    const settings = await ctx.db.query("settings").first();
+    const booking = await getBotBooking(ctx, thread_id);
+    const scope = {
+      message_id: latest?.message_id,
+      epoch: settings?.draft_epoch ?? 0,
+      context_key: draftContextKey(booking, conv?.inquiry_items, await getLabOrder(ctx, thread_id)),
+    };
+    return {
+      account_slug: conv?.account_slug ?? booking?.account_slug ?? null,
+      stored_draft_text: conv?.ai_draft_text ?? null,
+      draft_approval: currentDraftApproval(conv, scope),
+    };
   },
 });
