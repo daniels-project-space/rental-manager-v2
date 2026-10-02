@@ -47,6 +47,10 @@ export function normToken(raw: string): string {
   // Inventory says "PL to L mount", display aliases say "PL → L adapter".
   // Keep the category token while treating these two surfaces consistently.
   if (t === "adapter" || t === "adapters") return "mount";
+  // Unit spelling does not distinguish lens models; mounts, aperture numbers
+  // and model variants still participate in full-coverage confidence checks.
+  if (/^\d+mm$/.test(t)) return t.slice(0, -2);
+  if (t === "mm") return "";
   if (ROMAN[t]) return ROMAN[t];
   if (t.length > 3 && t.endsWith("s")) return t.slice(0, -1);
   return t;
@@ -55,7 +59,10 @@ export function normToken(raw: string): string {
 /** Tokenise a product/listing name into meaningful, variant-preserving tokens. */
 export function tokenize(str: string): Set<string> {
   const out = new Set<string>();
-  for (const raw of str.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
+  // Inventory uses f2.8 while renters commonly type f/2.8. Splitting the
+  // slash first discarded the f and left a different identity token (2).
+  const surface = str.toLowerCase().replace(/\b([ft])\s*\/\s*(\d)/g, "$1$2");
+  for (const raw of surface.match(/[a-z0-9]+/g) ?? []) {
     if (raw.length < 1) continue;
     const t = normToken(raw);
     if (!t || STOP.has(t)) continue;

@@ -1,3 +1,4 @@
+import { inclusiveRentalDays } from "../../convex/lib/hygglo_pricing";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { ToolReceipt } from "./renter-tool-evidence";
 const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
@@ -10,7 +11,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
   const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown) => {
     const days=number(r.days), quantity=number(r.quantity);
     const source=string(r.source);
-    if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day"].includes(source))return;
+    if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day","native_lab_proposal"].includes(source))return;
     if (!names.length || !days || !Number.isInteger(days) || !quantity || !Number.isInteger(quantity)) return;
     out.push({names,kind:"rental",daily_rate_gbp:r.multi_day_basis === "unknown_no_listing" && days !== 1 ? undefined : number(r.daily_rate_gbp),base_rate_gbp:number(base),total_gbp:number(r.listed_total_gbp),days,quantity,
       start_date:string(r.start_date),end_date:string(r.end_date),call_id:call,source});
@@ -36,7 +37,27 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
       const q=r.quote as Record<string,unknown>;
       const validMembers=(a:unknown):a is Array<{name:string;quantity:number}>=>Array.isArray(a)&&a.length>0&&a.every(i=>i&&typeof i==="object"&&string(i.name)&&number(i.quantity)&&Number.isInteger(i.quantity));
       if (validMembers(r.base_items)&&validMembers(r.added_items)&&r.added_items.length===1&&Array.isArray(q.lines)&&q.lines.length>0&&number(q.total_gbp)&&number(q.days)&&string(q.start_date)&&string(q.end_date)&&q.lines.every(l=>l&&typeof l==="object"&&string(l.name)&&number(l.qty)&&Number.isInteger(l.qty)&&number(l.line_total_gbp))) {
+        const members = (rows: Array<{name:string;quantity:number}>) => {
+          const totals=new Map<string,number>();
+          for(const row of rows) {const key=row.name.trim().toLowerCase();totals.set(key,(totals.get(key)??0)+row.quantity);}
+          return totals;
+        };
+        const expected=members([...r.base_items,...r.added_items]);
+        const actual=members(q.lines.map(l=>({name:l.name,quantity:l.qty})));
+        if(inclusiveRentalDays(string(q.start_date),string(q.end_date))!==q.days ||
+          expected.size!==actual.size || [...expected].some(([name,qty])=>actual.get(name)!==qty) ||
+          Math.abs(q.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(q.total_gbp as number))>0.011) continue;
         out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal:{base_items:r.base_items,added_items:r.added_items},total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
+        // Keep the native per-line quote as well as the proposed grand total.
+        // No echoed request name can supply the identity or the arithmetic.
+        for(const l of q.lines) {
+          const rate=number(l.effective_rate_gbp), base=number(l.daily_price_gbp);
+          if ((!string(l.item_id) && !number(l.product_id)) || !rate || !base ||
+            Math.abs(rate*(q.days as number)*l.qty-l.line_total_gbp)>0.011) continue;
+          const aliases=listings.filter(i=>i.account_slug===r.account_slug && i.product_id===l.product_id).flatMap(i=>i.names);
+          const names=[...new Set([l.name,...aliases])];
+          quote({days:q.days,quantity:l.qty,daily_rate_gbp:rate,listed_total_gbp:l.line_total_gbp,start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},names,`${call_id}:line:${l.item_id??l.product_id}`,base);
+        }
       }
     }
     if (tool === "get_lab_order" && Array.isArray(r.lines)) {

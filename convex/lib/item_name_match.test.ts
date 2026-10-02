@@ -261,3 +261,18 @@ describe("exactTitleMatch — the retry-loop fix", () => {
     expect(exactTitleMatch("   ", LISTINGS, nameOf)).toBeNull();
   });
 });
+
+
+describe("lens notation preserves physical identity",()=>{
+ const lenses=["Canon EF 16-35mm f2.8","Canon EF 16-35mm f4","Canon RF 16-35mm f2.8","Canon EF 24-105mm f4"].map(name=>({name}));
+ it("resolves slash aperture and omitted mm against the same unique native lens",()=>{
+  for(const name of ["Canon EF 16-35mm f/2.8","Canon EF 16–35 f2.8","Canon EF 16-35 mm F/2.8"])
+   expect(bestMatch(name,lenses,x=>x.name),name).toMatchObject({confident:true,match:{name:"Canon EF 16-35mm f2.8"}});
+ });
+ it("keeps mounts, aperture variants and ambiguous incomplete names distinct",()=>{
+  expect(bestMatch("Canon RF 16-35 f/2.8",lenses,x=>x.name)).toMatchObject({confident:true,match:{name:"Canon RF 16-35mm f2.8"}});
+  expect(bestMatch("Canon EF 16-35 f/4",lenses,x=>x.name)).toMatchObject({confident:true,match:{name:"Canon EF 16-35mm f4"}});
+  expect(bestMatch("Canon EF 16-35",lenses,x=>x.name).confident).toBe(false);
+  expect(bestMatch("Canon EF 16-35 f/1.8",lenses,x=>x.name).confident).toBe(false);
+ });
+});

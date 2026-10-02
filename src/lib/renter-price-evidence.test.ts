@@ -78,3 +78,44 @@ it("binds a complete read-only proposal to its thread, base basket, addition, da
  expect(renterPriceEvidence([receipt("quote_booking_addition",{...native,ok:false})],[],native.thread_id)).toEqual([]);
  expect(renterPriceEvidence([receipt("quote_booking_addition",{...native,quote:{...quote,lines:[quote.lines[0],{...quote.lines[1],line_total_gbp:null}]}})],[],native.thread_id)).toEqual([]);
 });
+
+
+describe("native proposed line prices survive the evidence handoff",()=>{
+ const thread="__probe__native-lines";
+ const baseName="Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series";
+ const native=()=>({ok:true,preview_only:true,source:"native_lab_proposal",thread_id:thread,account_slug:"leo",
+  base_items:[{name:baseName,quantity:1}],added_items:[{name:"Canon EF 16-35mm f2.8",quantity:1}],
+  quote:{days:2,start_date:"2026-10-20",end_date:"2026-10-21",total_gbp:164,lines:[
+   {name:baseName,product_id:1172450,qty:1,daily_price_gbp:62,effective_rate_gbp:62,line_total_gbp:124},
+   {name:"Canon EF 16-35mm f2.8",item_id:"native-lens",qty:1,daily_price_gbp:20,effective_rate_gbp:20,line_total_gbp:40},
+  ]}});
+ it("proves the add-on rate and line total from the captured native proposal without another lookup",()=>{
+  const proof=renterPriceEvidence([receipt("quote_booking_addition",native())],[],thread);
+  expect(proof).toContainEqual(expect.objectContaining({kind:"rental",names:["Canon EF 16-35mm f2.8"],quantity:1,days:2,daily_rate_gbp:20,total_gbp:40,start_date:"2026-10-20",end_date:"2026-10-21",source:"native_lab_proposal"}));
+  const scope={items:[{name:baseName,quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+  const text="Canon EF 16-35mm f2.8 would cost £20/day (£40 total) for 20 to 21 October. Adding one extra would bring your booking total to £164.";
+  expect(unsupportedPriceClaims(text,proof,scope)).toEqual([]);
+  for(const changed of [text.replace("£20","£21"),text.replace("£40","£41"),text.replace("Canon EF","Canon RF"),text.replace("21 October","22 October")])
+   expect(unsupportedPriceClaims(changed,proof,scope),changed).not.toEqual([]);
+ });
+ it("binds listing aliases only to the matching native account and product",()=>{
+  const names=[{account_slug:"leo",product_id:1172450,names:["BMPCC 6K Full Frame + Canon EF 24-105mm f4"]},{account_slug:"diogo",product_id:1172450,names:["Wrong account kit"]}];
+  const proof=renterPriceEvidence([receipt("quote_booking_addition",native())],names,thread);
+  expect(proof.find(p=>p.total_gbp===124)?.names).toContain(names[0].names[0]);
+  expect(proof.some(p=>p.names.includes("Wrong account kit"))).toBe(false);
+ });
+ it("rejects changed members, sums, dates and quantities rather than trusting the quoted grand total",()=>{
+  for(const mutate of [
+   (n:ReturnType<typeof native>)=>{n.quote.total_gbp=163;},
+   (n:ReturnType<typeof native>)=>{n.quote.days=3;},
+   (n:ReturnType<typeof native>)=>{n.quote.lines[1].qty=2;},
+   (n:ReturnType<typeof native>)=>{n.quote.lines[1].name="Sony 16-35mm";},
+  ]){const n=native();mutate(n);expect(renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread)).toEqual([]);}
+ });
+ it("does not mint individual prices from unbound identities or inconsistent rates",()=>{
+  for(const mutate of [
+   (n:ReturnType<typeof native>)=>{delete n.quote.lines[1].item_id;},
+   (n:ReturnType<typeof native>)=>{n.quote.lines[1].effective_rate_gbp=19;},
+  ]){const n=native();mutate(n);const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);expect(proof.some(p=>p.kind==="rental"&&p.names.includes("Canon EF 16-35mm f2.8"))).toBe(false);}
+ });
+});
