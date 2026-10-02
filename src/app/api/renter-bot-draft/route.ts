@@ -507,7 +507,7 @@ export async function POST(req: Request) {
    */
   const itemsWithoutKitData: string[] = [];
   const itemsWithKitData: string[] = [];
-  const kitEvidence: Array<{ names: string[]; contents: string[] }> = [];
+  const kitEvidence: Array<{ names: string[]; contents: string[]; booked_camera?: boolean }> = [];
   /**
    * Items a TOOL returned real kit text for during the turn, lower-cased.
    *
@@ -999,6 +999,7 @@ export async function POST(req: Request) {
         if (mappedKit || structuredKit || it.whats_included?.trim()) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
         if (mappedKit || structuredKit || it.whats_included?.trim()) {
           kitEvidence.push({ names: [...new Set([it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n).flatMap(renterItemNames))],
+            booked_camera: lc.is_confirmed === true && /^camera(?:_body)?$/.test(it.kind ?? ""),
             contents: mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.units_per_listing} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
           groundTruth += `  LISTING TITLE IS ADVERTISING, NOT KIT EVIDENCE: accessories named in the title or comparison models are not included unless recorded in the mapped gear or body inclusions above. Answer exact-kit questions from those records; do not append title accessories.\n`;
           groundTruth += `  PARTIAL KIT RECORD: known inclusions per listing, not an exhaustive manifest. Missing accessories are unverified, not proven absent. Stock mapping completeness does not establish every supplied accessory. Answer the known part and identify exact unrecorded details for owner review.\n`;

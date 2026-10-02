@@ -2,6 +2,22 @@ import { renterItemNames } from "./renter_item_names";
 import { describe, expect, it } from "vitest";
 import { unsupportedKitClaims } from "./kit_claims";
 const kit = { names: ["Sony A7 V"], contents: ["Sony A7 V", "NP-FZ100 batteries", "256GB card"] };
+describe("an alternative lens using the booked camera's supplied adapter",()=>{
+ const camera={names:["BMPCC 6K Full Frame"],contents:["Canon EF-to-L mount adapter"],booked_camera:true};
+ const lens={names:["Canon EF 16-35mm f2.8"],contents:["Canon EF 16-35mm f2.8"]};
+ const text="As a compatible alternative, I have the Canon EF 16-35mm f2.8 available for 20 to 21 October (which fits right onto the EF-to-L adapter included with your camera).";
+ it("attributes the expressly booked-camera component separately from the named alternative",()=>expect(unsupportedKitClaims(text,[camera,lens])).toEqual([]));
+ it("requires an actual booked camera, correct mount pair and unambiguous camera record",()=>{
+  expect(unsupportedKitClaims(text,[{...camera,booked_camera:false},lens])).toHaveLength(1);
+  expect(unsupportedKitClaims(text.replace("EF-to-L adapter","PL-to-L adapter"),[camera,lens])).toHaveLength(1);
+  expect(unsupportedKitClaims(text.replace("EF-to-L adapter","EF-to-E adapter"),[camera,lens])).toHaveLength(1);
+  expect(unsupportedKitClaims(text,[camera,lens,{names:["Sony FX3"],contents:["PL-to-E adapter"],booked_camera:true}])).toHaveLength(1);
+  expect(unsupportedKitClaims(text.replace("your camera","the lens"),[camera,lens])).toHaveLength(1);
+ });
+ it("keeps other alternative-kit components separate",()=>{
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 includes a case and an EF-to-L adapter included with your camera.",[camera,lens]).map(f=>f.content)).toEqual(["case"]);
+ });
+});
 describe("per-item included-content claims", () => {
   it("checks the actual multiline inclusion list instead of only its empty heading", () => {
     const text = "Sony A7 V is available.\n\nThe kit includes:\n- NP-FZ100 batteries (plus charger)\n- 256GB card\n\nLet me know if you would like it.";

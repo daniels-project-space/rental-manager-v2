@@ -1,4 +1,4 @@
-export type KitEvidence = { names: string[]; contents: string[] };
+export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean };
 const categories = [
   ["charger", /\bchargers?\b/i], ["battery", /\bbatter(?:y|ies)\b/i], ["card", /\b(?:cards?|sd|cfast|cf\s*express)\b/i],
   ["cage", /\bcages?\b/i], ["tripod", /\btripods?\b/i], ["microphone", /\b(?:mics?|microphones?)\b/i],
@@ -25,6 +25,10 @@ function details(text: string, category: string, pattern: RegExp): ComponentDeta
     for (const m of text.matchAll(/\b(?:cf\s*express(?:\s+(?:type\s+)?[ab])?|cfast|micro\s*sd|sd(?:hc|xc)?)\b/gi)) {
       if (positiveDetail(text, m.index!)) types.push(normalize(m[0]).replace(/ /g, "").replace(/^cfexpress([ab])$/, "cfexpresstype$1"));
     }
+  }
+  if (category === "adapter") {
+    for (const m of text.matchAll(/\b(PL|EF(?:-S)?|RF|E|L)\s*(?:-?\s*to\s*-?|[-–—→])\s*(?:(?:Sony|Canon|Leica)\s+)?(PL|EF(?:-S)?|RF|E|L)\b/gi))
+      if (positiveDetail(text, m.index!)) types.push(`adapter_${normalize(m[1])}_${normalize(m[2])}`);
   }
   const capacities = category === "card" || category === "ssd"
     ? [...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(GB|TB)\b/gi)].filter(m => positiveDetail(text, m.index!)).map(m => `${Number(m[1])}${m[2].toLowerCase()}`) : [];
@@ -65,12 +69,18 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     let claimed = match ? sentence.slice(match.index + match[0].length) : sentence;
     if (match?.[0].toLowerCase() === "included") claimed = sentence;
     claimed = claimed.split(/\b(?:but not|except|excluding|without)\b/i)[0];
+    // Preserve the attribution through component-list splitting at "with".
+    claimed = claimed.replace(/\bincluded\s+(?:with|in)\s+your\s+(?:(?:booked|rental)\s+)?camera(?:\s+kit)?\b/gi, "included_with_your_camera");
     const candidates = named.length ? named : subject.length ? subject : evidence;
     if (!candidates.length) continue; // unknown-kit guard handles missing evidence separately
     for (const [content, pattern] of categories) {
-      const claims = componentParts(claimed.replace(/\b(?:built[ -]?in|internal)\s+(?:variable\s+)?ND\s+filters?\b/gi, "intrinsic camera ND")).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c)).map(c => details(c, content, pattern));
-      if (claims.length && !candidates.every(e => claims.every(c => e.contents.some(entry =>
-        componentParts(entry).some(part => pattern.test(part) && supports(c, details(part, content, pattern))))))) {
+      const claims = componentParts(claimed.replace(/\b(?:built[ -]?in|internal)\s+(?:variable\s+)?ND\s+filters?\b/gi, "intrinsic camera ND")).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c));
+      if (claims.some(raw => {
+        const owners = raw.includes("included_with_your_camera") ? evidence.filter(e => e.booked_camera) : candidates;
+        const claim = details(raw, content, pattern);
+        return !owners.length || !owners.every(e => e.contents.some(entry =>
+          componentParts(entry).some(part => pattern.test(part) && supports(claim, details(part, content, pattern)))));
+      })) {
         failures.push({ sentence: sentence.trim(), content });
       }
     }
