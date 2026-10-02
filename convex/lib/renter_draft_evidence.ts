@@ -4,6 +4,13 @@ export const draftEvidenceValidator = v.object({
   model_id: v.string(),
   stage: v.string(),
   cost_usd: v.optional(v.number()),
+  prices: v.optional(v.array(v.object({
+    names:v.array(v.string()),kind:v.union(v.literal("rental"),v.literal("basket"),v.literal("replacement")),
+    daily_rate_gbp:v.optional(v.number()),base_rate_gbp:v.optional(v.number()),total_gbp:v.optional(v.number()),
+    days:v.optional(v.number()),quantity:v.optional(v.number()),start_date:v.optional(v.string()),end_date:v.optional(v.string()),
+    items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),
+    call_id:v.string(),source:v.string(),
+  }))),
   stock: v.array(v.object({
     item: v.string(), start_date: v.string(), end_date: v.string(),
     quantity: v.number(), available: v.union(v.boolean(), v.null()),

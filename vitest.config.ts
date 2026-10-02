@@ -27,6 +27,8 @@ export default defineConfig({
       "convex/lib/item_resolution.test.ts",
       "convex/lib/renter_stock.test.ts",
       "convex/lib/stock_claims.test.ts",
+      "convex/lib/price_claims.test.ts",
+      "src/lib/renter-price-evidence.test.ts",
       "convex/settings.draft-epoch.test.ts",
       "convex/lib/listing_inventory.test.ts",
       "convex/lib/verified_item_spec.test.ts",

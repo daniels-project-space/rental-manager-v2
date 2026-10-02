@@ -1,0 +1,42 @@
+import type { PriceEvidence } from "../../convex/lib/price_claims";
+import type { ToolReceipt } from "./renter-tool-evidence";
+const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
+const string = (s: unknown) => typeof s === "string" && s.trim() ? s : undefined;
+/** Whitelisted actual tool results, excluding arguments, errors and arbitrary numeric keys. */
+export function renterPriceEvidence(receipts: ToolReceipt[]): PriceEvidence[] {
+  const out: PriceEvidence[] = [];
+  const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown) => {
+    const days=number(r.days), quantity=number(r.quantity);
+    const source=string(r.source);
+    if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day"].includes(source))return;
+    if (!names.length || !days || !Number.isInteger(days) || !quantity || !Number.isInteger(quantity)) return;
+    out.push({names,kind:"rental",daily_rate_gbp:r.multi_day_basis === "unknown_no_listing" && days !== 1 ? undefined : number(r.daily_rate_gbp),base_rate_gbp:number(base),total_gbp:number(r.listed_total_gbp),days,quantity,
+      start_date:string(r.start_date),end_date:string(r.end_date),call_id:call,source});
+  };
+  const latestOrder=receipts.filter(r=>r.tool==="get_lab_order").at(-1);
+  for (const receipt of receipts) {
+    const {tool,call_id,result:r}=receipt;
+    if(tool==="get_lab_order" && receipt!==latestOrder)continue;
+    if (!call_id || r.error || r.ok===false || r.found===false) continue;
+    if (tool === "lookup_pricing" && r.found===true) {
+      const names=[r.matched_canonical,r.matched_listing,...(Array.isArray(r.verified_price_names)?r.verified_price_names:[])].filter((n):n is string=>!!string(n));
+      quote(r,names,call_id,r.one_day_rate_gbp??(r.days===1 || r.source==="curated_catalog" ? r.daily_rate_gbp:undefined));
+    }
+    if (tool === "find_owned_alternatives" && Array.isArray(r.alternatives)) for(const raw of r.alternatives) {
+      if (!raw || typeof raw!=="object") continue;
+      const a=raw as Record<string,unknown>; if(!string(a.name) || a.price_requires_owner_confirmation===true) continue;
+      const names=[a.name,a.listing_name].filter((n):n is string=>!!string(n));
+      if(a.quote && typeof a.quote==="object") quote(a.quote as Record<string,unknown>,names,`${call_id}:${a.name}`,a.daily_price_gbp);
+      else if(number(a.daily_price_gbp)) quote({daily_rate_gbp:a.daily_price_gbp,listed_total_gbp:a.daily_price_gbp,days:1,quantity:1,source:"owned_listing_one_day"},names,`${call_id}:${a.name}`,a.daily_price_gbp);
+    }
+    if (tool === "get_lab_order" && Array.isArray(r.lines)) {
+      for(const raw of r.lines) {
+        if(!raw || typeof raw!=="object")continue;
+        const l=raw as Record<string,unknown>; if(!string(l.name))continue;
+        quote({days:r.days,quantity:l.qty,daily_rate_gbp:l.effective_rate_gbp,listed_total_gbp:l.line_total_gbp,start_date:r.start_date,end_date:r.end_date,source:"lab_order_quote"},[l.name as string],`${call_id}:${l.name}`,l.daily_price_gbp);
+      }
+      if(number(r.total_gbp) && r.lines.length && r.lines.every(l=>l && typeof l==="object" && string(l.name) && number(l.qty) && Number.isInteger(l.qty)))out.push({names:[],items:r.lines.map(l=>({name:(l as Record<string,unknown>).name as string,quantity:(l as Record<string,unknown>).qty as number})),kind:"basket",total_gbp:number(r.total_gbp),days:number(r.days),start_date:string(r.start_date),end_date:string(r.end_date),call_id,source:"lab_order_quote"});
+    }
+  }
+  return out;
+}

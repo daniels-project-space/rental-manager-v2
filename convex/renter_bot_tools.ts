@@ -452,6 +452,7 @@ export const get_listing_context = query({
 export const lookup_pricing = query({
   args: {
     item_name: v.string(),
+    product_id: v.optional(v.number()),
     account_slug: v.optional(v.string()),
     days: v.optional(v.number()),
     quantity: v.optional(v.number()),
@@ -459,8 +460,9 @@ export const lookup_pricing = query({
   },
   handler: async (
     ctx,
-    { item_name, account_slug, days = 1, quantity = 1, listing_location_non_central },
+    { item_name, product_id, account_slug, days = 1, quantity = 1, listing_location_non_central },
   ) => {
+    if (product_id != null && !account_slug) return {found:false as const,item_name,message:"An exact listing quote requires its account"};
     if (!Number.isInteger(days) || days < 1 || days > 366 || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return { found: false as const, item_name, note: "Use a whole rental duration from 1 to 366 days" };
     /**
      * Nearest listing TITLES when nothing matched, for the miss return.
@@ -514,7 +516,13 @@ export const lookup_pricing = query({
       // listing IS the item" from "this listing merely mentions the item".
       let best: (typeof listings)[number] | null = null;
       let bestScore = 0;
-      {
+      let matchedCanonical: string | undefined;
+      if (product_id != null) {
+        best = listings.find(l => l.product_id === product_id) ?? null;
+        if (!best) return { found: false as const, item_name, message: "No verified owned listing for this exact product" };
+        bestScore = 1;
+      }
+      if (!best) {
         const allItems = await ctx.db.query("items").collect();
         const im = bestMatch(
           item_name,
@@ -531,7 +539,7 @@ export const lookup_pricing = query({
           // Among this item's own listings prefer the CHEAPEST — that's the
           // base offering rather than an add-on bundle built around it.
           best = chooseBaseListing(listings, [...pids]);
-          if (best) bestScore = 1;
+          if (best) { bestScore = 1; matchedCanonical = im.match.name_canonical; }
         }
       }
       // EXACT TITLE FAST PATH — identity, not similarity.
@@ -607,11 +615,12 @@ export const lookup_pricing = query({
           ...quote,
           item_name,
           matched_listing: best.name,
+          matched_canonical: matchedCanonical,
+          product_id: best.product_id,
           // The rate that applies to THIS length — what the renter pays per day.
           one_day_rate_gbp: Math.round(oneDay * 100) / 100,
           days,
           price_tiers: describeTiers(tiers),
-          included: best.description ?? null,
           distance_discount_applies: !!listing_location_non_central,
         };
       }

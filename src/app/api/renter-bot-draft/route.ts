@@ -1,6 +1,8 @@
+import { renterPriceEvidence } from "@/lib/renter-price-evidence";
+import type { PriceEvidence } from "../../../../convex/lib/price_claims";
 import { renterItemNames } from "../../../../convex/lib/renter_item_names";
 import type { StockRequest } from "../../../../convex/lib/stock_claims";
-import { formatGbp } from "../../../../convex/lib/hygglo_pricing";
+import { inclusiveRentalDays, formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
@@ -346,6 +348,13 @@ export async function POST(req: Request) {
    * same thing, and if they didn't the fact pack would already be incoherent.
    * The map dies with the request, so nothing is cached across drafts.
    */
+  const priceSources: ToolReceipt[] = [];
+  const fixedPriceEvidence: PriceEvidence[] = [];
+  const recordPriceQuery = (functionName: string, promise: Promise<unknown>) => promise.then(value => {
+    const tool = ({ "renter_bot_tools:lookup_pricing": "lookup_pricing", "renter_bot_tools:find_owned_alternatives": "find_owned_alternatives", "renter_bot_lab_order:get": "get_lab_order" } as Record<string,string>)[functionName];
+    if (tool && value && typeof value === "object" && !Array.isArray(value)) priceSources.push({tool,call_id:`server-price:${priceSources.length}`,result:value as Record<string,unknown>});
+    return value;
+  });
   const queryMemo = new Map<string, Promise<unknown>>();
   let memoHits = 0;
   const convex = {
@@ -355,7 +364,7 @@ export async function POST(req: Request) {
         const functionName = getFunctionName(fn);
         // An agent mutation can change the simulated order during this turn.
         // Re-read it to prove the action and get its current total.
-        if (functionName === "renter_bot_lab_order:get") return rawConvex.query(fn, args as never) as Promise<T>;
+        if (functionName === "renter_bot_lab_order:get") return recordPriceQuery(functionName, rawConvex.query(fn, args as never)) as Promise<T>;
         key = `${functionName}|${JSON.stringify(args ?? {})}`;
       } catch {
         // Unserialisable args — skip the memo rather than risk a wrong hit.
@@ -366,7 +375,7 @@ export async function POST(req: Request) {
         memoHits++;
         return hit as Promise<T>;
       }
-      const p = rawConvex.query(fn, args as never) as Promise<unknown>;
+      const p = recordPriceQuery(getFunctionName(fn), rawConvex.query(fn, args as never));
       queryMemo.set(key, p);
       return p as Promise<T>;
     }) as typeof rawConvex.query,
@@ -521,6 +530,7 @@ export async function POST(req: Request) {
    * your dates" still needs the dates, so that half of the guard stands.
    */
   let stockRequest: StockRequest = { items: [] };
+  let priceRequest: StockRequest = {items:[]};
   let availabilityOutKnown = false;
   const toolReceipts: ToolReceipt[] = [];
   /**
@@ -705,7 +715,7 @@ export async function POST(req: Request) {
           daily_price_gbp?: number | null;
         }>).map((a) => {
           if (typeof a.daily_price_gbp === "number") offeredPrices.push(a.daily_price_gbp);
-          return `${a.name}${a.daily_price_gbp != null ? ` (£${a.daily_price_gbp}/day)` : " (price on request)"}`;
+          return `${a.name}${a.daily_price_gbp != null ? ` (one-day base £${a.daily_price_gbp}/day)` : " (price on request)"}`;
         });
         if (all.length) {
           groundTruth += `MOUNT ADAPTERS WE OWN AND RENT: ${all.join("; ")}. These are real owned items; availability for the requested dates is NOT established. Check exact dates and quantity before offering one as available. If a lens needs an adapter to fit a body, check the matching one BY NAME before offering it.\n`;
@@ -734,6 +744,21 @@ export async function POST(req: Request) {
           components: (i.inventory_components ?? []).filter(c => c.stock_required && !!c.name)
             .map(c => ({ name: c.name!, quantity: c.requested_units })),
         })) };
+      priceRequest = stockRequest;
+      const quoteDays = inclusiveRentalDays(lc.start_date, lc.end_date) ?? 1;
+      await Promise.all((lc.items ?? []).filter((it: {owned?: boolean; name?: string; ambiguous_with?: unknown[]}) => it.owned === true && it.name && !it.ambiguous_with?.length).map(async (it: {name: string; inventory_name?: string; listing_name?: string; product_id?: number; qty?: number; replacement_cost_gbp?: number}) => {
+        try {
+          const quote = await convex.query(api.renter_bot_tools.lookup_pricing, {item_name:it.name,product_id:typeof it.product_id === "number" ? it.product_id : undefined,account_slug:account_slug||undefined,days:quoteDays,quantity:it.qty??1}) as Record<string,unknown>;
+          if(quote.found===true) {
+            const names=[it.name,it.inventory_name,it.listing_name].filter((n):n is string=>!!n);
+            priceSources.push({tool:"lookup_pricing",call_id:`selected-price:${priceSources.length}`,result:{...quote,verified_price_names:names,start_date:lc.start_date,end_date:lc.end_date}});
+            groundTruth += `EXACT RENTAL QUOTE for ${it.name}: ${JSON.stringify({source:quote.source,product_id:quote.product_id,days:quote.days,quantity:quote.quantity,daily_rate_gbp:quote.daily_rate_gbp,one_day_rate_gbp:quote.one_day_rate_gbp,listed_total_gbp:quote.listed_total_gbp,multi_day_basis:quote.multi_day_basis})}. Its daily_rate_gbp applies to ${quoteDays} days; one_day_rate_gbp is a separate base rate. Prefer listed_total_gbp; do not present the base rate as this hire's rate.\n`;
+          }
+        } catch { /* No quote means price confirmation is required. */ }
+        if(typeof it.replacement_cost_gbp === "number") fixedPriceEvidence.push({names:[it.inventory_name??it.name],kind:"replacement",total_gbp:it.replacement_cost_gbp,call_id:"prefetch:listing-context",source:"inventory_replacement_value"});
+      }));
+      if(typeof lc.gross_paid_gbp === "number" && lc.gross_paid_gbp > 0) fixedPriceEvidence.push({names:[],items:priceRequest.items.map(i=>({name:i.name,quantity:i.quantity})),kind:"basket",total_gbp:lc.gross_paid_gbp,days:quoteDays,start_date:lc.start_date,end_date:lc.end_date,call_id:"prefetch:listing-context",source:"booking_gross_amount"});
+      groundTruth += "PRICE CLAIM SCOPE: each quoted amount must match the exact item, quantity, duration and purpose. A replacement value is not a hire fee. No courier/deposit amount is verified. Never infer a total by multiplying a displayed base rate or summing alternative options.\n";
       groundTruth += `STOCK CLAIM SCOPE: each availability statement must match the exact checked item, date span and quantity. A free body does not prove its whole mapped kit is free. If a kit component is booked, identify that component rather than calling the free body booked. Alternative offers need the requested quantity; explicitly state any smaller quantity you can supply.\n`;
       for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
@@ -780,7 +805,7 @@ export async function POST(req: Request) {
               }>)
                 .slice(0, 5)
                 .map((a) => {
-                  const price = a.daily_price_gbp != null ? ` £${a.daily_price_gbp}/day` : "";
+                  const price = a.daily_price_gbp != null ? ` one-day base £${a.daily_price_gbp}/day` : "";
                   const mount = a.lens_mount ? `, ${a.lens_mount}` : "";
                   const lens =
                     a.includes_lens === true
@@ -845,7 +870,7 @@ export async function POST(req: Request) {
                   toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-glass:${toolReceipts.length}`, result: g }]));
                   const fits = ((g?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
                     .slice(0, 2)
-                    .map((x) => `${x.name}${x.daily_price_gbp != null ? ` (£${x.daily_price_gbp}/day)` : ""}`);
+                    .map((x) => `${x.name}${x.daily_price_gbp != null ? ` (one-day base £${x.daily_price_gbp}/day)` : ""}`);
                   if (fits.length) {
                     lensForAltText += ` ${need.body} goes out body-only (${need.mount}); glass we own that natively fits it: ${fits.join("; ")}.`;
                   }
@@ -932,7 +957,7 @@ export async function POST(req: Request) {
             for (const g of keep)
               if (typeof g.daily_price_gbp === "number") offeredPrices.push(g.daily_price_gbp);
             const fits = keep.map(
-              (g) => `${g.name}${g.daily_price_gbp != null ? ` (£${g.daily_price_gbp}/day)` : ""}`,
+              (g) => `${g.name}${g.daily_price_gbp != null ? ` (one-day base £${g.daily_price_gbp}/day)` : ""}`,
             );
             if (alreadyIn.length) {
               groundTruth += `  ALREADY IN THIS RENTAL for ${it.name}: ${alreadyIn.join("; ")}. This glass is INCLUDED in the price they already have. Say so as a positive ("it already comes with…") and NEVER offer it as a paid add-on.\n`;
@@ -1020,7 +1045,7 @@ export async function POST(req: Request) {
         if (it.replacement_cost_gbp != null) offeredPrices.push(it.replacement_cost_gbp);
         if (it.replacement_cost_gbp != null)
           groundTruth += `  ${it.inventory_name ?? it.name} insured replacement value per individual item: £${it.replacement_cost_gbp}. Only bring this up if they ask about damage, loss, deposit or insurance — then give the figure plainly rather than dodging, and note cover runs through the platform.\n`;
-        groundTruth += `- ${it.name}: £${it.daily_price_gbp ?? "?"} /day${tierTxt ? ` [Hygglo multi-day rates: ${tierTxt} — quote the rate for the length they asked for, never the 1-day rate times the days]` : ""}. Included: ${kitText}\n`;
+        groundTruth += `- ${it.name}: one-day base £${it.daily_price_gbp ?? "?"} /day${tierTxt ? ` [Hygglo multi-day rates: ${tierTxt} — quote the rate for the length they asked for, never the 1-day rate times the days]` : ""}. Included: ${kitText}\n`;
         try {
           if (lc.start_date && lc.end_date) {
             const av = await convex.query(api.renter_bot_tools.check_availability, {
@@ -1157,7 +1182,7 @@ export async function POST(req: Request) {
               });
               if (pricing?.found && typeof pricing.daily_rate_gbp === "number") {
                 dailyRateGbp = pricing.daily_rate_gbp;
-                priceLine = ` £${dailyRateGbp}/day.`;
+                priceLine = ` One-day base £${dailyRateGbp}/day. Fetch the duration quote before offering a longer hire.`;
               }
             } catch {
               /* best-effort */
@@ -1472,6 +1497,9 @@ export async function POST(req: Request) {
           resolvedItems,
           itemsWithoutKitData,
           kitEvidence,
+          priceEvidence: [...fixedPriceEvidence,...renterPriceEvidence([...priceSources,...toolReceipts])],
+          stockRequest,
+          priceRequest,
           offeredPrices: [...new Set(offeredPrices)],
           marketingItems,
         });
@@ -1661,6 +1689,7 @@ export async function POST(req: Request) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const after: any = await convex.query(api.renter_bot_lab_order.get, { thread_id });
         bookingModified = ((after?.changes ?? []).length as number) > orderChangesBefore;
+        if (bookingModified && Array.isArray(after?.lines)) priceRequest = {start_date:after.start_date,end_date:after.end_date,items:after.lines.map((l: {name:string;qty:number})=>({name:l.name,quantity:l.qty}))};
       } catch {
         /* leave false — a claim without proof stays a false claim */
       }
@@ -1719,6 +1748,8 @@ export async function POST(req: Request) {
       availabilityReceipts: stockReceipts(toolReceipts).map((r) => ({ call_id: r.call_id, ...r.result })),
       stockRequest,
       // Prices the fact pack itself offered — see offeredPrices' declaration.
+      priceEvidence: [...fixedPriceEvidence.filter(e => !bookingModified || e.kind !== "basket"),...renterPriceEvidence([...priceSources,...toolReceipts])],
+      priceRequest,
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
       tokenUsage,

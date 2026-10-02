@@ -150,6 +150,7 @@ import type * as lib_monthly_verification from "../lib/monthly_verification.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
 import type * as lib_platform_fallout from "../lib/platform_fallout.js";
 import type * as lib_poller_window from "../lib/poller_window.js";
+import type * as lib_price_claims from "../lib/price_claims.js";
 import type * as lib_push_registration from "../lib/push_registration.js";
 import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_recommendation_kit from "../lib/recommendation_kit.js";
@@ -445,6 +446,7 @@ declare const fullApi: ApiFromModules<{
   "lib/notification_events": typeof lib_notification_events;
   "lib/platform_fallout": typeof lib_platform_fallout;
   "lib/poller_window": typeof lib_poller_window;
+  "lib/price_claims": typeof lib_price_claims;
   "lib/push_registration": typeof lib_push_registration;
   "lib/quiet_hours": typeof lib_quiet_hours;
   "lib/recommendation_kit": typeof lib_recommendation_kit;

@@ -1,3 +1,4 @@
+import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
 import { unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
@@ -41,6 +42,8 @@ export interface GuardResult {
 
 export interface GuardOpts {
   stockEvidence?: StockReceipt[];
+  priceEvidence?: PriceEvidence[];
+  priceRequest?: StockRequest;
   stockRequest?: StockRequest;
   /** Reviewed exact-model catalog results, not a tool-use boolean or prose. */
   cameraEvidence?: CameraEvidence[];
@@ -663,7 +666,7 @@ const ASSERTS_AVAIL_RE =
     const quoted = [...text.matchAll(/£\s?(\d+(?:\.\d{1,2})?)/g)].map((m) =>
       Math.round(Number(m[1])),
     );
-    if (quoted.length) {
+    if (quoted.length && opts.priceEvidence === undefined) {
       const offered = (opts.factPack?.pricing?.offeredPrices ?? []).filter(
         (v) => Number.isFinite(v) && v > 0,
       );
@@ -972,7 +975,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 16. PRICE HALLUCINATION — FLAG (factPack-gated)
-  if (factPack?.pricing?.itemPrices && factPack.pricing.itemPrices.length) {
+  if (opts.priceEvidence === undefined && factPack?.pricing?.itemPrices && factPack.pricing.itemPrices.length) {
     const stated = [...text.matchAll(/£\s*(\d+(?:\.\d{2})?)/g)].map((m) =>
       parseFloat(m[1]),
     );
@@ -1034,6 +1037,10 @@ const ASSERTS_AVAIL_RE =
         );
       }
     }
+  }
+
+  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]})) {
+    push("PRICE_HALLUCINATION", detail, "flagged");
   }
 
   // 16b. KIT HALLUCINATION — FLAG (factPack-gated)
