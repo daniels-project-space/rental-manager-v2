@@ -4,6 +4,10 @@ export const draftEvidenceValidator = v.object({
   model_id: v.string(),
   stage: v.string(),
   cost_usd: v.optional(v.number()),
+  /** Catalogue exclusion snapshot; not a dated stock-check receipt. */
+  rental_eligibility: v.optional(v.object({
+    ineligible_items: v.array(v.string()), source: v.literal("native_catalogue"),
+  })),
   commercial: v.optional(v.object({stage:v.string(),threshold_gbp:v.number(),total_gbp:v.union(v.number(),v.null()),
     status:v.union(v.literal("below"),v.literal("meets"),v.literal("unknown"),v.literal("not_applicable"),v.literal("disabled")),
     basis:v.union(v.literal("current_booking"),v.literal("complete_requested_quote"),v.literal("none")),

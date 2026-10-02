@@ -33,9 +33,25 @@ function subjectOf(prefix: string) {
   return { name: s.trim(), quantity: count ? units[count[1].toLowerCase()] ?? Number(count[1]) : undefined };
 }
 
+/** Server-supplied catalogue exclusions support a plain rental decline only.
+ * They never attest calendar occupancy, stock depletion or a cause of refusal.
+ * Resolve every subject independently; one excluded item cannot decline a basket. */
+export function supportsRentalEligibilityDecline(clause: string, request: StockRequest, ineligibleItems: string[]) {
+  if (!ineligibleItems.length) return false;
+  const normalized = clause.replace(/’/g, "'");
+  const match = /\b(?:(?:isn't|aren't|is not|are not|not)\s+available|unavailable)\b/i.exec(normalized);
+  if (!match || /\b(?:because|due to|since|booked|booking|rented|stock|repair|maintenance|broken)\b/i.test(normalized.slice(match.index + match[0].length))) return false;
+  const subject = subjectOf(normalized.slice(0, match.index).replace(/\s+(?:is|are)\s*$/i, ""));
+  if (/\s+with\s+/i.test(subject.name)) return false;
+  subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
+  const generic = /^(?:it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
+  const targets = generic ? request.items : [{ name: subject.name }];
+  return targets.length > 0 && targets.every(target => ineligibleItems.some(name => sameItem(target.name, name)));
+}
+
 /** A class-wide tool-use boolean never proves stock for another item or span.
  * Unknown subjects remain unverified rather than being guessed from prose. */
-export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest) {
+export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest, ineligibleItems: string[] = []) {
   const failures: Array<{ negative: boolean; detail: string }> = [];
   let previousSubjects: StockRequest["items"] = [];
   for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
@@ -66,6 +82,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const explicitDates = clause.match(/\b\d{4}-\d{2}-\d{2}\b/g);
     const start = explicitDates?.[0] ?? request.start_date;
     const end = explicitDates?.[1] ?? request.end_date;
+    if (negative && supportsRentalEligibilityDecline(clause, { ...request, items: targets }, ineligibleItems)) continue;
     const proven = targets.length > 0 && targets.every(target => {
       if(modifiers.some(raw=>{
         if(/^built[ -]?in\s+ND(?:s|\s+filters?)?$/i.test(raw.trim()))return false; // reviewed separately as an intrinsic camera feature

@@ -770,7 +770,9 @@ export async function POST(req: Request) {
       groundTruth += `STOCK CLAIM SCOPE: each availability statement must match the exact checked item, date span and quantity. A free body does not prove its whole mapped kit is free. If a kit component is booked, identify that component rather than calling the free body booked. Alternative offers need the requested quantity; explicitly state any smaller quantity you can supply.\n`;
       for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
-          marketingItems.push(it.name ?? "that item");
+          // Preserve native catalogue identity for eligibility, independently
+          // of dated stock receipts. A generic fallback cannot prove identity.
+          marketingItems.push(...[it.name, it.inventory_name, it.listing_name].filter((n): n is string => !!n));
           let altText = "";
           // Real bug (2026-08-17): the Mastra TOOL now requires `kind` so the
           // agent can never omit it (see renter_bot_tools.ts), but THIS is a

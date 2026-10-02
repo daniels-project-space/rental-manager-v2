@@ -1,7 +1,7 @@
 import type { MinimumRentalContext } from "./minimum_rental";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
-import { unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { supportsRentalEligibilityDecline, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 /**
@@ -76,6 +76,7 @@ export interface GuardOpts {
       deliveryFeeGbp?: number | null;
     };
     verifiedListingItem?: string;
+    /** Native inventory exclusions, never model-provided names or stock receipts. */
     marketingItems?: string[];
     lowValueInstruction?: string;
     /**
@@ -589,14 +590,15 @@ const ASSERTS_AVAIL_RE =
     // Equipment stock is separate from a recording feature or pickup policy.
     // "4K isn't available on the A7 II" is not a claim that its body is out.
     if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*(?:is|are)?\s*$/i.test(subject) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(subject)) return false;
-    return assertsOutsideConditional(sentence, negativeStock);
+    return assertsOutsideConditional(sentence, negativeStock) &&
+      !supportsRentalEligibilityDecline(sentence, opts.stockRequest ?? { items: [] }, marketingItems);
   });
   if ((opts.groundedDuringTurn !== undefined || opts.hasItemGrounding === false) && assertsUnavailable && !opts.groundedDuringTurn?.unavailability) {
     push("UNGROUNDED_UNAVAILABILITY", "Asserts unavailability without a negative stock verdict; available alternatives and unknown stock do not prove the requested item is unavailable", "flagged");
   }
 
   if (opts.stockEvidence !== undefined) {
-    for (const failure of unsupportedStockClaims(text, opts.stockEvidence, opts.stockRequest ?? { items: [] })) {
+    for (const failure of unsupportedStockClaims(text, opts.stockEvidence, opts.stockRequest ?? { items: [] }, marketingItems)) {
       push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
     }
   }

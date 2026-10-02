@@ -4,6 +4,45 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("catalogue rental eligibility is distinct from calendar stock", () => {
+  const scope: StockRequest = { start_date: "2026-10-06", end_date: "2026-10-07", items: [{ name: "Sony FX6", quantity: 1 }] };
+  const alternative: StockReceipt = { ...stock, item: "Sony FX3", start_date: scope.start_date!, end_date: scope.end_date!, available: true, free_units: 1 };
+  const opts = { history: [], lastRenterMessage: "Is the FX6 available for 6 to 7 October?", hasItemGrounding: true,
+    groundedDuringTurn: { availability: true, unavailability: false }, stockEvidence: [alternative], stockRequest: scope,
+    factPack: { marketingItems: ["Sony FX6"] } };
+  it("accepts the real inventory decline and separately checked owned alternative", () => {
+    const result = guardDraft("The Sony FX6 isn't available for 6 to 7 October, but the Sony FX3 is available for those dates.", opts);
+    expect(result.flags.filter(f => ["UNGROUNDED_UNAVAILABILITY", "UNGROUNDED_AVAILABILITY", "MARKETING_ITEM_AVAILABLE"].includes(f.type))).toEqual([]);
+  });
+  it("does not turn eligibility into a booking or other stock-cause receipt", () => {
+    for (const text of ["The FX6 is already booked.", "The FX6 is out of stock.", "The FX6 is currently rented.", "The FX6 isn't available because it's booked out.", "The FX6 isn't available due to a repair."]) {
+      expect(guardDraft(text, opts).flags).toContainEqual(expect.objectContaining({ type: "UNGROUNDED_UNAVAILABILITY", severity: "critical" }));
+    }
+  });
+  it("keeps unsupported items, variants and positive offers blocked", () => {
+    for (const text of ["The FX30 isn't available.", "The A7 II isn't available.", "The FX3 isn't available.", "The FX6 is available."]) {
+      expect(guardDraft(text, opts).flags.some(f => f.severity === "critical" && f.action === "flagged")).toBe(true);
+    }
+    expect(guardDraft("The FX6 isn't available.", { ...opts, factPack: undefined }).flags).toContainEqual(expect.objectContaining({ type: "UNGROUNDED_UNAVAILABILITY" }));
+  });
+  it("does not use one ineligible item to decline a mixed basket", () => {
+    const stockRequest = { ...scope, items: [...scope.items, { name: "Sony FX3", quantity: 1 }] };
+    expect(guardDraft("They're unavailable for your dates.", { ...opts, stockRequest }).flags).toContainEqual(expect.objectContaining({ type: "UNGROUNDED_UNAVAILABILITY" }));
+  });
+  it("accepts exact native model identity without lending the alternative's stock verdict", () => {
+    const stockRequest = { ...scope, items: [{ name: "Sony A7S III", quantity: 1 }] };
+    const result = guardDraft("That exact Sony A7S III isn't available for 6th to 7th October, but the Sony FX3 is available for those dates.", {
+      ...opts, stockRequest, factPack: { marketingItems: ["Sony A7S III"] },
+    });
+    expect(result.flags.filter(f => f.type.startsWith("UNGROUNDED_"))).toEqual([]);
+    expect(guardDraft("The FX6 isn't available, but the FX3 is available.", { ...opts, stockEvidence: [{ ...alternative, start_date: "2026-10-08" }] }).flags)
+      .toContainEqual(expect.objectContaining({ type: "UNGROUNDED_AVAILABILITY" }));
+  });
+  it("does not attach a later pronoun to the excluded request after naming an owned alternative", () => {
+    expect(guardDraft("The FX6 isn't available. The FX3 is available. It isn't available for your dates.", opts).flags)
+      .toContainEqual(expect.objectContaining({ type: "UNGROUNDED_UNAVAILABILITY" }));
+  });
+});
 describe("scoped stock claims", () => {
   it("blocks unrelated negatives even if a different item has a real negative receipt", () => {
     expect(check("The Pyxis isn't available for those dates.")).toHaveLength(1);
