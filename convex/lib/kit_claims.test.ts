@@ -93,3 +93,10 @@ it("keeps built-in ND out of the physical accessory check", () => {
   expect(unsupportedKitClaims("Blackmagic 6K Pro comes with NP-F570 batteries, a 1TB SSD and a camera cage (native EF, built-in ND filters).", [pro])).toEqual([]);
   expect(unsupportedKitClaims("Blackmagic 6K Pro comes with an external ND filter.", [pro])).not.toEqual([]);
 });
+it("checks set counts without treating sets as individual batteries",()=>{
+ const e=[{names:["Sony A7 II"],contents:["Sony NP-FW50 batteries 2x sets","256GB card"]}];
+ expect(unsupportedKitClaims("The Sony A7 II includes two sets of NP-FW50 batteries and a 256GB card.",e)).toEqual([]);
+ expect(unsupportedKitClaims("The Sony A7 II includes three sets of NP-FW50 batteries.",e)).toHaveLength(1);
+ expect(unsupportedKitClaims("The Sony A7 II includes two NP-FW50 batteries.",e)).toHaveLength(1);
+ expect(unsupportedKitClaims("The Sony A7 II includes a 256GB SD card.",e)).toHaveLength(1);
+});

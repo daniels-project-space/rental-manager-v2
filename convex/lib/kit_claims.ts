@@ -10,7 +10,7 @@ function namesItem(text: string, name: string) {
   const tokens = normalize(name).split(" ").filter(Boolean);
   return tokens.length > 0 && new RegExp(`(?:^| )${tokens.join(" *")}(?: |$)`).test(normalize(text));
 }
-type ComponentDetails = { types: string[]; capacities: string[]; quantity?: number };
+type ComponentDetails = { types: string[]; capacities: string[]; quantity?: number; quantityUnit?: "sets" | "units" };
 const numbers: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 const positiveDetail = (text: string, index: number) => !/\b(?:not|no|without|rather than|instead of)\s+(?:(?:an?|the)\s+)?$/i.test(text.slice(0, index));
 /** Interpret only explicit component facts. A set is not an individual-unit count. */
@@ -34,15 +34,17 @@ function details(text: string, category: string, pattern: RegExp): ComponentDeta
   const quantityMatch = [...prefix.matchAll(/(?:^|\s)(one|two|three|four|five|six|seven|eight|nine|ten|\d+)(?:\s*[x×]\s*|\s+|$)/gi)]
     .find(m => !/^(?:GB|TB)\b/i.test(prefix.slice(m.index! + m[0].length).trim()));
   const suffixQuantity = noun ? /^\s*(?:\((?:x|×)?\s*)?(\d+)\s*(?:[x×]\s*)?(?:\)|$)/i.exec(text.slice(noun.index + noun[0].length)) : null;
-  const quantity = /\bsets?\b/i.test(text) ? undefined
+  const sets = /\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*[x×]?\s*sets?\b/i.exec(text);
+  const quantityUnit=/\bsets?\b/i.test(text)?"sets" as const:"units" as const;
+  const quantity = quantityUnit === "sets" ? (sets ? numbers[sets[1].toLowerCase()] ?? Number(sets[1]) : undefined)
     : quantityMatch ? (numbers[quantityMatch[1].toLowerCase()] ?? Number(quantityMatch[1]))
     : suffixQuantity ? Number(suffixQuantity[1]) : undefined;
-  return { types, capacities, quantity };
+  return { types, capacities, quantity, quantityUnit };
 }
 function supports(claim: ComponentDetails, proof: ComponentDetails) {
   return claim.types.every(t => proof.types.includes(t) || t === "cfexpress" && proof.types.some(p => p.startsWith("cfexpresstype")))
     && claim.capacities.every(c => proof.capacities.includes(c))
-    && (claim.quantity === undefined || claim.quantity === proof.quantity);
+    && (claim.quantity === undefined || claim.quantity === proof.quantity && claim.quantityUnit === proof.quantityUnit);
 }
 const componentParts = (s: string) => s.split(/[,;()]|\balong\s+with\b|\bwith\b|\band\b|\bplus\b/gi);
 /** Negative/optional offers are not claims of included contents. Preserve item attribution. */

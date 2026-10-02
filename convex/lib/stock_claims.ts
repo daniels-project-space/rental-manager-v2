@@ -48,9 +48,13 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*$/i.test(prefix) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(prefix)) continue;
     const negative = !!match[1] || /^(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available))$/i.test(match[0]);
     const subject = subjectOf(prefix.replace(/\s+(?:is|are)\s*$/i, ""));
-    const namedKit = /\s+(?:kit|set)\s*$/i.test(subject.name);
-    if (namedKit) subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
-    const bodyOnly = /^body$/i.test(subject.name);
+    const kitParts=subject.name.split(/\s+with\s+/i);
+    const modifiers=kitParts.slice(1).flatMap(p=>p.split(/\s+(?:and|plus)\s+/i));
+    subject.name=kitParts[0];
+    const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|set)\s*$/i.test(subject.name);
+    subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
+    const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
+    if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
     const generic = /^(?:body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
     let targets = request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     if (generic) targets = previousSubjects.length ? previousSubjects : request.items;
@@ -63,6 +67,14 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const start = explicitDates?.[0] ?? request.start_date;
     const end = explicitDates?.[1] ?? request.end_date;
     const proven = targets.length > 0 && targets.every(target => {
+      if(modifiers.some(raw=>{
+        if(/^built[ -]?in\s+ND(?:s|\s+filters?)?$/i.test(raw.trim()))return false; // reviewed separately as an intrinsic camera feature
+        const modifier=subjectOf(raw);
+        modifier.name=modifier.name.replace(/\s+lens(?:es)?$/i, "").trim();
+        const matching=(target.components??[]).filter(c=>sameItem(modifier.name,c.name) ||
+          /^\d+(?:[-–]\d+)?\s*mm$/i.test(modifier.name) && identity(c.name).replace(/^\w+\s+/, "")===identity(modifier.name));
+        return matching.length!==1 || modifier.quantity!==undefined && modifier.quantity!==matching[0].quantity;
+      }))return false;
       if (!negative && target.complete === false) return false;
       const required = !bodyOnly && target.components?.length && (!negative || generic || namedKit)
         ? target.components : [target];

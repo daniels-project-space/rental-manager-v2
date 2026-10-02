@@ -67,3 +67,10 @@ describe("scoped rental price claims",()=>{
   expect(g.flags).toContainEqual(expect.objectContaining({type:"PRICE_HALLUCINATION",severity:"critical"}));
  });
 });
+it("keeps duration-qualified generic totals tied to the actual subject",()=>{
+ const scope:StockRequest={start_date:"2026-10-06",end_date:"2026-10-07",items:[{name:"Sony A7 II",quantity:1}]};
+ const evidence:PriceEvidence[]=[{names:["Sony A7 II"],kind:"rental",days:2,quantity:1,total_gbp:56,daily_rate_gbp:28,source:"native",call_id:"native"}];
+ expect(unsupportedPriceClaims("The Sony A7 II kit is available. The total for the 2 days is £56.",evidence,scope)).toEqual([]);
+ expect(unsupportedPriceClaims("The total for the 4-day rental is £56.",evidence,scope)).toHaveLength(1);
+ expect(unsupportedPriceClaims("The total for the Pyxis is £56.",evidence,scope)).toHaveLength(1);
+});

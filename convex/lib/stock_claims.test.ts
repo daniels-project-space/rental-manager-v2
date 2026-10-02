@@ -85,3 +85,11 @@ describe("scoped stock claims", () => {
   });
 
 });
+it("resolves a selected kit's named lens without borrowing another manufacturer's stock",()=>{
+ const scope:StockRequest={...request,items:[{name:"Sony A7 II",quantity:1,complete:true,components:[{name:"Sony A7 II",quantity:1},{name:"Sony 28-70mm",quantity:1}]}]};
+ const receipts=[{...stock,item:"Sony A7 II",available:true},{...stock,item:"Sony 28-70mm",available:true}];
+ expect(check("The Sony A7 II kit with the 28-70mm lens is available for those dates.",receipts,scope)).toEqual([]);
+ for(const descriptor of ["Canon 28-70mm lens","24-70mm lens","two 28-70mm lenses"])expect(check(`The Sony A7 II kit with ${descriptor} is available.`,receipts,scope)).toHaveLength(1);
+ expect(check("The Sony A7 II kit with the 28-70mm lens is available.",[{...receipts[0]},{...receipts[1],available:false}],scope)).toHaveLength(1);
+ expect(check("The Sony A7 II body is available.",[{...receipts[0]},{...receipts[1],available:false}],scope)).toEqual([]);
+});

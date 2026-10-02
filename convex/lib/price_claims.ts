@@ -45,7 +45,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     let unresolvedPair = false;
     if (explicitSubject) {
       const named = norm(explicitSubject[1].replace(/\+/g," plus "));
-      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set))$/i.test(named);
+      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(named);
       if (!generic && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !names.includes(named)) {
         pairedItems=[];
@@ -75,7 +75,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const purpose = /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
       : /\b(?:delivery|courier|postage)\b/i.test(local) ? "delivery" : "rental";
-    const explicitDays = /\b(?:for|across|over|total\s+for)\s+(?:the\s+)?(\d+)\s+days?\b/i.exec(local);
+    const explicitDays = /\b(?:for|across|over|total\s+for)\s+(?:the\s+)?(\d+)[ -]+days?\b/i.exec(local);
     const days = explicitDays ? Number(explicitDays[1]) : duration;
     const requested = request.items.find(i => same(subject, [i.name, ...(i.aliases ?? [])]));
     const count = lastAt >= 0 ? /\b(\d+|one|two|both|three|four)\s*(?:x\s*)?$/.exec(before.slice(0,Math.max(0,lastAt-1)).trim()) : null;
