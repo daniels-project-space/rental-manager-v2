@@ -19,7 +19,7 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     const valid = Number.isInteger(qty) && qty > 0;
     return { item_id, name: item?.name_canonical ?? null, kind: item?.kind ?? null,
       units_per_listing: qty, requested_units: qty * quantity,
-      stock_required: !item || !isStandardAccessory(item.kind, item.name_canonical),
+      stock_required: !item || item.track_independent_stock === true || !isStandardAccessory(item.kind, item.name_canonical),
       owned: !item || !valid ? null : item.status === "active" && !item.is_marketing_only && item.qty > 0 };
   });
   const declared = description ? resolveBundleMapping(description, items) : null;

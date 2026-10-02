@@ -56,7 +56,7 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           const a = alternative as Record<string, unknown>;
           const stock = a.availability as Record<string, unknown> | null;
           if (stock?.available === true && typeof a.name === "string")
-            receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:${a.name}`, result: { ...stock, item_name: a.name, owned: true, requested_units: stock.quantity } });
+            receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:${a.name}`, result: { ...stock, item_name: a.name, owned: true, requested_units: stock.quantity, ...(typeof a.kind === "string" && a.kind.trim() ? {kind:a.kind} : {}) } });
         }
       }
     }

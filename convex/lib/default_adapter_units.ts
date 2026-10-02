@@ -2,17 +2,29 @@ import { bestMatch } from "./item_name_match";
 
 export type AdapterInventoryItem = {
   _id: unknown; name_canonical: string; kind?: string; aliases?: string[];
-  is_marketing_only?: boolean;
+  is_marketing_only?: boolean; track_independent_stock?: boolean; unit_kind?: string;
+  supplied_stock?: Array<{ item_id: unknown; qty: number; source: string }>;
   compatibility?: { included_with_rental?: string[] };
 };
 export type PhysicalUnit = { item_id: string; qty: number };
 
 /** Only explicitly recorded supplied adapters, never mount compatibility or
- * customary accessories. Media/battery allocation retains its existing policy. */
+ * customary accessories. Counted supplied pools require explicit item IDs and units;
+ * legacy media/battery records retain their existing policy. */
 export function defaultAdapterUnits(item: AdapterInventoryItem, inventory: AdapterInventoryItem[]) {
   const components: PhysicalUnit[] = [];
   const unresolved: string[] = [];
   if (item.is_marketing_only || !/^camera(?:_body)?$/.test(item.kind ?? "")) return { components, unresolved };
+  for (const c of item.supplied_stock ?? []) {
+    const target = inventory.find(i => String(i._id) === String(c.item_id));
+    if (!target || target.is_marketing_only || !target.track_independent_stock || target.unit_kind !== "unit" ||
+      String(target._id) === String(item._id) || !Number.isInteger(c.qty) || c.qty < 1 || !c.source.trim()) {
+      unresolved.push(`Supplied stock ${String(c.item_id)} (${c.qty})`); continue;
+    }
+    const previous = components.find(row => row.item_id === String(c.item_id));
+    if (previous) previous.qty = Math.max(previous.qty, c.qty);
+    else components.push({item_id:String(c.item_id),qty:c.qty});
+  }
   for (const raw of item.compatibility?.included_with_rental ?? []) {
     if (!/\badapters?\b/i.test(raw) || /\b(?:not included|not supplied|optional|without)\b/i.test(raw)) continue;
     const count = /^\s*(\d+)\s*(?:[x×]\s*|\s+)/i.exec(raw);
@@ -32,7 +44,7 @@ export function defaultAdapterUnits(item: AdapterInventoryItem, inventory: Adapt
 }
 
 /** Expand EACH logical listing before basket aggregation. Explicitly mapped
- * supplied adapters overlap defaults; a separate extra line adds its own units. */
+ * supplied components overlap defaults; a separate extra line adds its own units. */
 export function withDefaultAdapters(units: PhysicalUnit[], inventory: AdapterInventoryItem[]) {
   const quantities = new Map<string, number>();
   for (const c of units) quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);

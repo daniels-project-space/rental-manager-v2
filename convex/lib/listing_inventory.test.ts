@@ -104,3 +104,34 @@ describe("declared kit coverage", () => {
     expect(listing.complete).toBe(false);expect(listing.coverage?.unresolved).toHaveLength(1);
   });
 });
+
+
+describe("counted supplied battery pool", () => {
+  const pool = {_id:"battery",name_canonical:"NP-F570 batteries",kind:"power",unit_kind:"unit",qty:12,status:"active",track_independent_stock:true};
+  const camera = (id:string) => ({_id:id,name_canonical:id,kind:"camera",unit_kind:"unit",qty:1,status:"active",supplied_stock:[{item_id:"battery",qty:5,source:"recorded kit"}]});
+  const native=[camera("Pro"),camera("Full Frame"),pool] as unknown as Doc<"items">[];
+  const listing=(components:Array<{item_id:string;qty:number}>)=>({...resolveListingComponents(native,components),product_id:10,listing_name:"Blackmagic kits"});
+  it("allocates ten from one twelve-battery pool for both cameras",()=>{
+    const kit=listing([{item_id:"Pro",qty:1},{item_id:"Full Frame",qty:1}]);
+    expect(kit.components.find(c=>c.item_id==="battery")).toMatchObject({requested_units:10,stock_required:true});
+    expect(listingStock({...sources(),items:native},kit,request)).toMatchObject({available:true});
+  });
+  it("rejects a kit when another hire plus extra batteries leave fewer than five",()=>{
+    const hire={status:"confirmed",start_date:request.start_date,end_date:request.end_date,expanded_items:[{item_id:"Pro",qty:1},{item_id:"battery",qty:8}]} as unknown as Doc<"reservations">;
+    const result=listingStock({...sources(),items:native,reservations:[hire]},listing([{item_id:"Full Frame",qty:1}]),request);
+    expect(result.available).toBe(false);
+    expect(result.components.find(c=>c.item_name===pool.name_canonical)).toMatchObject({free_units:4,requested_units:5,available:false});
+  });
+  it("does not count the requesting booking against itself",()=>{
+    const hire={hygglo_order_id:"same",status:"confirmed",start_date:request.start_date,end_date:request.end_date,expanded_items:[{item_id:"Pro",qty:1}]} as unknown as Doc<"reservations">;
+    expect(listingStock({...sources(),items:native,reservations:[hire]},listing([{item_id:"Pro",qty:1}]),{...request,thread_id:"same"}).available).toBe(true);
+  });
+  it("cannot prove a missing, uncounted, pack-sized or fractional supplied pool",()=>{
+    for (const bad of [undefined,{...pool,track_independent_stock:false},{...pool,unit_kind:"kit"}]) {
+      const items=[camera("Pro"),...(bad?[bad]:[])] as unknown as Doc<"items">[];
+      expect(resolveListingComponents(items,[{item_id:"Pro",qty:1}]).complete).toBe(false);
+    }
+    const badCamera={...camera("Pro"),supplied_stock:[{item_id:"battery",qty:0.5,source:"recorded kit"}]};
+    expect(resolveListingComponents([badCamera,pool] as unknown as Doc<"items">[],[{item_id:"Pro",qty:1}]).complete).toBe(false);
+  });
+});

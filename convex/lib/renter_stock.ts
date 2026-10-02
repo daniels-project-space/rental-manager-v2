@@ -131,7 +131,7 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
   }
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
   const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations });
-  return { ...result, item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: 60, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
+  return { ...result, ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: 60, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
 }
 
 export async function checkRentalStock(ctx: QueryCtx, request: StockRequest) {

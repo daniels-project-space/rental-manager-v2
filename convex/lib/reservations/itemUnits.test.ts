@@ -47,3 +47,10 @@ describe("held units from fully mapped listing quantities", () => {
     expect(units.get("lens")).toBe(4);
   });
 });
+
+
+it("sums shared supplied batteries and separately booked extras across logical listings",()=>{
+ const inventory=[{_id:"pro",name_canonical:"Pro",kind:"camera",supplied_stock:[{item_id:"b",qty:5,source:"kit"}]},{_id:"ff",name_canonical:"Full Frame",kind:"camera",supplied_stock:[{item_id:"b",qty:5,source:"kit"}]},{_id:"b",name_canonical:"NP-F570 batteries",kind:"power",unit_kind:"unit",track_independent_stock:true}];
+ const mapping:OverrideMap=new Map([["leo#1",[{item_id:"pro",qty:1},{item_id:"b",qty:5}]],["leo#2",[{item_id:"ff",qty:1}]],["leo#3",[{item_id:"b",qty:3}]]]);
+ expect(reservationItemUnits({account_slug:"leo",hygglo_items:[{product_id:1},{product_id:2},{product_id:3}]},new Map(),mapping,inventory).get("b")).toBe(13);
+});

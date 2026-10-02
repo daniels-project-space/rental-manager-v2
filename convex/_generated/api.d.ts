@@ -12,6 +12,7 @@ import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_metrics.js";
 import type * as admin_backfill_weekly_metrics_5b from "../admin_backfill_weekly_metrics_5b.js";
+import type * as admin_battery_pool_20261002 from "../admin_battery_pool_20261002.js";
 import type * as admin_bootstrap_pidindex from "../admin_bootstrap_pidindex.js";
 import type * as admin_catalog_audit_20261001 from "../admin_catalog_audit_20261001.js";
 import type * as admin_catalog_identity_20261001 from "../admin_catalog_identity_20261001.js";
@@ -320,6 +321,7 @@ declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   admin_backfill_weekly_metrics: typeof admin_backfill_weekly_metrics;
   admin_backfill_weekly_metrics_5b: typeof admin_backfill_weekly_metrics_5b;
+  admin_battery_pool_20261002: typeof admin_battery_pool_20261002;
   admin_bootstrap_pidindex: typeof admin_bootstrap_pidindex;
   admin_catalog_audit_20261001: typeof admin_catalog_audit_20261001;
   admin_catalog_identity_20261001: typeof admin_catalog_identity_20261001;

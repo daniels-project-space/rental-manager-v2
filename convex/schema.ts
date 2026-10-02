@@ -93,6 +93,15 @@ const operationalSchema = defineSchema({
     sub_kind: v.optional(v.string()),
     qty: v.number(),
     unit_kind: v.string(),           // "unit" | "kit" | "set"
+    // Counted physical pools opt in; legacy accessory/pack counts stay unchanged.
+    track_independent_stock: v.optional(v.boolean()),
+    quantity_basis: v.optional(v.object({
+      basis: v.union(v.literal("owner_lower_bound"), v.literal("owner_exact")),
+      source: v.string(), note: v.string(), recorded_at: v.number(),
+    })),
+    supplied_stock: v.optional(v.array(v.object({
+      item_id: v.id("items"), qty: v.number(), source: v.string(),
+    }))),
     weight_kg: v.optional(v.number()),
     length_cm: v.optional(v.number()),
     width_cm: v.optional(v.number()),

@@ -79,3 +79,11 @@ describe("successful tool receipts", () => {
   });
 
 });
+
+
+it("carries the alternative's native item kind into stock evidence without borrowing the model's category",()=>{
+ const receipts=renterToolReceipts([{payload:{toolName:"find_owned_alternatives",toolCallId:"lens",args:{kind:"camera"},result:{alternatives:[{name:"Canon EF 16-35mm f2.8",kind:"lens",availability:{...stock,quantity:1}}]}}}]);
+ expect(stockReceipts(receipts)[0].result).toMatchObject({item_name:"Canon EF 16-35mm f2.8",kind:"lens",requested_units:1});
+ const noKind=renterToolReceipts([{payload:{toolName:"find_owned_alternatives",toolCallId:"unknown",args:{kind:"lens"},result:{alternatives:[{name:"Unknown item",availability:{...stock,quantity:1}}]}}}]);
+ expect(stockReceipts(noKind)[0].result.kind).toBeUndefined();
+});
