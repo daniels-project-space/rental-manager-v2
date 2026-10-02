@@ -6,6 +6,26 @@ const request:StockRequest={start_date:"2026-10-02",end_date:"2026-10-04",items:
 const prices:PriceEvidence[]=[{names:["BMPCC 6K Pro"],kind:"rental",days:3,quantity:1,daily_rate_gbp:30,base_rate_gbp:35,total_gbp:90,start_date:"2026-10-02",end_date:"2026-10-04",call_id:"real-alt",source:"hygglo_tier"},
 {names:["BMPCC 6K Full Frame"],kind:"rental",days:3,quantity:1,daily_rate_gbp:43.33,base_rate_gbp:50,total_gbp:130,call_id:"selected",source:"hygglo_tier"}];
 const check=(text:string, evidence=prices,scope=request)=>unsupportedPriceClaims(text,evidence,scope);
+describe("separate item prices after a parenthesized daily rate",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const receipts:PriceEvidence[]=[
+  {names:["Anamorphic Blazar Remus 100mm"],kind:"rental",days:2,quantity:1,total_gbp:50,daily_rate_gbp:25,source:"hygglo_tier",call_id:"native-lens"},
+  {names:["PL to L mount"],kind:"rental",days:2,quantity:1,total_gbp:20,daily_rate_gbp:10,source:"hygglo_tier",call_id:"native-adapter"}];
+ const text="For your 2-day hire from 20 to 21 October, the Blazar Remus 100mm is £50 (£25/day) and the PL to L mount adapter is £20 (£10/day).";
+ it("binds each amount to its own item rather than combining the prior rate suffix",()=>{
+  expect(check(text,receipts,scope)).toEqual([]);
+  expect(check(text.replace("and the","plus the"),receipts,scope)).toEqual([]);
+ });
+ it("still requires the second item's real total, duration and quantity",()=>{
+  expect(check(text,[receipts[0]],scope)).not.toEqual([]);
+  expect(check(text.replace("£20","£25"),receipts,scope)).not.toEqual([]);
+  expect(check(text,[receipts[0],{...receipts[1],days:3}],scope)).not.toEqual([]);
+  expect(check(text,[receipts[0],{...receipts[1],quantity:2}],scope)).not.toEqual([]);
+ });
+ it("does not accept a combined lens-and-adapter price from separate receipts",()=>{
+  expect(check("The Blazar Remus 100mm and the PL to L mount adapter are £50 for the two days.",receipts,scope)).not.toEqual([]);
+ });
+});
 describe("booking and duration price ownership beside component lists",()=>{
  const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Blackmagic 6K Full Frame + Canon EF 24-105mm f4",quantity:1}]};
  const quote:PriceEvidence={names:[scope.items[0].name],kind:"rental",days:2,quantity:1,total_gbp:124,call_id:"native-current",source:"lab_order_quote"};

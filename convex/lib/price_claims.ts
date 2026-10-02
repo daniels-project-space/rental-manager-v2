@@ -53,7 +53,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const models = [...before.matchAll(/\b(?:pyxis(?:\s+\d+k)?|fx\s*\d+[a-z]*|a7\s*(?:iii|ii|iv|v|\d+)|(?:canon\s+)?(?:r5c?|r6|c70)|(?:blackmagic|bmpcc)\s+(?!(?:kit|set|booking)\b)[^£.!?]{0,55})\b/g)];
     const unknown = models.at(-1);
     if (unknown && unknown.index! > Math.max(-1, lastAt) && !names.some(n => (` ${n} `).includes(` ${unknown[0].trim()} `))) subject = [norm(unknown[0])];
-    const segment = text.slice(consumed,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
+    const rawSegment = text.slice(consumed,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
+    // After the prior currency amount, a rate suffix belongs to that amount:
+    // "lens is £50 (£25/day) and the adapter is £20" names only the adapter
+    // for £20. Never treat "day" as an unreceipted member of a combined kit.
+    const segment = rawSegment.replace(/^\s*(?:(?:\/\s*day|per\s+day|a\s+day)\s*\)?|\))\s*(?:and|plus)\s+/i, "");
     const segmentDates = claimDateScope(segment, request.start_date);
     // An unchanged booking amount belongs to the current order, even when a
     // preceding paragraph discussed another item or the trailing text lists
