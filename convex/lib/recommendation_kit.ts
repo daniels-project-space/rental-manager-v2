@@ -7,7 +7,13 @@ type Mapping = { components: Array<{ item_id: unknown; qty: number }> };
 export function recordedKit(components: Array<{ name: string | null; qty: number }>, accessories: string[]) {
   const mapped = components.filter(c => c.name && Number.isInteger(c.qty) && c.qty > 0)
     .map(c => `${c.qty} × ${c.name}`);
-  const recorded = accessories.filter(c => typeof c === "string" && c.trim()).map(c => c.trim());
+  const physicalName = (name: string) => name.toLowerCase().replace(/batteries/g,"battery").replace(/cards/g,"card").replace(/cases/g,"case").replace(/chargers/g,"charger").replace(/[^a-z0-9]/g,"");
+  const recorded = accessories.filter(c => typeof c === "string" && c.trim()).map(c => c.trim()).filter(text=>{
+    const explicit=/^(\d+)\s*[×x]\s*(.+)$/i.exec(text);
+    // Only a matching physical name AND quantity can collapse. A pack, set,
+    // unspecified count or different quantity remains distinct evidence.
+    return !explicit || !components.some(c=>c.name && c.qty===Number(explicit[1]) && physicalName(c.name)===physicalName(explicit[2]));
+  });
   const contents = [...new Set([...mapped, ...recorded])];
   return { contents, included: contents.length ? contents.join(", ") : null,
     completeness: contents.length ? "partial" as const : "unknown" as const,

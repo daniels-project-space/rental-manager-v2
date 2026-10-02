@@ -35,6 +35,7 @@ export default defineConfig({
       "convex/settings.draft-epoch.test.ts",
       "convex/lib/listing_inventory.test.ts",
       "convex/lib/recommendation_basket.test.ts",
+      "convex/lib/listing_media_conflict.test.ts",
       "convex/lib/verified_item_spec.test.ts",
       "convex/lib/renter_kit_evidence.test.ts",
       "convex/lib/kit_claims.test.ts",

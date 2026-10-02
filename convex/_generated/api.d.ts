@@ -150,6 +150,7 @@ import type * as lib_lens_claim_references from "../lib/lens_claim_references.js
 import type * as lib_listing_display_catalog from "../lib/listing_display_catalog.js";
 import type * as lib_listing_equivalence from "../lib/listing_equivalence.js";
 import type * as lib_listing_inventory from "../lib/listing_inventory.js";
+import type * as lib_listing_media_conflict from "../lib/listing_media_conflict.js";
 import type * as lib_listing_photo_reference from "../lib/listing_photo_reference.js";
 import type * as lib_marketing_only_requests from "../lib/marketing_only_requests.js";
 import type * as lib_message_reconciliation from "../lib/message_reconciliation.js";
@@ -461,6 +462,7 @@ declare const fullApi: ApiFromModules<{
   "lib/listing_display_catalog": typeof lib_listing_display_catalog;
   "lib/listing_equivalence": typeof lib_listing_equivalence;
   "lib/listing_inventory": typeof lib_listing_inventory;
+  "lib/listing_media_conflict": typeof lib_listing_media_conflict;
   "lib/listing_photo_reference": typeof lib_listing_photo_reference;
   "lib/marketing_only_requests": typeof lib_marketing_only_requests;
   "lib/message_reconciliation": typeof lib_message_reconciliation;

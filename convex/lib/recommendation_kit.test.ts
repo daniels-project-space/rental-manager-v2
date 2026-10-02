@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recommendationKit, recordedKit } from "./recommendation_kit";
+import { recordedKit, recommendationKit } from "./recommendation_kit";
 const body = { _id: "body", name_canonical: "BMPCC 6K Full Frame", kind: "camera", compatibility: { included_with_rental: ["5× NP-F570 batteries", "1TB CFexpress Type B"] } };
 const lens = { _id: "lens", name_canonical: "Native L lens", kind: "lens" };
 describe("recommendation kit provenance", () => {
@@ -37,4 +37,10 @@ describe("selected kit source boundary", () => {
     expect(kit.contents).toEqual(["charger"]);
     expect(kit.source).toBe("inventory_record");
   });
+});
+
+it("does not list the same five physical batteries twice through mapping and inventory wording",()=>{
+ const kit=recordedKit([{name:"NP-F570 batteries",qty:5}],["5x NP-F570 battery","camera cage"]);
+ expect(kit.contents).toEqual(["5 × NP-F570 batteries","camera cage"]);
+ expect(recordedKit([{name:"NP-F570 batteries",qty:5}],["10x NP-F570 battery","1x BMPCC battery pack"]).contents).toEqual(["5 × NP-F570 batteries","10x NP-F570 battery","1x BMPCC battery pack"]);
 });

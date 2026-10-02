@@ -1,3 +1,4 @@
+import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { explicitRecommendationUse, recommendationBasket, type RecommendationLine } from "./lib/recommendation_basket";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { renterItemNames } from "./lib/renter_item_names";
@@ -389,12 +390,25 @@ export const get_listing_context = query({
         units_per_listing: 1, requested_units: l.qty, stock_required: true,
         owned: it.status === "active" && !it.is_marketing_only && it.qty > 0,
       }] : []);
+      let storageNeedsReview = false;
+      if (it && account_slug && ["camera","camera_body"].includes(it.kind ?? "")) {
+        const [indexes,overrides,peers]=await Promise.all([
+          ctx.db.query("hygglo_product_index").withIndex("by_item_id",q=>q.eq("item_id",it!._id)).collect(),
+          ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account_slug)).collect(),
+          ctx.db.query("online_listings").withIndex("by_account",q=>q.eq("account_slug",account_slug)).collect(),
+        ]);
+        const ids=baseListingProductIds(account_slug,String(it._id),indexes,overrides,allItems);
+        storageNeedsReview=listingMediaConflict(included_with_rental ?? [],peers.filter(p=>ids.includes(p.product_id)).map(p=>p.name ?? ""));
+        if (storageNeedsReview) included_with_rental=withoutUnverifiedMediaCapacity(included_with_rental ?? []);
+      }
       // Stock mapping proves physical identity, not an exhaustive accessory kit.
       const kit = recordedKit(
         inventoryComponents.map(c => ({ name: c.name, qty: c.units_per_listing })),
         included_with_rental ?? [],
       );
       items.push({
+        storage_contents_verification_required:storageNeedsReview,
+        storage_guidance:storageNeedsReview ? "Supplied storage records conflict with listing capacities. Ask the owner before promising any SSD/card capacity; supported recording formats do not prove supplied media." : null,
         kit_contents: kit.contents,
         kit_completeness: kit.completeness,
         kit_source: kit.source,
@@ -643,13 +657,26 @@ export const lookup_pricing = query({
             if (componentBaseOfferings.length >= 4) break;
           }
         }
+        const mediaInventory = await ctx.db.query("items").collect();
+        const storageNeedsReview = selectedContents.components.some(c => {
+          const item=mediaInventory.find(i=>String(i._id)===c.item_id);
+          if (!item || !["camera","camera_body"].includes(item.kind ?? "")) return false;
+          const recorded=(item.compatibility as {included_with_rental?:string[]} | undefined)?.included_with_rental ?? [];
+          const baseIds=baseListingProductIds(account_slug,c.item_id,idxRows,ovrRows,mediaInventory);
+          return listingMediaConflict(recorded,listings.filter(l=>baseIds.includes(l.product_id)).map(l=>l.name ?? ""));
+        });
         return {
           found: true as const,
           ...quote,
+          storage_contents_verification_required:storageNeedsReview,
+          storage_guidance:storageNeedsReview ? "Supplied storage records conflict with listing title capacities. Do not promise any supplied SSD/card capacity for this camera until the owner confirms it; neither source wins. The camera's supported recording media are separate from what the kit supplies." : null,
           component_base_offerings: componentBaseOfferings,
           item_name,
           matched_listing: best.name,
           matched_canonical: matchedCanonical,
+          display_name: matchedCanonical,
+          listing_title_is_not_kit_contents: true,
+          display_guidance: "Use display_name for a base offering in renter replies. matched_listing is the exact internal lookup identifier; its advertising, storage capacities and comparison models are not verified supplied contents. Confirm contents through listing context and physical inventory; never add a title's SSD/card/lens promise to a body quote.",
           product_id: best.product_id,
           account_slug,
           // The rate that applies to THIS length — what the renter pays per day.
@@ -1082,7 +1109,10 @@ export const find_owned_alternatives = query({
       const quoteDays = start_date && end_date ? Math.round((Date.parse(end_date) - Date.parse(start_date)) / 86400000) + 1 : null;
       const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
       const mapping = ovAll.find(o => o.account_slug === account_slug && o.product_id === altPid);
-      const kit = recommendationKit(it, mapping, allInventory);
+      const storedContents=(it.compatibility as {included_with_rental?:string[]} | undefined)?.included_with_rental ?? [];
+      const storageNeedsReview=["camera","camera_body"].includes(it.kind ?? "") && listingMediaConflict(storedContents,listings.filter(l=>candidatePids.includes(l.product_id)).map(l=>l.name ?? ""));
+      const safeItem=storageNeedsReview ? {...it,compatibility:{...(it.compatibility ?? {}),included_with_rental:withoutUnverifiedMediaCapacity(storedContents)}} : it;
+      const kit = recommendationKit(safeItem, mapping, allInventory);
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
@@ -1093,6 +1123,8 @@ export const find_owned_alternatives = query({
         stock_context_reason: basket.ok ? null : basket.reason,
         replacement_removed_listings: basket.removed,
         replacement_changes_kit_contents: basket.removed.length>0,
+        storage_contents_verification_required:storageNeedsReview,
+        storage_guidance:storageNeedsReview ? "Supplied storage capacity is conflicting and unverified. Do not copy the listing title or quote a recorded capacity until the owner confirms it." : null,
         name: it.name_canonical,
         kind: it.kind,
         replacement_cost_gbp: it.replacement_cost_gbp ?? null,
