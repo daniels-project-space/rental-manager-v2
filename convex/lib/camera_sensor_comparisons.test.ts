@@ -39,4 +39,9 @@ describe("manufacturer reviewed sensor comparisons", () => {
     expect(unsupportedSensorIdentityClaims("I'll check the dates; the FX30 has the same sensor as the FX3.")).toHaveLength(1);
     expect(unsupportedSensorIdentityClaims("I'll check stock and the FX30 has the same sensor as the FX3.")).toHaveLength(1);
   });
+  it("checks the actual numeric and sensor-family adjectives without losing decimal precision", () => {
+    const captured = "The Sony A7S III isn't available for 6 to 7 October, but the Sony FX3 is available. It shares the same 12.1MP full-frame Exmor R sensor as the A7S III.";
+    expect(unsupportedSensorIdentityClaims(captured)).toEqual([]);
+    expect(unsupportedSensorIdentityClaims("The FX30 shares the same 12.1MP full-frame Exmor R sensor as the FX3.")).toHaveLength(1);
+  });
 });

@@ -13,6 +13,9 @@ function modelIds(text: string) {
       .replace(/iii$/, "3").replace(/ii$/, "2").replace(/iv$/, "4").replace(/v$/, "5"));
 }
 
+const sensorWords = String.raw`(?:(?:\d+(?:\.\d+)?\s*MP|full[ -]?frame|image|imaging|CMOS|BSI|Exmor\s+R|back[ -]?illuminated|stacked)\s+)*`;
+const sensorIdentityClaim = new RegExp(String.raw`\b(?:same|identical)\s+${sensorWords}sensors?\b|\bshares?\s+(?:(?:its|the|a)\s+)?${sensorWords}sensors?\s+with\b|\buses?\s+(?:the\s+)?[^,;.!?]{1,45}'s\s+${sensorWords}sensor\b`, "i");
+
 /** Named objects replace the current subject; a single new model can compare
  * to the previous subject. A generic comparison needs an unambiguous pair.
  * Neither marketing eligibility nor common mount is proof of sensor identity. */
@@ -23,7 +26,7 @@ export function unsupportedSensorIdentityClaims(text: string, initialNames: stri
     const named = [...new Set(modelIds(clause))];
     if (named.length >= 2) subjects = named;
     else if (named.length === 1) subjects = [...subjects.filter(n => n !== named[0]).slice(-1), named[0]];
-    const claim = /\b(?:same|identical)\s+(?:(?:full[ -]?frame|image|imaging|CMOS)\s+)*sensors?\b|\bshares?\s+(?:(?:its|the|a|full[ -]?frame|image|imaging|CMOS)\s+)*sensors?\s+with\b|\buses?\s+(?:the\s+)?[^,;.!?]{1,45}'s\s+(?:image\s+)?sensor\b/i.exec(clause);
+    const claim = sensorIdentityClaim.exec(clause);
     if (!claim || /^\s*(?:size|format|dimensions?|resolution|type)\b/i.test(clause.slice(claim.index + claim[0].length))) continue;
     const prefix = clause.slice(0, claim.index);
     const negatesComparison = /\b(?:no|not|without|don't|doesn't|do not|does not|isn't|aren't|can't|cannot)\s+(?:(?:have|has|use|uses|share|shares|using|sharing|exactly|precisely|necessarily|the|a|an)\s+)*$/i.test(prefix);
