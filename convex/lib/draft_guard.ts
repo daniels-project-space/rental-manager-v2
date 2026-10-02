@@ -1598,7 +1598,7 @@ interface CotResult {
 function detectAndStripChainOfThought(text: string): CotResult {
   const details: string[] = [];
   const lines = text.split("\n");
-  const cotPatterns: { pattern: RegExp; weight: number }[] = [
+  const cotPatterns: { pattern: RegExp; weight: number; contextual?: boolean }[] = [
     // NB: conversational openers that collide with normal replies ("Let me
     // check on that", "Hold on", "OK so") are deliberately NOT here — for a short
     // draft they'd nuke a legitimate message. Only high-signal reasoning/leak
@@ -1606,43 +1606,46 @@ function detectAndStripChainOfThought(text: string): CotResult {
     { pattern: /^(Wait\.|Actually wait|Actually,? (?:wait|let me))/i, weight: 3 },
     { pattern: /^(Let me (?:think|re-read|re-check|reason|consider|figure|work) )/i, weight: 3 },
     { pattern: /^(I need to (?:think|consider|figure|decline|address))/i, weight: 3 },
-    { pattern: /^(So (?:I (?:need|should|can|cannot|must)|this|the|for|given))/i, weight: 2 },
-    { pattern: /^(Given (?:it's|that|the|this))/i, weight: 2 },
-    { pattern: /\b\d+\s*(?:units?|items?|sets?|pieces?)\s*(?:available|remaining|left|in stock|booked|out)\b/i, weight: 3 },
+    { pattern: /^(So (?:I (?:need|should|can|cannot|must)|this|the|for|given))/i, weight: 2, contextual: true },
+    { pattern: /^(Given (?:it's|that|the|this))/i, weight: 2, contextual: true },
+    { pattern: /\b\d+\s*(?:units?|items?|sets?|pieces?)\s*(?:available|remaining|left|in stock|booked|out)\b/i, weight: 3, contextual: true },
     // (?<![a-z0-9]): don't let model names like FX3 / A7x match "×3 available".
-    { pattern: /(?<![a-z0-9])[×x]\s*\d+\b.*\b(?:available|booked|unavailable|in stock)\b/i, weight: 3 },
-    { pattern: /\bALL\s+\d+\s+(?:are|were)\s+(?:booked|rented|out)\b/i, weight: 3 },
+    { pattern: /(?<![a-z0-9])[×x]\s*\d+\b.*\b(?:available|booked|unavailable|in stock)\b/i, weight: 3, contextual: true },
+    { pattern: /\bALL\s+\d+\s+(?:are|were)\s+(?:booked|rented|out)\b/i, weight: 3, contextual: true },
     { pattern: /\b(?:booked|rented)\s+(?:out\s+)?(?:to|by)\s+[A-Z][a-z]+\s+[A-Z]/, weight: 3 },
-    { pattern: /\b(?:inventory|stock)\s+(?:shows?|says?|indicates?|has|level)/i, weight: 2 },
-    { pattern: /\b[A-Z][a-z]+\s+[A-Z][a-z]+\s+(?:from|has|booked|rented|booking|rental)\b/, weight: 2 },
-    { pattern: /\b(?:booked|reserved|rented)\s+(?:from\s+)?\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}\b/i, weight: 2 },
-    { pattern: /\b(?:the\s+)?owner\s+is\s+(?:unavailable|away|busy|on vacation|not available)/i, weight: 3 },
-    { pattern: /\bmanual\s+approval\b/i, weight: 2 },
+    { pattern: /\b(?:inventory|stock)\s+(?:shows?|says?|indicates?|has|level)/i, weight: 2, contextual: true },
+    { pattern: /\b[A-Z][a-z]+\s+[A-Z][a-z]+\s+(?:from|has|booked|rented|booking|rental)\b/, weight: 2, contextual: true },
+    { pattern: /\b(?:booked|reserved|rented)\s+(?:from\s+)?\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}\b/i, weight: 2, contextual: true },
+    { pattern: /\b(?:the\s+)?owner\s+is\s+(?:unavailable|away|busy|on vacation|not available)/i, weight: 3, contextual: true },
+    { pattern: /\bmanual\s+approval\b/i, weight: 2, contextual: true },
     { pattern: /\bpending_review\b/i, weight: 3 },
-    { pattern: /\bowner(?:'s)?\s+(?:schedule|availability|calendar)\b/i, weight: 2 },
+    { pattern: /\bowner(?:'s)?\s+(?:schedule|availability|calendar)\b/i, weight: 2, contextual: true },
     { pattern: /^\d+\.\s+(?:Tell|Let|Suggest|Decline|Address|Check|The |I (?:need|should|can|must))/i, weight: 2 },
-    { pattern: /^(?:But|Also|And)\s+(?:wait|critically|importantly|the|I need)/i, weight: 2 },
+    { pattern: /^(?:But|Also|And)\s+(?:wait|critically|importantly|the|I need)/i, weight: 2, contextual: true },
     { pattern: /\bwhat (?:lighting|items?|gear|alternatives?) do I have\b/i, weight: 3 },
-    { pattern: /\bI (?:cannot|can't) fulfill\b/i, weight: 2 },
+    { pattern: /\bI (?:cannot|can't) fulfill\b/i, weight: 2, contextual: true },
     { pattern: /\blet me re-read\b/i, weight: 3 },
     { pattern: /\bI should suggest\b/i, weight: 2 },
   ];
-  const lineScores = lines.map((line) => {
+  // Stock facts, camera model names (e.g. "Full Frame booking") and
+  // fulfilment explanations are renter-facing content, not proof of private
+  // deliberation. Context markers may extend an explicit reasoning dump but
+  // cannot start one or strip a legitimate reply on their own.
+  let block = 0;
+  const lineBlocks = lines.map(line => { if (!line.trim()) block++; return block; });
+  const explicitBlocks = new Set(lines.flatMap((line, i) =>
+    cotPatterns.some(({pattern,contextual}) => !contextual && pattern.test(line.trim())) ? [lineBlocks[i]] : []));
+  const lineScores = lines.map((line, i) => {
     const t = line.trim();
     if (!t) return 0;
     let s = 0;
-    for (const { pattern, weight } of cotPatterns) if (pattern.test(t)) s += weight;
+    for (const { pattern, weight, contextual } of cotPatterns) if ((!contextual || explicitBlocks.has(lineBlocks[i])) && pattern.test(t)) s += weight;
     return s;
   });
   const nonEmpty = lines.filter((l) => l.trim().length > 0);
   const cotCount = lineScores.filter((s) => s >= 2).length;
   const ratio = nonEmpty.length ? cotCount / nonEmpty.length : 0;
   const FALLBACK = "Thanks for your patience — let me get back to you on this shortly.";
-
-  if (ratio > 0.5 && nonEmpty.length >= 3) {
-    details.push(`Full reasoning leak: ${cotCount}/${nonEmpty.length} lines were internal reasoning`);
-    return { stripped: true, cleanText: FALLBACK, details };
-  }
 
   // Only a genuine multi-line reasoning dump (>=3 non-empty lines) may be
   // replaced wholesale. A 1-2 line draft is a real reply, never a leak.
@@ -1679,6 +1682,13 @@ function detectAndStripChainOfThought(text: string): CotResult {
       return { stripped: true, cleanText: clean, details };
     }
     details.push("Leading reasoning stripped, remainder too short — using fallback");
+    return { stripped: true, cleanText: FALLBACK, details };
+  }
+
+  // Preserve a separate renter answer after a leading reasoning block before
+  // using the whole-reply fallback for a scattered reasoning dump.
+  if (ratio > 0.5 && nonEmpty.length >= 3) {
+    details.push(`Full reasoning leak: ${cotCount}/${nonEmpty.length} lines were internal reasoning`);
     return { stripped: true, cleanText: FALLBACK, details };
   }
 

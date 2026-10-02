@@ -864,3 +864,42 @@ describe("pricing review on unavailable additions",()=>{
   for(const change of [{stockEvidence:[]},{stockEvidence:[{...opts.stockEvidence[0],item:"Different lens"}]},{stockEvidence:[{...opts.stockEvidence[0],end_date:"2026-10-22"}]},{stockEvidence:[{...opts.stockEvidence[0],call_id:""}]},{stockEvidence:[{...opts.stockEvidence[0],available:true}]}]) expect(flag(text,change)).toBe(true);
  });
 });
+
+
+describe("reasoning cleanup preserves rental facts",()=>{
+  const opts={history:[],lastRenterMessage:"Can I add the Pro kit?",hasItemGrounding:true,groundedDuringTurn:{availability:true,unavailability:true}};
+  it("preserves the actual full-kit refusal before the separately priced body offer",()=>{
+    const text="For the Blackmagic 6K Pro kit with the 24-105mm lens, I only have one Canon EF 24-105mm lens in stock (which is currently assigned to your Full Frame booking), so I can't supply a second 24-105mm lens for those dates.\n\nHowever, the BMPCC 6K Pro body set is available for 20 to 21 October.\n\nBoth cameras can go out with five native NP-F570 batteries each.";
+    const result=guardDraft(text,opts);
+    expect(result.text).toContain("currently assigned to your Full Frame booking");
+    expect(result.text).toContain("can't supply a second 24-105mm lens");
+    expect(result.text).toContain("However, the BMPCC 6K Pro");
+    expect(result.flags.some(f=>f.type==="CHAIN_OF_THOUGHT")).toBe(false);
+  });
+  it("does not erase factual stock quantities in a multi-line renter reply",()=>{
+    const result=guardDraft("There are 2 units available for your dates.\n\nYour Full Frame booking already includes the Canon lens.\n\nThe inventory shows enough batteries for both cameras.",opts);
+    expect(result.text).toContain("2 units available");
+    expect(result.text).toContain("Full Frame booking");
+    expect(result.text).toContain("enough batteries");
+    expect(result.flags.some(f=>f.type==="CHAIN_OF_THOUGHT")).toBe(false);
+  });
+  it("still strips explicit deliberation and its stock working before the renter answer",()=>{
+    const result=guardDraft("Let me think through the stock.\nThe inventory shows 2 units available.\nI should suggest the body kit.\n\nThe body kit is available for your dates, and your existing booking remains unchanged.",opts);
+    expect(result.text).toContain("The body kit is available");
+    expect(result.text).not.toContain("Let me think");
+    expect(result.text).not.toContain("I should suggest");
+    expect(result.flags.some(f=>f.type==="CHAIN_OF_THOUGHT")).toBe(true);
+  });
+  it("does not attach a later internal paragraph to an earlier stock explanation",()=>{
+    const result=guardDraft("Your Full Frame booking already includes the Canon lens.\n\nLet me think about the next sentence.\n\nThe body kit is available for your dates.",opts);
+    expect(result.text).toContain("Full Frame booking already includes the Canon lens");
+    expect(result.text).not.toContain("Let me think");
+    expect(result.text).toContain("body kit is available");
+  });
+  it("still removes explicitly tagged internal reasoning",()=>{
+    const result=guardDraft("<think>The inventory shows enough batteries.</think>The body kit is available for your dates.",opts);
+    expect(result.text).not.toContain("inventory shows");
+    expect(result.text).toContain("body kit is available");
+    expect(result.flags.some(f=>f.type==="CHAIN_OF_THOUGHT")).toBe(true);
+  });
+});
