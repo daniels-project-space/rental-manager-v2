@@ -451,7 +451,7 @@ export function LiveChatSim({
           text:
             result.draft ||
             `⚠ Reply withheld — ${result.reason ?? blockReason(result.productionGuardFlags)}`,
-          overallStatus: result.overall_status,
+          overallStatus: result.status.startsWith("referral_") ? undefined : result.overall_status,
           runId: result.runId,
         },
       ]);

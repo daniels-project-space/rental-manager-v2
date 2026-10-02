@@ -304,9 +304,9 @@ export const sendTestMessage = action({
         const draft = `I couldn't restore that basket referral: ${handoff.error ?? "please ask the owner to check it"}. Your current basket hasn't been changed.`;
         const runId = `referral-${Date.now()}`;
         await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, { thread_id: args.threadId, account_slug: args.accountSlug, text: draft, run_id: runId });
-        return { draft, overall_status: "flag", runId, productionGuardFlags: [], status: "referral_not_restored", reason: handoff.error };
+        return { draft, overall_status: "not_scored", runId, productionGuardFlags: [], status: "referral_not_restored", reason: handoff.error };
       }
-      if (handoff.message) return { draft: handoff.message, overall_status: "pass", runId: `native-referral-${Date.now()}`, productionGuardFlags: [], status: "referral_restored" };
+      if (handoff.message) return { draft: handoff.message, overall_status: "not_scored", runId: `native-referral-${Date.now()}`, productionGuardFlags: [], status: "referral_restored" };
     }
     const startedAt = Date.now();
     const draftResult = await ctx.runAction(
