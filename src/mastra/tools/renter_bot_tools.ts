@@ -405,7 +405,7 @@ export const quoteBookingAdditionTool = createTool({
 export const modifyBookingTool = createTool({
   id: "modify_booking",
   description:
-    "SIMULATION (Renter Bot Lab only): actually add an item, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made.",
+    "SIMULATION (Renter Bot Lab only): actually add an item, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
   inputSchema: z.object({
     thread_id: z.string().describe("The conversation/thread id."),
     action: z

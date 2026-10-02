@@ -76,8 +76,8 @@ describe("additions check the complete physical basket",()=>{
     const {tables,ctx}=setup();tables.items.find(i=>i._id==="lens").qty=3;
     tables.items.find(i=>i._id==="lens").aliases=["Sony 28 70"];
     tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
-    expect(await add(ctx,1)).toMatchObject({ok:true});
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28 70",qty:1,request_message_id:"renter-1"})).toMatchObject({ok:true,already_applied:true});
+    expect(await add(ctx,1)).toMatchObject({ok:true,action_performed:true});
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28 70",qty:1,request_message_id:"renter-1"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
     expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(1);
     tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-2",fetched_at:2,_creationTime:2});
@@ -231,7 +231,21 @@ it("replayed removals cannot decrement the quantity twice",async()=>{
 });
 it("unchanged dates create no extra revision even without a message key",async()=>{
  const {tables,ctx}=fixture();
- expect(await extend(ctx)).toMatchObject({ok:true});
- expect(await extend(ctx)).toMatchObject({ok:true,already_applied:true});
+ expect(await extend(ctx)).toMatchObject({ok:true,action_performed:true});
+ const replay=await extend(ctx);
+ expect(replay).toMatchObject({ok:true,already_applied:true,action_performed:false});
+ expect(replay.applied).toBeUndefined();expect(replay.context_transition).toBeUndefined();
  expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+});
+
+it("replay history cannot claim that a removed item was added again",async()=>{
+ const {tables,ctx}=fixture();tables.items[0].qty=3;tables.renter_bot_lab_orders[0].items[0].qty=3;
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
+ expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:true,action_performed:true});
+ // Another edit under the same inbound can alter the current order independently.
+ expect(await remove(ctx,"Sony FX3",2)).toMatchObject({ok:true,action_performed:true});
+ const replay=await remove(ctx,"Sony FX3",1);
+ expect(replay).toMatchObject({ok:true,action_performed:false,already_applied:true,order:{lines:[]}});
+ expect(replay.applied).toBeUndefined();expect(replay.context_transition).toBeUndefined();
+ expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(2);
 });

@@ -224,6 +224,11 @@ CONVERSATION CRAFT — how to actually write the reply:
     which model, which dates. If modify_booking comes back ok:false, say what
     it tells you and NEVER claim the change happened — a removal that didn't
     happen is as damaging as an addition that didn't.
+    If the result says action_performed:false or already_applied:true,
+    nothing new was edited. Describe the CURRENT returned order: "Your dates
+    are already set to..." or "That lens is already on your booking."
+    Never say "I've moved/added/removed..." for that replay. A prior change
+    summary is history; check the current items/dates before acknowledging it.
 
 13. NEVER SAY YOU'LL CHECK SOMETHING THE FACTS ALREADY ANSWER. If the
     AVAILABILITY line names a next-free date or says the item is out and when

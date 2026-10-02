@@ -303,8 +303,8 @@ export const applyChange = mutation({
     const requestKey = messageId && !a.preview_only ? JSON.stringify([messageId,a.action,
       ...(a.action === "set_dates" ? [a.start_date,a.end_date ?? a.start_date] : [itemKey,a.qty ?? 1])]) : undefined;
     const previous = requestKey ? row.changes.find(change => change.request_key === requestKey) : undefined;
-    if (previous) return {ok:true,already_applied:true,applied:previous.summary,
-      note:"This request was applied previously. No new edit was made; use the current order below as the source of truth.",
+    if (previous) return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,
+      note:"This request was applied previously. NO new edit was made. Describe the CURRENT order below, using already set to or already contains where appropriate; never say I moved, added or removed it this time. A later edit may have changed the order since that earlier action.",
       order:summarise(row.items,row.start_date,row.end_date)};
 
     const beforeContext = await amendmentContext(ctx, a.thread_id);
@@ -332,7 +332,9 @@ export const applyChange = mutation({
       if ((booking?.pickup_date || booking?.status === "ongoing") && a.start_date !== row.start_date)
         return { ok: false, error: "The rental has already been collected. Keep its original pickup date when extending the return." };
       if (a.start_date === row.start_date && end === row.end_date)
-        return {ok:true,already_applied:true,applied:`dates already ${a.start_date} – ${end}`,order:summarise(lines,row.start_date,row.end_date)};
+        return {ok:true,already_applied:true,action_performed:false,unchanged:true,
+          note:"The booking already has these dates. No new edit occurred. Say the dates are already set, not that you moved or changed them.",
+          order:summarise(lines,row.start_date,row.end_date)};
       const stock = await checkOrderRentalStock(ctx, row.account_slug, lines, a.start_date, end, a.thread_id);
       if (stock.available !== true) return { ok: false, error_code: "stock_unavailable_or_unknown",
         error: `Cannot change this basket to ${a.start_date} – ${end}: ${stock.reason}. No dates or prices were changed. Use the checked full date span for the refusal; a failed range check alone does not prove which individual day is booked.`, stock_receipts: stock.receipts };
@@ -351,6 +353,7 @@ export const applyChange = mutation({
       });
       return {
         ok: true,
+        action_performed: true,
         applied: `dates set to ${a.start_date} – ${end}`,
         order: summarise(lines, a.start_date, end),
         stock_receipts: stock.receipts,
@@ -390,6 +393,7 @@ export const applyChange = mutation({
       });
       return {
         ok: true,
+        action_performed: true,
         applied: summaryText,
         order: summarise(kept, row.start_date, row.end_date),
         context_transition: await transition(),
@@ -467,7 +471,7 @@ export const applyChange = mutation({
     if (a.preview_only) {
       const quote = summarise(lines, row.start_date, row.end_date);
       if (quote.total_gbp == null) return {ok:false,error:"The complete proposed basket has unpriced items. Ask the owner for a quote; no items or prices changed."};
-      return {ok:true, preview_only:true, source:"native_lab_proposal" as const,
+      return {ok:true, action_performed:false, preview_only:true, source:"native_lab_proposal" as const,
         thread_id:a.thread_id, account_slug:row.account_slug,
         base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),
         added_items:[{name:m.match.name_canonical,quantity:qty}], quote,
@@ -482,6 +486,7 @@ export const applyChange = mutation({
     });
     return {
       ok: true,
+      action_performed: true,
       applied: summaryText,
       order: summarise(lines, row.start_date, row.end_date),
       stock_receipt: { ...stock, start_date: row.start_date, end_date: row.end_date },

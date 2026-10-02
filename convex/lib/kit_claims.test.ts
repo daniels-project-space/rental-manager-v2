@@ -19,6 +19,12 @@ describe("inclusion owner scopes in actual booked-kit replies", () => {
   expect(unsupportedKitClaims("Your booked kit comes with an EF-to-L adapter.",[{...camera,contents:["2 EF-to-L adapters"]}])).toEqual([]);
   expect(unsupportedKitClaims("Your booked kit comes with 1 EF-to-L adapter.",[{...camera,contents:["EF-to-L adapters"]}])).not.toEqual([]);
   expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your setup.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("As an alternative, I have the Canon EF 16-35mm f2.8 available for 20 to 21 October (which works with the EF to L mount adapter included in your set).",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your camera set.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the PL-to-L adapter included in your set.",evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your set of filters.",evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your lens set.",evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your set.",[{...camera,booked_camera:false,booked_item:false},lens])).not.toEqual([]);
   expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the PL-to-L adapter included in your setup.",evidence)).not.toEqual([]);
   expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your camera lens.",evidence)).not.toEqual([]);
  });

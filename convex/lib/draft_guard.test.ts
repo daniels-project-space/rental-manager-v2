@@ -399,6 +399,13 @@ describe("FALSE_ACTION_CLAIM — booking edits", () => {
     expect(fired("I’ve added the adapter — your booking now includes both.", false)).toBe(true);
   });
 
+  it("allows a current-state acknowledgement while a replay still cannot claim a new edit",()=>{
+    expect(fired("Your dates are already set to 22–23 October.",false)).toBe(false);
+    expect(fired("That lens is already on your booking.",false)).toBe(false);
+    expect(fired("The current booking has the original camera kit without that extra lens.",false)).toBe(false);
+    expect(fired("All done! I've moved your booking to 22–23 October.",false)).toBe(true);
+  });
+
   it("allows the same sentence when the edit really happened", () => {
     expect(fired("I've added the 100mm to your booking.", true)).toBe(false);
   });

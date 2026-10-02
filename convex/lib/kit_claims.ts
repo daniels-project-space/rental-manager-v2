@@ -57,7 +57,7 @@ function ownersForReference(owner: string, evidence: KitEvidence[]) {
   const booked = evidence.filter(e => e.booked_item === true || e.booked_camera === true);
   if (explicit.length) return /\byour\b/i.test(owner) ? explicit.filter(e => booked.includes(e)) : explicit;
   const reference = normalize(owner).replace(/\s+(?:already|still|currently)$/, "");
-  const match = /^your\s+(?:(?:booked|confirmed|rental)\s+)*(camera(?:\s+kit)?|lens(?:\s+kit)?|kit|booking|setup|package|order)$/.exec(reference);
+  const match = /^your\s+(?:(?:booked|confirmed|rental)\s+)*(camera(?:\s+(?:kit|set))?|lens(?:\s+(?:kit|set))?|kit|set|booking|setup|package|order)$/.exec(reference);
   if (!match) return [];
   if (/^lens/.test(match[1])) return booked.filter(e => e.kind === "lens");
   const cameras = booked.filter(e => e.booked_camera === true);
