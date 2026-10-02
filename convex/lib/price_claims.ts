@@ -93,8 +93,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const declaredQuantity = count ? ({one:1,two:2,both:2,three:3,four:4} as Record<string,number>)[count[1]] ?? Number(count[1]) : undefined;
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
     const amount = Number(m[1].replace(/,/g, ""));
-    const explicitBookingTotal = /\b(?:your|our|my|this|current|the)\s+(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment);
-    const basket = explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking)|your\s+total)\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(local));
+    const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
+    const basket = explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const candidates = evidence.filter(e => !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
       if (!dateScope.valid || explicitDays && scopedDuration != null && days !== scopedDuration) return false;
