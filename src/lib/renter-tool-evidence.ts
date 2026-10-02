@@ -4,7 +4,7 @@ export type ToolReceipt = { tool: string; call_id: string; result: Record<string
 
 /** Only server-returned recommendation contents can qualify an alternative's kit. */
 export function recommendationKitEvidence(receipts: ToolReceipt[]) {
-  const evidence: Array<{ names: string[]; contents: string[] }> = [];
+  const evidence: Array<{ names: string[]; contents: string[]; kind?: string }> = [];
   for (const r of receipts) {
     if (r.tool !== "find_owned_alternatives" || !Array.isArray(r.result.alternatives)) continue;
     for (const raw of r.result.alternatives) {
@@ -12,7 +12,7 @@ export function recommendationKitEvidence(receipts: ToolReceipt[]) {
       const a = raw as Record<string, unknown>;
       if (!["physical_mapping_and_inventory", "inventory_record"].includes(String(a.kit_source)) || typeof a.name !== "string" || !Array.isArray(a.kit_contents) || !a.kit_contents.length || !a.kit_contents.every(c => typeof c === "string" && c.trim())) continue;
       const model = a.spec_verification && typeof a.spec_verification === "object" ? (a.spec_verification as Record<string, unknown>).model : null;
-      evidence.push({ names: [...new Set([a.name, a.listing_name, model].filter((n): n is string => typeof n === "string" && !!n).flatMap(renterItemNames))], contents: a.kit_contents as string[] });
+      evidence.push({ names: [...new Set([a.name, a.listing_name, model].filter((n): n is string => typeof n === "string" && !!n).flatMap(renterItemNames))], contents: a.kit_contents as string[], ...(typeof a.kind === "string" && a.kind ? { kind: a.kind } : {}) });
     }
   }
   return evidence;

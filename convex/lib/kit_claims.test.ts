@@ -62,6 +62,15 @@ describe("an alternative lens using the booked camera's supplied adapter",()=>{
  it("keeps other alternative-kit components separate",()=>{
   expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 includes a case and an EF-to-L adapter included with your camera.",[camera,lens]).map(f=>f.content)).toEqual(["case"]);
  });
+ it("resolves the camera only when native owner kinds identify one confirmed camera",()=>{
+  const reply=text.replace("your camera","the camera");
+  const typedLens={...lens,kind:"lens"};
+  expect(unsupportedKitClaims(reply,[camera,typedLens])).toEqual([]);
+  for(const owners of [[camera,lens],[{...camera,booked_camera:false,kind:"camera"},typedLens],[camera,typedLens,{names:["Sony FX3"],contents:["case"],kind:"camera"}],[camera,typedLens,{names:["Sony FX3"],contents:["EF-to-L adapter"],booked_camera:true}]])
+   expect(unsupportedKitClaims(reply,owners)).not.toEqual([]);
+  for(const wrong of [reply.replace("EF-to-L","PL-to-L"),reply.replace("the EF-to-L adapter","2 EF-to-L adapters")])
+   expect(unsupportedKitClaims(wrong,[camera,typedLens])).not.toEqual([]);
+ });
 });
 describe("per-item included-content claims", () => {
   it("checks the actual multiline inclusion list instead of only its empty heading", () => {

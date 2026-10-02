@@ -57,6 +57,13 @@ function ownersForReference(owner: string, evidence: KitEvidence[]) {
   const booked = evidence.filter(e => e.booked_item === true || e.booked_camera === true);
   if (explicit.length) return /\byour\b/i.test(owner) ? explicit.filter(e => booked.includes(e)) : explicit;
   const reference = normalize(owner).replace(/\s+(?:already|still|currently)$/, "");
+  if (/^the camera(?:\s+(?:kit|set))?$/.test(reference)) {
+    // A definite camera reference is safe only when every native owner is
+    // typed and there is exactly one camera, confirmed on this booking.
+    if (evidence.some(e => !e.kind && e.booked_camera !== true)) return [];
+    const cameras = evidence.filter(e => e.booked_camera === true || /^camera(?:_body)?$/.test(e.kind ?? ""));
+    return cameras.length === 1 && cameras[0].booked_camera === true ? cameras : [];
+  }
   const match = /^your\s+(?:(?:booked|confirmed|rental)\s+)*(camera(?:\s+(?:kit|set))?|lens(?:\s+(?:kit|set))?|kit|set|booking|setup|package|order)$/.exec(reference);
   if (!match) return [];
   if (/^lens/.test(match[1])) return booked.filter(e => e.kind === "lens");

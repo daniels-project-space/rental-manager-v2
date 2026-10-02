@@ -632,3 +632,12 @@ Fresh managed recommendation: “For the 2-day hire (20 to 21 October), it is £
 A negative test exposed an independent unsafe identity fallback: a declared Canon RF 16–35mm could borrow the Canon EF lens's price because its bare focal range was recognised. Qualified brand/mount references now require their own unique Native lens reference before any focal fallback; RF/Sony/Sigma references cannot use a Canon EF receipt. Mount-only references derive from recorded Native name prefixes and remain ambiguous when multiple physical identities match. Stock checks independently retain exact mount/brand identity; positive and negative wrong-mount regressions pass. This covers recognised prefix declarations, not every possible free-text lens description.
 
 Source validation, exact production alias, fresh managed recommendation and desktop/mobile results are recorded in `/root/rental-calendar-reference-final-proof.json`. Wider audit requirements remain open.
+
+
+### Typed lens anaphora and definite camera ownership (2 October)
+
+Two fresh managed replies exposed three conservative false holds: “a second unit of that exact lens” lost its preceding lens identity, “included with the camera” lost its unique confirmed owner, and “For the 2 days, adding it” removed the price action prefix before the temporal preface. Both exact candidates now pass with their archived Native context, stock and price receipts. This is an archived replay, not fresh model qualification.
+
+Ordinal lens references require one preceding standalone Native lens identity and retain the physical quantity threshold; camera bundles cannot lend lens stock. Definite camera owners require typed Native evidence, exactly one camera and confirmed booking ownership. Recommendation kind is preserved from tool results and the server prefetch; missing kinds and additional cameras remain conservative holds. Price reference normalization strips the duration/calendar preface before the action prefix, while checking original dates, duration and amount. Wrong mounts, capacity, quantities, prices, owners and dates remain rejected by regressions.
+
+Full source tests: 1,082 passed, 14 skipped, 85 files; backend typecheck and Next build passed. Deployment, fresh managed model and human review evidence are recorded in `/root/rental-typed-anaphor-final-proof.json`. The broader audit remains active, including stock freshness at human send approval, multi-camera quantities, recommendations and physical phone notifications. No external renter messages were sent.

@@ -17,6 +17,15 @@ describe("references to an additional booked-kit lens",()=>{
    for(const verdict of ["is available","is not available"])
     expect(unsupportedStockClaims(`${name} ${verdict} for 20 to 21 October.`,[ef],scope)).not.toEqual([]);
  });
+ it("binds an ordinal exact-lens pronoun only to a preceding native lens",()=>{
+  const reply=text.replace("a second one","a second unit of that exact lens");
+  expect(unsupportedStockClaims(reply,[lens],scope)).toEqual([]);
+  for(const r of [{...lens,end_date:"2026-10-22"},{...lens,quantity:1,available:true,free_units:null},{...lens,quantity:2,available:true,free_units:2}])
+   expect(unsupportedStockClaims(reply,[r],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("A second unit of that exact lens isn't available for those dates.",[lens],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(`${scope.items[0].name} is your booked kit. A second unit of that exact lens isn't available for those dates.`,[{...lens,item:scope.items[0].name}],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(reply.replace("a second unit","a third unit"),[{...lens,quantity:1,available:true,free_units:2}],scope)).toEqual([]);
+ });
  it("resolves a uniquely receipted ordinal focal range and brand shorthand",()=>{
   for(const name of ["a second 24-105mm","a second Canon 24-105mm lens","a 2nd Canon EF 24–105mm"])
    expect(unsupportedStockClaims(text.replace("a second one",name),[lens],scope),name).toEqual([]);

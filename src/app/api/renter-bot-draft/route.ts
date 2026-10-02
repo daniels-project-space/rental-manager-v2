@@ -809,7 +809,7 @@ export async function POST(req: Request) {
                 if (a.quote?.listed_total_gbp != null) offeredPrices.push(a.quote.listed_total_gbp);
                 if (a.kit_contents?.length) {
                   itemsWithKitData.push(a.name);
-                  kitEvidence.push({ names: [a.name, a.listing_name].filter(Boolean), contents: a.kit_contents });
+                  kitEvidence.push({ names: [a.name, a.listing_name].filter(Boolean), contents: a.kit_contents, kind: a.kind });
                 }
                 groundTruth += `  OWNED ALTERNATIVE ${a.name}: mount ${a.lens_mount ?? "unknown"}; recorded kit ${a.included ?? "unknown, confirm exact contents"}; verified specs ${a.spec_text ?? "not verified"}; exact-date quote ${a.quote ? JSON.stringify(a.quote) : "requires price confirmation"}; availability ${a.availability ? JSON.stringify(a.availability) : "dates not checked"}. Advertising title does not establish inclusions.\n`;
               }

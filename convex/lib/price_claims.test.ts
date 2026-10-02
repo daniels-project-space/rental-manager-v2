@@ -61,6 +61,13 @@ describe("receipted lens shorthand",()=>{
   for(const name of ["Canon RF 16-35mm","RF 16-35mm","Sony E 16-35mm","Sigma EF 16-35mm"])
    expect(unsupportedPriceClaims(`${name} is £40 for the 2 days.`,[lens],scope)).not.toEqual([]);
  });
+ it("resolves adding pronouns after stripping a leading hire duration",()=>{
+  const dated=[lens,basket].map(e=>({...e,start_date:scope.start_date!,end_date:scope.end_date!}));
+  const reply="Canon EF 16-35mm f2.8 is available for 20 to 21 October. For the 2 days, adding it would be £40 (£20/day), which would bring the total booking to £164.";
+  expect(unsupportedPriceClaims(reply,dated,scope)).toEqual([]);
+  for(const wrong of [reply.replace("2 days","3 days"),reply.replace("For the 2 days,","For 22 to 23 October,"),reply.replace("£40","£60"),reply.replace("£20","£30"),reply.replace("£164","£124"),reply.replace("adding it","adding Canon RF 16-35mm")])
+   expect(unsupportedPriceClaims(wrong,dated,scope),wrong).not.toEqual([]);
+ });
  it("shares brand and mount disambiguation without borrowing a kit's price",()=>{
   const shorthand="Canon 16-35mm is £40 for the 2 days.";
   expect(unsupportedPriceClaims(shorthand,[lens],scope)).toEqual([]);
