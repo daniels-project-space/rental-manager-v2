@@ -11,6 +11,11 @@ describe("server price receipt adapters",()=>{
   const request={items:[{name:"Sony A7 II",quantity:1}]};
   const claim="Yes, the Sony A7 II kit is available for the 6th to the 7th of October. For the 2 days, the total comes to £56.";
   expect(unsupportedPriceClaims(claim,renterPriceEvidence([receipt("lookup_pricing",native)],identities),request)).toEqual([]);
+  const evidence=renterPriceEvidence([receipt("lookup_pricing",native)],identities);
+  const durationFirst="Yes, the Sony A7 II kit is available from the 6th to the 7th of October. For 2 days, the total is £56.";
+  expect(unsupportedPriceClaims(durationFirst,evidence,request)).toEqual([]);
+  expect(unsupportedPriceClaims(durationFirst.replace("For 2 days","For 4 days"),evidence,request)).not.toEqual([]);
+  expect(unsupportedPriceClaims(durationFirst.replace("For 2 days","For the Pyxis"),evidence,request)).not.toEqual([]);
   for(const changed of [{...native,product_id:1172847},{...native,account_slug:"diogo"},{...native,account_slug:undefined}]){
    const proof=renterPriceEvidence([receipt("lookup_pricing",changed)],identities);
    expect(proof[0].names).not.toContain("Sony A7 II");

@@ -45,7 +45,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     let unresolvedPair = false;
     if (explicitSubject) {
       const named = norm(explicitSubject[1].replace(/\+/g," plus "));
-      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(named);
+      // A duration-first adverb scopes the amount, not its item identity.
+      // Duration validation below still reads the original text.
+      const scopedNamed=named.replace(/^for\s+(?:the\s+)?\d+\s+days?\s+(?:the\s+)?/i, "");
+      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(scopedNamed);
       if (!generic && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !names.includes(named)) {
         pairedItems=[];
