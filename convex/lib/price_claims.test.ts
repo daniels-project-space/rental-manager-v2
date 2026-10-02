@@ -6,6 +6,25 @@ const request:StockRequest={start_date:"2026-10-02",end_date:"2026-10-04",items:
 const prices:PriceEvidence[]=[{names:["BMPCC 6K Pro"],kind:"rental",days:3,quantity:1,daily_rate_gbp:30,base_rate_gbp:35,total_gbp:90,start_date:"2026-10-02",end_date:"2026-10-04",call_id:"real-alt",source:"hygglo_tier"},
 {names:["BMPCC 6K Full Frame"],kind:"rental",days:3,quantity:1,daily_rate_gbp:43.33,base_rate_gbp:50,total_gbp:130,call_id:"selected",source:"hygglo_tier"}];
 const check=(text:string, evidence=prices,scope=request)=>unsupportedPriceClaims(text,evidence,scope);
+describe("booking and duration price ownership beside component lists",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Blackmagic 6K Full Frame + Canon EF 24-105mm f4",quantity:1}]};
+ const quote:PriceEvidence={names:[scope.items[0].name],kind:"rental",days:2,quantity:1,total_gbp:124,call_id:"native-current",source:"lab_order_quote"};
+ const other:PriceEvidence={names:["Canon EF 24-105mm f4"],kind:"rental",days:2,quantity:1,total_gbp:40,call_id:"native-lens",source:"hygglo_tier"};
+ const text="Canon EF 24-105mm f4 is in your kit. Your booking remains unchanged at £124 for the 2 days, with the 1 EF-to-L adapter, Canon EF 24-105mm f/4 lens, batteries, and CFexpress card all included as booked.";
+ it("binds an unchanged amount to the exact current order rather than the preceding or trailing lens",()=>expect(unsupportedPriceClaims(text,[quote,other],scope)).toEqual([]));
+ it("requires the exact total, members, quantity and duration of the current order",()=>{
+  for(const changed of [text.replace("£124","£40"),text.replace("2 days","3 days")]) expect(unsupportedPriceClaims(changed,[quote,other],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(text,[other],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(text,[{...quote,quantity:2}],scope)).not.toEqual([]);
+  const multi={...scope,items:[...scope.items,{name:"Sony FX3",quantity:1}]};
+  expect(unsupportedPriceClaims(text,[quote],multi)).not.toEqual([]);
+  expect(unsupportedPriceClaims(text,[{names:[],kind:"basket",items:multi.items,days:2,total_gbp:124,call_id:"native-order",source:"order_quote"}],multi)).toEqual([]);
+ });
+ it("does not treat a duration-first trailing contents list as a post-price item reference",()=>{
+  expect(unsupportedPriceClaims(`${scope.items[0].name} is £124 for the 2 days, with Canon EF 24-105mm f4 included.`,[quote,other],scope)).toEqual([]);
+  expect(unsupportedPriceClaims("£40 for Canon EF 24-105mm f4 for the 2 days.",[quote,other],scope)).toEqual([]);
+ });
+});
 describe("receipted lens shorthand",()=>{
  const scope:StockRequest={items:[{name:"BMPCC 6K Full Frame + Canon EF 24-105mm f4",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
  const lens:PriceEvidence={names:["Canon EF 16-35mm f2.8"],kind:"rental",days:2,quantity:1,daily_rate_gbp:20,total_gbp:40,call_id:"native-lens",source:"hygglo_tier"};

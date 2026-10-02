@@ -180,6 +180,13 @@ describe("booked-kit references versus negative stock claims", () => {
   it("still checks a later negative availability verdict after a booking adjective", () => {
     expect(unsupportedStockClaims("Your booked kit is unavailable.",[],request)).toHaveLength(1);
   });
+  it("keeps an included-as-booked component list out of stock verdicts without hiding later refusals",()=>{
+    const text="Your booking remains unchanged at £124 for the 2 days, with the 1 EF-to-L adapter, Canon EF 24-105mm f/4 lens, batteries, and CFexpress card all included as booked.";
+    expect(unsupportedStockClaims(text,[],request)).toEqual([]);
+    expect(unsupportedStockClaims("Canon EF 24-105mm f4 is supplied exactly as booked.",[],request)).toEqual([]);
+    expect(unsupportedStockClaims(text+" Canon EF 24-105mm f4 is unavailable.",[],request)).toHaveLength(1);
+    expect(unsupportedStockClaims("Canon EF 24-105mm f4 is included as booked out.",[],request)).not.toEqual([]);
+  });
   it("still requires a negative receipt for actual bookings consuming stock", () => {
     for(const claim of ["Canon EF 24-105mm f4 is already booked.","Canon EF 24-105mm f4 is booked.","Your Canon EF 24-105mm f4 is booked out.","Your Canon EF 24-105mm f4 is booked-out.","My Canon EF 24-105mm f4 is booked.","Our Canon EF 24-105mm f4 is booked.","Your Canon EF 24-105mm f4 is booked by another customer."])
       expect(unsupportedStockClaims(claim,[],request)).toHaveLength(1);

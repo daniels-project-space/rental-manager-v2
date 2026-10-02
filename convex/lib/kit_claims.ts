@@ -14,7 +14,7 @@ type ComponentDetails = { types: string[]; capacities: string[]; quantity?: numb
 const numbers: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 const positiveDetail = (text: string, index: number) => !/\b(?:not|no|without|rather than|instead of)\s+(?:(?:an?|the)\s+)?$/i.test(text.slice(0, index));
 /** Interpret only explicit component facts. A set is not an individual-unit count. */
-function details(text: string, category: string, pattern: RegExp): ComponentDetails {
+function details(text: string, category: string, pattern: RegExp, recordedContent = false): ComponentDetails {
   const types: string[] = [];
   if (category === "battery") {
     for (const m of text.matchAll(/\b(?:NP[\s-]*(?:FZ100|FW50|F\d+)|LP[\s-]*E\d+[A-Z]*)\b/gi)) {
@@ -42,7 +42,8 @@ function details(text: string, category: string, pattern: RegExp): ComponentDeta
   const quantityUnit=/\bsets?\b/i.test(text)?"sets" as const:"units" as const;
   const quantity = quantityUnit === "sets" ? (sets ? numbers[sets[1].toLowerCase()] ?? Number(sets[1]) : undefined)
     : quantityMatch ? (numbers[quantityMatch[1].toLowerCase()] ?? Number(quantityMatch[1]))
-    : suffixQuantity ? Number(suffixQuantity[1]) : undefined;
+    : suffixQuantity ? Number(suffixQuantity[1])
+    : recordedContent && category === "adapter" && noun?.[0].toLowerCase() === "adapter" ? 1 : undefined;
   return { types, capacities, quantity, quantityUnit };
 }
 function supports(claim: ComponentDetails, proof: ComponentDetails) {
@@ -51,6 +52,31 @@ function supports(claim: ComponentDetails, proof: ComponentDetails) {
     && (claim.quantity === undefined || claim.quantity === proof.quantity && claim.quantityUnit === proof.quantityUnit);
 }
 const componentParts = (s: string) => s.split(/[,;()]|\balong\s+with\b|\bwith\b|\band\b|\bplus\b/gi);
+function ownersForReference(owner: string, evidence: KitEvidence[]) {
+  const explicit = evidence.filter(e => e.names.some(n => n && namesItem(owner, n)));
+  if (explicit.length) return /\byour\b/i.test(owner) ? explicit.filter(e => e.booked_camera) : explicit;
+  return /^\s*your\s+(?:(?:booked|confirmed|rental|camera)\s+)*(?:camera|kit|booking)\b/i.test(owner)
+    ? evidence.filter(e => e.booked_camera) : [];
+}
+/** Bind each passive inclusion to its owner before splitting component lists.
+ * A named adapter or alternative lens isn't itself the camera kit's owner. */
+function inclusionOwners(text: string, evidence: KitEvidence[]) {
+  const scopes: KitEvidence[][] = [];
+  const booked = evidence.filter(e => e.booked_camera);
+  // A relative inclusion clause describes the component before the comma.
+  const joined = text.replace(/,\s*(?:which|that)\s+(?:is|are)\s+(?:already\s+)?included\b/gi, " included");
+  const marked = joined.replace(/\bincluded\s+(?:with|in|as\s+part\s+of)\s+([^,;.()]+?)(?=\s+\b(?:and|plus|along|with|at|for|because|which|that|but)\b|[,;.()]|$)/gi, (_whole, owner: string) => {
+    const owners = ownersForReference(owner, evidence);
+    const index = scopes.push(owners) - 1;
+    return `included __kit_owner_${index}__`;
+  });
+  // A booking's included component can also be stated without an owner tail.
+  const bookingReference = /\byour\s+(?:booking|(?:booked|rental)\s+(?:camera\s+)?kit)\b/i.test(text);
+  return { scopes, text: bookingReference ? marked.replace(/\bincluded\b(?!\s+__kit_owner_)/gi, () => {
+    const index = scopes.push(booked) - 1;
+    return `included __kit_owner_${index}__`;
+  }) : marked };
+}
 /** Negative/optional offers are not claims of included contents. Preserve item attribution. */
 export function unsupportedKitClaims(text: string, evidence: KitEvidence[], initialNames: string[] = []) {
   const failures: { sentence: string; content: string }[] = [];
@@ -69,17 +95,24 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     let claimed = match ? sentence.slice(match.index + match[0].length) : sentence;
     if (match?.[0].toLowerCase() === "included") claimed = sentence;
     claimed = claimed.split(/\b(?:but not|except|excluding|without)\b/i)[0];
-    // Preserve the attribution through component-list splitting at "with".
-    claimed = claimed.replace(/\bincluded\s+(?:with|in)\s+your\s+(?:(?:booked|rental)\s+)?camera(?:\s+kit)?\b/gi, "included_with_your_camera");
-    const candidates = named.length ? named : subject.length ? subject : evidence;
-    if (!candidates.length) continue; // unknown-kit guard handles missing evidence separately
+    const scoped = inclusionOwners(claimed, evidence);
+    claimed = scoped.text;
+    // For active "X includes Y", only X owns the claimed contents. Names
+    // inside Y must not lend their own kit facts to X.
+    const activeReference = match && match[0].toLowerCase() !== "included" ? sentence.slice(0, match.index) : null;
+    const hasActiveOwner = activeReference !== null && (/^\s*your\s+(?:(?:booked|confirmed|rental|camera)\s+)*(?:camera|kit|booking)\b/i.test(activeReference)
+      || evidence.some(e => e.names.some(n => n && namesItem(activeReference, n))));
+    const candidates = hasActiveOwner ? ownersForReference(activeReference!, evidence)
+      : named.length ? named : subject.length ? subject : evidence;
+    if (!evidence.length) continue; // unknown-kit guard handles missing evidence separately
     for (const [content, pattern] of categories) {
       const claims = componentParts(claimed.replace(/\b(?:built[ -]?in|internal)\s+(?:variable\s+)?ND\s+filters?\b/gi, "intrinsic camera ND")).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c));
       if (claims.some(raw => {
-        const owners = raw.includes("included_with_your_camera") ? evidence.filter(e => e.booked_camera) : candidates;
-        const claim = details(raw, content, pattern);
+        const scope = /__kit_owner_(\d+)__/.exec(raw);
+        const owners = scope ? scoped.scopes[Number(scope[1])] : candidates;
+        const claim = details(raw.replace(/__kit_owner_\d+__/g, ""), content, pattern);
         return !owners.length || !owners.every(e => e.contents.some(entry =>
-          componentParts(entry).some(part => pattern.test(part) && supports(claim, details(part, content, pattern)))));
+          componentParts(entry).some(part => pattern.test(part) && supports(claim, details(part, content, pattern, true)))));
       })) {
         failures.push({ sentence: sentence.trim(), content });
       }

@@ -61,22 +61,27 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     if (unknown && unknown.index! > Math.max(-1, lastAt) && !names.some(n => (` ${n} `).includes(` ${unknown[0].trim()} `))) subject = [norm(unknown[0])];
     const segment = text.slice(consumed,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
     const segmentDates = claimDateScope(segment, request.start_date);
-    let bookingSubject = false;
+    // An unchanged booking amount belongs to the current order, even when a
+    // preceding paragraph discussed another item or the trailing text lists
+    // supplied components. It still needs the current order's exact receipt.
+    let bookingSubject = /^\s*(?:(?:your|our|my|the|this|current|confirmed)\s+)*(?:booking|order|rental|hire)(?:\s+(?:total|price|cost))?\s+(?:remains|stays|is\s+still)(?:\s+(?:unchanged|the\s+same|set|confirmed|agreed))?(?:\s+(?:at|priced\s+at))?\s*$/i.test(segment);
     const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(segment);
     let pairedItems: Array<{names:string[];quantity:number}> | undefined;
     let unresolvedPair = false;
     if (explicitSubject) {
       const named = norm(explicitSubject[1].replace(/\+/g," plus "));
+      const exactOffering = known.find(k => aliases(k.names).includes(norm(explicitSubject[1])));
+      if (exactOffering) subject = exactOffering.names;
       // A duration-first adverb scopes the amount, not its item identity.
       // Duration validation below still reads the original text.
       const scopedNamed=named.replace(/^for\s+(?:the\s+)?\d+\s+days?\s+(?:the\s+)?/i, "");
       const datedSubject = segmentDates.matched_text ? scopedNamed.replace(norm(segmentDates.matched_text), "dates") : scopedNamed;
-      bookingSubject = /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
+      bookingSubject ||= /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
       const genericNamed = scopedNamed.replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
         .replace(/^adding\s+(?=(?:it|this|that)\b)/i, "");
       const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
-      if (!generic && !bookingSubject && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
-      if (/\b(?:and|with|plus)\b/.test(named) && !names.includes(named)) {
+      if (!generic && !bookingSubject && !exactOffering && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
+      if (/\b(?:and|with|plus)\b/.test(named) && !exactOffering && !names.includes(named)) {
         pairedItems=[];
         for(const part of named.split(/\b(?:and|with|plus)\b/)) {
           const match=known.find(k=>aliases(k.names).some(n=>(` ${part} `).includes(` ${n} `)));
@@ -88,13 +93,18 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         }
       }
     }
+    if (bookingSubject && request.items.length === 1) {
+      subject = [request.items[0].name, ...(request.items[0].aliases ?? [])];
+      subjectQuantity = request.items[0].quantity;
+    }
     const end = pos + m[0].length;
     const nextMoney = text.slice(end).search(/£/);
     const following = text.slice(end, nextMoney < 0 ? undefined : end + nextMoney);
     const after = following.split(/(?<=[.!?])\s+|\n/)[0];
     // Support ordinary "£40/day for the FX3" ordering, without borrowing a later offer.
-    const post = norm(after);
-    if (/^\s*(?:\/day|per\s+day|a\s+day)?\s+for\s+(?:the\s+)?/i.test(after)) {
+    const postReference = /^\s*(?:\/day|per\s+day|a\s+day)?\s+for\s+(?:the\s+)?([^,;()]+)/i.exec(after)?.[1];
+    if (!bookingSubject && postReference && !/^(?:\d+[ -]+days?|(?:these|those|the requested)\s+dates)\b/i.test(postReference)) {
+      const post = norm(postReference.split(/\s+(?:with|and|plus)\s+/i)[0]);
       const named = names.find(n => (` ${post} `).includes(` ${n} `));
       if (named) subject = [named];
     }

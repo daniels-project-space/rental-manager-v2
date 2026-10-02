@@ -86,7 +86,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const adjective = /\b(?:your|my|our|the|this|that|their)\s*$/i.test(before);
       const ownerConfirmation = /\byour\b[^.!?]{0,70}\b(?:is|are)\s*$/i.test(before)
         || /^\s+for\s+you\b/i.test(after);
-      return (adjective || ownerConfirmation) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;
+      const inclusionReference = /\b(?:included|supplied)\s+(?:(?:exactly|already)\s+)?as\s*$/i.test(before);
+      return (adjective || ownerConfirmation || inclusionReference) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;
     });
     const match = /\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b/i.exec(availabilityClause);
     if (!match) continue;

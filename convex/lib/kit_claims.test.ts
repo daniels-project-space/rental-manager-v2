@@ -2,6 +2,35 @@ import { renterItemNames } from "./renter_item_names";
 import { describe, expect, it } from "vitest";
 import { unsupportedKitClaims } from "./kit_claims";
 const kit = { names: ["Sony A7 V"], contents: ["Sony A7 V", "NP-FZ100 batteries", "256GB card"] };
+describe("inclusion owner scopes in actual booked-kit replies", () => {
+ const camera={names:renterItemNames("BMPCC 6K Full Frame"),contents:["Canon EF-to-L mount adapter"],booked_camera:true};
+ const lens={names:["Canon EF 16-35mm f2.8"],contents:["Canon EF 16-35mm f2.8"]};
+ const adapter={names:["EF to L mount"],contents:["EF to L mount"]};
+ const evidence=[camera,lens,adapter];
+ const reply="I checked our stock for 20 to 21 October, and we only have 1 EF-to-L mount adapter in total, which is already included with your booked Blackmagic 6K Full Frame kit. Because of that capacity limit, we aren't able to add a second EF-to-L adapter to the basket. Your booking remains unchanged with the 1 included adapter at £124 for the 2 days.";
+ it("accepts the live refusal's relative clause and possessive booking follow-up",()=>expect(unsupportedKitClaims(reply,evidence)).toEqual([]));
+ it("attributes an alternative's mount to the booked kit, not to the lens",()=>{
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included in your kit.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included with the Blackmagic 6K Full Frame kit.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included as part of your confirmed Blackmagic 6K Full Frame kit.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Your booked kit comes with 1 EF-to-L adapter.",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Your booked kit comes with 2 EF-to-L adapters.",evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims("Your booked kit comes with 1 EF-to-L adapter.",[{...camera,booked_camera:false}])).not.toEqual([]);
+  expect(unsupportedKitClaims("Your booked kit comes with an EF-to-L adapter.",[{...camera,contents:["2 EF-to-L adapters"]}])).toEqual([]);
+  expect(unsupportedKitClaims("Your booked kit comes with 1 EF-to-L adapter.",[{...camera,contents:["EF-to-L adapters"]}])).not.toEqual([]);
+ });
+ it("does not authorize unbooked cameras, another camera's adapter, or extra quantities",()=>{
+  expect(unsupportedKitClaims(reply,[{...camera,booked_camera:false},lens,adapter])).not.toEqual([]);
+  expect(unsupportedKitClaims(reply.replaceAll("EF-to-L","PL-to-L"),evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims(reply.replace("1 included adapter","2 included adapters"),evidence)).not.toEqual([]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 fits the EF-to-L adapter included with your booked Sony FX3 kit.",[...evidence,{names:["Sony FX3"],contents:["PL-to-E adapter"],booked_camera:true}])).not.toEqual([]);
+ });
+ it("retains subsequent component claims and does not borrow an alternative's kit facts",()=>{
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 includes an EF-to-L adapter included with your camera and a charger.",evidence).map(f=>f.content)).toEqual(["charger"]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 uses the EF-to-L adapter included with your camera kit with 2 PL-to-L adapters.",evidence).map(f=>f.content)).toEqual(["adapter"]);
+  expect(unsupportedKitClaims("Canon EF 16-35mm f2.8 includes the Blackmagic 6K Full Frame adapter.",evidence)).not.toEqual([]);
+ });
+});
 describe("an alternative lens using the booked camera's supplied adapter",()=>{
  const camera={names:["BMPCC 6K Full Frame"],contents:["Canon EF-to-L mount adapter"],booked_camera:true};
  const lens={names:["Canon EF 16-35mm f2.8"],contents:["Canon EF 16-35mm f2.8"]};
