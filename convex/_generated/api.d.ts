@@ -114,6 +114,7 @@ import type * as lib_camera_mode_claims from "../lib/camera_mode_claims.js";
 import type * as lib_camera_requirements from "../lib/camera_requirements.js";
 import type * as lib_camera_sensor_comparisons from "../lib/camera_sensor_comparisons.js";
 import type * as lib_capacity_gap from "../lib/capacity_gap.js";
+import type * as lib_claim_date_scope from "../lib/claim_date_scope.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
 import type * as lib_conversation_funnel from "../lib/conversation_funnel.js";
 import type * as lib_customer_metrics from "../lib/customer_metrics.js";
@@ -173,6 +174,7 @@ import type * as lib_renter_draft_evidence from "../lib/renter_draft_evidence.js
 import type * as lib_renter_item_names from "../lib/renter_item_names.js";
 import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
 import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
+import type * as lib_renter_order_stock from "../lib/renter_order_stock.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
@@ -413,6 +415,7 @@ declare const fullApi: ApiFromModules<{
   "lib/camera_requirements": typeof lib_camera_requirements;
   "lib/camera_sensor_comparisons": typeof lib_camera_sensor_comparisons;
   "lib/capacity_gap": typeof lib_capacity_gap;
+  "lib/claim_date_scope": typeof lib_claim_date_scope;
   "lib/co_occurrence": typeof lib_co_occurrence;
   "lib/conversation_funnel": typeof lib_conversation_funnel;
   "lib/customer_metrics": typeof lib_customer_metrics;
@@ -472,6 +475,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_item_names": typeof lib_renter_item_names;
   "lib/renter_kit_evidence": typeof lib_renter_kit_evidence;
   "lib/renter_order_quote": typeof lib_renter_order_quote;
+  "lib/renter_order_stock": typeof lib_renter_order_stock;
   "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;
   "lib/reservations/accounts": typeof lib_reservations_accounts;

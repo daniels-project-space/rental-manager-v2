@@ -57,6 +57,13 @@ describe("successful tool receipts", () => {
     expect(successfulGrounding(receipts).availability).toBe(true);
     expect(receipts[1].call_id).toBe("change:mutation-stock");
   });
+  it("retains independently checked stock from a rejected amendment without claiming a successful edit", () => {
+    const receipts = renterToolReceipts([{ payload: { toolName: "modify_booking", toolCallId: "amend", result: { ok: false, error: "No dates changed", stock_receipts: [{ ...stock, item_id: "camera", available: false, source: "shared_inventory_confirmed_rentals" }] } } }]);
+    expect(receipts.some(r => r.tool === "modify_booking")).toBe(false);
+    expect(successfulGrounding(receipts)).toMatchObject({ availability: false, unavailability: true });
+    expect(stockReceipts(receipts)[0].call_id).toBe("amend:amendment-stock:camera");
+    expect(renterToolReceipts([{ payload: { toolName: "modify_booking", args: { stock_receipts: [stock] } } }])).toEqual([]);
+  });
   it("drops partial telemetry and duplicate receipt events before persistence", () => {
     const steps = [{ payload: { toolName: "check_availability", toolCallId: "one", result: stock } }, { payload: { toolName: "check_availability", toolCallId: "one", result: { ...stock } } }, { payload: { toolName: "check_availability", toolCallId: "one", result: { toolCallId: "one" } } }];
     expect(stockReceipts(renterToolReceipts(steps))).toHaveLength(1);

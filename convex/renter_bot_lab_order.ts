@@ -8,6 +8,7 @@ import type { PriceTier } from "./lib/hygglo_pricing";
 import { inclusiveDays, summarise } from "./lib/renter_order_quote";
 export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
+import { checkOrderRentalStock } from "./lib/renter_order_stock";
 
 /**
  * The SIMULATED Hygglo order behind a Renter Bot Lab session.
@@ -283,6 +284,15 @@ export const applyChange = mutation({
       const end = a.end_date ?? a.start_date;
       if (!validIsoDate(a.start_date) || !validIsoDate(end) || end < a.start_date || inclusiveDays(a.start_date, end) > 366)
         return { ok: false, error: "Use valid pickup and return dates in order, up to 366 rental days" };
+      const booking = await ctx.db.query("renter_bot_lab_bookings")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", a.thread_id)).first();
+      if (booking?.return_date || booking?.is_obsolete || /^(?:completed|cancelled)$/i.test(booking?.status ?? ""))
+        return { ok: false, error: "This rental is already closed. Arrange a new booking instead of changing its dates." };
+      if ((booking?.pickup_date || booking?.status === "ongoing") && a.start_date !== row.start_date)
+        return { ok: false, error: "The rental has already been collected. Keep its original pickup date when extending the return." };
+      const stock = await checkOrderRentalStock(ctx, row.account_slug, lines, a.start_date, end, a.thread_id);
+      if (stock.available !== true) return { ok: false, error_code: "stock_unavailable_or_unknown",
+        error: `Cannot change this basket to ${a.start_date} – ${end}: ${stock.reason}. No dates or prices were changed. Use the checked full date span for the refusal; a failed range check alone does not prove which individual day is booked.`, stock_receipts: stock.receipts };
       await ctx.db.patch(row._id, {
         start_date: a.start_date,
         end_date: end,
@@ -292,18 +302,15 @@ export const applyChange = mutation({
         ],
         updated_at: Date.now(),
       });
-      const booking = await ctx.db.query("renter_bot_lab_bookings")
-        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", a.thread_id)).first();
       if (booking) await ctx.db.patch(booking._id, {
         start_date: a.start_date,
         end_date: end,
-        pickup_date: undefined,
-        return_date: undefined,
       });
       return {
         ok: true,
         applied: `dates set to ${a.start_date} – ${end}`,
         order: summarise(lines, a.start_date, end),
+        stock_receipts: stock.receipts,
       };
     }
 

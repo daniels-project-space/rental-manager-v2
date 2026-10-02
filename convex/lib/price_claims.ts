@@ -1,4 +1,5 @@
 import { inclusiveRentalDays } from "./hygglo_pricing";
+import { claimDateScope } from "./claim_date_scope";
 import { renterItemNames } from "./renter_item_names";
 import { shortItemName } from "./item_display_name";
 import type { StockRequest } from "./stock_claims";
@@ -40,6 +41,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const unknown = models.at(-1);
     if (unknown && unknown.index! > Math.max(-1, lastAt) && !names.some(n => (` ${n} `).includes(` ${unknown[0].trim()} `))) subject = [norm(unknown[0])];
     const segment = text.slice(consumed,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
+    const segmentDates = claimDateScope(segment, request.start_date);
+    let bookingSubject = false;
     const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(segment);
     let pairedItems: Array<{names:string[];quantity:number}> | undefined;
     let unresolvedPair = false;
@@ -48,8 +51,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       // A duration-first adverb scopes the amount, not its item identity.
       // Duration validation below still reads the original text.
       const scopedNamed=named.replace(/^for\s+(?:the\s+)?\d+\s+days?\s+(?:the\s+)?/i, "");
+      const datedSubject = segmentDates.matched_text ? scopedNamed.replace(norm(segmentDates.matched_text), "dates") : scopedNamed;
+      bookingSubject = /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
       const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(scopedNamed);
-      if (!generic && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
+      if (!generic && !bookingSubject && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !names.includes(named)) {
         pairedItems=[];
         for(const part of named.split(/\b(?:and|with|plus)\b/)) {
@@ -78,17 +83,19 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const purpose = /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
       : /\b(?:delivery|courier|postage)\b/i.test(local) ? "delivery" : "rental";
-    const explicitDays = /\b(?:for|across|over|total\s+for)\s+(?:the\s+)?(\d+)[ -]+days?\b/i.exec(local);
-    const days = explicitDays ? Number(explicitDays[1]) : duration;
+    const dateScope = claimDateScope(segment + m[0] + after, request.start_date);
+    const explicitDays = /\b(?:for|across|over|total\s+for)\s+(?:(?:the|these|those)\s+)?(\d+)[ -]+days?\b/i.exec(local);
+    const scopedDuration = dateScope.explicit && dateScope.valid ? inclusiveRentalDays(dateScope.start_date, dateScope.end_date) : null;
+    const days = explicitDays ? Number(explicitDays[1]) : scopedDuration ?? duration;
     const requested = request.items.find(i => same(subject, [i.name, ...(i.aliases ?? [])]));
     const count = lastAt >= 0 ? /\b(\d+|one|two|both|three|four)\s*(?:x\s*)?$/.exec(before.slice(0,Math.max(0,lastAt-1)).trim()) : null;
     const declaredQuantity = count ? ({one:1,two:2,both:2,three:3,four:4} as Record<string,number>)[count[1]] ?? Number(count[1]) : undefined;
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
-    const dates = local.match(/\b\d{4}-\d{2}-\d{2}\b/g);
     const amount = Number(m[1].replace(/,/g, ""));
-    const basket = !!pairedItems || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking)|your\s+total)\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+total\b/i.test(local));
+    const basket = !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking)|your\s+total)\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+total\b/i.test(local));
     const candidates = evidence.filter(e => !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
+      if (!dateScope.valid || explicitDays && scopedDuration != null && days !== scopedDuration) return false;
       if (purpose === "deposit" || purpose === "delivery") return false; // No verified fee source is held today.
       if (purpose === "replacement") return e.kind === "replacement" && e.total_gbp != null && cents(e.total_gbp) === cents(amount);
       if (e.kind === "replacement") return false;
@@ -96,8 +103,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         const claimed=pairedItems??request.items.map(i=>({names:[i.name,...(i.aliases??[])],quantity:i.quantity}));
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;
       }
-      if (dates?.[0] && e.start_date && dates[0] !== e.start_date || dates?.[1] && e.end_date && dates[1] !== e.end_date) return false;
-      if (!base && ((request.start_date && e.start_date && e.start_date !== request.start_date) || (request.end_date && e.end_date && e.end_date !== request.end_date))) return false;
+      const start = dateScope.start_date ?? (explicitDays ? undefined : request.start_date);
+      const end = dateScope.end_date ?? (explicitDays ? undefined : request.end_date);
+      if (!base && ((start && e.start_date && e.start_date !== start) || (end && e.end_date && e.end_date !== end))) return false;
       if (daily && base) return e.base_rate_gbp != null && cents(e.base_rate_gbp) === cents(amount);
       if (days != null && e.days !== days) return false;
       if ((declaredQuantity != null || !daily) && quantity != null && e.kind !== "basket" && e.quantity !== quantity) return false;

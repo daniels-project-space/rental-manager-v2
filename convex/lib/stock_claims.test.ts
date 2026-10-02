@@ -4,6 +4,22 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("amendment date claims", () => {
+  const original = { start_date: "2026-10-06", end_date: "2026-10-07", items: [{ name: "Sony FX3", quantity: 1 }] };
+  const proposed = { ...stock, start_date: "2026-10-06", end_date: "2026-10-08" };
+  it("uses the explicitly stated proposed span rather than the unchanged original booking", () => {
+    expect(unsupportedStockClaims("The Sony FX3 isn't available for 6 to 8 October.", [proposed], original)).toEqual([]);
+  });
+  it("requires a point-date check before calling one particular extra day booked", () => {
+    const text = "The Sony FX3 is fully booked on 8 October.";
+    expect(unsupportedStockClaims(text, [proposed], original)).toHaveLength(1);
+    expect(unsupportedStockClaims(text, [{ ...proposed, start_date: "2026-10-08" }], original)).toEqual([]);
+  });
+  it("keeps years and neighbouring days distinct", () => {
+    expect(unsupportedStockClaims("The FX3 isn't available for 6 to 8 October 2025.", [proposed], original)).toHaveLength(1);
+    expect(unsupportedStockClaims("The FX3 is booked on 9 October.", [{ ...proposed, start_date: "2026-10-08" }], original)).toHaveLength(1);
+  });
+});
 describe("catalogue rental eligibility is distinct from calendar stock", () => {
   const scope: StockRequest = { start_date: "2026-10-06", end_date: "2026-10-07", items: [{ name: "Sony FX6", quantity: 1 }] };
   const alternative: StockReceipt = { ...stock, item: "Sony FX3", start_date: scope.start_date!, end_date: scope.end_date!, available: true, free_units: 1 };

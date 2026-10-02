@@ -6,6 +6,19 @@ const request:StockRequest={start_date:"2026-10-02",end_date:"2026-10-04",items:
 const prices:PriceEvidence[]=[{names:["BMPCC 6K Pro"],kind:"rental",days:3,quantity:1,daily_rate_gbp:30,base_rate_gbp:35,total_gbp:90,start_date:"2026-10-02",end_date:"2026-10-04",call_id:"real-alt",source:"hygglo_tier"},
 {names:["BMPCC 6K Full Frame"],kind:"rental",days:3,quantity:1,daily_rate_gbp:43.33,base_rate_gbp:50,total_gbp:130,call_id:"selected",source:"hygglo_tier"}];
 const check=(text:string, evidence=prices,scope=request)=>unsupportedPriceClaims(text,evidence,scope);
+describe("original booking and proposed alternative prices",()=>{
+ const original:StockRequest={start_date:"2026-10-06",end_date:"2026-10-07",items:[{name:"Sony FX3",quantity:1}]};
+ const ledger:PriceEvidence[]=[{names:["Sony FX3"],kind:"rental",days:2,quantity:1,total_gbp:98,start_date:"2026-10-06",end_date:"2026-10-07",call_id:"original",source:"lab_order_quote"},
+  {names:["Sony A7 V"],kind:"rental",days:3,quantity:1,total_gbp:110,start_date:"2026-10-06",end_date:"2026-10-08",call_id:"alternative",source:"hygglo_tier"}];
+ it("keeps the captured unchanged booking and proposed three-day alternative separate",()=>{
+  const text="Your booking remains set for 6 to 7 October as confirmed, which is £98 total.\n\nIf you need a camera covering the full 6 to 8 October window, I do have the Sony A7 V available for those 3 days at £110 total.";
+  expect(unsupportedPriceClaims(text,ledger,original)).toEqual([]);
+ });
+ it("cannot turn a booking reference into an unrelated camera's price",()=>{
+  expect(unsupportedPriceClaims("Your booking for the Pyxis remains set for 6 to 7 October, which is £98 total.",ledger,original)).toHaveLength(1);
+  expect(unsupportedPriceClaims("The A7 V is £110 for 6 to 9 October.",ledger,original)).toHaveLength(1);
+ });
+});
 describe("scoped rental price claims",()=>{
  it("accepts exact-duration totals and separates the one-day base rate",()=>{
   expect(check("The Blackmagic 6K Pro is £90 total for 3 days (£30/day).")).toEqual([]);

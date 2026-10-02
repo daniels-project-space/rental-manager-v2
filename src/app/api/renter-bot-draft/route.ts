@@ -1666,7 +1666,10 @@ export async function POST(req: Request) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const after: any = await convex.query(api.renter_bot_lab_order.get, { thread_id });
         bookingModified = ((after?.changes ?? []).length as number) > orderChangesBefore;
-        if (bookingModified && Array.isArray(after?.lines)) priceRequest = {start_date:after.start_date,end_date:after.end_date,items:after.lines.map((l: {name:string;qty:number})=>({name:l.name,quantity:l.qty}))};
+        if (bookingModified && Array.isArray(after?.lines)) {
+          priceRequest = {start_date:after.start_date,end_date:after.end_date,items:after.lines.map((l: {name:string;qty:number})=>({name:l.name,quantity:l.qty}))};
+          priceSources.push({tool:"get_lab_order",call_id:"post-amendment:lab-order",result:after});
+        }
       } catch {
         /* leave false — a claim without proof stays a false claim */
       }

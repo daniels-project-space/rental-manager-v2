@@ -1,4 +1,5 @@
 import { shortItemName } from "./item_display_name";
+import { claimDateScope } from "./claim_date_scope";
 export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
   available: boolean | null; free_units: number | null;
@@ -79,11 +80,12 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       targets = [{ name: subject.name, quantity: subject.quantity ?? (requestedCounts.length === 1 ? requestedCounts[0] : NaN) }];
     }
     if (!generic) previousSubjects = targets;
-    const explicitDates = clause.match(/\b\d{4}-\d{2}-\d{2}\b/g);
-    const start = explicitDates?.[0] ?? request.start_date;
-    const end = explicitDates?.[1] ?? request.end_date;
+    const dateScope = claimDateScope(clause, request.start_date);
+    const start = dateScope.start_date ?? request.start_date;
+    const end = dateScope.end_date ?? request.end_date;
     if (negative && supportsRentalEligibilityDecline(clause, { ...request, items: targets }, ineligibleItems)) continue;
     const proven = targets.length > 0 && targets.every(target => {
+      if (!dateScope.valid) return false;
       if(modifiers.some(raw=>{
         if(/^built[ -]?in\s+ND(?:s|\s+filters?)?$/i.test(raw.trim()))return false; // reviewed separately as an intrinsic camera feature
         const modifier=subjectOf(raw);
