@@ -365,6 +365,7 @@ export const findOwnedAlternativesTool = createTool({
       }).optional(),
     }).optional().describe("Pass every hard camera requirement, including recording frame rate, capture format and full_width=true for an uncropped/full-sensor-width request. Physical sensor size does not establish recording capture area. Only source-reviewed modes qualify; read their conditions and explain mandatory settings/crops. Codec and bit-depth claims still require separate exact-model proof."),
     exclude_name: z.string().optional(),
+    lower_value_only: z.boolean().optional().describe("Use true for alternatives after failed verification. Compares recorded replacement values, never daily hire prices; unknown original value yields no lower-value suggestions. Keep the required category, mount, quantity and capability checks. Never promise approval."),
     item_name: z.string().optional().describe("Exact item being replaced, to rank suitable substitutes."),
     start_date: z.string().optional(),
     end_date: z.string().optional(),

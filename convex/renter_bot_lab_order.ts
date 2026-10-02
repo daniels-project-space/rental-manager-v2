@@ -1,3 +1,4 @@
+import { verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { internalMutation, mutation, query } from "./_generated/server";
@@ -164,6 +165,8 @@ export const get = query({
       .unique();
     if (!row) return null;
     const display = await listingDisplayCatalog(ctx, row.account_slug);
+    const booking = await getBotBooking(ctx, thread_id);
+    const referral = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => q.eq("source_thread_id", thread_id)).unique();
     return {
       ...summarise(
         row.items.map((i) => ({ ...i, display_name: i.product_id != null ? display.name(row.account_slug, i.product_id, i.name) : i.item_id ? shortItemName(display.itemMap.get(String(i.item_id)) ?? i.name) : shortItemName(i.name), item_id: i.item_id ? String(i.item_id) : undefined })),
@@ -171,6 +174,8 @@ export const get = query({
         row.end_date,
       ),
       changes: row.changes,
+      stage: rentalStage(booking, londonToday()).stage,
+      referral_code: referral?.code,
       account_slug: row.account_slug,
     };
   },
@@ -201,6 +206,8 @@ export const seed = internalMutation({
       .query("renter_bot_lab_orders")
       .withIndex("by_thread", (q) => q.eq("thread_id", a.thread_id))
       .unique();
+    if (await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => q.eq("source_thread_id", a.thread_id)).unique())
+      throw new Error("A referred cancelled basket is immutable; start a new Lab session");
     if (existing) await ctx.db.delete(existing._id);
 
     const owned = (await ctx.db.query("items").collect()).filter(
@@ -493,5 +500,79 @@ export const applyChange = mutation({
       stock_receipts: basketStock.receipts,
       context_transition: await transition(),
     };
+  },
+});
+
+/** A final platform event, never a renter's claim or a pending document check. */
+export const simulateVerificationFailure = mutation({
+  args: { thread_id: v.string(), referral_code: v.string() },
+  handler: async (ctx, a) => {
+    assertLabThread(a.thread_id);
+    if (!/^[a-f0-9-]{36}$/i.test(a.referral_code)) throw new Error("Use a generated referral code");
+    const booking = await getBotBooking(ctx, a.thread_id);
+    const order = await getLabOrder(ctx, a.thread_id);
+    if (!booking || !order) throw new Error("A simulated booking and basket are required");
+    const old = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => q.eq("source_thread_id", a.thread_id)).unique();
+    if (old) {
+      if (rentalStage(booking, londonToday()).stage !== "VERIFICATION_FAILED") throw new Error("Failure event no longer matches the booking");
+      return { ok: true, already_applied: true, referral_code: old.code, message: verificationFailureReply(old.code) };
+    }
+    if (rentalStage(booking, londonToday()).stage !== "AWAITING_VERIFICATION")
+      throw new Error("Only a booking awaiting verification can receive this final failure event");
+    if (await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code", q => q.eq("code", a.referral_code)).unique())
+      throw new Error("Referral code already exists");
+    const now = Date.now();
+    await ctx.db.patch(booking._id, { status: "cancelled", order_step: "VERIFICATION_FAILED" });
+    await ctx.db.patch(order._id, { changes: [...order.changes, { at: now, summary: "Final verification failure: simulated booking automatically cancelled" }], updated_at: now });
+    await ctx.db.insert("renter_bot_lab_referrals", { code: a.referral_code, source_thread_id: a.thread_id, account_slug: order.account_slug, created_at: now, expires_at: now + 7 * 86400000 });
+    const message = verificationFailureReply(a.referral_code);
+    await ctx.db.insert("hygglo_messages", { account_slug: order.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-verification-failed`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
+    return { ok: true, already_applied: false, referral_code: a.referral_code, message };
+  },
+});
+
+/** Explicit basket handoff. No inherited verification, payment or approval. */
+export const redeemReferral = mutation({
+  args: { thread_id: v.string(), code: v.string() },
+  handler: async (ctx, a) => {
+    assertLabThread(a.thread_id);
+    const referral = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code", q => q.eq("code", a.code)).unique();
+    if (!referral || referral.expires_at <= Date.now()) return { ok: false, error: "Referral is invalid or expired" };
+    if (referral.source_thread_id === a.thread_id) return { ok: false, error: "A friend needs their own new booking" };
+    if (referral.redeemed_by) return referral.redeemed_by === a.thread_id
+      ? { ok: true, already_applied: true } : { ok: false, error: "Referral has already been used" };
+    const target = await getLabOrder(ctx, a.thread_id);
+    const source = await getLabOrder(ctx, referral.source_thread_id);
+    const booking = await getBotBooking(ctx, referral.source_thread_id);
+    if (!source || !target || target.account_slug !== referral.account_slug || rentalStage(booking, londonToday()).stage !== "VERIFICATION_FAILED")
+      return { ok: false, error: "Referral does not match this account or a cancelled verification failure" };
+    if (await getBotBooking(ctx, a.thread_id) || target.items.length || target.changes.length)
+      return { ok: false, error: "Start an empty inquiry for the friend's own booking" };
+    if (!source.start_date || !source.end_date || source.start_date < londonToday())
+      return { ok: false, error: "Original dates have passed. Choose new dates with the owner" };
+    const lines = [];
+    for (const old of source.items) {
+      if (old.product_id != null) {
+        const listing = await ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", target.account_slug).eq("product_id", old.product_id!)).unique();
+        if (!listing || typeof listing.daily_price !== "number") return { ok: false, error: "A basket listing is no longer priced. Ask the owner to check it" };
+        lines.push({ ...old, name: listing.name ?? old.name, daily_price_gbp: listing.daily_price, price_tiers: await tiersForProduct(ctx, target.account_slug, old.product_id), pricing_basis: "listing" as const });
+      } else if (old.item_id) {
+        const item = await ctx.db.get(old.item_id);
+        if (!item || item.status !== "active" || item.is_marketing_only || (item.qty ?? 0) < old.qty) return { ok: false, error: "An item is no longer owned and available" };
+        const daily = await resolveDailyPrice(ctx, target.account_slug, String(item._id), item.name_canonical);
+        const pid = await listingPidForItem(ctx, target.account_slug, String(item._id));
+        if (daily == null || pid == null) return { ok: false, error: "An item needs a current listing price" };
+        lines.push({ ...old, name: item.name_canonical, daily_price_gbp: daily, price_tiers: await tiersForProduct(ctx, target.account_slug, pid), pricing_basis: "listing" as const });
+      } else return { ok: false, error: "Unresolved item identity: ask the owner to check the basket" };
+    }
+    const stock = await checkOrderRentalStock(ctx, target.account_slug, lines, source.start_date, source.end_date, a.thread_id);
+    if (stock.available !== true) return { ok: false, error: "Original basket is no longer available for these dates", stock_receipts: stock.receipts };
+    const now = Date.now();
+    await ctx.db.patch(target._id, { items: lines, start_date: source.start_date, end_date: source.end_date, changes: [{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required" }], updated_at: now });
+    const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", a.thread_id)).first();
+    if (conv) await ctx.db.patch(conv._id, { inquiry_items: lines.map(l => ({ name: l.name, qty: l.qty, ...(l.product_id != null ? { product_id: l.product_id } : {}) })) });
+    await ctx.db.patch(referral._id, { redeemed_by: a.thread_id });
+    await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: "Your friend's basket referral was recognised. The basket was restored after checking current prices and stock. This is your own new request, with its own platform approval, payment and verification requirements; no previous approvals or payments were transferred.", hygglo_sent_at: now, fetched_at: now });
+    return { ok: true, already_applied: false, order: summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), source.start_date, source.end_date), stock_receipts: stock.receipts };
   },
 });

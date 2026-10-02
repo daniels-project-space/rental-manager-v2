@@ -273,6 +273,8 @@ export const cleanup = mutation({
       if (r.hygglo_order_id && matches(r.hygglo_order_id)) await ctx.db.delete(r._id);
     for (const order of await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread", (q) => thread_id ? q.eq("thread_id", thread_id) : q.gte("thread_id", PREFIX).lt("thread_id", `${PREFIX}\uffff`)).collect())
       if (matches(order.thread_id)) await ctx.db.delete(order._id);
+    for (const referral of await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => thread_id ? q.eq("source_thread_id", thread_id) : q.gte("source_thread_id", PREFIX).lt("source_thread_id", `${PREFIX}\uffff`)).collect())
+      if (matches(referral.source_thread_id)) await ctx.db.delete(referral._id);
     return { removed: n };
   },
 });

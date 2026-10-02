@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -409,10 +409,20 @@ function blockReason(flags: unknown): string {
 }
 
 export function LiveChatSim({
-  session,
+  session: initialSession,
 }: {
   session: { threadId: string; accountSlug: string; context: SessionContext };
 }) {
+  const [session, setSession] = useState(initialSession);
+  const createdFriendThreads = useRef<string[]>([]);
+  const endLiveSession = useAction(api.renter_bot_lab_actions.endLiveSession);
+  useEffect(() => () => { for (const threadId of createdFriendThreads.current) void endLiveSession({ threadId }); }, [endLiveSession]);
+  const startLiveSession = useAction(api.renter_bot_lab_actions.startLiveSession);
+  const simulateFailure = useMutation(api.renter_bot_lab_order.simulateVerificationFailure);
+  const redeemReferral = useMutation(api.renter_bot_lab_order.redeemReferral);
+  const currentOrder = useQuery(api.renter_bot_lab_order.get, { thread_id: session.threadId });
+  const [failureFeedback, setFailureFeedback] = useState("");
+  const [referralInput, setReferralInput] = useState("");
   const sendTestMessage = useAction(api.renter_bot_lab_actions.sendTestMessage);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
@@ -458,6 +468,35 @@ export function LiveChatSim({
     }
   }
 
+  async function failVerification() {
+    setSending(true);
+    try {
+      const result = await simulateFailure({ thread_id: session.threadId, referral_code: crypto.randomUUID() });
+      setTurns(t => [...t, { role: "bot", text: result.message }]);
+      setFailureFeedback("Final failed check: simulated booking cancelled. Basket preserved for referral.");
+    } catch (e) { setFailureFeedback(e instanceof Error ? e.message : String(e)); }
+    finally { setSending(false); }
+  }
+  async function startFriend() {
+    if (!referralInput.trim() || sending) return;
+    setSending(true);
+    let threadId: string | undefined;
+    try {
+      const friend = await startLiveSession({ accountSlug: session.accountSlug, items: [], lifecycle: "inquiry" });
+      threadId = friend.threadId;
+      const restored = await redeemReferral({ thread_id: threadId, code: referralInput.trim() });
+      if (!restored.ok) throw new Error(restored.error ?? "Could not restore the basket");
+      createdFriendThreads.current.push(threadId);
+      setSession({ threadId, accountSlug: session.accountSlug, context: { ...friend.context, items: restored.order?.lines.map(l => l.name) ?? [], startDate: restored.order?.start_date ?? undefined, endDate: restored.order?.end_date ?? undefined } });
+      setTurns([{ role: "bot", text: "Friend referral recognised. Your basket has been restored with current stock and prices. This is a new request from your own account and still needs the platform's checks." }]);
+      setFailureFeedback("Separate friend inquiry — no verification, payment or approval transferred.");
+      setReferralInput("");
+    } catch (e) {
+      if (threadId) await endLiveSession({ threadId });
+      setFailureFeedback(e instanceof Error ? e.message : String(e));
+    } finally { setSending(false); }
+  }
+
   const statusColor = (s?: string) =>
     s === "pass"
       ? "text-emerald-400"
@@ -498,6 +537,16 @@ export function LiveChatSim({
         {sending && (
           <p className="text-xs text-[#8b8fa3]">Generating real draft…</p>
         )}
+      </div>
+      <div className="border-t border-white/10 p-3 text-xs text-[#8b8fa3]">
+        <p>Current platform stage: {currentOrder?.stage?.replace(/_/g, " ") ?? "loading"}</p>
+        <button disabled={sending || currentOrder?.stage !== "AWAITING_VERIFICATION"} onClick={failVerification} className="my-2 rounded bg-red-500/20 px-3 py-2 text-red-200 disabled:opacity-40">Simulate final failed verification</button>
+        {currentOrder?.referral_code && <p className="break-all">Basket referral: {currentOrder.referral_code}</p>}
+        <div className="mt-2 flex gap-2">
+          <input aria-label="Friend basket referral" value={referralInput} onChange={e => setReferralInput(e.target.value)} placeholder="Friend's basket referral code" className="min-w-0 flex-1 rounded bg-black/30 p-2" />
+          <button disabled={sending || !referralInput.trim()} onClick={startFriend} className="rounded bg-white/10 p-2 disabled:opacity-40">Start friend's own request</button>
+        </div>
+        {failureFeedback && <p className="mt-2">{failureFeedback}</p>}
       </div>
       <OrderPanel threadId={session.threadId} />
       <div className="flex gap-2 border-t border-white/10 p-3">

@@ -158,7 +158,7 @@ describe("durable review mutations and automatic queue", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("provider must not be called"));
     const ctx = { runAction: vi.fn().mockResolvedValue({}), runQuery: vi.fn().mockResolvedValue({ draft_review: saved.review, draft_epoch: 2, draft_context_key: f.args.context_key, last_message_id: f.args.message_id }), runMutation: vi.fn().mockResolvedValue({ok:true}) };
     try {
-      expect(await invoke(generateDraft, ctx, { thread_id: f.args.thread_id })).toMatchObject({ status: "skipped", review: saved.review, flags: f.args.flags });
+      expect(await invoke(generateDraft, ctx, { thread_id: "__probe__review-test" })).toMatchObject({ status: "skipped", review: saved.review, flags: f.args.flags });
       expect(fetchSpy).not.toHaveBeenCalled(); expect(ctx.runMutation).toHaveBeenCalledTimes(2);
     } finally { fetchSpy.mockRestore(); }
   });
@@ -166,6 +166,11 @@ describe("durable review mutations and automatic queue", () => {
 
 
 describe("managed generation ownership", () => {
+  it("blocks real chats before leasing, context reads or provider calls without written rollout consent", async () => {
+    const ctx={runMutation:vi.fn(),runQuery:vi.fn(),runAction:vi.fn()};
+    expect(await invoke(generateDraft,ctx,{thread_id:"real-rental"})).toEqual({status:"skipped",reason:"lab_only_pending_written_consent"});
+    expect(ctx.runMutation).not.toHaveBeenCalled();expect(ctx.runQuery).not.toHaveBeenCalled();expect(ctx.runAction).not.toHaveBeenCalled();
+  });
   it("rejects overlap and an expired owner's release cannot remove its replacement", async () => {
     const f = await setup();
     expect(await invoke(claimDraftGeneration, f.ctx, {thread_id:f.args.thread_id,token:"first"})).toEqual({ok:true});
@@ -179,13 +184,13 @@ describe("managed generation ownership", () => {
   });
   it("does not resolve context or call a model when another generation owns the thread", async () => {
     const ctx={runMutation:vi.fn().mockResolvedValue({ok:false,reason:"generation_in_progress"}),runQuery:vi.fn(),runAction:vi.fn()};
-    expect(await invoke(generateDraft,ctx,{thread_id:"busy-thread"})).toMatchObject({status:"skipped",reason:"generation_in_progress"});
+    expect(await invoke(generateDraft,ctx,{thread_id:"__probe__busy-thread"})).toMatchObject({status:"skipped",reason:"generation_in_progress"});
     expect(ctx.runQuery).not.toHaveBeenCalled();expect(ctx.runAction).not.toHaveBeenCalled();expect(ctx.runMutation).toHaveBeenCalledTimes(1);
   });
   it("releases its own claim after a context failure so a corrected retry can run", async () => {
     const failure=new Error("context unavailable");
     const ctx={runMutation:vi.fn().mockResolvedValue({ok:true}),runQuery:vi.fn().mockRejectedValue(failure),runAction:vi.fn().mockResolvedValue({})};
-    await expect(invoke(generateDraft,ctx,{thread_id:"failure-thread"})).rejects.toThrow("context unavailable");
+    await expect(invoke(generateDraft,ctx,{thread_id:"__probe__failure-thread"})).rejects.toThrow("context unavailable");
     expect(ctx.runMutation).toHaveBeenCalledTimes(2);
     expect(ctx.runMutation.mock.calls[1][1]).toEqual(ctx.runMutation.mock.calls[0][1]);
   });

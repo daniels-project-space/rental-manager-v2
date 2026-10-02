@@ -173,6 +173,7 @@ import type * as lib_renter_bot_filters_supplemental from "../lib/renter_bot_fil
 import type * as lib_renter_bot_intents from "../lib/renter_bot_intents.js";
 import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.js";
 import type * as lib_renter_bot_rubric from "../lib/renter_bot_rubric.js";
+import type * as lib_renter_bot_runtime from "../lib/renter_bot_runtime.js";
 import type * as lib_renter_bot_tone_scorer from "../lib/renter_bot_tone_scorer.js";
 import type * as lib_renter_dna from "../lib/renter_dna.js";
 import type * as lib_renter_draft_evidence from "../lib/renter_draft_evidence.js";
@@ -199,6 +200,7 @@ import type * as lib_shadow_compare from "../lib/shadow_compare.js";
 import type * as lib_stock_claims from "../lib/stock_claims.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_thread_messages from "../lib/thread_messages.js";
+import type * as lib_verification_failure from "../lib/verification_failure.js";
 import type * as lib_verified_item_spec from "../lib/verified_item_spec.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
 import type * as lib_widget_mv from "../lib/widget_mv.js";
@@ -479,6 +481,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_intents": typeof lib_renter_bot_intents;
   "lib/renter_bot_negotiation": typeof lib_renter_bot_negotiation;
   "lib/renter_bot_rubric": typeof lib_renter_bot_rubric;
+  "lib/renter_bot_runtime": typeof lib_renter_bot_runtime;
   "lib/renter_bot_tone_scorer": typeof lib_renter_bot_tone_scorer;
   "lib/renter_dna": typeof lib_renter_dna;
   "lib/renter_draft_evidence": typeof lib_renter_draft_evidence;
@@ -505,6 +508,7 @@ declare const fullApi: ApiFromModules<{
   "lib/stock_claims": typeof lib_stock_claims;
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/thread_messages": typeof lib_thread_messages;
+  "lib/verification_failure": typeof lib_verification_failure;
   "lib/verified_item_spec": typeof lib_verified_item_spec;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;
   "lib/widget_mv": typeof lib_widget_mv;

@@ -1,3 +1,4 @@
+import { friendReferralFromMessage } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
@@ -296,6 +297,16 @@ export const sendTestMessage = action({
       text: args.text,
     });
 
+    const referralCode = friendReferralFromMessage(args.text);
+    if (referralCode) {
+      const handoff = await ctx.runMutation(api.renter_bot_lab_order.redeemReferral, { thread_id: args.threadId, code: referralCode });
+      if (!handoff.ok) {
+        const draft = `I couldn't restore that basket referral: ${handoff.error ?? "please ask the owner to check it"}. Your current basket hasn't been changed.`;
+        const runId = `referral-${Date.now()}`;
+        await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, { thread_id: args.threadId, account_slug: args.accountSlug, text: draft, run_id: runId });
+        return { draft, overall_status: "flag", runId, productionGuardFlags: [], status: "referral_not_restored", reason: handoff.error };
+      }
+    }
     const startedAt = Date.now();
     const draftResult = await ctx.runAction(
       api.replyInbox_actions.generateDraft,

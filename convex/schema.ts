@@ -2546,6 +2546,15 @@ const operationalSchema = defineSchema({
     updated_at: v.number(),
   }).index("by_name", ["item_name_canonical"]),
 
+  renter_bot_lab_referrals: defineTable({
+    code: v.string(),
+    source_thread_id: v.string(),
+    account_slug: v.string(),
+    created_at: v.number(),
+    expires_at: v.number(),
+    redeemed_by: v.optional(v.string()),
+  }).index("by_code", ["code"]).index("by_source", ["source_thread_id"]),
+
   renter_bot_lab_orders: defineTable({
     thread_id: v.string(),
     account_slug: v.string(),

@@ -1,3 +1,4 @@
+import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
 import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
 import { generationFailure } from "../../../../convex/lib/canonical_generation_error";
 import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-price-evidence";
@@ -301,6 +302,7 @@ export async function POST(req: Request) {
   }
   const { thread_id } = body;
   if (!thread_id) return NextResponse.json({ ok: false, error: "no_thread_id" }, { status: 400 });
+  if (!renterBotRuntimeAllowed(thread_id)) return NextResponse.json({ok:false,error:"lab_only_pending_written_consent"},{status:403});
 
   /**
    * OPTIMISER HOOK — lets a caller swap the CONVERSATION_CRAFT block for a

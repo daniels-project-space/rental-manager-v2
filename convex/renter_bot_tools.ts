@@ -831,12 +831,13 @@ export const find_owned_alternatives = query({
     })),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
+    lower_value_only: v.optional(v.boolean()),
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
     quantity: v.optional(v.number()),
     thread_id: v.optional(v.string()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements }) => {
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lower_value_only }) => {
     // Owned = active + not marketing-only + qty>0 on the SHARED items table
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
@@ -916,6 +917,7 @@ export const find_owned_alternatives = query({
     // The item being replaced — needed for mount/family affinity scoring.
     const targetName = item_name ?? exclude_name ?? null;
     let targetId: string | null = null;
+    let targetValue: number | null = null;
     let target: { name: string; kind?: string | null; lens_mount?: string | null } | null = null;
     if (targetName) {
       // Resolve against the FULL catalog, not just owned: the item being
@@ -924,7 +926,8 @@ export const find_owned_alternatives = query({
       // exactly the signals that make a substitute sensible.
       const allForTarget = await ctx.db.query("items").collect();
       const tm = bestMatch(targetName, allForTarget, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
-      if (tm.match) {
+      if (tm.match && tm.confident) {
+        targetValue = typeof tm.match.replacement_cost_gbp === "number" && tm.match.replacement_cost_gbp > 0 ? tm.match.replacement_cost_gbp : null;
         targetId = String(tm.match._id);
         target = {
           name: tm.match.name_canonical,
@@ -955,7 +958,8 @@ export const find_owned_alternatives = query({
 
     const exclude = (exclude_name ?? "").toLowerCase().trim();
     const targetLower = (item_name ?? "").toLowerCase().trim();
-    const excludedMatch = exclude_name ? bestMatch(exclude_name, allInventory, i => i.name_canonical, i => i.aliases ?? []).match : null;
+    const exclusion = exclude_name ? bestMatch(exclude_name, allInventory, i => i.name_canonical, i => i.aliases ?? []) : null;
+    const excludedMatch = exclusion?.confident ? exclusion.match : null;
     const cameraQuery = camera_requirements !== undefined || normKind(kind) === "camera" || normKind(target?.kind) === "camera";
     const requirements: CameraRequirements = { ...camera_requirements };
     if (cameraQuery && !requirements.role) {
@@ -968,6 +972,8 @@ export const find_owned_alternatives = query({
     const rejected = { requirements: 0, stock: 0 };
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
+      // Replacement value, never the daily hire rate, determines this filter.
+      if (lower_value_only && (targetValue == null || typeof it.replacement_cost_gbp !== "number" || it.replacement_cost_gbp <= 0 || it.replacement_cost_gbp >= targetValue)) continue;
       if (cameraQuery && normKind(it.kind) !== "camera") continue;
       const nameLower = it.name_canonical.toLowerCase();
       // Never offer the very item being replaced back as its own alternative.
@@ -1024,6 +1030,7 @@ export const find_owned_alternatives = query({
         availability: stock ? { available: stock.available, start_date, end_date, quantity: quantity ?? 1, free_units: stock.free_units, checked_at: stock.checked_at } : null,
         name: it.name_canonical,
         kind: it.kind,
+        replacement_cost_gbp: it.replacement_cost_gbp ?? null,
         lens_mount: capabilities?.native_mount ?? it.lens_mount ?? null,
         camera_capabilities: capabilities,
         daily_price_gbp: altOneDay ?? altListing?.daily_price ?? null,
@@ -1048,6 +1055,11 @@ export const find_owned_alternatives = query({
       matched_by: matchedBy,
       kind_fell_back: kindFellBack,
       target: target?.name ?? null,
+      target_identity_resolved: targetId != null,
+      lower_value_only: lower_value_only === true,
+      target_replacement_cost_gbp: targetValue,
+      lower_value_reason: lower_value_only && targetValue == null ? "Original item identity or replacement value is unverified; ask the owner before suggesting a lower-value option" : null,
+      verification_approval_guaranteed: false,
       camera_requirements: cameraQuery ? requirements : null,
       recording_requirement_checked: !!requirements.recording,
       // Only the recorded mode properties are checked, never arbitrary codecs.

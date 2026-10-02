@@ -27,6 +27,7 @@ import { api, internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { sameDraftApproval } from "./lib/draft_review";
+import { renterBotRuntimeAllowed } from "./lib/renter_bot_runtime";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
 import { dnaSummary } from "./lib/renter_dna";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
@@ -95,6 +96,7 @@ export const generateDraft = action({
     generation_error?: CanonicalGenerationError;
     review?: DraftReview;
   }> => {
+    if (!renterBotRuntimeAllowed(thread_id)) return {status:"skipped",reason:"lab_only_pending_written_consent"};
     const generationToken = crypto.randomUUID();
     const claim = await ctx.runMutation(internal.replyInbox.claimDraftGeneration, { thread_id, token: generationToken });
     if (!claim.ok) return { status: "skipped", reason: claim.reason };

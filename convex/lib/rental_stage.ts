@@ -24,7 +24,9 @@ export function rentalStage(row: {
     guidance = "Answer the current question, establish exact gear, quantity and dates when needed, recommend a relevant owned option using verified facts. Invite booking when they are ready. No exact pickup address or claim that a booking exists.";
   } else if (row.is_obsolete || ["cancelled", "canceled", "declined"].includes(status ?? "") || ["CANCELED", "VERIFICATION_FAILED"].includes(step ?? "")) {
     stage = step === "VERIFICATION_FAILED" ? "VERIFICATION_FAILED" : "CANCELLED";
-    guidance = "This order is no longer going ahead. Do not arrange collection or claim it is booked. Help with a new request if they want to try again; any disputed cancellation needs human review.";
+    guidance = stage === "VERIFICATION_FAILED"
+      ? "The platform's final verification failure cancelled this booking. Do not arrange collection, retry edits, promise approval or claim a refund was issued. Explain that a friend can make their own booking from their own account, taking responsibility and completing that booking's checks; they can mention the referral code to restore the basket with fresh availability and pricing. Do not share credentials or the original renter's personal verification details. Offer to check suitable lower-value owned equipment if helpful using find_owned_alternatives with lower_value_only=true and the exact physical item being replaced, preserving all required capabilities; lower value may change the checks but never guarantees approval. An existing verified account may need verification again."
+      : "This order is no longer going ahead. Do not arrange collection or claim it is booked. Help with a new request if they want to try again; any disputed cancellation needs human review.";
   } else if (status === "completed" || step === "REVIEWED") {
     stage = "COMPLETED";
     guidance = "The return is complete. Answer after-rental questions, feedback or a new booking request. Do not arrange collection for this finished rental.";
