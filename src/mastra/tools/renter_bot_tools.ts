@@ -148,9 +148,12 @@ export const lookupPricingTool = createTool({
 export const checkAvailabilityTool = createTool({
   id: "check_availability",
   description:
-    "Check whether an item is available for a date range across active reservations. Call BEFORE confirming availability. Returns exact owned-stock capacity, requested quantity, per-day free units and a reason. available:null means unknown/ambiguous/invalid, NEVER available. Honors shared stock, repairs, blackouts, vacation and return buffers. Marketing-only gear always returns available:false. For a kit/listing pass its product_id: checking one component does not prove the whole kit is available. The result includes each component receipt.",
+    "Check whether an item is available for a date range across active reservations. Call BEFORE confirming availability. For an open confirmed booking, specify additional or replacement: the full proposed basket is checked, including existing gear and shared kit components. Replacement requires an exact current replace_product_id and does not edit anything. A standalone check cannot bypass the confirmed basket; current-booking prefetch does not prove extras. available:null means unknown/ambiguous/invalid, NEVER available. Honors shared stock, repairs, blackouts, vacation and return buffers. Marketing-only gear always returns available:false. For a kit/listing pass its product_id: checking one component does not prove the whole kit is available. The result includes each component receipt.",
   inputSchema: z.object({
     item_name: z.string(),
+    booking_use: z.enum(["current","standalone","additional","replacement"]).optional().describe("current checks existing booked gear (including a proposed new date span), additional retains it plus the extra, replacement removes a selected listing. current cannot bypass an explicit additional/replacement request."),
+    replace_product_id: z.number().int().positive().optional(),
+    replace_quantity: z.number().int().min(1).max(20).optional(),
     product_id: z.number().int().optional().describe("For a LISTING or KIT, use the exact product_id from get_listing_context; checks every component and quantity. Never invent an id."),
     quantity: z.number().int().min(1).max(20).optional().describe("Units the renter actually requests; default 1."),
     pickup_time: z.string().optional().describe("Agreed London pickup time HH:MM; omit when unknown."),

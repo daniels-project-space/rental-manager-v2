@@ -87,7 +87,7 @@ function RentalListingCard({
     overlapsBooking(startDate, endDate, b),
   );
   const rangeValid = startDate && endDate && endDate >= startDate;
-  const stock = useQuery(api.renter_bot_tools.check_availability, rangeValid ? { item_name: itemName, product_id: productId, account_slug: accountSlug, thread_id: threadId, quantity: 1, start_date: startDate, end_date: endDate } : "skip");
+  const stock = useQuery(api.renter_bot_tools.check_availability, rangeValid ? { item_name: itemName, product_id: productId, account_slug: accountSlug, thread_id: threadId, booking_use: "current", prefetch_current: true, quantity: 1, start_date: startDate, end_date: endDate } : "skip");
   const rangeFree = rangeValid && stock?.available === true;
   const days = rangeValid ? Math.round((Date.parse(endDate) - Date.parse(startDate)) / 86400000) + 1 : 0;
   const quote = useQuery(api.renter_bot_tools.lookup_pricing, days > 0 && days <= 366 ? { item_name: itemName, account_slug: accountSlug, days } : "skip");
@@ -169,7 +169,7 @@ function RentalListingCard({
                   : stock.owned === false
                     ? "Not rentable from owned inventory"
                     : rangeFree
-                      ? `Free for these dates (${stock.free_units} ${productId != null ? "kits" : "units"})`
+                      ? stock.free_units==null ? "Booked items available for these dates" : `Free for these dates (${stock.free_units} ${productId != null ? "kits" : "units"})`
                       : "Unavailable for these dates"}
             </span>
           </div>
@@ -177,9 +177,9 @@ function RentalListingCard({
         </div>
       </div>
 
-      {stock && "components" in stock && (
+      {stock && "components" in stock && Array.isArray(stock.components) && (
         <div className="border-t border-white/10 px-4 py-2">
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8b8fa3]">Kit stock for selected dates</p>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8b8fa3]">Booking stock for selected dates</p>
           {stock.components.map((component, index) => (
             <p key={index} className="text-xs text-[#e4e6eb]">
               {component.item_name}: {component.requested_units} required · {component.free_units ?? "unknown"} free

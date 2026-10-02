@@ -1,4 +1,5 @@
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
+import { availabilityBasket } from "./lib/availability_basket";
 import { explicitRecommendationUse, recommendationBasket, type RecommendationLine } from "./lib/recommendation_basket";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { renterItemNames } from "./lib/renter_item_names";
@@ -756,8 +757,42 @@ export const check_availability = query({
     pickup_time: v.optional(v.string()),
     return_time: v.optional(v.string()),
     thread_id: v.optional(v.string()),
+    booking_use: v.optional(v.union(v.literal("current"),v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
+    prefetch_current: v.optional(v.boolean()),
+    replace_product_id: v.optional(v.number()),
+    replace_quantity: v.optional(v.number()),
   },
-  handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id, product_id }) => {
+  handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id, product_id, booking_use, prefetch_current, replace_product_id, replace_quantity }) => {
+    if (thread_id) {
+      const [booking,labOrder]=await Promise.all([getBotBooking(ctx,thread_id),getLabOrder(ctx,thread_id)]);
+      if ((booking?.account_slug && booking.account_slug!==account_slug) || (labOrder?.account_slug && labOrder.account_slug!==account_slug))
+        throw new Error("The current booking belongs to a different account");
+      const stage=rentalStage(booking,londonToday()).stage;
+      const closed=["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
+      const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
+      const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
+        : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id}))
+        : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
+      const recent=existing.length && !closed ? await recentThreadMessages(ctx,thread_id,12) : [];
+      const expected=explicitRecommendationUse(recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "");
+      if (requiresContext || booking_use || expected) {
+        const sources=await loadStockSources(ctx);
+        const match=product_id==null ? bestMatch(item_name,sources.items,i=>i.name_canonical,i=>i.aliases ?? []) : null;
+        const candidate={name:match?.confident ? match.match!.name_canonical : item_name,qty:quantity ?? 1,product_id,
+          ...(match?.confident ? {item_id:String(match.match!._id)} : {})};
+        const basket=availabilityBasket(existing,candidate,{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
+          can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expected,replace_product_id,replace_quantity,
+          current_context:prefetch_current===true});
+        const check=basket.ok && account_slug ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,thread_id,sources,{pickup_time,return_time}) : null;
+        return {available:check?.available ?? null,owned:check?.available===true ? true : null,item_name:candidate.name,
+          product_id,requested_units:candidate.qty,free_units:null,start_date,end_date,checked_at:Date.now(),
+          booking_use:basket.use,rental_stage:stage,reason:basket.ok ? check?.reason ?? "missing_account" : basket.reason,
+          stock_scope:basket.use==="current" ? "current_booking" : "proposed_basket",
+          components:check?.receipts ?? [],replacement_removed_listings:basket.removed,
+          conflict_count:check?.receipts.filter(r=>r.available===false).length ?? 0,buffer_violation:false,
+          guidance:"This verdict checks the complete basket. Current-booking checks do not prove an extra item. A rejected proposal can be caused by shared components; explain their counts rather than claiming the added item is independently out of stock. Replacement is a read-only scenario, never a booking edit."};
+      }
+    }
     if (product_id !== undefined) {
       if (!account_slug) throw new Error("A listing stock check needs its account");
       const sources = await loadStockSources(ctx);

@@ -6,7 +6,7 @@ import { withDefaultAdapters } from "./default_adapter_units";
 type Line = { name: string; qty: number; item_id?: string; product_id?: number };
 /** Check the candidate basket in the mutation's database snapshot. Shared kit
  * components are counted together; independent per-line successes are unsafe. */
-export async function checkOrderRentalStock(ctx: QueryCtx, account: string, lines: Line[], start: string, end: string, thread: string, preloadedSources?: Awaited<ReturnType<typeof loadStockSources>>) {
+export async function checkOrderRentalStock(ctx: QueryCtx, account: string, lines: Line[], start: string, end: string, thread: string, preloadedSources?: Awaited<ReturnType<typeof loadStockSources>>, times?: {pickup_time?:string;return_time?:string}) {
   const sources = preloadedSources ?? await loadStockSources(ctx);
   const required = new Map<string, number>();
   for (const line of lines) {
@@ -27,7 +27,7 @@ export async function checkOrderRentalStock(ctx: QueryCtx, account: string, line
   if (!required.size) return { available: null, reason: "no_physical_order_items", receipts: [] };
   const receipts = [...required].map(([id, quantity]) => {
     const item = sources.items.find(i => String(i._id) === id)!;
-    return { ...stockForItem(sources, item, { item_name: item.name_canonical, start_date: start, end_date: end, quantity, thread_id: thread }), start_date: start, end_date: end };
+    return { ...stockForItem(sources, item, { item_name: item.name_canonical, start_date: start, end_date: end, quantity, thread_id: thread, ...times }), start_date: start, end_date: end };
   });
   const available = receipts.some(r => r.available === false) ? false : receipts.every(r => r.available === true) ? true : null;
   return { available, reason: available === true ? "available" : available === false ? "component_unavailable" : "stock_unknown", receipts };

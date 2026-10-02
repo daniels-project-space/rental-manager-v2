@@ -1,4 +1,5 @@
 import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
+import { explicitRecommendationUse } from "../../../../convex/lib/recommendation_basket";
 import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
 import { generationFailure } from "../../../../convex/lib/canonical_generation_error";
 import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-price-evidence";
@@ -1077,6 +1078,8 @@ export async function POST(req: Request) {
         try {
           if (lc.start_date && lc.end_date) {
             const av = await convex.query(api.renter_bot_tools.check_availability, {
+              booking_use: "current",
+              prefetch_current: true,
               item_name: it.inventory_name ?? it.name ?? "",
               ...(typeof it.product_id === "number" ? { product_id: it.product_id } : {}),
               start_date: lc.start_date,
@@ -1088,19 +1091,22 @@ export async function POST(req: Request) {
               ...(lc.return_time ? { return_time: lc.return_time } : {}),
             });
             const verdict = av.available === true
-              ? `AVAILABLE for ${lc.start_date} to ${lc.end_date}: ${av.free_units} units free; this listing requests ${it.qty ?? 1}.`
+              ? `AVAILABLE for ${lc.start_date} to ${lc.end_date}: ${av.free_units==null ? "complete current basket checked" : `${av.free_units} units free`}; this listing requests ${it.qty ?? 1}.`
               : av.available === false
                 ? `NOT AVAILABLE for ${lc.start_date} to ${lc.end_date}: ${av.reason}; ${av.free_units} units free.`
                 : `NOT VERIFIED for these dates (${av.reason}). Do not affirm or deny availability; clarify the exact model or dates.`;
-            toolReceipts.push({ tool: "check_availability", call_id: `prefetch:${toolReceipts.length}`, result: av });
+            // Existing-booking proof cannot ground a new extra/replacement.
+            // Keep it visible as current context, but require a proposal check.
+            const proposalRequested=explicitRecommendationUse(lastRenter)!==undefined;
+            if (!proposalRequested) toolReceipts.push({ tool: "check_availability", call_id: `prefetch:${toolReceipts.length}`, result: av });
             if ("components" in av && Array.isArray(av.components)) {
               for (const component of av.components) {
-                toolReceipts.push({ tool: "check_availability", call_id: `prefetch-component:${toolReceipts.length}`, result: component });
+                if (!proposalRequested) toolReceipts.push({ tool: "check_availability", call_id: `prefetch-component:${toolReceipts.length}`, result: component });
                 groundTruth += `  COMPONENT AVAILABILITY (${component.item_name}): ${component.available === true ? "AVAILABLE" : component.available === false ? "NOT AVAILABLE" : "UNKNOWN"}; requested ${component.requested_units}, free ${component.free_units} for ${lc.start_date} to ${lc.end_date}.\n`;
               }
             }
             if (av.available === false) availabilityOutKnown = true;
-            groundTruth += `  AVAILABILITY (${it.name}): ${verdict} If the renter changes dates or quantity, call check_availability for the NEW request.\n`;
+            groundTruth += `  CURRENT BOOKING AVAILABILITY (${it.name}): ${verdict} This checks existing gear only. For any additional item or replacement, call check_availability with booking_use additional or replacement for the complete proposed basket. If the renter changes dates or quantity, check the NEW request.\n`;
             factsEmitted.push(`availability:${it.name}:${verdict}`);
           } else {
             groundTruth += `  AVAILABILITY (${it.name}): no exact requested date range checked yet. Call check_availability with the dates and quantity they ask for; never infer availability from an empty booking list.\n`;
