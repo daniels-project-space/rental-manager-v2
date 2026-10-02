@@ -24,6 +24,56 @@ function fixture() {
   return { tables, ctx: { db } };
 }
 const extend = (ctx: any) => (applyChange as any)._handler(ctx, { thread_id: "__probe__atomic", action: "set_dates", start_date: "2026-10-06", end_date: "2026-10-08" });
+const remove = (ctx: any, item_name: string, qty?: number) => (applyChange as any)._handler(ctx,
+  { thread_id: "__probe__atomic", action: "remove_item", item_name, ...(qty === undefined ? {} : {qty}) });
+describe("item removals preserve exact identity and quantity", () => {
+  it("removes A7 II without removing A7 III", async () => {
+    const { tables, ctx } = fixture();
+    tables.items = [{_id:"ii",name_canonical:"Sony A7 II",aliases:["Sony A7 2"]},{_id:"iii",name_canonical:"Sony A7 III",aliases:["Sony A7 3"]}];
+    tables.renter_bot_lab_orders[0].items = tables.items.map(i => ({ item_id:i._id,name:i.name_canonical,qty:1,daily_price_gbp:40,origin:"seed" }));
+    expect(await remove(ctx,"Sony A7 II")).toMatchObject({ok:true,order:{total_gbp:80,lines:[{name:"Sony A7 III",qty:1}]}});
+    expect(tables.renter_bot_lab_orders[0].items).toHaveLength(1);
+  });
+  it("uses reviewed native aliases without matching incidental advertising models", async () => {
+    const { tables, ctx } = fixture();
+    tables.items[0].aliases=["FX 3"];
+    tables.renter_bot_lab_orders[0].items[0].name="Sony FX3 (same sensor as Sony A7S III)";
+    const before=structuredClone(tables);
+    expect(await remove(ctx,"Sony A7S III")).toMatchObject({ok:false});
+    expect(tables).toEqual(before);
+    expect(await remove(ctx,"FX 3")).toMatchObject({ok:true,order:{lines:[]}});
+  });
+  it.each([undefined,1,2])("removes only the requested %s units, defaulting to one",async(qty)=>{
+    const {tables,ctx}=fixture();tables.renter_bot_lab_orders[0].items[0].qty=3;
+    const result=await remove(ctx,"Sony FX3",qty);
+    expect(result).toMatchObject({ok:true,order:{lines:[{qty:3-(qty??1)}],total_gbp:80*(3-(qty??1))}});
+  });
+  it.each([0,-1,1.5,21,2])("rejects invalid or excessive quantity %s without writes",async(qty)=>{
+    const {tables,ctx}=fixture();const before=structuredClone(tables);
+    expect(await remove(ctx,"Sony FX3",qty)).toMatchObject({ok:false});expect(tables).toEqual(before);
+  });
+  it.each(["camera","Pyxis"])("does not treat an unresolved %s as an included kit item",async(name)=>{
+    const {tables,ctx}=fixture();const before=structuredClone(tables);
+    const result=await remove(ctx,name);
+    expect(result).toMatchObject({ok:false});expect(result.error).not.toMatch(/tell the renter it's included/i);expect(tables).toEqual(before);
+  });
+  it("asks which variant when a model prefix identifies two order lines",async()=>{
+    const {tables,ctx}=fixture();tables.renter_bot_lab_orders[0].items=[{name:"Sony A7 II",qty:1,origin:"seed"},{name:"Sony A7 III",qty:1,origin:"seed"}];
+    const before=structuredClone(tables);expect(await remove(ctx,"Sony A7")).toMatchObject({ok:false});expect(tables).toEqual(before);
+  });
+  it.each(["completed","cancelled","returned","obsolete","canceled","declined","step:CANCELED","step:REVIEWED","step:VERIFICATION_FAILED"])("does not edit an already %s rental",async(state)=>{
+    const {tables,ctx}=fixture();
+    tables.items[0].qty=3;
+    if(state==="returned")tables.renter_bot_lab_bookings[0].return_date="2026-10-07";
+    else if(state==="obsolete")tables.renter_bot_lab_bookings[0].is_obsolete=true;
+    else if(state.startsWith("step:"))tables.renter_bot_lab_bookings[0].order_step=state.slice(5);
+    else tables.renter_bot_lab_bookings[0].status=state;
+    const before=structuredClone(tables);
+    expect(await remove(ctx,"Sony FX3")).toMatchObject({ok:false});
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3"})).toMatchObject({ok:false});
+    expect(tables).toEqual(before);
+  });
+});
 describe("date amendments validate stock before writing", () => {
   it("leaves both records and physical pickup facts untouched on a blocked extra day", async () => {
     const { tables, ctx } = fixture();

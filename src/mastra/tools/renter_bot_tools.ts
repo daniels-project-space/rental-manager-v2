@@ -401,7 +401,7 @@ export const modifyBookingTool = createTool({
       .enum(["add_item", "remove_item", "set_dates"])
       .describe("What to do to the booking."),
     item_name: z.string().optional().describe("Exact item name for add_item/remove_item."),
-    qty: z.number().optional().describe("How many (defaults to 1)."),
+    qty: z.number().optional().describe("Units to add or remove (defaults to 1). To remove all units of a model, read get_lab_order and pass that exact booked quantity. Never guess a quantity or remove a different model."),
     start_date: z.string().optional().describe("YYYY-MM-DD, for set_dates."),
     end_date: z.string().optional().describe("YYYY-MM-DD, for set_dates. Same as start for a one-day rental."),
   }),

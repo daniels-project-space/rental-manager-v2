@@ -12,6 +12,8 @@ import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
 import type { QueryCtx } from "./_generated/server";
+import { rentalStage } from "./lib/rental_stage";
+import { londonToday } from "./lib/effectiveDates";
 
 async function amendmentContext(ctx: QueryCtx, threadId: string) {
   const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", threadId)).first();
@@ -293,16 +295,16 @@ export const applyChange = mutation({
       item_id: i.item_id ? String(i.item_id) : undefined,
     }));
     let summaryText = "";
+    const booking = await getBotBooking(ctx, a.thread_id);
+    const stage = rentalStage(booking, londonToday()).stage;
+    if (booking?.return_date || ["COMPLETED", "CANCELLED", "VERIFICATION_FAILED"].includes(stage))
+      return { ok: false, error: "This rental is already closed. Arrange a new booking instead of changing its dates or items." };
 
     if (a.action === "set_dates") {
       if (!a.start_date) return { ok: false, error: "start_date required" };
       const end = a.end_date ?? a.start_date;
       if (!validIsoDate(a.start_date) || !validIsoDate(end) || end < a.start_date || inclusiveDays(a.start_date, end) > 366)
         return { ok: false, error: "Use valid pickup and return dates in order, up to 366 rental days" };
-      const booking = await ctx.db.query("renter_bot_lab_bookings")
-        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", a.thread_id)).first();
-      if (booking?.return_date || booking?.is_obsolete || /^(?:completed|cancelled)$/i.test(booking?.status ?? ""))
-        return { ok: false, error: "This rental is already closed. Arrange a new booking instead of changing its dates." };
       if ((booking?.pickup_date || booking?.status === "ongoing") && a.start_date !== row.start_date)
         return { ok: false, error: "The rental has already been collected. Keep its original pickup date when extending the return." };
       const stock = await checkOrderRentalStock(ctx, row.account_slug, lines, a.start_date, end, a.thread_id);
@@ -333,23 +335,28 @@ export const applyChange = mutation({
     if (!a.item_name) return { ok: false, error: "item_name required" };
 
     if (a.action === "remove_item") {
-      const before = lines.length;
-      const target = a.item_name.toLowerCase().trim();
-      const kept = lines.filter(
-        (l) => !l.name.toLowerCase().includes(target) && !target.includes(l.name.toLowerCase()),
-      );
-      if (kept.length === before)
-        // Actionable, because the bot has to SAY something useful here. The
-        // usual cause is a renter asking to drop something that is part of the
-        // kit rather than a separate line ("actually drop the battery"), where
-        // there is nothing to remove and nothing to deduct. Without this the
-        // bot claimed a removal that never happened and the guard withheld the
-        // entire reply, so the renter got silence.
+      const qty = a.qty ?? 1;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 20)
+        return { ok: false, error: "quantity must be a whole number between 1 and 20" };
+      if (isGenericItemQuery(a.item_name))
+        return { ok: false, error: `"${a.item_name}" names a category. Ask which exact booked model to remove; no items or prices changed.` };
+      const inventory = await ctx.db.query("items").collect();
+      const candidates = lines.map(line => ({ line, native: inventory.find(i => String(i._id) === line.item_id) }));
+      // Physical identity and reviewed aliases outrank advertising-title prose.
+      // A7 II is not A7 III; an FX3 title mentioning A7S III is still an FX3.
+      const match = bestMatch(a.item_name, candidates,
+        c => c.native?.name_canonical ?? c.line.name, c => c.native?.aliases ?? []);
+      if (!match.match || !match.confident)
         return {
           ok: false,
-          error: `"${a.item_name}" is not a separate line on this booking — it is most likely part of the kit already. Tell the renter it's included, so there is nothing to remove and nothing to deduct from the price. Do NOT say you removed it.`,
+          error: `"${a.item_name}" does not identify one specific booked line. Ask which exact model they mean. No items or prices changed. Do not claim it is included in a kit without checking the native kit contents.`,
         };
-      summaryText = `removed ${a.item_name}`;
+      const selected = match.match.line;
+      if (!Number.isInteger(selected.qty) || selected.qty < qty)
+        return { ok: false, error: `Only ${selected.qty}x ${selected.name} are on this booking. Do not remove more than the booked quantity; no items or prices changed.` };
+      selected.qty -= qty;
+      const kept = lines.filter(l => l !== selected || selected.qty > 0);
+      summaryText = `removed ${qty}x ${match.match.native?.name_canonical ?? selected.name}`;
       await ctx.db.patch(row._id, {
         items: kept.map((l) => ({ ...l, item_id: l.item_id as never })),
         changes: [...row.changes, { at: Date.now(), summary: summaryText }],
