@@ -1,6 +1,7 @@
 import { isStandardAccessory } from "./reservations/itemUnits";
+import { defaultAdapterUnits, type AdapterInventoryItem } from "./default_adapter_units";
 
-type Inventory = { _id: unknown; kind?: string; name_canonical: string };
+type Inventory = AdapterInventoryItem;
 type Mapping = { account_slug: string; product_id: number; components: Array<{ item_id: unknown; qty: number }> };
 
 /** Equal daily prices can have different tiers. Stable id breaks the tie so
@@ -18,11 +19,13 @@ export function baseListingProductIds(account: string, itemId: string,
   overrides: Mapping[], inventory: Inventory[]): number[] {
   const items = new Map(inventory.map((i) => [String(i._id), i]));
   const mappings = new Map(overrides.filter((o) => o.account_slug === account).map((o) => [o.product_id, o]));
+  const primary = items.get(itemId);
+  const supplied = primary ? defaultAdapterUnits(primary, inventory).components : [];
   const qualifies = (o: Mapping) => o.components.some((c) => String(c.item_id) === itemId && c.qty === 1) &&
     o.components.every((c) => {
       if (String(c.item_id) === itemId) return c.qty === 1;
       const item = items.get(String(c.item_id));
-      return !!item && isStandardAccessory(item.kind, item.name_canonical);
+      return !!item && (isStandardAccessory(item.kind, item.name_canonical) || supplied.some(a => a.item_id === String(c.item_id) && c.qty <= a.qty));
     });
   const pids = new Set<number>();
   for (const row of index) {

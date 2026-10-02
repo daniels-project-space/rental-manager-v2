@@ -444,6 +444,7 @@ function computeAvailability(
     reservation,
     av.productIndex,
     av.overrideMap,
+    av.itemRows,
   );
   if (units.size === 0) return null;
 
@@ -463,10 +464,10 @@ function computeAvailability(
     let booked = 0;
     let pending = 0;
     for (const d of dates) {
-      const b = bookedUnitsOnDate(confirmed, itemId, d);
+      const b = bookedUnitsOnDate(confirmed, itemId, d, {productIndex:av.productIndex,overrides:av.overrideMap,inventory:av.itemRows});
       if (b > booked) booked = b;
       if (av.includePending) {
-        const p = bookedUnitsOnDate(pendingRows, itemId, d);
+        const p = bookedUnitsOnDate(pendingRows, itemId, d, {productIndex:av.productIndex,overrides:av.overrideMap,inventory:av.itemRows});
         if (p > pending) pending = p;
       }
     }
@@ -1428,7 +1429,7 @@ export const getThreadContext = internalQuery({
       const itemNameOf = new Map<string, string>();
       if (reservation) {
         availability = computeAvailability(reservation, availCtx);
-        const units = reservationItemUnits(reservation, availCtx.productIndex, availCtx.overrideMap);
+        const units = reservationItemUnits(reservation, availCtx.productIndex, availCtx.overrideMap, availCtx.itemRows);
         for (const id of [...units.keys()].slice(0, 8)) {
           resolvedIds.push(id);
           itemNameOf.set(id, availCtx.itemName.get(id) ?? "item");

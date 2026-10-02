@@ -6,6 +6,7 @@ import { extensionOccupancyQty, effStart, effEnd } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildOverrideMap, buildProductIndexMap, reservationItemUnits } from "./reservations/itemUnits";
 import { londonToday } from "./effectiveDates";
+import { defaultAdapterUnits } from "./default_adapter_units";
 
 export type StockRequest = {
   item_name: string;
@@ -116,7 +117,7 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     // The requesting booking already occupies its units; it must not block itself.
     if (request.thread_id && r.hygglo_order_id === request.thread_id) continue;
     if (!r.start_date || !r.end_date) continue;
-    const qty = reservationItemUnits(r, sources.productIndex, sources.overrides).get(String(item._id)) ?? 0;
+    const qty = reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items).get(String(item._id)) ?? 0;
     if (qty <= 0) continue;
     const pickup = effStart({ start_date: r.start_date, pickup_date: r.pickup_date });
     const ret = effEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today);
@@ -139,5 +140,28 @@ export async function checkRentalStock(ctx: QueryCtx, request: StockRequest) {
   if (!resolved.confident || !resolved.match) {
     return { available: null, found: false, owned: null, reason: resolved.ambiguousWith.length ? "ambiguous_item" : "unknown_item", item_name: request.item_name, free_units: null, total_units: null, requested_units: request.quantity ?? 1, per_day: [], conflicts: [], alternatives: resolved.ambiguousWith.map((i) => i.name_canonical), checked_at: Date.now() };
   }
-  return { found: true, ...stockForItem(sources, resolved.match, request), alternatives: [] };
+  return { found: true, ...stockForRentalItem(sources, resolved.match, request), alternatives: [] };
+}
+
+/** Rentable camera offering includes its recorded supplied adapters. Keep
+ * stockForItem physical-only for component receipts and basket aggregation. */
+export function stockForRentalItem(sources:Awaited<ReturnType<typeof loadStockSources>>,item:Doc<"items">,request:StockRequest) {
+  const primary=stockForItem(sources,item,request);
+  if (primary.reason === "invalid_request") return primary;
+  const defaults=defaultAdapterUnits(item,sources.items);
+  if (!defaults.components.length && !defaults.unresolved.length) return primary;
+  const components=[{...primary,units_per_item:1},...defaults.components.map(c=>{
+    const adapter=sources.items.find(i=>String(i._id)===c.item_id)!;
+    return {...stockForItem(sources,adapter,{...request,item_name:adapter.name_canonical,quantity:c.qty*(request.quantity??1)}),units_per_item:c.qty};
+  })];
+  const negative=components.some(c=>c.available===false);
+  const available=negative?false:defaults.unresolved.length?null:components.every(c=>c.available===true)?true:null;
+  const free=defaults.unresolved.length?null:Math.min(...components.map(c=>c.free_units==null?0:Math.floor(c.free_units/c.units_per_item)));
+  const total=Math.min(...components.map(c=>Math.floor(c.total_units/c.units_per_item)));
+  const per_day=primary.per_day.map(day=>({...day,free:Math.min(...components.map(c=>{
+    const date=c.per_day.find(d=>d.date===day.date);
+    return date?Math.floor(date.free/c.units_per_item):0;
+  }))}));
+  return {...primary,available,free_units:free,total_units:total,per_day,reason:negative?"supplied_component_unavailable":available===true?"available":"unresolved_default_adapter",
+    source:"item_with_supplied_adapters",components,unresolved_default_adapters:defaults.unresolved};
 }

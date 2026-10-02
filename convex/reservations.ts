@@ -230,7 +230,8 @@ export const getDueReturns = query({
     const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
     const itemNameById = new Map<string, string>();
     const stdAccIds = new Set<string>();
-    for (const it of await ctx.db.query("items").collect()) { itemNameById.set(String(it._id), it.name_canonical); if (isStandardAccessory((it as { kind?: string }).kind, it.name_canonical)) stdAccIds.add(String(it._id)); }
+    const unitInventory = await ctx.db.query("items").collect();
+    for (const it of unitInventory) { itemNameById.set(String(it._id), it.name_canonical); if (isStandardAccessory((it as { kind?: string }).kind, it.name_canonical)) stdAccIds.add(String(it._id)); }
 
     const maps = await renterMaps(ctx);
     const results: Array<Record<string, unknown>> = [];
@@ -279,7 +280,7 @@ export const getDueReturns = query({
         // Override-resolved component list (actual kit contents), not listing titles.
         const agg = new Map<string, number>();
         for (const m of members)
-          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap)) {
+          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap, unitInventory)) {
             if (stdAccIds.has(id)) continue;
             agg.set(id, (agg.get(id) ?? 0) + qty);
           }
@@ -303,7 +304,7 @@ export const getDueReturns = query({
       const assocItems = (() => {
         const m2 = new Map<string, { name: string; qty: number }>();
         for (const m of members) {
-          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap)) {
+          for (const [id, qty] of reservationItemUnits(m as ResolvableRes, productIndex, overrideMap, unitInventory)) {
             const ex = m2.get(id);
             if (ex) ex.qty += qty;
             else m2.set(id, { name: itemNameById.get(id) ?? "item", qty });

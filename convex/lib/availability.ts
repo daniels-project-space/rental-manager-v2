@@ -23,6 +23,13 @@
 
 import { QueryCtx } from "../_generated/server";
 import { Id, Doc } from "../_generated/dataModel";
+import { reservationItemUnits, buildOverrideMap, buildProductIndexMap, type OverrideMap } from "./reservations/itemUnits";
+import type { AdapterInventoryItem } from "./default_adapter_units";
+export type UnitAllocation = {productIndex:Map<string,string>;overrides:OverrideMap;inventory:AdapterInventoryItem[]};
+async function loadUnitAllocation(ctx:QueryCtx):Promise<UnitAllocation> {
+  const [inventory,index,overrides]=await Promise.all([ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),ctx.db.query("listing_resolution_override").collect()]);
+  return {inventory,productIndex:buildProductIndexMap(index),overrides:buildOverrideMap(overrides)};
+}
 
 export type AvailabilityResult = {
   available: number; // units available at date
@@ -60,13 +67,14 @@ export function claimHoldsStock(c: { stage?: string; status?: string }): boolean
   return HOLDING_STAGES.has(claimStage(c));
 }
 
-export function bookedUnitsOnDate(rows: ResRow[], itemId: Id<"items">, date: string): number {
+export function bookedUnitsOnDate(rows: ResRow[], itemId: Id<"items">, date: string, allocation?:UnitAllocation): number {
   let n = 0;
   for (const r of rows) {
     if (r.is_obsolete) continue;
     const effPick = r.pickup_date ?? r.start_date;
     const effRet = r.return_date ?? r.end_date;
     if (!effPick || !effRet || date < effPick || date > effRet) continue;
+    if (allocation) {n += reservationItemUnits(r,allocation.productIndex,allocation.overrides,allocation.inventory).get(String(itemId)) ?? 0;continue;}
     const src = (r.expanded_items && r.expanded_items.length ? r.expanded_items : r.resolved_items) ?? [];
     for (const x of src) if (x.item_id === itemId) n += (x.qty ?? 1);
   }
@@ -133,7 +141,7 @@ export async function isItemUnitAvailable(
     .query("reservations")
     .withIndex("by_status", (q) => q.eq("status", "confirmed"))
     .collect();
-  const bookedUnits = bookedUnitsOnDate(confirmed, itemId, date);
+  const bookedUnits = bookedUnitsOnDate(confirmed, itemId, date, await loadUnitAllocation(ctx));
 
   // Plus units out on repair (open cases) — same rule everywhere else.
   const claims = await ctx.db.query("insurance_claims").collect();
@@ -231,6 +239,7 @@ export async function diagnoseDenialAvailability(
     .withIndex("by_status", (q) => q.eq("status", "confirmed"))
     .collect();
   const claimRows = await ctx.db.query("insurance_claims").collect();
+  const allocation = await loadUnitAllocation(ctx);
 
   for (const ref of sourceItems) {
     const item = await ctx.db.get(ref.item_id);
@@ -254,7 +263,7 @@ export async function diagnoseDenialAvailability(
     const blockedDates: string[] = [];
     for (const d of dates) {
       const blackout = blackouts.some((b) => b.start_date <= d && b.end_date >= d);
-      const booked = bookedUnitsOnDate(confirmedRes, ref.item_id, d);
+      const booked = bookedUnitsOnDate(confirmedRes, ref.item_id, d, allocation);
       if (blackout || total === 0 || booked + repairHeld >= total) blockedDates.push(d);
     }
     if (blockedDates.length > 0) {

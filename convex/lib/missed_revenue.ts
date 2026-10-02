@@ -174,7 +174,7 @@ export async function computeMissedRevenue(
 
   const ownedUnitsOf = (r: Doc<"reservations">): Array<[Id<"items">, number]> => {
     const out: Array<[Id<"items">, number]> = [];
-    for (const [idStr, qty] of reservationItemUnits(r, productIndex, overrideMap)) {
+    for (const [idStr, qty] of reservationItemUnits(r, productIndex, overrideMap, items)) {
       const it = itemById.get(idStr);
       if (it && !it.is_marketing_only && it.status === "active" && (it.qty ?? 0) > 0) {
         out.push([idStr as Id<"items">, qty]);
@@ -252,7 +252,7 @@ export async function computeMissedRevenue(
       const total = itemById.get(String(id))?.qty ?? 0;
       let peak = 0;
       for (const d of dates) {
-        const b = bookedUnitsOnDate(otherConfirmed, id, d);
+        const b = bookedUnitsOnDate(otherConfirmed, id, d, {productIndex,overrides:overrideMap,inventory:items});
         if (b > peak) peak = b;
       }
       if (total - peak < reqQty) {

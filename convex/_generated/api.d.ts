@@ -119,6 +119,7 @@ import type * as lib_claim_date_scope from "../lib/claim_date_scope.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
 import type * as lib_conversation_funnel from "../lib/conversation_funnel.js";
 import type * as lib_customer_metrics from "../lib/customer_metrics.js";
+import type * as lib_default_adapter_units from "../lib/default_adapter_units.js";
 import type * as lib_delivery_weight from "../lib/delivery_weight.js";
 import type * as lib_denial_classifier from "../lib/denial_classifier.js";
 import type * as lib_double_booking from "../lib/double_booking.js";
@@ -421,6 +422,7 @@ declare const fullApi: ApiFromModules<{
   "lib/co_occurrence": typeof lib_co_occurrence;
   "lib/conversation_funnel": typeof lib_conversation_funnel;
   "lib/customer_metrics": typeof lib_customer_metrics;
+  "lib/default_adapter_units": typeof lib_default_adapter_units;
   "lib/delivery_weight": typeof lib_delivery_weight;
   "lib/denial_classifier": typeof lib_denial_classifier;
   "lib/double_booking": typeof lib_double_booking;

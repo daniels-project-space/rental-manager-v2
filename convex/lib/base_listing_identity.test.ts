@@ -4,6 +4,13 @@ const items = [{ _id: "body", name_canonical: "Sony FX3", kind: "camera" }, { _i
 const index = [{ account_slug: "leo", product_id: 1, item_id: "body" }];
 const ids = (components: Array<{ item_id: string; qty: number }>, target = "body") => baseListingProductIds("leo", target, index, [{ account_slug: "leo", product_id: 1, components }], items);
 describe("base listing identity", () => {
+  it("prices a camera with its recorded supplied adapter without pricing the adapter from that camera",()=>{
+    const inventory=[{_id:"ff",name_canonical:"BMPCC 6K Full Frame",kind:"camera",compatibility:{included_with_rental:["EF to L mount adapter"]}},{_id:"adapter",name_canonical:"EF to L mount",aliases:["EF to L mount adapter"],kind:"adapter"}];
+    const mapping=[{account_slug:"leo",product_id:10,components:[{item_id:"ff",qty:1},{item_id:"adapter",qty:1}]}];
+    expect(baseListingProductIds("leo","ff",[],mapping,inventory)).toEqual([10]);
+    expect(baseListingProductIds("leo","adapter",[],mapping,inventory)).toEqual([]);
+    expect(baseListingProductIds("leo","ff",[],[{...mapping[0],components:[{item_id:"ff",qty:1},{item_id:"adapter",qty:2}]}],inventory)).toEqual([]);
+  });
   it("breaks equal-price ties consistently when stored rows arrive in either order", () => {
     const a = { product_id: 1172744, daily_price: 20, total_three_days: 60 };
     const b = { product_id: 1115113, daily_price: 20, total_three_days: 50 };

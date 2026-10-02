@@ -1,4 +1,5 @@
 import type { Id } from "../../_generated/dataModel";
+import { withDefaultAdapters, type AdapterInventoryItem } from "../default_adapter_units";
 
 type XItem = { item_id?: Id<"items"> | string | null; item_name_canonical?: string; qty?: number };
 type HItem = { name?: string; product_id?: number; qty?: number };
@@ -61,6 +62,7 @@ export function reservationItemUnits(
   r: ResolvableRes,
   productIndex: Map<string, string>,
   overrideMap?: OverrideMap,
+  inventory: AdapterInventoryItem[] = [],
 ): Map<string, number> {
   const slug = r.account_slug ?? "";
 
@@ -71,7 +73,7 @@ export function reservationItemUnits(
     for (const h of r.hygglo_items ?? []) {
       const comps = h.product_id != null ? overrideMap.get(`${slug}#${h.product_id}`) : undefined;
       if (!comps) { allOverridden = false; break; }
-      for (const c of comps) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty * (h.qty ?? 1));
+      for (const c of withDefaultAdapters(comps,inventory).components) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty * (h.qty ?? 1));
     }
     // allOverridden with an EMPTY ov = every listing is a marketing/own-nothing
     // override → the reservation has no owned items (drops mis-attributions).
@@ -98,7 +100,7 @@ export function reservationItemUnits(
       if (comps) for (const c of comps) m.set(c.item_id, c.qty);
     }
   }
-  return m;
+  return new Map(withDefaultAdapters([...m].map(([item_id,qty]) => ({item_id,qty})),inventory).components.map(c=>[c.item_id,c.qty]));
 }
 
 

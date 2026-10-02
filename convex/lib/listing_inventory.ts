@@ -4,6 +4,7 @@ import { isStandardAccessory } from "./reservations/itemUnits";
 import { loadStockSources, stockForItem, type StockRequest } from "./renter_stock";
 
 import { resolveBundleMapping } from "./bundle_mapping";
+import { withDefaultAdapters } from "./default_adapter_units";
 
 type Component = { item_id: string; qty: number };
 export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string) {
@@ -11,6 +12,8 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const quantities = new Map<string, number>();
   for (const c of override ?? (primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
     quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);
+  const supplied = withDefaultAdapters([...quantities].map(([item_id,qty]) => ({item_id,qty})), items);
+  for (const c of supplied.components) quantities.set(c.item_id,c.qty);
   const components = [...quantities].map(([item_id, qty]) => {
     const item = items.find((i) => String(i._id) === item_id);
     const valid = Number.isInteger(qty) && qty > 0;
@@ -26,10 +29,10 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     structured: declared.structured || (declared.components.length === 1 && declared.components[0].qty === 1),
   } : null;
   const coverageComplete = !coverage || (coverage.structured && !coverage.missing.length && !coverage.unresolved.length);
-  const complete = coverageComplete && override !== undefined && validQuantity && components.every((c) => c.owned !== null);
+  const complete = !supplied.unresolved.length && coverageComplete && override !== undefined && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
-  return { components, complete, owned, valid_quantity: validQuantity, source: override === undefined ? "primary_item_only" : "listing_override", coverage };
+  return { components, complete, owned, valid_quantity: validQuantity, source: override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
 
 export async function loadListingInventory(ctx: QueryCtx, account: string, productId: number, quantity = 1,

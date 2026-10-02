@@ -19,7 +19,7 @@ import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { query, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
-import { checkRentalStock, loadStockSources, stockForItem } from "./lib/renter_stock";
+import { checkRentalStock, loadStockSources, stockForRentalItem } from "./lib/renter_stock";
 import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_identity";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
@@ -984,7 +984,7 @@ export const find_owned_alternatives = query({
       // lens as a substitute for a camera body is never useful.
       const requiredKind = normKind(target?.kind ?? kind);
       if (requiredKind && normKind(it.kind) !== requiredKind) continue;
-      const stock = stockSources && start_date && end_date ? stockForItem(stockSources, it, { item_name: it.name_canonical, start_date, end_date, quantity, thread_id }) : null;
+      const stock = stockSources && start_date && end_date ? stockForRentalItem(stockSources, it, { item_name: it.name_canonical, start_date, end_date, quantity, thread_id }) : null;
       if (stock && stock.available !== true) { rejected.stock++; continue; }
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than

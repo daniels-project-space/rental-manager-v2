@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import { resolveListingComponents, listingStock } from "./listing_inventory";
 import type { loadStockSources } from "./renter_stock";
+import { stockForRentalItem } from "./renter_stock";
 
 const inventory = [
   { _id: "camera", name_canonical: "Sony FX3", kind: "camera", status: "active", qty: 4 },
@@ -17,6 +18,23 @@ const sources = (extra: Partial<Awaited<ReturnType<typeof loadStockSources>>> = 
 });
 
 describe("whole listing inventory and stock", () => {
+  it("checks the supplied camera adapter against other confirmed camera hires",()=>{
+    const native=[{_id:"ff",name_canonical:"BMPCC 6K Full Frame",kind:"camera",status:"active",qty:2,compatibility:{included_with_rental:["EF to L mount adapter"]}},{_id:"adapter",name_canonical:"EF to L mount",aliases:["EF to L mount adapter"],kind:"adapter",status:"active",qty:1}] as unknown as Doc<"items">[];
+    const listing={...resolveListingComponents(native,[{item_id:"ff",qty:1}],"ff"),product_id:10,listing_name:"Full Frame kit"};
+    expect(listing.components.find(c=>c.item_id==="adapter")).toMatchObject({requested_units:1,stock_required:true});
+    const hire={status:"confirmed",start_date:request.start_date,end_date:request.end_date,expanded_items:[{item_id:"ff",qty:1}]} as unknown as Doc<"reservations">;
+    const result=listingStock({...sources(),items:native,reservations:[hire]},listing,request);
+    expect(result.available).toBe(false);
+    expect(result.components.find(c=>c.item_name==="EF to L mount")).toMatchObject({free_units:0,available:false});
+    expect(result.components.find(c=>c.item_name==="BMPCC 6K Full Frame")).toMatchObject({free_units:1,available:true});
+    const offered=stockForRentalItem({...sources(),items:native,reservations:[hire]},native[0],{item_name:native[0].name_canonical,start_date:request.start_date,end_date:request.end_date});
+    expect(offered).toMatchObject({available:false,free_units:0,total_units:1});
+    expect(offered.per_day.every(d=>d.free===0)).toBe(true);
+  });
+  it("keeps unknown recorded adapters unverified rather than silently dropping them",()=>{
+    const native=[{...inventory[0],compatibility:{included_with_rental:["Unknown EF to L mount adapter"]}}] as Doc<"items">[];
+    expect(resolveListingComponents(native,[{item_id:"camera",qty:1}],"camera")).toMatchObject({complete:false,owned:null});
+  });
   it("cannot prove a multi-item listing from its primary lens", () => {
     const listing = { ...resolveListingComponents(inventory, undefined, "lens"), product_id: 1172559, listing_name: "Two camera kit" };
     expect(listing.owned).toBeNull();

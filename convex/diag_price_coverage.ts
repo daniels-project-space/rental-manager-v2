@@ -2,6 +2,34 @@ import { internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { baseListingProductIds } from "./lib/base_listing_identity";
+import { loadStockSources, stockForItem } from "./lib/renter_stock";
+import { reservationItemUnits } from "./lib/reservations/itemUnits";
+import { defaultAdapterUnits } from "./lib/default_adapter_units";
+import { londonToday } from "./lib/effectiveDates";
+
+/** Read-only comparison against actual confirmed/ongoing bookings; no renter
+ * names, message bodies or mutation of imported reservations. */
+export const adapterStock = internalQuery({
+  args:{},
+  handler:async(ctx)=>{
+    const sources=await loadStockSources(ctx);
+    const adapterIds=new Set(sources.items.flatMap(i=>defaultAdapterUnits(i,sources.items).components.map(c=>c.item_id)));
+    const changes=sources.reservations.flatMap(r=>{
+      const before=reservationItemUnits(r,sources.productIndex,sources.overrides);
+      const after=reservationItemUnits(r,sources.productIndex,sources.overrides,sources.items);
+      return [...adapterIds].filter(id=>(after.get(id)??0)!==(before.get(id)??0)).map(id=>({
+        order_id:r.hygglo_order_id,account_slug:r.account_slug,start_date:r.start_date,end_date:r.end_date,
+        adapter:sources.items.find(i=>String(i._id)===id)?.name_canonical,before:before.get(id)??0,after:after.get(id)??0,
+      }));
+    });
+    const today=londonToday();
+    const stock=sources.items.filter(i=>adapterIds.has(String(i._id))).map(i=>{
+      const checked=stockForItem(sources,i,{item_name:i.name_canonical,start_date:today,end_date:today});
+      return {name:i.name_canonical,total_units:checked.total_units,free_units:checked.free_units,per_day:checked.per_day};
+    });
+    return {today,changed_allocations:changes,stock};
+  },
+});
 
 /**
  * Which rentable items have NO resolvable price on an account?

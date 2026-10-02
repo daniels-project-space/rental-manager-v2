@@ -1,6 +1,7 @@
 import type { QueryCtx } from "../_generated/server";
 import { loadListingInventory } from "./listing_inventory";
 import { loadStockSources, stockForItem } from "./renter_stock";
+import { withDefaultAdapters } from "./default_adapter_units";
 
 type Line = { name: string; qty: number; item_id?: string; product_id?: number };
 /** Check the candidate basket in the mutation's database snapshot. Shared kit
@@ -18,7 +19,9 @@ export async function checkOrderRentalStock(ctx: QueryCtx, account: string, line
       const matches = sources.items.filter(i => line.item_id ? String(i._id) === line.item_id : i.name_canonical.toLowerCase() === line.name.toLowerCase());
       if (matches.length !== 1) return { available: null, reason: "unresolved_order_item", receipts: [] };
       const id = String(matches[0]._id);
-      required.set(id, (required.get(id) ?? 0) + line.qty);
+      const supplied = withDefaultAdapters([{item_id:id,qty:line.qty}],sources.items);
+      if (supplied.unresolved.length) return {available:null,reason:"unresolved_default_adapter",receipts:[]};
+      for (const c of supplied.components) required.set(c.item_id,(required.get(c.item_id) ?? 0)+c.qty);
     }
   }
   if (!required.size) return { available: null, reason: "no_physical_order_items", receipts: [] };

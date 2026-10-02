@@ -718,7 +718,7 @@ export async function computeStripLive(
 
       // Override-resolved items, account-correct listing photo, deduped by IMAGE
       // (a multi-item set listing shows ONE tile, not one per resolved item).
-      const ovUnits = Array.from(reservationItemUnits(r as unknown as Parameters<typeof reservationItemUnits>[0], productIndexStrip, overrideMapStrip));
+      const ovUnits = Array.from(reservationItemUnits(r as unknown as Parameters<typeof reservationItemUnits>[0], productIndexStrip, overrideMapStrip, rawItemsForStrip));
       if (ovUnits.length > 0) {
         const acct = (r as { account_slug?: string }).account_slug ?? "";
         const seen = new Set<string>();
@@ -1266,7 +1266,7 @@ export async function computeWeeklyLive(
     for (const r of reservations) {
       const names: string[] = [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const [id, qty] of reservationItemUnits(r as any, productIndexW, overrideMapW)) {
+      for (const [id, qty] of reservationItemUnits(r as any, productIndexW, overrideMapW, allItemsWeekly)) {
         const it = itemByIdW.get(id); if (!it || isStandardAccessory(it.kind, it.name_canonical)) continue;
         const nm = it.name_canonical; if (nm) names.push(qty > 1 ? shortItemName(nm) + " ×" + qty : shortItemName(nm));
       }
@@ -1508,7 +1508,8 @@ export const getGanttWeek = query({
 
     // --- Items table: load all for fuzzy resolver + shared-blacklist guard ---
     type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string; kind?: string };
-    const allItems = (await ctx.db.query("items").collect()) as GanttItemDoc[];
+    const inventoryForGantt = await ctx.db.query("items").collect();
+    const allItems = inventoryForGantt as GanttItemDoc[];
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
     // Override-resolved item names per reservation (memoized) — Gantt rows key
     // off the corrected inventory items, not raw listing/item-name strings.
@@ -1519,7 +1520,7 @@ export const getGanttWeek = query({
     for (const r of reservations) {
       const names = new Set<string>();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const id of reservationItemUnits(r as any, productIndexG, overrideMapG).keys()) {
+      for (const id of reservationItemUnits(r as any, productIndexG, overrideMapG, inventoryForGantt).keys()) {
         const it = itemByIdG.get(id); if (!it || isStandardAccessory(it.kind, it.name_canonical)) continue;
         if (it.name_canonical) names.add(it.name_canonical);
       }
@@ -1869,7 +1870,7 @@ export const searchCalendarInventory = query({
       if (!effPick || !effRet) continue;
       const pickT = ((r as { pickup_time?: string }).pickup_time) || "00:00";
       const retT = ((r as { return_time?: string }).return_time) || "23:59";
-      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap))
+      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap, allItems))
         .filter(([id]) => matchedById.has(id))
         .map(([id, qty]) => ({ id, qty }));
       if (lines.length === 0) continue;
@@ -1897,7 +1898,7 @@ export const searchCalendarInventory = query({
       if (!effPick || !effRet) continue;
       const pickT = ((r as { pickup_time?: string }).pickup_time) || "00:00";
       const retT = ((r as { return_time?: string }).return_time) || "23:59";
-      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap))
+      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap, allItems))
         .filter(([id]) => matchedById.has(id))
         .map(([id, qty]) => ({ id, qty }));
       if (lines.length === 0) continue;
@@ -1954,7 +1955,7 @@ export const searchCalendarInventory = query({
       if (!r.start_date) continue;
       const rangeEnd = (r.return_date ?? r.end_date) ?? r.start_date;
       if (r.start_date > weekEnd || rangeEnd < weekStart!) continue; // no overlap
-      const heldIds = reservationItemUnits(r, productIndex, overrideMap);
+      const heldIds = reservationItemUnits(r, productIndex, overrideMap, allItems);
       if (Array.from(heldIds.keys()).some((id) => matchedById.has(id))) {
         reservationIds.add(String(r._id));
       }
@@ -2133,7 +2134,7 @@ export const getItemAvailabilityForChat = query({
       // booking — that's exactly the "booked with Cian Duignan until June 4"
       // (3 weeks ago) bug the chat had.
       if (effRet < today) continue;
-      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap))
+      const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap, allItems))
         .filter(([id]) => matchedById.has(id))
         .map(([id, qty]) => ({ id, qty }));
       if (lines.length === 0) continue;
