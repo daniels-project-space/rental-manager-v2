@@ -1,3 +1,10 @@
+const lensBrands = "canon|sony|nikon|sigma|tamron|panasonic|fujifilm|fuji|zeiss|leica|laowa|tokina|samyang|rokinon|ttartisan|7artisans|dzofilm|sirui|meike|irix|voigtlander|cooke|angenieux";
+const lensMounts = "ef s|ef m|rf s|ef|rf|fe|e|l|pl|f|z|x|gfx";
+/** Explicit brand/mount references cannot borrow a bare range's receipt. */
+export function declaredLensReferences(normalizedReference: string) {
+  return [...normalizedReference.matchAll(new RegExp(`\\b(?:(?:${lensBrands})(?:\\s+(?:${lensMounts}))?|(?:${lensMounts}))\\s+(?:\\d+\\s+){1,3}\\d+mm\\b`, "g"))].map(m=>m[0]);
+}
+
 /** Narrow references derived from exact native item identities. A kit title
  * mentioning a lens must never lend the kit's stock or price to that lens. */
 export function lensClaimReferences<T extends { names: string[] }>(entries: T[], sameIdentity: (a: string[], b: string[]) => boolean) {
@@ -15,6 +22,8 @@ export function lensClaimReferences<T extends { names: string[] }>(entries: T[],
     if (/^[a-z][a-z\s-]*$/i.test(prefix)) {
       keys.push(normalize(`${prefix} ${range[1]}`));
       keys.push(normalize(`${prefix.split(/\s+/)[0]} ${range[1]}`));
+      const mount = new RegExp(`\\b(${lensMounts})$`, "i").exec(normalize(prefix));
+      if (mount) keys.push(normalize(`${mount[1]} ${range[1]}`));
     }
     for (const key of new Set(keys)) {
       const matches = owners.get(key) ?? [];

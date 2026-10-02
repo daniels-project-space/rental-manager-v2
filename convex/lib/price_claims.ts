@@ -3,7 +3,7 @@ import { claimDateScope } from "./claim_date_scope";
 import { renterItemNames } from "./renter_item_names";
 import { shortItemName } from "./item_display_name";
 import type { StockRequest } from "./stock_claims";
-import { lensClaimReferences } from "./lens_claim_references";
+import { lensClaimReferences, declaredLensReferences } from "./lens_claim_references";
 import { claimedRentalDays, withoutDurationReference } from "./claim_duration";
 
 /** Server-returned quotes. A number alone is never a receipt. */
@@ -68,10 +68,12 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       const scopedNamed=named.replace(/^for\s+(?:the\s+)?\d+\s+days?\s+(?:the\s+)?/i, "");
       const datedSubject = segmentDates.matched_text ? scopedNamed.replace(norm(segmentDates.matched_text), "dates") : scopedNamed;
       bookingSubject ||= /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
-      const genericNamed = withoutDurationReference(scopedNamed.replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
-        .replace(/^adding\s+(?=(?:it|this|that)\b)/i, ""));
+      const genericNamed = withoutDurationReference(named.replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
+        .replace(/^adding\s+(?=(?:it|this|that)\b)/i, ""), segmentDates.matched_text ? norm(segmentDates.matched_text) : undefined);
       const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
-      if (!generic && !bookingSubject && !exactOffering && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
+      const unsupportedQualifiedLens = !exactOffering && declaredLensReferences(genericNamed).find(reference=>!focalSubjects.has(reference));
+      if (unsupportedQualifiedLens) { subject=[unsupportedQualifiedLens]; unresolvedPair=true; }
+      else if (!generic && !bookingSubject && !exactOffering && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !exactOffering && !names.includes(named)) {
         pairedItems=[];
         for(const part of named.split(/\b(?:and|with|plus)\b/)) {

@@ -42,6 +42,25 @@ describe("receipted lens shorthand",()=>{
    expect(unsupportedPriceClaims(`Canon EF 16-35mm f2.8 is £40 for ${days} days.`,[lens],scope)).not.toEqual([]);
   expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that for three days"),[lens,basket],scope)).not.toEqual([]);
  });
+ it("separates a duration/calendar preface from its grounded pronoun without discarding scope",()=>{
+  const dated=[lens,basket].map(e=>({...e,start_date:scope.start_date!,end_date:scope.end_date!}));
+  const preface="Canon EF 16-35mm f2.8 is available. For the 2-day hire (20 to 21 October), it is £20/day (£40 total), which would bring your booking total to £164.";
+  expect(unsupportedPriceClaims(preface,dated,scope)).toEqual([]);
+  expect(unsupportedPriceClaims(preface.replace("2-day","two-day"),dated,scope)).toEqual([]);
+  expect(unsupportedPriceClaims(preface.replace("the 2-day hire (20 to 21 October),","20 to 21 October,"),dated,scope)).toEqual([]);
+  for(const wrong of [preface.replace("20 to 21","22 to 23"),preface.replace("20 to 21","32 to 33"),preface.replace("2-day","three-day"),preface.replace("2-day","a few-day"),preface.replace("£40","£50"),preface.replace("£164","£124"),preface.replace("it is","Canon RF 16-35mm is"),preface.replace("it is","two Canon EF 16-35mm f2.8 lenses are")])
+   expect(unsupportedPriceClaims(wrong,dated,scope),wrong).not.toEqual([]);
+ });
+ it("requires the explicitly declared brand/mount instead of borrowing its bare focal range",()=>{
+  expect(unsupportedPriceClaims("EF 16-35mm is £40 for the 2 days.",[lens],scope)).toEqual([]);
+  const rf={...lens,names:["Canon RF 16-35mm f2.8"],daily_rate_gbp:30,total_gbp:60,call_id:"native-rf"};
+  expect(unsupportedPriceClaims("Canon RF 16-35mm is £60 for the 2 days.",[lens,rf],scope)).toEqual([]);
+  expect(unsupportedPriceClaims("Canon RF 16-35mm is £40 for the 2 days.",[lens,rf],scope)).not.toEqual([]);
+  const sigma={...lens,names:["Sigma EF 16-35mm f2.8"],call_id:"native-sigma"};
+  expect(unsupportedPriceClaims("EF 16-35mm is £40 for the 2 days.",[lens,sigma],scope)).not.toEqual([]);
+  for(const name of ["Canon RF 16-35mm","RF 16-35mm","Sony E 16-35mm","Sigma EF 16-35mm"])
+   expect(unsupportedPriceClaims(`${name} is £40 for the 2 days.`,[lens],scope)).not.toEqual([]);
+ });
  it("shares brand and mount disambiguation without borrowing a kit's price",()=>{
   const shorthand="Canon 16-35mm is £40 for the 2 days.";
   expect(unsupportedPriceClaims(shorthand,[lens],scope)).toEqual([]);

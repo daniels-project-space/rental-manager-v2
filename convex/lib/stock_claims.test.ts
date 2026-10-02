@@ -9,6 +9,14 @@ describe("references to an additional booked-kit lens",()=>{
  const lens:StockReceipt={...stock,item:"Canon EF 24-105mm f4",start_date:scope.start_date!,end_date:scope.end_date!,quantity:2,available:false,free_units:1};
  const text="We only have the one Canon EF 24-105mm f4 in total (which is already included in your kit), so a second one isn't available for those dates.";
  it("keeps an exact item reference through a non-stock kit description and checks two physical units",()=>expect(unsupportedStockClaims(text,[lens],scope)).toEqual([]));
+ it("never substitutes an EF stock receipt for an explicit RF or Sony lens",()=>{
+  const ef={...lens,item:"Canon EF 16-35mm f2.8",quantity:1,available:true,free_units:1};
+  expect(unsupportedStockClaims("Canon EF 16-35mm is available for 20 to 21 October.",[ef],scope)).toEqual([]);
+  expect(unsupportedStockClaims("EF 16-35mm is available for 20 to 21 October.",[ef],scope)).toEqual([]);
+  for(const name of ["Canon RF 16-35mm","RF 16-35mm","Sony E 16-35mm"])
+   for(const verdict of ["is available","is not available"])
+    expect(unsupportedStockClaims(`${name} ${verdict} for 20 to 21 October.`,[ef],scope)).not.toEqual([]);
+ });
  it("resolves a uniquely receipted ordinal focal range and brand shorthand",()=>{
   for(const name of ["a second 24-105mm","a second Canon 24-105mm lens","a 2nd Canon EF 24–105mm"])
    expect(unsupportedStockClaims(text.replace("a second one",name),[lens],scope),name).toEqual([]);

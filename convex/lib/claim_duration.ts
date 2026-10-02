@@ -5,8 +5,14 @@ const qualification = `(?:(?:the|these|those|your|a|an)\\s+)?${count}[ -]+days?(
 
 /** A duration qualifies a price's scope, never its item identity. Keep the
  * original text for validation even when removing it from an anaphor. */
-export function withoutDurationReference(reference: string) {
-  return reference.replace(new RegExp(`\\s+for\\s+${qualification}\\s*$`,"i"), "")
+export function withoutDurationReference(reference: string, calendarReference?: string) {
+  // The caller supplies an already parsed calendar span; removing its words
+  // from identity never removes the original claim's date validation.
+  const dateFree = calendarReference ? reference.replace(calendarReference, "") : reference;
+  const durationFree = dateFree.replace(new RegExp(`^for\\s+${qualification}\\b\\s*`, "i"), "").trim();
+  const scoped = calendarReference ? durationFree.replace(/^for\s+(?=(?:it|this|that|they|these|those|(?:the\s+)?(?:total|price|rate|rental|hire|booking|order|kit|camera|body|set))\b)/i, "")
+    .replace(/\s+for\s*$/i, "") : durationFree;
+  return scoped.replace(new RegExp(`\\s+for\\s+${qualification}\\s*$`,"i"), "")
     .replace(/\s+for\s+(?:(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking))\s*$/i, "");
 }
 export function claimedRentalDays(text: string): number | null {
