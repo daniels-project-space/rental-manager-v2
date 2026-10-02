@@ -517,3 +517,8 @@ The compose buffer now retains the accepted draft's message ID, booking context,
 Native managed generation plus a real Lab addition qualified: current copy accepted in dry run; stale stamped copy rejected; stale exact legacy copy rejected; unrelated owner-written reply accepted. All own probe rows were cleaned. Full suite: 1,011 passed, 14 skipped across 85 files; Next production build passed. This scopes approval to the current inbound, booking and draft generation; global inventory/catalogue changes and external-send races require separate qualification. Automatic renter sending remains disabled.
 
 The preceding proposed-addition quote phase also passed three actual managed cases: read-only additional-lens quote with no booking writes; refused two-lens addition with a verified smaller available proposal; and an accepted one-lens addition with the updated native total. Production `e340bd4` was verified READY on the exact alias, and old cached drafts were invalidated at epoch 25.
+
+
+### Lab booking panel routing — 2 October
+
+Production screenshot review during copied-draft qualification exposed a 422 response: the shared inbox rendered the external Hygglo order editor for simulated Lab threads. Lab threads now render a reactive read-only booking panel backed by `renter_bot_lab_order:get`, showing canonical item names, quantities, dated line prices and the native total. Simulated order management remains in Rental Bot Lab. This removes an inappropriate provider fetch and avoids presenting real-provider editing controls for a simulated order. Production browser qualification checks £56 before and £92 after a native one-lens addition, including the £36 added line, at desktop and phone widths.

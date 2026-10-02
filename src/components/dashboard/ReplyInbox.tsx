@@ -1439,6 +1439,33 @@ function DateCalendar({
   );
 }
 
+/** Lab orders are stored locally and must never be fetched from Hygglo. */
+function LabOrderSummary({ threadId }: { threadId: string }) {
+  const order = useQuery(api.renter_bot_lab_order.get, { thread_id: threadId });
+  const [expanded, setExpanded] = useState(false);
+  if (order === undefined) return <div className="px-4 py-3 border-b border-white/[0.07]"><SkeletonBlock className="h-8 w-full" /></div>;
+  if (!order) return <div className="px-4 py-2 border-b border-white/[0.07] text-xs text-[#9aa0ad]">No Lab booking has been created yet.</div>;
+  return <div className="border-b border-white/[0.07] bg-[#0d0f13]" aria-label="Lab booking">
+    <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
+      className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-white/[0.02]">
+      <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#7a8190] shrink-0">Lab booking</span>
+      <span className="text-[11.5px] text-[#9aa0ad] truncate">
+        {order.lines.length} item{order.lines.length === 1 ? "" : "s"} · {money(order.total_gbp, "GBP")} · {order.days} day{order.days === 1 ? "" : "s"}
+      </span>
+      <span className="ml-auto text-[11px] font-medium text-sky-300 shrink-0">{expanded ? "Close ▴" : "View ▾"}</span>
+    </button>
+    {expanded && <div className="px-4 pb-3 space-y-2 text-xs">
+      {order.lines.map((line, index) => <div key={`${line.item_id ?? line.product_id ?? line.name}-${index}`} className="flex items-center gap-2">
+        <span className="text-[#e6e9ef] flex-1 min-w-0">{line.qty}× {line.display_name ?? shortListing(line.name)}</span>
+        <span className="text-[#9aa0ad] shrink-0">{money(line.line_total_gbp, "GBP")}</span>
+      </div>)}
+      <div className="text-[#9aa0ad]">{prettyDay(order.start_date)} → {prettyDay(order.end_date)}</div>
+      {!!order.unpriced.length && <div className="text-amber-300">Some items need a verified price before a total can be quoted.</div>}
+      <div className="text-[10.5px] text-[#6b7280]">Simulated booking. Manage its items and dates in Rental Bot Lab.</div>
+    </div>}
+  </div>;
+}
+
 function OrderEditor({
   accountSlug,
   orderId,
@@ -2106,7 +2133,9 @@ export function ReplyModal({
           {/* Order editor — live items + add/remove + price + dates (has_reservation
               threads only; inquiries with no booking have nothing to edit). */}
           {tile.has_reservation && tile.account_slug && (
-            <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
+            tile.thread_id.startsWith("__probe__")
+              ? <LabOrderSummary threadId={tile.thread_id} />
+              : <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
           )}
 
           {/* Renter reviews — confined panel, opened by tapping the stars.
