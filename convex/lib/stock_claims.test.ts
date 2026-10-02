@@ -4,6 +4,18 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("references to an additional booked-kit lens",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame + Canon EF 24-105mm f4",quantity:1}]};
+ const lens:StockReceipt={...stock,item:"Canon EF 24-105mm f4",start_date:scope.start_date!,end_date:scope.end_date!,quantity:2,available:false,free_units:1};
+ const text="We only have the one Canon EF 24-105mm f4 in total (which is already included in your kit), so a second one isn't available for those dates.";
+ it("keeps an exact item reference through a non-stock kit description and checks two physical units",()=>expect(unsupportedStockClaims(text,[lens],scope)).toEqual([]));
+ it("cannot borrow the receipt for another model, dates, unknown capacity, or an unspecified first unit",()=>{
+  for (const r of [{...lens,item:"Canon EF 16-35mm f2.8"},{...lens,end_date:"2026-10-22"},{...lens,quantity:1,available:true,free_units:null},{...lens,free_units:2,available:true}])
+   expect(unsupportedStockClaims(text,[r],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(text.replace("a second one","it"),[lens],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("A second one isn't available for those dates.",[lens],scope)).not.toEqual([]);
+ });
+});
 describe("amendment date claims", () => {
   const original = { start_date: "2026-10-06", end_date: "2026-10-07", items: [{ name: "Sony FX3", quantity: 1 }] };
   const proposed = { ...stock, start_date: "2026-10-06", end_date: "2026-10-08" };

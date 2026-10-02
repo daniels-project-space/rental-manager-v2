@@ -2553,6 +2553,7 @@ const operationalSchema = defineSchema({
         name: v.string(),
         qty: v.number(),
         daily_price_gbp: v.optional(v.number()),
+        pricing_basis: v.optional(v.union(v.literal("listing"), v.literal("catalog"))),
         /**
          * Hygglo's multi-day tier table for this line's listing. Needed because
          * the rate DROPS with length (1 day £80, 3+ £66.67, 7+ £50), so

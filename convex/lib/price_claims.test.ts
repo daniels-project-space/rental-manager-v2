@@ -12,6 +12,10 @@ describe("receipted lens shorthand",()=>{
  const basket:PriceEvidence={names:[],kind:"basket",items:[...scope.items,{name:lens.names[0],quantity:1}],proposal:{base_items:scope.items,added_items:[{name:lens.names[0],quantity:1}]},days:2,total_gbp:164,call_id:"native-proposal",source:"native_lab_proposal"};
  const text="We have a compatible Canon EF 16-35mm f2.8 wide-angle zoom. Adding the 16-35mm would be £40 for the 2 days (£20/day), which would bring your total booking to £164.";
  it("accepts a unique focal-range shorthand without losing the proposed basket scope",()=>expect(unsupportedPriceClaims(text,[lens,basket],scope)).toEqual([]));
+ it("resolves Adding that from the last named receipted alternative",()=>{
+  expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that"),[lens,basket],scope)).toEqual([]);
+  expect(unsupportedPriceClaims(text.replace("Adding the 16-35mm","Adding that").replace("£164","£124"),[lens,basket],scope)).not.toEqual([]);
+ });
  it("still refuses ambiguous ranges, wrong prices, dates and quantities",()=>{
   const other={...lens,names:["Sony E 16-35mm f2.8"],call_id:"other-lens"};
   expect(unsupportedPriceClaims(text,[lens,other,basket],scope)).not.toEqual([]);

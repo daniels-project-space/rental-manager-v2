@@ -26,9 +26,10 @@ function sameItem(a: string, b: string) {
 }
 const units: Record<string, number> = { one: 1, single: 1, two: 2, both: 2, three: 3, four: 4 };
 function subjectOf(prefix: string) {
-  let s = prefix.trim().replace(/^(?:but|however|whereas|while)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
+  let s = prefix.trim().replace(/^(?:but|however|whereas|while|so|therefore)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
   s = s.replace(/^(?:exact|specific|particular|requested|selected)\s+/i, "");
+  if (/^second\s+one$/i.test(s)) return {name:"one",quantity:2};
   const count = /^(\d+|one|single|two|both|three|four)\s*(?:x|×)?\s+/i.exec(s);
   if (count) s = s.slice(count[0].length);
   return { name: s.trim(), quantity: count ? units[count[1].toLowerCase()] ?? Number(count[1]) : undefined };
@@ -55,7 +56,26 @@ export function supportsRentalEligibilityDecline(clause: string, request: StockR
 export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest, ineligibleItems: string[] = []) {
   const failures: Array<{ negative: boolean; detail: string }> = [];
   let previousSubjects: StockRequest["items"] = [];
+  const knownSubjects = [...request.items];
+  for (const receipt of receipts)
+    if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
+      knownSubjects.push({name:receipt.item,quantity:1});
   for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+    // Remember an exact native item reference even when that clause merely
+    // describes kit contents. "A second one" still needs a two-unit receipt.
+    const mentionText = ` ${identity(clause)} `;
+    let latestMention = -1;
+    let longestMention = 0;
+    let mentioned: StockRequest["items"] = [];
+    for (const candidate of knownSubjects) for (const name of [candidate.name, ...(candidate.aliases ?? [])]) {
+      const key = identity(name);
+      const at = key ? mentionText.lastIndexOf(` ${key} `) : -1;
+      const end = at < 0 ? -1 : at + key.length;
+      if (end > latestMention || end === latestMention && key.length > longestMention) {
+        latestMention=end;longestMention=key.length;mentioned=at < 0 ? [] : [candidate];
+      } else if (at >= 0 && end === latestMention && key.length === longestMention && !mentioned.includes(candidate)) mentioned.push(candidate);
+    }
+    if (mentioned.length) previousSubjects = mentioned;
     if (/\b(?:check|verify|confirm|know|unsure|uncertain|not sure)\b[^.!?]{0,70}\b(?:whether|if)\b/i.test(clause)) continue;
     // "Your booked kit" is a booking reference, not a claim that stock is
     // unavailable. Keep character positions and continue scanning for any
@@ -86,9 +106,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
-    const generic = /^(?:body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
+    const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
     let targets = request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
-    if (generic) targets = previousSubjects.length ? previousSubjects : request.items;
+    if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
     else if (!targets.length) {
       const requestedCounts = [...new Set(request.items.map(i => i.quantity))];
       targets = [{ name: subject.name, quantity: subject.quantity ?? (requestedCounts.length === 1 ? requestedCounts[0] : NaN) }];

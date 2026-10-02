@@ -7,7 +7,7 @@ function fixture() {
   const tables: Record<string, any[]> = {
     items: [{ _id: "camera", name_canonical: "Sony FX3", status: "active", is_marketing_only: false, qty: 1, kind: "camera_body", aliases: [] }],
     renter_bot_lab_orders: [{ _id: "order", thread_id: "__probe__atomic", account_slug: "leo", start_date: "2026-10-06", end_date: "2026-10-07", changes: [],
-      items: [{ item_id: "camera", name: "Sony FX3", qty: 1, daily_price_gbp: 40, origin: "seed" }] }],
+      items: [{ item_id: "camera", name: "Sony FX3", qty: 1, daily_price_gbp: 40, pricing_basis: "listing", origin: "seed" }] }],
     renter_bot_lab_bookings: [{ _id: "booking", hygglo_order_id: "__probe__atomic", start_date: "2026-10-06", end_date: "2026-10-07", pickup_date: "2026-10-06" }],
   };
   const db = {
@@ -33,6 +33,9 @@ describe("additions check the complete physical basket",()=>{
     f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
     f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1},{item_id:"lens",qty:1}]}];
     f.tables.pricing_catalog=[{item_name_canonical:"Sony 28-70mm",daily_price_min:18}];
+    f.tables.online_listings=[{account_slug:"leo",product_id:2,name:"Sony 28-70mm",daily_price:18}];
+    f.tables.hygglo_product_index=[{account_slug:"leo",product_id:2,item_id:"lens"}];
+    f.tables.listing_resolution_override.push({account_slug:"leo",product_id:2,components:[{item_id:"lens",qty:1}]});
     return f;
   };
   const add=(ctx:any,qty:number)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
@@ -41,6 +44,12 @@ describe("additions check the complete physical basket",()=>{
     const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true});
     expect(result).toMatchObject({ok:true,preview_only:true,source:"native_lab_proposal",base_items:[{name:"Sony FX3",quantity:1}],added_items:[{name:"Sony 28-70mm",quantity:1}],quote:{total_gbp:116,days:2,lines:[expect.anything(),expect.objectContaining({name:"Sony 28-70mm",qty:1,line_total_gbp:36})]}});
     expect(result.context_transition).toBeUndefined();expect(tables).toEqual(before);
+  });
+  it("does not invent a dated proposal from a catalogue-only extra",async()=>{
+    const {tables,ctx}=setup();tables.online_listings=[];tables.hygglo_product_index=[];tables.listing_resolution_override=tables.listing_resolution_override.filter(o=>o.product_id!==2);
+    const before=structuredClone(tables);
+    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true})).toMatchObject({ok:false});
+    expect(tables).toEqual(before);
   });
   it("rejects an overallocated proposal without writes",async()=>{
     const {tables,ctx}=setup();const before=structuredClone(tables);
@@ -73,7 +82,7 @@ describe("item removals preserve exact identity and quantity", () => {
   it("removes A7 II without removing A7 III", async () => {
     const { tables, ctx } = fixture();
     tables.items = [{_id:"ii",name_canonical:"Sony A7 II",aliases:["Sony A7 2"]},{_id:"iii",name_canonical:"Sony A7 III",aliases:["Sony A7 3"]}];
-    tables.renter_bot_lab_orders[0].items = tables.items.map(i => ({ item_id:i._id,name:i.name_canonical,qty:1,daily_price_gbp:40,origin:"seed" }));
+    tables.renter_bot_lab_orders[0].items = tables.items.map(i => ({ item_id:i._id,name:i.name_canonical,qty:1,daily_price_gbp:40,pricing_basis:"listing",origin:"seed" }));
     expect(await remove(ctx,"Sony A7 II")).toMatchObject({ok:true,order:{total_gbp:80,lines:[{name:"Sony A7 III",qty:1}]}});
     expect(tables.renter_bot_lab_orders[0].items).toHaveLength(1);
   });

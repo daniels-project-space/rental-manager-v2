@@ -22,9 +22,9 @@ describe("simulated booking maths", () => {
   it("multiplies each line by qty AND days", () => {
     const s = summarise(
       [
-        { name: "BMPCC 6K Pro", qty: 1, daily_price_gbp: 35, origin: "seed" },
-        { name: "Blazar Remus 100mm", qty: 1, daily_price_gbp: 25, origin: "added" },
-        { name: "PL to EF mount", qty: 2, daily_price_gbp: 8, origin: "added" },
+        { name: "BMPCC 6K Pro", qty: 1, daily_price_gbp: 35, pricing_basis: "listing", origin: "seed" },
+        { name: "Blazar Remus 100mm", qty: 1, daily_price_gbp: 25, pricing_basis: "listing", origin: "added" },
+        { name: "PL to EF mount", qty: 2, daily_price_gbp: 8, pricing_basis: "listing", origin: "added" },
       ],
       "2026-08-23",
       "2026-08-24",
@@ -45,5 +45,20 @@ describe("simulated booking maths", () => {
     );
     expect(s.total_gbp).toBeNull();
     expect(s.unpriced).toEqual(["Mystery rig"]);
+  });
+  it("keeps a base-only catalogue price unknown when dates extend beyond one day", () => {
+    const lines = [{name:"PL to RF mount",qty:2,daily_price_gbp:8,pricing_basis:"catalog" as const}];
+    expect(summarise(lines,"2026-10-20","2026-10-20").total_gbp).toBe(16);
+    const extended = summarise(lines,"2026-10-20","2026-10-21");
+    expect(extended.total_gbp).toBeNull();
+    expect(extended.unpriced).toEqual(["PL to RF mount"]);
+    expect(extended.lines[0]).toMatchObject({daily_price_gbp:8,effective_rate_gbp:null,line_total_gbp:null});
+    expect(summarise(lines,"2026-10-20","2026-10-20").total_gbp).toBe(16);
+  });
+  it("cannot treat an old daily-only line or catalogue-attached tiers as verified duration pricing", () => {
+    const legacy={name:"PL to RF mount",qty:1,daily_price_gbp:8};
+    expect(summarise([legacy],"2026-10-20","2026-10-21").total_gbp).toBeNull();
+    expect(summarise([{...legacy,pricing_basis:"catalog",price_tiers:[{days:1,pricePerDay:8}]}],"2026-10-20","2026-10-21").total_gbp).toBeNull();
+    expect(summarise([{...legacy,product_id:1172765}],"2026-10-20","2026-10-21").total_gbp).toBe(16);
   });
 });

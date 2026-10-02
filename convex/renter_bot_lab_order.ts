@@ -56,6 +56,7 @@ type OrderLine = {
   name: string;
   qty: number;
   daily_price_gbp?: number;
+  pricing_basis?: "listing" | "catalog";
   price_tiers?: PriceTier[];
   origin: string;
 };
@@ -123,10 +124,11 @@ async function resolveDailyPrice(
   }
   if (price === undefined) {
     const cat = await ctx.db.query("pricing_catalog").collect();
-    const hit = cat.find(
-      (c: { item_name_canonical: string }) =>
+    const hit = cat.filter(
+      (c: { item_name_canonical: string; marketing_only?: boolean; is_bundle?: boolean; daily_price_min:number }) =>
+        !c.marketing_only && !c.is_bundle && c.daily_price_min > 0 &&
         c.item_name_canonical.toLowerCase().trim() === itemName.toLowerCase().trim(),
-    ) as { daily_price_min?: number } | undefined;
+    ).sort((a: {daily_price_min:number}, b: {daily_price_min:number}) => a.daily_price_min-b.daily_price_min)[0] as { daily_price_min?: number } | undefined;
     price = hit?.daily_price_min;
   }
   return price;
@@ -219,6 +221,7 @@ export const seed = internalMutation({
           name: (listing.name ?? "listing").slice(0, 70),
           qty: 1,
           daily_price_gbp: listing.daily_price,
+          pricing_basis: "listing" as const,
           price_tiers: await tiersForProduct(ctx, a.account_slug, a.base_product_id as number),
           origin: "listing",
         });
@@ -227,6 +230,7 @@ export const seed = internalMutation({
     for (const name of lines.length ? [] : a.item_names) {
       const m = bestMatch(name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
       const hit = m.match && m.confident ? m.match : null;
+      const pricedPid = hit ? await listingPidForItem(ctx, a.account_slug, String(hit._id)) : undefined;
       // Price the SEEDED items too. Leaving them undefined made total_gbp null
       // for every scenario, so the bot was told "do not quote a total" on a
       // perfectly ordinary booking and the Lab panel could never show one.
@@ -237,7 +241,8 @@ export const seed = internalMutation({
         daily_price_gbp: hit
           ? await resolveDailyPrice(ctx, a.account_slug, String(hit._id), hit.name_canonical)
           : undefined,
-        price_tiers: hit ? await (async () => { const pid = await listingPidForItem(ctx, a.account_slug, String(hit._id)); return pid != null ? await tiersForProduct(ctx, a.account_slug, pid) : undefined; })() : undefined,
+        pricing_basis: pricedPid != null ? "listing" as const : "catalog" as const,
+        price_tiers: pricedPid != null ? await tiersForProduct(ctx, a.account_slug, pricedPid) : undefined,
         origin: "seed",
       });
     }
@@ -424,6 +429,7 @@ export const applyChange = mutation({
         name: m.match.name_canonical,
         qty,
         daily_price_gbp: price,
+        pricing_basis: pricedPid != null ? "listing" : "catalog",
         price_tiers: tiers,
         origin: "added",
       });
