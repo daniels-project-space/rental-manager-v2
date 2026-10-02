@@ -52,3 +52,25 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
   }
   return [...new Set(failures)];
 }
+
+
+/** Intrinsic ND belongs to the reviewed body profile, not accessory contents. */
+export function unsupportedBuiltInNDClaims(text: string, evidence: CameraEvidence[], initialNames: string[] = []) {
+  const failures: string[] = [];
+  const initial = evidence.filter(e => e.names.some(n => initialNames.includes(n)));
+  let subject = initial.length === 1 ? initial : [];
+  for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|[,;]|\b(?:but|while|whereas)\b/i)) {
+    const named = evidence.map(e => ({ e, length: Math.max(0, ...e.names.filter(n => mentionsCamera(clause, n)).map(n => n.length)) })).filter(m => m.length);
+    if (named.length) {
+      const longest = Math.max(...named.map(m => m.length));
+      subject = named.filter(m => m.length === longest).map(m => m.e);
+    } else if (explicitCameraModel.test(clause)) subject = [];
+    const claim = /\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.exec(clause);
+    if (!claim) continue;
+    const prefix = clause.slice(0, claim.index);
+    if (/\b(?:if|whether|check|verify|confirm)\b[^,;:]{0,100}$/i.test(prefix) || /\b(?:want|need|require|prefer|looking for)\b[^,;:]{0,45}$/i.test(prefix)) continue;
+    const negative = /\b(?:no|not|without|isn't|aren't|doesn't|does not|lack|lacks)\b[^,;:()]{0,45}$/i.test(prefix);
+    if (!subject.length || !subject.every(e => e.capabilities.built_in_nd === !negative)) failures.push(clause.trim());
+  }
+  return failures;
+}

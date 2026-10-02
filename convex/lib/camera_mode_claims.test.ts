@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unsupportedCameraModeClaims, type CameraEvidence } from "./camera_mode_claims";
+import { unsupportedBuiltInNDClaims, unsupportedCameraModeClaims, type CameraEvidence } from "./camera_mode_claims";
 import { guardDraft } from "./draft_guard";
 import type { RecordingMode } from "./camera_requirements";
 const mode = (fps: number, format: "full_frame" | "aps_c", width: boolean): RecordingMode => ({ resolution: "uhd_4k", nominal_fps: [fps], capture_format: format, full_width: width, internal: true, conditions: [], verified_model: "model", source_url: "https://manufacturer.example/mode", verified_at: 1 });
@@ -50,5 +50,22 @@ describe("recording mode claims use exact model and capture area", () => {
   it("reaches the real guard as an unresolved critical review flag", () => {
     const result = guardDraft("Sony A7 V records uncropped full-frame 4K120p.", { history: [], lastRenterMessage: "I need uncropped 4K120p", cameraEvidence: evidence });
     expect(result.flags).toContainEqual(expect.objectContaining({ type: "CAMERA_MODE_HALLUCINATION", severity: "critical", action: "flagged" }));
+  });
+});
+
+describe("reviewed intrinsic ND rather than physical accessories", () => {
+  const ff = { names: ["BMPCC 6K Full Frame", "Blackmagic 6K Full Frame"], capabilities: { role: "interchangeable_lens" as const, sensor_format: "full_frame" as const, internal_4k: true, built_in_nd: false } };
+  const pro = { names: ["BMPCC 6K Pro", "Blackmagic 6K Pro"], capabilities: { ...ff.capabilities, sensor_format: "super35" as const, built_in_nd: true } };
+  it("accepts a named Pro followed by a truthful intrinsic feature parenthesis", () => {
+    expect(unsupportedBuiltInNDClaims("Blackmagic 6K Pro is available. It comes with batteries (Super 35 sensor, native EF mount, built-in ND filters).", [ff, pro], ["BMPCC 6K Full Frame"])).toEqual([]);
+  });
+  it("blocks wrong or unknown body features and a false denial", () => {
+    expect(unsupportedBuiltInNDClaims("Blackmagic 6K Full Frame has built-in ND filters.", [ff, pro])).toHaveLength(1);
+    expect(unsupportedBuiltInNDClaims("Blackmagic 6K Pro has no built-in ND filters.", [ff, pro])).toHaveLength(1);
+    expect(unsupportedBuiltInNDClaims("Canon C70 has built-in ND filters.", [ff, pro])).toHaveLength(1);
+  });
+  it("uses the actual selected request for a generic initial feature reference", () => {
+    expect(unsupportedBuiltInNDClaims("It has built-in ND filters.", [ff, pro], ["BMPCC 6K Pro"])).toEqual([]);
+    expect(unsupportedBuiltInNDClaims("It has built-in ND filters.", [ff, pro], ["BMPCC 6K Full Frame"])).toHaveLength(1);
   });
 });

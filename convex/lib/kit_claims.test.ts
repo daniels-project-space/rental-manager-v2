@@ -79,3 +79,17 @@ describe("established camera identity aliases in mixed kits", () => {
     expect(renterItemNames("BMPCC 6K Full Frame")).not.toContain("Blackmagic 6K Pro");
   });
 });
+
+it("seeds this-kit references from the selected request instead of unrelated alternatives", () => {
+  const ff = { names: renterItemNames("BMPCC 6K Full Frame"), contents: ["NP-F570 batteries 5x", "1x 1TB CFexpress Type B card", "Canon EF-to-L mount adapter"] };
+  const sony = { names: ["Sony A7 V"], contents: ["NP-FZ100 batteries", "256GB card"] };
+  const text = "For this kit, our records include 5x NP-F570 batteries and 1x 1TB CFexpress Type B card (along with a Canon EF-to-L mount adapter).";
+  expect(unsupportedKitClaims(text, [ff, sony], ["BMPCC 6K Full Frame"])).toEqual([]);
+  expect(unsupportedKitClaims(text, [ff, sony])).not.toEqual([]);
+  expect(unsupportedKitClaims("This kit includes NP-FZ100 batteries.", [ff, sony], ["BMPCC 6K Full Frame"])).not.toEqual([]);
+});
+it("keeps built-in ND out of the physical accessory check", () => {
+  const pro = { names: renterItemNames("BMPCC 6K Pro"), contents: ["5x NP-F570 batteries", "1TB SSD", "camera cage"] };
+  expect(unsupportedKitClaims("Blackmagic 6K Pro comes with NP-F570 batteries, a 1TB SSD and a camera cage (native EF, built-in ND filters).", [pro])).toEqual([]);
+  expect(unsupportedKitClaims("Blackmagic 6K Pro comes with an external ND filter.", [pro])).not.toEqual([]);
+});

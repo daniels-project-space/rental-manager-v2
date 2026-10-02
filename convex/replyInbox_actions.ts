@@ -785,7 +785,7 @@ export const generateDraft = action({
       awaiting_owner_action: c.awaiting_owner_action,
     } : null, londonToday()).stage;
     const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
-    const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b/i.test(checkedDraft)
+    const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b|\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.test(checkedDraft)
       ? await ctx.runQuery(api.renter_bot_tools.get_verified_camera_profiles, {}) : [];
     const guard = guardDraft(checkedDraft, {
       cameraEvidence,

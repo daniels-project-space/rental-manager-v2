@@ -44,11 +44,12 @@ function supports(claim: ComponentDetails, proof: ComponentDetails) {
     && claim.capacities.every(c => proof.capacities.includes(c))
     && (claim.quantity === undefined || claim.quantity === proof.quantity);
 }
-const componentParts = (s: string) => s.split(/[,;]|\band\b|\bplus\b/gi);
+const componentParts = (s: string) => s.split(/[,;()]|\balong\s+with\b|\bwith\b|\band\b|\bplus\b/gi);
 /** Negative/optional offers are not claims of included contents. Preserve item attribution. */
-export function unsupportedKitClaims(text: string, evidence: KitEvidence[]) {
+export function unsupportedKitClaims(text: string, evidence: KitEvidence[], initialNames: string[] = []) {
   const failures: { sentence: string; content: string }[] = [];
-  let subject: KitEvidence[] = [];
+  const selected = evidence.filter(e => e.names.some(n => initialNames.some(i => normalize(i) === normalize(n))));
+  let subject: KitEvidence[] = selected.length === 1 ? selected : [];
   let includedList = false;
   for (const sentence of text.split(/(?<=[.!?])\s+|\n/)) {
     if (!sentence.trim()) continue;
@@ -65,7 +66,7 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[]) {
     const candidates = named.length ? named : subject.length ? subject : evidence;
     if (!candidates.length) continue; // unknown-kit guard handles missing evidence separately
     for (const [content, pattern] of categories) {
-      const claims = componentParts(claimed).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c)).map(c => details(c, content, pattern));
+      const claims = componentParts(claimed.replace(/\b(?:built[ -]?in|internal)\s+(?:variable\s+)?ND\s+filters?\b/gi, "intrinsic camera ND")).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c)).map(c => details(c, content, pattern));
       if (claims.length && !candidates.every(e => claims.every(c => e.contents.some(entry =>
         componentParts(entry).some(part => pattern.test(part) && supports(c, details(part, content, pattern))))))) {
         failures.push({ sentence: sentence.trim(), content });

@@ -1,3 +1,4 @@
+import { renterItemNames } from "./lib/renter_item_names";
 import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
@@ -795,7 +796,7 @@ export const get_verified_camera_profiles = query({ args: {}, handler: async ctx
     const capabilities = verifiedCameraCapabilities(spec, i.name_canonical);
     return capabilities ? [{ names: [i.name_canonical, ...(i.aliases ?? []), spec!.verified_model!,
       // Manufacturer can be omitted in ordinary replies ("the FX3", "A7 V").
-      ...(i.name_canonical.startsWith("Sony ") ? [i.name_canonical.slice(5)] : [])], capabilities }] : [];
+      ...(i.name_canonical.startsWith("Sony ") ? [i.name_canonical.slice(5)] : [])].flatMap(renterItemNames), capabilities }] : [];
   });
 } });
 
