@@ -1,6 +1,7 @@
 import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
 import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-price-evidence";
 import type { PriceEvidence } from "../../../../convex/lib/price_claims";
+import { sensorComparisonInstruction } from "../../../../convex/lib/camera_sensor_comparisons";
 import { renterItemNames } from "../../../../convex/lib/renter_item_names";
 import type { StockRequest } from "../../../../convex/lib/stock_claims";
 import { inclusiveRentalDays, formatGbp } from "../../../../convex/lib/hygglo_pricing";
@@ -470,7 +471,7 @@ export async function POST(req: Request) {
   // PRE-FETCH the ground truth (Haiku under-calls its tools, so we hand it the
   // requested listing + its real availability up front — it must not contradict
   // these). The agent can still call check_location, search_knowledge, etc.
-  let groundTruth = "";
+  let groundTruth = `${sensorComparisonInstruction()}\n`;
   const marketingItems: string[] = [];
   // Defaults FALSE — this must FAIL CLOSED. It gates pickup-address disclosure
   // (below) and the false-confirmation guard, and it is only set true when a

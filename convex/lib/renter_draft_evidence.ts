@@ -4,6 +4,9 @@ export const draftEvidenceValidator = v.object({
   model_id: v.string(),
   stage: v.string(),
   cost_usd: v.optional(v.number()),
+  camera_comparisons: v.optional(v.array(v.object({
+    models: v.array(v.string()), relation: v.literal("same_sensor"), source_url: v.string(), verified_at: v.number(),
+  }))),
   /** Catalogue exclusion snapshot; not a dated stock-check receipt. */
   rental_eligibility: v.optional(v.object({
     ineligible_items: v.array(v.string()), source: v.literal("native_catalogue"),

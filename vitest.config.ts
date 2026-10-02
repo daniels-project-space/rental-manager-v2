@@ -42,6 +42,7 @@ export default defineConfig({
       "convex/seed/kit_source_repair.test.ts",
       "convex/lib/camera_requirements.test.ts",
       "convex/lib/camera_mode_claims.test.ts",
+      "convex/lib/camera_sensor_comparisons.test.ts",
       "convex/lib/push_registration.test.ts",
       "convex/notifications.push.test.ts",
       "src/lib/push-service-worker.test.ts",

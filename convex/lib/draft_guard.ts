@@ -1,4 +1,5 @@
 import type { MinimumRentalContext } from "./minimum_rental";
+import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
 import { supportsRentalEligibilityDecline, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
@@ -158,6 +159,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
   EMPTY_DRAFT: "critical",
   CAMERA_MODE_HALLUCINATION: "critical",
+  CAMERA_COMPARISON_HALLUCINATION: "critical",
   CAMERA_FEATURE_HALLUCINATION: "critical",
   // High, not critical: it misleads but does not create a wrong booking.
   INVENTED_POPULARITY: "high",
@@ -1067,6 +1069,9 @@ const ASSERTS_AVAIL_RE =
 
   for (const claim of unsupportedKitClaims(text, factPack?.kitEvidence ?? [], opts.stockRequest?.items.map(i => i.name) ?? [])) {
     push("KIT_HALLUCINATION", `Unverified included ${claim.content}: "${claim.sentence.slice(0, 160)}"`, "flagged");
+  }
+  for (const claim of unsupportedSensorIdentityClaims(text, opts.stockRequest?.items.map(i => i.name) ?? [])) {
+    push("CAMERA_COMPARISON_HALLUCINATION", `Sensor identity comparison lacks reviewed exact-pair evidence: "${claim.slice(0, 160)}"`, "flagged");
   }
   if (opts.cameraEvidence !== undefined) for (const claim of unsupportedCameraModeClaims(text, opts.cameraEvidence)) {
     push("CAMERA_MODE_HALLUCINATION", `Recording mode lacks matching model/capture-area proof: "${claim.slice(0, 160)}"`, "flagged");
