@@ -14,7 +14,7 @@ The price contract required a currency figure because it saw a prefetched bookin
 
 ## Evidence
 
-- 1,128 tests pass; 14 skipped; 86 files. Next production build and Convex typecheck/deploy pass. Graph updated; the pre-existing Graphify extraction warning for `convex/audit_qty_drift_data.ts` remains.
+- 1,129 tests pass; 14 skipped; 86 files. Next production build and Convex typecheck/deploy pass. Graph updated; the pre-existing Graphify extraction warning for `convex/audit_qty_drift_data.ts` remains.
 - Native body and lens-kit proposals previously failed `listing_not_rentable_or_unmapped`. They now succeed with the original kit unchanged and a separate £98 body for 20–21 October. A £130 kit proposes £228; a £98 body booking proposes £196; a £160 two-body kit proposes £258. Previews made no edits; owned probes cleaned up.
 - Native same-item check: a two-camera £196 Lab booking proposes one extra at £98, producing £294. The merged extra-body line is £196 for two bodies; the currency guard accepts £98 for one extra and rejects £196 or another booking's £160. Preview leaves the order unchanged.
 - Native stock rejects four cameras when three are free. A probe initially expected success; its authoritative refusal is preserved in `/root/rental-marginal-fourth-body-block-proof.json`. The successful price test uses the available three-camera case.
@@ -27,3 +27,8 @@ Receipts: `/root/rental-offering-before-native-proof.json`, `/root/rental-offeri
 Real Hygglo chat migration, renter sends, financial execution and real cancellations/bookings remain blocked without explicit written consent. Simulation setup edits touched only their own `__probe__` Lab orders. All proposals were read-only.
 
 Exact packing quantities/storage pools, explicit extra-kit selection, ambiguous removal across offerings, server-enforced quote-only mutation consent and confidence calibration remain audit targets. This phase does not prove overall production readiness.
+
+
+## Shared receipt validator correction
+
+The first fresh model extra-body run completed its quote tool call but failed when saving the draft: the backend's closed `draftEvidenceValidator` did not include `quote_role`. The shared validator now accepts the optional base/proposed_line/addition union, and a new contract test compares every emitted price-receipt field and role against the backend validator. Full revalidation: 1,129 passing tests, 14 skipped; Next build and Convex typecheck/deploy pass. The unavailable-lens fresh model reply passed, asked for the second body's camera/mount, and had no missing-price contract flag. Final extra-body model and exact deployment results remain in separate release receipts.

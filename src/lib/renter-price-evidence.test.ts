@@ -2,6 +2,7 @@ import {describe,it,expect} from "vitest";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import type {ToolReceipt} from "./renter-tool-evidence";
 import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
+import {draftEvidenceValidator} from "../../convex/lib/renter_draft_evidence";
 const receipt=(tool:string,result:Record<string,unknown>,call_id="call"):ToolReceipt=>({tool,result,call_id});
 describe("server price receipt adapters",()=>{
  it("binds an exact quote's short name only to the verified account and listing",()=>{
@@ -130,6 +131,18 @@ describe("same-item marginal proposal evidence",()=>{
   base_quote:{...dated,lines:[{...line}],total_gbp:80},addition_quote:{...dated,lines:[{...line}],total_gbp:80},additional_cost_gbp:80});
  const scope={items:[{name:line.name,quantity:1}],start_date:dated.start_date,end_date:dated.end_date};
  const claim="One extra Sony FX3 would cost £80 for 2 days. Adding it would bring your booking total to £160.";
+ it("keeps every emitted receipt field and role within the shared backend validator",()=>{
+  const root=draftEvidenceValidator.json;
+  if(root.type!=="object")throw new Error("Expected object evidence validator");
+  const prices=root.value.prices.fieldType;
+  if(prices.type!=="array" || prices.value.type!=="object")throw new Error("Expected price objects");
+  const fields=prices.value.value;
+  const proof=renterPriceEvidence([receipt("quote_booking_addition",native())],[],thread);
+  expect(proof.some(p=>p.quote_role==="addition")).toBe(true);
+  for(const p of proof)expect(Object.entries(p).filter(([,v])=>v!==undefined).map(([k])=>k).filter(k=>!(k in fields))).toEqual([]);
+  expect(fields.quote_role.optional).toBe(true);
+  expect(fields.quote_role.fieldType).toEqual({type:"union",value:[{type:"literal",value:"base"},{type:"literal",value:"proposed_line"},{type:"literal",value:"addition"}]});
+ });
  it("proves the additional unit, not just the combined two-unit line",()=>{
   const n=native();const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);
   expect(proof).toContainEqual(expect.objectContaining({quote_role:"addition",quantity:1,total_gbp:80}));
