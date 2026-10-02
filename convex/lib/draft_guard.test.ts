@@ -69,6 +69,10 @@ describe("positive stock does not prove a negative for an unknown request", () =
 
 describe("authoritative booking transitions", () => {
   const opts = { history: [], lastRenterMessage: "Has my request been accepted?", stage: "AWAITING_OWNER_APPROVAL" };
+  it.each(["INQUIRY", "UNCONFIRMED", "CANCELLED", "VERIFICATION_FAILED", "AWAITING_OWNER_APPROVAL", "AWAITING_PAYMENT", "AWAITING_VERIFICATION"])("rejects false current confirmation in %s", stage => {
+    expect(guardDraft("Your booking is confirmed.", {...opts,stage}).flags).toContainEqual(expect.objectContaining({type:"PREMATURE_CONFIRMATION",severity:"critical"}));
+    expect(guardDraft("I'll share the address once the platform confirms your booking.", {...opts,stage}).flags.some(f=>f.type==="PREMATURE_CONFIRMATION")).toBe(false);
+  });
   it("blocks the live false promise that acceptance alone confirms a rental", () => {
     const result = guardDraft("It's awaiting approval on my end. Once accepted, the booking will be confirmed and I'll share the exact pickup address.", opts);
     expect(result.flags.some(f => f.type === "PREMATURE_CONFIRMATION" && f.severity === "critical")).toBe(true);

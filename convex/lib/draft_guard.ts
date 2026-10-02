@@ -1198,9 +1198,9 @@ const ASSERTS_AVAIL_RE =
       );
   }
 
-  if (["awaiting_verification", "awaiting_payment", "awaiting_owner_approval"].includes(stage ?? "") &&
+  if (["inquiry", "unconfirmed", "cancelled", "verification_failed", "awaiting_verification", "awaiting_payment", "awaiting_owner_approval"].includes(stage ?? "") &&
     assertsOutsideConditional(text, /\b(?:(?:(?:your|the|this)\s+)?(?:booking|rental|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:confirmed|booked|secured|locked in|all set)\b|\byou(?:'re|’re| are)\s+(?:all\s+)?(?:booked|confirmed|set|good to go|locked in)\b|\b(?:confirmed|booked)\s+(?:your|the|this)\s+(?:booking|request|order|rental)\b/i)) {
-    push("PREMATURE_CONFIRMATION", "Claims confirmation before the platform's remaining booking steps are complete", "flagged");
+    push("PREMATURE_CONFIRMATION", "Claims a confirmed booking without a current confirmed platform order", "flagged");
   }
 
   // Future promises also have to respect the remaining platform steps.

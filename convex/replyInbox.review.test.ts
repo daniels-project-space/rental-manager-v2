@@ -33,6 +33,15 @@ async function setup() {
   return { ...fixture, args, convId, settingsId, bookingId, now };
 }
 describe("durable review mutations and automatic queue", () => {
+  it("regenerates a saved draft when its booking becomes obsolete without a new message", async () => {
+    const f=await setup();
+    expect(await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:"Helpful answer"})).toMatchObject({ok:true});
+    expect(f.rows.get(f.convId).ai_draft_context_key).toBe(f.args.context_key);
+    expect(await invoke(threadsNeedingDraft,f.ctx,{limit:20})).toEqual([]);
+    await f.ctx.db.patch(f.bookingId,{is_obsolete:true});
+    expect(await invoke(threadsNeedingDraft,f.ctx,{limit:20})).toEqual([f.args.thread_id]);
+    expect(await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:"Late old answer"})).toMatchObject({ok:false,reason:"stale_context"});
+  });
   it("persists reasons, clears the old preview and stops repeated backfill selection", async () => {
     const f = await setup();
     expect(await invoke(threadsNeedingDraft, f.ctx, { limit: 20 })).toEqual([f.args.thread_id]);

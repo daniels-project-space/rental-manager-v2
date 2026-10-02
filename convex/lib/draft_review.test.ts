@@ -8,7 +8,7 @@ describe("message-scoped human review", () => {
     const scope = { message_id: "renter-1", epoch: 2, context_key: draftContextKey(booking) };
     expect(currentDraftReview(review, scope)).toBe(review);
     for (const changed of [{ ...scope, message_id: "renter-2" }, { ...scope, epoch: 3 },
-      ...[{ end_date: "2026-10-05" }, { items: [{ name: "Sony FX3", qty: 2 }] }, { status: "CONFIRMED" }]
+      ...[{ end_date: "2026-10-05" }, { items: [{ name: "Sony FX3", qty: 2 }] }, { status: "CONFIRMED" }, {is_obsolete:true}, {pickup_date:"2026-10-03"}]
         .map(patch => ({ ...scope, context_key: draftContextKey({ ...booking, ...patch }) }))]) {
       expect(currentDraftReview(review, changed)).toBeNull();
     }
@@ -16,6 +16,13 @@ describe("message-scoped human review", () => {
   it("does not retry because a poll timestamp or item ordering changed", () => {
     const items = [{ name: "Sony FX3", qty: 1 }, { name: "Lens", qty: 1 }];
     expect(draftContextKey({ ...booking, items, updated_at: 1 })).toBe(draftContextKey({ ...booking, items: items.slice().reverse(), updated_at: 2 }));
+  });
+  it("invalidates on a real stage transition at London midnight without daily timestamp churn", () => {
+    const confirmed={...booking,status:"confirmed",start_date:"2026-10-03"};
+    expect(draftContextKey(confirmed,[],null,"2026-10-01")).toBe(draftContextKey(confirmed,[],null,"2026-10-02"));
+    expect(draftContextKey(confirmed,[],null,"2026-10-02")).not.toBe(draftContextKey(confirmed,[],null,"2026-10-03"));
+    const inUse={...booking,status:"ongoing",end_date:"2026-10-04"};
+    expect(draftContextKey(inUse,[],null,"2026-10-04")).not.toBe(draftContextKey(inUse,[],null,"2026-10-05"));
   });
   it("detects changes using the actual reservation item_name field", () => {
     expect(draftContextKey({ items: [{ item_name: "Sony FX3", qty: 1 }] }))

@@ -731,6 +731,7 @@ const operationalSchema = defineSchema({
     // as stale and auto-regenerated — so a fix reaches every thread without a
     // manual flush.
     ai_draft_epoch: v.optional(v.number()),
+    ai_draft_context_key: v.optional(v.string()),
     // Output-policing result (Phase 1 draft guard): confidence 0..1 + the flags
     // raised on the draft (auto-fixed leaks + items flagged for owner review).
     ai_draft_confidence: v.optional(v.number()),

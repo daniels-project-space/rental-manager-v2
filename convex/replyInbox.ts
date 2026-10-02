@@ -2,6 +2,8 @@ import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortListingTitle, shortItemName } from "./lib/item_display_name";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { getBotBooking, getLabOrder, type BotBooking } from "./lib/renter_booking";
+import { rentalStage } from "./lib/rental_stage";
+import { londonToday } from "./lib/effectiveDates";
 /**
  * Reply Inbox (2026-06-22) — cross-account "renter messages awaiting my reply"
  * queue for the dashboard widget.
@@ -685,6 +687,7 @@ async function assembleTile(
     ai_draft_stale:
       !!conv?.ai_draft_text &&
       ((conv?.ai_draft_epoch ?? 0) !== (hub?.draftEpoch ?? 0) ||
+        conv?.ai_draft_context_key !== draftContextKey(reservation, conv?.inquiry_items, simOrder) ||
         (conv?.ai_draft_generated_at ?? 0) < (conv?.last_renter_msg_at ?? 0)),
     location: computeLocation(reservation, slug, hub ?? null),
   };
@@ -1676,6 +1679,10 @@ export const getThreadContext = internalQuery({
       renter_total_rentals: renter?.total_rentals_count ?? null,
       low_reviews,
       has_reservation: !!reservation,
+      rental_stage: rentalStage(reservation ? {...reservation,
+        start_date: simOrder?.start_date ?? reservation.start_date,
+        end_date: simOrder?.end_date ?? reservation.end_date,
+      } : null, londonToday()),
       items: richItems.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name)),
       start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
       end_date: simOrder?.end_date ?? reservation?.end_date ?? null,
@@ -1734,9 +1741,9 @@ export const threadsNeedingDraft = internalQuery({
     );
     const out: string[] = [];
     for (const c of convs) {
+      const booking = await getBotBooking(ctx, c.thread_id);
       if (c.ai_draft_review) {
         const [latest] = await recentThreadMessages(ctx, c.thread_id, 1);
-        const booking = await getBotBooking(ctx, c.thread_id);
         if (currentDraftReview(c.ai_draft_review, { message_id: latest?.message_id, epoch,
           context_key: draftContextKey(booking, c.inquiry_items) })) continue;
       }
@@ -1746,6 +1753,7 @@ export const threadsNeedingDraft = internalQuery({
       if (
         !c.ai_draft_text ||
         (c.ai_draft_epoch ?? 0) !== epoch ||
+        c.ai_draft_context_key !== draftContextKey(booking, c.inquiry_items) ||
         (c.ai_draft_generated_at ?? 0) < (c.last_renter_msg_at ?? 0)
       )
         out.push(c.thread_id);
@@ -1773,6 +1781,7 @@ export const setDraftReview = internalMutation({
     const review = { for_message_id: message_id, epoch, context_key, reason, flags, stage, evidence, created_at: Date.now() };
     await ctx.db.patch(conv._id, { ai_draft_review: review, ai_draft_text: undefined,
       ai_draft_for_message_id: undefined, ai_draft_generated_at: undefined, ai_draft_epoch: undefined,
+      ai_draft_context_key: undefined,
       ai_draft_confidence: undefined, ai_draft_flags: undefined, ai_draft_evidence: undefined });
     return { ok: true as const, review };
   },
@@ -1823,7 +1832,8 @@ export const setDraft = internalMutation({
     }
     const settings = await ctx.db.query("settings").first();
     if (epoch !== undefined && epoch !== (settings?.draft_epoch ?? 0)) return { ok: false, reason: "stale_context" };
-    if (context_key !== undefined && context_key !== draftContextKey(await getBotBooking(ctx, thread_id), conv.inquiry_items, await getLabOrder(ctx, thread_id))) {
+    const currentContext = draftContextKey(await getBotBooking(ctx, thread_id), conv.inquiry_items, await getLabOrder(ctx, thread_id));
+    if (context_key !== undefined && context_key !== currentContext) {
       return { ok: false, reason: "stale_context" };
     }
     const patch: Record<string, unknown> = {
@@ -1832,6 +1842,7 @@ export const setDraft = internalMutation({
       ai_draft_for_message_id: message_id,
       ai_draft_generated_at: Date.now(),
       ai_draft_epoch: settings?.draft_epoch ?? 0,
+      ai_draft_context_key: currentContext,
       ai_draft_confidence: confidence,
       ai_draft_flags: flags,
       ai_draft_evidence: evidence,

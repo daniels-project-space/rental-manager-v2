@@ -1,4 +1,6 @@
 import type { DraftEvidence } from "./renter_draft_evidence";
+import { rentalStage } from "./rental_stage";
+import { londonToday } from "./effectiveDates";
 
 export type ReviewFlag = {
   type: string; detail: string; severity: "critical" | "high" | "medium" | "low";
@@ -10,11 +12,14 @@ export type DraftReview = {
 };
 
 /** Order facts, not polling timestamps. Reordered item arrays are equivalent. */
-export function draftContextKey(booking: unknown, inquiryItems: unknown = [], labOrder: unknown = null) {
+export function draftContextKey(booking: unknown, inquiryItems: unknown = [], labOrder: unknown = null, today = londonToday()) {
   const b = booking && typeof booking === "object" ? booking as Record<string, unknown> : {};
   const lab = labOrder && typeof labOrder === "object" ? labOrder as Record<string, unknown> : {};
   const items = lab.items ?? b.items ?? inquiryItems;
   return JSON.stringify({
+    stage: rentalStage(booking ? {...b, start_date: lab.start_date ?? b.start_date,
+      end_date: lab.end_date ?? b.end_date} as Parameters<typeof rentalStage>[0] : null, today).stage,
+    obsolete: b.is_obsolete ?? false, collection: b.pickup_date ?? null,
     start: lab.start_date ?? b.start_date ?? null, end: lab.end_date ?? b.end_date ?? null, returned: b.return_date ?? null,
     status: b.status ?? null, booking_status: b.booking_status ?? null, step: b.order_step ?? null,
     pending: b.awaiting_owner_action ?? false, pickup: b.pickup_method ?? null,

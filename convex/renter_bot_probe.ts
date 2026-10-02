@@ -52,6 +52,9 @@ export const seed = internalMutation({
         start_date: v.string(),
         end_date: v.string(),
         gross_paid_gbp: v.optional(v.number()),
+        is_obsolete: v.optional(v.boolean()),
+        pickup_date: v.optional(v.string()),
+        return_date: v.optional(v.string()),
         // The real Hygglo lifecycle, in order. Keeping the literal union
         // rather than a loose string means a probe cannot invent a stage that
         // production can never be in.
@@ -155,6 +158,9 @@ export const seed = internalMutation({
         hygglo_order_id: thread_id,
         account_slug,
         status: bk.status,
+        ...("is_obsolete" in bk ? {is_obsolete: bk.is_obsolete} : {}),
+        ...("pickup_date" in bk ? {pickup_date: bk.pickup_date} : {}),
+        ...("return_date" in bk ? {return_date: bk.return_date} : {}),
         renter_name: "Probe Renter",
         start_date: bk.start_date,
         end_date: bk.end_date,

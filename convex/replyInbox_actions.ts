@@ -4,8 +4,6 @@ import type { StockRequest } from "./lib/stock_claims";
 import type { KitEvidence } from "./lib/kit_claims";
 import { currentDraftReview, type DraftReview } from "./lib/draft_review";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
-import { rentalStage } from "./lib/rental_stage";
-import { londonToday } from "./lib/effectiveDates";
 "use node";
 /**
  * Reply Inbox — Node-runtime actions (LLM draft + gated live Hygglo send).
@@ -790,11 +788,7 @@ export const generateDraft = action({
     // (internal leaks, leaked reasoning, "Hygglo", timestamps, markdown, Leo/
     // diogo we→I) and FLAG judgement calls for my review (price/availability
     // claims, premature confirmation, false action claims, out-of-hours times…).
-    const guardStage = rentalStage(c.has_reservation ? {
-      status: c.status, order_step: c.order_step,
-      start_date: c.start_date, end_date: c.end_date,
-      awaiting_owner_action: c.awaiting_owner_action,
-    } : null, londonToday()).stage;
+    const guardStage = c.rental_stage.stage;
     const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
     const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b|\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.test(checkedDraft)
       ? await ctx.runQuery(api.renter_bot_tools.get_verified_camera_profiles, {}) : [];
