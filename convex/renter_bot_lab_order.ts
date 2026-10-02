@@ -89,7 +89,7 @@ async function listingPidForItem(
   const idx = await ctx.db.query("hygglo_product_index").collect();
   const ov = await ctx.db.query("listing_resolution_override").collect();
   const inventory = await ctx.db.query("items").collect();
-  const pids = baseListingProductIds(accountSlug, itemId, idx, ov, inventory);
+  const pids = baseListingProductIds(accountSlug, itemId, idx, ov, inventory,listings);
   let best: { pid: number; price: number } | null = null;
   for (const pid of pids) {
     const l = listings.find((x: { product_id: number }) => x.product_id === pid) as
@@ -117,7 +117,7 @@ async function resolveDailyPrice(
   const idx = await ctx.db.query("hygglo_product_index").collect();
   const ov = await ctx.db.query("listing_resolution_override").collect();
   const inventory = await ctx.db.query("items").collect();
-  const pids = baseListingProductIds(accountSlug, itemId, idx, ov, inventory);
+  const pids = baseListingProductIds(accountSlug, itemId, idx, ov, inventory,listings);
   let price: number | undefined;
   for (const pid of pids) {
     const l = listings.find((x: { product_id: number }) => x.product_id === pid) as

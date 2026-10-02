@@ -2,7 +2,7 @@ import { bestMatch } from "./item_name_match";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { extractComponents } from "./bundle_description_parse";
 
-type Inventory = { _id: unknown; name_canonical: string; kind: string; qty: number; aliases?: string[]; lens_mount?: string | null };
+type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
 const tokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
@@ -55,7 +55,7 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     const existing = resolved.find(row => row.item_id === String(item._id));
     // Explicit contents bullets state units; stock capacity must not reduce them.
     if (existing) existing.qty += component.qty;
-    else resolved.push({ item_id: String(item._id), name: item.name_canonical, qty: component.qty, kind: item.kind });
+    else resolved.push({ item_id: String(item._id), name: item.name_canonical, qty: component.qty, kind: item.kind ?? "unknown" });
   }
   return { components: resolved, unmatched, structured: usedBullets, explicit: hasContentsSection };
 }

@@ -69,7 +69,7 @@ export const check = internalQuery({
     let viaCatalog = 0;
     const details = [];
     for (const it of items) {
-      const pids = baseListingProductIds(account_slug, String(it._id), idx, ov, items);
+      const pids = baseListingProductIds(account_slug, String(it._id), idx, ov, items,listings);
       if (item_names?.includes(it.name_canonical)) details.push({
         name: it.name_canonical,
         listings: pids.map(pid => ({ product_id: pid, title: listings.find(l => l.product_id === pid)?.name,

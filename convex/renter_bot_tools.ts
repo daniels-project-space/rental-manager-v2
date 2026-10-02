@@ -285,7 +285,7 @@ export const get_listing_context = query({
                   q.eq("account_slug", account_slug).eq("product_id", pid),
                 )
                 .first();
-              if (!listing) continue;
+              if (!listing || !baseListingProductIds(account_slug,String(it._id),idxRows,overrides,allItems,[listing]).includes(pid)) continue;
               const p = listing.daily_price;
               const bp = bestListing?.daily_price;
               if (!bestListing || (typeof p === "number" && (typeof bp !== "number" || p < bp || (p === bp && listing.product_id < (bestListing.product_id ?? Infinity))))) {
@@ -398,7 +398,7 @@ export const get_listing_context = query({
           ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account_slug)).collect(),
           ctx.db.query("online_listings").withIndex("by_account",q=>q.eq("account_slug",account_slug)).collect(),
         ]);
-        const ids=baseListingProductIds(account_slug,String(it._id),indexes,overrides,allItems);
+        const ids=baseListingProductIds(account_slug,String(it._id),indexes,overrides,allItems,peers);
         storageNeedsReview=listingMediaConflict(included_with_rental ?? [],peers.filter(p=>ids.includes(p.product_id)).map(p=>p.name ?? ""));
         if (storageNeedsReview) included_with_rental=withoutUnverifiedMediaCapacity(included_with_rental ?? []);
       }
@@ -552,7 +552,7 @@ export const lookup_pricing = query({
             .query("hygglo_product_index")
             .withIndex("by_item_id", (q2) => q2.eq("item_id", im.match!._id))
             .collect();
-          const pids = new Set(baseListingProductIds(account_slug, String(im.match._id), idxRows, ovrRows, allItems));
+          const pids = new Set(baseListingProductIds(account_slug, String(im.match._id), idxRows, ovrRows, allItems,listings));
           // Among this item's own listings prefer the CHEAPEST — that's the
           // base offering rather than an add-on bundle built around it.
           best = chooseBaseListing(listings, [...pids]);
@@ -619,7 +619,7 @@ export const lookup_pricing = query({
         if (!matchedCanonical) {
           const inventory = await ctx.db.query("items").collect();
           const identities = inventory.filter(i => i.status === "active" && !i.is_marketing_only &&
-            baseListingProductIds(account_slug, String(i._id), idxRows, ovrRows, inventory).includes(best!.product_id));
+            baseListingProductIds(account_slug, String(i._id), idxRows, ovrRows, inventory,listings).includes(best!.product_id));
           if (identities.length === 1) matchedCanonical = identities[0].name_canonical;
         }
         // REAL Hygglo tiers, not a guessed curve.
@@ -651,6 +651,10 @@ export const lookup_pricing = query({
           reason: "not_rentable" as const,
           message: "This listing contains an item that is not owned rentable inventory. Do not quote or recommend this offering; use a separately verified owned alternative.",
         };
+        if (!selectedContents.complete || selectedContents.owned !== true || (!selectedContents.coverage && /body-only-fallback/i.test(ovrRows.find(o=>o.product_id===best!.product_id)?.note ?? ""))) return {
+          found:false as const,item_name,product_id:best.product_id,reason:"listing_mapping_unverified" as const,
+          message:"This listing's full equipment mapping is unverified. Its price cannot establish a rentable kit or a body-only rate. Ask for owner review or use a separately verified base offering. This is not a dated out-of-stock verdict.",
+        };
         const componentBaseOfferings: Array<{name:string;listing_name:string;product_id:number}> = [];
         if (!matchedCanonical && selectedContents.complete && selectedContents.owned === true) {
           const inventory = await ctx.db.query("items").collect();
@@ -658,7 +662,7 @@ export const lookup_pricing = query({
             if (!component.stock_required || component.owned !== true) continue;
             const item = inventory.find(i => String(i._id) === component.item_id);
             if (!item || !["camera", "camera_body", "lens", "drone", "gimbal", "monitor", "audio", "lighting", "grip"].includes(item.kind ?? "")) continue;
-            const candidate = chooseBaseListing(listings, baseListingProductIds(account_slug, component.item_id, idxRows, ovrRows, inventory));
+            const candidate = chooseBaseListing(listings, baseListingProductIds(account_slug, component.item_id, idxRows, ovrRows, inventory,listings));
             if (!candidate || candidate.product_id === best.product_id || !candidate.name) continue;
             const contents = await loadListingInventory(ctx, account_slug, candidate.product_id);
             if (!contents.complete || contents.owned !== true) continue;
@@ -671,7 +675,7 @@ export const lookup_pricing = query({
           const item=mediaInventory.find(i=>String(i._id)===c.item_id);
           if (!item || !["camera","camera_body"].includes(item.kind ?? "")) return false;
           const recorded=(item.compatibility as {included_with_rental?:string[]} | undefined)?.included_with_rental ?? [];
-          const baseIds=baseListingProductIds(account_slug,c.item_id,idxRows,ovrRows,mediaInventory);
+          const baseIds=baseListingProductIds(account_slug,c.item_id,idxRows,ovrRows,mediaInventory,listings);
           return listingMediaConflict(recorded,listings.filter(l=>baseIds.includes(l.product_id)).map(l=>l.name ?? ""));
         });
         return {
@@ -712,8 +716,8 @@ export const lookup_pricing = query({
         // informed one instead of another guess at the spelling.
         did_you_mean: nearMisses,
         guidance: nearMisses.length
-          ? "That exact name matched nothing. If one of did_you_mean is the same item, call lookup_pricing ONCE more with that exact title. If none of them is, we do not stock it — say so and offer the closest thing we do. Do NOT retry with reworded versions of the original name, and do NOT quote a price for a did_you_mean entry without looking it up."
-          : "That exact name matched nothing and there is no close listing on this account. Do not retry with a reworded name; say you'll confirm the price, or offer something we do stock.",
+          ? "That exact name matched nothing. If one of did_you_mean is the same item, call lookup_pricing ONCE more with that exact title. If none of them is, the price or identity needs confirmation. A price miss does not prove that the gear is unavailable; check exact owned inventory and dates before refusing it. Do NOT retry with reworded versions of the original name, and do NOT quote a price for a did_you_mean entry without looking it up."
+          : "That exact name matched nothing and there is no close listing on this account. Do not retry with a reworded name; say you'll confirm the price, or check a verified owned alternative. This price miss is not an out-of-stock verdict.",
       };
     }
 
@@ -1007,7 +1011,7 @@ export const find_owned_alternatives = query({
     const allInventory = await ctx.db.query("items").collect();
     const specs = await ctx.db.query("item_specs").collect();
     const specsByItem = new Map(specs.map(spec => [String(spec.item_id), spec]));
-    const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory);
+    const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory,listings);
     // Alternative listing quotes require identity-backed account pricing.
 
     // Rank by SUBSTITUTABILITY, not bare name overlap. A renter asking for a
@@ -1265,7 +1269,7 @@ export const get_mount_adapters = query({
     // the index alone misses adapters that are only mapped by an override, and
     // the price silently degrades to null or a stale catalog row.
     const ovAll = await ctx.db.query("listing_resolution_override").collect();
-    const pidsFor = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, inventory);
+    const pidsFor = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, inventory,listings);
     const priceFor = (itemId: string, name: string): number | null => {
       let best: number | null = null;
       for (const pid of pidsFor(itemId)) {

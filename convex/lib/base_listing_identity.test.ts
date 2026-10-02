@@ -4,6 +4,27 @@ const items = [{ _id: "body", name_canonical: "Sony FX3", kind: "camera" }, { _i
 const index = [{ account_slug: "leo", product_id: 1, item_id: "body" }];
 const ids = (components: Array<{ item_id: string; qty: number }>, target = "body") => baseListingProductIds("leo", target, index, [{ account_slug: "leo", product_id: 1, components }], items);
 describe("base listing identity", () => {
+  it("rejects a legacy body-only fallback even when advertising cannot be parsed",()=>{
+    expect(baseListingProductIds("leo","body",index,[{account_slug:"leo",product_id:1,note:"description [body-only-fallback]",components:[{item_id:"body",qty:1}]}],items)).toEqual([]);
+  });
+  it("uses currently verified contents rather than an obsolete fallback audit note",()=>{
+    const mapping=[{account_slug:"leo",product_id:1,note:"old body-only-fallback; later repaired",components:[{item_id:"body",qty:1}]}];
+    expect(baseListingProductIds("leo","body",index,mapping,items,[{product_id:1,description:"Included in this rental: • Sony FX3 • 1TB SSD"}])).toEqual([1]);
+  });
+  it("rejects missing equipment in an explicit kit before it becomes a base body price",()=>{
+    const listings=[{product_id:1,description:"Included in this rental: • Sony FX3 • Sony 24-70mm"}];
+    const mapping=[{account_slug:"leo",product_id:1,components:[{item_id:"body",qty:1}]}];
+    expect(baseListingProductIds("leo","body",index,mapping,items,listings)).toEqual([]);
+    expect(baseListingProductIds("leo","body",index,[],items,listings)).toEqual([]);
+  });
+  it("keeps a verified body with incidental supplied media as a base offering",()=>{
+    const listings=[{product_id:1,description:"Included in this rental: • Sony FX3 • 1TB SSD • 5x batteries"}];
+    expect(baseListingProductIds("leo","body",index,[{account_slug:"leo",product_id:1,components:[{item_id:"body",qty:1}]}],items,listings)).toEqual([1]);
+  });
+  it("does not assume unresolved advertised lenses are incidental accessories",()=>{
+    const listings=[{product_id:1,description:"Included in this rental: • Sony FX3 • Great Joy Anamorphic Lens Set – 35mm, 50mm, 85mm"}];
+    expect(baseListingProductIds("leo","body",index,[{account_slug:"leo",product_id:1,components:[{item_id:"body",qty:1}]}],items,listings)).toEqual([]);
+  });
   it("prices a camera with its recorded supplied adapter without pricing the adapter from that camera",()=>{
     const inventory=[{_id:"ff",name_canonical:"BMPCC 6K Full Frame",kind:"camera",compatibility:{included_with_rental:["EF to L mount adapter"]}},{_id:"adapter",name_canonical:"EF to L mount",aliases:["EF to L mount adapter"],kind:"adapter"}];
     const mapping=[{account_slug:"leo",product_id:10,components:[{item_id:"ff",qty:1},{item_id:"adapter",qty:1}]}];

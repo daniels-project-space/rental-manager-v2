@@ -1,0 +1,11 @@
+# Prevent incomplete kit mappings from supplying body prices
+
+Leo product 1112159 advertises a Pro, Great Joy 35/50/85mm lenses and an RS3 Pro gimbal. Its legacy override contained only the Pro body. Native exact-title pricing returned £260 for two days under the canonical Pro identity, even though the declared kit mapping was incomplete. The description resolver identified the missing gimbal and unresolved lens set.
+
+Base offering selection now checks declared equipment coverage as well as mapped components. Unresolved or missing equipment cannot establish a body-only rate. Historical body-only fallbacks require explicit current contents proof; repaired mappings are judged by current coverage rather than obsolete audit-note text. All pricing, recommendation, adapter, listing-context and Lab base-selection callers use this rule. Exact-kit pricing also refuses incomplete/unverified ownership mappings, with an owner-review reason and no usable total. Explicitly unrentable items remain a separate refusal. A price miss never establishes dated unavailability.
+
+Live regression verification refused the incomplete advertised kit via exact ID and exact title. Verified Pro offerings retained £70 and £94, repaired Full Frame kit £124, and FX3 £98. General Pro lookup still chose £70. An initial implementation exceeded the Native query CPU limit; identity matching now runs before description parsing. A regression also caught historical fallback notes on the repaired Full Frame kit; current coverage now takes precedence. These failures and original receipts are retained.
+
+The current catalog snapshot contains 108 inventory items, 1,133 listings and 399 overrides. Coverage analysis flags 200 incomplete mappings for review; that count does not prove 200 incorrect listings. Seven of eleven mappings with historical body-only-fallback notes remain incomplete, while four have current complete coverage. Inventory quantities, listing records and overrides were not rewritten by this audit.
+
+Validation: 1,186 tests passed / 14 skipped across 91 files; final Next build, backend typecheck/deploy and Graphify update passed. Exact production alias and fresh model acceptance are recorded separately. Combined recommendation totals, unavailable-item evidence and the broader production-readiness audit remain open. Real Hygglo actions stay disabled.
