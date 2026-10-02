@@ -1,4 +1,5 @@
 import type { MinimumRentalContext } from "./minimum_rental";
+import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
 import { unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
@@ -539,41 +540,10 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
 
   // 8. MARKETING-ONLY ITEM CLAIMED AVAILABLE — FLAG (factPack-gated)
   const marketingItems = factPack?.marketingItems ?? [];
-  if (marketingItems.length > 0) {
-    // Must distinguish "the X IS available" from "the X ISN'T available".
-    //
-    // This matched the word "available" ANYWHERE in the draft plus the item
-    // name ANYWHERE, with no negation handling — so it fired on the exact
-    // script the system REQUIRES for a not-owned item ("that exact RED Komodo
-    // isn't available for next week, but I have the Sony FX3 at £40/day"),
-    // because that sentence contains both the name and the word "available".
-    // Every correct reply on the not-owned path was therefore escalated.
-    // Rule 8b below already handles negation properly; this now does too.
-    //
-    // Scoped to what FOLLOWS the item name, so a negation attached to a
-    // DIFFERENT item later in the reply can't excuse a positive claim here.
-    const tl = text.toLowerCase();
-    const POSITIVE =
-      /^(?:\s*\w+){0,3}?\s*(?:is|are|'?s|looks?)?\s*(?:still\s+)?(?:available|free|in stock)\b|^[^.!?]{0,40}\b(?:i|we)'?(?:ve)?\s*(?:have|got)\b/i;
-    const NEGATED = /\b(?:is\s?n[o']?t|are\s?n[o']?t|not|no longer|un)\s*(?:available|free|in stock)\b|\b(?:don'?t|do not)\s+(?:have|stock)\b/i;
-    for (const item of marketingItems) {
-      const idx = tl.indexOf(item.toLowerCase());
-      if (idx === -1) continue;
-      // Cut at the sentence end: a raw character window spilled into the NEXT
-      // sentence, so "The RED Komodo is available then. The Sony FX3 isn't
-      // available that week." was excused by the FX3's negation.
-      const after = text
-        .slice(idx + item.length, idx + item.length + 120)
-        .split(/[.!?]/)[0];
-      if (NEGATED.test(after)) continue; // correct concealment wording
-      if (POSITIVE.test(after)) {
-        push(
-          "MARKETING_ITEM_AVAILABLE",
-          `Claims marketing-only item "${item}" is available`,
-          "flagged",
-        );
-      }
-    }
+  const fulfillmentNames=[...(opts.stockEvidence??[]).map(r=>r.item),...(opts.stockRequest?.items??[]).flatMap(i=>[i.name,...(i.aliases??[]),...(i.components??[]).map(c=>c.name)]),
+    ...(opts.availability?.items??[]).map(i=>i.name),...(factPack?.pricing?.itemPrices??[]).map(i=>i.name),...(opts.priceEvidence??[]).filter(e=>e.kind==="rental").flatMap(e=>e.names)];
+  for(const item of forbiddenFulfillmentClaims(text,marketingItems,fulfillmentNames)) {
+    push("MARKETING_ITEM_AVAILABLE", `Claims marketing-only item "${item}" can be fulfilled`, "flagged");
   }
 
   // 8b. Compare each item's local clause, not unrelated claims elsewhere.
@@ -1217,17 +1187,8 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 21b. UNFULFILLABLE BOOKING — FLAG (confirms gear we don't own)
-  if (opts.unfulfillableItems?.length) {
-    const confirms =
-      /\b(available|in stock|approved|confirmed|all set|sorted|good to go|booked for you|just (?:needs?|pay)|go ahead and pay|ready for you|locked in)\b/i.test(
-        text,
-      );
-    if (confirms)
-      push(
-        "UNFULFILLABLE_BOOKING",
-        `Confirms/offers an item we don't own (${opts.unfulfillableItems.slice(0, 2).join(", ")}) — should decline or offer a real alternative`,
-        "flagged",
-      );
+  for(const item of forbiddenFulfillmentClaims(text,opts.unfulfillableItems??[],fulfillmentNames)) {
+    push("UNFULFILLABLE_BOOKING", `Confirms/offers an item we cannot fulfil (${item})`, "flagged");
   }
 
   // 22. FALSE ACTION CLAIM — FLAG

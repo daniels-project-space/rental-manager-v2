@@ -36,6 +36,7 @@ export default defineConfig({
       "convex/lib/renter_kit_evidence.test.ts",
       "convex/lib/kit_claims.test.ts",
       "convex/lib/draft_review.test.ts",
+      "convex/lib/fulfillment_claims.test.ts",
       "convex/replyInbox.review.test.ts",
       "convex/lib/recommendation_kit.test.ts",
       "convex/seed/kit_source_repair.test.ts",

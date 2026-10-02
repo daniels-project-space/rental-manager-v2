@@ -126,6 +126,7 @@ import type * as lib_draft_review from "../lib/draft_review.js";
 import type * as lib_draft_review_validator from "../lib/draft_review_validator.js";
 import type * as lib_effectiveDates from "../lib/effectiveDates.js";
 import type * as lib_feature_flags_helper from "../lib/feature_flags_helper.js";
+import type * as lib_fulfillment_claims from "../lib/fulfillment_claims.js";
 import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
 import type * as lib_hygglo_pricing from "../lib/hygglo_pricing.js";
 import type * as lib_imageResolution from "../lib/imageResolution.js";
@@ -423,6 +424,7 @@ declare const fullApi: ApiFromModules<{
   "lib/draft_review_validator": typeof lib_draft_review_validator;
   "lib/effectiveDates": typeof lib_effectiveDates;
   "lib/feature_flags_helper": typeof lib_feature_flags_helper;
+  "lib/fulfillment_claims": typeof lib_fulfillment_claims;
   "lib/gatedGenerate": typeof lib_gatedGenerate;
   "lib/hygglo_pricing": typeof lib_hygglo_pricing;
   "lib/imageResolution": typeof lib_imageResolution;

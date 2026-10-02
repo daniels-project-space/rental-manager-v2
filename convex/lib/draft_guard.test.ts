@@ -282,6 +282,7 @@ describe("guardDraft — MARKETING_ITEM_AVAILABLE negation handling", () => {
     ...baseOpts,
     lastRenterMessage: "is the red komodo available next week?",
     factPack: { marketingItems: ["RED Komodo"] },
+    availability: {items:[{name:"RED Komodo",available:false},{name:"Sony FX3",available:true}]},
   };
 
   it("does NOT fire on the required concealment wording", () => {
@@ -315,6 +316,14 @@ describe("guardDraft — MARKETING_ITEM_AVAILABLE negation handling", () => {
       opts,
     );
     expect(r.flags.map((f) => f.type)).toContain("MARKETING_ITEM_AVAILABLE");
+  });
+  it("does not let the second guard block a correct decline and owned alternative",()=>{
+    const result=guardDraft("The RED Komodo isn't available for those dates, but the Sony FX3 is available.",{...opts,unfulfillableItems:["RED Komodo"],hasItemGrounding:true,availability:{items:[{name:"RED Komodo",available:false},{name:"Sony FX3",available:true}]}});
+    expect(result.flags.filter(f=>["MARKETING_ITEM_AVAILABLE","UNFULFILLABLE_BOOKING"].includes(f.type))).toEqual([]);
+  });
+  it("does not let a same-sentence denial of another model hide a false offer",()=>{
+    const result=guardDraft("The RED Komodo is available, but the Sony FX3 isn't available.",opts);
+    expect(result.flags.some(f=>f.type==="MARKETING_ITEM_AVAILABLE")).toBe(true);
   });
 });
 
