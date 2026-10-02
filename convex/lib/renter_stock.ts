@@ -2,7 +2,7 @@ import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { bestMatch } from "./item_name_match";
 import { claimHoldsStock } from "./availability";
-import { extensionOccupancyQty, effStart, effEnd } from "./double_booking";
+import { effStart, effEnd } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildOverrideMap, buildProductIndexMap, reservationItemUnits } from "./reservations/itemUnits";
 import { londonToday } from "./effectiveDates";
@@ -34,6 +34,8 @@ type Occupancy = {
   qty: number;
   renter_name?: string | null;
   order_id?: string;
+  /** Account + renter identity + complete physical basket, never name alone. */
+  extension_key?: string;
 };
 type DateBlock = { start_date: string; end_date: string };
 
@@ -42,7 +44,13 @@ export function stockWindowPeak(occupancy: Occupancy[], start: string, end: stri
   const instants = new Set([start, ...occupancy.map((r) => r.start).filter((t) => t >= start && t < end)]);
   let peak = 0;
   for (const at of instants) {
-    peak = Math.max(peak, extensionOccupancyQty(occupancy.filter((r) => r.start <= at && r.end > at)));
+    const extensions = new Map<string, number>();
+    let independent = 0;
+    for (const row of occupancy.filter((r) => r.start <= at && r.end > at)) {
+      if (!row.extension_key) independent += row.qty;
+      else extensions.set(row.extension_key, Math.max(extensions.get(row.extension_key) ?? 0, row.qty));
+    }
+    peak = Math.max(peak, independent + [...extensions.values()].reduce((sum, qty) => sum + qty, 0));
   }
   return peak;
 }
@@ -117,7 +125,8 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     // The requesting booking already occupies its units; it must not block itself.
     if (request.thread_id && r.hygglo_order_id === request.thread_id) continue;
     if (!r.start_date || !r.end_date) continue;
-    const qty = reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items).get(String(item._id)) ?? 0;
+    const units = reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items);
+    const qty = units.get(String(item._id)) ?? 0;
     if (qty <= 0) continue;
     const pickup = effStart({ start_date: r.start_date, pickup_date: r.pickup_date });
     const ret = effEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today);
@@ -127,7 +136,12 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
       // The buffer carries into the following date instead of wrapping to 00:xx.
       end = new Date(Date.parse(`${ret}T${returnTime}:00Z`) + 3600000).toISOString().slice(0, 16);
     }
-    occupancy.push({ start: `${pickup}T${r.pickup_time ?? "00:00"}`, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id });
+    const name = r.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+    const renter = r.renter_id ? `id:${r.renter_id}` : name && !["unknown", "unknown renter", "?", "—"].includes(name) ? `name:${name}` : undefined;
+    // Preserve same-kit extensions; sharing a battery or adapter does not make
+    // two different kits one rental. Quantity is part of the complete basket.
+    const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
+    occupancy.push({ start: `${pickup}T${r.pickup_time ?? "00:00"}`, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
   }
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
   const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations });

@@ -1,0 +1,11 @@
+# Shared stock across same-renter kits — 2 October 2026
+
+Renter availability previously used the notification extension helper, which keeps the largest overlapping quantity per normalized renter name. Two separate Blackmagic kits for one renter each supply five NP-F570 batteries, but availability counted only five from the shared pool instead of ten.
+
+Stock occupancy now merges only an overlapping matching complete physical basket with the same account and renter identity. The basket includes quantities and is built by reservationItemUnits, so Native listing overrides and supplied components determine its contents. Different baskets, renter IDs or unidentified renters count separately. Same-kit extensions remain counted once. The name-based notification behavior remains as requested; it no longer determines stock occupancy.
+
+Limits: matching account/renter/basket is still an extension heuristic, not a verified platform extension link. Distinct concurrent orders with exactly the same basket and renter can still be ambiguous. Changed quantities count separately until their relationship can be established; unknown identities also remain separate. No real reservations or renter messages were edited.
+
+Validation: 1,139 tests passed, 14 skipped, including distinct camera kits sharing a pool, matching extensions, different renter IDs and changed quantities. Next build, Convex typecheck/deployment and Graphify update passed (existing partial AST warning for audit_qty_drift_data.ts remains). Current Native catalog allocations were read and passed through the actual local stockForItem implementation with explicitly simulated reservation inputs: old name-only demand 5, corrected demand 10, pool 12, free 2, request for 3 rejected; matching extension demand 5/free 7. This proof is not a claim that two such real reservations currently exist. Live Native availability separately verifies the pool lower bound, rejection of 13 units and five-battery kit receipt. Evidence: /root/rental-shared-pool-native-fixture-proof.json and /root/rental-shared-pool-native-regression-proof.json.
+
+Real Hygglo rollout remains disabled pending explicit written consent. The broader bot audit remains active.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evaluateStockWindow, stockWindowPeak, validIsoDate } from "./renter_stock";
+import { evaluateStockWindow, stockForItem, stockWindowPeak, validIsoDate } from "./renter_stock";
 
 const request = { item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04" };
 const evaluate = (overrides: Partial<Parameters<typeof evaluateStockWindow>[0]> = {}) => evaluateStockWindow({ request, owned: true, total: 4, repair: 0, occupancy: [], blackouts: [], vacations: [], ...overrides });
@@ -20,8 +20,11 @@ describe("renter stock verdicts", () => {
   it("deducts multi-unit bookings and independent renters", () => {
     expect(evaluate({ occupancy: [hire(2), hire(1, "B")] }).free_units).toBe(1);
   });
-  it("counts an extension once, preserving a larger extended quantity", () => {
-    expect(evaluate({ occupancy: [hire(1), hire(2)] }).free_units).toBe(2);
+  it("counts a proven matching-basket extension once", () => {
+    expect(evaluate({ occupancy: [{ ...hire(2), extension_key: "same-basket" }, { ...hire(2), extension_key: "same-basket" }] }).free_units).toBe(2);
+  });
+  it("does not merge occupancy by renter name alone", () => {
+    expect(evaluate({ occupancy: [hire(1), hire(2)] }).free_units).toBe(1);
   });
   it("does not total rentals that do not overlap each other", () => {
     const occupancy = [{ ...hire(3), end: "2026-10-03T00:00" }, { ...hire(3, "B"), start: "2026-10-03T00:00" }];
@@ -66,5 +69,29 @@ describe("renter stock verdicts", () => {
   });
   it("does not merge unnamed renters", () => {
     expect(stockWindowPeak([{ ...hire(1), renter_name: undefined }, { ...hire(1), renter_name: undefined }], "2026-10-02T00:00", "2026-10-03T00:00")).toBe(2);
+  });
+});
+
+describe("shared kit stock across separate reservations", () => {
+  const pool = {_id:"b",name_canonical:"NP-F570 batteries",kind:"power",unit_kind:"unit",track_independent_stock:true,status:"active",qty:12};
+  const camera = (id:string) => ({_id:id,name_canonical:id,kind:"camera",supplied_stock:[{item_id:"b",qty:5,source:"kit"}]});
+  const items = [camera("pro"),camera("ff"),pool];
+  const reservation = (order:string,product:number,extra={}) => ({hygglo_order_id:order,account_slug:"leo",renter_name:"Same Renter",status:"confirmed",start_date:"2026-10-20",end_date:"2026-10-21",hygglo_items:[{product_id:product}],...extra});
+  const check = (reservations:any[]) => stockForItem({items,reservations,productIndex:new Map(),overrides:new Map([["leo#1",[{item_id:"pro",qty:1}]],["leo#2",[{item_id:"ff",qty:1}]]]),claims:[],blackouts:[],vacations:[]} as any,pool as any,{item_name:pool.name_canonical,start_date:"2026-10-20",end_date:"2026-10-21",quantity:3});
+  it("counts five batteries in each different kit for the same renter",()=>{
+    const result=check([reservation("pro-order",1),reservation("ff-order",2)]);
+    expect(result.free_units).toBe(2);
+    expect(result.available).toBe(false);
+    expect(result.per_day.map(d=>d.booked)).toEqual([10,10]);
+  });
+  it("preserves matching kit extensions with normalized names",()=>{
+    expect(check([reservation("original",1),reservation("extension",1,{renter_name:" SAME   RENTER "})]).free_units).toBe(7);
+  });
+  it("counts different renter IDs separately even when names match",()=>{
+    expect(check([reservation("a",1,{renter_id:"person-a"}),reservation("b",1,{renter_id:"person-b"})]).free_units).toBe(2);
+  });
+  it("does not merge unknown renters or changed basket quantities",()=>{
+    expect(check([reservation("a",1,{renter_name:"Unknown"}),reservation("b",1,{renter_name:"Unknown"})]).free_units).toBe(2);
+    expect(check([reservation("a",1),reservation("b",1,{hygglo_items:[{product_id:1,qty:2}]})]).free_units).toBe(0);
   });
 });
