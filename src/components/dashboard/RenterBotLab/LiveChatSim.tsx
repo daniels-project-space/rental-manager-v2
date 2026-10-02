@@ -300,7 +300,7 @@ function ContextBanner({ context, threadId, accountSlug }: { context: SessionCon
           order?.lines.length ? order.lines.map((l) => `${l.qty}× ${l.display_name ?? l.name}`).join(", ") : context.items.length ? context.items.join(", ") : "not set",
         )}
         {row("Simulation dates", order?.start_date ? `${order.start_date} → ${order.end_date}` : context.dates || (context.startDate ? `${context.startDate} → ${context.endDate}` : "not set"))}
-        {row("Stage", context.lifecycle?.replace(/_/g, " ") || "inquiry")}
+        {row("Stage", order?.stage?.toLowerCase().replace(/_/g, " ") ?? context.lifecycle?.replace(/_/g, " ") ?? "inquiry")}
         {row("Location", context.location || "not set")}
         {row(
           "Seed price",
@@ -487,8 +487,8 @@ export function LiveChatSim({
       const restored = await redeemReferral({ thread_id: threadId, code: referralInput.trim() });
       if (!restored.ok) throw new Error(restored.error ?? "Could not restore the basket");
       createdFriendThreads.current.push(threadId);
-      setSession({ threadId, accountSlug: session.accountSlug, context: { ...friend.context, items: restored.order?.lines.map(l => l.name) ?? [], startDate: restored.order?.start_date ?? undefined, endDate: restored.order?.end_date ?? undefined } });
-      setTurns([{ role: "bot", text: "Friend referral recognised. Your basket has been restored with current stock and prices. This is a new request from your own account and still needs the platform's checks." }]);
+      setSession({ threadId, accountSlug: session.accountSlug, context: { ...friend.context, items: restored.order?.lines.map(l => l.name) ?? [], productId: restored.order?.lines[0]?.product_id, priceGbp: restored.order?.lines[0]?.daily_price_gbp ?? undefined, startDate: restored.order?.start_date ?? undefined, endDate: restored.order?.end_date ?? undefined } });
+      setTurns([{ role: "bot", text: restored.message ?? "Friend referral recognised. Your basket has been restored with current stock and prices. This is a new request from your own account and still needs the platform's checks." }]);
       setFailureFeedback("Separate friend inquiry — no verification, payment or approval transferred.");
       setReferralInput("");
     } catch (e) {
