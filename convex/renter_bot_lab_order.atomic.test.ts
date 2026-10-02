@@ -277,3 +277,13 @@ describe("commercial offering identity and marginal quotes",()=>{
   const p=await preview(ctx);expect(p).toMatchObject({ok:true,additional_cost_gbp:40,base_quote:{total_gbp:60},quote:{total_gbp:100,lines:[{qty:1,daily_price_gbp:30},{qty:1,daily_price_gbp:20}]}});
  });
 });
+
+it("blocks every mistaken edit against a quote-only renter message without writing",async()=>{
+ const {ctx,tables}=fixture();
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"quote",sender:"renter",body_text:"Could you quote an extra Sony FX3? Quote only, don't change my booking.",fetched_at:1,_creationTime:1}];
+ const before=structuredClone(tables);
+ for(const action of ["add_item","remove_item","set_dates"]){
+  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action,item_name:"Sony FX3",qty:1,start_date:"2026-10-08",end_date:"2026-10-09",request_message_id:"quote"})).toMatchObject({ok:false,action_performed:false,error_code:"renter_requested_read_only"});
+  expect(tables).toEqual(before);
+ }
+});

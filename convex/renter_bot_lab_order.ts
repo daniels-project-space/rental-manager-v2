@@ -1,3 +1,4 @@
+import { renterRequestsReadOnly } from "./lib/renter_booking_consent";
 import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
@@ -303,6 +304,10 @@ export const applyChange = mutation({
     const [latestMessage] = await recentThreadMessages(ctx, a.thread_id, 1);
     if (a.request_message_id !== undefined && a.request_message_id !== latestMessage?.message_id)
       return { ok:false, error_code:"stale_inbound", error:"A newer message arrived. No booking changes were made; regenerate using the current conversation." };
+    if (!a.preview_only && latestMessage?.sender === "renter" &&
+      renterRequestsReadOnly(latestMessage.body_text, a.action))
+      return {ok:false,action_performed:false,error_code:"renter_requested_read_only",
+        error:"The current renter message requests pricing only or prohibits this edit. No booking changes were made. Use a read-only quote or answer their question; ask for confirmation before making the restricted change."};
     const messageId = a.request_message_id ?? latestMessage?.message_id;
     const nativeItems = a.action === "set_dates" ? [] : await ctx.db.query("items").collect();
     const identity = a.item_name ? bestMatch(a.item_name, nativeItems, i=>i.name_canonical, i=>i.aliases ?? []) : null;
