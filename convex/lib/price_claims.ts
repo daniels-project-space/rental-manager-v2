@@ -39,7 +39,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   let consumed = 0;
   for (const m of text.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/g)) {
     const pos = m.index!;
-    const before = norm(text.slice(consumed, pos));
+    // Normalise identities within clauses, retaining boundaries so a camera
+    // mention cannot absorb a later pronoun from another sentence.
+    const before = text.slice(consumed, pos).split(/;|\n|(?<=[.!?])\s+/).map(norm).join(". ");
     let lastName = "", lastAt = -1, lastEnd = -1;
     for (const n of names) {
       const at = (` ${before} `).lastIndexOf(` ${n} `);
@@ -47,7 +49,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     }
     if (lastAt >= 0) subject = focalSubjects.get(lastName) ?? [lastName];
     // Explicit unknown camera identities must not inherit the previous quote.
-    const models = [...before.matchAll(/\b(?:pyxis(?:\s+\d+k)?|fx\s*\d+[a-z]*|a7\s*(?:iii|ii|iv|v|\d+)|(?:canon\s+)?(?:r5c?|r6|c70)|(?:blackmagic|bmpcc)\s+[^£.!?]{0,55})\b/g)];
+    const models = [...before.matchAll(/\b(?:pyxis(?:\s+\d+k)?|fx\s*\d+[a-z]*|a7\s*(?:iii|ii|iv|v|\d+)|(?:canon\s+)?(?:r5c?|r6|c70)|(?:blackmagic|bmpcc)\s+(?!(?:kit|set|booking)\b)[^£.!?]{0,55})\b/g)];
     const unknown = models.at(-1);
     if (unknown && unknown.index! > Math.max(-1, lastAt) && !names.some(n => (` ${n} `).includes(` ${unknown[0].trim()} `))) subject = [norm(unknown[0])];
     const segment = text.slice(consumed,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";

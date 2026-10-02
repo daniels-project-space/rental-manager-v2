@@ -61,6 +61,14 @@ describe("receipted lens shorthand",()=>{
   for(const name of ["Canon RF 16-35mm","RF 16-35mm","Sony E 16-35mm","Sigma EF 16-35mm"])
    expect(unsupportedPriceClaims(`${name} is £40 for the 2 days.`,[lens],scope)).not.toEqual([]);
  });
+ it("keeps a generic kit-owner aside out of a lens's price identity",()=>{
+  const dated=[lens,basket].map(e=>({...e,start_date:scope.start_date!,end_date:scope.end_date!}));
+  const reply="The Canon EF 16-35mm f2.8 is fully compatible since your booked Blackmagic kit already includes the EF to L mount adapter.\n\nIt is available for 20 to 21 October. Adding it would be £40 for the 2 days (£20/day), which would bring your total booking to £164.";
+  expect(unsupportedPriceClaims(reply,dated,scope)).toEqual([]);
+  for(const wrong of [reply.replace("£40","£60"),reply.replace("£20","£30"),reply.replace("£164","£124"),reply.replace("2 days","3 days"),reply.replace("Adding it","Blackmagic 8K Mystery is"),reply.replace("Adding it","Canon RF 16-35mm is")])
+   expect(unsupportedPriceClaims(wrong,dated,scope),wrong).not.toEqual([]);
+  expect(unsupportedPriceClaims("Canon EF 16-35mm f2.8 is available. Blackmagic 8K Mystery is another model. It is £40 for the 2 days.",dated,scope)).not.toEqual([]);
+ });
  it("resolves adding pronouns after stripping a leading hire duration",()=>{
   const dated=[lens,basket].map(e=>({...e,start_date:scope.start_date!,end_date:scope.end_date!}));
   const reply="Canon EF 16-35mm f2.8 is available for 20 to 21 October. For the 2 days, adding it would be £40 (£20/day), which would bring the total booking to £164.";

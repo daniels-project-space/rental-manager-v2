@@ -125,9 +125,11 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
     const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
+    const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
     let targets = reference ? [reference.item] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
+    else if (countedUnitReference) targets = previousSubjects.length === 1 ? previousSubjects : [];
     else if (lensReference) {
       // A lens pronoun needs a preceding standalone lens identity, never a
       // camera bundle that happens to mention a focal length in its name.
