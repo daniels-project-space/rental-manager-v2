@@ -1,4 +1,4 @@
-import { verificationFailureReply } from "./lib/verification_failure";
+import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { internalMutation, mutation, query } from "./_generated/server";
@@ -540,7 +540,7 @@ export const redeemReferral = mutation({
     if (!referral || referral.expires_at <= Date.now()) return { ok: false, error: "Referral is invalid or expired" };
     if (referral.source_thread_id === a.thread_id) return { ok: false, error: "A friend needs their own new booking" };
     if (referral.redeemed_by) return referral.redeemed_by === a.thread_id
-      ? { ok: true, already_applied: true } : { ok: false, error: "Referral has already been used" };
+      ? { ok: true, already_applied: true, message: "This referral is already linked to your request. No duplicate items were added and your current basket has not been changed. Your own booking still needs the platform checks." } : { ok: false, error: "Referral has already been used" };
     const target = await getLabOrder(ctx, a.thread_id);
     const source = await getLabOrder(ctx, referral.source_thread_id);
     const booking = await getBotBooking(ctx, referral.source_thread_id);
@@ -567,12 +567,16 @@ export const redeemReferral = mutation({
     }
     const stock = await checkOrderRentalStock(ctx, target.account_slug, lines, source.start_date, source.end_date, a.thread_id);
     if (stock.available !== true) return { ok: false, error: "Original basket is no longer available for these dates", stock_receipts: stock.receipts };
+    const quote = summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), source.start_date, source.end_date);
+    if (quote.total_gbp == null || quote.unpriced.length) return { ok: false, error: "Basket needs current pricing; ask the owner before restoring it" };
+    const display = await listingDisplayCatalog(ctx, target.account_slug);
+    const message = friendBasketReply({ ...quote, lines: lines.map(l => ({ qty: l.qty, name: l.product_id != null ? display.name(target.account_slug, l.product_id, l.name) : shortItemName(l.name) })) });
     const now = Date.now();
     await ctx.db.patch(target._id, { items: lines, start_date: source.start_date, end_date: source.end_date, changes: [{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required" }], updated_at: now });
     const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", a.thread_id)).first();
     if (conv) await ctx.db.patch(conv._id, { inquiry_items: lines.map(l => ({ name: l.name, qty: l.qty, ...(l.product_id != null ? { product_id: l.product_id } : {}) })) });
     await ctx.db.patch(referral._id, { redeemed_by: a.thread_id });
-    await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: "Your friend's basket referral was recognised. The basket was restored after checking current prices and stock. This is your own new request, with its own platform approval, payment and verification requirements; no previous approvals or payments were transferred.", hygglo_sent_at: now, fetched_at: now });
-    return { ok: true, already_applied: false, order: summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), source.start_date, source.end_date), stock_receipts: stock.receipts };
+    await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
+    return { ok: true, already_applied: false, order: quote, message, stock_receipts: stock.receipts };
   },
 });

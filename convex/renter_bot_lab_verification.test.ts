@@ -56,7 +56,8 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
   expect(await (applyChange as any)._handler(f.ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1})).toMatchObject({ok:false});
  });
  it("restores identities and quantity at today's price without inheriting a booking; replay does not duplicate",async()=>{
-  const f=setup();await fail(f.ctx);expect(await redeem(f.ctx)).toMatchObject({ok:true,already_applied:false,order:{total_gbp:110}});
+  const f=setup();await fail(f.ctx);const restored=await redeem(f.ctx);expect(restored).toMatchObject({ok:true,already_applied:false,order:{total_gbp:110}});
+  expect(restored.message).toContain("£110");expect(restored.message).toContain("not a confirmed booking");
   expect(f.tables.renter_bot_lab_orders[1].items[0]).toMatchObject({item_id:"camera",qty:1,daily_price_gbp:55});
   expect(f.tables.renter_bot_lab_bookings).toHaveLength(1);
   expect(await redeem(f.ctx)).toMatchObject({ok:true,already_applied:true});expect(f.tables.renter_bot_lab_orders[1].items).toHaveLength(1);
