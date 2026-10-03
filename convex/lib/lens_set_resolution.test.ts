@@ -10,6 +10,10 @@ describe("explicit inventory lens sets", () => {
   it("supports a shared mm suffix and keeps the requested order", () => {
     const result=resolveLensSet("Great Joy 85, 35 & 50mm lens set", inventory);
     expect(result?.ok && result.items.map(i=>i._id)).toEqual(["85","35","50"]);
+    for(const name of ["Great Joy 35mm 50mm 85mm anamorphic lens set","Great Joy 35mm, 50mm, and 85mm anamorphic set","Great Joy 35, 50, & 85mm set"]){
+      const set=resolveLensSet(name,inventory);expect(set?.ok && set.items.map(i=>i._id)).toEqual(["35","50","85"]);
+    }
+    expect(resolveLensSet("Great Joy 35 50 85mm set",inventory)).toBeNull();
   });
   it("does not silently select an owned variant over a marketing variant", () => {
     expect(resolveLensSet("Great Joy 35, 50 and 85mm set", [...inventory,{...inventory[0],_id:"another",is_marketing_only:false,qty:1}])).toEqual({ok:false,reason:"lens_set_identity_ambiguous"});

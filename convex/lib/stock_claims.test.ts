@@ -39,6 +39,8 @@ describe("requested lens-set shorthand",()=>{
  });
  it("keeps comma-separated focal lists together and refuses ambiguous family shorthand",()=>{
   expect(review("The Great Joy 35mm, 50mm and 85mm anamorphic lens set isn't available for 20 to 21 October.")).toEqual([]);
+  for(const name of ["Great Joy 35mm, 50mm, and 85mm anamorphic set","Great Joy 35mm 50mm 85mm anamorphic lens set","Great Joy 35, 50, 85mm lens set"])
+   expect(review(`The ${name} isn't available for 20 to 21 October.`)).toEqual([]);
   expect(review(negative,receipts,`${message} Or quote the Great Joy 35mm and 50mm lens set.`)).not.toEqual([]);
   expect(review("The Great Joy 35mm and 50mm lens set isn't available for 20 to 21 October.",receipts,`${message} Or quote the Great Joy 35mm and 50mm lens set.`)).toEqual([]);
  });

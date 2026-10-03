@@ -21,10 +21,10 @@ import { getBotBooking, getLabOrder } from "./lib/renter_booking";
  * `reservations` without a `withIndex(...)`. The bot only ever scans
  * `reservations` filtered by `by_account_slug` or `by_hygglo_order_id`.
  */
-import { query, action } from "./_generated/server";
+import { query, action, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
-import { checkRentalStock, loadStockSources, stockForRentalItem } from "./lib/renter_stock";
+import { checkRentalStock, loadStockSources, stockForRentalItem, stockForItem } from "./lib/renter_stock";
 import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_identity";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
@@ -751,6 +751,57 @@ export const lookup_pricing = query({
 
 // ── Tool 4: check_availability ───────────────────────────────
 
+type JointStockArgs={account_slug:string;thread_id?:string;start_date:string;end_date:string;
+  items:Array<{item_name:string;quantity:number;product_id?:number}>;
+  booking_use?:"standalone"|"additional"|"replacement";replace_product_id?:number;replace_quantity?:number;
+  pickup_time?:string;return_time?:string};
+async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>) {
+    if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
+    const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
+    if ((booking?.account_slug && booking.account_slug!==a.account_slug) || (labOrder?.account_slug && labOrder.account_slug!==a.account_slug)) throw new Error("The current booking belongs to a different account");
+    const stage=rentalStage(booking,londonToday()).stage;
+    const closed=["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
+    const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
+    const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
+      : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id})) : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
+    const recent=a.thread_id && !closed && existing.length ? await recentThreadMessages(ctx,a.thread_id,12) : [];
+    const expected=explicitRecommendationUse(recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "");
+    const sources=preloadedSources ?? await loadStockSources(ctx);
+    const candidates:RecommendationLine[]=[];
+    for (const line of a.items) {
+      const set=line.product_id==null ? resolveLensSet(line.item_name,sources.items) : null;
+      if (set && !set.ok) return {available:null,reason:set.reason,components:[]};
+      if (set?.ok) candidates.push(...set.items.map(i=>({name:i.name_canonical,qty:line.quantity,item_id:String(i._id)})));
+      else {
+        const match=line.product_id==null ? bestMatch(line.item_name,sources.items,i=>i.name_canonical,i=>i.aliases ?? []) : null;
+        candidates.push({name:match?.confident ? match.match!.name_canonical : line.item_name,qty:line.quantity,product_id:line.product_id,
+          ...(match?.confident ? {item_id:String(match.match!._id)} : {})});
+      }
+    }
+    if (candidates.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
+    if (candidates.some(c=>!Number.isInteger(c.qty)||c.qty<1||c.qty>20)) return {available:null,reason:"invalid_quantity",components:[]};
+    // A verified non-rentable member makes this exact set impossible in any
+    // booking scenario. Report that catalogue constraint even when addition
+    // versus replacement is undecided; never certify a positive proposal here.
+    const physical=candidates.map(c=>c.product_id==null ? sources.items.find(i=>String(i._id)===c.item_id) : undefined);
+    if (physical.every(Boolean) && physical.some(i=>i!.is_marketing_only || i!.status!=="active" || i!.qty<=0)) {
+      const receipts=physical.map((i,index)=>({...stockForItem(sources,i!,{item_name:i!.name_canonical,start_date:a.start_date,end_date:a.end_date,
+        quantity:candidates[index].qty,thread_id:a.thread_id,pickup_time:a.pickup_time,return_time:a.return_time}),start_date:a.start_date,end_date:a.end_date}));
+      const basket={available:false,items:receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
+      return {available:false,reason:"not_rentable",source:"native_catalogue_eligibility",stock_scope:"proposed_basket",
+        start_date:a.start_date,end_date:a.end_date,basket,components:receipts.map(r=>({...r,basket})),
+        guidance:"At least one exact requested member is not rentable in the Native catalogue. This is not a calendar conflict and does not imply every member is missing. No booking or price changes were made."};
+    }
+    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
+      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:a.booking_use,expected_use:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
+    if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
+    const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,a.thread_id ?? "",sources,{pickup_time:a.pickup_time,return_time:a.return_time});
+    const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
+    return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
+      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,
+      guidance:"This is a read-only joint basket verdict. Only available:true proves all proposed gear fits alongside retained items. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
+}
+
 export const check_availability = query({
   args: {
     item_name: v.string(),
@@ -768,17 +819,20 @@ export const check_availability = query({
     replace_quantity: v.optional(v.number()),
   },
   handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id, product_id, booking_use, prefetch_current, replace_product_id, replace_quantity }) => {
-    // A set description is not a single commercial listing. Give the bot
-    // exact inventory identities for its joint tool, without inventing a
-    // dated verdict or bypassing the existing booking's stock requirements.
-    if (product_id == null && /\bset\s*$/i.test(item_name)) {
+    // Expand verified prime-set identities into the shared Native joint check.
+    // One snapshot proves the result; no second model call is needed.
+    if (product_id == null && /\bsets?\s*$/i.test(item_name)) {
       const sources = await loadStockSources(ctx);
       const set = resolveLensSet(item_name, sources.items);
-      if (set) return { available: null, owned: null, item_name, start_date, end_date,
-        reason: set.ok ? "lens_set_requires_joint_check" : set.reason,
-        resolved_items: set.ok ? set.items.map(item => ({item_name:item.name_canonical,quantity:quantity ?? 1})) : [],
-        guidance: set.ok ? "These are lookup identities, not stock evidence. Call check_basket_availability with all resolved_items, this account/thread, these dates and the correct addition or replacement context. Do not refuse or promise stock from this unknown result."
-          : "The exact lens-set identities are unverified or ambiguous. Ask for the exact lenses or owner clarification; do not call this set unavailable." };
+      if (set && !set.ok) return {available:null,owned:null,item_name,start_date,end_date,reason:set.reason,resolved_items:[],
+        guidance:"The exact lens-set identities are unverified or ambiguous. Ask for the exact lenses or owner clarification; do not call this set unavailable."};
+      if (set?.ok) {
+        if (!account_slug || booking_use==="current") return {available:null,reason:!account_slug ? "missing_account" : "select_exact_current_listing",components:[]};
+        const resolved_items=set.items.map(item=>({item_name:item.name_canonical,quantity:quantity ?? 1}));
+        const result=await performJointStockCheck(ctx,{account_slug,thread_id,start_date,end_date,items:resolved_items,booking_use,
+          replace_product_id,replace_quantity,pickup_time,return_time},sources);
+        return {...result,resolved_items};
+      }
     }
     if (thread_id) {
       const [booking,labOrder]=await Promise.all([getBotBooking(ctx,thread_id),getLabOrder(ctx,thread_id)]);
@@ -836,33 +890,7 @@ export const check_basket_availability = query({
     booking_use:v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
     replace_product_id:v.optional(v.number()),replace_quantity:v.optional(v.number()),
     pickup_time:v.optional(v.string()),return_time:v.optional(v.string())},
-  handler:async(ctx,a)=>{
-    if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
-    const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
-    if ((booking?.account_slug && booking.account_slug!==a.account_slug) || (labOrder?.account_slug && labOrder.account_slug!==a.account_slug)) throw new Error("The current booking belongs to a different account");
-    const stage=rentalStage(booking,londonToday()).stage;
-    const closed=["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
-    const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
-    const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
-      : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id})) : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
-    const recent=a.thread_id && !closed && existing.length ? await recentThreadMessages(ctx,a.thread_id,12) : [];
-    const expected=explicitRecommendationUse(recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "");
-    const sources=await loadStockSources(ctx);
-    const candidates=a.items.map(line=>{
-      const match=line.product_id==null ? bestMatch(line.item_name,sources.items,i=>i.name_canonical,i=>i.aliases ?? []) : null;
-      return {name:match?.confident ? match.match!.name_canonical : line.item_name,qty:line.quantity,product_id:line.product_id,
-        ...(match?.confident ? {item_id:String(match.match!._id)} : {})};
-    });
-    if (candidates.some(c=>!Number.isInteger(c.qty)||c.qty<1||c.qty>20)) return {available:null,reason:"invalid_quantity",components:[]};
-    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
-      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:a.booking_use,expected_use:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
-    if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
-    const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,a.thread_id ?? "",sources,{pickup_time:a.pickup_time,return_time:a.return_time});
-    const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
-    return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
-      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,
-      guidance:"This is a read-only joint basket verdict. Only available:true proves all proposed gear fits alongside retained items. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
-  },
+  handler:async(ctx,a)=>performJointStockCheck(ctx,a),
 });
 
 // ── Tool 6: get_negotiation_stance ───────────────────────────

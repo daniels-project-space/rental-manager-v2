@@ -1,7 +1,7 @@
 import { shortItemName } from "./item_display_name";
 import { claimDateScope } from "./claim_date_scope";
 import { lensClaimReferences } from "./lens_claim_references";
-import { requestedLensSets, lensSetSubjectFamily } from "./lens_set_resolution";
+import { requestedLensSets, resolveLensSet, lensSetSubjectFamily, lensSetFocalPattern, lensSetSuffixPattern } from "./lens_set_resolution";
 export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
   available: boolean | null; free_units: number | null;
@@ -89,8 +89,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     (a,b) => a.some(left => b.some(right => sameItem(left,right))));
   const lenses=[...new Map(receipts.filter(r=>r.kind==="lens").map(r=>[r.item,{_id:r.item,name_canonical:r.item,kind:"lens"}])).values()];
   const requestedSets=requestedLensSets(latestRenterMessage,lenses);
-  const setSafeText=text.replace(/\b\d+(?:\.\d+)?\s*(?:mm)?(?:\s*(?:,|\/|and|&)\s*\d+(?:\.\d+)?\s*(?:mm)?)+\s+(?:(?:anamorphic\s+)?(?:lens|lenses)\s+)?sets?\b/gi,
-    list=>list.replace(/,/g,"/"));
+  const setSafeText=text.replace(new RegExp(`\\b${lensSetFocalPattern}${lensSetSuffixPattern}\\b`,"gi"),
+    list=>list.replace(/,\s*(?:and|&)\s*/gi,"/").replace(/,/g,"/"));
   for (const rawClause of setSafeText.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
     const relativeSubjects=precedingNamedSubjects;
     precedingNamedSubjects=[];
@@ -173,8 +173,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     let targets = reference ? [reference.item] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     // Only the explicit latest requested members can define an abbreviated
     // set. Unrelated negative lens receipts cannot invent its contents.
+    const statedSet=namedKit && !modifiers.length ? resolveLensSet(`${subject.name} set`,lenses) : null;
     const matchingSets=namedKit && !modifiers.length ? requestedSets.filter(s=>s.family===lensSetSubjectFamily(subject.name)
-      || lensSetSubjectFamily(s.reference.replace(/\s+sets?$/i,""))===lensSetSubjectFamily(subject.name)) : [];
+      || statedSet?.ok && JSON.stringify(s.items.map(i=>i._id).sort())===JSON.stringify(statedSet.items.map(i=>i._id).sort())) : [];
     const distinctSets=new Set(matchingSets.map(s=>JSON.stringify([s.items.map(i=>i._id).sort(),s.quantity])));
     const requestedSet=distinctSets.size===1 ? matchingSets[0] : undefined;
     const setQuantity=subject.quantity ?? requestedSet?.quantity ?? 1;

@@ -201,4 +201,19 @@ describe("complete multi-item Native addition quotes",()=>{
   expect(unsupportedPriceClaims(repeated,proof(),scope)).not.toEqual([]);
   expect(unsupportedPriceClaims(claim.replace("Adding both would","Both now"),proof(),scope)).not.toEqual([]);
  });
+ it("keeps the conditional proposal across currency amounts in the same sentence",()=>{
+  for(const ending of ["bringing your total to", "taking your updated booking total to", "raising your full booking total to"]){
+   const text=claim.replace("which would bring your total booking to",ending);
+   expect(unsupportedPriceClaims(text,proof(),scope),text).toEqual([]);
+   expect(unsupportedPriceClaims(text.replace("£194","£195"),proof(),scope)).not.toEqual([]);
+   expect(unsupportedPriceClaims(text.replace("PL to L","PL to E"),proof(),scope)).not.toEqual([]);
+  }
+ });
+ it("does not carry conditional evidence across sentence, paragraph or semicolon boundaries",()=>{
+  for(const separator of [". ","\n\n","; "]){
+   const text=claim.replace(", which would bring your total booking to",`${separator}Bringing your total to`);
+   expect(unsupportedPriceClaims(text,proof(),scope),text).not.toEqual([]);
+  }
+  expect(unsupportedPriceClaims(claim.replace("Adding both would be","Adding both is").replace("which would bring your total booking to","bringing your total to"),proof(),scope)).not.toEqual([]);
+ });
 });

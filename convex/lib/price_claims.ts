@@ -143,8 +143,15 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const amount = Number(m[1].replace(/,/g, ""));
     const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised|complete|full)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:(?:complete|full)\s+)?(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
     const conditionalTotal = /\b(?:would|could)\s+(?:bring|take|make|increase|raise)\b[^£.!?]{0,90}\btotal\b/i.test(segment);
+    // A prior amount ends the local currency segment, but does not end its
+    // conditional sentence: "Adding both would be £70, bringing your total
+    // to £194" still describes a proposal. Never carry this across sentences.
+    const sentenceBeforeAmount=text.slice(0,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
+    const continuedConditionalTotal=explicitBookingTotal &&
+      /^\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making|increasing|raising)\b/i.test(segment) &&
+      /\b(?:would|could)\b/i.test(sentenceBeforeAmount) && /£/.test(sentenceBeforeAmount);
     const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
-    const proposalTotal = conditionalTotal && !baselineTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
+    const proposalTotal = conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
     const group=quotedGroup(pos);
     const groupAddition=!baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);

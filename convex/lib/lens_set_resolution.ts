@@ -1,11 +1,15 @@
 type LensIdentity = { _id: unknown; kind?: string; name_canonical: string; aliases?: string[] };
 const normal = (value: string) => value.toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
 const descriptors = /\b(?:anamorphic|lens|lenses)\b/gi;
+// Whitespace can separate explicit mm values, but never unitless numbers.
+// Oxford commas and a shared final mm suffix remain exact focal lists.
+export const lensSetFocalPattern = String.raw`\d+(?:\.\d+)?\s*(?:mm)?(?:(?:\s*(?:,\s*(?:and|&)?|/|and|&)\s*|(?<=mm)\s+)\d+(?:\.\d+)?\s*(?:mm)?)+`;
+export const lensSetSuffixPattern = String.raw`\s+(?:anamorphic\s+)?(?:(?:lens|lenses)\s+)?sets?`;
 
 /** Expand only an explicit prime-lens family and focal list against inventory.
  * This provides lookup identities, never ownership or availability evidence. */
 export function resolveLensSet<T extends LensIdentity>(name: string, inventory: T[]) {
-  const match = /^([a-z][a-z\s-]*?)\s+(\d+(?:\.\d+)?\s*(?:mm)?(?:\s*(?:,|\/|and|&)\s*\d+(?:\.\d+)?\s*(?:mm)?)+)\s+(?:(?:anamorphic\s+)?(?:lens|lenses)\s+)?sets?$/i.exec(name.trim());
+  const match = new RegExp(`^([a-z][a-z\\s-]*?)\\s+(${lensSetFocalPattern})${lensSetSuffixPattern}$`,"i").exec(name.trim());
   if (!match) return null;
   const focals = [...match[2].matchAll(/\d+(?:\.\d+)?/g)].map(m => Number(m[0]));
   if (focals.length > 8 || focals.some(f => f <= 0) || new Set(focals).size !== focals.length)
@@ -40,7 +44,7 @@ export function requestedLensSets<T extends LensIdentity>(message: string, inven
   const sets: Array<{family:string;items:T[];quantity:number;reference:string}>=[];
   for (const family of families) {
     const escaped=family.split(" ").map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("\\s+");
-    const pattern=new RegExp(`\\b${escaped}\\s+\\d+(?:\\.\\d+)?\\s*(?:mm)?(?:\\s*(?:,|/|and|&)\\s*\\d+(?:\\.\\d+)?\\s*(?:mm)?)+\\s+(?:(?:anamorphic\\s+)?(?:lens|lenses)\\s+)?sets?\\b`,"gi");
+    const pattern=new RegExp(`\\b${escaped}\\s+${lensSetFocalPattern}${lensSetSuffixPattern}\\b`,"gi");
     for (const match of message.matchAll(pattern)) {
       const result=resolveLensSet(match[0],inventory);
       if (!result?.ok) continue;
