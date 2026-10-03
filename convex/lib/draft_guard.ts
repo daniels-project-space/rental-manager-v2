@@ -602,7 +602,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   if (opts.stockEvidence !== undefined || text.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+/).some(sentence=>rentalRefusalSubject(sentence))) {
-    for (const failure of unsupportedStockClaims(text, opts.stockEvidence ?? [], opts.stockRequest ?? { items: [] }, marketingItems)) {
+    for (const failure of unsupportedStockClaims(text, opts.stockEvidence ?? [], opts.stockRequest ?? { items: [] }, marketingItems, opts.lastRenterMessage)) {
       push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
     }
   }

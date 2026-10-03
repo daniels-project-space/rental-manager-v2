@@ -1,0 +1,9 @@
+# Requested lens-set stock claims
+
+The deployed Lab bot correctly obtained three negative Native stock receipts for Great Joy 35mm, 50mm and 85mm, then wrote “The Great Joy anamorphic set isn't available for 20 to 21 October.” The guard could not connect that shortened subject to the exact receipts and withheld the draft.
+
+Stock review now anchors a set shorthand to an explicit family/focal-length list in the latest renter message. Exact canonical lens identities supply the member mapping. Mount/aperture omissions in inventory aliases cannot erase canonical variant tokens. Ambiguous shorthand for multiple requested sets remains blocked; a full named focal list can identify its particular requested set. Commas inside an explicit focal-list set remain within one claim.
+
+A whole-set refusal requires a matching negative receipt for at least one member, preserving dates and quantities. This does not prove that every individual member is unavailable. A positive promise requires every member's affirmative receipt and a joint basket covering all requested physical units. Standalone positive checks do not substitute for a joint check. Both draft review and send-time rechecking use the same latest message to resolve the shorthand; the send check still recomputes stock from the current Native snapshot.
+
+Regression coverage includes the actual rejected sentence, partial set failure, wrong family/focal length/date/verdict, ambiguous requests, separate versus joint checks, set counts, canonical mount variants and per-member refusals. The captured real model candidate passes replay with its original Native evidence. Full suite, production build, backend typecheck and deployment verification accompany release. This proves the repaired set scenario only; the broader bot audit remains active and real Hygglo operations remain disabled.

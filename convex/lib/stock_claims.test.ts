@@ -4,6 +4,39 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("requested lens-set shorthand",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const message="Can you quote your Blackmagic 6K Full Frame with the Great Joy 35mm, 50mm and 85mm anamorphic lens set for 20 to 21 October? Please quote only.";
+ const members=[35,50,85].map(f=>({name:`Anamorphic Great Joy lens ${f}mm`,quantity:1}));
+ const receipts:StockReceipt[]=members.map(i=>({...stock,item:i.name,quantity:1,start_date:scope.start_date!,end_date:scope.end_date!,available:false,owned:false,kind:"lens",basket:{available:false,items:members}}));
+ const negative="The Great Joy anamorphic set isn't available for 20 to 21 October.";
+ const positive="The Great Joy anamorphic set is available for 20 to 21 October.";
+ const review=(text:string,evidence=receipts,latest=message)=>unsupportedStockClaims(text,evidence,scope,[],latest);
+ it("resolves the actual deployed candidate using exact requested members",()=>expect(review(negative)).toEqual([]));
+ it("allows a whole-set refusal when one exact member cannot be supplied",()=>{
+  expect(review(negative,receipts.map((r,i)=>({...r,available:i!==0,owned:true})))).toEqual([]);
+ });
+ it("cannot borrow different families, focal lengths, dates, unknown or affirmative verdicts",()=>{
+  for(const evidence of [[],receipts.slice(0,2),receipts.map(r=>({...r,available:true})),receipts.map(r=>({...r,available:null})),receipts.map(r=>({...r,end_date:"2026-10-22"})),receipts.map(r=>({...r,item:r.item.replace("Great Joy","Blazar Remus")}))]) expect(review(negative,evidence)).not.toEqual([]);
+  for(const latest of ["Can I rent a Great Joy set?",message.replace("85mm","100mm"),message.replace("Great Joy","Blazar Remus")])expect(review(negative,receipts,latest)).not.toEqual([]);
+ });
+ it("requires a positive joint receipt for every member and the exact set quantity",()=>{
+  const positiveReceipts=receipts.map(r=>({...r,available:true,owned:true,basket:{available:true,items:members}}));
+  expect(review(positive,positiveReceipts)).toEqual([]);
+  expect(review(positive,positiveReceipts.map(r=>({...r,basket:undefined})))).not.toEqual([]);
+  expect(review(positive,positiveReceipts.map((r,i)=>({...r,available:i!==0})))).not.toEqual([]);
+  expect(review(positive,positiveReceipts,message.replace("the Great Joy","two Great Joy"))).not.toEqual([]);
+  expect(review(positive.replace("The Great Joy","Two Great Joy"),positiveReceipts)).not.toEqual([]);
+ });
+ it("does not let a whole-set negative prove that every member is unavailable",()=>{
+  expect(review("Anamorphic Great Joy lens 50mm is unavailable for 20 to 21 October.",receipts.map((r,i)=>({...r,available:i!==0})))).not.toEqual([]);
+ });
+ it("keeps comma-separated focal lists together and refuses ambiguous family shorthand",()=>{
+  expect(review("The Great Joy 35mm, 50mm and 85mm anamorphic lens set isn't available for 20 to 21 October.")).toEqual([]);
+  expect(review(negative,receipts,`${message} Or quote the Great Joy 35mm and 50mm lens set.`)).not.toEqual([]);
+  expect(review("The Great Joy 35mm and 50mm lens set isn't available for 20 to 21 October.",receipts,`${message} Or quote the Great Joy 35mm and 50mm lens set.`)).toEqual([]);
+ });
+});
 describe("references to an additional booked-kit lens",()=>{
  const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame + Canon EF 24-105mm f4",quantity:1}]};
  const lens:StockReceipt={...stock,item:"Canon EF 24-105mm f4",start_date:scope.start_date!,end_date:scope.end_date!,quantity:2,available:false,free_units:1};

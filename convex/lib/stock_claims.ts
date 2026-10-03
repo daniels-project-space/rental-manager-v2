@@ -1,6 +1,7 @@
 import { shortItemName } from "./item_display_name";
 import { claimDateScope } from "./claim_date_scope";
 import { lensClaimReferences } from "./lens_claim_references";
+import { requestedLensSets, lensSetSubjectFamily } from "./lens_set_resolution";
 export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
   available: boolean | null; free_units: number | null;
@@ -71,7 +72,7 @@ export function supportsRentalEligibilityDecline(clause: string, request: StockR
 
 /** A class-wide tool-use boolean never proves stock for another item or span.
  * Unknown subjects remain unverified rather than being guessed from prose. */
-export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest, ineligibleItems: string[] = []) {
+export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest, ineligibleItems: string[] = [], latestRenterMessage = "") {
   const failures: Array<{ negative: boolean; detail: string }> = [];
   let previousSubjects: StockRequest["items"] = [];
   let precedingNamedSubjects: StockRequest["items"] = [];
@@ -86,7 +87,11 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   });
   const references = lensClaimReferences(knownSubjects.map(item => ({names:[item.name,...(item.aliases??[])],item})),
     (a,b) => a.some(left => b.some(right => sameItem(left,right))));
-  for (const rawClause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+  const lenses=[...new Map(receipts.filter(r=>r.kind==="lens").map(r=>[r.item,{_id:r.item,name_canonical:r.item,kind:"lens"}])).values()];
+  const requestedSets=requestedLensSets(latestRenterMessage,lenses);
+  const setSafeText=text.replace(/\b\d+(?:\.\d+)?\s*(?:mm)?(?:\s*(?:,|\/|and|&)\s*\d+(?:\.\d+)?\s*(?:mm)?)+\s+(?:(?:anamorphic\s+)?(?:lens|lenses)\s+)?sets?\b/gi,
+    list=>list.replace(/,/g,"/"));
+  for (const rawClause of setSafeText.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
     const relativeSubjects=precedingNamedSubjects;
     precedingNamedSubjects=[];
     const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rawClause);
@@ -155,8 +160,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const kitParts=subject.name.split(/\s+with\s+/i);
     const modifiers=kitParts.slice(1).flatMap(p=>p.split(/\s+(?:and|plus)\s+/i));
     subject.name=kitParts[0];
-    const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|set)\s*$/i.test(subject.name);
-    subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
+    const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|sets?)\s*$/i.test(subject.name);
+    subject.name = subject.name.replace(/\s+(?:kit|sets?)\s*$/i, "");
     const lensName=subject.name.replace(/\s+(?:(?:wide[ -]angle|standard|telephoto|anamorphic)\s+)?(?:zoom\s+)?lens(?:es)?$/i, "");
     if (receipts.some(r=>r.kind === "lens" && sameItem(lensName,r.item))) subject.name=lensName;
     const reference = references.get(identity(subject.name.replace(/\s+lens(?:es)?$/i,"")));
@@ -166,6 +171,15 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
     let targets = reference ? [reference.item] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
+    // Only the explicit latest requested members can define an abbreviated
+    // set. Unrelated negative lens receipts cannot invent its contents.
+    const matchingSets=namedKit && !modifiers.length ? requestedSets.filter(s=>s.family===lensSetSubjectFamily(subject.name)
+      || lensSetSubjectFamily(s.reference.replace(/\s+sets?$/i,""))===lensSetSubjectFamily(subject.name)) : [];
+    const distinctSets=new Set(matchingSets.map(s=>JSON.stringify([s.items.map(i=>i._id).sort(),s.quantity])));
+    const requestedSet=distinctSets.size===1 ? matchingSets[0] : undefined;
+    const setQuantity=subject.quantity ?? requestedSet?.quantity ?? 1;
+    if (requestedSet) targets=[{name:subject.name,quantity:setQuantity,complete:true,
+      components:requestedSet.items.map(i=>({name:i.name_canonical,quantity:setQuantity}))}];
     if (subject.name.toLowerCase()==="which") targets=relativeSubjects.length===1 ? relativeSubjects : [];
     else if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
     else if (countedUnitReference) targets = previousSubjects.length === 1 ? previousSubjects : [];
@@ -182,8 +196,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const pluralGroup=/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(prefix.replace(/\s+(?:is|are)\s*$/i,"").trim())
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
     const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
-    const coordinated=coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
-    const jointClaim=pluralGroup || coordinated.length>1;
+    const coordinated=requestedSet ? [coordinatedPrefix] : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
+    const jointClaim=pluralGroup || coordinated.length>1 || !!requestedSet;
     if (pluralGroup) {
       targets=!precedingInvalid && precedingBullets.length>=2 && (!/^both|^(?:these|those) two/i.test(prefix.trim()) || precedingBullets.length===2) && precedingBullets.every((i,index)=>!precedingBullets.slice(0,index).some(other=>sameItem(i.name,other.name))) ? precedingBullets : [];
       subject.quantity=undefined;

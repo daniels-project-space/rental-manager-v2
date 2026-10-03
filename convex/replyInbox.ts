@@ -2183,6 +2183,6 @@ export const recheckCopiedDraftStock = internalQuery({
       const item=resolveStockItem(name,sources.items);
       return item.confident&&!!item.match&&(item.match.is_marketing_only===true||item.match.status!=="active"||item.match.qty<=0);
     });
-    return {ok:unsupportedStockClaims(text,receipts,request,excluded).length===0,reason:"stock_unverified",checked_at:Date.now()};
+    return {ok:unsupportedStockClaims(text,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length===0,reason:"stock_unverified",checked_at:Date.now()};
   },
 });
