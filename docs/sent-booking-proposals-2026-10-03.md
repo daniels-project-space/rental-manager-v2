@@ -1,0 +1,11 @@
+# Preserve exact quotes on owner messages
+
+Booking changes need consent to the selected equipment and terms. The previous message history retained owner text but lost the exact Native proposal when the conversation's current draft rotated. A draft existing on the conversation is also not proof that its quote was sent to the renter.
+
+The server price-evidence adapter now preserves exact product IDs, quantities and marginal price from the verified Native addition quote. Those fields are only emitted after existing full-basket, base and marginal quote validation passes. Existing price-claim verification continues to use the same Native arithmetic and identities.
+
+When the Lab records its assistant message, or the owner send path records a successfully sent message, `sentAdditionProposals` attaches pending Native quote evidence to that message. The sent text must exactly match the current approved draft, the latest inbound must be a renter message, and the account, draft epoch and booking context must match. The proposal's base basket must still equal the current booking, which prevents an already-applied addition's confirmation from becoming another pending offer. The archive retains the original base basket, selected product IDs/quantities, dates, additional amount and proposed total. It survives subsequent messages and draft replacement.
+
+This archive is evidence, not consent. It can include quote evidence used while drafting; a later consent check must also establish that the owner actually offered those items and terms in the message, that the renter accepted that offer, and that the current Native quote still matches. No booking mutation has been enabled by the presence of an archive alone. Positive request/acceptance reconciliation remains unfinished.
+
+Validation uses focused pricing, transaction and archive cases and one disposable Native Lab session with a real deployed quote and explicitly synthetic draft text. There are no paid model calls in this phase. The synthetic draft tests storage and context binding; it does not demonstrate model behavior. Real Hygglo chat activation and booking/message writes remain disabled and require separate explicit written consent.

@@ -191,6 +191,7 @@ import type * as lib_renter_item_names from "../lib/renter_item_names.js";
 import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
 import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
 import type * as lib_renter_order_stock from "../lib/renter_order_stock.js";
+import type * as lib_renter_sent_proposal from "../lib/renter_sent_proposal.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_required_mount_adapter from "../lib/required_mount_adapter.js";
@@ -513,6 +514,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_kit_evidence": typeof lib_renter_kit_evidence;
   "lib/renter_order_quote": typeof lib_renter_order_quote;
   "lib/renter_order_stock": typeof lib_renter_order_stock;
+  "lib/renter_sent_proposal": typeof lib_renter_sent_proposal;
   "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;
   "lib/required_mount_adapter": typeof lib_required_mount_adapter;

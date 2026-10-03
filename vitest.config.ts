@@ -75,6 +75,7 @@ export default defineConfig({
       "convex/lib/bundle_description_parse.test.ts",
       "convex/renter_bot_lab_order.test.ts",
       "convex/renter_bot_lab_order.atomic.test.ts",
+      "convex/lib/renter_sent_proposal.test.ts",
       "convex/renter_bot_lab_verification.test.ts",
       "convex/lib/hygglo_pricing.test.ts",
       "convex/lib/renter_bot_conversation_rubric.test.ts",

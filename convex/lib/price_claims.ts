@@ -13,7 +13,7 @@ export type PriceEvidence = {
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
-  proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>};
+  proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number};
   call_id: string; source: string;
   required_accessory_names?: string[];
 };

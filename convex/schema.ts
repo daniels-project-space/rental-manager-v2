@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { sentAdditionProposalValidator } from "./lib/renter_sent_proposal";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { draftReviewValidator } from "./lib/draft_review_validator";
 
@@ -949,6 +950,7 @@ const operationalSchema = defineSchema({
     hygglo_sent_at: v.optional(v.number()),
     fetched_at: v.number(),
     raw: v.optional(v.string()),
+    quoted_additions: v.optional(v.array(sentAdditionProposalValidator)),
   }).index("by_account", ["account_slug"])
     .index("by_thread", ["thread_id"])
     // Lets the twice-daily response-rate snapshot answer "did the owner ever

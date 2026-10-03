@@ -48,7 +48,8 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
         if(inclusiveRentalDays(string(q.start_date),string(q.end_date))!==q.days ||
           expected.size!==actual.size || [...expected].some(([name,qty])=>actual.get(name)!==qty) ||
           Math.abs(q.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(q.total_gbp as number))>0.011) continue;
-        out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal:{base_items:r.base_items,added_items:r.added_items},total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
+        const proposal: NonNullable<PriceEvidence["proposal"]> = {base_items:r.base_items,added_items:r.added_items};
+        out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal,total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
         // Keep the native per-line quote as well as the proposed grand total.
         // No echoed request name can supply the identity or the arithmetic.
         for(const l of q.lines) {
@@ -83,8 +84,13 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
           number(r.additional_cost_gbp) &&
           Math.abs((q.total_gbp as number)-(baseQuote!.total_gbp as number)-(additionQuote!.total_gbp as number))<0.011 &&
           Math.abs((r.additional_cost_gbp as number)-(additionQuote!.total_gbp as number))<0.011) {
+          const additionLines=additionQuote!.lines as Array<Record<string,unknown>>;
+          if(additionLines.every(l=>Number.isInteger(l.product_id) && (l.product_id as number)>0)) {
+            proposal.added_listings=additionLines.map(l=>({product_id:l.product_id as number,quantity:l.qty as number}));
+            proposal.additional_cost_gbp=r.additional_cost_gbp as number;
+          }
           if(r.added_items.length>1)out.push({names:[],kind:"basket",quote_role:"addition",items:r.added_items,
-            proposal:{base_items:r.base_items,added_items:r.added_items},total_gbp:number(additionQuote!.total_gbp),days:number(q.days),
+            proposal,total_gbp:number(additionQuote!.total_gbp),days:number(q.days),
             start_date:string(q.start_date),end_date:string(q.end_date),call_id:`${call_id}:addition-group`,source:"native_lab_proposal"});
           for(const l of additionQuote!.lines as Array<Record<string,unknown>>) {
             const name=string(l.name); if (!name) continue;
