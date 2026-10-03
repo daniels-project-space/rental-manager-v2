@@ -26,6 +26,7 @@ import type * as admin_reset_account_state from "../admin_reset_account_state.js
 import type * as admin_verify_camera_capabilities_20261001 from "../admin_verify_camera_capabilities_20261001.js";
 import type * as admin_verify_camera_specs_20261001 from "../admin_verify_camera_specs_20261001.js";
 import type * as admin_verify_item_specs_20261001 from "../admin_verify_item_specs_20261001.js";
+import type * as admin_verify_remus_specs_20261003 from "../admin_verify_remus_specs_20261003.js";
 import type * as admin_verify_ttartisan_20261001 from "../admin_verify_ttartisan_20261001.js";
 import type * as ai_decisions from "../ai_decisions.js";
 import type * as ai_insights from "../ai_insights.js";
@@ -216,6 +217,7 @@ import type * as lib_return_messages from "../lib/return_messages.js";
 import type * as lib_return_presence from "../lib/return_presence.js";
 import type * as lib_revenue_attribution from "../lib/revenue_attribution.js";
 import type * as lib_reviewed_camera_specs from "../lib/reviewed_camera_specs.js";
+import type * as lib_reviewed_remus_specs from "../lib/reviewed_remus_specs.js";
 import type * as lib_shadow_compare from "../lib/shadow_compare.js";
 import type * as lib_stock_claims from "../lib/stock_claims.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
@@ -357,6 +359,7 @@ declare const fullApi: ApiFromModules<{
   admin_verify_camera_capabilities_20261001: typeof admin_verify_camera_capabilities_20261001;
   admin_verify_camera_specs_20261001: typeof admin_verify_camera_specs_20261001;
   admin_verify_item_specs_20261001: typeof admin_verify_item_specs_20261001;
+  admin_verify_remus_specs_20261003: typeof admin_verify_remus_specs_20261003;
   admin_verify_ttartisan_20261001: typeof admin_verify_ttartisan_20261001;
   ai_decisions: typeof ai_decisions;
   ai_insights: typeof ai_insights;
@@ -547,6 +550,7 @@ declare const fullApi: ApiFromModules<{
   "lib/return_presence": typeof lib_return_presence;
   "lib/revenue_attribution": typeof lib_revenue_attribution;
   "lib/reviewed_camera_specs": typeof lib_reviewed_camera_specs;
+  "lib/reviewed_remus_specs": typeof lib_reviewed_remus_specs;
   "lib/shadow_compare": typeof lib_shadow_compare;
   "lib/stock_claims": typeof lib_stock_claims;
   "lib/telegram_convex": typeof lib_telegram_convex;
