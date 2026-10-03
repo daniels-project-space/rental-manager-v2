@@ -381,3 +381,22 @@ describe("complete setup acceptance is one transaction",()=>{
   await expect((applyAdditionBasket as any)._handler(ctx,{thread_id:"real-rental",request_message_id:"renter-current",items:[{product_id:2,qty:1}]})).rejects.toThrow("refusing a real");
  });
 });
+
+describe("Native target restrictions protect actual booking changes",()=>{
+ it("refuses conflicting complete additions without changing the order",async()=>{
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Please don't add the Blazar Remus 100mm or the PL to L mount adapter. Keep the existing camera booking.";const before=structuredClone(tables);
+  expect(await applyBasket(ctx)).toMatchObject({ok:false,action_performed:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
+ });
+ it("also protects the legacy single-add path from a named adapter restriction",async()=>{
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't add the PL to L mount adapter.";const before=structuredClone(tables);
+  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:3,item_name:"PL to L mount",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
+ });
+ it("preserves the accepted lens when the renter forbids adding an adapter they supply",async()=>{
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't add your PL to L mount adapter. I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm.";
+  expect(await applyBasket(ctx,[{product_id:2,qty:1}])).toMatchObject({ok:true,order:{total_gbp:174}});
+ });
+ it("refuses removal of the exact protected booked model",async()=>{
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't remove my Blackmagic 6K Full Frame.";const before=structuredClone(tables);
+  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"remove_item",product_id:1,item_name:"BMPCC 6K Full Frame",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
+ });
+});

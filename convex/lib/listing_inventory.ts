@@ -36,7 +36,7 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
 }
 
 export async function loadListingInventory(ctx: QueryCtx, account: string, productId: number, quantity = 1,
-  sources?: Awaited<ReturnType<typeof loadStockSources>>) {
+  sources?: Pick<Awaited<ReturnType<typeof loadStockSources>>, "items">) {
   const [override, product, listing] = await Promise.all([
     ctx.db.query("listing_resolution_override").withIndex("by_account_product", (q) => q.eq("account_slug", account).eq("product_id", productId)).first(),
     ctx.db.query("hygglo_products").withIndex("by_account_product", (q) => q.eq("accountSlug", account).eq("productId", productId)).first(),

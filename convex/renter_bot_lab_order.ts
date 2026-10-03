@@ -1,5 +1,5 @@
 import { additionMountRequirements } from "./lib/booking_addition_mount";
-import { renterRequestsReadOnly } from "./lib/renter_booking_consent";
+import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventoryItem } from "./lib/renter_booking_consent";
 import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
@@ -19,6 +19,19 @@ import type { QueryCtx } from "./_generated/server";
 import { rentalStage } from "./lib/rental_stage";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { londonToday } from "./lib/effectiveDates";
+
+async function prohibitsSelectedItems(ctx: QueryCtx, accountSlug:string, text:string, action:"add_item"|"remove_item", lines:Array<{product_id?:number;item_id?:string;name?:string;qty:number}>) {
+  const inventory=await ctx.db.query("items").collect();
+  const native:ConsentInventoryItem[]=inventory.map(item=>({id:String(item._id),name:item.name_canonical,aliases:item.aliases??[],kind:item.kind}));
+  const selectedIds:string[]=[];
+  for(const line of lines){
+    const previousCount=selectedIds.length;
+    if(line.product_id!=null){const mapping=await loadListingInventory(ctx,accountSlug,line.product_id,line.qty,{items:inventory});selectedIds.push(...mapping.components.map(c=>String(c.item_id)));}
+    else if(line.item_id)selectedIds.push(String(line.item_id));
+    if(selectedIds.length===previousCount && line.name){const id=`booked:${line.name}`;native.push({id,name:line.name});selectedIds.push(id);}
+  }
+  return renterProhibitsItemChange(text,action,native,selectedIds);
+}
 
 async function amendmentContext(ctx: QueryCtx, threadId: string) {
   const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", threadId)).first();
@@ -360,6 +373,8 @@ export const applyAdditionBasket = mutation({
       error:"The selected setup is incomplete or its compatibility is unverified. Quote the complete setup and obtain agreement to its required accessories; then include every selected listing in one add_items request. No booking changes were made."};
     const prepared=await prepareAdditionBasket(ctx,{thread_id:a.thread_id,items});
     if(!prepared.ok || !prepared.proposed_lines || !prepared.added_items) return {...prepared,action_performed:false};
+    if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items))
+      return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected items conflict with a named renter restriction, or the restriction cannot be reconciled. No booking changes were made. Clarify the restricted item instead of ignoring it."};
     const {proposed_lines:_private,...verified_quote}=prepared;
     const beforeContext=await amendmentContext(ctx,a.thread_id);
     const beforeRevision=row.changes.length;
@@ -507,6 +522,8 @@ export const applyChange = mutation({
       const selected = match.match.line;
       if (!Number.isInteger(selected.qty) || selected.qty < qty)
         return { ok: false, error: `Only ${selected.qty}x ${selected.name} are on this booking. Do not remove more than the booked quantity; no items or prices changed.` };
+      if(latestMessage?.sender==="renter" && await prohibitsSelectedItems(ctx,row.account_slug,latestMessage.body_text,"remove_item",[{...selected,qty}]))
+        return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected removal conflicts with a named renter restriction. No items or prices changed."};
       selected.qty -= qty;
       const kept = lines.filter(l => l !== selected || selected.qty > 0);
       summaryText = `removed ${qty}x ${match.match.native?.name_canonical ?? selected.name}`;
@@ -589,6 +606,9 @@ export const applyChange = mutation({
       if(plan.status!=="none") return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,
         error:"This single addition needs a complete verified setup. Quote and accept all required owner-supplied adapters together with add_items; no items or prices changed."};
     }
+
+    if(!a.preview_only && latestMessage?.sender==="renter" && await prohibitsSelectedItems(ctx,row.account_slug,latestMessage.body_text,"add_item",[additionLine]))
+      return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected addition conflicts with a named renter restriction. No items or prices changed."};
 
     // A body and its kits share physical IDs; merge only identical offerings
     // with the same captured commercial terms.
