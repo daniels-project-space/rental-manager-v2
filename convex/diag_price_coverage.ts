@@ -1,3 +1,5 @@
+import { resolveBundleMapping } from "./lib/bundle_mapping";
+import { loadListingInventory } from "./lib/listing_inventory";
 import { internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -112,3 +114,18 @@ export default internalAction({
   handler: async (ctx, a): Promise<unknown> =>
     ctx.runQuery(internal.diag_price_coverage.check, a),
 });
+
+
+/** Read-only contents/identity diagnosis for explicit account listing IDs.
+ * Uses the same parser and coverage contract as actual bot tools. */
+export const componentMapping=internalQuery({args:{account_slug:v.string(),product_ids:v.array(v.number())},handler:async(ctx,a)=>{
+ if(a.product_ids.length>10||a.product_ids.some(id=>!Number.isInteger(id)||id<=0))throw new Error("Supply at most ten exact product IDs");
+ const items=await ctx.db.query("items").collect();
+ return Promise.all([...new Set(a.product_ids)].map(async product_id=>{
+  const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",a.account_slug).eq("product_id",product_id)).unique();
+  if(!listing)return {product_id,found:false as const};
+  const declared=resolveBundleMapping(listing.description??"",items);
+  const physical=await loadListingInventory(ctx,a.account_slug,product_id,1,{items});
+  return {product_id,found:true as const,account_slug:a.account_slug,title:listing.name,declared,physical};
+ }));
+}});

@@ -157,7 +157,7 @@ export function bestMatch<T>(
   // query is a prefix and cannot pick between them.
   const fullyCovered = ranked.filter((r) => r.coverage === 1);
   const rivals = fullyCovered.filter((r) => r.item !== top.item);
-  const confident = top.coverage === 1 && rivals.length === 0;
+  const confident = top.coverage === 1 && rivals.length === 0 && !isGenericItemQuery(query);
   return {
     match: top.item,
     confident,

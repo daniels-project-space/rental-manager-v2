@@ -170,3 +170,25 @@ it("does not turn the live optional Sony XLR handle into mandatory kit stock",()
  expect(names(desc).join(" ")).not.toMatch(/XLR|About this/i);
  expect(names(desc).join(" ")).toMatch(/Sony FX3/);
 });
+
+
+it("ignores plural quantity-prefixed headings without inventing flash inventory",()=>{
+ const description="Included in this rental: • 1x Cameras: • 1x 3× DJI Osmo Action 5 Pro cameras • 1x Carrying bag About this item: Camera kit.";
+ const inventory=[{_id:"action",name_canonical:"DJI Osmo Action Pro 5",kind:"camera"},{_id:"flash",name_canonical:"Camera flash",kind:"lighting"}];
+ const parsed=extractComponents(description);expect(parsed.usedBullets).toBe(true);expect(parsed.components).toEqual([{qty:1,name:"3x DJI Osmo Action 5 Pro cameras"}]);
+ const mapped=resolveBundleMapping(description,inventory);expect(mapped.components).toEqual([]);expect(mapped.unmatched).toEqual(["Ambiguous quantity: 1x 3x DJI Osmo Action 5 Pro cameras"]);
+});
+it("uses a single explicit bullet without splitting a digit-bearing product name",()=>{
+ const description="Included in this rental: • 3x DJI Osmo Action 5 Pro cameras";
+ expect(extractComponents(description)).toMatchObject({usedBullets:true,components:[{qty:3,name:"DJI Osmo Action 5 Pro cameras"}]});
+ const mapped=resolveBundleMapping(description,[{_id:"action",name_canonical:"DJI Osmo Action Pro 5",kind:"camera"}]);
+ expect(mapped).toMatchObject({structured:true,components:[{item_id:"action",qty:3}],unmatched:[]});
+});
+
+
+it("does not allocate a gimbal twice when its named carry case is also supplied",()=>{
+ const description="Included in this rental: • 1x Sony FX3 • 1x DJI RS 3 Pro gimbal • 1x DJI RS 3 Pro carry case About this item: Cinema kit.";
+ const inventory=[{_id:"fx3",name_canonical:"Sony FX3",kind:"camera"},{_id:"rs3",name_canonical:"DJI RS3 Pro gimbal",kind:"gimbal"}];
+ expect(resolveBundleMapping(description,inventory)).toMatchObject({components:[{item_id:"fx3",qty:1},{item_id:"rs3",qty:1}],unmatched:[]});
+ expect(extractComponents("Included in this rental: • Sony FX3 with DJI RS 3 Pro carry case").components).toHaveLength(1);
+});

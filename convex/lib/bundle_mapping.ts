@@ -14,6 +14,11 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
   const resolved: Array<{item_id:string;name:string;qty:number;kind:string}> = [];
   const unmatched: string[] = [];
   for (const component of components) {
+    // A second leading count is malformed/ambiguous contents, not a model
+    // token to discard while adopting the outer quantity (e.g. 1x 3x cameras).
+    if (/^\d{1,2}\s*x\s+/i.test(component.name)) {
+      unmatched.push(`Ambiguous quantity: ${component.qty}x ${component.name}`); continue;
+    }
     // Recording media/power supplied with a body are described by its owner
     // inventory record. A "5x batteries" line is not five battery-pack rentals.
     const majorEquipment = /\b(?:camera(?!\s+(?:batter|cage))|bmpcc|blackmagic|fx\d|a7\w*|gimbal|lens(?:es)?|tripod|mic(?:rophone)?|rig|monitor|lights?|led)\b/i;

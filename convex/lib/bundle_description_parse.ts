@@ -21,6 +21,12 @@ const NOISE_RE =
 /** Protective caps and lens hoods are supplied packaging, not separate rented
  * lenses. Match the whole component so mixed gear lines remain unresolved. */
 const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+and\s+rear)?|rear)\s+)?(?:lens\s+|body\s+)?caps?$|^lens\s+hood$/i;
+/** A model-specific carry case is still a case, not a second copy of that
+ * model. Mixed equipment lines must remain visible to identity review. */
+function isProtectivePackaging(name:string):boolean {
+  return PROTECTIVE_PACKAGING_RE.test(name) ||
+    /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
+}
 
 /** Pull the component list out of an "Included in this rental" style block. */
 export function extractComponents(desc: string): {
@@ -56,8 +62,8 @@ export function extractComponents(desc: string): {
     /\bDirect Add-?on\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b/i,
   )[0];
   // Section labels ("Camera:", "Lenses (Anamorphic):", "Media:") are headings.
-  body = body.replace(/\b(camera|lenses?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");
-  body = body.replace(/\b(camera|lenses?|media|audio|support|accessories|lighting|power)\s*:/gi, " ");
+  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lenses?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");
+  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lenses?|media|audio|support|accessories|lighting|power)\s*:/gi, " ");
 
   // Common misspellings in the real listings — normalise BEFORE matching, so a
   // genuinely-owned component isn't dropped for a typo. Live: "1x 24-105mm f4
@@ -105,11 +111,11 @@ export function extractComponents(desc: string): {
     .split(/\s*[*•‣●]\s+|\s+-\s+/)
     .map((s) => s.trim())
     .filter(Boolean);
+  const usedBullets = /(?:^|\s)[*•‣●]\s+|\s+-\s+/.test(body);
   const parts =
-    bulletParts.length >= 2
+    usedBullets
       ? bulletParts
       : body.split(/(?=(?<![\d.])\b\d{1,2}\s*x?\s+(?!(?:tb|gb|mb|mm|k)\b)[A-Za-z])/i);
-  const usedBullets = bulletParts.length >= 2;
   const out: Array<{ qty: number; name: string }> = [];
   for (const raw of parts) {
     const p = raw.trim().replace(/^(?:my|a|an|the)\s+/i, "");
@@ -128,7 +134,7 @@ export function extractComponents(desc: string): {
     // A fragment with no letters or digits is a leftover delimiter, not a
     // component: a lone "*" survived the numeric-split fallback.
     if (!/[a-z0-9]/i.test(name)) continue;
-    if (!name || NOISE_RE.test(name) || PROTECTIVE_PACKAGING_RE.test(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
+    if (!name || NOISE_RE.test(name) || isProtectivePackaging(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
     out.push({ qty, name: name.slice(0, 60) });
   }
   return { components: out, usedBullets, hasContentsSection: !!m };

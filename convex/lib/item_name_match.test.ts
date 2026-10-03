@@ -276,3 +276,12 @@ describe("lens notation preserves physical identity",()=>{
   expect(bestMatch("Canon EF 16-35 f/1.8",lenses,x=>x.name).confident).toBe(false);
  });
 });
+
+
+it("does not turn a generic category into a confident physical-item identity",()=>{
+ const inventory=[{name:"Camera flash"},{name:"Canon R5"}];
+ expect(bestMatch("Cameras:",inventory,i=>i.name)).toMatchObject({confident:false});
+ expect(bestMatch("camera",[{name:"Camera flash"}],i=>i.name)).toMatchObject({confident:false});
+ expect(bestMatch("Camera flash",inventory,i=>i.name)).toMatchObject({confident:true,match:{name:"Camera flash"}});
+ expect(bestMatch("lens",[{name:"Sony GM 16-35mm f2.8"}],i=>i.name)).toMatchObject({confident:false});
+});

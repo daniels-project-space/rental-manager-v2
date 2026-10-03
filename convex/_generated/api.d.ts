@@ -22,6 +22,7 @@ import type * as admin_fix_inventory_20260625 from "../admin_fix_inventory_20260
 import type * as admin_item_attribution from "../admin_item_attribution.js";
 import type * as admin_migrate from "../admin_migrate.js";
 import type * as admin_reclassify from "../admin_reclassify.js";
+import type * as admin_reconcile_lens_filter_20261003 from "../admin_reconcile_lens_filter_20261003.js";
 import type * as admin_reset_account_state from "../admin_reset_account_state.js";
 import type * as admin_review_shared_lens_variants_20261003 from "../admin_review_shared_lens_variants_20261003.js";
 import type * as admin_verify_camera_capabilities_20261001 from "../admin_verify_camera_capabilities_20261001.js";
@@ -366,6 +367,7 @@ declare const fullApi: ApiFromModules<{
   admin_item_attribution: typeof admin_item_attribution;
   admin_migrate: typeof admin_migrate;
   admin_reclassify: typeof admin_reclassify;
+  admin_reconcile_lens_filter_20261003: typeof admin_reconcile_lens_filter_20261003;
   admin_reset_account_state: typeof admin_reset_account_state;
   admin_review_shared_lens_variants_20261003: typeof admin_review_shared_lens_variants_20261003;
   admin_verify_camera_capabilities_20261001: typeof admin_verify_camera_capabilities_20261001;
