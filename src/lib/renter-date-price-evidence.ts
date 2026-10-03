@@ -20,7 +20,8 @@ export function datePriceEvidence(receipt:ToolReceipt,threadId?:string):PriceEvi
  const same=q.lines.every((l,i)=>{const old=base.lines[i];return l.name===old.name&&l.qty===old.qty&&l.product_id===old.product_id&&l.item_id===old.item_id&&l.daily_price_gbp===old.daily_price_gbp&&JSON.stringify(l.price_tiers??[])===JSON.stringify(old.price_tiers??[]);});
  if(!same||typeof r.price_delta_gbp!=="number"||!Number.isFinite(r.price_delta_gbp)||cents(r.price_delta_gbp)!==cents(q.total_gbp-base.total_gbp))return [];
  return [{names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),total_gbp:q.total_gbp,days:q.days,start_date:q.start_date,end_date:q.end_date,
-  date_proposal:{before_context_key:r.before_context_key,from_start_date:base.start_date,from_end_date:base.end_date,base_total_gbp:base.total_gbp},call_id:receipt.call_id,source:"native_lab_date_proposal"},
+  date_proposal:{before_context_key:r.before_context_key,from_start_date:base.start_date,from_end_date:base.end_date,base_total_gbp:base.total_gbp,
+   ...(typeof r.physical_identity_key==="string"&&r.physical_identity_key?{physical_identity_key:r.physical_identity_key}:{})},call_id:receipt.call_id,source:"native_lab_date_proposal"},
   ...q.lines.map(l=>({names:[l.name],kind:"rental" as const,quantity:l.qty,daily_rate_gbp:l.effective_rate_gbp,base_rate_gbp:l.daily_price_gbp,total_gbp:l.line_total_gbp,
    days:q.days,start_date:q.start_date,end_date:q.end_date,call_id:`${receipt.call_id}:line:${l.product_id??l.item_id}`,source:"native_lab_date_proposal"}))];
 }

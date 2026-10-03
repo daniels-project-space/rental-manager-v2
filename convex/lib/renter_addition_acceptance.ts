@@ -4,7 +4,7 @@ import { renterItemNames } from "./renter_item_names";
 import type { SentAdditionProposal } from "./renter_sent_proposal";
 
 export type AcceptedAdditionLine = {product_id:number;name:string;qty:number;line_total_gbp:number;daily_rate_gbp?:number;base_daily_rate_gbp?:number;aliases?:string[];identity_name?:string;primary_removal_aliases?:string[]};
-export type AdditionAcceptanceQuote = {context_key:string;start_date:string;end_date:string;total_gbp:number;additional_cost_gbp:number;lines:AcceptedAdditionLine[]};
+export type AdditionAcceptanceQuote = {context_key:string;start_date:string;end_date:string;total_gbp:number;additional_cost_gbp:number;lines:AcceptedAdditionLine[];physical_identity_key?:string};
 const sameMoney = (a:number,b:number) => Number.isFinite(a) && Number.isFinite(b) && Math.round(a*100)===Math.round(b*100);
 const numbers:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
 const normal = (s:string) => s.replace(/[’‘]/g,"'").replace(/\s+/g," ").trim();
@@ -116,6 +116,7 @@ export function acceptsAddition(text:string,quote:AdditionAcceptanceQuote,owner?
   if(direct.matches && price.matches)return true;
   if(!owner)return false;
   const candidates=(owner.quoted_additions??[]).filter(p=>p.context_key===quote.context_key &&
+    (!quote.physical_identity_key||p.physical_identity_key===quote.physical_identity_key) &&
     p.start_date===quote.start_date && p.end_date===quote.end_date && keys(p.items)===keys(quote.lines) &&
     sameMoney(p.total_gbp,quote.total_gbp) && sameMoney(p.additional_cost_gbp,quote.additional_cost_gbp) &&
     quote.lines.every(line=>hasLineName(owner.body_text,line)) && pricesMatch(owner.body_text,quote,true).matches);

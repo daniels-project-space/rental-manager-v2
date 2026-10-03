@@ -1,6 +1,6 @@
 import { amendmentMoneyClaims } from "./renter_amendment_money";
 import type { SentDateProposal } from "./renter_date_proposal";
-type Terms={context_key:string;from_start_date:string;from_end_date:string;start_date:string;end_date:string;total_gbp:number;base_total_gbp:number;today:string};
+type Terms={context_key:string;from_start_date:string;from_end_date:string;start_date:string;end_date:string;total_gbp:number;base_total_gbp:number;today:string;physical_identity_key?:string};
 const sameMoney=(a:number,b:number)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.round(a*100)===Math.round(b*100);
 const months=["january","february","march","april","may","june","july","august","september","october","november","december"];
 const normal=(s:string)=>s.replace(/[’‘]/g,"'").replace(/```[\s\S]*?```/g," ").replace(/["“][^"”]*\b(?:move|extend|change|set|update|reschedule)\b[^"”]*["”]/gi," ");
@@ -68,6 +68,7 @@ export function acceptsDateChange(text:string,terms:Terms,owner?:{body_text:stri
   if(requested&&(price.matches||terms.total_gbp<=terms.base_total_gbp))return true;
   if(!owner)return false;
   const offers=(owner.quoted_dates??[]).filter(p=>p.context_key===terms.context_key&&p.from_start_date===terms.from_start_date&&p.from_end_date===terms.from_end_date
+    &&(!terms.physical_identity_key||p.physical_identity_key===terms.physical_identity_key)
     &&p.start_date===terms.start_date&&p.end_date===terms.end_date&&sameMoney(p.total_gbp,terms.total_gbp)&&sameMoney(p.base_total_gbp,terms.base_total_gbp));
   if(offers.length!==1||(owner.quoted_dates??[]).length!==1||/\b(?:alternatively|either|instead|options?)\b|\bor\b/i.test(owner.body_text))return false;
   if(/\bunavailable\b|(?:not|aren't|isn't|can't|cannot|unavailable).{0,25}(?:available|extend|change|move|possible)|\b(?:don't|do not)\s+(?:extend|change|move)/i.test(owner.body_text))return false;

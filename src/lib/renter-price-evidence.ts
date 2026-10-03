@@ -50,7 +50,8 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
         if(inclusiveRentalDays(string(q.start_date),string(q.end_date))!==q.days ||
           expected.size!==actual.size || [...expected].some(([name,qty])=>actual.get(name)!==qty) ||
           Math.abs(q.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(q.total_gbp as number))>0.011) continue;
-        const proposal: NonNullable<PriceEvidence["proposal"]> = {base_items:r.base_items,added_items:r.added_items};
+        const proposal: NonNullable<PriceEvidence["proposal"]> = {base_items:r.base_items,added_items:r.added_items,
+          ...(string(r.physical_identity_key)?{physical_identity_key:r.physical_identity_key as string}:{})};
         out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal,total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
         // Keep the native per-line quote as well as the proposed grand total.
         // No echoed request name can supply the identity or the arithmetic.

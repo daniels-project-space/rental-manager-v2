@@ -15,7 +15,7 @@ import type { PriceTier } from "./lib/hygglo_pricing";
 import { inclusiveDays, summarise } from "./lib/renter_order_quote";
 export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate, loadStockSources } from "./lib/renter_stock";
-import { checkOrderRentalStock, resolveOrderPhysicalItems, sameOrderPhysicalItems, type OrderPhysicalItem } from "./lib/renter_order_stock";
+import { checkOrderRentalStock, resolveOrderPhysicalItems, sameOrderPhysicalItems, orderPhysicalIdentityKey, type OrderPhysicalItem } from "./lib/renter_order_stock";
 import { loadListingInventory } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
@@ -52,7 +52,10 @@ async function additionConsent(ctx:QueryCtx,threadId:string,account:string,text:
   const inventory=await ctx.db.query("items").collect();
   const identities=await Promise.all(addition.lines.map(line=>offeringConsentIdentity(ctx,account,line,inventory)));
   if(identities.some(i=>!i))return false;
+  const physical=await resolveOrderPhysicalItems(ctx,account,complete.lines,inventory);
+  if(!physical.items.length)return false;
   return acceptsAddition(text,{context_key:await amendmentContext(ctx,threadId),start_date:complete.start_date,end_date:complete.end_date,
+    physical_identity_key:orderPhysicalIdentityKey(physical.items),
     total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,
     lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous);
 }
@@ -72,6 +75,7 @@ async function prepareDateChange(ctx:QueryCtx,row:NonNullable<Awaited<ReturnType
   const stock=await checkOrderRentalStock(ctx,row.account_slug,row.items,start,end,row.thread_id);
   if(stock.available!==true)return {ok:false as const,error_code:"stock_unavailable_or_unknown",error:`Cannot change this basket to ${start} – ${end}: ${stock.reason}. No dates or prices were changed. A failed range check alone does not identify which individual day is booked.`,stock_receipts:stock.receipts};
   return {ok:true as const,preview_only:true as const,source:"native_lab_date_proposal" as const,thread_id:row.thread_id,
+    physical_identity_key:stock.physical_identity_key,
     before_context_key:await amendmentContext(ctx,row.thread_id),base_items:row.items.map(i=>({name:i.name,quantity:i.qty})),
     quote,base_quote,price_delta_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts:stock.receipts};
 }
@@ -378,6 +382,7 @@ async function prepareAdditionBasket(ctx: QueryCtx, a: {thread_id:string;items:A
     if(quote.total_gbp==null || base_quote.total_gbp==null || addition_quote.total_gbp==null)
       return {ok:false,error:"The proposal includes unpriced items. Ask the owner for a quote; no booking changes were made."};
     return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,
+      physical_identity_key:stock.physical_identity_key,
       base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
       quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,proposed_lines:lines};
 }
@@ -534,6 +539,7 @@ export const applyChange = mutation({
       const messages=await recentThreadMessages(ctx,a.thread_id,2);
       const owner=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
       if(!acceptsDateChange(latestMessage!.body_text,{context_key:beforeContext,
+        physical_identity_key:prepared.physical_identity_key??undefined,
         from_start_date:prepared.base_quote.start_date!,from_end_date:prepared.base_quote.end_date!,
         start_date:a.start_date,end_date:end,total_gbp:prepared.quote.total_gbp!,base_total_gbp:prepared.base_quote.total_gbp!,today:londonToday()},owner))
         return {ok:false,action_performed:false,error_code:"date_consent_unverified",error:"The current renter message does not agree to these exact dates and Native price. No dates or prices changed. Use quote_booking_dates, offer its complete period and total, then use clear acceptance without asking again for already agreed terms."};
@@ -711,6 +717,7 @@ export const applyChange = mutation({
       const additionQuote = summarise([additionLine], row.start_date, row.end_date);
       if (quote.total_gbp == null || baseQuote.total_gbp == null || additionQuote.total_gbp == null) return {ok:false,error:"The complete proposed basket has unpriced items. Ask the owner for a quote; no items or prices changed."};
       return {ok:true, action_performed:false, preview_only:true, source:"native_lab_proposal" as const,
+        physical_identity_key:basketStock.physical_identity_key,
         thread_id:a.thread_id, account_slug:row.account_slug,
         base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),
         added_items:[{name:additionLine.name,quantity:qty}], quote,

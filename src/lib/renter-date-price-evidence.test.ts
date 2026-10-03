@@ -1,10 +1,10 @@
 import { expect,it } from "vitest";
 import { datePriceEvidence } from "./renter-date-price-evidence";
 const quote=(days:number,end_date:string)=>({start_date:"2026-10-20",end_date,days,total_gbp:40*days,lines:[{name:"Sony FX3",qty:1,item_id:"camera",daily_price_gbp:40,effective_rate_gbp:40,line_total_gbp:40*days}]});
-const receipt=()=>({tool:"quote_booking_dates",call_id:"native",result:{thread_id:"__probe__dates",ok:true,preview_only:true,source:"native_lab_date_proposal",before_context_key:"current",quote:quote(3,"2026-10-22"),base_quote:quote(2,"2026-10-21"),price_delta_gbp:40}});
+const receipt=()=>({tool:"quote_booking_dates",call_id:"native",result:{thread_id:"__probe__dates",ok:true,preview_only:true,source:"native_lab_date_proposal",before_context_key:"current",physical_identity_key:"native-physical-key",quote:quote(3,"2026-10-22"),base_quote:quote(2,"2026-10-21"),price_delta_gbp:40}});
 it("preserves the complete Native basket and original quote context",()=>{
  const evidence=datePriceEvidence(receipt(),"__probe__dates");
- expect(evidence).toHaveLength(2);expect(evidence[0]).toMatchObject({total_gbp:120,date_proposal:{before_context_key:"current",base_total_gbp:80,from_end_date:"2026-10-21"}});
+ expect(evidence).toHaveLength(2);expect(evidence[0]).toMatchObject({total_gbp:120,date_proposal:{physical_identity_key:"native-physical-key",before_context_key:"current",base_total_gbp:80,from_end_date:"2026-10-21"}});
  expect(evidence[1]).toMatchObject({total_gbp:120,daily_rate_gbp:40,quantity:1,days:3});
 });
 it("rejects altered totals, base basket, date span, delta and thread",()=>{

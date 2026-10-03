@@ -31,19 +31,19 @@ export async function resolveOrderPhysicalItems(ctx:QueryCtx,account:string,line
 }
 export function sameOrderPhysicalItems(before:OrderPhysicalItem[]|undefined,after:OrderPhysicalItem[]) {
   if(!before?.length||!after.length)return false;
-  const key=(items:OrderPhysicalItem[])=>JSON.stringify([...items].sort((a,b)=>a.item_id.localeCompare(b.item_id)).map(i=>[i.item_id,i.name,i.quantity]));
-  return key(before)===key(after);
+  return orderPhysicalIdentityKey(before)===orderPhysicalIdentityKey(after);
 }
+export const orderPhysicalIdentityKey=(items:ReadonlyArray<OrderPhysicalItem>)=>JSON.stringify([...items].sort((a,b)=>a.item_id.localeCompare(b.item_id)).map(i=>[i.item_id,i.name,i.quantity]));
 /** Check the candidate basket in the mutation's database snapshot. Shared kit
  * components are counted together; independent per-line successes are unsafe. */
 export async function checkOrderRentalStock(ctx: QueryCtx, account: string, lines: Line[], start: string, end: string, thread: string, preloadedSources?: Awaited<ReturnType<typeof loadStockSources>>, times?: {pickup_time?:string;return_time?:string}) {
   const sources = preloadedSources ?? await loadStockSources(ctx);
   const resolved=await resolveOrderPhysicalItems(ctx,account,lines,sources.items);
-  if(!resolved.items.length)return {available:resolved.available,reason:resolved.reason,receipts:[]};
+  if(!resolved.items.length)return {available:resolved.available,reason:resolved.reason,receipts:[],physical_identity_key:null};
   const receipts = resolved.items.map(({item_id,quantity}) => {
     const item = sources.items.find(i => String(i._id) === item_id)!;
     return { ...stockForItem(sources, item, { item_name: item.name_canonical, start_date: start, end_date: end, quantity, thread_id: thread, ...times }), start_date: start, end_date: end };
   });
   const available = receipts.some(r => r.available === false) ? false : receipts.every(r => r.available === true) ? true : null;
-  return { available, reason: available === true ? "available" : available === false ? "component_unavailable" : "stock_unknown", receipts };
+  return { available, reason: available === true ? "available" : available === false ? "component_unavailable" : "stock_unknown", receipts,physical_identity_key:orderPhysicalIdentityKey(resolved.items) };
 }

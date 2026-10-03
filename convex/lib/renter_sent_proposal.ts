@@ -10,6 +10,7 @@ import { recentThreadMessages } from "./thread_messages";
 
 export const sentAdditionProposalValidator = v.object({
   context_key: v.string(), epoch: v.number(), quoted_for_message_id: v.string(),
+  physical_identity_key:v.optional(v.string()),
   items: v.array(v.object({ product_id: v.number(), qty: v.number() })),
   base_items: v.array(v.object({ name: v.string(), quantity: v.number() })),
   added_items: v.array(v.object({ name: v.string(), quantity: v.number() })),
@@ -36,6 +37,7 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
     const items = selections.map(i => ({ product_id: i.product_id, qty: i.quantity })).sort((a,b) => a.product_id-b.product_id);
     if (new Set(items.map(i=>i.product_id)).size !== items.length) continue;
     const proposal: SentAdditionProposal = { context_key:scope.context_key, epoch:scope.epoch,
+      ...(price.proposal.physical_identity_key?{physical_identity_key:price.proposal.physical_identity_key}:{}),
       quoted_for_message_id:scope.message_id, items, base_items:price.proposal.base_items, added_items:price.proposal.added_items,
       start_date:price.start_date, end_date:price.end_date, total_gbp:price.total_gbp!, additional_cost_gbp:additional! };
     proposals.set(JSON.stringify(proposal), proposal);
@@ -70,6 +72,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
       ||p.from_start_date!==order.start_date||p.from_end_date!==order.end_date||total==null||Math.round(total*100)!==Math.round(p.base_total_gbp*100)
       ||!price.start_date||!price.end_date||!price.total_gbp||!Number.isFinite(price.total_gbp)||!price.items||members(price.items)!==currentMembers)continue;
     const proposal:SentDateProposal={context_key,epoch,quoted_for_message_id:approval.message_id,from_start_date:p.from_start_date,from_end_date:p.from_end_date,
+      ...(p.physical_identity_key?{physical_identity_key:p.physical_identity_key}:{}),
       start_date:price.start_date,end_date:price.end_date,total_gbp:price.total_gbp,base_total_gbp:p.base_total_gbp,items:price.items};
     if(!dates.some(d=>JSON.stringify(d)===JSON.stringify(proposal)))dates.push(proposal);
   }

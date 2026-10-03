@@ -9,15 +9,15 @@ import type { PriceEvidence } from "./price_claims";
 
 const scope={context_key:"current-basket",epoch:5,message_id:"renter-current"};
 const price=():PriceEvidence=>({names:[],kind:"basket",source:"native_lab_proposal",call_id:"quote",total_gbp:194,start_date:"2026-10-20",end_date:"2026-10-21",
-  proposal:{base_items:[{name:"BMPCC 6K Full Frame",quantity:1}],added_items:[{name:"Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}],
+  proposal:{physical_identity_key:"native-addition-key",base_items:[{name:"BMPCC 6K Full Frame",quantity:1}],added_items:[{name:"Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}],
     added_listings:[{product_id:1116294,quantity:1},{product_id:1172765,quantity:1}],additional_cost_gbp:70}});
 
 describe("sent Native proposal evidence",()=>{
   it("retains exact Native listing identity and marginal terms from the real joint quote fixture",()=>{
-    const evidence=renterPriceEvidence([{tool:"quote_booking_addition",call_id:"native",result:nativeQuote}],[],nativeQuote.thread_id);
+    const evidence=renterPriceEvidence([{tool:"quote_booking_addition",call_id:"native",result:{...nativeQuote,physical_identity_key:"native-addition-key"}}],[],nativeQuote.thread_id);
     const proposals=additionProposalsFromEvidence(evidence,scope);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0]).toMatchObject({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],total_gbp:194,additional_cost_gbp:70});
+    expect(proposals[0]).toMatchObject({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],total_gbp:194,additional_cost_gbp:70,physical_identity_key:"native-addition-key"});
   });
   it("does not duplicate the quote for a grouped marginal price receipt",()=>{
     expect(additionProposalsFromEvidence([price(),{...price(),quote_role:"addition"},price()],scope)).toHaveLength(1);
@@ -65,7 +65,7 @@ describe("owner message proposal archive",()=>{
       const f=fixture();const text=f.conversation.ai_draft_text;
       if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"run"});
       else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"owner-sent"});
-      expect(f.tables.hygglo_messages.at(-1)).toMatchObject({sender:"owner",body_text:text,quoted_additions:[expect.objectContaining({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],total_gbp:194,additional_cost_gbp:70,quoted_for_message_id:"renter-current",epoch:5})]});
+      expect(f.tables.hygglo_messages.at(-1)).toMatchObject({sender:"owner",body_text:text,quoted_additions:[expect.objectContaining({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],total_gbp:194,additional_cost_gbp:70,physical_identity_key:"native-addition-key",quoted_for_message_id:"renter-current",epoch:5})]});
     });
   }
   for(const variant of ["edited_text","wrong_inbound","old_epoch","old_context","review_rejected","owner_latest","no_evidence","already_applied","no_order"]){
@@ -90,11 +90,11 @@ describe("sent date offer archive",()=>{
   it(`${path} archives the exact full quote for later acceptance`,async()=>{
    const f=fixture();const order=f.tables.renter_bot_lab_orders[0];
    f.conversation.ai_draft_text="I can extend your booking to 20–22 October for £170 total.";
-   f.conversation.ai_draft_evidence.prices=[{names:[],kind:"basket",source:"native_lab_date_proposal",call_id:"native-date",items:order.items.map((i:any)=>({name:i.name,quantity:i.qty})),total_gbp:170,start_date:"2026-10-20",end_date:"2026-10-22",date_proposal:{before_context_key:f.conversation.ai_draft_context_key,from_start_date:order.start_date,from_end_date:order.end_date,base_total_gbp:124}}];
+   f.conversation.ai_draft_evidence.prices=[{names:[],kind:"basket",source:"native_lab_date_proposal",call_id:"native-date",items:order.items.map((i:any)=>({name:i.name,quantity:i.qty})),total_gbp:170,start_date:"2026-10-20",end_date:"2026-10-22",date_proposal:{physical_identity_key:"native-date-key",before_context_key:f.conversation.ai_draft_context_key,from_start_date:order.start_date,from_end_date:order.end_date,base_total_gbp:124}}];
    const text=f.conversation.ai_draft_text;
    if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"date"});
    else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"date-owner"});
-   expect(f.tables.hygglo_messages.at(-1)).toMatchObject({quoted_dates:[expect.objectContaining({context_key:f.conversation.ai_draft_context_key,from_end_date:"2026-10-21",end_date:"2026-10-22",total_gbp:170,base_total_gbp:124,quoted_for_message_id:"renter-current"})]});
+   expect(f.tables.hygglo_messages.at(-1)).toMatchObject({quoted_dates:[expect.objectContaining({context_key:f.conversation.ai_draft_context_key,from_end_date:"2026-10-21",end_date:"2026-10-22",total_gbp:170,base_total_gbp:124,physical_identity_key:"native-date-key",quoted_for_message_id:"renter-current"})]});
   });
  }
 });

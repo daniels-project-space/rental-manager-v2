@@ -442,7 +442,7 @@ describe("additions reconcile real requests and sent quote terms",()=>{
  const offer=async(f:ReturnType<typeof setupAtomicAddition>)=>{
   const q=await (quoteAdditionBasket as any)._handler(f.ctx,{thread_id:"__probe__atomic",items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
   const context=draftContextKey(await getBotBooking(f.ctx as any,"__probe__atomic"),undefined,await getLabOrder(f.ctx as any,"__probe__atomic"));
-  const proposal={context_key:context,epoch:82,quoted_for_message_id:"earlier-renter",items:[{product_id:2,qty:1},{product_id:3,qty:1}],base_items:q.base_items,added_items:q.added_items,start_date:q.quote.start_date,end_date:q.quote.end_date,total_gbp:q.quote.total_gbp,additional_cost_gbp:q.additional_cost_gbp};
+  const proposal={physical_identity_key:q.physical_identity_key,context_key:context,epoch:82,quoted_for_message_id:"earlier-renter",items:[{product_id:2,qty:1},{product_id:3,qty:1}],base_items:q.base_items,added_items:q.added_items,start_date:q.quote.start_date,end_date:q.quote.end_date,total_gbp:q.quote.total_gbp,additional_cost_gbp:q.additional_cost_gbp};
   f.tables.hygglo_messages[0].fetched_at=2;f.tables.hygglo_messages[0]._creationTime=2;
   f.tables.hygglo_messages.unshift({thread_id:"__probe__atomic",message_id:"owner-offer",sender:"owner",account_slug:"leo",body_text:"The Blazar Remus 100mm and PL to L mount cost £70 extra for 20–21 October, bringing the booking total to £194. Shall I add both?",quoted_additions:[proposal],fetched_at:1,_creationTime:1});
  };
@@ -461,6 +461,21 @@ describe("additions reconcile real requests and sent quote terms",()=>{
   expect(await applyBasket(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:194}});
   expect(await applyBasket(f.ctx)).toMatchObject({ok:true,already_applied:true,action_performed:false});expect(f.tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
  });
+ for(const variant of ["different_pool_same_name","component_quantity","missing_identity"]){
+  it(`does not authorize changed physical equipment from an old addition quote: ${variant}`,async()=>{
+   const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add both.";
+   if(variant==="missing_identity")delete f.tables.hygglo_messages[0].quoted_additions[0].physical_identity_key;
+   else {
+    const component=f.tables.listing_resolution_override.find(r=>r.product_id===2).components[0];
+    const item=f.tables.items.find(i=>i._id===component.item_id);item.qty=10;
+    if(variant==="component_quantity")component.qty=2;
+    else {f.tables.items.push({...item,_id:"replacement-pool"});component.item_id="replacement-pool";}
+   }
+   const fresh=await (quoteAdditionBasket as any)._handler(f.ctx,{thread_id:"__probe__atomic",items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
+   expect(fresh).toMatchObject({ok:true,quote:{total_gbp:194}});
+   const before=structuredClone(f.tables);expect(await applyBasket(f.ctx)).toMatchObject({ok:false,action_performed:false,error_code:"addition_consent_unverified"});expect(f.tables).toEqual(before);
+  });
+ }
  for(const variant of ["changed_price","unused_quote","intervening_question"]){
   it(`does not reuse an offer after ${variant}`,async()=>{
    const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add both.";
@@ -519,9 +534,22 @@ describe("date quotes and positive consent",()=>{
    const f=fixture();f.tables.hygglo_messages[0].body_text=text;const before=structuredClone(f.tables);
    expect(await extend(f.ctx)).toMatchObject({ok:false,error_code:"date_consent_unverified"});expect(f.tables).toEqual(before);
   });
+ for(const variant of ["different_pool_same_name","missing_identity"]){
+  it(`does not authorize changed physical equipment from an old date quote: ${variant}`,async()=>{
+   const f=fixture();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
+   f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1}]}];
+   const quote=await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"set_dates",start_date:"2026-10-06",end_date:"2026-10-08",preview_only:true});
+   const proposal={physical_identity_key:quote.physical_identity_key,context_key:quote.before_context_key,from_start_date:"2026-10-06",from_end_date:"2026-10-07",start_date:"2026-10-06",end_date:"2026-10-08",total_gbp:120,base_total_gbp:80,epoch:86,quoted_for_message_id:"fixture-current",items:[{name:"Sony FX3",quantity:1}]};
+   if(variant==="missing_identity")delete proposal.physical_identity_key;
+   else {f.tables.items.push({...f.tables.items[0],_id:"replacement-pool"});f.tables.listing_resolution_override[0].components[0].item_id="replacement-pool";}
+   f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"owner",sender:"owner",body_text:"I can extend your booking to 6–8 October for £120 total.",fetched_at:2,quoted_dates:[proposal]}, {thread_id:"__probe__atomic",message_id:"accepted",sender:"renter",body_text:"Yes please extend it.",fetched_at:3});
+   expect(await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"set_dates",start_date:"2026-10-06",end_date:"2026-10-08",preview_only:true})).toMatchObject({ok:true,quote:{total_gbp:120}});
+   const before=structuredClone(f.tables);expect(await extend(f.ctx)).toMatchObject({ok:false,error_code:"date_consent_unverified"});expect(f.tables).toEqual(before);
+  });
+ }
  it("accepts the exact saved offer and reruns stock before the write",async()=>{
   const f=fixture();const quote=await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"set_dates",start_date:"2026-10-06",end_date:"2026-10-08",preview_only:true});
-  f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"owner",sender:"owner",body_text:"I can extend your booking to 6–8 October for £120 total.",fetched_at:2,quoted_dates:[{context_key:quote.before_context_key,from_start_date:"2026-10-06",from_end_date:"2026-10-07",start_date:"2026-10-06",end_date:"2026-10-08",total_gbp:120,base_total_gbp:80,epoch:86,quoted_for_message_id:"fixture-current",items:[{name:"Sony FX3",quantity:1}]}]},
+  f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"owner",sender:"owner",body_text:"I can extend your booking to 6–8 October for £120 total.",fetched_at:2,quoted_dates:[{physical_identity_key:quote.physical_identity_key,context_key:quote.before_context_key,from_start_date:"2026-10-06",from_end_date:"2026-10-07",start_date:"2026-10-06",end_date:"2026-10-08",total_gbp:120,base_total_gbp:80,epoch:86,quoted_for_message_id:"fixture-current",items:[{name:"Sony FX3",quantity:1}]}]},
    {thread_id:"__probe__atomic",message_id:"accepted",sender:"renter",body_text:"Yes please extend it.",fetched_at:3});
   f.tables.owner_unavailability=[{item_id:"camera",start_date:"2026-10-08",end_date:"2026-10-08"}];const blocked=structuredClone(f.tables);
   expect(await extend(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(blocked);
