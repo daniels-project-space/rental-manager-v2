@@ -113,7 +113,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     let bookingSubject = /^\s*(?:(?:your|our|my|the|this|current|confirmed)\s+)*(?:booking|order|rental|hire)(?:\s+(?:total|price|cost))?\s+(?:remains|stays|is\s+still)(?:\s+(?:unchanged|the\s+same|set|confirmed|agreed))?(?:\s+(?:at|priced\s+at))?\s*$/i.test(segment);
     const currentBookingReference = /\b(?:current|existing|confirmed)\s+([^£.!?()]{0,70}?)\s+(?:booking|order)\s*\(\s*$/i.exec(segment);
     if (currentBookingReference && request.items.length === 1 && aliases([request.items[0].name, ...(request.items[0].aliases ?? [])]).some(name => ` ${name} `.includes(` ${norm(currentBookingReference[1])} `))) bookingSubject = true;
-    const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(segment);
+    // In “the lens pairs with the adapter, which is £10/day”, only the
+    // adapter owns the amount. “with” is compatibility, not a joint price.
+    const relativePriceSubject = /\b(?:pairs|paired|works|used)\s+with\s+([^£.!?]{1,90}?),?\s+which\s+(is|are|costs?)\s*$/i.exec(segment);
+    const priceSubjectSegment = relativePriceSubject ? `${relativePriceSubject[1].replace(/,\s*$/, "")} ${relativePriceSubject[2]}` : segment;
+    const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(priceSubjectSegment);
     let pairedItems: Array<{names:string[];quantity:number}> | undefined;
     let unresolvedPair = false;
     if (explicitSubject) {

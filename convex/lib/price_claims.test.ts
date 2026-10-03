@@ -280,3 +280,19 @@ it("binds adding those to the exact preceding bullet group",()=>{
  expect(check(text.replace("£70","£50"),receipts,scope)).not.toEqual([]);
  expect(check(text,receipts.slice(0,2),scope)).not.toEqual([]);
 });
+
+describe("prices in compatibility relative clauses",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const receipts:PriceEvidence[]=[
+ {names:["Blazar Remus 100mm"],kind:"rental",days:2,quantity:1,total_gbp:50,daily_rate_gbp:25,source:"hygglo_tier",call_id:"lens"},
+ {names:["PL to L mount"],kind:"rental",days:2,quantity:1,total_gbp:20,daily_rate_gbp:10,source:"hygglo_tier",call_id:"adapter"}];
+ const text="The Great Joy 35mm, 50mm, and 85mm anamorphic lens set isn't available for 20 to 21 October. \n\nFor an anamorphic option on the Blackmagic 6K Full Frame (native L-mount), I have the Blazar Remus 100mm T2.8 anamorphic prime available. That runs at £25/day (£50 total for your 2-day shoot). Since it's PL mount, it pairs with our PL to L-mount adapter, which is £10/day (£20 total for 2 days).\n\nI haven't changed anything on your current booking. Let me know if you'd like to look at adding the Blazar Remus setup!";
+ it("prices the relative-clause adapter separately from the lens",()=>{
+  expect(check(text,receipts,scope)).toEqual([]);
+  for(const verb of ["works","can be paired","can be used"]) expect(check(text.replace("pairs",verb),receipts,scope),verb).toEqual([]);
+ });
+ it("cannot borrow a price for another item, quantity, duration or amount",()=>{
+  for(const wrong of [text.replace("£10","£25"),text.replace("£20","£50"),text.replace("PL to L-mount","PL to EF mount"),text.replace("PL to L-mount adapter","two PL to L-mount adapters"),text.replace("PL to L-mount adapter","unknown cinema accessory"),text.replace("2 days","3 days")]) expect(check(wrong,receipts,scope),wrong).not.toEqual([]);
+  expect(check(text,receipts.slice(0,1),scope)).not.toEqual([]);
+ });
+});
