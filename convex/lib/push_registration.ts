@@ -13,3 +13,15 @@ export function validatePushSubscription(args: { endpoint: string; p256dh: strin
   const publicKey = decode(args.p256dh);
   if (publicKey.length !== 65 || publicKey.charCodeAt(0) !== 4 || decode(args.auth).length !== 16) throw new Error("Invalid push subscription keys");
 }
+
+export async function pushCredentialHash(value:string){
+ const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));
+ return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
+}
+export async function validPushRenewalCredential(value:string,expected?:string){
+ if(!/^[a-f0-9]{64}$/.test(value)||!expected||!/^[a-f0-9]{64}$/.test(expected))return false;
+ const actual=await pushCredentialHash(value);let difference=0;
+ for(let i=0;i<actual.length;i++)difference|=actual.charCodeAt(i)^expected.charCodeAt(i);
+ return difference===0;
+}
+export const pushKeysHash=(keys:{p256dh:string;auth:string})=>pushCredentialHash(atob(keys.p256dh.replace(/-/g,"+").replace(/_/g,"/"))+"|"+atob(keys.auth.replace(/-/g,"+").replace(/_/g,"/")));

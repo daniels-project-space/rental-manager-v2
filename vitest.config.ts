@@ -29,6 +29,7 @@ export default defineConfig({
       "src/lib/convex-request-context.test.ts",
       "src/lib/owner-http-route.test.ts",
       "src/app/api/renter-bot-ab/route.test.ts",
+      "src/app/api/push/renew/route.test.ts",
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_resolution.test.ts",

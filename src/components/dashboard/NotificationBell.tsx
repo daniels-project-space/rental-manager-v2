@@ -1,4 +1,5 @@
 "use client";
+import { pushDeviceCredential } from "@/lib/push-device-credential";
 /**
  * Notification bell (2026-06-23). Top-of-dashboard icon that:
  *   • enables phone push (registers the SW, requests permission, subscribes via
@@ -157,7 +158,8 @@ export function NotificationBell() {
         }
         if (cancelled) return;
         const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
-        let result = await save({
+        const renewal_credential=await pushDeviceCredential(true);
+        let result = await save({renewal_credential,
           endpoint: sub.endpoint,
           previous_endpoint: previousEndpoint,
           p256dh: json.keys?.p256dh ?? "",
@@ -175,7 +177,7 @@ export function NotificationBell() {
           sub = await reg.pushManager.subscribe({ userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource });
           const replacement = sub.toJSON();
-          result = await save({ endpoint: sub.endpoint, previous_endpoint: expiredEndpoint,
+          result = await save({ renewal_credential,endpoint: sub.endpoint, previous_endpoint: expiredEndpoint,
             p256dh: replacement.keys?.p256dh ?? "", auth: replacement.keys?.auth ?? "", user_agent: navigator.userAgent });
         }
         if (!cancelled) {
@@ -185,7 +187,7 @@ export function NotificationBell() {
             setPushMode(result.mode);
             rememberPushMode(result.mode);
             window.localStorage.setItem(PUSH_ENDPOINT_STORAGE_KEY, sub.endpoint);
-            reg.active?.postMessage({ type: "push-registration-saved", endpoint: sub.endpoint });
+            reg.active?.postMessage({ type: "push-registration-saved", endpoint: sub.endpoint,renewal_credential });
             setErr(null);
           }
         }
@@ -246,7 +248,8 @@ export function NotificationBell() {
         });
       }
       const json = sub.toJSON() as { keys?: { p256dh?: string; auth?: string } };
-      const result = await save({
+      const renewal_credential=await pushDeviceCredential();
+      const result = await save({renewal_credential,
         endpoint: sub.endpoint,
         activate: true,
         p256dh: json.keys?.p256dh ?? "",
@@ -259,7 +262,7 @@ export function NotificationBell() {
       rememberPushMode(result.mode);
       if (!result.active) throw new Error("Could not activate notifications on this device.");
       window.localStorage.setItem(PUSH_ENDPOINT_STORAGE_KEY, sub.endpoint);
-      reg.active?.postMessage({ type: "push-registration-saved", endpoint: sub.endpoint });
+      reg.active?.postMessage({ type: "push-registration-saved", endpoint: sub.endpoint,renewal_credential });
       setPushState("enabled");
     } catch (e) {
       setErr((e as Error).message || "Could not enable notifications.");

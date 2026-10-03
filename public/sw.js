@@ -27,7 +27,7 @@ function urlB64ToUint8Array(base64String) {
 // Workers cannot read localStorage. Retain the current opaque endpoint in
 // IndexedDB so rotation can prove it belongs to the selected installation,
 // even when oldSubscription is missing and all app windows are closed.
-function subscriptionEndpoint(value) {
+function subscriptionEndpoint(value,key="endpoint") {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open("rental-manager-push", 1);
     request.onupgradeneeded = () => request.result.createObjectStore("registration");
@@ -37,7 +37,7 @@ function subscriptionEndpoint(value) {
       const db = request.result;
       const transaction = db.transaction("registration", value === undefined ? "readonly" : "readwrite");
       const store = transaction.objectStore("registration");
-      const operation = value === undefined ? store.get("endpoint") : store.put(value, "endpoint");
+      const operation = value === undefined ? store.get(key) : store.put(value,key);
       let result;
       operation.onsuccess = () => { result = operation.result; };
       transaction.oncomplete = () => { db.close(); resolve(result); };
@@ -47,8 +47,10 @@ function subscriptionEndpoint(value) {
   });
 }
 self.addEventListener("message", (event) => {
+  if(event.origin && event.origin!==self.location.origin)return;
   if (event.data?.type === "push-registration-saved" && typeof event.data.endpoint === "string")
-    event.waitUntil(subscriptionEndpoint(event.data.endpoint));
+    event.waitUntil(Promise.all([subscriptionEndpoint(event.data.endpoint),
+      ...(typeof event.data.renewal_credential === "string" && /^[a-f0-9]{64}$/.test(event.data.renewal_credential) ? [subscriptionEndpoint(event.data.renewal_credential,"renewal_credential")] : [])]));
 });
 
 self.addEventListener("pushsubscriptionchange", (event) => {
@@ -65,11 +67,15 @@ self.addEventListener("pushsubscriptionchange", (event) => {
           applicationServerKey: urlB64ToUint8Array(key),
         });
         const json = sub.toJSON();
-        const saved = await fetch("/api/push/save", {
+        const renewalCredential=await subscriptionEndpoint(undefined,"renewal_credential");
+        // Older installations migrate on their next foreground owner save.
+        // The capability route works after that owner's login cookie expires.
+        const saved = await fetch(renewalCredential ? "/api/push/renew" : "/api/push/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             endpoint: sub.endpoint,
+            ...(renewalCredential ? {renewal_credential:renewalCredential} : {}),
             previous_endpoint: previousEndpoint,
             p256dh: (json.keys && json.keys.p256dh) || "",
             auth: (json.keys && json.keys.auth) || "",

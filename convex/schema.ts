@@ -2296,6 +2296,7 @@ const operationalSchema = defineSchema({
     slot: v.literal("primary"), endpoint: v.string(),
     mode: v.union(v.literal("all"), v.literal("money_only"), v.literal("my_share")),
     needs_renewal: v.boolean(), updated_at: v.number(),
+    renewal_credential_hash: v.optional(v.string()), subscription_keys_hash: v.optional(v.string()),
   }).index("by_slot", ["slot"]),
   push_subscriptions: defineTable({
     endpoint: v.string(),

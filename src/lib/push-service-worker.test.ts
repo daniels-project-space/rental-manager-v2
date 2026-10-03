@@ -65,3 +65,11 @@ describe("actual push worker lifecycle", () => {
     expect(test.showNotification).toHaveBeenCalledWith("Rental alert", expect.objectContaining({ tag: "renter_message:thread", renotify: true, data: { url: "/?thread=thread" } }));
   });
 });
+
+it("renews after a worker restart using its persisted credential rather than an owner cookie",async()=>{
+ const test=worker();await test.fire("message",{data:{type:"push-registration-saved",endpoint:"https://push.test/old",renewal_credential:"a".repeat(64)}});
+ const restarted=worker(test.store);await restarted.fire("pushsubscriptionchange",{});
+ const request=restarted.fetch.mock.calls.find(([url])=>url==="/api/push/renew") as any;
+ expect(JSON.parse(request[1].body)).toMatchObject({endpoint:"https://push.test/new",previous_endpoint:"https://push.test/old",renewal_credential:"a".repeat(64)});
+ expect(restarted.fetch.mock.calls.some(([url])=>url==="/api/push/save")).toBe(false);
+});

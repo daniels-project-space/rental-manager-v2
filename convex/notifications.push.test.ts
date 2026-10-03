@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { pruneSubscriptions, savePushSubscription, removePushSubscription } from "./notifications";
+import { pruneSubscriptions, savePushSubscription, removePushSubscription, renewPushSubscription } from "./notifications";
 
 // Exercise the real registered mutation handlers with an in-memory database
 // adapter; transport and browser permission are verified separately.
@@ -70,4 +70,46 @@ describe("actual push registration mutations", () => {
     await invoke(removePushSubscription, ctx, { endpoint: phone });
     expect(await invoke(savePushSubscription, ctx, { endpoint: phone, previous_endpoint: phone, ...keys })).toMatchObject({ active: false });
   });
+});
+
+const token="a".repeat(64),otherToken="b".repeat(64);
+describe("selected phone renewal capability",()=>{
+ const setup=async()=>{const f=database();await invoke(savePushSubscription,f.ctx,{endpoint:phone,...keys,activate:true,mode:"my_share",renewal_credential:token,user_agent:"iPhone"});return f;};
+ it("stores only the capability hash and renews without an owner login",async()=>{
+  const f=await setup();const registration=[...f.rows.values()].find(r=>r.table==="push_registration");
+  expect(registration.renewal_credential_hash).toMatch(/^[a-f0-9]{64}$/);expect(registration.renewal_credential_hash).not.toBe(token);
+  expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone+"-new",previous_endpoint:phone,...keys,renewal_credential:token})).toMatchObject({active:true,mode:"my_share"});
+  const sub=[...f.rows.values()].find(r=>r.table==="push_subscriptions");expect(sub.user_agent).toBe("iPhone");
+ });
+ for(const invalid of ["",otherToken,"phone endpoint is not a credential"]){
+  it(`refuses an invalid capability (${invalid.length} characters) without writes`,async()=>{
+   const f=await setup(),before=structuredClone([...f.rows]);
+   expect(await invoke(renewPushSubscription,f.ctx,{endpoint:desktop,previous_endpoint:phone,...keys,renewal_credential:invalid})).toMatchObject({active:false});expect([...f.rows]).toEqual(before);
+  });
+ }
+ it("refuses a wrong previous destination even with a valid capability",async()=>{
+  const f=await setup(),before=structuredClone([...f.rows]);expect(await invoke(renewPushSubscription,f.ctx,{endpoint:desktop,previous_endpoint:desktop,...keys,renewal_credential:token})).toMatchObject({active:false});expect([...f.rows]).toEqual(before);
+ });
+ it("keeps the token and mode through repeated endpoint rotations",async()=>{
+  const f=await setup();let endpoint=phone;
+  for(let i=0;i<3;i++){const next=phone+i;expect(await invoke(renewPushSubscription,f.ctx,{endpoint:next,previous_endpoint:endpoint,...keys,renewal_credential:token})).toMatchObject({active:true,mode:"my_share"});endpoint=next;}
+  expect([...f.rows.values()].filter(r=>r.table==="push_subscriptions")).toHaveLength(1);
+ });
+ it("accepts changed keys on a pruned but unchanged endpoint URL",async()=>{
+  const f=await setup();await invoke(pruneSubscriptions,f.ctx,{endpoints:[phone]});
+  expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:phone,...keys,renewal_credential:token})).toMatchObject({active:false,status:"renewal_required"});
+  expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:phone,...keys,auth:btoa("b".repeat(16)),renewal_credential:token})).toMatchObject({active:true,mode:"my_share"});
+ });
+ it("does not treat base64 encoding changes as fresh encryption keys",async()=>{
+  const f=await setup();await invoke(pruneSubscriptions,f.ctx,{endpoints:[phone]});
+  expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:phone,p256dh:keys.p256dh.replace(/=+$/,""),auth:keys.auth.replace(/=+$/,""),renewal_credential:token})).toMatchObject({active:false,status:"renewal_required"});
+ });
+ it("revokes the old capability when delivery moves to another device",async()=>{
+  const f=await setup();await invoke(savePushSubscription,f.ctx,{endpoint:desktop,...keys,activate:true,renewal_credential:otherToken});const before=structuredClone([...f.rows]);
+  expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:desktop,...keys,renewal_credential:token})).toMatchObject({active:false});expect([...f.rows]).toEqual(before);
+ });
+ it("revokes on disable and does not revive the old credential on re-enable",async()=>{
+  const f=await setup();await invoke(removePushSubscription,f.ctx,{endpoint:phone});expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:phone,...keys,renewal_credential:token})).toMatchObject({active:false});
+  await invoke(savePushSubscription,f.ctx,{endpoint:phone,...keys,activate:true,renewal_credential:otherToken});expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:phone,...keys,renewal_credential:token})).toMatchObject({active:false});
+ });
 });

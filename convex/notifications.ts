@@ -25,7 +25,7 @@
  *   NOTIF_BASE_URL (optional, defaults to the prod alias)
  */
 import { v } from "convex/values";
-import { ownsPushDestination, validatePushSubscription } from "./lib/push_registration";
+import { ownsPushDestination, validatePushSubscription, pushCredentialHash, validPushRenewalCredential, pushKeysHash } from "./lib/push_registration";
 import {
   query,
   mutation,
@@ -155,13 +155,8 @@ export const getVapidPublicKey = query({
   },
 });
 
-export const savePushSubscription = mutation({
-  args: {
-    endpoint: v.string(), p256dh: v.string(), auth: v.string(),
-    mode: v.optional(pushModeValidator), user_agent: v.optional(v.string()),
-    activate: v.optional(v.boolean()), previous_endpoint: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
+type PushSaveArgs={endpoint:string;p256dh:string;auth:string;mode?:PushNotificationMode;user_agent?:string;activate?:boolean;previous_endpoint?:string;renewal_credential?:string};
+async function upsertSelectedPush(ctx:MutationCtx,args:PushSaveArgs){
     validatePushSubscription(args);
     const now = Date.now();
     const subscriptions = await ctx.db.query("push_subscriptions").collect();
@@ -176,23 +171,47 @@ export const savePushSubscription = mutation({
     const mode = resolvePushSubscriptionMode({ requested: activate ? args.mode : undefined,
       existing: existing?.mode, previousActive: selected?.mode ?? legacy?.mode });
     if (!ownsPushDestination({ ...args, activate }, currentEndpoint)) return { status: "inactive" as const, active: false, mode };
-    const credentialsChanged = !!existing && (existing.p256dh !== args.p256dh || existing.auth !== args.auth);
+    const subscription_keys_hash=await pushKeysHash(args);
+    const credentialsChanged=existing ? existing.p256dh!==args.p256dh || existing.auth!==args.auth
+      : !!selected?.subscription_keys_hash && selected.subscription_keys_hash!==subscription_keys_hash;
+    if(args.renewal_credential && !/^[a-f0-9]{64}$/.test(args.renewal_credential))throw new Error("Invalid push renewal credential");
+    const renewal_credential_hash=args.renewal_credential ? await pushCredentialHash(args.renewal_credential)
+      : activate && selected?.endpoint!==args.endpoint ? undefined : selected?.renewal_credential_hash;
     if (selected?.needs_renewal && args.endpoint === selected.endpoint && !credentialsChanged)
       return { status: "renewal_required" as const, active: false, mode };
 
+    const user_agent=args.user_agent ?? existing?.user_agent ?? subscriptions.find(s=>s.endpoint===currentEndpoint)?.user_agent;
     // One intentional destination. Only its renewal or an explicit Enable
     // gesture can replace a row; desktop heartbeats cannot delete the phone.
     for (const row of subscriptions) if (row.endpoint !== args.endpoint) await ctx.db.delete(row._id);
     if (existing) {
-      if (credentialsChanged || existing.mode !== mode || existing.user_agent !== args.user_agent || now - existing.last_seen_at >= 24 * 60 * 60 * 1000)
-        await ctx.db.patch(existing._id, { p256dh: args.p256dh, auth: args.auth, mode, user_agent: args.user_agent, last_seen_at: now });
-    } else await ctx.db.insert("push_subscriptions", { endpoint: args.endpoint, p256dh: args.p256dh, auth: args.auth, mode, user_agent: args.user_agent, created_at: now, last_seen_at: now });
-    if (!selected) await ctx.db.insert("push_registration", { slot: "primary", endpoint: args.endpoint, mode, needs_renewal: false, updated_at: now });
-    else if (selected.endpoint !== args.endpoint || selected.mode !== mode || selected.needs_renewal)
-      await ctx.db.patch(selected._id, { endpoint: args.endpoint, mode, needs_renewal: false, updated_at: now });
+      if (credentialsChanged || existing.mode !== mode || existing.user_agent !== user_agent || now - existing.last_seen_at >= 24 * 60 * 60 * 1000)
+        await ctx.db.patch(existing._id, { p256dh: args.p256dh, auth: args.auth, mode, user_agent, last_seen_at: now });
+    } else await ctx.db.insert("push_subscriptions", { endpoint: args.endpoint, p256dh: args.p256dh, auth: args.auth, mode, user_agent, created_at: now, last_seen_at: now });
+    if (!selected) await ctx.db.insert("push_registration", { slot: "primary", endpoint: args.endpoint, mode, needs_renewal: false, updated_at: now,renewal_credential_hash,subscription_keys_hash });
+    else if (selected.endpoint !== args.endpoint || selected.mode !== mode || selected.needs_renewal || selected.renewal_credential_hash!==renewal_credential_hash || selected.subscription_keys_hash!==subscription_keys_hash)
+      await ctx.db.patch(selected._id, { endpoint: args.endpoint, mode, needs_renewal: false, updated_at: now,renewal_credential_hash,subscription_keys_hash });
     if (!existing || credentialsChanged) await ctx.scheduler.runAfter(0, internal.notifications_send.dispatchPending, {});
     return { status: existing ? "updated" as const : "created" as const, active: true, mode };
+}
+export const savePushSubscription = mutation({
+  args: {
+    endpoint: v.string(), p256dh: v.string(), auth: v.string(),
+    mode: v.optional(pushModeValidator), user_agent: v.optional(v.string()),
+    activate: v.optional(v.boolean()), previous_endpoint: v.optional(v.string()), renewal_credential:v.optional(v.string()),
   },
+  handler:upsertSelectedPush,
+});
+
+// The cookie-independent route must present the selected device's capability.
+export const renewPushSubscription=mutation({
+ args:{endpoint:v.string(),p256dh:v.string(),auth:v.string(),previous_endpoint:v.string(),renewal_credential:v.string()},
+ handler:async(ctx,args)=>{
+  const selected=await ctx.db.query("push_registration").withIndex("by_slot",q=>q.eq("slot","primary")).unique();
+  if(!selected || !await validPushRenewalCredential(args.renewal_credential,selected.renewal_credential_hash)
+    || (args.previous_endpoint!==selected.endpoint && args.endpoint!==selected.endpoint))return {active:false,status:"inactive" as const};
+  return upsertSelectedPush(ctx,{endpoint:args.endpoint,p256dh:args.p256dh,auth:args.auth,previous_endpoint:selected.endpoint});
+ },
 });
 
 export const pushRegistrationStatus = query({ args: { endpoint: v.string() }, handler: async (ctx, { endpoint }) => {
