@@ -157,6 +157,13 @@ const operationalSchema = defineSchema({
     source_url: v.optional(v.string()),
     verified_at: v.optional(v.number()),
     verified_model: v.optional(v.string()),
+    lens_capabilities: v.optional(v.object({
+      focus_mode:v.optional(v.union(v.literal("autofocus"),v.literal("manual_focus"))),
+      wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),
+      projection:v.optional(v.union(v.literal("fisheye"),v.literal("anamorphic"))),coverage:v.optional(v.literal("full_frame")),
+      focal_min_mm:v.optional(v.number()),focal_max_mm:v.optional(v.number()),max_aperture_f:v.optional(v.number()),max_aperture_t:v.optional(v.number()),
+      verified_model:v.string(),source_url:v.string(),verified_at:v.number(),
+    })),
     camera_capabilities: v.optional(v.object({
       role: v.union(v.literal("action"), v.literal("interchangeable_lens")),
       sensor_format: v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor")),

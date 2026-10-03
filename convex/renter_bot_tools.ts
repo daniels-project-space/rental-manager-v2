@@ -1,3 +1,5 @@
+import { inventorySpecMap } from "./lib/inventory_spec_grounding";
+import { verifiedLensCapabilities, meetsLensRequirements, reconcileLensRequirements, hasLensRequirements } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
 import { availabilityBasket } from "./lib/availability_basket";
@@ -1017,6 +1019,7 @@ export const find_owned_alternatives = query({
         full_width: v.optional(v.boolean()), internal: v.optional(v.boolean()),
       })),
     })),
+    lens_requirements: v.optional(v.object({excluded_projections:v.optional(v.array(v.union(v.literal("fisheye"),v.literal("anamorphic")))),focus_mode:v.optional(v.union(v.literal("autofocus"),v.literal("manual_focus"))),wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),projection:v.optional(v.union(v.literal("fisheye"),v.literal("anamorphic"))),coverage:v.optional(v.literal("full_frame")),focal_mm:v.optional(v.number()),max_wide_focal_mm:v.optional(v.number()),max_aperture_f:v.optional(v.number()),max_aperture_t:v.optional(v.number())})),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
     lower_value_only: v.optional(v.boolean()),
@@ -1028,7 +1031,7 @@ export const find_owned_alternatives = query({
     replace_product_id: v.optional(v.number()),
     replace_quantity: v.optional(v.number()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lower_value_only, booking_use, replace_product_id, replace_quantity }) => {
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lens_requirements, lower_value_only, booking_use, replace_product_id, replace_quantity }) => {
     // Owned = active + not marketing-only + qty>0 on the SHARED items table
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
@@ -1094,7 +1097,7 @@ export const find_owned_alternatives = query({
     const ovAll = await ctx.db.query("listing_resolution_override").collect();
     const allInventory = await ctx.db.query("items").collect();
     const specs = await ctx.db.query("item_specs").collect();
-    const specsByItem = new Map(specs.map(spec => [String(spec.item_id), spec]));
+    const specsByItem = inventorySpecMap(specs);
     const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory,listings);
     // Alternative listing quotes require identity-backed account pricing.
 
@@ -1169,9 +1172,11 @@ export const find_owned_alternatives = query({
     const existingLines: RecommendationLine[] = labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
       : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id}))
       : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
-    const recent = requiresBookingContext && thread_id ? await recentThreadMessages(ctx,thread_id,12) : [];
+    const recent = thread_id ? await recentThreadMessages(ctx,thread_id,12) : [];
     const latestRenter = recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "";
     const expectedUse = requiresBookingContext ? explicitRecommendationUse(latestRenter) : undefined;
+    const lensQuery = lens_requirements !== undefined || normKind(kind) === "lens" || normKind(target?.kind) === "lens";
+    const lensCheck = reconcileLensRequirements(lens_requirements, lensQuery ? [item_name ?? "", latestRenter] : []);
     const basketContext = {requires_booking_context:requiresBookingContext,open_basket:!closed && existingLines.length>0,
       can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expectedUse,replace_product_id,replace_quantity};
     const alternatives: Array<Record<string, unknown>> = [];
@@ -1192,6 +1197,8 @@ export const find_owned_alternatives = query({
       // every genuinely-compatible lens.
       const spec = specsByItem.get(String(it._id));
       const capabilities = verifiedCameraCapabilities(spec, it.name_canonical);
+      const lensCapabilities = lensQuery && it.kind === "lens" ? verifiedLensCapabilities(spec,it.name_canonical) : null;
+      if (lensQuery && (it.kind !== "lens" || lensCheck.conflict || !meetsLensRequirements(lensCapabilities,lensCheck.requirements))) {rejected.requirements++; continue;}
       if (cameraQuery && !meetsCameraRequirements(capabilities, requirements, lens_mount)) { rejected.requirements++; continue; }
       if (!cameraQuery && lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
       // With a known target, keep suggestions in the same category. Offering a
@@ -1260,6 +1267,7 @@ export const find_owned_alternatives = query({
         kind: it.kind,
         replacement_cost_gbp: it.replacement_cost_gbp ?? null,
         lens_mount: capabilities?.native_mount ?? it.lens_mount ?? null,
+        lens_capabilities: lensCapabilities,
         camera_capabilities: capabilities,
         daily_price_gbp: altOneDay ?? altListing?.daily_price ?? null,
         price_requires_owner_confirmation: !altListing,
@@ -1296,6 +1304,10 @@ export const find_owned_alternatives = query({
       lower_value_reason: lower_value_only && targetValue == null ? "Original item identity or replacement value is unverified; ask the owner before suggesting a lower-value option" : null,
       verification_approval_guaranteed: false,
       camera_requirements: cameraQuery ? requirements : null,
+      lens_requirements: lensQuery ? lensCheck.requirements : null,
+      lens_requirements_conflict: lensQuery && lensCheck.conflict,
+      lens_requirement_checked: lensQuery && hasLensRequirements(lensCheck.requirements),
+      lens_guidance: "Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",
       recording_requirement_checked: !!requirements.recording,
       // Only the recorded mode properties are checked, never arbitrary codecs.
       requirements_match_is_not_codec_verification: true,

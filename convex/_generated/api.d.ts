@@ -26,6 +26,7 @@ import type * as admin_reset_account_state from "../admin_reset_account_state.js
 import type * as admin_verify_camera_capabilities_20261001 from "../admin_verify_camera_capabilities_20261001.js";
 import type * as admin_verify_camera_specs_20261001 from "../admin_verify_camera_specs_20261001.js";
 import type * as admin_verify_item_specs_20261001 from "../admin_verify_item_specs_20261001.js";
+import type * as admin_verify_lens_capabilities_20261003 from "../admin_verify_lens_capabilities_20261003.js";
 import type * as admin_verify_remus_specs_20261003 from "../admin_verify_remus_specs_20261003.js";
 import type * as admin_verify_ttartisan_20261001 from "../admin_verify_ttartisan_20261001.js";
 import type * as ai_decisions from "../ai_decisions.js";
@@ -153,6 +154,7 @@ import type * as lib_kit_claims from "../lib/kit_claims.js";
 import type * as lib_knowledge_search from "../lib/knowledge_search.js";
 import type * as lib_lab_lifecycle from "../lib/lab_lifecycle.js";
 import type * as lib_lens_claim_references from "../lib/lens_claim_references.js";
+import type * as lib_lens_requirements from "../lib/lens_requirements.js";
 import type * as lib_lens_set_resolution from "../lib/lens_set_resolution.js";
 import type * as lib_listing_display_catalog from "../lib/listing_display_catalog.js";
 import type * as lib_listing_equivalence from "../lib/listing_equivalence.js";
@@ -359,6 +361,7 @@ declare const fullApi: ApiFromModules<{
   admin_verify_camera_capabilities_20261001: typeof admin_verify_camera_capabilities_20261001;
   admin_verify_camera_specs_20261001: typeof admin_verify_camera_specs_20261001;
   admin_verify_item_specs_20261001: typeof admin_verify_item_specs_20261001;
+  admin_verify_lens_capabilities_20261003: typeof admin_verify_lens_capabilities_20261003;
   admin_verify_remus_specs_20261003: typeof admin_verify_remus_specs_20261003;
   admin_verify_ttartisan_20261001: typeof admin_verify_ttartisan_20261001;
   ai_decisions: typeof ai_decisions;
@@ -486,6 +489,7 @@ declare const fullApi: ApiFromModules<{
   "lib/knowledge_search": typeof lib_knowledge_search;
   "lib/lab_lifecycle": typeof lib_lab_lifecycle;
   "lib/lens_claim_references": typeof lib_lens_claim_references;
+  "lib/lens_requirements": typeof lib_lens_requirements;
   "lib/lens_set_resolution": typeof lib_lens_set_resolution;
   "lib/listing_display_catalog": typeof lib_listing_display_catalog;
   "lib/listing_equivalence": typeof lib_listing_equivalence;
