@@ -1,39 +1,50 @@
 import { NextResponse } from "next/server";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../convex/_generated/api";
 import { getRenterBotAgent, type RenterBotOutput } from "@/mastra/agents/renter_bot";
+import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
+import { withRenterToolScope } from "@/lib/renter-tool-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 /**
- * A/B harness — runs the SAME thread through the live single-shot bot
- * (replyInbox_actions.generateDraft) and the agentic Mastra renter bot, and
- * returns both drafts side by side so we can compare before retiring the old
- * one. POST { thread_id, account_slug, message }. Diagnostic only.
+ * Lab comparison: canonical reviewed draft versus an unreviewed raw agent
+ * candidate. Candidate tools cannot change the booking. Both use the recorded
+ * account and latest renter message. Never runs on a real Hygglo conversation.
  */
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convex) {
   let body: { thread_id?: string; account_slug?: string; message?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "bad_json" }, { status: 400 });
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "bad_json" }, { status: 400 });
   const { thread_id, account_slug, message } = body;
-  if (!thread_id) return NextResponse.json({ error: "no_thread_id" }, { status: 400 });
-
-  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-  const convex = new ConvexHttpClient(convexUrl);
+  if (typeof thread_id !== "string" || !thread_id.trim()) return NextResponse.json({ error: "no_thread_id" }, { status: 400 });
+  if (!renterBotRuntimeAllowed(thread_id)) return NextResponse.json({ error: "lab_only_pending_written_consent" }, { status: 403 });
+  let context;
+  try { context = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id }); }
+  catch { return NextResponse.json({ error: "comparison_context_unavailable" }, { status: 503 }); }
+  if (!context.account_slug || (account_slug && account_slug !== context.account_slug)) {
+    return NextResponse.json({ error: "comparison_account_mismatch" }, { status: 409 });
+  }
+  const latest = context.last_messages.at(-1);
+  if (!latest || latest.sender !== "renter" || (message !== undefined && message !== latest.body)) {
+    return NextResponse.json({ error: "comparison_message_mismatch" }, { status: 409 });
+  }
 
   // OLD bot — the live convex draft path.
   let oldDraft = "";
   try {
-    const r = (await convex.action(api.replyInbox_actions.generateDraft, {
+    const r = await convex.action(api.replyInbox_actions.generateDraft, {
       thread_id,
-    })) as { draft?: string } | null;
-    oldDraft = r?.draft ?? "(no draft)";
-  } catch (e) {
-    oldDraft = "ERR: " + (e instanceof Error ? e.message : String(e));
+    });
+    if (r.status !== "ok" || !r.draft) return NextResponse.json({ error: "canonical_comparison_unavailable" }, { status: 503 });
+    oldDraft = r.draft;
+  } catch {
+    return NextResponse.json({ error: "canonical_comparison_unavailable" }, { status: 503 });
   }
 
   // NEW bot — the agentic Mastra renter bot.
@@ -52,9 +63,9 @@ export async function POST(req: Request) {
         content: [
           `TODAY IS ${todayLondon} (Europe/London). Compute any relative dates the renter uses ("this weekend", "next Friday", "tomorrow") from TODAY — never guess a date. When you call check_availability, pass real dates derived from today.`,
           `THREAD: ${thread_id}`,
-          `ACCOUNT: ${account_slug ?? ""}`,
+          `ACCOUNT: ${context.account_slug}`,
           `LATEST INBOUND MESSAGE FROM RENTER:`,
-          message ?? "",
+          latest.body,
         ].join("\n"),
       },
     ];
@@ -63,9 +74,9 @@ export async function POST(req: Request) {
     // allowed providers"). The agent still runs its tool loop; its prompt asks
     // for the JSON, so we parse it from the plain text (falling back to raw).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: any = await (agent as any).generate(baseMessages, {
+    const result: any = await withRenterToolScope({ threadId: thread_id, accountSlug: context.account_slug, bookingWritesAllowed: false }, () => (agent as any).generate(baseMessages, {
       maxSteps: 10,
-    });
+    }));
     const text: string = result?.text ?? "";
     let obj: RenterBotOutput | null = null;
     try {
@@ -108,5 +119,5 @@ export async function POST(req: Request) {
     newDraft = "ERR: " + (e instanceof Error ? e.message : String(e));
   }
 
-  return NextResponse.json({ thread_id, old: oldDraft, new: newDraft, new_meta: newMeta, trace, rawText });
-}
+  return NextResponse.json({ thread_id, old: oldDraft, new: newDraft, new_meta: newMeta, trace, rawText, comparison_kind: "canonical_reviewed_vs_raw_candidate", new_reviewed: false });
+});

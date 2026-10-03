@@ -16,7 +16,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import { getVaultOpenRouterModel } from "@/lib/llm-client";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_COMPACT_SYSTEM } from "../../../../mastra/agents/walle";
 import { traceWalle } from "../../../../lib/walle/langfuse";
@@ -34,7 +34,7 @@ interface CompactBody {
   messages: CompactMessage[];
 }
 
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convexClient) {
   let body: CompactBody;
   try {
     body = (await req.json()) as CompactBody;
@@ -48,13 +48,8 @@ export async function POST(req: Request) {
   }
   if (!Array.isArray(messages) || messages.length === 0) {
     return NextResponse.json({ ok: false, error: "no_messages" }, { status: 400 });
-  }
+  } // canonical (NEXT_PUBLIC pins to orphan)
 
-  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
-  if (!convexUrl) {
-    return NextResponse.json({ ok: false, error: "missing_convex_url" }, { status: 500 });
-  }
-  const convexClient = new ConvexHttpClient(convexUrl);
 
   // ── Rate limit (per session; compaction is rare, 6/hr is generous) ──
   try {
@@ -137,7 +132,7 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}
+});
 
 export async function GET() {
   return NextResponse.json({

@@ -17,7 +17,7 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
-import { ConvexHttpClient } from "convex/browser";
+import { withServiceRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 import { renderListingsBatch } from "@/trigger/render-listing";
 
@@ -42,13 +42,9 @@ function checkAuth(req: Request): NextResponse | null {
   return null;
 }
 
-export async function POST(req: Request) {
+export const POST = withServiceRoute(async function POST(req: Request, convex) {
   const unauth = checkAuth(req);
   if (unauth) return unauth;
-
-  const convexUrl =
-    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-  const convex = new ConvexHttpClient(convexUrl);
 
   try {
     // 1) Compute the missing set.
@@ -96,4 +92,4 @@ export async function POST(req: Request) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
-}
+});

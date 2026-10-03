@@ -16,7 +16,7 @@ import { normalizeClaimedFacts } from "../../../../convex/lib/renter_draft_evide
 import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
-import { ConvexHttpClient } from "convex/browser";
+import { withServiceRoute } from "@/lib/owner-http-route";
 import { getFunctionName, makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import {
@@ -288,7 +288,7 @@ export const maxDuration = 180;
  * (which keeps the guard + setDraft + learning). This is the bot; the old
  * single-shot is only a fallback if this errors.
  */
-export async function POST(req: Request) {
+export const POST = withServiceRoute(async function POST(req: Request, rawConvex) {
   const expected = process.env.RENTER_BOT_API_SECRET;
   const authorization = req.headers.get("authorization");
   if (!expected || authorization !== `Bearer ${expected}`) {
@@ -338,9 +338,6 @@ export async function POST(req: Request) {
     thread_id.startsWith("__probe__")
       ? body.model_override
       : null;
-
-  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-  const rawConvex = new ConvexHttpClient(convexUrl);
 
   /**
    * Request-scoped query memo.
@@ -1773,4 +1770,4 @@ export async function POST(req: Request) {
       { status: failure.transient ? 503 : 500 },
     );
   }
-}
+});

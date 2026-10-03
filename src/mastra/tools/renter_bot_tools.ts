@@ -19,7 +19,8 @@ import "server-only";
 
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
+import type { ConvexHttpClient } from "convex/browser";
+import { createRequestConvexClient } from "@/lib/convex-request-context";
 import { getFunctionName } from "convex/server";
 import { bindRenterToolArgs, currentRenterToolScope } from "@/lib/renter-tool-scope";
 import { withBookingAdditionPreview } from "@/lib/renter-pricing-preview";
@@ -31,13 +32,8 @@ import { api } from "@/../convex/_generated/api";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const anyApi = api as any;
 
-// Canonical poller-write Convex (per CLAUDE.md): never read from
-// exciting-lion-29 even when NEXT_PUBLIC_CONVEX_URL says so.
-const CONVEX_URL =
-  process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-
 function convex(): ConvexHttpClient {
-  const client = new ConvexHttpClient(CONVEX_URL);
+  const client = createRequestConvexClient();
   for (const method of ["query", "mutation", "action"] as const) {
     const invoke = client[method].bind(client) as (fn: Parameters<typeof client.query>[0], args: Record<string, unknown>) => Promise<unknown>;
     Object.assign(client, { [method]: (fn: Parameters<typeof client.query>[0], args: Record<string, unknown> = {}) => invoke(fn, bindRenterToolArgs(getFunctionName(fn), args)) });

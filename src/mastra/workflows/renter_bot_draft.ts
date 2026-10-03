@@ -18,7 +18,8 @@ import "server-only";
 
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
+import type { ConvexHttpClient } from "convex/browser";
+import { createConvexServiceClient } from "@/lib/convex-service";
 import { api } from "@/../convex/_generated/api";
 import { isWithinUkQuietHours } from "@/lib/quiet-hours";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +29,7 @@ const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
 
 function convex(): ConvexHttpClient {
-  return new ConvexHttpClient(CONVEX_URL);
+  return createConvexServiceClient(CONVEX_URL);
 }
 
 // ── Shared schemas ────────────────────────────────────────────

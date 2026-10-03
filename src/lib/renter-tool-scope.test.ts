@@ -41,3 +41,9 @@ it("binds booking changes to the server's inbound message and rejects a fabricat
  expect(bindRenterToolArgs("renter_bot_lab_order:applyChange",{thread_id:"other",request_message_id:"model-choice",action:"add_item"},{threadId:"one",accountSlug:"leo",requestMessageId:"renter-1"})).toMatchObject({thread_id:"one",request_message_id:"renter-1"});
  expect(bindRenterToolArgs("renter_bot_lab_order:applyChange",{request_message_id:"model-choice"},{threadId:"one",accountSlug:"leo"})).toMatchObject({request_message_id:""});
 });
+
+it("blocks booking tools in a read-only diagnostic while preserving scoped reads", () => {
+ const scope = { threadId: "__probe__comparison", accountSlug: "leo", bookingWritesAllowed: false };
+ expect(() => bindRenterToolArgs("renter_bot_lab_order:applyChange", { action: "add_item" }, scope)).toThrow("disabled");
+ expect(bindRenterToolArgs("renter_bot_tools:lookup_pricing", { account_slug: "diogo" }, scope)).toEqual({ account_slug: "leo" });
+});

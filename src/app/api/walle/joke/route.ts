@@ -20,7 +20,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import { getVaultOpenRouterModel } from "@/lib/llm-client";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 import { pickJokeSeed } from "../../../../components/dashboard/WallE/walle.jokes";
 import { traceWalle } from "../../../../lib/walle/langfuse";
@@ -36,7 +36,7 @@ const JOKE_SYSTEM = `You are WallE — a dry-witted, camera-aware assistant for 
 Voice: dry, terse, camera-aware. No laugh-track. No "Why did...?" setups. No emoji. No exclamation marks.
 Output: exactly one joke, plain text, under 220 characters. No preamble. No quotation marks around the joke.`;
 
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convex) {
   let body: JokeRequestBody;
   try {
     body = (await req.json()) as JokeRequestBody;
@@ -47,15 +47,9 @@ export async function POST(req: Request) {
   const userId = body?.userId;
   if (typeof userId !== "string" || !userId) {
     return NextResponse.json({ joke: null, reason: "error" }, { status: 200 });
-  }
-
-  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
-  if (!convexUrl) {
-    return NextResponse.json({ joke: null, reason: "error" }, { status: 200 });
-  }
+  } // canonical (NEXT_PUBLIC pins to orphan)
 
   try {
-    const convex = new ConvexHttpClient(convexUrl);
 
     // 0) Rate limit (10/hr per user; cheap protection against client bugs).
     try {
@@ -136,7 +130,7 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ joke: null, reason: "error" }, { status: 200 });
   }
-}
+});
 
 export async function GET() {
   return NextResponse.json({

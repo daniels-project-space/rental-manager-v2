@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 // the `pushsubscriptionchange` self-heal). We upsert it via the same Convex
 // mutation the bell uses (dedups by endpoint), so a rotated subscription keeps
 // receiving notifications without the operator re-enabling the bell.
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convex) {
   let body: { endpoint?: string; p256dh?: string; auth?: string; previous_endpoint?: string };
   try {
     body = await req.json();
@@ -18,12 +18,8 @@ export async function POST(req: Request) {
   if (!body?.endpoint) {
     return NextResponse.json({ ok: false, error: "no_endpoint" }, { status: 400 });
   }
-  const convexUrl =
-    process.env.CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    "https://hearty-oyster-600.convex.cloud";
   try {
-    const convex = new ConvexHttpClient(convexUrl);
+
     const result = await convex.mutation(api.notifications.savePushSubscription, {
       endpoint: body.endpoint,
       p256dh: body.p256dh ?? "",
@@ -38,4 +34,4 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-}
+});

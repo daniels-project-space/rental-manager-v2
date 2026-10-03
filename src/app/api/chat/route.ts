@@ -34,7 +34,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { streamText, stepCountIs, type ModelMessage } from "ai";
 import { getVaultOpenRouterModel } from "@/lib/llm-client";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../convex/_generated/api";
 import {
   ANALYTICAL_INTENT,
@@ -62,7 +62,7 @@ ${DASHBOARD_GROUNDING_RULES}
 
 Style: concise, plain UK English, no filler ("As an AI…", "I'd be happy to…"). Numbers first, prose second.`;
 
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convexClient) {
   let body: ChatRequestBody;
   try {
     body = (await req.json()) as ChatRequestBody;
@@ -74,13 +74,6 @@ export async function POST(req: Request) {
   if (typeof message !== "string" || !message.trim()) {
     return NextResponse.json({ ok: false, error: "no_message" }, { status: 400 });
   }
-
-  // Hardcode the canonical deployment (CLAUDE.md hard rule #3): Vercel pins
-  // NEXT_PUBLIC_CONVEX_URL to the orphan exciting-lion-29, which lacks the
-  // poller-written data AND these chat queries. CONVEX_URL stays overridable.
-  const convexUrl =
-    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-  const convexClient = convexUrl ? new ConvexHttpClient(convexUrl) : null;
 
   // Light per-thread rate limit (reuses the WallE bucket — sessionId stand-in).
   if (convexClient) {
@@ -250,7 +243,7 @@ export async function POST(req: Request) {
       "x-accel-buffering": "no",
     },
   });
-}
+});
 
 export async function GET() {
   return NextResponse.json({

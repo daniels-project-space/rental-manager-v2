@@ -21,7 +21,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import { getVaultOpenRouterModel } from "@/lib/llm-client";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 import {
   buildWalleNarrationPrompt,
@@ -45,7 +45,7 @@ const MODES: ReadonlySet<NarrationMode> = new Set([
   "idle",
 ]);
 
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convex) {
   let body: NarrateRequestBody;
   try {
     body = (await req.json()) as NarrateRequestBody;
@@ -59,14 +59,9 @@ export async function POST(req: Request) {
   }
   if (!MODES.has(mode)) {
     return NextResponse.json({ line: null, reason: "error" }, { status: 200 });
-  }
+  } // canonical (NEXT_PUBLIC pins to orphan)
 
-  const convexUrl = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
-  if (!convexUrl) {
-    return NextResponse.json({ line: null, reason: "error" }, { status: 200 });
-  }
 
-  const convex = new ConvexHttpClient(convexUrl);
 
   // ── Rate limit ────────────────────────────────────────────────────
   try {
@@ -174,7 +169,7 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ line: null, reason: "error" }, { status: 200 });
   }
-}
+});
 
 export async function GET() {
   return NextResponse.json({

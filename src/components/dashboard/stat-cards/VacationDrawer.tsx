@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvex } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 
@@ -124,6 +124,7 @@ function ConflictPanel({
 
 export default function VacationDrawer({ data }: Props) {
   // Live queries / mutations
+  const client = useConvex();
   const activeVacations = useQuery(api.vacation.getActiveVacations);
   const setVacation = useMutation(api.vacation.setVacation);
   const cancelVacation = useMutation(api.vacation.cancelVacation);
@@ -146,8 +147,7 @@ export default function VacationDrawer({ data }: Props) {
   const [formError, setFormError] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Programmatic call to checkVacationConflicts via the HTTP client — avoids
-  // a network roundtrip on every keystroke that a reactive useQuery would cause.
+  // Check only on demand, using the provider's authenticated client.
   const runConflictCheck = async () => {
     setFormError(null);
     if (!start || !end) return;
@@ -161,12 +161,6 @@ export default function VacationDrawer({ data }: Props) {
     }
     setChecking(true);
     try {
-      const { ConvexHttpClient } = await import("convex/browser");
-      // Hardcode the canonical deployment (CLAUDE.md hard rule #3): Vercel pins
-      // NEXT_PUBLIC_CONVEX_URL to the orphan exciting-lion-29, which has a stale,
-      // incomplete dataset (missing 1481 v1 imports) and would silently give
-      // wrong vacation-conflict results.
-      const client = new ConvexHttpClient("https://hearty-oyster-600.convex.cloud");
       const result = await client.query(api.vacation.checkVacationConflicts, {
         start_date: start,
         end_date: end,

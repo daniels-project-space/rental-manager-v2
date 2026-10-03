@@ -14,19 +14,15 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
-import { ConvexHttpClient } from "convex/browser";
+import { withServiceRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  try {
-    const url = process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud"; // canonical (NEXT_PUBLIC pins to orphan)
-    if (!url) {
-      return NextResponse.json({ status: "config_error" }, { status: 500 });
-    }
-    const client = new ConvexHttpClient(url);
+export const GET = withServiceRoute(async function GET(_request: Request, client) {
+  try { // canonical (NEXT_PUBLIC pins to orphan)
+
     const result = await client.query(api.poller_health.checkPollerHealth, {});
     if (result.ok) {
       return NextResponse.json({ status: "ok" }, { status: 200 });
@@ -35,4 +31,4 @@ export async function GET() {
   } catch {
     return NextResponse.json({ status: "error" }, { status: 500 });
   }
-}
+});

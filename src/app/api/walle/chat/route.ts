@@ -33,7 +33,7 @@ import {
   type ModelMessage,
 } from "ai";
 import { getVaultOpenRouterModel } from "@/lib/llm-client";
-import { ConvexHttpClient } from "convex/browser";
+import { withOwnerRoute } from "@/lib/owner-http-route";
 import { api } from "../../../../../convex/_generated/api";
 import { WALLE_CHAT_SYSTEM } from "../../../../mastra/agents/walle";
 import { buildWalleChatAgent } from "../../../../mastra/agents/walle_chat_agent";
@@ -92,7 +92,7 @@ function extractText(m: IncomingMessage): string {
   return "";
 }
 
-export async function POST(req: Request) {
+export const POST = withOwnerRoute(async function POST(req: Request, convexClient) {
   let body: ChatRequestBody;
   try {
     body = (await req.json()) as ChatRequestBody;
@@ -107,15 +107,6 @@ export async function POST(req: Request) {
   if (typeof sessionId !== "string" || !sessionId) {
     return NextResponse.json({ ok: false, error: "missing_session_id" }, { status: 400 });
   }
-
-  // ── Convex client (rate-limit + tool execution + persistence) ──
-  // Hardcode the canonical deployment (CLAUDE.md hard rule #3): Vercel pins
-  // NEXT_PUBLIC_CONVEX_URL to the orphan exciting-lion-29, which lacks the
-  // poller-written data AND these chat queries (walle_inventory etc.). CONVEX_URL
-  // stays overridable for local/dev.
-  const convexUrl =
-    process.env.CONVEX_URL ?? "https://hearty-oyster-600.convex.cloud";
-  const convexClient = convexUrl ? new ConvexHttpClient(convexUrl) : null;
 
   // ── Rate limit (per-session; sessionId is our user proxy until auth lands) ──
   if (convexClient) {
@@ -336,7 +327,7 @@ export async function POST(req: Request) {
 
   // AI SDK v6 streams via Server-Sent Events.
   return createUIMessageStreamResponse({ stream: uiStream });
-}
+});
 
 export async function GET() {
   return NextResponse.json({
