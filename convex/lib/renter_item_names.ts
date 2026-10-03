@@ -12,5 +12,7 @@ export function renterItemNames(name: string): string[] {
       names.push(`${prefix} 6K ${variant}`);
     if (variant === "Full Frame") names.push("BMPCC 6K FF", "Blackmagic 6K FF", "6K FF");
   }
+  const remus=/^(?:Anamorphic\s+)?Blazar\s+Remus\s+(\d+)\s*mm(?:\s+.*)?$/i.exec(name.trim());
+  if(remus)names.push(`Blazar Remus ${remus[1]}mm`);
   return [...new Set(names.filter(Boolean))];
 }

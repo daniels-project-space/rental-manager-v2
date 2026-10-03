@@ -1,4 +1,6 @@
 import { additionMountRequirements } from "./lib/booking_addition_mount";
+import { offeringConsentIdentity } from "./lib/offering_consent_identity";
+import { acceptsRemoval } from "./lib/renter_removal_acceptance";
 import { acceptsAddition } from "./lib/renter_addition_acceptance";
 import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventoryItem } from "./lib/renter_booking_consent";
 import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
@@ -39,16 +41,19 @@ async function amendmentContext(ctx: QueryCtx, threadId: string) {
   return draftContextKey(await getBotBooking(ctx, threadId), conv?.inquiry_items, await getLabOrder(ctx, threadId));
 }
 
-async function additionConsent(ctx:QueryCtx,threadId:string,text:string,
+async function additionConsent(ctx:QueryCtx,threadId:string,account:string,text:string,
   complete:ReturnType<typeof summarise>,addition:ReturnType<typeof summarise>,additionalCost:number) {
   if(!complete.start_date || !complete.end_date || complete.total_gbp==null ||
     addition.lines.some(l=>!Number.isInteger(l.product_id) || !l.product_id || l.line_total_gbp==null))return false;
   const messages=await recentThreadMessages(ctx,threadId,2);
   // recentThreadMessages returns oldest-to-newest within the selected window.
   const previous=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
+  const inventory=await ctx.db.query("items").collect();
+  const identities=await Promise.all(addition.lines.map(line=>offeringConsentIdentity(ctx,account,line,inventory)));
+  if(identities.some(i=>!i))return false;
   return acceptsAddition(text,{context_key:await amendmentContext(ctx,threadId),start_date:complete.start_date,end_date:complete.end_date,
     total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,
-    lines:addition.lines.map(l=>({product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous);
+    lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous);
 }
 
 /**
@@ -388,7 +393,7 @@ export const applyAdditionBasket = mutation({
     if(!prepared.ok || !prepared.proposed_lines || !prepared.added_items) return {...prepared,action_performed:false};
     if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items))
       return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected items conflict with a named renter restriction, or the restriction cannot be reconciled. No booking changes were made. Clarify the restricted item instead of ignoring it."};
-    if(!await additionConsent(ctx,a.thread_id,latest.body_text,prepared.quote,prepared.addition_quote,prepared.additional_cost_gbp))
+    if(!await additionConsent(ctx,a.thread_id,row.account_slug,latest.body_text,prepared.quote,prepared.addition_quote,prepared.additional_cost_gbp))
       return {ok:false,action_performed:false,error_code:"addition_consent_unverified",error:"The current renter message does not agree to these exact items, quantities and Native quote terms. No booking changes were made. Answer their question or quote the complete setup; do not infer permission from an unrelated message. Clear agreement to an unchanged sent quote can be used directly."};
     const {proposed_lines:_private,...verified_quote}=prepared;
     const beforeContext=await amendmentContext(ctx,a.thread_id);
@@ -449,6 +454,14 @@ export const applyChange = mutation({
       const candidates = row.items.map(line=>({line,native:nativeItems.find(i=>String(i._id)===String(line.item_id))}));
       const selected = bestMatch(a.item_name,candidates,c=>c.native?.name_canonical ?? c.line.name,c=>c.native?.aliases ?? []);
       if (selected.confident && selected.match?.line.product_id != null) itemKey = `product:${selected.match.line.product_id}`;
+      else if(messageId){
+        const history=row.changes.flatMap(change=>{
+          if(!change.removed_item || change.removed_item.qty!==(a.qty??1) || !change.request_key)return [];
+          try{const key=JSON.parse(change.request_key);return key[0]===messageId && key[1]==="remove_item" ? [change.removed_item] : [];}catch{return [];}
+        });
+        const prior=bestMatch(a.item_name,history,r=>r.identity_name,r=>r.aliases);
+        if(prior.confident && prior.match)itemKey=`product:${prior.match.product_id}`;
+      }
     }
     const requestKey = messageId && !a.preview_only ? JSON.stringify([messageId,a.action,
       ...(a.action === "set_dates" ? [a.start_date,a.end_date ?? a.start_date] : [itemKey,a.qty ?? 1])]) : undefined;
@@ -540,12 +553,22 @@ export const applyChange = mutation({
         return { ok: false, error: `Only ${selected.qty}x ${selected.name} are on this booking. Do not remove more than the booked quantity; no items or prices changed.` };
       if(latestMessage?.sender==="renter" && await prohibitsSelectedItems(ctx,row.account_slug,latestMessage.body_text,"remove_item",[{...selected,qty}]))
         return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected removal conflicts with a named renter restriction. No items or prices changed."};
+      const bookedQuote=summarise(lines,row.start_date,row.end_date);
+      const identities=await Promise.all(bookedQuote.lines.map(line=>offeringConsentIdentity(ctx,row.account_slug,line,inventory)));
+      const consentLines=bookedQuote.lines.map((line,index)=>({...identities[index],product_id:line.product_id ?? 0,name:line.name,qty:line.qty,
+        line_total_gbp:line.line_total_gbp ?? NaN}));
+      if(selected.product_id==null || identities.some(i=>!i) || !acceptsRemoval(latestMessage?.body_text ?? "",consentLines,{product_id:selected.product_id,qty},{start_date:row.start_date ?? "",end_date:row.end_date ?? ""}))
+        return {ok:false,action_performed:false,error_code:"removal_consent_unverified",
+          error:"The current renter message does not request removal of this exact booked offering and quantity. No items or prices were changed. Answer their question or clarify the intended booked item; do not infer permission from an unrelated message or remove a kit component as a whole listing."};
+      const removedIdentity=identities[lines.indexOf(selected)]!;
       selected.qty -= qty;
       const kept = lines.filter(l => l !== selected || selected.qty > 0);
       summaryText = `removed ${qty}x ${match.match.native?.name_canonical ?? selected.name}`;
       await ctx.db.patch(row._id, {
         items: kept.map((l) => ({ ...l, item_id: l.item_id as never })),
-        changes: [...row.changes, { at: Date.now(), summary: summaryText, ...(requestKey ? {request_key:requestKey} : {}) }],
+        changes: [...row.changes, { at: Date.now(), summary: summaryText, ...(requestKey ? {request_key:requestKey} : {}),
+          removed_item:{product_id:selected.product_id!,qty,identity_name:removedIdentity.identity_name,
+            aliases:[...removedIdentity.aliases,...removedIdentity.primary_removal_aliases]} }],
         updated_at: Date.now(),
       });
       return {
@@ -668,7 +691,7 @@ export const applyChange = mutation({
     const additionQuote=summarise([additionLine],row.start_date,row.end_date);
     const baseQuote=summarise(row.items,row.start_date,row.end_date);
     if(completeQuote.total_gbp==null || baseQuote.total_gbp==null ||
-      !await additionConsent(ctx,a.thread_id,latestMessage!.body_text,completeQuote,additionQuote,completeQuote.total_gbp-baseQuote.total_gbp))
+      !await additionConsent(ctx,a.thread_id,row.account_slug,latestMessage!.body_text,completeQuote,additionQuote,completeQuote.total_gbp-baseQuote.total_gbp))
       return {ok:false,action_performed:false,error_code:"addition_consent_unverified",error:"This exact addition and its price are not agreed by the current renter message or an unchanged sent Native quote. No booking changes were made. Use a read-only quote when agreement is missing."};
 
     await ctx.db.patch(row._id, {

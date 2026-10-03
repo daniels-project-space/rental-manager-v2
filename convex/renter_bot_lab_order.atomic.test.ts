@@ -152,15 +152,19 @@ describe("additions check the complete physical basket",()=>{
 describe("item removals preserve exact identity and quantity", () => {
   it("removes A7 II without removing A7 III", async () => {
     const { tables, ctx } = fixture();
+    tables.renter_bot_lab_orders[0].items[0].product_id=1;
     tables.items = [{_id:"ii",name_canonical:"Sony A7 II",aliases:["Sony A7 2"]},{_id:"iii",name_canonical:"Sony A7 III",aliases:["Sony A7 3"]}];
-    tables.renter_bot_lab_orders[0].items = tables.items.map(i => ({ item_id:i._id,name:i.name_canonical,qty:1,daily_price_gbp:40,pricing_basis:"listing",origin:"seed" }));
+    tables.renter_bot_lab_orders[0].items = tables.items.map(i => ({ product_id:i._id==="ii"?1:2,item_id:i._id,name:i.name_canonical,qty:1,daily_price_gbp:40,pricing_basis:"listing",origin:"seed" }));
+    tables.hygglo_messages[0].body_text="Please remove Sony A7 II.";
     expect(await remove(ctx,"Sony A7 II")).toMatchObject({ok:true,order:{total_gbp:80,lines:[{name:"Sony A7 III",qty:1}]}});
     expect(tables.renter_bot_lab_orders[0].items).toHaveLength(1);
   });
   it("uses reviewed native aliases without matching incidental advertising models", async () => {
     const { tables, ctx } = fixture();
+    tables.renter_bot_lab_orders[0].items[0].product_id=1;
     tables.items[0].aliases=["FX 3"];
     tables.renter_bot_lab_orders[0].items[0].name="Sony FX3 (same sensor as Sony A7S III)";
+    tables.hygglo_messages[0].body_text="Please remove FX 3.";
     const before=structuredClone(tables);
     expect(await remove(ctx,"Sony A7S III")).toMatchObject({ok:false});
     expect(tables).toEqual(before);
@@ -168,6 +172,8 @@ describe("item removals preserve exact identity and quantity", () => {
   });
   it.each([undefined,1,2])("removes only the requested %s units, defaulting to one",async(qty)=>{
     const {tables,ctx}=fixture();tables.renter_bot_lab_orders[0].items[0].qty=3;
+    tables.renter_bot_lab_orders[0].items[0].product_id=1;
+    tables.hygglo_messages[0].body_text=`Please remove ${qty??1} Sony FX3.`;
     const result=await remove(ctx,"Sony FX3",qty);
     expect(result).toMatchObject({ok:true,order:{lines:[{qty:3-(qty??1)}],total_gbp:80*(3-(qty??1))}});
   });
@@ -276,7 +282,8 @@ describe("amended drafts retain atomic cache safety", () => {
 it("replayed removals cannot decrement the quantity twice",async()=>{
  const {tables,ctx}=fixture();tables.items[0].aliases=["FX 3"];
  tables.renter_bot_lab_orders[0].items[0].qty=3;
- tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please update my booking.",fetched_at:1,_creationTime:1}];
+ tables.renter_bot_lab_orders[0].items[0].product_id=1;
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please remove one Sony FX3.",fetched_at:1,_creationTime:1}];
  expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:true});
  expect(await remove(ctx,"FX 3",1)).toMatchObject({ok:true,already_applied:true,order:{lines:[expect.objectContaining({qty:2})]}});
  expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
@@ -292,10 +299,11 @@ it("unchanged dates create no extra revision even without a message key",async()
 
 it("replay history cannot claim that a removed item was added again",async()=>{
  const {tables,ctx}=fixture();tables.items[0].qty=3;tables.renter_bot_lab_orders[0].items[0].qty=3;
- tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please update my booking.",fetched_at:1,_creationTime:1}];
+ tables.renter_bot_lab_orders[0].items[0].product_id=1;
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please remove one Sony FX3.",fetched_at:1,_creationTime:1}];
  expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:true,action_performed:true});
- // Another edit under the same inbound can alter the current order independently.
- expect(await remove(ctx,"Sony FX3",2)).toMatchObject({ok:true,action_performed:true});
+ // A separate owner edit alters current state; the original inbound cannot authorise a different quantity.
+ await ctx.db.patch("order",{items:[],changes:[...tables.renter_bot_lab_orders[0].changes,{at:2,summary:"owner removed remaining units"}]});
  const replay=await remove(ctx,"Sony FX3",1);
  expect(replay).toMatchObject({ok:true,action_performed:false,already_applied:true,order:{lines:[]}});
  expect(replay.applied).toBeUndefined();expect(replay.context_transition).toBeUndefined();
@@ -462,4 +470,39 @@ describe("additions reconcile real requests and sent quote terms",()=>{
    const before=structuredClone(f.tables);expect(await applyBasket(f.ctx)).toMatchObject({ok:false,action_performed:false,error_code:"addition_consent_unverified"});expect(f.tables).toEqual(before);
   });
  }
+});
+
+
+describe("removals require the exact current renter request",()=>{
+ const setup=()=>{const f=fixture();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;f.tables.renter_bot_lab_orders[0].items[0].qty=3;return f;};
+ for(const text of ["How heavy is the Sony FX3?","Please update my booking.","Please remove Sony A7 III.","Please remove two Sony FX3.","Please remove it.","If I remove Sony FX3, what would it cost?","Please remove Sony FX3 after I confirm.","Please remove Sony FX3 for £79.99 less."]){
+  it(`rejects a conflicting removal after ${text}`,async()=>{const {tables,ctx}=setup();tables.hygglo_messages[0].body_text=text;const before=structuredClone(tables);
+   expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:false});expect(tables).toEqual(before);});
+ }
+ it("accepts the exact named units once and keeps current Native prices",async()=>{const {tables,ctx}=setup();tables.hygglo_messages[0].body_text="Please remove two Sony FX3.";
+  expect(await remove(ctx,"Sony FX3",2)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:80,lines:[expect.objectContaining({product_id:1,qty:1})]}});
+  expect(await remove(ctx,"Sony FX3",2)).toMatchObject({ok:true,already_applied:true,action_performed:false});expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);});
+});
+
+
+describe("consent uses Native offering components, never comparison titles",()=>{
+ const setup=()=>{const f=fixture();f.tables.items[0].qty=3;f.tables.items[0].lens_mount="E";f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
+  f.tables.online_listings=[{account_slug:"leo",product_id:2,name:"Sony FX3 (same sensor as Sony A7S III)",daily_price:45}];
+  f.tables.hygglo_product_index=[{account_slug:"leo",product_id:2,item_id:"camera"}];
+  f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1}]},{account_slug:"leo",product_id:2,components:[{item_id:"camera",qty:1}]}];return f;};
+ for(const path of ["atomic","legacy"]){
+  it(`refuses a different model named in the title through ${path}`,async()=>{const {ctx,tables}=setup();tables.hygglo_messages[0].body_text="Please add Sony A7S III for £90 extra.";const before=structuredClone(tables);
+   const result=path==="atomic" ? await (applyAdditionBasket as any)._handler(ctx,{thread_id:"__probe__atomic",request_message_id:"fixture-current",items:[{product_id:2,qty:1}]}) : await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",product_id:2,qty:1});
+   expect(result).toMatchObject({ok:false,error_code:"addition_consent_unverified"});expect(tables).toEqual(before);});
+ }
+ it("accepts the real Native camera despite its advertising title",async()=>{const {ctx,tables}=setup();tables.hygglo_messages[0].body_text="Please add Sony FX3 for £90 extra.";
+  expect(await (applyAdditionBasket as any)._handler(ctx,{thread_id:"__probe__atomic",request_message_id:"fixture-current",items:[{product_id:2,qty:1}]})).toMatchObject({ok:true,action_performed:true,order:{total_gbp:170}});});
+ it("refuses a comparison-model removal and records the actual removed identity for retries",async()=>{const {ctx,tables}=setup();tables.renter_bot_lab_orders[0].items[0].name="Sony FX3 (same sensor as Sony A7S III)";
+  tables.hygglo_messages[0].body_text="Please remove Sony A7S III.";let before=structuredClone(tables);
+  expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"remove_item",item_name:"Sony FX3",product_id:1})).toMatchObject({ok:false,error_code:"removal_consent_unverified"});expect(tables).toEqual(before);
+  tables.hygglo_messages[0].body_text="Please remove Sony FX3.";
+  expect(await remove(ctx,"Sony FX3")).toMatchObject({ok:true,action_performed:true});before=structuredClone(tables);
+  expect(await remove(ctx,"Sony FX3")).toMatchObject({ok:true,already_applied:true,action_performed:false});expect(tables).toEqual(before);
+  expect(tables.renter_bot_lab_orders[0].changes[0].removed_item).toMatchObject({product_id:1,qty:1,identity_name:"Sony FX3"});
+ });
 });

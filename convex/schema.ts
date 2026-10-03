@@ -2598,7 +2598,9 @@ const operationalSchema = defineSchema({
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
     /** Append-only trail of what the bot did, for the Lab's overview panel. */
-    changes: v.array(v.object({ at: v.number(), summary: v.string(), request_key: v.optional(v.string()) })),
+    changes: v.array(v.object({ at: v.number(), summary: v.string(), request_key: v.optional(v.string()),
+      removed_item:v.optional(v.object({product_id:v.number(),qty:v.number(),identity_name:v.string(),aliases:v.array(v.string())})),
+    })),
     updated_at: v.number(),
   }).index("by_thread", ["thread_id"]),
 
