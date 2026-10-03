@@ -34,7 +34,7 @@
  * the (common) clean-window case, not in the rebuild path.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, query } from "../owner_functions";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { getAccountSlugs, upsertSingleton, isoDaysAgo, todayISO, ACCOUNT_ALL } from "./_helpers";

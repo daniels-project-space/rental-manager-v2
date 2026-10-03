@@ -8,7 +8,7 @@
  */
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
-import { internalAction, internalMutation, query } from "./_generated/server";
+import { internalAction, internalMutation, query } from "./owner_functions";
 import { ACCOUNTS } from "./mv/constants";
 import { queueNotificationEventsDetailed, type NotifEventInput } from "./notifications";
 import { accountWord } from "./lib/notification_events";

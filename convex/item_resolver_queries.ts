@@ -5,7 +5,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, mutation, query } from "./_generated/server";
+import { internalQuery, internalMutation, mutation, query } from "./owner_functions";
 // Phase W3b — dual-write to reservation_vision side table.
 import { mirrorResolvedItemsToVisionTable } from "./reservation_vision";
 import { titleHash } from "./listing_cache";

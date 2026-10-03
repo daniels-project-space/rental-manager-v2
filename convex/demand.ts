@@ -6,7 +6,7 @@
  * item_name within a lookback window. When a real `demand_records` table
  * lands, swap this implementation while keeping the wire shape stable.
  */
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 
 /**

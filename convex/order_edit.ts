@@ -22,7 +22,7 @@
  * the order's `actions` map — the UI reads getOrderState().actions and passes
  * the right one; the write helpers default sensibly if omitted.
  */
-import { action } from "./_generated/server";
+import { action } from "./owner_functions";
 import { v } from "convex/values";
 import {
   getAccountCredentials,

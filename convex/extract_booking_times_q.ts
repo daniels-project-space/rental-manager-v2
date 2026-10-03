@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, query, mutation } from "./_generated/server";
+import { internalQuery, internalMutation, query, mutation } from "./owner_functions";
 import { internal } from "./_generated/api";
 
 export const getReservationForExtract = internalQuery({

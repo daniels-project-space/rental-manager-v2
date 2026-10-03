@@ -8,7 +8,7 @@
  * projects annual revenue at OWNER_SHARE, flags alias-of-owned via items.aliases.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, query } from "../owner_functions";
 import { internal } from "../_generated/api";
 import { getAccountSlugs, upsertSingleton, ACCOUNT_ALL } from "./_helpers";
 import { OWNER_SHARE } from "./constants";

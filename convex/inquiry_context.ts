@@ -9,7 +9,7 @@
  * snapshots the order's items onto conversations.inquiry_items (with product_id)
  * so getThreadContext can name + GROUND the listing (specs / price / owned).
  */
-import { action, internalAction, internalQuery, internalMutation } from "./_generated/server";
+import { action, internalAction, internalQuery, internalMutation } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import {

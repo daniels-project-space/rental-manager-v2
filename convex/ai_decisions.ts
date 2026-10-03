@@ -17,7 +17,7 @@
  * approve_modified and what audit fields to record.
  */
 import { v } from "convex/values";
-import { internalQuery, mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./owner_functions";
 
 const decisionEnum = v.union(
   v.literal("accept"),

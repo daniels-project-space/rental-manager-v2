@@ -12,7 +12,7 @@
  * so daily refresh is plenty.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, query } from "../owner_functions";
 import { ACCOUNT_ALL } from "./constants";
 import { isPaidWithV1Legacy } from "../lib/reservations/predicates";
 

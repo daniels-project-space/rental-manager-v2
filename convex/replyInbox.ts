@@ -18,7 +18,7 @@ import { londonToday } from "./lib/effectiveDates";
  * gated Hygglo send live in the sibling "use node" module
  * `replyInbox_actions.ts`.
  */
-import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation } from "./owner_functions";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";

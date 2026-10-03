@@ -18,7 +18,7 @@
  * have nothing to do with the bot. `shadow_compare` separates those out as
  * incomparable instead of scoring them.
  */
-import { action, internalQuery } from "./_generated/server";
+import { action, internalQuery } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import { compareToReal, type ShadowVerdict } from "./lib/shadow_compare";

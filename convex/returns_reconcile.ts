@@ -10,7 +10,7 @@
  *   - only the recent window (avoid touching ancient unreconciled rows)
  *   - never reopens; only confirmed → completed
  */
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, query } from "./owner_functions";
 
 const RECENT_DAYS = 120;
 const recentCutoff = () =>

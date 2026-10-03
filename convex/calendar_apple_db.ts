@@ -3,7 +3,7 @@
  * The CalDAV/network side lives in `calendar_apple.ts` ("use node"), which can
  * only hold actions; Convex requires queries/mutations in a non-node file.
  */
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./owner_functions";
 import { v } from "convex/values";
 
 export type ResForCal = {

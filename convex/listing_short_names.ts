@@ -14,7 +14,7 @@
  * Splitting keeps the dashboard query path free of "use node" imports.
  */
 
-import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation } from "./owner_functions";
 import { v } from "convex/values";
 
 // SHA-256 hex helper (Convex V8 runtime exposes globalThis.crypto.subtle).

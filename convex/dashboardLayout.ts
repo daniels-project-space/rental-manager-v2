@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./owner_functions";
 import type { Doc } from "./_generated/dataModel";
 
 const stringArray = v.array(v.string());

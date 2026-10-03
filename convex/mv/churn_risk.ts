@@ -12,7 +12,7 @@
  * Top 30 by risk × lifetimeGbp per account.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, query } from "../owner_functions";
 import { getAccountSlugs, upsertSingleton, ACCOUNT_ALL } from "./_helpers";
 import { elapsedDays } from "./constants";
 

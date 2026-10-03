@@ -32,7 +32,7 @@
  * that merge here would risk the documented Hygglo gotchas (PATCH silently
  * ignores price; the image reference must be a bare filename on PUT).
  */
-import { action, mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import { action, mutation, query, internalMutation, internalQuery } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 

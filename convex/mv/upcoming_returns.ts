@@ -10,7 +10,7 @@
  * Windows the next 7 days ahead PLUS includes already-overdue confirmed rentals.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, query } from "../owner_functions";
 import { getAccountSlugs, upsertSingleton, todayISO, ACCOUNT_ALL } from "./_helpers";
 
 const WINDOW_DAYS = 7;

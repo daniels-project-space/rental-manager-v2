@@ -35,7 +35,7 @@
  * `force: true` bypasses both checks.
  */
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, query } from "../owner_functions";
 import { internal } from "../_generated/api";
 import { getAccountSlugs, upsertSingleton, todayISO, isoDaysAgo, ACCOUNT_ALL } from "./_helpers";
 import { isPaid } from "../order_step_semantics";

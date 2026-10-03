@@ -23,6 +23,8 @@ export default defineConfig({
     globals: false,
     include: [
       "convex/lib/owner_setup.test.ts",
+      "convex/lib/owner_authorization.test.ts",
+      "convex/owner_functions.test.ts",
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_resolution.test.ts",

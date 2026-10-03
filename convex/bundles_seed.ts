@@ -10,7 +10,7 @@
  * inventory at seed time).
  */
 
-import { mutation } from "./_generated/server";
+import { mutation } from "./owner_functions";
 
 interface V1Bundle {
   slug: string;

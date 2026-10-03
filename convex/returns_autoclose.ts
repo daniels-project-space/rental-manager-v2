@@ -51,7 +51,7 @@
  * for rentals already marked returned before this rework (e.g. James 3991399). It
  * is referenced by NO cron.
  */
-import { action } from "./_generated/server";
+import { action } from "./owner_functions";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
 // `returnOrder` is the irreversible Hygglo close (action:"return"). It is

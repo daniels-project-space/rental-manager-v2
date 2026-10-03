@@ -15,7 +15,7 @@
  *     CLAUDE.md mandates no Convex actions for LLM work.
  */
 
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./owner_functions";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 

@@ -12,7 +12,7 @@
  * for renters who never owned) — hence "no people show ratings". This resolves
  * the real rating + reviews and writes them to the renter.
  */
-import { action, internalAction, internalQuery, internalMutation } from "./_generated/server";
+import { action, internalAction, internalQuery, internalMutation } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";

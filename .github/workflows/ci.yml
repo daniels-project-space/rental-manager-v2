@@ -33,6 +33,8 @@ jobs:
           else
             npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           fi
+      - name: Guard public Convex owner boundaries
+        run: node scripts/check-owner-boundary.mjs
       - name: Typecheck (script if defined, else tsc --noEmit)
         run: |
           if node -e "process.exit(require('./package.json').scripts?.typecheck?0:1)"; then

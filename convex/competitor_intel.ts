@@ -13,7 +13,7 @@
  * Not wired into the poll path; nothing here runs on a cron.
  */
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 
 /** One aggregated competitor item (input shape for `replaceAll`). */
 const itemArg = v.object({

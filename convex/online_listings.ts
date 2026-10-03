@@ -11,7 +11,7 @@
  * Queries + the upsert mutation live here (V8 runtime); the rescan ACTION (which
  * calls Hygglo) lives in online_listings_actions.ts ("use node").
  */
-import { query, internalMutation } from "./_generated/server";
+import { query, internalMutation } from "./owner_functions";
 import { v } from "convex/values";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 

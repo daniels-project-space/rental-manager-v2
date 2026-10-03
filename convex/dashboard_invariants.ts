@@ -36,7 +36,7 @@
  * invariant here flags it as an `issue` in the report.
  */
 
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import {
   dedupByLogicalRental,
   isConfirmedWithDates,

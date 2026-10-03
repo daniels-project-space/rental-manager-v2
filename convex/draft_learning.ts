@@ -11,7 +11,7 @@
  * The lesson set is hard-capped + de-duplicated so it stays small and coherent,
  * and only the few relevant ones are injected per draft.
  */
-import { internalQuery, internalMutation, query, mutation } from "./_generated/server";
+import { internalQuery, internalMutation, query, mutation } from "./owner_functions";
 import { v } from "convex/values";
 
 const MAX_PER_SCOPE = 12; // keep the set small on purpose

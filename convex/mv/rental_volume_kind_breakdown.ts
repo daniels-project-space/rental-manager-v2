@@ -12,7 +12,7 @@
  * for every (account × days × kind). Same output, 70× less bandwidth.
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, internalQuery, query } from "../_generated/server";
+import { internalAction, internalMutation, internalQuery, query } from "../owner_functions";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { attributeRevenue, overridePoolForReservation } from "../lib/revenue_attribution";

@@ -15,7 +15,7 @@
  * inventory row; otherwise `isMarketingOnly: true`.
  */
 
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
 
 // ── Shared arg validators (mirror the schema field shapes) ────────────────

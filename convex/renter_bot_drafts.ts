@@ -11,7 +11,7 @@
  * Operator UI (Telegram, Phase 1) mutates these rows when Daniel marks a
  * draft `sent` / `dismissed` after manually copy-pasting into Hygglo.
  */
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation } from "./owner_functions";
 import { v } from "convex/values";
 
 // ── Mutations ─────────────────────────────────────────────────

@@ -23,7 +23,7 @@
  * (same call shape as items:listActive / knowledge:search). This is NOT the
  * reservations table the CLAUDE.md no-collect rule guards.
  */
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 import {
   findBestMatch,

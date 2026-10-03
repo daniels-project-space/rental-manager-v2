@@ -10,7 +10,7 @@
 //   npx convex run audit_reclassification:auditPaidCancelledActorSplit
 
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import type { Doc } from "./_generated/dataModel";
 import { classifyRow } from "./demand_loss";
 

@@ -18,7 +18,7 @@
  *     months). For purchase recommendations we mirror the V1 "monthly
  *     revenue potential" projection.
  */
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 import { OWNER_SHARE } from "./lib/revenue_attribution";
 /** V1 assumption for converting daily rate → average rental length when no

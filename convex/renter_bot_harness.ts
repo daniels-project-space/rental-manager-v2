@@ -5,7 +5,7 @@
  * rather than duplicating them. Test-only. No relationship to any Hygglo
  * write path — nothing here imports hygglo-write.ts or the send actions.
  */
-import { action, internalMutation, internalQuery } from "./_generated/server";
+import { action, internalMutation, internalQuery } from "./owner_functions";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { api, internal } from "./_generated/api";

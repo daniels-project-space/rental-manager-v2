@@ -33,7 +33,7 @@ import {
   internalQuery,
   internalMutation,
   type MutationCtx,
-} from "./_generated/server";
+} from "./owner_functions";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {

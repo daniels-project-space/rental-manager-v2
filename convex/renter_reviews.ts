@@ -14,7 +14,7 @@ import {
   query,
   internalQuery,
   internalMutation,
-} from "./_generated/server";
+} from "./owner_functions";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 

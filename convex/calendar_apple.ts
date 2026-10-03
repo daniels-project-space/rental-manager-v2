@@ -8,7 +8,7 @@
  * reminders, updating/removing them when the booking changes. No OAuth exists for
  * iCloud CalDAV — it's Basic auth with the app password. DB layer: calendar_apple_db.
  */
-import { action, internalAction } from "./_generated/server";
+import { action, internalAction } from "./owner_functions";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import crypto from "crypto";

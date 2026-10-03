@@ -28,7 +28,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
-} from "./_generated/server";
+} from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {

@@ -21,7 +21,7 @@
 "use node";
 
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import { action } from "./owner_functions";
 import { internal } from "./_generated/api";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";

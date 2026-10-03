@@ -55,7 +55,7 @@ import {
   internalMutation,
   internalQuery,
   query,
-} from "../_generated/server";
+} from "../owner_functions";
 import { anyApi } from "convex/server";
 import { londonToday } from "../lib/effectiveDates";
 import {

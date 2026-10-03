@@ -12,7 +12,7 @@
  * skip-and-return-cached.
  */
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 
 const STALE_LOCK_MS = 5 * 60_000; // 5 min
 

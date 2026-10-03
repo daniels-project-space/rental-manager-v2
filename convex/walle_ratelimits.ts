@@ -25,7 +25,7 @@
  *   if (!ok) return Response.json({ error: "rate_limited", retryAfter }, { status: 429 });
  */
 import { components } from "./_generated/api";
-import { mutation } from "./_generated/server";
+import { mutation } from "./owner_functions";
 import { v } from "convex/values";
 import { RateLimiter, MINUTE, HOUR } from "@convex-dev/rate-limiter";
 

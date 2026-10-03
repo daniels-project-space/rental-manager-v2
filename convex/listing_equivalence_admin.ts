@@ -26,7 +26,7 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery, query } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./owner_functions";
 import {
   DEFAULT_LISTING_EQUIVALENCE_MAP,
 } from "./lib/listing_equivalence";

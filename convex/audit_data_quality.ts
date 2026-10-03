@@ -7,7 +7,7 @@
 //   npx convex run --prod audit_data_quality:auditExpandedItemsPresence
 //   npx convex run --prod audit_data_quality:auditOtherBucketSubclasses
 
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 
 /**

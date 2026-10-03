@@ -15,7 +15,7 @@ import {
   internalMutation,
   internalQuery,
   query,
-} from "./_generated/server";
+} from "./owner_functions";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { scoreDraft } from "./lib/renter_bot_rubric";

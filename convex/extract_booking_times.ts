@@ -29,7 +29,7 @@
 "use node";
 
 import { v } from "convex/values";
-import { action, internalAction } from "./_generated/server";
+import { action, internalAction } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { getActionLlmModel } from "./item_resolver";

@@ -1,4 +1,4 @@
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation } from "./owner_functions";
 import { v } from "convex/values";
 import { isPaid } from "./order_step_semantics";
 import { isPendingVerification, netOf, type ReservationRow } from "./lib/reservations/predicates";

@@ -12,7 +12,7 @@
  * truth.
  */
 import { v } from "convex/values";
-import { query, internalMutation } from "../_generated/server";
+import { query, internalMutation } from "../owner_functions";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { effectiveDate, isLive } from "../lib/reservations/predicates";
 import { OWNER_SHARE } from "../lib/missed_revenue";

@@ -27,7 +27,7 @@
 
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, mutation, query } from "./_generated/server";
+import { internalAction, internalMutation, mutation, query } from "./owner_functions";
 import { api } from "./_generated/api";
 import type { AttributionContext } from "./lib/revenue_attribution";
 import {

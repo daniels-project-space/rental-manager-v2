@@ -20,7 +20,7 @@ import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/c
  * out for real while automation writes stay blocked by READ_ONLY_MODE. ONLY a
  * deliberate Send click reaches this action — no cron/scheduler calls it.
  */
-import { action, internalAction } from "./_generated/server";
+import { action, internalAction } from "./owner_functions";
 import { v } from "convex/values";
 import { normalizeClaimedFacts, type DraftEvidence } from "./lib/renter_draft_evidence";
 import { api, internal } from "./_generated/api";

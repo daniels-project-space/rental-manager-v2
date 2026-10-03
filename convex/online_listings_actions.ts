@@ -12,7 +12,7 @@
  * Next-oriented (pulls in @/hygglo-core + aws-sdk + the renderer) and doesn't
  * belong in Convex's dependency graph.
  */
-import { action } from "./_generated/server";
+import { action } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import {

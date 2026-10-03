@@ -12,7 +12,7 @@ import {
   internalMutation,
   query,
   internalQuery as _internalQuery,
-} from "./_generated/server";
+} from "./owner_functions";
 import { internal as _internal } from "./_generated/api";
 
 // Silence unused-import warnings (kept exported for future expansion):

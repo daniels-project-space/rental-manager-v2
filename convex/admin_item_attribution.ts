@@ -17,7 +17,7 @@
  *   npx convex run --prod admin_item_attribution:bulkSetItemAttribution "$(cat /tmp/item_attribution_template.json)"
  */
 
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 

@@ -1,4 +1,4 @@
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./owner_functions";
 import type { Id } from "./_generated/dataModel";
 import { loadMarketingOnlyRequestIds } from "./lib/marketing_only_requests";
 import { v } from "convex/values";

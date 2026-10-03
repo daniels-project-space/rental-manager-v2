@@ -11,7 +11,7 @@
  * Cached on the reservation; distance-from-hub + the heavy tag are derived live
  * in replyInbox.computeLocation against the order's OWN account hub.
  */
-import { action, internalAction, internalQuery, internalMutation } from "./_generated/server";
+import { action, internalAction, internalQuery, internalMutation } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";

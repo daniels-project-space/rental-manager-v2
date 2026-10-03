@@ -13,7 +13,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, mutation, query } from "./_generated/server";
+import { internalQuery, internalMutation, mutation, query } from "./owner_functions";
 
 /** Stable hash for a sorted, normalised list of item-name strings.
  *  Convex actions+queries+mutations all need the same fn — kept inline so

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation } from "./owner_functions";
 
 /**
  * One-shot: clear order_step on all reservations so the next poll cycle

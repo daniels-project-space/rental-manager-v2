@@ -7,7 +7,7 @@
  * Refresher: daily for 3 standard windows (30/90/365 days).
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, query } from "../_generated/server";
+import { internalAction, internalMutation, query } from "../owner_functions";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 

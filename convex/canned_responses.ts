@@ -4,7 +4,7 @@
  * symbol button that only pastes into the composer; Daniel still presses Send.
  * The manage overlay lists/edits them. All per `account_slug`.
  */
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./owner_functions";
 import { v } from "convex/values";
 
 /** All canned responses for an account, ordered. */

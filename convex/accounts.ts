@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./owner_functions";
 
 export const list = query({
   args: {},

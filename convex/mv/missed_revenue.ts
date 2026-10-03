@@ -14,7 +14,7 @@
  * existing query handlers can swap the source verbatim.
  */
 import { v } from "convex/values";
-import { query } from "../_generated/server";
+import { query } from "../owner_functions";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { OWNER_SHARE } from "../lib/missed_revenue";
 

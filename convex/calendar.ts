@@ -1,5 +1,5 @@
 import { shortItemName } from "./lib/item_display_name";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {

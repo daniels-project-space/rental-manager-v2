@@ -6,7 +6,7 @@
  *   - data.renters.getProfile     → renters.getByName
  *   - data.renters.checkBlacklist → renters.checkBlacklistByName
  */
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 
 function norm(s: string): string {

@@ -10,7 +10,7 @@
  * which CLAUDE.md forbids scanning). Phase 2+ may swap to an embeddings
  * index if the corpus grows.
  */
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 import { rankKnowledge } from "./lib/knowledge_search";
 

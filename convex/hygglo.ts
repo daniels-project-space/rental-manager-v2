@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v, type Infer } from "convex/values";

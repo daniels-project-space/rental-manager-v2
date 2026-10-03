@@ -22,7 +22,7 @@
  * (regular V8 module).
  */
 
-import { internalAction, action } from "./_generated/server";
+import { internalAction, action } from "./owner_functions";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {

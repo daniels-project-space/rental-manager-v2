@@ -14,7 +14,7 @@
  * tick after deploy and for non-standard `days` values.
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, internalQuery, query } from "../_generated/server";
+import { internalAction, internalMutation, internalQuery, query } from "../owner_functions";
 import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";

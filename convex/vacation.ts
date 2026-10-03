@@ -14,7 +14,7 @@
  *  - Soft-cancel via is_active=false (keeps audit trail).
  */
 
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./owner_functions";
 import { v } from "convex/values";
 import {
   isConfirmedWithDates,

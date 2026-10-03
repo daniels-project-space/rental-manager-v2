@@ -11,7 +11,7 @@
  * descending; we never `.collect()` the table. Phase 2+ can swap to a
  * dedicated per-thread "latest sender" materialised view.
  */
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 
 export const listUnansweredThreads = query({

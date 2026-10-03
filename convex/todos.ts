@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
 
 /** Owner personal to-do lists (e.g. "items to buy next"). Global, not account-scoped. */

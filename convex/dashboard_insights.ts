@@ -2,7 +2,7 @@
 // Five small read queries — no recomputation, just aggregations over Phase 5's table.
 
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { readWidgetMv } from "./lib/widget_mv";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isPaid } from "./order_step_semantics";

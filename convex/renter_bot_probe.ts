@@ -4,7 +4,7 @@
  * question battery + validation. Threads use the `__probe__` prefix and are
  * removed by `cleanup`. Also used by Lab sessions; never used to send renter messages.
  */
-import { action, internalMutation, mutation } from "./_generated/server";
+import { action, internalMutation, mutation } from "./owner_functions";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";

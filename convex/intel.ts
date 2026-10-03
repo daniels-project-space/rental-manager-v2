@@ -14,7 +14,7 @@
  * ──────────────────────────────────────────────────────────────────────────
  */
 
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 import {
   effectiveDate,

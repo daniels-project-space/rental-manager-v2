@@ -12,7 +12,7 @@
  * run explicitly uses it. The DB write is in a separate file because Convex
  * mutations can't live in a "use node" file.
  */
-import { action } from "./_generated/server";
+import { action } from "./owner_functions";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { createHyggloCore } from "../src/hygglo-core";

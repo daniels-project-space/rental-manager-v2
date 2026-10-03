@@ -9,7 +9,7 @@
  *   listFlagged — every blacklisted / whitelisted renter
  */
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./owner_functions";
 import { resolveRenter, trustOf, type RenterDoc } from "./lib/renters";
 
 const summarize = (r: RenterDoc) => ({

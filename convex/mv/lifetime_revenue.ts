@@ -9,7 +9,7 @@
  * current month + AI attribution drift slowly, so 24h staleness is fine.
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, query } from "../_generated/server";
+import { internalAction, internalMutation, query } from "../owner_functions";
 import { api } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";

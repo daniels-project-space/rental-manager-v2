@@ -18,7 +18,7 @@ import {
   internalQuery,
   mutation,
   query,
-} from "./_generated/server";
+} from "./owner_functions";
 
 /**
  * Upsert the side-table row for a reservation. Creates the row if missing,

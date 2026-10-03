@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 
 export const auditObsoleteThreadJoin = query({
   args: { limit: v.optional(v.number()) },

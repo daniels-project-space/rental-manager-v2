@@ -1,4 +1,4 @@
-import { query } from "./_generated/server";
+import { query } from "./owner_functions";
 import { v } from "convex/values";
 import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
 import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";

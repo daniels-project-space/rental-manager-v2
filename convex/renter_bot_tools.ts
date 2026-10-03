@@ -21,7 +21,7 @@ import { getBotBooking, getLabOrder } from "./lib/renter_booking";
  * `reservations` without a `withIndex(...)`. The bot only ever scans
  * `reservations` filtered by `by_account_slug` or `by_hygglo_order_id`.
  */
-import { query, action, type QueryCtx } from "./_generated/server";
+import { query, action, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { checkRentalStock, loadStockSources, stockForRentalItem, stockForItem } from "./lib/renter_stock";

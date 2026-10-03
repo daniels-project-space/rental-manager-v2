@@ -25,7 +25,7 @@
  * cron-scheduled and have no callers from production code; safe to keep
  * because internalMutations are only reachable from server-side code.
  */
-import { query, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { query, internalAction, internalMutation, internalQuery } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { sendTelegram } from "./lib/telegram_convex";

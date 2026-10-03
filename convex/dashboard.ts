@@ -1,5 +1,5 @@
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
-import { query, type QueryCtx } from "./_generated/server";
+import { query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import {
