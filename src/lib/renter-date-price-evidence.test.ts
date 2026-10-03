@@ -31,3 +31,9 @@ it("uses raw Native tiers rather than multiplying an approximate displayed daily
  const wrong=structuredClone(nativeQuote);wrong.quote.lines[0].line_total_gbp=170.01;wrong.quote.total_gbp=170.01;wrong.price_delta_gbp=46.01;
  expect(datePriceEvidence({tool:"quote_booking_dates",call_id:"actual-native",result:wrong},nativeQuote.thread_id)).toEqual([]);
 });
+
+it("never promotes an extension difference into a verified deposit or delivery fee",()=>{
+ const evidence=datePriceEvidence(receipt(),"__probe__dates");
+ const request={items:[{name:"Sony FX3",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+ for(const fee of ["deposit","delivery","replacement cost"])expect(unsupportedPriceClaims(`Extending to 20–22 October requires £40 extra ${fee}.`,evidence,request)).not.toEqual([]);
+});

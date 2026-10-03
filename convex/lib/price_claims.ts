@@ -205,6 +205,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const proven = candidates.some(e => {
       if(dateAdjustment){
         const p=e.date_proposal;
+        if(purpose!=="rental")return false;
+        if(declaredQuantity!=null && !request.items.every(i=>i.quantity===declaredQuantity))return false;
         if(!p || e.total_gbp==null || daily || !dateScope.valid || !e.items || e.items.length!==request.items.length)return false;
         if(!request.items.every(i=>e.items!.some(q=>same([i.name,...(i.aliases??[])],[q.name])&&q.quantity===i.quantity)))return false;
         if(request.start_date && request.start_date!==p.from_start_date && request.start_date!==e.start_date || request.end_date && request.end_date!==p.from_end_date && request.end_date!==e.end_date)return false;
