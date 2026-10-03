@@ -1,3 +1,4 @@
+import { additionMountRequirements } from "./lib/booking_addition_mount";
 import { renterRequestsReadOnly } from "./lib/renter_booking_consent";
 import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
@@ -278,9 +279,8 @@ export const seed = internalMutation({
  * wrong thing.
  */
 /** A single read-only quote for multiple exact offerings and retained gear. */
-export const quoteAdditionBasket = query({
-  args:{thread_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
-  handler:async(ctx,a)=>{
+/** Preparation is shared by quoting and the single acceptance transaction. */
+async function prepareAdditionBasket(ctx: QueryCtx, a: {thread_id:string;items:Array<{product_id:number;qty:number}>}) {
     assertLabThread(a.thread_id);
     if(!a.items.length || a.items.length>8 || a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20))
       return {ok:false,error:"Use one to eight exact listing IDs with whole quantities from 1 to 20."};
@@ -322,7 +322,53 @@ export const quoteAdditionBasket = query({
       return {ok:false,error:"The proposal includes unpriced items. Ask the owner for a quote; no booking changes were made."};
     return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,
       base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
-      quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts};
+      quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,proposed_lines:lines};
+}
+
+export const quoteAdditionBasket = query({
+  args:{thread_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
+  handler:async(ctx,a)=>{
+    const result = await prepareAdditionBasket(ctx,a);
+    if ("proposed_lines" in result) { const {proposed_lines: _private, ...quote} = result; return quote; }
+    return result;
+  },
+});
+
+export const applyAdditionBasket = mutation({
+  args:{thread_id:v.string(),request_message_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
+  handler:async(ctx,a)=>{
+    assertLabThread(a.thread_id);
+    if (!a.items.length || a.items.length>8 || a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20))
+      return {ok:false,action_performed:false,error:"Use one to eight exact listing IDs with whole quantities from 1 to 20."};
+    const row=await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).unique();
+    if (!row) return {ok:false,action_performed:false,error:"No simulated order for this session."};
+    const [latest]=await recentThreadMessages(ctx,a.thread_id,1);
+    if (!a.request_message_id || latest?.sender!=="renter" || a.request_message_id!==latest.message_id)
+      return {ok:false,action_performed:false,error_code:"stale_inbound",error:"Use the current renter message. No booking changes were made."};
+    if (renterRequestsReadOnly(latest.body_text,"add_item"))
+      return {ok:false,action_performed:false,error_code:"renter_requested_read_only",error:"The renter requested pricing only or prohibited this edit. No booking changes were made."};
+    const selections=new Map<number,number>();
+    for(const item of a.items) selections.set(item.product_id,(selections.get(item.product_id)??0)+item.qty);
+    const items=[...selections].sort((a,b)=>a[0]-b[0]).map(([product_id,qty])=>({product_id,qty}));
+    if(items.some(i=>i.qty>20)) return {ok:false,action_performed:false,error:"The aggregate quantity exceeds 20."};
+    const requestKey=JSON.stringify([a.request_message_id,"add_items",items]);
+    const previous=row.changes.find(change=>change.request_key===requestKey);
+    if(previous) return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,
+      note:"No new edit was made. Describe the CURRENT returned order, not a historical change.",order:summarise(row.items,row.start_date,row.end_date)};
+    const plan=await additionMountRequirements(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,items});
+    if(plan.status!=="none") return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,
+      error:"The selected setup is incomplete or its compatibility is unverified. Quote the complete setup and obtain agreement to its required accessories; then include every selected listing in one add_items request. No booking changes were made."};
+    const prepared=await prepareAdditionBasket(ctx,{thread_id:a.thread_id,items});
+    if(!prepared.ok || !prepared.proposed_lines || !prepared.added_items) return {...prepared,action_performed:false};
+    const {proposed_lines:_private,...verified_quote}=prepared;
+    const beforeContext=await amendmentContext(ctx,a.thread_id);
+    const beforeRevision=row.changes.length;
+    const summaryText=`added together: ${prepared.added_items.map(i=>`${i.quantity}x ${i.name}`).join(", ")}`;
+    await ctx.db.patch(row._id,{items:prepared.proposed_lines.map(line=>({...line,item_id:line.item_id as never})),
+      changes:[...row.changes,{at:Date.now(),summary:summaryText,request_key:requestKey}],updated_at:Date.now()});
+    return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summaryText,order:prepared.quote,verified_quote,additional_cost_gbp:prepared.additional_cost_gbp,stock_receipts:prepared.stock_receipts,
+      context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,
+        after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
   },
 });
 
@@ -538,6 +584,12 @@ export const applyChange = mutation({
         price_tiers:tiers, origin:"added",
       };
     }
+    if (additionLine.product_id != null) {
+      const plan=await additionMountRequirements(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,items:[{product_id:additionLine.product_id,qty}]});
+      if(plan.status!=="none") return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,
+        error:"This single addition needs a complete verified setup. Quote and accept all required owner-supplied adapters together with add_items; no items or prices changed."};
+    }
+
     // A body and its kits share physical IDs; merge only identical offerings
     // with the same captured commercial terms.
     const already = lines.find(l => (additionLine.product_id != null ? l.product_id === additionLine.product_id :

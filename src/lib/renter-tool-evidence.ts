@@ -35,6 +35,13 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
       // The pricing adapter performs a real read-only Native proposal check.
       // Harvest its result through the same validation path as an explicit
       // quote tool, including negative shared-stock receipts from refusals.
+      // Acceptance carries the exact Native preparation used in its transaction.
+      // This is price evidence; the parent mutation's action flag proves the edit.
+      if (payload.toolName === "modify_booking" && result.ok === true && result.action_performed === true &&
+          result.source === "native_lab_amendment" && result.verified_quote && typeof result.verified_quote === "object" &&
+          result.context_transition && typeof result.context_transition === "object" &&
+          (result.context_transition as Record<string, unknown>).source === "native_lab_amendment")
+        visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:accepted-quote`,result:result.verified_quote});
       if (payload.toolName === "lookup_pricing" && result.found === true && result.booking_addition_preview && typeof result.booking_addition_preview === "object")
         visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:booking-preview`,result:result.booking_addition_preview});
       if (payload.toolName === "lookup_pricing" && result.found === true && Array.isArray(result.component_base_offering_quotes))

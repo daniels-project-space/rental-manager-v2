@@ -448,12 +448,13 @@ export const quoteBookingAdditionTool = createTool({
 export const modifyBookingTool = createTool({
   id: "modify_booking",
   description:
-    "SIMULATION (Renter Bot Lab only): actually add an item, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
+    "SIMULATION (Renter Bot Lab only): atomically add one item or a complete group of items, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Use add_items with every exact product_id and qty for a quoted setup, including its required owner-supplied adapters. The complete group either succeeds together or nothing is changed. Never make separate add_item calls for parts of the same agreed setup. A missing required adapter returns complete_setup_required: quote the complete setup and ask for its agreement instead of adding an incomplete setup. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
   inputSchema: z.object({
     thread_id: z.string().describe("The conversation/thread id."),
     action: z
-      .enum(["add_item", "remove_item", "set_dates"])
+      .enum(["add_item", "add_items", "remove_item", "set_dates"])
       .describe("What to do to the booking."),
+    items: z.array(z.object({product_id:z.number().int().positive(),qty:z.number().int().min(1).max(20)})).min(1).max(8).optional().describe("For add_items: every exact listing and quantity accepted together, including required adapters."),
     item_name: z.string().optional().describe("Exact item name for add_item/remove_item."),
     product_id: z.number().int().positive().optional().describe("Exact Native listing ID when selecting a specific priced kit or booked offering. Preserves its components and chooses the correct line."),
     qty: z.number().optional().describe("Units to add or remove (defaults to 1). To remove all units of a model, read get_lab_order and pass that exact booked quantity. Never guess a quantity or remove a different model."),
@@ -469,7 +470,28 @@ export const modifyBookingTool = createTool({
           "You cannot modify a real booking. Tell the renter you'll note it and that they can add it on the listing page, or that you'll confirm it with them.",
       };
     }
-    return await convex().mutation(anyApi.renter_bot_lab_order.applyChange, input);
+    const client=convex();
+    if (input.action==="add_item" || input.action==="add_items") {
+      if (input.action==="add_items" && (!input.items || input.item_name || input.product_id!=null || input.qty!=null)) return {ok:false,error:"Use only the items array for add_items."};
+      if (input.action==="add_item" && input.items) return {ok:false,error:"Use add_items for a complete group."};
+      let items=input.items;
+      if (!items) {
+        let productId=input.product_id;
+        if (productId==null && input.item_name) {
+          const scope=currentRenterToolScope();
+          if(!scope)return {ok:false,error:"Missing verified booking context."};
+          const order=await client.query(anyApi.renter_bot_lab_order.get,{thread_id:scope.threadId}) as {days?:number};
+          const price=await client.query(anyApi.renter_bot_tools.lookup_pricing,{item_name:input.item_name,account_slug:scope.accountSlug,days:order?.days,quantity:input.qty??1}) as {found?:boolean;product_id?:number};
+          if(price.found)productId=price.product_id;
+        }
+        if(productId==null)return {ok:false,error:"Use an exact verified listing before adding it. No changes were made."};
+        items=[{product_id:productId,qty:input.qty??1}];
+      }
+      return await client.mutation(anyApi.renter_bot_lab_order.applyAdditionBasket,{thread_id:input.thread_id,request_message_id:"",items});
+    }
+    if(input.items)return {ok:false,error:"Items arrays apply only to add_items."};
+    const {items:_unused,...legacy}=input;
+    return await client.mutation(anyApi.renter_bot_lab_order.applyChange,legacy);
   },
 });
 

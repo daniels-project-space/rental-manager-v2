@@ -112,6 +112,7 @@ import type * as lib_ai_attribution from "../lib/ai_attribution.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_availability_basket from "../lib/availability_basket.js";
 import type * as lib_base_listing_identity from "../lib/base_listing_identity.js";
+import type * as lib_booking_addition_mount from "../lib/booking_addition_mount.js";
 import type * as lib_bundle_description_parse from "../lib/bundle_description_parse.js";
 import type * as lib_bundle_mapping from "../lib/bundle_mapping.js";
 import type * as lib_camera_mode_claims from "../lib/camera_mode_claims.js";
@@ -433,6 +434,7 @@ declare const fullApi: ApiFromModules<{
   "lib/availability": typeof lib_availability;
   "lib/availability_basket": typeof lib_availability_basket;
   "lib/base_listing_identity": typeof lib_base_listing_identity;
+  "lib/booking_addition_mount": typeof lib_booking_addition_mount;
   "lib/bundle_description_parse": typeof lib_bundle_description_parse;
   "lib/bundle_mapping": typeof lib_bundle_mapping;
   "lib/camera_mode_claims": typeof lib_camera_mode_claims;

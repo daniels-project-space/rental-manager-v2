@@ -1,0 +1,13 @@
+# Atomic acceptance of complete equipment setups
+
+An isolated native Lab booking reproduced a partial edit: the Remus lens addition committed, a deliberately invalid second adapter listing failed, and the booking was left at £174 without the required adapter. The two separate item transactions could not guarantee the agreed complete setup.
+
+The bot now accepts one or multiple exact listings through applyAdditionBasket. It binds acceptance to the latest renter message, preserves quote-only intent, verifies required adapter coverage, resolves current listing prices and complete shared stock, and commits every selected line in one transaction. It reuses the same basket preparation as quoteAdditionBasket. Canonically ordered item quantities make retries idempotent across item ordering. Missing required adapters are refused on both the atomic and legacy single-item path. Renter-supplied matching adapters remain uncharged. The tool exposes add_items so the model can select a complete agreed setup directly.
+
+The transaction returns its verified pre-edit quote alongside the successful action and context transition. Actual component and aggregate Native pricing receipts are harvested for draft review; a diagnostic or unchanged result cannot supply acceptance price evidence. A/B diagnostic scopes block the new write function. Real thread IDs remain refused.
+
+Validation: 1,282 tests passed, 14 skipped across 100 files; the expanded transaction/receipt test file passed all 62 tests. Next build, Convex typecheck/deploy and owner source checks passed. Six native Lab cases passed: invalid second listing, insufficient second-item stock, omitted required adapter on both paths, complete setup plus retry, quote-only intent, and renter-supplied adapter. All fixtures cleaned. The complete setup committed once at £194; second-item failures left the original booking untouched. Graphify updated.
+
+Native baseline: /root/rental-atomic-addition-baseline-proof.json. Native validation: /root/rental-atomic-addition-native-proof.json. Production model acceptance remains to be verified after the website deployment.
+
+Real Hygglo activation and booking writes remain disabled pending separate explicit written consent. Owner authentication cutover, durable phone push renewal and the broader inventory/conversation audit remain unfinished. The existing read-only intent deny gate still needs a broader target-specific consent review; this change does not claim to prove every possible wording of consent.

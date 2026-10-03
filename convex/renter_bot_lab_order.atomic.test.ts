@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applyChange } from "./renter_bot_lab_order";
+import { applyChange, applyAdditionBasket } from "./renter_bot_lab_order";
 import { amendedDraftContext, draftContextKey } from "./lib/draft_review";
 import { setDraft } from "./replyInbox";
+import { renterToolReceipts } from "../src/lib/renter-tool-evidence";
+import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 
 function fixture() {
   const tables: Record<string, any[]> = {
@@ -28,8 +30,8 @@ const remove = (ctx: any, item_name: string, qty?: number) => (applyChange as an
   { thread_id: "__probe__atomic", action: "remove_item", item_name, ...(qty === undefined ? {} : {qty}) });
 describe("additions check the complete physical basket",()=>{
   const setup=()=>{
-    const f=fixture();
-    f.tables.items.push({_id:"lens",name_canonical:"Sony 28-70mm",status:"active",is_marketing_only:false,qty:2,kind:"lens",aliases:[]});
+    const f=fixture(); f.tables.items[0].lens_mount="E";
+    f.tables.items.push({_id:"lens",name_canonical:"Sony 28-70mm",status:"active",is_marketing_only:false,qty:2,kind:"lens",lens_mount:"E",aliases:[]});
     f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
     f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1},{item_id:"lens",qty:1}]}];
     f.tables.pricing_catalog=[{item_name_canonical:"Sony 28-70mm",daily_price_min:18}];
@@ -326,4 +328,56 @@ it("blocks every mistaken edit against a quote-only renter message without writi
   expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action,item_name:"Sony FX3",qty:1,start_date:"2026-10-08",end_date:"2026-10-09",request_message_id:"quote"})).toMatchObject({ok:false,action_performed:false,error_code:"renter_requested_read_only"});
   expect(tables).toEqual(before);
  }
+});
+
+function setupAtomicAddition(){
+ const f=fixture();
+ f.tables.items=[{_id:"camera",name_canonical:"BMPCC 6K Full Frame",kind:"camera_body",lens_mount:"L",status:"active",qty:1,aliases:[]},
+ {_id:"lens",name_canonical:"Anamorphic Blazar Remus 100mm",kind:"lens",lens_mount:"PL",status:"active",qty:1,aliases:[]},
+ {_id:"adapter",name_canonical:"PL to L mount",kind:"accessory",status:"active",qty:1,aliases:[]}];
+ const row=f.tables.renter_bot_lab_orders[0];row.start_date="2026-10-20";row.end_date="2026-10-21";row.items=[{product_id:1,name:"BMPCC 6K Full Frame",qty:1,daily_price_gbp:62,pricing_basis:"listing",origin:"seed"}];
+ Object.assign(f.tables.renter_bot_lab_bookings[0],{start_date:row.start_date,end_date:row.end_date,pickup_date:undefined,status:"confirmed"});
+ f.tables.online_listings=[{account_slug:"leo",product_id:1,name:"BMPCC 6K Full Frame",daily_price:62},{account_slug:"leo",product_id:2,name:"Blazar Remus 100mm",daily_price:25},{account_slug:"leo",product_id:3,name:"PL to L mount",daily_price:10}];
+ f.tables.listing_resolution_override=f.tables.items.map((item,i)=>({account_slug:"leo",product_id:i+1,components:[{item_id:item._id,qty:1}]}));
+ f.tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-current",sender:"renter",body_text:"Please add the Blazar Remus 100mm and your PL to L mount adapter together as quoted.",fetched_at:1,_creationTime:1}];
+ return f;
+}
+const applyBasket=(ctx:any,items=[{product_id:2,qty:1},{product_id:3,qty:1}],request_message_id="renter-current")=>(applyAdditionBasket as any)._handler(ctx,{thread_id:"__probe__atomic",request_message_id,items});
+describe("complete setup acceptance is one transaction",()=>{
+ it("commits every required component, native total and one revision together",async()=>{
+  const {tables,ctx}=setupAtomicAddition();const result=await applyBasket(ctx);
+  expect(result).toMatchObject({ok:true,action_performed:true,order:{total_gbp:194},context_transition:{source:"native_lab_amendment",before_revision:0,after_revision:1}});
+  expect(tables.renter_bot_lab_orders[0].items.map((i:any)=>i.product_id)).toEqual([1,2,3]);expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  const receipts=renterToolReceipts([{toolName:"modify_booking",toolCallId:"actual-acceptance",result}]);
+  const prices=renterPriceEvidence(receipts,[],"__probe__atomic");
+  expect(prices).toEqual(expect.arrayContaining([expect.objectContaining({kind:"basket",total_gbp:194}),expect.objectContaining({kind:"basket",quote_role:"addition",total_gbp:70}),expect.objectContaining({kind:"rental",total_gbp:50}),expect.objectContaining({kind:"rental",total_gbp:20})]));
+  expect(renterPriceEvidence(renterToolReceipts([{toolName:"modify_booking",result:{...result,action_performed:false}}]),[],"__probe__atomic")).toEqual([]);
+
+ });
+ it("does not commit the first item when the later item has no verified mapping or stock",async()=>{
+  for(const items of [[{product_id:2,qty:1},{product_id:999,qty:1}],[{product_id:2,qty:1},{product_id:3,qty:2}]]){
+   const {tables,ctx}=setupAtomicAddition();const before=structuredClone(tables);expect(await applyBasket(ctx,items)).toMatchObject({ok:false,action_performed:false});expect(tables).toEqual(before);
+  }
+ });
+ it("refuses a lens-only acceptance that omits its required owner-supplied adapter",async()=>{
+  const {tables,ctx}=setupAtomicAddition();const before=structuredClone(tables);
+  expect(await applyBasket(ctx,[{product_id:2,qty:1}])).toMatchObject({ok:false,error_code:"complete_setup_required"});
+  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:2,item_name:"Blazar Remus 100mm",qty:1})).toMatchObject({ok:false,error_code:"complete_setup_required"});expect(tables).toEqual(before);
+ });
+ it("accepts the lens alone when the renter supplies its explicitly matching adapter",async()=>{
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm.";
+  expect(await applyBasket(ctx,[{product_id:2,qty:1}])).toMatchObject({ok:true,order:{total_gbp:174}});expect(tables.renter_bot_lab_orders[0].items).toHaveLength(2);
+ });
+ it("retries the same complete request once regardless of selection ordering",async()=>{
+  const {tables,ctx}=setupAtomicAddition();expect(await applyBasket(ctx)).toMatchObject({ok:true,action_performed:true});
+  expect(await applyBasket(ctx,[{product_id:3,qty:1},{product_id:2,qty:1}])).toMatchObject({ok:true,already_applied:true,action_performed:false,order:{total_gbp:194}});expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+ });
+ it("preserves readonly intent and rejects stale, missing or owner message scope",async()=>{
+  for(const variant of ["readonly","stale","missing","owner"]){const {tables,ctx}=setupAtomicAddition();if(variant==="readonly")tables.hygglo_messages[0].body_text="Please quote only, don't change my booking.";if(variant==="owner")tables.hygglo_messages[0].sender="owner";
+   const before=structuredClone(tables);expect(await applyBasket(ctx,undefined,variant==="stale"?"older":variant==="missing"?"":"renter-current")).toMatchObject({ok:false,action_performed:false});expect(tables).toEqual(before);}
+ });
+ it("does not add a complete setup to a cancelled rental or any real thread",async()=>{
+  const {tables,ctx}=setupAtomicAddition();tables.renter_bot_lab_bookings[0].status="cancelled";const before=structuredClone(tables);expect(await applyBasket(ctx)).toMatchObject({ok:false,action_performed:false});expect(tables).toEqual(before);
+  await expect((applyAdditionBasket as any)._handler(ctx,{thread_id:"real-rental",request_message_id:"renter-current",items:[{product_id:2,qty:1}]})).rejects.toThrow("refusing a real");
+ });
 });
