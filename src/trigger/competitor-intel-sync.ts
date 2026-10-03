@@ -30,7 +30,7 @@
  */
 
 import { schedules, task, logger } from "@trigger.dev/sdk/v3";
-import { ConvexHttpClient } from "convex/browser";
+import { createConvexServiceClient } from "../lib/convex-service";
 import { api } from "../../convex/_generated/api";
 import { createClient } from "../hygglo-core/client";
 import {
@@ -135,7 +135,7 @@ async function runCompetitorIntelSync(opts: SyncOptions = {}): Promise<SyncResul
     dryRun,
   });
 
-  const convex = new ConvexHttpClient(CONVEX_URL);
+  const convex = createConvexServiceClient(CONVEX_URL);
   let itemCount = agg.items.length;
   let totalEstRevenueGbp = 0;
   let totalRentalsSampled = 0;

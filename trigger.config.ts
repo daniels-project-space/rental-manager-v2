@@ -23,7 +23,7 @@ export default defineConfig({
       aptGet({ packages: ["ca-certificates"] }),
       syncEnvVars(() => {
         const values = Object.fromEntries(
-          ["VAULT_ACCESS_TOKEN"]
+          ["VAULT_ACCESS_TOKEN", "CONVEX_DEPLOY_KEY", "CONVEX_URL"]
             .map((key) => [key, process.env[key]])
             .filter((entry): entry is [string, string] => Boolean(entry[1])),
         );

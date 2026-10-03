@@ -23,7 +23,7 @@
  */
 
 import { schedules, task, logger } from "@trigger.dev/sdk/v3";
-import { ConvexHttpClient } from "convex/browser";
+import { createConvexServiceClient } from "../lib/convex-service";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { createHyggloCore } from "../hygglo-core/index";
@@ -75,7 +75,7 @@ async function runCatalogSync(
   const dryRun = opts.dryRun === true;
   const fetchDetail = opts.fetchDetail !== false;
   const runStart = Date.now();
-  const convex = new ConvexHttpClient(CONVEX_URL);
+  const convex = createConvexServiceClient(CONVEX_URL);
 
   // Read master inventory once (shared across accounts). listForReconcile
   // returns { _id, name (=name_canonical), aliases, qty } — exactly the shape

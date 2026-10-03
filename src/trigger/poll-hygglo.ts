@@ -9,7 +9,8 @@
  * READ-ONLY on Hygglo: only GET requests after auth. No mutations sent to Hygglo.
  */
 import { schedules, logger, tasks } from "@trigger.dev/sdk/v3";
-import { ConvexHttpClient } from "convex/browser";
+import type { ConvexHttpClient } from "convex/browser";
+import { createConvexServiceClient } from "../lib/convex-service";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
@@ -414,7 +415,7 @@ export const pollHyggloInbox = schedules.task({
     // the selected interval has elapsed, while a deliberate manual run always
     // executes immediately. Check before vault access / Hygglo auth so a
     // skipped tick costs only two small Convex reads.
-    const convex = new ConvexHttpClient(CONVEX_URL);
+    const convex = createConvexServiceClient(CONVEX_URL);
     let effectiveIntervalMs = MIN_EFFECTIVE_POLL_INTERVAL_MS;
     // Phase 31 (cost opt) — the human-set dial, clamped to the hard 2-60min
     // bounds, BEFORE the adaptive backoff widening below. Kept separate so

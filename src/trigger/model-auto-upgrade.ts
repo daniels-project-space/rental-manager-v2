@@ -28,7 +28,7 @@
  *   - GITHUB_BASE_BRANCH (optional; default 'main')
  */
 import { schedules, logger } from "@trigger.dev/sdk/v3";
-import { ConvexHttpClient } from "convex/browser";
+import { createConvexServiceClient } from "../lib/convex-service";
 import { api } from "../../convex/_generated/api";
 import {
   DEFAULT_GROK_CHAT_MODEL,
@@ -229,7 +229,7 @@ export const modelAutoUpgradeScan = schedules.task({
     const scannedAt = Date.now();
     const apiKey = process.env.XAI_API_KEY ?? "";
     const ghToken = process.env.GITHUB_TOKEN ?? "";
-    const convex = new ConvexHttpClient(CONVEX_URL);
+    const convex = createConvexServiceClient(CONVEX_URL);
     const currentModel = DEFAULT_GROK_CHAT_MODEL;
 
     if (!apiKey) {

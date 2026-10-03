@@ -1,6 +1,21 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { authorizeOwner } from "./lib/owner_authorization";
 import { components } from "./_generated/api";
 import { v } from "convex/values";
+
+/** Read-only proof of worker identity, independent of the transitional rollout switch. */
+export const serviceIdentity = internalQuery({
+  args: {},
+  returns: v.object({ authenticated_service: v.boolean() }),
+  handler: async (ctx) => {
+    const role = await authorizeOwner(
+      await ctx.auth.getUserIdentity(), process.env.CONVEX_SITE_URL,
+      async () => null, async () => undefined,
+    );
+    if (role !== "service") throw new Error("Expected deployment service identity");
+    return { authenticated_service: true };
+  },
+});
 
 /** Privileged cleanup exclusively for this audit's deliberately named auth fixtures. */
 export const cleanup = internalMutation({

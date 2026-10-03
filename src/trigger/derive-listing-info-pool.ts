@@ -26,7 +26,8 @@
  *     them in comparison_references[].
  */
 import { schedules, logger, task } from "@trigger.dev/sdk/v3";
-import { ConvexHttpClient } from "convex/browser";
+import type { ConvexHttpClient } from "convex/browser";
+import { createConvexServiceClient } from "../lib/convex-service";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { api } from "../../convex/_generated/api";
@@ -546,7 +547,7 @@ async function runBatch(
   errors: number;
   skipped: number;
 }> {
-  const convex = new ConvexHttpClient(CONVEX_URL);
+  const convex = createConvexServiceClient(CONVEX_URL);
   const limit = payload?.limit ?? DEFAULT_BATCH_LIMIT;
   const force = !!payload?.force;
 
