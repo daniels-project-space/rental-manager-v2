@@ -34,3 +34,25 @@ describe("verified lens requirement boundary",()=>{
   expect(assessLensRequirements(cap,{focal_mm:90}).status).toBe("mismatch");
  });
 });
+
+
+describe("shared model variant reviews",()=>{
+ const review=(model:string,capabilities:any)=>({model,source_urls:[spec.source_url],verified_at:10,capabilities});
+ const base=spec.lens_capabilities;
+ it("uses shared AF and range without claiming a particular generation",()=>{
+  const cap=verifiedLensCapabilities({...spec,lens_variant_reviews:[review("GM",base),review("GM II",base)]},"Exact lens");
+  expect(cap).toMatchObject({focus_mode:"autofocus",focal_min_mm:16,focal_max_mm:35,model_scope:"shared_variants",reviewed_models:[{model:"GM"},{model:"GM II"}]});
+  expect(assessLensRequirements(cap,{focus_mode:"autofocus",max_wide_focal_mm:16,max_aperture_f:2.8,coverage:"full_frame"}).status).toBe("match");
+ });
+ it("keeps differing or unreviewed properties unknown despite a legacy full profile",()=>{
+  const cap=verifiedLensCapabilities({...spec,lens_variant_reviews:[review("GM",base),review("GM II",{...base,focus_mode:undefined,max_aperture_f:4})]},"Exact lens");
+  expect(cap?.focus_mode).toBeUndefined();expect(cap?.max_aperture_f).toBeUndefined();
+  expect(assessLensRequirements(cap,{focus_mode:"autofocus",max_aperture_f:2.8}).status).toBe("unknown");
+ });
+ it("rejects missing, duplicate, stale or invalid variant evidence instead of falling back",()=>{
+  const reviews=[review("GM",base),review("GM II",base)];
+  for(const lens_variant_reviews of [[],[reviews[0]],[reviews[0],reviews[0]],[reviews[0],{...reviews[1],verified_at:9}],[reviews[0],{...reviews[1],source_urls:["http://invalid.example"]}],[reviews[0],review("GM II",{...base,focal_min_mm:40})]]){
+   expect(verifiedLensCapabilities({...spec,lens_variant_reviews},"Exact lens")).toBeNull();
+  }
+ });
+});
