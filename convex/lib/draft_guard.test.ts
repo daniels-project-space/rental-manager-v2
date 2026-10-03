@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { guardDraft } from "./draft_guard";
+import { scoreDraft } from "./renter_bot_rubric";
 
 const baseOpts = {
   history: [],
@@ -84,6 +85,19 @@ describe("authoritative booking transitions", () => {
 });
 
 describe("first-person agreement",()=>{
+ it("reports a harmless voice correction separately from an internal leak",()=>{
+  const opts={history:[],lastRenterMessage:"Thank you",firstPerson:true};
+  const result=guardDraft("We are happy to help.",opts);
+  expect(result.text).toBe("I am happy to help.");
+  expect(result.flags).toContainEqual(expect.objectContaining({type:"FIRST_PERSON_STYLE",severity:"low",action:"rewritten"}));
+  expect(result.flags.some(f=>f.type==="INTERNAL_ACTION")).toBe(false);
+  const scored=scoreDraft({accountSlug:"leo",draftText:result.text,productionFlags:result.flags});
+  expect(scored.results.find(r=>r.category==="production_guard:FIRST_PERSON_STYLE")?.status).toBe("pass");
+  const leaked=guardDraft("We are happy to help.\n*Internal note: notify Daniel on Telegram*",opts);
+  expect(leaked.flags).toContainEqual(expect.objectContaining({type:"INTERNAL_ACTION",severity:"critical",action:"stripped"}));
+  const leakScore=scoreDraft({accountSlug:"leo",draftText:leaked.text,productionFlags:leaked.flags});
+  expect(leakScore.results.find(r=>r.category==="production_guard:INTERNAL_ACTION")?.status).toBe("flag");
+ });
  it("preserves the verification-failure meaning when rewriting the owner's voice",()=>{
   const result=guardDraft("We aren't able to release the collection address without a confirmed booking.",{history:[],lastRenterMessage:"Verification failed, can I collect?",stage:"VERIFICATION_FAILED",firstPerson:true});
   expect(result.text).toBe("I'm not able to release the collection address without a confirmed booking.");

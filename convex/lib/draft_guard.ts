@@ -157,6 +157,7 @@ const SHOOT_QUESTION_PATTERN = /\bwhat(?:'s| is) the shoot for\b/i;
 
 const SEVERITY: Record<string, FlagSeverity> = {
   INTERNAL_ACTION: "critical",
+  FIRST_PERSON_STYLE: "low",
   EMPTY_DRAFT: "critical",
   CAMERA_MODE_HALLUCINATION: "critical",
   CAMERA_COMPARISON_HALLUCINATION: "critical",
@@ -377,7 +378,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       /\bI'm (separate|different|independent|distinct)\b/gi,
       "they're $1",
     );
-    push("INTERNAL_ACTION", 'Rewrote "we/our" to "I/my"', "rewritten");
+    push("FIRST_PERSON_STYLE", 'Rewrote "we/our" to "I/my"', "rewritten");
   }
 
   // 1e. CHAIN-OF-THOUGHT LEAK — STRIP
