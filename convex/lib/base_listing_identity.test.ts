@@ -47,3 +47,20 @@ describe("base listing identity", () => {
     expect(baseListingProductIds("leo", "body", [], [{ account_slug: "leo", product_id: 2, components: [{ item_id: "body", qty: 1 }] }, { account_slug: "diogo", product_id: 3, components: [{ item_id: "body", qty: 1 }] }], items)).toEqual([2]);
   });
 });
+
+
+describe("lens offering contents distinguish packaging from tracked extras",()=>{
+ const lens={_id:"gm",name_canonical:"Sony GM 16-35mm f2.8",kind:"lens",lens_mount:"Sony E-mount"};
+ const inventory=[lens,{_id:"nd",name_canonical:"ND filter",kind:"accessory"}];
+ const mapping=[{account_slug:"leo",product_id:1115113,components:[{item_id:"gm",qty:1}]}];
+ it("keeps the actual single-lens listing price despite front/rear caps and hood",()=>{
+  const description="Included in this rental: • Sony FE 16–35mm f/2.8 GM Lens • Front and Rear Lens Caps • Lens Hood • Carry Pouch About this item: Sony wide-angle zoom.";
+  expect(baseListingProductIds("leo","gm",[],mapping,inventory,[{product_id:1115113,description}])).toEqual([1115113]);
+ });
+ it("does not hide a separately tracked filter, extra lens or mixed equipment behind packaging",()=>{
+  for(const extra of ["ND filter","Sony 24-70mm lens","Lens Hood with Sony 24-70mm lens"]){
+   const description=`Included in this rental: • Sony 16-35mm GM f2.8 lens • ${extra}`;
+   expect(baseListingProductIds("leo","gm",[],mapping,inventory,[{product_id:1115113,description}])).toEqual([]);
+  }
+ });
+});

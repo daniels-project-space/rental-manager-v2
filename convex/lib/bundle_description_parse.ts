@@ -18,6 +18,9 @@ const ADDON_RE =
 
 const NOISE_RE =
   /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable)\b/i;
+/** Protective caps and lens hoods are supplied packaging, not separate rented
+ * lenses. Match the whole component so mixed gear lines remain unresolved. */
+const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+and\s+rear)?|rear)\s+)?(?:lens\s+|body\s+)?caps?$|^lens\s+hood$/i;
 
 /** Pull the component list out of an "Included in this rental" style block. */
 export function extractComponents(desc: string): {
@@ -125,7 +128,7 @@ export function extractComponents(desc: string): {
     // A fragment with no letters or digits is a leftover delimiter, not a
     // component: a lone "*" survived the numeric-split fallback.
     if (!/[a-z0-9]/i.test(name)) continue;
-    if (!name || NOISE_RE.test(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
+    if (!name || NOISE_RE.test(name) || PROTECTIVE_PACKAGING_RE.test(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
     out.push({ qty, name: name.slice(0, 60) });
   }
   return { components: out, usedBullets, hasContentsSection: !!m };
