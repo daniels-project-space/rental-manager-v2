@@ -1,4 +1,5 @@
 import {describe,it,expect} from "vitest";
+import jointNativeQuote from "./fixtures/renter-joint-native-quote.json";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import type {ToolReceipt} from "./renter-tool-evidence";
 import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
@@ -168,5 +169,36 @@ describe("same-item marginal proposal evidence",()=>{
    (n:ReturnType<typeof native>)=>{n.addition_quote.lines[0].daily_price_gbp=45;},
    (n:ReturnType<typeof native>)=>{n.base_quote.total_gbp=70;},
   ]){const n=native();change(n);const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);expect(proof.some(p=>p.quote_role==="addition")).toBe(false);expect(unsupportedPriceClaims(claim,proof,scope)).not.toEqual([]);}
+ });
+});
+
+
+describe("complete multi-item Native addition quotes",()=>{
+ const native=jointNativeQuote;
+ const scope={start_date:native.quote.start_date,end_date:native.quote.end_date,items:native.base_items};
+ const claim="- Blazar Remus 100mm: £50 (£25/day)\n- PL to L mount adapter: £20 (£10/day)\n\nAdding both would be an additional £70, which would bring your total booking to £194.";
+ const proof=(n:Record<string,unknown>=native)=>renterPriceEvidence([receipt("quote_booking_addition",n)],[],native.thread_id);
+ it("validates actual Native joint quote parts and binds the group cost and proposed full total",()=>{
+  const evidence=proof();
+  expect(evidence).toContainEqual(expect.objectContaining({kind:"basket",quote_role:"addition",total_gbp:70,items:native.added_items}));
+  expect(unsupportedPriceClaims(claim,evidence,scope)).toEqual([]);
+  for(const changed of [claim.replace("£70","£71"),claim.replace("£194","£195"),claim.replace("PL to L","PL to E"),claim.replace("Blazar Remus 100mm:","Two Blazar Remus 100mm:"),claim.replace("Blazar Remus 100mm:","Unknown lens:")])
+   expect(unsupportedPriceClaims(changed,evidence,scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(claim,evidence,{...scope,end_date:"2026-10-22"})).not.toEqual([]);
+ });
+ it("rejects another thread, failed proposals, altered groups and inconsistent marginal terms",()=>{
+  expect(renterPriceEvidence([receipt("quote_booking_addition",native)],[],"__probe__another")).toEqual([]);
+  expect(proof({...native,ok:false})).toEqual([]);
+  expect(proof({...native,added_items:[native.added_items[0],native.added_items[0]]})).toEqual([]);
+  for(const changed of [{...native,additional_cost_gbp:71},{...native,addition_quote:{...native.addition_quote,total_gbp:71}},
+   {...native,addition_quote:{...native.addition_quote,end_date:"2026-10-22"}}]) {
+    expect(proof(changed).some(e=>e.kind==="basket"&&e.quote_role==="addition")).toBe(false);
+    expect(unsupportedPriceClaims(claim,proof(changed),scope)).not.toEqual([]);
+   }
+ });
+ it("never accepts repeated quoted members in place of the distinct Native group",()=>{
+  const repeated=claim.replace("PL to L mount adapter:","Blazar Remus 100mm:").replace("£20 (£10/day)","£50 (£25/day)");
+  expect(unsupportedPriceClaims(repeated,proof(),scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(claim.replace("Adding both would","Both now"),proof(),scope)).not.toEqual([]);
  });
 });

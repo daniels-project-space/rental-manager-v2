@@ -1,0 +1,220 @@
+{
+  "ok": true,
+  "preview_only": true,
+  "action_performed": false,
+  "source": "native_lab_proposal",
+  "thread_id": "__probe__joint-native-fixture",
+  "account_slug": "leo",
+  "base_items": [
+    {
+      "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+      "quantity": 1
+    }
+  ],
+  "added_items": [
+    {
+      "name": "Blazar Remus 100mm",
+      "quantity": 1
+    },
+    {
+      "name": "PL \u2192 L adapter",
+      "quantity": 1
+    }
+  ],
+  "quote": {
+    "days": 2,
+    "end_date": "2026-10-21",
+    "lines": [
+      {
+        "daily_price_gbp": 62,
+        "effective_rate_gbp": 62,
+        "line_total_gbp": 124,
+        "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "origin": "listing",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 62
+          },
+          {
+            "days": 3,
+            "pricePerDay": 56.666666666666664
+          },
+          {
+            "days": 7,
+            "pricePerDay": 41.42857142857143
+          },
+          {
+            "days": 30
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1172450,
+        "qty": 1,
+        "tiers": "1 day \u00a362, 3+ days ~\u00a356.67/day (\u00a3170 for 3 days), 7+ days ~\u00a341.43/day (\u00a3290 for 7 days)"
+      },
+      {
+        "daily_price_gbp": 25,
+        "effective_rate_gbp": 25,
+        "line_total_gbp": 50,
+        "name": "Blazar Remus 100mm",
+        "origin": "added",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 25
+          },
+          {
+            "days": 3,
+            "pricePerDay": 20
+          },
+          {
+            "days": 7,
+            "pricePerDay": 15.714285714285714
+          },
+          {
+            "days": 30
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1116294,
+        "qty": 1,
+        "tiers": "1 day \u00a325, 3+ days ~\u00a320/day (\u00a360 for 3 days), 7+ days ~\u00a315.71/day (\u00a3110 for 7 days)"
+      },
+      {
+        "daily_price_gbp": 10,
+        "effective_rate_gbp": 10,
+        "line_total_gbp": 20,
+        "name": "PL \u2192 L adapter",
+        "origin": "added",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 10
+          },
+          {
+            "days": 3,
+            "pricePerDay": 10
+          },
+          {
+            "days": 7,
+            "pricePerDay": 5.285714285714286
+          },
+          {
+            "days": 30
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1172765,
+        "qty": 1,
+        "tiers": "1 day \u00a310, 3+ days ~\u00a310/day (\u00a330 for 3 days), 7+ days ~\u00a35.29/day (\u00a337 for 7 days)"
+      }
+    ],
+    "start_date": "2026-10-20",
+    "total_gbp": 194,
+    "unpriced": []
+  },
+  "base_quote": {
+    "days": 2,
+    "end_date": "2026-10-21",
+    "lines": [
+      {
+        "daily_price_gbp": 62,
+        "effective_rate_gbp": 62,
+        "line_total_gbp": 124,
+        "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "origin": "listing",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 62
+          },
+          {
+            "days": 3,
+            "pricePerDay": 56.666666666666664
+          },
+          {
+            "days": 7,
+            "pricePerDay": 41.42857142857143
+          },
+          {
+            "days": 30
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1172450,
+        "qty": 1,
+        "tiers": "1 day \u00a362, 3+ days ~\u00a356.67/day (\u00a3170 for 3 days), 7+ days ~\u00a341.43/day (\u00a3290 for 7 days)"
+      }
+    ],
+    "start_date": "2026-10-20",
+    "total_gbp": 124,
+    "unpriced": []
+  },
+  "addition_quote": {
+    "days": 2,
+    "end_date": "2026-10-21",
+    "lines": [
+      {
+        "daily_price_gbp": 25,
+        "effective_rate_gbp": 25,
+        "line_total_gbp": 50,
+        "name": "Blazar Remus 100mm",
+        "origin": "added",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 25
+          },
+          {
+            "days": 3,
+            "pricePerDay": 20
+          },
+          {
+            "days": 7,
+            "pricePerDay": 15.714285714285714
+          },
+          {
+            "days": 30
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1116294,
+        "qty": 1,
+        "tiers": "1 day \u00a325, 3+ days ~\u00a320/day (\u00a360 for 3 days), 7+ days ~\u00a315.71/day (\u00a3110 for 7 days)"
+      },
+      {
+        "daily_price_gbp": 10,
+        "effective_rate_gbp": 10,
+        "line_total_gbp": 20,
+        "name": "PL \u2192 L adapter",
+        "origin": "added",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 10
+          },
+          {
+            "days": 3,
+            "pricePerDay": 10
+          },
+          {
+            "days": 7,
+            "pricePerDay": 5.285714285714286
+          },
+          {
+            "days": 30
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1172765,
+        "qty": 1,
+        "tiers": "1 day \u00a310, 3+ days ~\u00a310/day (\u00a330 for 3 days), 7+ days ~\u00a35.29/day (\u00a337 for 7 days)"
+      }
+    ],
+    "start_date": "2026-10-20",
+    "total_gbp": 70,
+    "unpriced": []
+  },
+  "additional_cost_gbp": 70
+}

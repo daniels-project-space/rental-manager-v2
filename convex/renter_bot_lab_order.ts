@@ -9,7 +9,7 @@ import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
 import type { PriceTier } from "./lib/hygglo_pricing";
 import { inclusiveDays, summarise } from "./lib/renter_order_quote";
 export { inclusiveDays, summarise } from "./lib/renter_order_quote";
-import { checkRentalStock, validIsoDate } from "./lib/renter_stock";
+import { checkRentalStock, validIsoDate, loadStockSources } from "./lib/renter_stock";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { loadListingInventory } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
@@ -277,6 +277,55 @@ export const seed = internalMutation({
  * the bot cannot add something we do not own, and cannot silently add the
  * wrong thing.
  */
+/** A single read-only quote for multiple exact offerings and retained gear. */
+export const quoteAdditionBasket = query({
+  args:{thread_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
+  handler:async(ctx,a)=>{
+    assertLabThread(a.thread_id);
+    if(!a.items.length || a.items.length>8 || a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20))
+      return {ok:false,error:"Use one to eight exact listing IDs with whole quantities from 1 to 20."};
+    const row=await getLabOrder(ctx,a.thread_id);
+    const booking=await getBotBooking(ctx,a.thread_id);
+    if(!row)return {ok:false,error:"No simulated order for this session."};
+    if(!row.items.length)return {ok:false,error:"There is no existing basket. Use exact standalone item pricing for a new inquiry."};
+    if(booking?.return_date || ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(rentalStage(booking,londonToday()).stage))
+      return {ok:false,error:"This rental is closed. Arrange a new booking rather than quoting additions."};
+    if(!row.start_date || !row.end_date)return {ok:false,error:"Confirm pickup and return dates before quoting additions."};
+    const sources=await loadStockSources(ctx);
+    const catalog=await listingDisplayCatalog(ctx,row.account_slug);
+    const added:OrderLine[]=[];
+    for(const input of a.items) {
+      const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",row.account_slug).eq("product_id",input.product_id)).first();
+      const inventory=await loadListingInventory(ctx,row.account_slug,input.product_id,input.qty,sources);
+      if(!listing || typeof listing.daily_price!=="number" || listing.daily_price<=0 || !inventory.complete || inventory.owned!==true)
+        return {ok:false,error:"An exact selected offering lacks a verified owned mapping or price. No booking changes were made."};
+      const line:OrderLine={name:catalog.name(row.account_slug,input.product_id,listing.name??inventory.listing_name??""),
+        product_id:input.product_id,qty:input.qty,daily_price_gbp:listing.daily_price,pricing_basis:"listing",
+        price_tiers:await tiersForProduct(ctx,row.account_slug,input.product_id),origin:"added"};
+      const duplicate=added.find(l=>l.product_id===line.product_id);
+      if(duplicate)duplicate.qty+=line.qty;
+      else added.push(line);
+    }
+    if(added.some(l=>l.qty>20))return {ok:false,error:"The aggregate quantity per offering exceeds 20."};
+    const lines:OrderLine[]=row.items.map(l=>({...l,item_id:l.item_id?String(l.item_id):undefined}));
+    for(const line of added) {
+      const same=lines.find(l=>l.product_id===line.product_id && l.daily_price_gbp===line.daily_price_gbp && JSON.stringify(l.price_tiers??[])===JSON.stringify(line.price_tiers??[]));
+      if(same)same.qty+=line.qty;
+      else lines.push({...line});
+    }
+    const stock=await checkOrderRentalStock(ctx,row.account_slug,lines,row.start_date,row.end_date,a.thread_id,sources);
+    const basket={available:stock.available,items:stock.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
+    const stock_receipts=stock.receipts.map(r=>({...r,basket}));
+    if(stock.available!==true)return {ok:false,error_code:"basket_stock_unavailable_or_unknown",error:"The complete proposed basket cannot be verified available. No items or prices changed.",stock_receipts};
+    const quote=summarise(lines,row.start_date,row.end_date),base_quote=summarise(row.items,row.start_date,row.end_date),addition_quote=summarise(added,row.start_date,row.end_date);
+    if(quote.total_gbp==null || base_quote.total_gbp==null || addition_quote.total_gbp==null)
+      return {ok:false,error:"The proposal includes unpriced items. Ask the owner for a quote; no booking changes were made."};
+    return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,
+      base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
+      quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts};
+  },
+});
+
 export const applyChange = mutation({
   args: {
     thread_id: v.string(),

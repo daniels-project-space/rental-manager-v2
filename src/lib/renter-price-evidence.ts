@@ -36,7 +36,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
     if (tool === "quote_booking_addition" && !!threadId && r.thread_id===threadId && r.preview_only===true && r.source==="native_lab_proposal" && r.quote && typeof r.quote==="object") {
       const q=r.quote as Record<string,unknown>;
       const validMembers=(a:unknown):a is Array<{name:string;quantity:number}>=>Array.isArray(a)&&a.length>0&&a.every(i=>i&&typeof i==="object"&&string(i.name)&&number(i.quantity)&&Number.isInteger(i.quantity));
-      if (validMembers(r.base_items)&&validMembers(r.added_items)&&r.added_items.length===1&&Array.isArray(q.lines)&&q.lines.length>0&&number(q.total_gbp)&&number(q.days)&&string(q.start_date)&&string(q.end_date)&&q.lines.every(l=>l&&typeof l==="object"&&string(l.name)&&number(l.qty)&&Number.isInteger(l.qty)&&number(l.line_total_gbp))) {
+      if (validMembers(r.base_items)&&validMembers(r.added_items)&&r.added_items.length<=8&&Array.isArray(q.lines)&&q.lines.length>0&&number(q.total_gbp)&&number(q.days)&&string(q.start_date)&&string(q.end_date)&&q.lines.every(l=>l&&typeof l==="object"&&string(l.name)&&number(l.qty)&&Number.isInteger(l.qty)&&number(l.line_total_gbp))) {
         const members = (rows: Array<{name:string;quantity:number}>) => {
           const totals=new Map<string,number>();
           for(const row of rows) {const key=row.name.trim().toLowerCase();totals.set(key,(totals.get(key)??0)+row.quantity);}
@@ -82,6 +82,9 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
           number(r.additional_cost_gbp) &&
           Math.abs((q.total_gbp as number)-(baseQuote!.total_gbp as number)-(additionQuote!.total_gbp as number))<0.011 &&
           Math.abs((r.additional_cost_gbp as number)-(additionQuote!.total_gbp as number))<0.011) {
+          if(r.added_items.length>1)out.push({names:[],kind:"basket",quote_role:"addition",items:r.added_items,
+            proposal:{base_items:r.base_items,added_items:r.added_items},total_gbp:number(additionQuote!.total_gbp),days:number(q.days),
+            start_date:string(q.start_date),end_date:string(q.end_date),call_id:`${call_id}:addition-group`,source:"native_lab_proposal"});
           for(const l of additionQuote!.lines as Array<Record<string,unknown>>) {
             const name=string(l.name); if (!name) continue;
             const aliases=listings.filter(i=>i.account_slug===r.account_slug && i.product_id===l.product_id).flatMap(i=>i.names);

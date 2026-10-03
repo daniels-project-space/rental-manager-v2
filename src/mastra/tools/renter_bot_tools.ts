@@ -420,12 +420,18 @@ export const findOwnedAlternativesTool = createTool({
  */
 export const quoteBookingAdditionTool = createTool({
   id: "quote_booking_addition",
-  description: "Read-only Renter Bot Lab quote: price the COMPLETE existing booking plus an exact extra item, checking kit component stock and current duration tiers. Use before offering a combined new total, especially a smaller available alternative after an addition fails. Use addition_quote / additional_cost_gbp for the extra units and quote.total_gbp for the new complete total; a merged two-unit line is not the cost of one extra unit. This never adds or reserves anything. A successful quote is a proposal: say would bring the total to, never say added or booked. Real bookings require owner confirmation.",
-  inputSchema: z.object({thread_id:z.string(),item_name:z.string().describe("Exact owned model or selected listing to add to the proposed basket."),product_id:z.number().int().positive().optional().describe("Exact listing ID from the Native price or listing result; preserves the selected kit and its component stock."),qty:z.number().int().min(1).max(20).default(1)}),
+  description: "Read-only Renter Bot Lab quote: price the COMPLETE existing booking plus all proposed extra items in one check. For multiple extras use items with their exact product_id from lookup_pricing; separate single-item quotes cannot prove their combined cost, checking kit component stock and current duration tiers. Use before offering a combined new total, especially a smaller available alternative after an addition fails. Use addition_quote / additional_cost_gbp for the extra units and quote.total_gbp for the new complete total; a merged two-unit line is not the cost of one extra unit. This never adds or reserves anything. A successful quote is a proposal: say would bring the total to, never say added or booked. Real bookings require owner confirmation.",
+  inputSchema: z.object({thread_id:z.string(),items:z.array(z.object({product_id:z.number().int().positive(),qty:z.number().int().min(1).max(20)})).min(1).max(8).optional(),item_name:z.string().optional().describe("Exact owned model or selected listing to add to the proposed basket."),product_id:z.number().int().positive().optional().describe("Exact listing ID from the Native price or listing result; preserves the selected kit and its component stock."),qty:z.number().int().min(1).max(20).default(1)}),
   outputSchema: z.unknown(),
   execute: async (input) => {
     if (!input.thread_id.startsWith("__probe__")) return {ok:false,error:"Combined booking proposals require an owner quote for real bookings."};
-    return await convex().mutation(anyApi.renter_bot_lab_order.applyChange,{...input,action:"add_item",preview_only:true});
+    if(input.items) {
+      if(input.item_name || input.product_id!=null)return {ok:false,error:"Choose the items array or the single item fields, never both."};
+      return await convex().query(anyApi.renter_bot_lab_order.quoteAdditionBasket,{thread_id:input.thread_id,items:input.items});
+    }
+    if(!input.item_name)return {ok:false,error:"Supply exact addition items or one exact item_name."};
+    const {items:unused,...single}=input;
+    return await convex().mutation(anyApi.renter_bot_lab_order.applyChange,{...single,action:"add_item",preview_only:true});
   },
 });
 

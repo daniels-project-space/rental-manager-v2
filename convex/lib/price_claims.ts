@@ -16,7 +16,7 @@ export type PriceEvidence = {
   proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>};
   call_id: string; source: string;
 };
-const norm = (s: string) => s.toLowerCase().replace(/’/g, "'").replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (s: string) => s.toLowerCase().replace(/’/g, "'").replace(/\b(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\b/g,(_,from:string,to:string)=>`mountadapter ${from} ${to.replace(/^sony\s+/,"")}`).replace(/[^a-z0-9]+/g, " ").trim();
 const aliases = (names: string[]) => [...new Set(names.flatMap(n => renterItemNames(n).flatMap(a => [norm(a), norm(shortItemName(a)), norm(a.replace(/^Sony\s+(?=(?:FX\d+|A7)\b)/i, ""))])))];
 export const samePriceNames = (a: string[], b: string[]) => aliases(a).some(n => aliases(b).includes(n));
 const cents = (n: number) => Math.round(n * 100);
@@ -37,6 +37,22 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];
   let subjectQuantity: number | undefined;
   let pendingProposalTotal = false;
+  const quotedGroup=(pos:number)=>{
+    const rows=text.slice(0,pos).split(/\n/);rows.pop();
+    while(rows.length&&!rows.at(-1)!.trim())rows.pop();
+    const group:Array<{names:string[];quantity:number}>=[];
+    while(rows.length) {
+      const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rows.at(-1)!);
+      if(!bullet)break;
+      rows.pop();
+      const count=/^(\d+|one|two|three|four)(?:\s+[x×]?\s*|[x×]\s*)/i.exec(bullet[1]);
+      const label=bullet[1].slice(count?.[0].length??0).trim();
+      const named=known.find(i=>same([label],i.names));
+      if(!named)return [];
+      group.unshift({names:named.names,quantity:count ? ({one:1,two:2,three:3,four:4} as Record<string,number>)[count[1].toLowerCase()]??Number(count[1]) : 1});
+    }
+    return group;
+  };
   let consumed = 0;
   for (const m of text.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/g)) {
     const pos = m.index!;
@@ -130,12 +146,14 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
     const proposalTotal = conditionalTotal && !baselineTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
-    const basket = proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
+    const group=quotedGroup(pos);
+    const groupAddition=!baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
+    const basket = groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
       !/\b(?:would|could|add|adding)\b/i.test(segment);
     const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);
     const candidates = evidence.filter(e => (!additionPrice || basket ||
-      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) : e.kind !== "basket" && same(subject,e.names)));
+      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) && (groupAddition ? e.quote_role==="addition" : e.quote_role!=="addition") : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
       if (Number.isNaN(days) || !dateScope.valid || explicitDays !== null && scopedDuration != null && days !== scopedDuration) return false;
       if (purpose === "deposit" || purpose === "delivery") return false; // No verified fee source is held today.
@@ -143,11 +161,16 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       if (e.kind === "replacement") return false;
       if (e.kind === "basket") {
         const requestedItems=request.items.map(i=>({names:[i.name,...(i.aliases??[])],quantity:i.quantity}));
-        const membersMatch=(a:Array<{names:string[];quantity:number}>,b:Array<{name:string;quantity:number}>)=>a.length===b.length && a.every(c=>b.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity));
+        const membersMatch=(a:Array<{names:string[];quantity:number}>,b:Array<{name:string;quantity:number}>)=>{
+          const remaining=[...b];
+          return a.length===b.length && a.every(c=>{const index=remaining.findIndex(i=>same(c.names,[i.name])&&c.quantity===i.quantity);if(index<0)return false;remaining.splice(index,1);return true;});
+        };
         if (e.proposal) {
           // A proposal never certifies an already-applied total or an unrelated basket.
           if ((!proposalTotal && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
-          if (e.proposal.added_items.length!==1 || !same(subject,[e.proposal.added_items[0].name]) ||
+          if(e.proposal.added_items.length>1) {
+            if(!membersMatch(pairedItems??group,e.proposal.added_items) || !e.proposal.added_items.some(i=>same(subject,[i.name])))return false;
+          } else if (!same(subject,[e.proposal.added_items[0].name]) ||
               (declaredQuantity??subjectQuantity??1)!==e.proposal.added_items[0].quantity) return false;
         }
         const claimed=pairedItems??(e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
