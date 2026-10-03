@@ -1,3 +1,5 @@
+import { conversationStageValidator } from "./lib/conversation_stage_validator";
+import type { ConversationStage } from "./lib/renter_bot_intents";
 import { resolveBotRenter } from "./lib/renter_identity";
 import { ownerCheckValidator } from "./lib/owner_checks";
 import { persistOwnerChecks } from "./renter_bot_owner_checks";
@@ -1257,7 +1259,7 @@ export const getThreadContext = internalQuery({
 
     // Phase 4 conversation stage (sales funnel). A reservation's DB status is
     // authoritative; a date-less inquiry is read from renter interest signals.
-    let conversation_stage: string;
+    let conversation_stage: ConversationStage;
     if (reservation) {
       conversation_stage = rentalStage(reservation,londonToday()).stage;
     } else {
@@ -1820,7 +1822,7 @@ export const setDraft = internalMutation({
     message_id: v.optional(v.string()),
     epoch: v.optional(v.number()),
     context_key: v.optional(v.string()),
-    conversation_stage: v.optional(v.string()),
+    conversation_stage: v.optional(conversationStageValidator),
     confidence: v.optional(v.number()),
     evidence: v.optional(draftEvidenceValidator),
     flags: v.optional(
@@ -1858,7 +1860,8 @@ export const setDraft = internalMutation({
     }
     const settings = await ctx.db.query("settings").first();
     if (epoch !== undefined && epoch !== (settings?.draft_epoch ?? 0)) return { ok: false, reason: "stale_context" };
-    const currentContext = draftContextKey(await getBotBooking(ctx, thread_id), conv.inquiry_items, await getLabOrder(ctx, thread_id));
+    const booking=await getBotBooking(ctx,thread_id);
+    const currentContext = draftContextKey(booking, conv.inquiry_items, await getLabOrder(ctx, thread_id));
     if (context_key !== undefined && context_key !== currentContext) {
       return { ok: false, reason: "stale_context" };
     }
@@ -1877,8 +1880,9 @@ export const setDraft = internalMutation({
       ai_draft_flags: flags,
       ai_draft_evidence: evidence,
     };
-    if (conversation_stage && conversation_stage !== conv.conversation_stage) {
-      patch.conversation_stage = conversation_stage;
+    const stage=booking?rentalStage(booking,londonToday()).stage:conversation_stage;
+    if (stage && stage !== conv.conversation_stage) {
+      patch.conversation_stage = stage;
       patch.stage_updated_at = Date.now();
     }
     await ctx.db.patch(conv._id, patch);

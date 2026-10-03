@@ -1,3 +1,4 @@
+import { conversationStageValidator } from "./lib/conversation_stage_validator";
 import { ownerCheckValidator } from "./lib/owner_checks";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
@@ -721,18 +722,8 @@ const operationalSchema = defineSchema({
     account_id: v.optional(v.id("accounts")),
     renter_id: v.optional(v.id("renters")),
     last_msg_at: v.number(),
-    // Renter-bot Phase 1 — 7-stage state machine (INQUIRY → DEAD).
-    // Optional: existing rows pre-Phase-1 have it undefined; the bot
-    // backfills on first run by inferring from latest reservation.status.
-    conversation_stage: v.optional(v.union(
-      v.literal("INQUIRY"),
-      v.literal("INTERESTED"),
-      v.literal("READY_TO_BOOK"),
-      v.literal("BOOKED"),
-      v.literal("CONFIRMED"),
-      v.literal("COMPLETED"),
-      v.literal("DEAD"),
-    )),
+    // Operational booking stages plus retained historical sales labels.
+    conversation_stage: v.optional(conversationStageValidator),
     stage_updated_at: v.optional(v.number()),
     // ── Reply Inbox (2026-06-22) — "needs my reply" queue support ──
     // Stamped by hygglo.upsertMessages on every new message so the reply

@@ -1,3 +1,6 @@
+import schema from "./schema";
+import { CONVERSATION_STAGES } from "./lib/renter_bot_intents";
+import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
@@ -194,4 +197,27 @@ describe("managed generation ownership", () => {
     expect(ctx.runMutation).toHaveBeenCalledTimes(2);
     expect(ctx.runMutation.mock.calls[1][1]).toEqual(ctx.runMutation.mock.calls[0][1]);
   });
+});
+
+
+describe("operational conversation stage storage",()=>{
+ it("storage accepts the same stage vocabulary as structured model output",()=>{
+  const stored=schema.tables.conversations.validator.fields.conversation_stage.members.map(member=>member.value);
+  expect(stored).toEqual([...CONVERSATION_STAGES]);
+  for(const stage of stored)expect(validateRenterBotOutput({draft:"A reply",intent:"GENERAL",conversation_stage:stage,red_flags:[],factsClaimed:[],needs_human:false})).not.toBeNull();
+  expect(validateRenterBotOutput({draft:"A reply",intent:"GENERAL",conversation_stage:"invented",red_flags:[],factsClaimed:[],needs_human:false})).toBeNull();
+ });
+ for(const [status,order_step,expected] of [["confirmed","BOOKED_AFTER_VERIFIED","CONFIRMED_UPCOMING"],["pending_review","VERIFIED","AWAITING_VERIFICATION"],["cancelled","VERIFICATION_FAILED","VERIFICATION_FAILED"]]){
+  it(`stores current Native ${expected} rather than an incoming stale sales label`,async()=>{
+   const f=await setup();await f.ctx.db.patch(f.bookingId,{status,order_step,start_date:"2099-10-20",end_date:"2099-10-21"});
+   const key=draftContextKey(f.rows.get(f.bookingId));
+   expect(await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:key,conversation_stage:"INQUIRY",draft_text:"A helpful stage-aware reply"})).toMatchObject({ok:true});
+   expect(f.rows.get(f.convId).conversation_stage).toBe(expected);
+  });
+ }
+ it("retains sales stages when no booking exists",async()=>{
+  const f=await setup();f.rows.delete(f.bookingId);
+  expect(await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:draftContextKey(null),conversation_stage:"INTERESTED",draft_text:"A helpful inquiry reply"})).toMatchObject({ok:true});
+  expect(f.rows.get(f.convId).conversation_stage).toBe("INTERESTED");
+ });
 });

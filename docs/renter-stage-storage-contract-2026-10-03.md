@@ -1,0 +1,13 @@
+# Operational stage persistence contract and fresh owner-check verification
+
+A fresh actual generation exposed an integration error introduced by the preceding context-stage change: the current booking correctly yielded CONFIRMED_UPCOMING and the model produced a valid reply, but setDraft tried to persist the operational stage into a conversation schema that still allowed only seven legacy sales labels. The mutation failed at storage. The failed write did not retain the reply text, so that run cannot verify wording.
+
+Conversation storage and setDraft now use one validator derived from the same CONVERSATION_STAGES vocabulary used by the structured model output. Legacy labels remain accepted. A scoped draft write independently derives a booked stage from current Native booking facts, preventing an incoming stale sales label from overwriting it; conversations without bookings retain the supplied valid sales stage. Unknown labels fail at the write boundary.
+
+Validation: 55 focused tests cover the shared storage/model vocabulary, current booked-stage persistence against stale supplied labels, unbooked sales-stage preservation, existing stale/context/review boundaries and renter identity. Project and backend typechecks passed. A deployed Native own-fixture write stored CONFIRMED_UPCOMING despite incoming INQUIRY, rejected an invented label without changing the conversation, preserved the basket and cleaned the fixture.
+
+One additional fresh actual canonical generation after the fix saved and approved a manual-focus answer for the exact TTArtisan and an owner specification-check task for requested autofocus/wide-angle E-mount requirements. It did not ask permission again, quote an unverified replacement, or change the booking. One owner task persisted and the fixture was cleaned. Model remained google/gemini-3.7-flash. First actual run cost $0.009147825; second cost $0.008962575; total $0.0181104. The first failed storage, the second passed; neither was a synthetic model replay.
+
+Proofs: /root/rental-owner-workflow-fresh-proof.json (failure), /root/rental-stage-storage-native-proof.json (zero-model Native write), /root/rental-owner-workflow-after-storage-proof.json (actual successful generation).
+
+Limits: the Sony candidates still need reviewed specifications, dated stock and exact pricing before becoming a suitable quote. This is one real wording case, not general semantic correctness or production-readiness proof. Pending-task history completeness, equipment-context drift, renter-stat provenance, owner auth and long-running phone delivery remain open. Real Hygglo messaging stays disabled; migration requires separate explicit written consent.

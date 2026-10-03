@@ -128,6 +128,7 @@ import type * as lib_claim_date_scope from "../lib/claim_date_scope.js";
 import type * as lib_claim_duration from "../lib/claim_duration.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
 import type * as lib_conversation_funnel from "../lib/conversation_funnel.js";
+import type * as lib_conversation_stage_validator from "../lib/conversation_stage_validator.js";
 import type * as lib_customer_metrics from "../lib/customer_metrics.js";
 import type * as lib_default_adapter_units from "../lib/default_adapter_units.js";
 import type * as lib_delivery_weight from "../lib/delivery_weight.js";
@@ -468,6 +469,7 @@ declare const fullApi: ApiFromModules<{
   "lib/claim_duration": typeof lib_claim_duration;
   "lib/co_occurrence": typeof lib_co_occurrence;
   "lib/conversation_funnel": typeof lib_conversation_funnel;
+  "lib/conversation_stage_validator": typeof lib_conversation_stage_validator;
   "lib/customer_metrics": typeof lib_customer_metrics;
   "lib/default_adapter_units": typeof lib_default_adapter_units;
   "lib/delivery_weight": typeof lib_delivery_weight;
