@@ -84,8 +84,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     return group;
   };
   let consumed = 0;
+  let pricedComponents: Array<{names:string[];quantity:number}> = [];
   for (const m of text.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/g)) {
     const pos = m.index!;
+    if (/\n\s*\n/.test(text.slice(consumed, pos))) pricedComponents = [];
     // Normalise identities within clauses, retaining boundaries so a camera
     // mention cannot absorb a later pronoun from another sentence.
     const before = text.slice(consumed, pos).split(/;|\n|(?<=[.!?])\s+/).map(norm).join(". ");
@@ -183,8 +185,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
     const proposalTotal = conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
-    const group=quotedGroup(pos);
-    const groupAddition=!baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
+    const componentAddition = pricedComponents.length > 1 && /^\s*(?:\/\s*day|per\s+day|a\s+day)?\s*\)?\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making)\s+(?:the\s+)?(?:addition|additions|additional cost)\s+(?:to|of)\s*$/i.test(segment);
+    const group=componentAddition ? pricedComponents : quotedGroup(pos);
+    const groupAddition=componentAddition || !baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
     const basket = groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
       !/\b(?:would|could|add|adding)\b/i.test(segment);
@@ -204,13 +207,13 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         };
         if (e.proposal) {
           // A proposal never certifies an already-applied total or an unrelated basket.
-          if ((!proposalTotal && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
+          if ((!proposalTotal && !componentAddition && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
           if(e.proposal.added_items.length>1) {
             if(!membersMatch(pairedItems??group,e.proposal.added_items) || !e.proposal.added_items.some(i=>same(subject,[i.name])))return false;
           } else if (!same(subject,[e.proposal.added_items[0].name]) ||
               (declaredQuantity??subjectQuantity??1)!==e.proposal.added_items[0].quantity) return false;
         }
-        const claimed=pairedItems??(e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
+        const claimed=pairedItems??(groupAddition ? group : e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;
       }
       const start = dateScope.start_date ?? (explicitDays !== null ? undefined : request.start_date);
@@ -225,6 +228,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         : (perUnit && e.kind === "rental" && e.quantity && e.total_gbp != null ? e.total_gbp/e.quantity : e.total_gbp);
       return expected != null && cents(expected) === cents(amount);
     });
+    if (proven && !basket && !daily && purpose === "rental") {
+      const component = { names: [...subject], quantity: declaredQuantity ?? subjectQuantity ?? quantity ?? 1 };
+      if (!pricedComponents.some(item => same(item.names, component.names))) pricedComponents.push(component);
+    }
     if (!proven) failures.push(`No matching ${purpose} ${daily ? "daily rate" : "total"} receipt for £${m[1]} (${subject.join(" / ") || "unresolved item"}; duration and quantity must agree)`);
     consumed = end;
   }

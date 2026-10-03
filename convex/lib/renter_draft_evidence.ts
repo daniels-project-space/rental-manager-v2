@@ -22,6 +22,7 @@ export const draftEvidenceValidator = v.object({
     days:v.optional(v.number()),quantity:v.optional(v.number()),start_date:v.optional(v.string()),end_date:v.optional(v.string()),
     items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),
     proposal:v.optional(v.object({base_items:v.array(v.object({name:v.string(),quantity:v.number()})),added_items:v.array(v.object({name:v.string(),quantity:v.number()}))})),
+    required_accessory_names:v.optional(v.array(v.string())),
     call_id:v.string(),source:v.string(),
   }))),
   /** Native request identity used by the guard, retained for send-time stock checks. */

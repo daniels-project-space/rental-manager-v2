@@ -236,3 +236,20 @@ it("rejects an incomplete required-adapter quote while allowing grounded compone
  expect(incompleteSetupQuotes("Blazar Remus 100mm with my PL to L mount adapter would be £70 extra in total.", evidence)).toEqual([]);
  expect(incompleteSetupQuotes("Blazar Remus 100mm is unavailable. Your booking remains £124.", evidence)).toEqual([]);
 });
+
+describe("native component prices followed by their addition total",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const added=[{name:"Blazar Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}];
+ const receipts:PriceEvidence[]=[
+  {names:["Anamorphic Blazar Remus 100mm"],kind:"rental",days:2,quantity:1,total_gbp:50,daily_rate_gbp:25,source:"hygglo_tier",call_id:"lens"},
+  {names:["PL to L mount"],kind:"rental",days:2,quantity:1,total_gbp:20,daily_rate_gbp:10,source:"hygglo_tier",call_id:"adapter"},
+  {names:[],kind:"basket",quote_role:"addition",days:2,total_gbp:70,items:added,proposal:{base_items:scope.items,added_items:added},source:"native_lab_proposal",call_id:"basket"}];
+ const text="The Great Joy 35mm, 50mm and 85mm anamorphic lens set isn't available for 20 to 21 October.\n\nAs an alternative, we have the Anamorphic Blazar Remus 100mm available at £50 for the 2 days (£25/day). Since the Blazar Remus is PL mount and the Blackmagic 6K Full Frame uses an L-mount, it pairs with our PL to L mount adapter, which is £20 for the 2 days (£10/day)—bringing the addition to £70 total.\n\nI haven't made any changes to your existing booking. Let me know if you'd like to look at adding that setup!";
+ it("binds the final amount to the exact previously priced component basket",()=>expect(check(text,receipts,scope)).toEqual([]));
+ it("requires every priced component and the exact native basket",()=>{
+  for(const wrong of [text.replace("£70","£50"),text.replace("£20","£25"),text.replace("2 days","3 days"),text.replace("PL to L","PL to EF"),text.replace("the Anamorphic Blazar Remus","two Anamorphic Blazar Remus")]) expect(check(wrong,receipts,scope),wrong).not.toEqual([]);
+  expect(check(text,receipts.slice(0,2),scope)).not.toEqual([]);
+  expect(check(text,[...receipts.slice(0,2),{...receipts[2],proposal:{base_items:[{name:"Sony FX3",quantity:1}],added_items:added}}],scope)).not.toEqual([]);
+  expect(check(text,[...receipts.slice(0,2),{...receipts[2],items:[added[0]]}],scope)).not.toEqual([]);
+ });
+});
