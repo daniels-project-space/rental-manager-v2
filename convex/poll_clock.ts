@@ -43,7 +43,7 @@
  * "due" means and the task silently discards runs the clock paid to enqueue.
  */
 import { internalAction } from "./_generated/server";
-import { api } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { hyggloPollMode } from "../src/lib/quiet-hours";
 import {
   isPollIntervalElapsed,
@@ -115,8 +115,8 @@ export const tickPollClock = internalAction({
 
     // ── Gate B — local Convex reads only, still no network ─────────────
     const [settings, previous] = await Promise.all([
-      ctx.runQuery(api.settings.get, {}),
-      ctx.runQuery(api.sync_state.get, { source: "hygglo_poller" }),
+      ctx.runQuery(internal.settings.__service_get, {}),
+      ctx.runQuery(internal.sync_state.__service_get, { source: "hygglo_poller" }),
     ]);
 
     const { effectiveIntervalMs, quietStreak } = resolveEffectivePollInterval(

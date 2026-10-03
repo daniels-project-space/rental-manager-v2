@@ -26,7 +26,6 @@
  */
 import { v } from "convex/values";
 import { ownsPushDestination, validatePushSubscription } from "./lib/push_registration";
-import { makeFunctionReference } from "convex/server";
 import {
   query,
   mutation,
@@ -59,11 +58,7 @@ const pushModeValidator = v.union(
   v.literal("my_share"),
 );
 
-// Kept as a name reference until the generated API catches up with this new
-// internal recovery mutation.
-const replayPreferenceSuppressedRateAlertsRef = makeFunctionReference<"mutation">(
-  "notifications:replayRecentPreferenceSuppressedLowResponseRateAlerts",
-);
+const replayPreferenceSuppressedRateAlertsRef = internal.notifications.replayRecentPreferenceSuppressedLowResponseRateAlerts;
 
 export interface NotifEventInput {
   type: NotifType;

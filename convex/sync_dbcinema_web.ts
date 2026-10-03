@@ -24,24 +24,14 @@
  *   DBCINEMA_ADMIN_TOKEN  (the storefront's ADMIN_TOKEN)
  */
 import { internalAction, internalMutation } from "./_generated/server";
-import { makeFunctionReference } from "convex/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { computePollHash } from "./hygglo";
 
-// Self-reference by name: this module is new and not yet in the committed
-// _generated/api type map, so the typed `internal.sync_dbcinema_web.*` would
-// break `next build`'s typecheck. By-name avoids that (same pattern as the
-// dashboard chat tools).
-const upsertBatchRef = makeFunctionReference<"mutation">(
-  "sync_dbcinema_web:upsertSiteBookingsBatch",
-);
-// Force-rebuild the Active-Rentals MV after a change, exactly like the Hygglo
-// poller does (its dirty-probe only scans recent future-dated rows, so a web
-// status change would otherwise not surface on the tiles until the hourly cron).
-const statsDrawerRefreshRef = makeFunctionReference<"mutation">(
-  "mv/stats_drawer:refresh",
-);
+const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
+// This scheduled refresh is an action, as declared by its native registration.
+const statsDrawerRefreshRef = internal.mv.stats_drawer.refresh;
 
 const WEB_SLUG = "dbcinema_web";
 // The storefront's gear is DB Cinema's gear; its product IDs live in the

@@ -11,8 +11,8 @@
  * Cached on the reservation; distance-from-hub + the heavy tag are derived live
  * in replyInbox.computeLocation against the order's OWN account hub.
  */
-import { action, internalAction, internalQuery, internalMutation } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalAction, internalQuery, internalMutation, internalActionOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { classifyOrderWeight } from "./lib/delivery_weight";
@@ -194,9 +194,12 @@ export const resolveActive = internalAction({
     });
     let resolved = 0;
     for (const t of threads) {
-      const r = await ctx.runAction(api.locations.resolveForThread, { thread_id: t });
+      const r = await ctx.runAction(internal.locations.__service_resolveForThread, { thread_id: t });
       if (r.ok) resolved++;
     }
     return { resolved };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_resolveForThread = internalActionOf(resolveForThread);

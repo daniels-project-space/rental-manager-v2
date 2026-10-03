@@ -19,7 +19,7 @@
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../owner_functions";
-import { api } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 
@@ -39,9 +39,9 @@ export async function refreshAll(
   // Cache under "all" only.
   const slug = ACCOUNT_ALL;
   const [activeConflicts, revenueDelta, utilizationDelta] = await Promise.all([
-    ctx.runQuery(api.dashboard_insights.getActiveConflicts, { _bypassMv: true }),
-    ctx.runQuery(api.dashboard_insights.getRevenueDelta, { _bypassMv: true }),
-    ctx.runQuery(api.dashboard_insights.getUtilizationDelta, { _bypassMv: true }),
+    ctx.runQuery(internal.dashboard_insights.__service_getActiveConflicts, { _bypassMv: true }),
+    ctx.runQuery(internal.dashboard_insights.__service_getRevenueDelta, { _bypassMv: true }),
+    ctx.runQuery(internal.dashboard_insights.__service_getUtilizationDelta, { _bypassMv: true }),
   ]);
   await ctx.runMutation(anyApi.mv.walle_signals.write, {
     account: slug,

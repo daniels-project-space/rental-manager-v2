@@ -6,7 +6,7 @@
  * own recent-request calculation, so we deliberately do not reconstruct it
  * from the app's partial inbox history.
  */
-import { makeFunctionReference } from "convex/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "./owner_functions";
 import { ACCOUNTS } from "./mv/constants";
@@ -61,8 +61,7 @@ async function fetchProfileRate(url: string): Promise<number | null> {
   return extractHyggloResponseRate(await response.text());
 }
 
-// The committed generated API intentionally lags newly added Convex modules.
-const writeRef = makeFunctionReference<"mutation">("channel_response_rates:write");
+const writeRef = internal.channel_response_rates.write;
 
 /** Scheduled at 02:00, 08:00, 14:00 and 20:00 UTC from convex/crons.ts. */
 export const refresh = internalAction({

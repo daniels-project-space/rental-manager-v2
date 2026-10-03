@@ -16,7 +16,7 @@
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../owner_functions";
-import { api } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { londonTime } from "../lib/effectiveDates";
@@ -132,7 +132,7 @@ export async function refreshAll(
   let written = 0;
   for (const { key, arg } of slugs) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fullPayload: any = await ctx.runQuery(api.dashboard.getStatsDrawerData, {
+    const fullPayload: any = await ctx.runQuery(internal.dashboard.__service_getStatsDrawerData, {
       accountSlug: arg,
       _bypassMv: true,
     });

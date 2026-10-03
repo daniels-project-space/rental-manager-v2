@@ -14,7 +14,7 @@
  *  - Soft-cancel via is_active=false (keeps audit trail).
  */
 
-import { query, mutation } from "./owner_functions";
+import { query, mutation, internalQueryOf, internalMutationOf } from "./owner_functions";
 import { v } from "convex/values";
 import {
   isConfirmedWithDates,
@@ -397,3 +397,15 @@ export const cancelVacation = mutation({
     return null;
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getActiveVacations = internalQueryOf(getActiveVacations);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_checkVacationConflicts = internalQueryOf(checkVacationConflicts);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_setVacation = internalMutationOf(setVacation);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_cancelVacation = internalMutationOf(cancelVacation);

@@ -24,7 +24,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { ActionCtx } from "../_generated/server";
-import { api } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { infoPoolEnabledAccounts } from "../lib/feature_flags_helper";
@@ -352,7 +352,7 @@ export async function refreshHandoffsWidget(
     payload,
     generatedAt: now,
   });
-  const conflicts = await ctx.runQuery(api.dashboard_insights.getActiveConflicts, {
+  const conflicts = await ctx.runQuery(internal.dashboard_insights.__service_getActiveConflicts, {
     _bypassMv: true,
   });
   await ctx.runMutation(anyApi.mv.widgets.writeWidget, {
@@ -384,14 +384,14 @@ export async function refreshSlowWidgets(
   for (const { key, arg } of SLUG_VARIANTS) {
     await write(
       `sell:${key}`,
-      await ctx.runQuery(api.items.getSellRecommendations, {
+      await ctx.runQuery(internal.items.__service_getSellRecommendations, {
         accountSlug: arg,
         _bypassMv: true,
       }),
     );
     await write(
       `price:${key}`,
-      await ctx.runQuery(api.items.getPriceRecommendations, {
+      await ctx.runQuery(internal.items.__service_getPriceRecommendations, {
         accountSlug: arg,
         _bypassMv: true,
       }),
@@ -399,7 +399,7 @@ export async function refreshSlowWidgets(
     for (const days of CANONICAL_BUNDLE_WINDOWS) {
       await write(
         `bundles:${key}:${days}`,
-        await ctx.runQuery(api.bundles.getTopBundles, {
+        await ctx.runQuery(internal.bundles.__service_getTopBundles, {
           accountSlug: arg,
           days,
           _bypassMv: true,
@@ -413,7 +413,7 @@ export async function refreshSlowWidgets(
     const y = currentTaxYear - i;
     await write(
       `tax:${y}`,
-      await ctx.runQuery(api.tax.getTaxYearSummary, {
+      await ctx.runQuery(internal.tax.__service_getTaxYearSummary, {
         startYear: y,
         _bypassMv: true,
       }),

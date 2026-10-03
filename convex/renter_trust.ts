@@ -12,8 +12,8 @@
  * for renters who never owned) — hence "no people show ratings". This resolves
  * the real rating + reviews and writes them to the renter.
  */
-import { action, internalAction, internalQuery, internalMutation } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalAction, internalQuery, internalMutation, internalActionOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -200,7 +200,7 @@ export const resolveActiveTrust = internalAction({
     });
     let resolved = 0;
     for (const t of threads) {
-      const r = await ctx.runAction(api.renter_trust.resolveForThread, {
+      const r = await ctx.runAction(internal.renter_trust.__service_resolveForThread, {
         thread_id: t,
       });
       if (r.ok) resolved++;
@@ -208,3 +208,6 @@ export const resolveActiveTrust = internalAction({
     return { resolved };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_resolveForThread = internalActionOf(resolveForThread);

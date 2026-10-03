@@ -2,7 +2,7 @@
 // Five small read queries — no recomputation, just aggregations over Phase 5's table.
 
 import { v } from "convex/values";
-import { query } from "./owner_functions";
+import { query, internalQueryOf } from "./owner_functions";
 import { readWidgetMv } from "./lib/widget_mv";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isPaid } from "./order_step_semantics";
@@ -851,3 +851,12 @@ export const getRevenueDelta = query({
     };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getActiveConflicts = internalQueryOf(getActiveConflicts);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getRevenueDelta = internalQueryOf(getRevenueDelta);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getUtilizationDelta = internalQueryOf(getUtilizationDelta);

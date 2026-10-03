@@ -4,8 +4,8 @@
  * question battery + validation. Threads use the `__probe__` prefix and are
  * removed by `cleanup`. Also used by Lab sessions; never used to send renter messages.
  */
-import { action, internalMutation, mutation } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalMutation, mutation, internalMutationOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { DraftEvidence } from "./lib/renter_draft_evidence";
@@ -220,7 +220,7 @@ export const run = action({
     // "0 violations" for every model. A silent-looking pass built on nothing.
     const { model_override, ...seedArgs } = a;
     await ctx.runMutation(internal.renter_bot_probe.seed, seedArgs);
-    const r = await ctx.runAction(api.replyInbox_actions.generateDraft, {
+    const r = await ctx.runAction(internal.replyInbox_actions.__service_generateDraft, {
       thread_id: a.thread_id,
       ...(model_override ? { model_override } : {}),
     });
@@ -300,3 +300,6 @@ export const isolateLegacyBookings = internalMutation({
     return { moved, real_reservations_changed: 0 };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_cleanup = internalMutationOf(cleanup);

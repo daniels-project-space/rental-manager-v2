@@ -8,7 +8,7 @@
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../owner_functions";
-import { api } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 
@@ -33,7 +33,7 @@ export async function refreshAll(
   let written = 0;
   for (const { key, arg } of slugs) {
     for (const days of STANDARD_WINDOWS) {
-      const payload = await ctx.runQuery(api.dashboard.getRentalVolumeByCategory, {
+      const payload = await ctx.runQuery(internal.dashboard.__service_getRentalVolumeByCategory, {
         accountSlug: arg,
         days,
         _bypassMv: true,

@@ -21,9 +21,9 @@ import { getBotBooking, getLabOrder } from "./lib/renter_booking";
  * `reservations` without a `withIndex(...)`. The bot only ever scans
  * `reservations` filtered by `by_account_slug` or `by_hygglo_order_id`.
  */
-import { query, action, type QueryCtx } from "./owner_functions";
+import { query, action, type QueryCtx, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
-import { api } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { checkRentalStock, loadStockSources, stockForRentalItem, stockForItem } from "./lib/renter_stock";
 import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_identity";
 import { rentalStage } from "./lib/rental_stage";
@@ -950,7 +950,7 @@ export const check_location = action({
       return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
     };
 
-    const hubs = (await ctx.runQuery(api.settings.listAccountHubs, {})) as Array<{
+    const hubs = (await ctx.runQuery(internal.settings.__service_listAccountHubs, {})) as Array<{
       slug: string; hub_postcode: string | null; hub_label: string | null;
     }>;
     const hub = hubs.find((h) => h.slug === account_slug);
@@ -961,7 +961,7 @@ export const check_location = action({
     if (!renterGeo) return { ok: false, reason: "That doesn't look like a full UK postcode — please re-send it." };
 
     const km = Math.round(haversineKm(hubGeo, renterGeo) * 10) / 10;
-    const settings = (await ctx.runQuery(api.settings.get, {})) as { hub_max_km?: number; hub_heavy_max_km?: number } | null;
+    const settings = (await ctx.runQuery(internal.settings.__service_get, {})) as { hub_max_km?: number; hub_heavy_max_km?: number } | null;
     const maxKm = settings?.hub_max_km ?? 30;
     const heavyMaxKm = settings?.hub_heavy_max_km ?? maxKm;
     const deliverable = km <= maxKm;
@@ -1415,3 +1415,12 @@ export const get_hard_truths = query({
     return { hard_truths: profile?.hard_truths ?? null };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_lookup_pricing = internalQueryOf(lookup_pricing);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_find_owned_alternatives = internalQueryOf(find_owned_alternatives);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_get_verified_camera_profiles = internalQueryOf(get_verified_camera_profiles);

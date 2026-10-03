@@ -9,8 +9,8 @@
  * snapshots the order's items onto conversations.inquiry_items (with product_id)
  * so getThreadContext can name + GROUND the listing (specs / price / owned).
  */
-import { action, internalAction, internalQuery, internalMutation } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalAction, internalQuery, internalMutation, internalActionOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import {
   getAccountCredentials,
@@ -151,7 +151,7 @@ export const resolveActive = internalAction({
     });
     let resolved = 0;
     for (const t of threads) {
-      const r = await ctx.runAction(api.inquiry_context.resolveForThread, {
+      const r = await ctx.runAction(internal.inquiry_context.__service_resolveForThread, {
         thread_id: t,
       });
       if (r.ok && r.count) resolved++;
@@ -159,3 +159,6 @@ export const resolveActive = internalAction({
     return { resolved };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_resolveForThread = internalActionOf(resolveForThread);

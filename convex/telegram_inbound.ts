@@ -21,7 +21,7 @@
 
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -363,7 +363,7 @@ async function handleStatus(ctx: any): Promise<string> {
     end_date: string;
     reason?: string;
     created_by?: string;
-  }> = await ctx.runQuery(api.vacation.getActiveVacations, {});
+  }> = await ctx.runQuery(internal.vacation.__service_getActiveVacations, {});
   if (active.length === 0) {
     return [
       "No active vacations.",
@@ -396,7 +396,7 @@ async function handleSet(ctx: any, chatId: string, body: string): Promise<string
     pending: Array<{ start_date: string; end_date: string }>;
   };
   try {
-    conflicts = await ctx.runQuery(api.vacation.checkVacationConflicts, {
+    conflicts = await ctx.runQuery(internal.vacation.__service_checkVacationConflicts, {
       start_date: start,
       end_date: end,
     });
@@ -431,7 +431,7 @@ async function handleSet(ctx: any, chatId: string, body: string): Promise<string
 
   // No confirmed conflicts — commit
   try {
-    const result = await ctx.runMutation(api.vacation.setVacation, {
+    const result = await ctx.runMutation(internal.vacation.__service_setVacation, {
       start_date: start,
       end_date: end,
       reason,
@@ -463,7 +463,7 @@ async function handleForce(ctx: any, chatId: string): Promise<string> {
     return "Pending confirmation expired \\(>5 min\\). Resend `/vacation set …`.";
   }
   try {
-    const result = await ctx.runMutation(api.vacation.setVacation, {
+    const result = await ctx.runMutation(internal.vacation.__service_setVacation, {
       start_date: pending.start_date,
       end_date: pending.end_date,
       reason: pending.reason,
@@ -488,7 +488,7 @@ async function handleCancel(ctx: any, arg: string): Promise<string> {
     _id: Id<"vacation_periods">;
     start_date: string;
     end_date: string;
-  }> = await ctx.runQuery(api.vacation.getActiveVacations, {});
+  }> = await ctx.runQuery(internal.vacation.__service_getActiveVacations, {});
   if (active.length === 0) {
     return "No active vacations to cancel.";
   }
@@ -510,7 +510,7 @@ async function handleCancel(ctx: any, arg: string): Promise<string> {
     target = hit._id;
   }
   try {
-    await ctx.runMutation(api.vacation.cancelVacation, { vacation_id: target });
+    await ctx.runMutation(internal.vacation.__service_cancelVacation, { vacation_id: target });
     return `Vacation cancelled: \`${target}\``;
   } catch (e: any) {
     return `cancelVacation failed: ${e?.message ?? "unknown"}`;

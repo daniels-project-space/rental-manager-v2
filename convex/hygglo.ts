@@ -1,6 +1,6 @@
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
 import { isMatchingOptimisticOwnerMessage } from "./lib/message_reconciliation";
@@ -282,7 +282,7 @@ export const upsertMessages = mutation({
       if (!reservation) continue;
       if (reservation.is_obsolete) continue;
       if (!reservation.start_date || !reservation.end_date) continue;
-      await ctx.scheduler.runAfter(0, api.extract_booking_times.extractForReservation, {
+      await ctx.scheduler.runAfter(0, internal.extract_booking_times.__service_extractForReservation, {
         reservation_id: reservation._id,
       });
       scheduled++;

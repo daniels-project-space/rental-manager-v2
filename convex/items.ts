@@ -1,5 +1,5 @@
 import { shortItemName } from "./lib/item_display_name";
-import { mutation, query } from "./owner_functions";
+import { mutation, query, internalQueryOf } from "./owner_functions";
 import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
@@ -1109,3 +1109,9 @@ export const admin_setMarketingOnly = mutation({
 // against unrelated reservations was the secondary cross-item-photo
 // contamination path. Replaced by per-reservation `image_hints` written at
 // poll time + `resolveImageForReservationItem` at read time.
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getSellRecommendations = internalQueryOf(getSellRecommendations);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getPriceRecommendations = internalQueryOf(getPriceRecommendations);

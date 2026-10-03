@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { query, mutation } from "./owner_functions";
+import { query, mutation, internalMutationOf } from "./owner_functions";
 
 export const list = query({
   args: {},
@@ -40,3 +40,6 @@ export const setProfileImage = mutation({
     return { action: "inserted", id };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_setProfileImage = internalMutationOf(setProfileImage);

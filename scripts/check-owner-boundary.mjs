@@ -16,6 +16,8 @@ function walk(directory) {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
       const module = statement.moduleSpecifier.text, named = statement.importClause?.namedBindings;
       if (!named) continue;
+      const generatedApi = module.endsWith("_generated/api");
+      if (generatedApi && ts.isNamespaceImport(named)) failures.push(`${relative}: use named internal references, not the generated API namespace`);
       const raw = module.endsWith("_generated/server") || module === "convex/server";
       if (ts.isNamespaceImport(named) && raw && relative !== "owner_functions.ts") {
         failures.push(`${relative}: raw SDK namespace imports can bypass owner registration`);
@@ -23,6 +25,8 @@ function walk(directory) {
       if (!ts.isNamedImports(named)) continue;
       for (const item of named.elements) {
         const original = (item.propertyName ?? item.name).text;
+        if (generatedApi && original === "api") failures.push(`${relative}: Convex server callers must use internal counterparts, not public api references`);
+        if (module === "convex/server" && original === "makeFunctionReference") failures.push(`${relative}: use typed internal references instead of unchecked function-name strings`);
         if (!publicNames.has(original)) continue;
         builders.set(item.name.text, { original, module });
         if (raw && relative !== "owner_functions.ts" && !(relative === "auth.ts" && original === "query")) {

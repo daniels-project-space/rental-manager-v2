@@ -1,12 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
 import { authComponent } from "./auth";
-import { query, mutation, action, internalQuery } from "./owner_functions";
+import { query, mutation, action, internalQuery, internalQueryOf, internalMutationOf, internalActionOf } from "./owner_functions";
 import { internalQuery as originalInternalQuery } from "./_generated/server";
+import { v } from "convex/values";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("actual registered owner handlers", () => {
+  it.each([[query, internalQueryOf], [mutation, internalMutationOf], [action, internalActionOf]] as const)("preserves validators and behavior for privileged internal callers while denying the public call", async (builder, counterpart) => {
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+    const handler = vi.fn((_ctx, args) => args.value * 2);
+    const publicFunction = (builder as typeof query)({ args: { value: v.number() }, returns: v.number(), handler });
+    const internalFunction = (counterpart as typeof internalQueryOf)(publicFunction);
+    expect(internalFunction.isInternal).toBe(true);
+    expect((internalFunction as any).exportArgs()).toBe((publicFunction as any).exportArgs());
+    expect((internalFunction as any).exportReturns()).toBe((publicFunction as any).exportReturns());
+    const ctx = { auth: { getUserIdentity: async () => null } };
+    await expect((publicFunction as any)._handler(ctx, { value: 7 })).rejects.toThrow("OWNER_AUTH_REQUIRED");
+    expect(handler).not.toHaveBeenCalled();
+    expect(await (internalFunction as any)._handler(ctx, { value: 7 })).toBe(14);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+  it("refuses unknown functions and mismatched counterpart types", () => {
+    expect(() => internalQueryOf({} as any)).toThrow("matching owner-protected");
+    expect(() => internalMutationOf(query({ handler: async () => null }) as any)).toThrow("matching owner-protected");
+  });
   it.each([["query", query], ["mutation", mutation], ["action", action]] as const)("denies an anonymous %s before its handler can read or write data", async (_kind, builder) => {
     vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
     vi.stubEnv("CONVEX_SITE_URL", "https://example.convex.site");

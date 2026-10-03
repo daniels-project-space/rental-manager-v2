@@ -1,5 +1,5 @@
 import { internalAction } from "./_generated/server";
-import { api } from "./_generated/api";
+import { internal } from "./_generated/api";
 
 /**
  * How big is each tool's RESULT, in characters?
@@ -37,7 +37,7 @@ export default internalAction({
     try {
       rec(
         "search_knowledge(what's included)",
-        await ctx.runQuery(api.knowledge.search, {
+        await ctx.runQuery(internal.knowledge.__service_search, {
           query: "what is included with the camera",
         }),
       );
@@ -48,7 +48,7 @@ export default internalAction({
     try {
       rec(
         "lookup_pricing",
-        await ctx.runQuery(api.renter_bot_tools.lookup_pricing, {
+        await ctx.runQuery(internal.renter_bot_tools.__service_lookup_pricing, {
           item_name: item,
           account_slug: acct,
           days: 3,
@@ -61,7 +61,7 @@ export default internalAction({
     try {
       rec(
         "find_owned_alternatives(camera)",
-        await ctx.runQuery(api.renter_bot_tools.find_owned_alternatives, {
+        await ctx.runQuery(internal.renter_bot_tools.__service_find_owned_alternatives, {
           account_slug: acct,
           kind: "camera",
         }),

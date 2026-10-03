@@ -18,7 +18,7 @@
  */
 
 import { mutation, query } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 /**
@@ -472,7 +472,7 @@ export const reresolveObsoleteOwnerDenied = mutation({
     for (const r of batch) {
       await ctx.scheduler.runAfter(
         scheduled * 1000,
-        api.item_resolver.resolveReservation,
+        internal.item_resolver.__service_resolveReservation,
         { reservation_id: r._id },
       );
       scheduled++;
@@ -567,7 +567,7 @@ export const reresolveAllObsoletes = mutation({
     for (const r of batch) {
       await ctx.scheduler.runAfter(
         scheduled * 1000,
-        api.item_resolver.resolveReservation,
+        internal.item_resolver.__service_resolveReservation,
         { reservation_id: r._id },
       );
       scheduled++;

@@ -13,7 +13,7 @@
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../owner_functions";
-import { api } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 
@@ -42,7 +42,7 @@ export async function refreshAll(
   // span accounts — compute(all).filter(accountSlug===slug) ≡ compute(slug),
   // and filtering preserves the comparator order on the subset.
   const allPayload: Array<Record<string, unknown> & { accountSlug?: string }> =
-    await ctx.runQuery(api.reservations.getDueReturns, {
+    await ctx.runQuery(internal.reservations.__service_getDueReturns, {
       accountSlug: null,
       _bypassMv: true,
     });

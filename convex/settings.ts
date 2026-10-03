@@ -1,4 +1,4 @@
-import { action, mutation, query, internalMutation } from "./owner_functions";
+import { action, mutation, query, internalMutation, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -612,3 +612,9 @@ export const setAccountPickupHours = mutation({
     return { ok: true, account_slug, pickup_hours };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_get = internalQueryOf(get);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_listAccountHubs = internalQueryOf(listAccountHubs);

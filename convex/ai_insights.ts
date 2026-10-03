@@ -1,4 +1,4 @@
-import { query } from "./owner_functions";
+import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { effectiveDate } from "./lib/reservations/predicates";
 
@@ -258,3 +258,6 @@ export const getInsights = query({
     return insights.slice(0, 5);
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getInsights = internalQueryOf(getInsights);

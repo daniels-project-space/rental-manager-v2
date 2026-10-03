@@ -12,7 +12,7 @@
  *  cash-basis filings will accept and what the rest of the dashboard reports.
  */
 
-import { query, type QueryCtx } from "./owner_functions";
+import { query, type QueryCtx, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { SLOW_WIDGET_MAX_AGE_MS, readWidgetMv } from "./lib/widget_mv";
 import {
@@ -388,3 +388,6 @@ export const listAvailableTaxYears = query({
     });
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getTaxYearSummary = internalQueryOf(getTaxYearSummary);

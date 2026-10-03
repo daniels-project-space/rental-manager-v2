@@ -8,9 +8,9 @@
  * reminders, updating/removing them when the booking changes. No OAuth exists for
  * iCloud CalDAV — it's Basic auth with the app password. DB layer: calendar_apple_db.
  */
-import { action, internalAction } from "./owner_functions";
+import { action, internalAction, internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import crypto from "crypto";
 
 const ICLOUD_ROOT = "https://caldav.icloud.com";
@@ -370,7 +370,7 @@ export const autoSyncTick = internalAction({
     if (!APPLE_CALENDAR_WRITES_ENABLED) return { ran: false };
     const c = await ctx.runQuery(internal.calendar_apple_db._getConnection, {});
     if (c?.status !== "connected" || !c.auto_sync) return { ran: false };
-    await ctx.runAction(api.calendar_apple.syncAllConfirmed, {});
+    await ctx.runAction(internal.calendar_apple.__service_syncAllConfirmed, {});
     return { ran: true };
   },
 });
@@ -388,9 +388,15 @@ export const syncAllConfirmed = action({
     let synced = 0, removed = 0;
     for (const t of threads) {
       let r: { ok?: boolean; synced?: number; removed?: number } | null = null;
-      try { r = await ctx.runAction(api.calendar_apple.syncReservation, { thread_id: t }); } catch { r = null; }
+      try { r = await ctx.runAction(internal.calendar_apple.__service_syncReservation, { thread_id: t }); } catch { r = null; }
       if (r?.ok) { synced += r.synced ?? 0; removed += r.removed ?? 0; }
     }
     return { ok: true, threads: threads.length, synced, removed };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_syncAllConfirmed = internalActionOf(syncAllConfirmed);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_syncReservation = internalActionOf(syncReservation);

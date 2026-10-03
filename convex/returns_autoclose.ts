@@ -52,7 +52,7 @@
  * is referenced by NO cron.
  */
 import { action } from "./owner_functions";
-import { internal, api } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 // `returnOrder` is the irreversible Hygglo close (action:"return"). It is
 // HARD-GATED at the chokepoint behind ALLOW_RETURN_WRITES (decoupled from
@@ -234,7 +234,7 @@ async function finalizeReservationClose(
       review_done_at: r.review_done_at ?? Date.now(),
       msg_done_at: r.msg_done_at ?? Date.now(),
     });
-    await ctx.runMutation(api.reservations.markPlatformClosed, { reservationId });
+    await ctx.runMutation(internal.reservations.__service_markPlatformClosed, { reservationId });
     return {
       closed: "skipped",
       reviewed: "skipped",
@@ -298,7 +298,7 @@ async function finalizeReservationClose(
       review_done_at: r.review_done_at ?? Date.now(),
       msg_done_at: r.msg_done_at ?? Date.now(),
     });
-    await ctx.runMutation(api.reservations.markPlatformClosed, { reservationId });
+    await ctx.runMutation(internal.reservations.__service_markPlatformClosed, { reservationId });
     return { closed: closeStatus, reviewed: "n/a", messaged: "n/a" };
   }
 
@@ -396,7 +396,7 @@ async function finalizeReservationClose(
   const msgFailedRetriable =
     messageEligible && !alreadyMessaged && messaged !== "sent";
   if (!reviewFailedRetriable && !msgFailedRetriable) {
-    await ctx.runMutation(api.reservations.markPlatformClosed, { reservationId });
+    await ctx.runMutation(internal.reservations.__service_markPlatformClosed, { reservationId });
   }
 
   return {
@@ -453,7 +453,7 @@ export const finalizeReturn = action({
     const reservationId = args.reservationId;
 
     // 1. Mark returned (CRM saves, status=completed, stage review_message, etc.).
-    await ctx.runMutation(api.reservations.markReturned, args);
+    await ctx.runMutation(internal.reservations.__service_markReturned, args);
 
     // 2. Read back the resulting outcome + staged message off the pending feed
     //    (the same resolution the close helper uses, so green is consistent).

@@ -1,4 +1,4 @@
-import { internalMutation, internalQuery, mutation, query } from "./owner_functions";
+import { internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
 import type { Id } from "./_generated/dataModel";
 import { loadMarketingOnlyRequestIds } from "./lib/marketing_only_requests";
 import { v } from "convex/values";
@@ -1535,3 +1535,12 @@ export const listStuckActive = internalQuery({
       }));
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getDueReturns = internalQueryOf(getDueReturns);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_markPlatformClosed = internalMutationOf(markPlatformClosed);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_markReturned = internalMutationOf(markReturned);

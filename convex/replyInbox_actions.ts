@@ -20,10 +20,10 @@ import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/c
  * out for real while automation writes stay blocked by READ_ONLY_MODE. ONLY a
  * deliberate Send click reaches this action — no cron/scheduler calls it.
  */
-import { action, internalAction } from "./owner_functions";
+import { action, internalAction, internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
 import { normalizeClaimedFacts, type DraftEvidence } from "./lib/renter_draft_evidence";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { sameDraftApproval } from "./lib/draft_review";
@@ -105,7 +105,7 @@ export const generateDraft = action({
     // detail's items onto conv.inquiry_items (no-op if cached or a reservation
     // already carries the items). This is what stops "I don't know which item."
     try {
-      await ctx.runAction(api.inquiry_context.resolveForThread, { thread_id });
+      await ctx.runAction(internal.inquiry_context.__service_resolveForThread, { thread_id });
     } catch {
       /* best-effort grounding */
     }
@@ -305,7 +305,7 @@ export const generateDraft = action({
     let listingFacts: ListingFact[] = [];
     if (c.account_slug && c.listing_product_ids?.length) {
       try {
-        listingFacts = (await ctx.runQuery(api.online_listings.factsForProducts, {
+        listingFacts = (await ctx.runQuery(internal.online_listings.__service_factsForProducts, {
           account_slug: c.account_slug,
           product_ids: c.listing_product_ids,
         })) as ListingFact[];
@@ -823,7 +823,7 @@ export const generateDraft = action({
     const guardStage = c.rental_stage.stage;
     const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
     const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b|\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.test(checkedDraft)
-      ? await ctx.runQuery(api.renter_bot_tools.get_verified_camera_profiles, {}) : [];
+      ? await ctx.runQuery(internal.renter_bot_tools.__service_get_verified_camera_profiles, {}) : [];
     const guard = guardDraft(checkedDraft, {
       cameraEvidence,
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
@@ -1014,7 +1014,7 @@ export const pregenerateActiveDrafts = internalAction({
     let made = 0;
     for (const t of threads) {
       try {
-        const r = await ctx.runAction(api.replyInbox_actions.generateDraft, {
+        const r = await ctx.runAction(internal.replyInbox_actions.__service_generateDraft, {
           thread_id: t,
         });
         if (r.status === "ok" && r.draft) made++;
@@ -1056,7 +1056,7 @@ export const sendRenterReply = action({
   }> => {
     const body = text.trim();
     if (!body) return { status: "failed", error: "Empty message" };
-    const approvalContext = await ctx.runQuery(api.replyInbox.getDraftApprovalContext,{thread_id});
+    const approvalContext = await ctx.runQuery(internal.replyInbox.__service_getDraftApprovalContext,{thread_id});
     const legacyDraftCopy = body === approvalContext.stored_draft_text?.trim();
     if (draft_approval || legacyDraftCopy) {
       if (approvalContext.account_slug!==account_slug || !approvalContext.draft_approval || (draft_approval && !sameDraftApproval(draft_approval,approvalContext.draft_approval)))
@@ -1179,3 +1179,6 @@ export const declineOrder = action({
     };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_generateDraft = internalActionOf(generateDraft);

@@ -1,4 +1,4 @@
-import { query } from "./owner_functions";
+import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import {
   SLOW_WIDGET_MAX_AGE_MS,
@@ -138,3 +138,6 @@ export const getTopBundles = query({
 });
 
 export const getBundleRevenueRanking = getTopBundles;
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getTopBundles = internalQueryOf(getTopBundles);

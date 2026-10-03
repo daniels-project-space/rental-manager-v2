@@ -1,4 +1,4 @@
-import { mutation, query } from "./owner_functions";
+import { mutation, query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 
 // ── Queries ───────────────────────────────────────────────────
@@ -98,3 +98,6 @@ export const recordSyncRun = mutation({
     }
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_get = internalQueryOf(get);

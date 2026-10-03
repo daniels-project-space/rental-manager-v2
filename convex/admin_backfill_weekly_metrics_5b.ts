@@ -23,13 +23,8 @@
  */
 
 import { v } from "convex/values";
-import {
-  action,
-  internalAction,
-  internalMutation,
-  internalQuery,
-} from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalAction, internalMutation, internalQuery, internalActionOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   buildCommitmentMap,
@@ -713,7 +708,7 @@ export const cronRefreshLastWeek = internalAction({
     d.setUTCDate(d.getUTCDate() - 7);
     const last = d.toISOString().slice(0, 10);
     await ctx.runAction(
-      api.admin_backfill_weekly_metrics_5b.backfillAdvancedBatch,
+      internal.admin_backfill_weekly_metrics_5b.__service_backfillAdvancedBatch,
       { start_week: last, end_week: last, weeks_per_batch: 1 },
     );
   },
@@ -744,3 +739,6 @@ export const topSubstitutionFlows = internalQuery({
       .slice(0, lim);
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_backfillAdvancedBatch = internalActionOf(backfillAdvancedBatch);

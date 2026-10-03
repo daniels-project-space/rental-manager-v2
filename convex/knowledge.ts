@@ -10,7 +10,7 @@
  * which CLAUDE.md forbids scanning). Phase 2+ may swap to an embeddings
  * index if the corpus grows.
  */
-import { query } from "./owner_functions";
+import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { rankKnowledge } from "./lib/knowledge_search";
 
@@ -96,3 +96,6 @@ export const getTemplate = query({
     };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_search = internalQueryOf(search);

@@ -1,4 +1,4 @@
-import { query } from "./owner_functions";
+import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
 import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
@@ -1443,3 +1443,9 @@ export const getTopRentalsForItem = query({
     return out.slice(0, 6);
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getInvestmentScorecard = internalQueryOf(getInvestmentScorecard);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getLifetimeByMonth = internalQueryOf(getLifetimeByMonth);

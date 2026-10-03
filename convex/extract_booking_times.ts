@@ -29,8 +29,8 @@
 "use node";
 
 import { v } from "convex/values";
-import { action, internalAction } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalAction, internalActionOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { getActionLlmModel } from "./item_resolver";
 import { isWithinUkQuietHours } from "./lib/quiet_hours";
@@ -151,3 +151,6 @@ export const extractForReservation = action({
 // extractBatch deleted 2026-05-24 — lifted to src/trigger/extract-booking-times.ts
 // in Phase 18.5 (LLM-on-Trigger rule from CLAUDE.md). The Convex action was
 // orphaned with zero callers after the lift.
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_extractForReservation = internalActionOf(extractForReservation);

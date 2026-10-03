@@ -18,7 +18,7 @@ import { londonToday } from "./lib/effectiveDates";
  * gated Hygglo send live in the sibling "use node" module
  * `replyInbox_actions.ts`.
  */
-import { query, mutation, internalQuery, internalMutation } from "./owner_functions";
+import { query, mutation, internalQuery, internalMutation, internalQueryOf } from "./owner_functions";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
@@ -31,7 +31,7 @@ import { summarise } from "./lib/renter_order_quote";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { filterImminentHandoffs, type ImminentHandoffCandidate } from "./lib/imminent_handoffs";
 import type { Doc, Id } from "./_generated/dataModel";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { PREFIX as PROBE_THREAD_PREFIX } from "./renter_bot_probe";
 import { readWidgetMv } from "./lib/widget_mv";
 import { exactListingProductIds } from "./lib/draft_listing_grounding";
@@ -1981,7 +1981,7 @@ export const recordSentReply = internalMutation({
       .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
       .first();
     if (reservation && !reservation.is_obsolete && reservation.start_date && reservation.end_date) {
-      await ctx.scheduler.runAfter(0, api.extract_booking_times.extractForReservation, {
+      await ctx.scheduler.runAfter(0, internal.extract_booking_times.__service_extractForReservation, {
         reservation_id: reservation._id,
       });
     }
@@ -2186,3 +2186,9 @@ export const recheckCopiedDraftStock = internalQuery({
     return {ok:unsupportedStockClaims(text,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length===0,reason:"stock_unverified",checked_at:Date.now()};
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getReplyQueue = internalQueryOf(getReplyQueue);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getDraftApprovalContext = internalQueryOf(getDraftApprovalContext);

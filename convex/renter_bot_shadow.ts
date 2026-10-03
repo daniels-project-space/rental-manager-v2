@@ -19,7 +19,7 @@
  * incomparable instead of scoring them.
  */
 import { action, internalQuery } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { compareToReal, type ShadowVerdict } from "./lib/shadow_compare";
 
@@ -270,7 +270,7 @@ export const runSample = action({
       // reads as "no draft" and there is nothing to act on.
       let flags: string[] = [];
       try {
-        const res = (await ctx.runAction(api.replyInbox_actions.generateDraft, {
+        const res = (await ctx.runAction(internal.replyInbox_actions.__service_generateDraft, {
           thread_id: tid,
         })) as { draft?: string; reason?: string; flags?: string[] } | null;
         draft = res?.draft ?? "";
@@ -307,7 +307,7 @@ export const runSample = action({
       });
     }
 
-    await ctx.runMutation(api.renter_bot_probe.cleanup, {});
+    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
 
     const totals = {
       exchanges: results.length,

@@ -10,14 +10,9 @@ import { labBooking } from "./lib/lab_lifecycle";
  * any of the four send-gated functions documented in
  * docs/renter-bot-policy.md.
  */
-import {
-  action,
-  internalMutation,
-  internalQuery,
-  query,
-} from "./owner_functions";
+import { action, internalMutation, internalQuery, query } from "./owner_functions";
 import { v } from "convex/values";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { scoreDraft } from "./lib/renter_bot_rubric";
 import type { DraftEvidence } from "./lib/renter_draft_evidence";
 import { PREFIX } from "./renter_bot_probe";
@@ -299,7 +294,7 @@ export const sendTestMessage = action({
 
     const referralCode = friendReferralFromMessage(args.text);
     if (referralCode) {
-      const handoff = await ctx.runMutation(api.renter_bot_lab_order.redeemReferral, { thread_id: args.threadId, code: referralCode });
+      const handoff = await ctx.runMutation(internal.renter_bot_lab_order.__service_redeemReferral, { thread_id: args.threadId, code: referralCode });
       if (!handoff.ok) {
         const draft = `I couldn't restore that basket referral: ${handoff.error ?? "please ask the owner to check it"}. Your current basket hasn't been changed.`;
         const runId = `referral-${Date.now()}`;
@@ -310,7 +305,7 @@ export const sendTestMessage = action({
     }
     const startedAt = Date.now();
     const draftResult = await ctx.runAction(
-      api.replyInbox_actions.generateDraft,
+      internal.replyInbox_actions.__service_generateDraft,
       { thread_id: args.threadId },
     );
     const draftRow = await ctx.runQuery(
@@ -381,7 +376,7 @@ export const sendTestMessage = action({
 export const endLiveSession = action({
   args: { threadId: v.string() },
   handler: async (ctx, args): Promise<{ removed: number }> =>
-    ctx.runMutation(api.renter_bot_probe.cleanup, { thread_id: args.threadId }),
+    ctx.runMutation(internal.renter_bot_probe.__service_cleanup, { thread_id: args.threadId }),
 });
 
 export const runFixtureBatch = action({
@@ -392,5 +387,5 @@ export const runFixtureBatch = action({
   ): Promise<{
     runBatchId: string;
     results: Array<{ fixtureId: string; overall_status: string }>;
-  }> => ctx.runAction(api.renter_bot_harness.runBatch, args),
+  }> => ctx.runAction(internal.renter_bot_harness.__service_runBatch, args),
 });

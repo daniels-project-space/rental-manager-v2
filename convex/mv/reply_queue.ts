@@ -27,7 +27,7 @@
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, query } from "../owner_functions";
-import { api } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { refreshHandoffsWidget } from "./widgets";
 import {
@@ -95,7 +95,7 @@ export async function refreshAll(
   // Run the live assembly once (accountSlug null → all tiles; high limit so the
   // stored list is never truncated before the reader slices per-account).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tiles: any = await ctx.runQuery(api.replyInbox.getReplyQueue, {
+  const tiles: any = await ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
     accountSlug: undefined,
     limit: REPLY_MV_LIMIT,
     withinDays: REPLY_MV_WITHIN_DAYS,

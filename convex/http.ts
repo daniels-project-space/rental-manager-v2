@@ -16,7 +16,7 @@
 
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { internal, api } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { authComponent, createAuth } from "./auth";
 
 const http = httpRouter();
@@ -82,7 +82,7 @@ http.route({
     }
 
     try {
-      await ctx.runMutation(api.ported_listings.upsert, {
+      await ctx.runMutation(internal.ported_listings.__service_upsert, {
         productId: String(productId),
         status: status as (typeof allowed)[number],
         ...(typeof body.portedR2Key === "string" ? { portedR2Key: body.portedR2Key } : {}),

@@ -5,10 +5,10 @@
  * rather than duplicating them. Test-only. No relationship to any Hygglo
  * write path — nothing here imports hygglo-write.ts or the send actions.
  */
-import { action, internalMutation, internalQuery } from "./owner_functions";
+import { action, internalMutation, internalQuery, internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { scoreDraft, scoreSkippedGeneration } from "./lib/renter_bot_rubric";
 import { PREFIX } from "./renter_bot_probe";
 
@@ -117,7 +117,7 @@ export const runFixture = action({
     });
 
     const draftResult = await ctx.runAction(
-      api.replyInbox_actions.generateDraft,
+      internal.replyInbox_actions.__service_generateDraft,
       { thread_id: threadId },
     );
 
@@ -187,7 +187,7 @@ export const runFixture = action({
     }
 
     if (!args.skipCleanup) {
-      await ctx.runMutation(api.renter_bot_probe.cleanup, {});
+      await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
     }
 
     return { runId, overall_status: overallStatus };
@@ -215,7 +215,7 @@ export const runBatch = action({
 
     const results: Array<{ fixtureId: string; overall_status: string }> = [];
     for (const fixtureId of fixtureIds) {
-      const r = await ctx.runAction(api.renter_bot_harness.runFixture, {
+      const r = await ctx.runAction(internal.renter_bot_harness.__service_runFixture, {
         fixtureId,
         runBatchId,
         triggeredBy: "harness_batch" as const,
@@ -223,7 +223,7 @@ export const runBatch = action({
       });
       results.push({ fixtureId, overall_status: r.overall_status });
     }
-    await ctx.runMutation(api.renter_bot_probe.cleanup, {});
+    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
     return { runBatchId, results };
   },
 });
@@ -247,7 +247,7 @@ export const runToCleanStreak = action({
     let lastRunId: string | undefined;
     while (streak < target && attempts < maxAttempts) {
       attempts++;
-      const r = await ctx.runAction(api.renter_bot_harness.runFixture, {
+      const r = await ctx.runAction(internal.renter_bot_harness.__service_runFixture, {
         fixtureId: args.fixtureId,
         runBatchId,
         triggeredBy: "harness_batch" as const,
@@ -256,7 +256,7 @@ export const runToCleanStreak = action({
       lastRunId = r.runId;
       streak = r.overall_status === "pass" ? streak + 1 : 0;
     }
-    await ctx.runMutation(api.renter_bot_probe.cleanup, {});
+    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
     return { streakAchieved: streak, attempts, lastRunId };
   },
 });
@@ -333,7 +333,7 @@ export const runMultiTurnScenario = action({
       });
 
       const startedAt = Date.now();
-      const draftResult = await ctx.runAction(api.replyInbox_actions.generateDraft, {
+      const draftResult = await ctx.runAction(internal.replyInbox_actions.__service_generateDraft, {
         thread_id: threadId,
       });
 
@@ -401,7 +401,13 @@ export const runMultiTurnScenario = action({
       });
     }
 
-    await ctx.runMutation(api.renter_bot_probe.cleanup, {});
+    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
     return { scenarioId: args.scenarioId, threadId, turnResults };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_runFixture = internalActionOf(runFixture);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_runBatch = internalActionOf(runBatch);

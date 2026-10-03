@@ -23,8 +23,8 @@
 "use node";
 
 import { v } from "convex/values";
-import { action, internalAction } from "./owner_functions";
-import { api, internal } from "./_generated/api";
+import { action, internalAction, internalActionOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import { gatedGenerateObject } from "./lib/gatedGenerate";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
@@ -676,7 +676,7 @@ export const resolveBatch = internalAction({
     for (const id of ids) {
       try {
         const res: { ok: boolean; reason?: string } = await ctx.runAction(
-          api.item_resolver.resolveReservation,
+          internal.item_resolver.__service_resolveReservation,
           { reservation_id: id as never },
         );
         if (res.ok) resolved++;
@@ -689,3 +689,6 @@ export const resolveBatch = internalAction({
     return { ids: ids.length, resolved, skipped };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_resolveReservation = internalActionOf(resolveReservation);

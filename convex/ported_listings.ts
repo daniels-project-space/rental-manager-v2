@@ -14,7 +14,7 @@
  *   - setConfig : write the per-account gradient/style profile doc.
  */
 
-import { mutation, query } from "./owner_functions";
+import { mutation, query, internalMutationOf } from "./owner_functions";
 import { v } from "convex/values";
 
 /**
@@ -211,3 +211,6 @@ export const setConfig = mutation({
     return await ctx.db.insert("ported_listings_config", doc);
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_upsert = internalMutationOf(upsert);

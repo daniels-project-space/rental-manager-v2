@@ -1,5 +1,5 @@
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
-import { query, type QueryCtx } from "./owner_functions";
+import { query, type QueryCtx, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import {
@@ -2803,3 +2803,9 @@ export const getMonthlyVerificationLosses = query({
   args: { accountSlug: v.union(v.string(), v.null()), month: v.string() },
   handler: async (ctx, { accountSlug, month }) => loadMonthlyVerificationLosses(ctx, month, accountSlug),
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getRentalVolumeByCategory = internalQueryOf(getRentalVolumeByCategory);
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_getStatsDrawerData = internalQueryOf(getStatsDrawerData);

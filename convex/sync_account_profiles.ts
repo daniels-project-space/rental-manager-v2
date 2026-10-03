@@ -7,7 +7,7 @@
 "use node";
 
 import { internalAction } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 
 const VAULT_URL = "https://fantastic-roadrunner-485.convex.cloud";
 const API_BASE = "https://api.hygglo.com/api";
@@ -91,7 +91,7 @@ export const syncAccountProfiles = internalAction({
       if (!orderId) { errors.push(acc.slug + ": no orders to scrape"); continue; }
       const url = await fetchProfileImage(token, orderId);
       if (!url) { errors.push(acc.slug + ": no profileImage in order"); continue; }
-      await ctx.runMutation(api.accounts.setProfileImage, { slug: acc.slug, profile_image_url: url });
+      await ctx.runMutation(internal.accounts.__service_setProfileImage, { slug: acc.slug, profile_image_url: url });
       updated.push(acc.slug);
     }
     return { ok: errors.length === 0, updated, errors };

@@ -27,8 +27,8 @@
 
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, mutation, query } from "./owner_functions";
-import { api } from "./_generated/api";
+import { internalAction, internalMutation, mutation, query, internalMutationOf } from "./owner_functions";
+import { internal } from "./_generated/api";
 import type { AttributionContext } from "./lib/revenue_attribution";
 import {
   computeCapacityMetrics,
@@ -572,7 +572,7 @@ export const backfillAll = internalAction({
     let rowsSkipped = 0;
     let nextWeek: string | null = null;
     for (let i = 0; i < cap; i++) {
-      const res = (await ctx.runMutation(api.admin_backfill_weekly_metrics.backfillBatch, {
+      const res = (await ctx.runMutation(internal.admin_backfill_weekly_metrics.__service_backfillBatch, {
         batch_weeks: 1,
         ...(i === 0
           ? { reset_cursor: true, start_week: args.start_week, end_week: args.end_week }
@@ -804,3 +804,6 @@ export const sanityCheck = query({
     };
   },
 });
+
+// Privileged caller counterpart; shares the original handler and validators.
+export const __service_backfillBatch = internalMutationOf(backfillBatch);
