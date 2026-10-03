@@ -1,0 +1,11 @@
+# Match equipment additions to actual renter agreement
+
+A latest renter message ID established freshness but did not establish consent. Controlled tool arguments could add a Remus lens and adapter after a camera-weight question. Additions now reconcile actual Native selections, quantities, booking dates and commercial terms with the renter's request before patching the order.
+
+Both the atomic addition mutation and the legacy single-item edit path call the same acceptance check. A direct request must identify every selected commercial item and quantity and agree to the complete Native price, either as an aggregate or correctly attributed itemised amounts. Naming a camera alone does not permit substituting a camera-and-lens bundle, and a generic adapter request cannot choose a mount. Conditional, hypothetical and reported instructions are not edit permission. A component price alone cannot authorise an unpriced companion item.
+
+Natural acceptance of a sent quote uses the immediately preceding owner message and its saved Native proposal. Exact listing IDs/quantities, original booking context, dates, additional price and proposed total must still match. The owner text must actually mention and price the selected offer; unused evidence in a draft is insufficient. Unnamed acceptance cannot choose between multiple or alternative offers. An intervening renter question breaks the reference. Captured epoch records the approved quote's provenance; a deployment epoch change alone does not invalidate otherwise identical Native terms.
+
+Existing Native lifecycle, complete adapter compatibility, owned inventory, aggregate stock, actor/message binding, negative restrictions and idempotency checks remain in place. Read-only previews do not require edit consent. A clear priced request or acceptance of an unchanged sent proposal requires no additional confirmation.
+
+Validation is focused on the changed transaction and price/quote surfaces, with disposable deployed Lab checks. Controlled conflicting arguments are not evidence of the model selecting those edits. Real Hygglo messaging and booking writes remain disabled. Positive removal/date-change reconciliation, further natural-language edge cases, owner access and phone push reliability remain unfinished parts of the broad audit.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyChange, applyAdditionBasket } from "./renter_bot_lab_order";
+import { applyChange, applyAdditionBasket, quoteAdditionBasket } from "./renter_bot_lab_order";
 import { amendedDraftContext, draftContextKey } from "./lib/draft_review";
+import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { setDraft } from "./replyInbox";
 import { renterToolReceipts } from "../src/lib/renter-tool-evidence";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
@@ -46,6 +47,7 @@ describe("additions check the complete physical basket",()=>{
     f.tables.online_listings=[{account_slug:"leo",product_id:2,name:"Sony 28-70mm",daily_price:18}];
     f.tables.hygglo_product_index=[{account_slug:"leo",product_id:2,item_id:"lens"}];
     f.tables.listing_resolution_override.push({account_slug:"leo",product_id:2,components:[{item_id:"lens",qty:1}]});
+    f.tables.hygglo_messages[0].body_text="Please add the Sony 28-70mm at £36 extra.";
     return f;
   };
   const add=(ctx:any,qty:number)=>applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
@@ -76,14 +78,14 @@ describe("additions check the complete physical basket",()=>{
     expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false});
   });
   it("does not replay a body addition when a retry switches between canonical name and exact product ID",async()=>{
-    const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"one-request",sender:"renter",body_text:"Please add one extra Sony FX3 body."}];
+    const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"one-request",sender:"renter",body_text:"Please add one extra Sony FX3 at £90 extra."}];
     const args={thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1,request_message_id:"one-request"};
     expect(await applyCurrentChange(ctx,args)).toMatchObject({ok:true,action_performed:true});
     expect(await applyCurrentChange(ctx,{...args,product_id:4})).toMatchObject({ok:true,already_applied:true,action_performed:false});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
   });
   it("recognizes a request already recorded by the previous physical-ID ledger format",async()=>{
-    const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"legacy-request",sender:"renter",body_text:"Please add one extra Sony FX3 body."}];
+    const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"legacy-request",sender:"renter",body_text:"Please add one extra Sony FX3 at £90 extra."}];
     tables.renter_bot_lab_orders[0].changes=[{at:1,summary:"added 1x Sony FX3",request_key:JSON.stringify(["legacy-request","add_item","camera",1])}];
     const before=structuredClone(tables);
     expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",product_id:4,qty:1,request_message_id:"legacy-request"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
@@ -125,12 +127,12 @@ describe("additions check the complete physical basket",()=>{
   it("replays an addition once per inbound across reviewed aliases, while a new request can add more",async()=>{
     const {tables,ctx}=setup();tables.items.find(i=>i._id==="lens").qty=3;
     tables.items.find(i=>i._id==="lens").aliases=["Sony 28 70"];
-    tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please update my booking.",fetched_at:1,_creationTime:1}];
+    tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please add the Sony 28-70mm at £36 extra.",fetched_at:1,_creationTime:1}];
     expect(await add(ctx,1)).toMatchObject({ok:true,action_performed:true});
     expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28 70",qty:1,request_message_id:"renter-1"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
     expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(1);
-    tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-2",sender:"renter",body_text:"Please update my booking.",fetched_at:2,_creationTime:2});
+    tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-2",sender:"renter",body_text:"Please add the Sony 28-70mm at £36 extra.",fetched_at:2,_creationTime:2});
     expect(await add(ctx,1)).toMatchObject({ok:true});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(2);
     expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(2);
@@ -347,7 +349,7 @@ function setupAtomicAddition(){
  Object.assign(f.tables.renter_bot_lab_bookings[0],{start_date:row.start_date,end_date:row.end_date,pickup_date:undefined,status:"confirmed"});
  f.tables.online_listings=[{account_slug:"leo",product_id:1,name:"BMPCC 6K Full Frame",daily_price:62},{account_slug:"leo",product_id:2,name:"Blazar Remus 100mm",daily_price:25},{account_slug:"leo",product_id:3,name:"PL to L mount",daily_price:10}];
  f.tables.listing_resolution_override=f.tables.items.map((item,i)=>({account_slug:"leo",product_id:i+1,components:[{item_id:item._id,qty:1}]}));
- f.tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-current",sender:"renter",body_text:"Please add the Blazar Remus 100mm and your PL to L mount adapter together as quoted.",fetched_at:1,_creationTime:1}];
+ f.tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-current",sender:"renter",body_text:"Please add the Blazar Remus 100mm and your PL to L mount adapter together for £70 extra.",fetched_at:1,_creationTime:1}];
  return f;
 }
 const applyBasket=(ctx:any,items=[{product_id:2,qty:1},{product_id:3,qty:1}],request_message_id="renter-current")=>(applyAdditionBasket as any)._handler(ctx,{thread_id:"__probe__atomic",request_message_id,items});
@@ -373,7 +375,7 @@ describe("complete setup acceptance is one transaction",()=>{
   expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:2,item_name:"Blazar Remus 100mm",qty:1})).toMatchObject({ok:false,error_code:"complete_setup_required"});expect(tables).toEqual(before);
  });
  it("accepts the lens alone when the renter supplies its explicitly matching adapter",async()=>{
-  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm.";
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm at £50 extra.";
   expect(await applyBasket(ctx,[{product_id:2,qty:1}])).toMatchObject({ok:true,order:{total_gbp:174}});expect(tables.renter_bot_lab_orders[0].items).toHaveLength(2);
  });
  it("retries the same complete request once regardless of selection ordering",async()=>{
@@ -400,7 +402,7 @@ describe("Native target restrictions protect actual booking changes",()=>{
   expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:3,item_name:"PL to L mount",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
  });
  it("preserves the accepted lens when the renter forbids adding an adapter they supply",async()=>{
-  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't add your PL to L mount adapter. I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm.";
+  const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't add your PL to L mount adapter. I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm at £50 extra.";
   expect(await applyBasket(ctx,[{product_id:2,qty:1}])).toMatchObject({ok:true,order:{total_gbp:174}});
  });
  it("refuses removal of the exact protected booked model",async()=>{
@@ -425,4 +427,39 @@ describe("legacy edits require a live renter inbound",()=>{
       });
     }
   }
+});
+
+
+describe("additions reconcile real requests and sent quote terms",()=>{
+ const offer=async(f:ReturnType<typeof setupAtomicAddition>)=>{
+  const q=await (quoteAdditionBasket as any)._handler(f.ctx,{thread_id:"__probe__atomic",items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
+  const context=draftContextKey(await getBotBooking(f.ctx as any,"__probe__atomic"),undefined,await getLabOrder(f.ctx as any,"__probe__atomic"));
+  const proposal={context_key:context,epoch:82,quoted_for_message_id:"earlier-renter",items:[{product_id:2,qty:1},{product_id:3,qty:1}],base_items:q.base_items,added_items:q.added_items,start_date:q.quote.start_date,end_date:q.quote.end_date,total_gbp:q.quote.total_gbp,additional_cost_gbp:q.additional_cost_gbp};
+  f.tables.hygglo_messages[0].fetched_at=2;f.tables.hygglo_messages[0]._creationTime=2;
+  f.tables.hygglo_messages.unshift({thread_id:"__probe__atomic",message_id:"owner-offer",sender:"owner",account_slug:"leo",body_text:"The Blazar Remus 100mm and PL to L mount cost £70 extra for 20–21 October, bringing the booking total to £194. Shall I add both?",quoted_additions:[proposal],fetched_at:1,_creationTime:1});
+ };
+ for(const text of ["How heavy is the Blackmagic 6K Full Frame camera?","Please add the Sony FX3 for £70 extra.","Please add the Blazar Remus 100mm only for £70 extra.","Please add two Blazar Remus 100mm and the PL to L mount for £70 extra.","Please add the Blazar Remus 100mm and PL to L mount for £60 extra.","Please add the Blazar Remus 100mm and PL to L mount for 22 to 23 October at £70 extra."]){
+  it(`does not change the order for conflicting selection: ${text}`,async()=>{
+   const f=setupAtomicAddition();f.tables.hygglo_messages[0].body_text=text;const before=structuredClone(f.tables);
+   expect(await applyBasket(f.ctx)).toMatchObject({ok:false,action_performed:false,error_code:"addition_consent_unverified"});expect(f.tables).toEqual(before);
+  });
+ }
+ it("blocks the same unrequested addition through the legacy single-item path",async()=>{
+  const f=setupAtomicAddition();f.tables.hygglo_messages[0].body_text="How heavy is the camera?";const before=structuredClone(f.tables);
+  expect(await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:3,item_name:"PL to L mount",qty:1})).toMatchObject({ok:false,action_performed:false,error_code:"addition_consent_unverified"});expect(f.tables).toEqual(before);
+ });
+ it("accepts a natural reply to the actual exact Native offer once",async()=>{
+  const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add both.";
+  expect(await applyBasket(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:194}});
+  expect(await applyBasket(f.ctx)).toMatchObject({ok:true,already_applied:true,action_performed:false});expect(f.tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+ });
+ for(const variant of ["changed_price","unused_quote","intervening_question"]){
+  it(`does not reuse an offer after ${variant}`,async()=>{
+   const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add both.";
+   if(variant==="changed_price")f.tables.online_listings.find(i=>i.product_id===2).daily_price=30;
+   if(variant==="unused_quote")f.tables.hygglo_messages[0].body_text="The camera weighs about one kilogram.";
+   if(variant==="intervening_question")f.tables.hygglo_messages.splice(1,0,{thread_id:"__probe__atomic",message_id:"unrelated",sender:"renter",body_text:"How heavy is it?",fetched_at:1.5,_creationTime:1.5});
+   const before=structuredClone(f.tables);expect(await applyBasket(f.ctx)).toMatchObject({ok:false,action_performed:false,error_code:"addition_consent_unverified"});expect(f.tables).toEqual(before);
+  });
+ }
 });

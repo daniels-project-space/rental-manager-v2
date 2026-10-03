@@ -1,4 +1,5 @@
 import { additionMountRequirements } from "./lib/booking_addition_mount";
+import { acceptsAddition } from "./lib/renter_addition_acceptance";
 import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventoryItem } from "./lib/renter_booking_consent";
 import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
@@ -36,6 +37,18 @@ async function prohibitsSelectedItems(ctx: QueryCtx, accountSlug:string, text:st
 async function amendmentContext(ctx: QueryCtx, threadId: string) {
   const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", threadId)).first();
   return draftContextKey(await getBotBooking(ctx, threadId), conv?.inquiry_items, await getLabOrder(ctx, threadId));
+}
+
+async function additionConsent(ctx:QueryCtx,threadId:string,text:string,
+  complete:ReturnType<typeof summarise>,addition:ReturnType<typeof summarise>,additionalCost:number) {
+  if(!complete.start_date || !complete.end_date || complete.total_gbp==null ||
+    addition.lines.some(l=>!Number.isInteger(l.product_id) || !l.product_id || l.line_total_gbp==null))return false;
+  const messages=await recentThreadMessages(ctx,threadId,2);
+  // recentThreadMessages returns oldest-to-newest within the selected window.
+  const previous=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
+  return acceptsAddition(text,{context_key:await amendmentContext(ctx,threadId),start_date:complete.start_date,end_date:complete.end_date,
+    total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,
+    lines:addition.lines.map(l=>({product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous);
 }
 
 /**
@@ -375,6 +388,8 @@ export const applyAdditionBasket = mutation({
     if(!prepared.ok || !prepared.proposed_lines || !prepared.added_items) return {...prepared,action_performed:false};
     if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items))
       return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected items conflict with a named renter restriction, or the restriction cannot be reconciled. No booking changes were made. Clarify the restricted item instead of ignoring it."};
+    if(!await additionConsent(ctx,a.thread_id,latest.body_text,prepared.quote,prepared.addition_quote,prepared.additional_cost_gbp))
+      return {ok:false,action_performed:false,error_code:"addition_consent_unverified",error:"The current renter message does not agree to these exact items, quantities and Native quote terms. No booking changes were made. Answer their question or quote the complete setup; do not infer permission from an unrelated message. Clear agreement to an unchanged sent quote can be used directly."};
     const {proposed_lines:_private,...verified_quote}=prepared;
     const beforeContext=await amendmentContext(ctx,a.thread_id);
     const beforeRevision=row.changes.length;
@@ -648,6 +663,13 @@ export const applyChange = mutation({
         stock_receipt:{...stock,start_date:row.start_date,end_date:row.end_date},
         stock_receipts:basketStock.receipts};
     }
+
+    const completeQuote=summarise(lines,row.start_date,row.end_date);
+    const additionQuote=summarise([additionLine],row.start_date,row.end_date);
+    const baseQuote=summarise(row.items,row.start_date,row.end_date);
+    if(completeQuote.total_gbp==null || baseQuote.total_gbp==null ||
+      !await additionConsent(ctx,a.thread_id,latestMessage!.body_text,completeQuote,additionQuote,completeQuote.total_gbp-baseQuote.total_gbp))
+      return {ok:false,action_performed:false,error_code:"addition_consent_unverified",error:"This exact addition and its price are not agreed by the current renter message or an unchanged sent Native quote. No booking changes were made. Use a read-only quote when agreement is missing."};
 
     await ctx.db.patch(row._id, {
       items: lines.map((l) => ({ ...l, item_id: l.item_id as never })),

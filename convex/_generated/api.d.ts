@@ -175,6 +175,7 @@ import type * as lib_recommendation_kit from "../lib/recommendation_kit.js";
 import type * as lib_rental_stage from "../lib/rental_stage.js";
 import type * as lib_rental_volume from "../lib/rental_volume.js";
 import type * as lib_renterLookup from "../lib/renterLookup.js";
+import type * as lib_renter_addition_acceptance from "../lib/renter_addition_acceptance.js";
 import type * as lib_renter_booking from "../lib/renter_booking.js";
 import type * as lib_renter_booking_consent from "../lib/renter_booking_consent.js";
 import type * as lib_renter_bot_conversation_rubric from "../lib/renter_bot_conversation_rubric.js";
@@ -498,6 +499,7 @@ declare const fullApi: ApiFromModules<{
   "lib/rental_stage": typeof lib_rental_stage;
   "lib/rental_volume": typeof lib_rental_volume;
   "lib/renterLookup": typeof lib_renterLookup;
+  "lib/renter_addition_acceptance": typeof lib_renter_addition_acceptance;
   "lib/renter_booking": typeof lib_renter_booking;
   "lib/renter_booking_consent": typeof lib_renter_booking_consent;
   "lib/renter_bot_conversation_rubric": typeof lib_renter_bot_conversation_rubric;
