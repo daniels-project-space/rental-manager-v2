@@ -414,8 +414,9 @@ export const applyChange = mutation({
     if (!row) return { ok: false, error: "no simulated order for this session" };
 
     const [latestMessage] = await recentThreadMessages(ctx, a.thread_id, 1);
-    if (a.request_message_id !== undefined && a.request_message_id !== latestMessage?.message_id)
-      return { ok:false, error_code:"stale_inbound", error:"A newer message arrived. No booking changes were made; regenerate using the current conversation." };
+    if ((!a.preview_only && (!a.request_message_id || latestMessage?.sender !== "renter")) ||
+      (a.request_message_id !== undefined && a.request_message_id !== latestMessage?.message_id))
+      return { ok:false, action_performed:false, error_code:"stale_inbound", error:"Booking edits require the current renter message ID. No booking changes were made; regenerate using the current conversation." };
     if (!a.preview_only && latestMessage?.sender === "renter" &&
       renterRequestsReadOnly(latestMessage.body_text, a.action))
       return {ok:false,action_performed:false,error_code:"renter_requested_read_only",

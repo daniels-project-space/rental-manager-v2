@@ -7,6 +7,7 @@ import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 
 function fixture() {
   const tables: Record<string, any[]> = {
+    hygglo_messages: [{ thread_id:"__probe__atomic", message_id:"fixture-current", sender:"renter", body_text:"Please update my booking.", fetched_at:1, _creationTime:1 }],
     items: [{ _id: "camera", name_canonical: "Sony FX3", status: "active", is_marketing_only: false, qty: 1, kind: "camera_body", aliases: [] }],
     renter_bot_lab_orders: [{ _id: "order", thread_id: "__probe__atomic", account_slug: "leo", start_date: "2026-10-06", end_date: "2026-10-07", changes: [],
       items: [{ item_id: "camera", name: "Sony FX3", qty: 1, daily_price_gbp: 40, pricing_basis: "listing", origin: "seed" }] }],
@@ -25,8 +26,15 @@ function fixture() {
   };
   return { tables, ctx: { db } };
 }
-const extend = (ctx: any) => (applyChange as any)._handler(ctx, { thread_id: "__probe__atomic", action: "set_dates", start_date: "2026-10-06", end_date: "2026-10-08" });
-const remove = (ctx: any, item_name: string, qty?: number) => (applyChange as any)._handler(ctx,
+// Mirror the canonical server caller: attach the actual latest inbound ID.
+// Boundary tests below deliberately bypass this helper to exercise missing IDs.
+async function applyCurrentChange(ctx:any,args:any) {
+  const messages=await ctx.db.query("hygglo_messages").withIndex("by_thread",(q:any)=>q.eq("thread_id",args.thread_id)).collect();
+  const latest=messages.at(-1);
+  return (applyChange as any)._handler(ctx,{...args,...(!args.preview_only && args.request_message_id===undefined ? {request_message_id:latest?.message_id}: {})});
+}
+const extend = (ctx: any) => applyCurrentChange(ctx, { thread_id: "__probe__atomic", action: "set_dates", start_date: "2026-10-06", end_date: "2026-10-08" });
+const remove = (ctx: any, item_name: string, qty?: number) => applyCurrentChange(ctx,
   { thread_id: "__probe__atomic", action: "remove_item", item_name, ...(qty === undefined ? {} : {qty}) });
 describe("additions check the complete physical basket",()=>{
   const setup=()=>{
@@ -40,7 +48,7 @@ describe("additions check the complete physical basket",()=>{
     f.tables.listing_resolution_override.push({account_slug:"leo",product_id:2,components:[{item_id:"lens",qty:1}]});
     return f;
   };
-  const add=(ctx:any,qty:number)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
+  const add=(ctx:any,qty:number)=>applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty});
   const exactSetup=()=>{
     const f=setup();f.tables.items[0].qty=3;
     f.tables.online_listings.push({account_slug:"leo",product_id:3,name:"Sony FX3 and 28-70mm kit",daily_price:60},{account_slug:"leo",product_id:4,name:"Sony FX3 body",daily_price:45});
@@ -50,57 +58,57 @@ describe("additions check the complete physical basket",()=>{
   };
   it("preserves the exact selected kit price and both physical components in a read-only quote",async()=>{
     const {tables,ctx}=exactSetup();const before=structuredClone(tables);
-    const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3 and 28-70mm kit",product_id:3,qty:1,preview_only:true});
+    const result=await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3 and 28-70mm kit",product_id:3,qty:1,preview_only:true});
     expect(result).toMatchObject({ok:true,additional_cost_gbp:120,quote:{total_gbp:200},addition_quote:{lines:[expect.objectContaining({product_id:3,qty:1,daily_price_gbp:60})]}});
     expect(result.stock_receipts).toEqual(expect.arrayContaining([expect.objectContaining({item_name:"Sony FX3",requested_units:2}),expect.objectContaining({item_name:"Sony 28-70mm",requested_units:2})]));
     expect(tables).toEqual(before);
   });
   it("rejects the exact kit when its shared lens is already consumed by the current booking",async()=>{
     const {tables,ctx}=exactSetup();tables.items.find(i=>i._id==="lens").qty=1;const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false,stock_receipts:expect.arrayContaining([expect.objectContaining({item_name:"Sony 28-70mm",requested_units:2,available:false})])});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false,stock_receipts:expect.arrayContaining([expect.objectContaining({item_name:"Sony 28-70mm",requested_units:2,available:false})])});
     expect(tables).toEqual(before);
   });
   it("does not quote another account's listing or an unowned mapping",async()=>{
     const {tables,ctx}=exactSetup();const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:999,preview_only:true})).toMatchObject({ok:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:999,preview_only:true})).toMatchObject({ok:false});
     expect(tables).toEqual(before);
     tables.listing_resolution_override.find(r=>r.product_id===3).components=[];
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"FX3 kit",product_id:3,preview_only:true})).toMatchObject({ok:false});
   });
   it("does not replay a body addition when a retry switches between canonical name and exact product ID",async()=>{
     const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"one-request",sender:"renter",body_text:"Please add one extra Sony FX3 body."}];
     const args={thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1,request_message_id:"one-request"};
-    expect(await (applyChange as any)._handler(ctx,args)).toMatchObject({ok:true,action_performed:true});
-    expect(await (applyChange as any)._handler(ctx,{...args,product_id:4})).toMatchObject({ok:true,already_applied:true,action_performed:false});
+    expect(await applyCurrentChange(ctx,args)).toMatchObject({ok:true,action_performed:true});
+    expect(await applyCurrentChange(ctx,{...args,product_id:4})).toMatchObject({ok:true,already_applied:true,action_performed:false});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
   });
   it("recognizes a request already recorded by the previous physical-ID ledger format",async()=>{
     const {tables,ctx}=exactSetup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"legacy-request",sender:"renter",body_text:"Please add one extra Sony FX3 body."}];
     tables.renter_bot_lab_orders[0].changes=[{at:1,summary:"added 1x Sony FX3",request_key:JSON.stringify(["legacy-request","add_item","camera",1])}];
     const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",product_id:4,qty:1,request_message_id:"legacy-request"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",product_id:4,qty:1,request_message_id:"legacy-request"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
     expect(tables).toEqual(before);
   });
   it("quotes one extra with the full native basket and no writes or edit transition",async()=>{
     const {tables,ctx}=setup();const before=structuredClone(tables);
-    const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true});
+    const result=await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true});
     expect(result).toMatchObject({ok:true,preview_only:true,source:"native_lab_proposal",base_items:[{name:"Sony FX3",quantity:1}],added_items:[{name:"Sony 28-70mm",quantity:1}],quote:{total_gbp:116,days:2,lines:[expect.anything(),expect.objectContaining({name:"Sony 28-70mm",qty:1,line_total_gbp:36})]}});
     expect(result.context_transition).toBeUndefined();expect(tables).toEqual(before);
   });
   it("does not invent a dated proposal from a catalogue-only extra",async()=>{
     const {tables,ctx}=setup();tables.online_listings=[];tables.hygglo_product_index=[];tables.listing_resolution_override=tables.listing_resolution_override.filter(o=>o.product_id!==2);
     const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true})).toMatchObject({ok:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:1,preview_only:true})).toMatchObject({ok:false});
     expect(tables).toEqual(before);
   });
   it("rejects an overallocated proposal without writes",async()=>{
     const {tables,ctx}=setup();const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:2,preview_only:true})).toMatchObject({ok:false});expect(tables).toEqual(before);
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",qty:2,preview_only:true})).toMatchObject({ok:false});expect(tables).toEqual(before);
   });
   it("rejects a partial priced proposal and a preview flag on another action",async()=>{
     const {tables,ctx}=setup();delete tables.renter_bot_lab_orders[0].items[0].daily_price_gbp;const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",preview_only:true})).toMatchObject({ok:false});
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"remove_item",item_name:"Sony FX3",preview_only:true})).toMatchObject({ok:false});expect(tables).toEqual(before);
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",preview_only:true})).toMatchObject({ok:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"remove_item",item_name:"Sony FX3",preview_only:true})).toMatchObject({ok:false});expect(tables).toEqual(before);
   });
   it("rejects two extras when the kit already needs one of the two free lenses",async()=>{
     const {tables,ctx}=setup();const before=structuredClone(tables);
@@ -117,12 +125,12 @@ describe("additions check the complete physical basket",()=>{
   it("replays an addition once per inbound across reviewed aliases, while a new request can add more",async()=>{
     const {tables,ctx}=setup();tables.items.find(i=>i._id==="lens").qty=3;
     tables.items.find(i=>i._id==="lens").aliases=["Sony 28 70"];
-    tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
+    tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please update my booking.",fetched_at:1,_creationTime:1}];
     expect(await add(ctx,1)).toMatchObject({ok:true,action_performed:true});
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28 70",qty:1,request_message_id:"renter-1"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28 70",qty:1,request_message_id:"renter-1"})).toMatchObject({ok:true,already_applied:true,action_performed:false});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
     expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(1);
-    tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-2",fetched_at:2,_creationTime:2});
+    tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-2",sender:"renter",body_text:"Please update my booking.",fetched_at:2,_creationTime:2});
     expect(await add(ctx,1)).toMatchObject({ok:true});
     expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(2);
     expect(tables.renter_bot_lab_orders[0].items[1].qty).toBe(2);
@@ -130,7 +138,7 @@ describe("additions check the complete physical basket",()=>{
   it("never lets a delayed tool change the order after another inbound",async()=>{
     const {tables,ctx}=setup();tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"new",fetched_at:2,_creationTime:2}];
     const before=structuredClone(tables);
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",request_message_id:"old"})).toMatchObject({ok:false,error_code:"stale_inbound"});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony 28-70mm",request_message_id:"old"})).toMatchObject({ok:false,error_code:"stale_inbound"});
     expect(tables).toEqual(before);
   });
   it("does not add a free extra to an existing unmapped kit",async()=>{
@@ -183,7 +191,7 @@ describe("item removals preserve exact identity and quantity", () => {
     else tables.renter_bot_lab_bookings[0].status=state;
     const before=structuredClone(tables);
     expect(await remove(ctx,"Sony FX3")).toMatchObject({ok:false});
-    expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3"})).toMatchObject({ok:false});
+    expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3"})).toMatchObject({ok:false});
     expect(tables).toEqual(before);
   });
 });
@@ -227,7 +235,7 @@ describe("date amendments validate stock before writing", () => {
   });
   it("does not move a collected rental's start date or edit an already returned rental", async () => {
     const { tables, ctx } = fixture();
-    expect(await (applyChange as any)._handler(ctx, { thread_id: "__probe__atomic", action: "set_dates", start_date: "2026-10-07", end_date: "2026-10-08" })).toMatchObject({ ok: false });
+    expect(await applyCurrentChange(ctx, { thread_id: "__probe__atomic", action: "set_dates", start_date: "2026-10-07", end_date: "2026-10-08" })).toMatchObject({ ok: false });
     tables.renter_bot_lab_bookings[0].return_date = "2026-10-07";
     expect(await extend(ctx)).toMatchObject({ ok: false });
     expect(tables.renter_bot_lab_orders[0].changes).toEqual([]);
@@ -239,7 +247,7 @@ describe("amended drafts retain atomic cache safety", () => {
     const f = fixture();
     f.tables.conversations = [{ _id: "conversation", thread_id: "__probe__atomic" }];
     f.tables.settings = [{ _id: "settings", draft_epoch: 20 }];
-    f.tables.hygglo_messages = [{ message_id: "renter-1", thread_id: "__probe__atomic", fetched_at: 1, _creationTime: 1 }];
+    f.tables.hygglo_messages = [{ message_id: "renter-1", thread_id: "__probe__atomic", sender:"renter", body_text:"Please update my booking.", fetched_at: 1, _creationTime: 1 }];
     const before = draftContextKey(f.tables.renter_bot_lab_bookings[0], [], f.tables.renter_bot_lab_orders[0]);
     const result = await extend(f.ctx);
     const key = amendedDraftContext(before, "__probe__atomic", [result.context_transition]);
@@ -266,7 +274,7 @@ describe("amended drafts retain atomic cache safety", () => {
 it("replayed removals cannot decrement the quantity twice",async()=>{
  const {tables,ctx}=fixture();tables.items[0].aliases=["FX 3"];
  tables.renter_bot_lab_orders[0].items[0].qty=3;
- tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please update my booking.",fetched_at:1,_creationTime:1}];
  expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:true});
  expect(await remove(ctx,"FX 3",1)).toMatchObject({ok:true,already_applied:true,order:{lines:[expect.objectContaining({qty:2})]}});
  expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
@@ -282,7 +290,7 @@ it("unchanged dates create no extra revision even without a message key",async()
 
 it("replay history cannot claim that a removed item was added again",async()=>{
  const {tables,ctx}=fixture();tables.items[0].qty=3;tables.renter_bot_lab_orders[0].items[0].qty=3;
- tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",fetched_at:1,_creationTime:1}];
+ tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"renter-1",sender:"renter",body_text:"Please update my booking.",fetched_at:1,_creationTime:1}];
  expect(await remove(ctx,"Sony FX3",1)).toMatchObject({ok:true,action_performed:true});
  // Another edit under the same inbound can alter the current order independently.
  expect(await remove(ctx,"Sony FX3",2)).toMatchObject({ok:true,action_performed:true});
@@ -303,7 +311,7 @@ describe("commercial offering identity and marginal quotes",()=>{
   f.tables.online_listings=[{account_slug:"leo",product_id:3,name:"Sony FX3 body",daily_price:20}];
   return f;
  };
- const preview=(ctx:any)=>(applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1,preview_only:true});
+ const preview=(ctx:any)=>applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",item_name:"Sony FX3",qty:1,preview_only:true});
  it("adds a body separately instead of multiplying the already-booked lens kit",async()=>{
   const {ctx,tables}=setup();const before=structuredClone(tables);const p=await preview(ctx);
   expect(p).toMatchObject({ok:true,additional_cost_gbp:40,base_quote:{total_gbp:80},addition_quote:{total_gbp:40},quote:{total_gbp:120,lines:[{product_id:1,qty:1,daily_price_gbp:40},{product_id:3,qty:1,daily_price_gbp:20}]}});
@@ -325,7 +333,7 @@ it("blocks every mistaken edit against a quote-only renter message without writi
  tables.hygglo_messages=[{thread_id:"__probe__atomic",message_id:"quote",sender:"renter",body_text:"Could you quote an extra Sony FX3? Quote only, don't change my booking.",fetched_at:1,_creationTime:1}];
  const before=structuredClone(tables);
  for(const action of ["add_item","remove_item","set_dates"]){
-  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action,item_name:"Sony FX3",qty:1,start_date:"2026-10-08",end_date:"2026-10-09",request_message_id:"quote"})).toMatchObject({ok:false,action_performed:false,error_code:"renter_requested_read_only"});
+  expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action,item_name:"Sony FX3",qty:1,start_date:"2026-10-08",end_date:"2026-10-09",request_message_id:"quote"})).toMatchObject({ok:false,action_performed:false,error_code:"renter_requested_read_only"});
   expect(tables).toEqual(before);
  }
 });
@@ -362,7 +370,7 @@ describe("complete setup acceptance is one transaction",()=>{
  it("refuses a lens-only acceptance that omits its required owner-supplied adapter",async()=>{
   const {tables,ctx}=setupAtomicAddition();const before=structuredClone(tables);
   expect(await applyBasket(ctx,[{product_id:2,qty:1}])).toMatchObject({ok:false,error_code:"complete_setup_required"});
-  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:2,item_name:"Blazar Remus 100mm",qty:1})).toMatchObject({ok:false,error_code:"complete_setup_required"});expect(tables).toEqual(before);
+  expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:2,item_name:"Blazar Remus 100mm",qty:1})).toMatchObject({ok:false,error_code:"complete_setup_required"});expect(tables).toEqual(before);
  });
  it("accepts the lens alone when the renter supplies its explicitly matching adapter",async()=>{
   const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm.";
@@ -389,7 +397,7 @@ describe("Native target restrictions protect actual booking changes",()=>{
  });
  it("also protects the legacy single-add path from a named adapter restriction",async()=>{
   const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't add the PL to L mount adapter.";const before=structuredClone(tables);
-  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:3,item_name:"PL to L mount",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
+  expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"add_item",product_id:3,item_name:"PL to L mount",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
  });
  it("preserves the accepted lens when the renter forbids adding an adapter they supply",async()=>{
   const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't add your PL to L mount adapter. I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm.";
@@ -397,6 +405,24 @@ describe("Native target restrictions protect actual booking changes",()=>{
  });
  it("refuses removal of the exact protected booked model",async()=>{
   const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Don't remove my Blackmagic 6K Full Frame.";const before=structuredClone(tables);
-  expect(await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action:"remove_item",product_id:1,item_name:"BMPCC 6K Full Frame",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
+  expect(await applyCurrentChange(ctx,{thread_id:"__probe__atomic",action:"remove_item",product_id:1,item_name:"BMPCC 6K Full Frame",qty:1})).toMatchObject({ok:false,error_code:"renter_prohibited_item"});expect(tables).toEqual(before);
  });
+});
+
+
+describe("legacy edits require a live renter inbound",()=>{
+  for(const action of ["add_item","remove_item","set_dates"] as const){
+    for(const variant of ["missing_id","empty_id","stale_id","owner_latest","no_message"]){
+      it(`${action} refuses ${variant} before changing the basket or booking`,async()=>{
+        const {tables,ctx}=fixture();
+        if(variant==="owner_latest")tables.hygglo_messages[0].sender="owner";
+        if(variant==="no_message")tables.hygglo_messages=[];
+        const before=structuredClone(tables);
+        const request_message_id=variant==="missing_id"?undefined:variant==="empty_id"?"":variant==="stale_id"?"older-message":"fixture-current";
+        const result=await (applyChange as any)._handler(ctx,{thread_id:"__probe__atomic",action,item_name:"Sony FX3",qty:1,start_date:"2026-10-06",end_date:"2026-10-08",...(request_message_id===undefined?{}:{request_message_id})});
+        expect(result).toMatchObject({ok:false,action_performed:false,error_code:"stale_inbound"});
+        expect(tables).toEqual(before);
+      });
+    }
+  }
 });
