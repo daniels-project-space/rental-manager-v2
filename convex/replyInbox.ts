@@ -1,3 +1,4 @@
+import { renterHistory } from "./lib/renter_history";
 import { conversationStageValidator } from "./lib/conversation_stage_validator";
 import type { ConversationStage } from "./lib/renter_bot_intents";
 import { resolveBotRenter } from "./lib/renter_identity";
@@ -1232,30 +1233,9 @@ export const getThreadContext = internalQuery({
         ? profileRenter(renterMsgs, renter?.renter_dna ?? undefined)
         : (renter?.renter_dna ?? null);
 
-    // Phase 3 welcome-back — prior rentals WITH US for this renter (the current
-    // thread excluded). Counts anything that reached payment/handoff or beyond.
-    let prior_rentals = 0;
-    let last_rental_at: number | null = null;
-    if (renterId) {
-      const rs = await ctx.db
-        .query("reservations")
-        .withIndex("by_renter", (q) => q.eq("renter_id", renterId))
-        .collect();
-      for (const r of rs) {
-        if (r.hygglo_order_id === thread_id) continue;
-        const done =
-          r.status === "completed" ||
-          r.status === "confirmed" ||
-          r.order_step === "DELIVERED" ||
-          r.order_step === "RETURNED" ||
-          r.order_step === "REVIEWED";
-        if (!done) continue;
-        prior_rentals++;
-        const t = r.created_at ?? r._creationTime;
-        if (typeof t === "number" && (last_rental_at == null || t > last_rental_at))
-          last_rental_at = t;
-      }
-    }
+    const history=await renterHistory(ctx,renter,thread_id,londonToday());
+    const prior_rentals=history.recorded_rentals_with_us??0;
+    const last_rental_at=history.last_rental_with_us_at;
 
     // Phase 4 conversation stage (sales funnel). A reservation's DB status is
     // authoritative; a date-less inquiry is read from renter interest signals.
@@ -1639,6 +1619,7 @@ export const getThreadContext = internalQuery({
       renter_dna,
       prior_rentals,
       last_rental_at,
+      renter_history:history,
       availability,
       fact_pack,
       owned_cameras,
@@ -1679,7 +1660,7 @@ export const getThreadContext = internalQuery({
       renter_blacklisted: renter?.blacklisted ?? renter?.blacklist ?? false,
       renter_flagged:
         (renter as { flag_on_request?: boolean } | null)?.flag_on_request ?? false,
-      renter_total_rentals: renter?.total_rentals_count ?? null,
+      renter_total_rentals: renter?.platform_completed_rentals ?? null,
       low_reviews,
       has_reservation: !!reservation,
       rental_stage: rentalStage(reservation ? {...reservation,
@@ -1892,38 +1873,26 @@ export const setDraft = internalMutation({
 
 // ── Renter intelligence persistence (Phase 3) ────────────────────
 
-/**
- * Persist the RenterDNA + rental counts computed in getThreadContext. Called by
- * generateDraft so the trust read survives across threads/sessions. Cheap, and
- * only patches fields we actually have.
- */
-export const persistRenterStats = internalMutation({
-  args: {
-    renter_id: v.id("renters"),
-    renter_dna: v.optional(
-      v.object({
-        style: v.optional(v.string()),
-        expertise: v.optional(v.string()),
-        driver: v.optional(v.string()),
-        energy: v.optional(v.string()),
-        decisionSpeed: v.optional(v.string()),
-        signals_observed: v.optional(v.number()),
-        updated_at: v.optional(v.number()),
-      }),
-    ),
-    total_rentals_count: v.optional(v.number()),
-    last_rental_at: v.optional(v.number()),
-  },
-  handler: async (ctx, { renter_id, renter_dna, total_rentals_count, last_rental_at }) => {
-    const renter = await ctx.db.get(renter_id);
-    if (!renter) return { ok: false };
-    const patch: Record<string, unknown> = {};
-    if (renter_dna) patch.renter_dna = { ...renter_dna, updated_at: Date.now() };
-    if (total_rentals_count != null) patch.total_rentals_count = total_rentals_count;
-    if (last_rental_at != null) patch.last_rental_at = last_rental_at;
-    if (Object.keys(patch).length) await ctx.db.patch(renter_id, patch);
-    return { ok: true };
-  },
+/** Tone learning never writes platform or business-history statistics.
+ * Resolve the person and transcript in the current Native snapshot. */
+export const persistRenterDNA = internalMutation({
+ args:{thread_id:v.string(),message_id:v.string(),epoch:v.number(),context_key:v.string(),renter_id:v.optional(v.id("renters"))},
+ handler:async(ctx,a)=>{
+  if(a.thread_id.startsWith(PROBE_THREAD_PREFIX))return {ok:true,skipped:"lab_isolated"};
+  const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).first();
+  const booking=await getBotBooking(ctx,a.thread_id);
+  const messages=await recentThreadMessages(ctx,a.thread_id,40);
+  const settings=await ctx.db.query("settings").first();
+  if(!conv||messages.at(-1)?.message_id!==a.message_id||(settings?.draft_epoch??0)!==a.epoch||draftContextKey(booking,conv.inquiry_items)!==a.context_key)
+   return {ok:false,reason:"stale_context"};
+  const identity=await resolveBotRenter(ctx,booking,conv);
+  if(identity.identity_conflict||!identity.renter||identity.renter._id!==a.renter_id)return {ok:false,reason:"renter_identity_changed"};
+  const text=messages.filter(m=>m.sender!=="owner").map(m=>m.body_text);
+  if(!text.length)return {ok:true,skipped:"no_renter_messages"};
+  const renter_dna=profileRenter(text,identity.renter.renter_dna);
+  await ctx.db.patch(identity.renter._id,{renter_dna:{...renter_dna,updated_at:Date.now()}});
+  return {ok:true};
+ }
 });
 
 // ── Post-send bookkeeping (called by sendRenterReply action) ──────

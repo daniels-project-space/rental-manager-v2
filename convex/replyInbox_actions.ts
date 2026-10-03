@@ -443,8 +443,8 @@ export const generateDraft = action({
     // this to the renter; it just informs tone + caution).
     const rt: string[] = [];
     if (c.renter_rating != null) rt.push(`${c.renter_rating}★${c.renter_review_count != null ? ` from ${c.renter_review_count} reviews` : ""}`);
-    const pastRentals = c.prior_rentals || c.renter_total_rentals || 0;
-    if (pastRentals) rt.push(`${pastRentals} past rentals with me`);
+    if(c.prior_rentals)rt.push(`${c.prior_rentals} recorded prior rentals with this business`);
+    if(c.renter_total_rentals!=null)rt.push(`${c.renter_total_rentals} completed rentals across Hygglo`);
     if (c.renter_blacklisted) rt.push("BLACKLISTED");
     else if (c.renter_flagged) rt.push("FLAGGED for manual review");
     const lowRated = c.renter_rating != null && c.renter_rating < 4;
@@ -462,7 +462,7 @@ export const generateDraft = action({
       ? `Renter style (internal, adapt my tone to match, never mention): ${dnaText}.`
       : null;
     const welcomeLine = c.prior_rentals
-      ? `Returning renter — this is rental #${c.prior_rentals + 1} with me; they've rented before, so a warm, familiar tone fits (no need to over-explain the basics).`
+      ? `Recorded prior rentals with this business support a warm, familiar tone where appropriate.`
       : null;
 
     // Phase 5: house rules (rules table), money-saving bundle, hard truths.
@@ -1046,14 +1046,11 @@ export const generateDraft = action({
     });
     if (!savedDraft.ok) return { status: "skipped", reason: "stale_inbound", ...generationMeta };
 
-    // Persist the RenterDNA + rental counts so the trust read carries across
-    // threads (best-effort — never block the draft on it).
-    if (c.renter_id) {
-      await ctx.runMutation(internal.replyInbox.persistRenterStats, {
-        renter_id: c.renter_id,
-        renter_dna: c.renter_dna ?? undefined,
-        total_rentals_count: c.prior_rentals,
-        last_rental_at: c.last_rental_at ?? undefined,
+    // Lab conversations cannot train a real renter profile. Business history
+    // stays derived; only Native transcript-based tone learning is persisted.
+    if(c.renter_id && !thread_id.startsWith("__probe__")) {
+      await ctx.runMutation(internal.replyInbox.persistRenterDNA, {
+        thread_id,renter_id:c.renter_id,message_id:c.last_message_id??"",epoch:c.draft_epoch,context_key:c.draft_context_key,
       });
     }
     return {

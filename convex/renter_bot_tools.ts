@@ -1,3 +1,4 @@
+import { renterHistory } from "./lib/renter_history";
 import { getBotRenter } from "./lib/renter_identity";
 import { lensRequirementsValidator } from "./lib/owner_checks";
 import { ownerChecksForBot } from "./renter_bot_owner_checks";
@@ -55,7 +56,7 @@ export const get_renter_context = query({
     const profile=await getBotRenter(ctx,reservation,conversation);
     const renter=profile?{
       _id:String(profile._id),display_name:profile.display_name,hygglo_rating:profile.hygglo_rating,
-      total_rentals_count:profile.total_rentals_count,total_spend_gbp:profile.total_spend_gbp,
+      total_rentals_count:profile.platform_completed_rentals,total_spend_gbp:profile.total_spend_gbp,
       blacklisted:profile.blacklisted??profile.blacklist,blacklist_reason:profile.blacklist_reason,renter_dna:profile.renter_dna,
     }:null;
 
@@ -87,6 +88,7 @@ export const get_renter_context = query({
           : conversation?.account_slug ?? reservation?.account_slug ?? "unknown",
       hygglo_order_id: reservation?.hygglo_order_id ?? thread_id,
       renter,
+      renter_history:await renterHistory(ctx,profile,thread_id,londonToday()),
       owner_checks: ownerChecks,
       conversation_stage: stage,
       rental_stage: rentalStage(reservation, londonToday()),

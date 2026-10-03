@@ -64,7 +64,10 @@ export const applyTrust = internalMutation({
     const hasReviews = (review_count ?? 0) > 0;
     if (rating != null && hasReviews) patch.hygglo_rating = rating;
     if (hasReviews) patch.hygglo_review_count = review_count;
-    if (total_rentals != null) patch.total_rentals_count = total_rentals;
+    if (total_rentals != null && Number.isInteger(total_rentals) && total_rentals >= 0) {
+      patch.total_rentals_count = total_rentals;
+      patch.platform_completed_rentals = total_rentals;
+    }
     await ctx.db.patch(renter_id, patch);
 
     // Replace this renter's cached reviews with the renter-SIDE set (with text).

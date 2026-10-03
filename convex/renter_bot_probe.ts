@@ -16,6 +16,21 @@ import { bestMatch } from "./lib/item_name_match";
 // probe/fixture threads from real UI surfaces without duplicating the string.
 export const PREFIX = LAB_THREAD_PREFIX;
 
+/** Owned profile fixture for exercising trust/history contracts without using
+ * a real person's identity. Cleanup removes only this exact namespace. */
+export const seedRenterProfile=internalMutation({
+ args:{thread_id:v.string(),legacy_count:v.number()},
+ handler:async(ctx,a)=>{
+  if(!a.thread_id.startsWith(PREFIX)||!Number.isInteger(a.legacy_count)||a.legacy_count<0)throw new Error("Use an owned Lab profile fixture");
+  const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).first();
+  if(!conv)throw new Error("Lab conversation required");
+  const key=`${a.thread_id}-renter`;
+  if(conv.renter_id){const existing=await ctx.db.get(conv.renter_id);if(existing?.hygglo_user_id!==key)throw new Error("Refusing to replace another renter identity");return {renter_id:conv.renter_id};}
+  const renter_id=await ctx.db.insert("renters",{hygglo_user_id:key,display_name:"Lab Renter",total_rentals_count:a.legacy_count,last_rental_at:1000,created_at:Date.now()});
+  await ctx.db.patch(conv._id,{renter_id});return {renter_id};
+ }
+});
+
 export const seed = internalMutation({
   args: {
     thread_id: v.string(),
@@ -253,6 +268,13 @@ export const cleanup = mutation({
     let n = 0;
     const convs = await ctx.db.query("conversations").withIndex("by_thread", (q) => thread_id ? q.eq("thread_id", thread_id) : q.gte("thread_id", PREFIX).lt("thread_id", `${PREFIX}\uffff`)).collect();
     for (const c of convs) {
+      if(c.renter_id){
+        const profile=await ctx.db.get(c.renter_id);
+        if(profile?.hygglo_user_id===`${c.thread_id}-renter`){
+          for(const review of await ctx.db.query("renter_reviews").withIndex("by_renter",q=>q.eq("renter_id",profile._id)).collect())await ctx.db.delete(review._id);
+          await ctx.db.delete(profile._id);
+        }
+      }
       for (const m of await ctx.db
         .query("hygglo_messages")
         .withIndex("by_thread", (q) => q.eq("thread_id", c.thread_id))

@@ -201,6 +201,7 @@ import type * as lib_renter_date_acceptance from "../lib/renter_date_acceptance.
 import type * as lib_renter_date_proposal from "../lib/renter_date_proposal.js";
 import type * as lib_renter_dna from "../lib/renter_dna.js";
 import type * as lib_renter_draft_evidence from "../lib/renter_draft_evidence.js";
+import type * as lib_renter_history from "../lib/renter_history.js";
 import type * as lib_renter_identity from "../lib/renter_identity.js";
 import type * as lib_renter_item_names from "../lib/renter_item_names.js";
 import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
@@ -542,6 +543,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_date_proposal": typeof lib_renter_date_proposal;
   "lib/renter_dna": typeof lib_renter_dna;
   "lib/renter_draft_evidence": typeof lib_renter_draft_evidence;
+  "lib/renter_history": typeof lib_renter_history;
   "lib/renter_identity": typeof lib_renter_identity;
   "lib/renter_item_names": typeof lib_renter_item_names;
   "lib/renter_kit_evidence": typeof lib_renter_kit_evidence;

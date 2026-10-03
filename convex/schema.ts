@@ -264,7 +264,10 @@ const operationalSchema = defineSchema({
     phone: v.optional(v.string()),
     hygglo_rating: v.optional(v.number()),
     hygglo_review_count: v.optional(v.number()),
+    // Legacy count may have been overwritten by old bot-local statistics.
     total_rentals_count: v.optional(v.number()),
+    // Written only by an authoritative platform trust refresh.
+    platform_completed_rentals: v.optional(v.number()),
     // When renter_trust last read this renter's Hygglo order detail. Lets the
     // backfill cron progress past already-checked (incl. 0-review) renters.
     trust_checked_at: v.optional(v.number()),
@@ -590,6 +593,7 @@ const operationalSchema = defineSchema({
     // slice is normally only a handful of rows. Never scan every completed row.
     .index("by_status_close_pending", ["status", "platform_close_pending"])
     .index("by_renter", ["renter_id"])
+    .index("by_hygglo_user_id", ["hygglo_user_id"])
     .index("by_account_slug", ["account_slug"])
     .index("by_start_date", ["start_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])
