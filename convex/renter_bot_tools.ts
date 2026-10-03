@@ -1,5 +1,5 @@
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
-import { verifiedLensCapabilities, meetsLensRequirements, reconcileLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
+import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
 import { availabilityBasket } from "./lib/availability_basket";
@@ -1180,11 +1180,13 @@ export const find_owned_alternatives = query({
     const latestRenter = recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "";
     const expectedUse = requiresBookingContext ? explicitRecommendationUse(latestRenter) : undefined;
     const lensQuery = lens_requirements !== undefined || normKind(kind) === "lens" || normKind(target?.kind) === "lens";
-    const lensCheck = reconcileLensRequirements(lens_requirements, lensQuery ? [item_name ?? "", latestRenter] : []);
+    const desiredLensRequirements = lens_requirements ?? {};
+    const lensRequirementsSpecified = lens_requirements !== undefined;
     const basketContext = {requires_booking_context:requiresBookingContext,open_basket:!closed && existingLines.length>0,
       can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expectedUse,replace_product_id,replace_quantity};
     const alternatives: Array<Record<string, unknown>> = [];
     const rejected = { requirements: 0, stock: 0 };
+    const lensReviewNeeded: Array<{name:string;unverified_requirements:string[]}> = [];
     const rejectedStockOptions: Array<Record<string,unknown>> = [];
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
@@ -1202,9 +1204,16 @@ export const find_owned_alternatives = query({
       const spec = specsByItem.get(String(it._id));
       const capabilities = verifiedCameraCapabilities(spec, it.name_canonical);
       const lensCapabilities = lensQuery && it.kind === "lens" ? verifiedLensCapabilities(spec,it.name_canonical) : null;
-      if (lensQuery && (it.kind !== "lens" || lensCheck.conflict || !meetsLensRequirements(lensCapabilities,lensCheck.requirements))) {rejected.requirements++; continue;}
-      if (cameraQuery && !meetsCameraRequirements(capabilities, requirements, lens_mount)) { rejected.requirements++; continue; }
       if (!cameraQuery && lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
+      if (lensQuery) {
+        if (it.kind !== "lens" || !lensRequirementsSpecified) {rejected.requirements++; continue;}
+        const assessment = assessLensRequirements(lensCapabilities, desiredLensRequirements);
+        if (assessment.status !== "match") {
+          if (assessment.status === "unknown") lensReviewNeeded.push({name:it.name_canonical,unverified_requirements:assessment.unknown});
+          rejected.requirements++; continue;
+        }
+      }
+      if (cameraQuery && !meetsCameraRequirements(capabilities, requirements, lens_mount)) { rejected.requirements++; continue; }
       // With a known target, keep suggestions in the same category. Offering a
       // lens as a substitute for a camera body is never useful.
       const requiredKind = normKind(target?.kind ?? kind);
@@ -1308,10 +1317,13 @@ export const find_owned_alternatives = query({
       lower_value_reason: lower_value_only && targetValue == null ? "Original item identity or replacement value is unverified; ask the owner before suggesting a lower-value option" : null,
       verification_approval_guaranteed: false,
       camera_requirements: cameraQuery ? requirements : null,
-      lens_requirements: lensQuery ? lensCheck.requirements : null,
-      lens_requirements_conflict: lensQuery && lensCheck.conflict,
-      lens_requirement_checked: lensQuery && hasLensRequirements(lensCheck.requirements),
-      lens_guidance: "Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",
+      lens_requirements: lensQuery ? desiredLensRequirements : null,
+      lens_requirements_specified: lensQuery && lensRequirementsSpecified,
+      lens_requirement_checked: lensQuery && lensRequirementsSpecified && hasLensRequirements(desiredLensRequirements),
+      lens_review_needed: lensQuery ? lensReviewNeeded : [],
+      lens_search_outcome: !lensQuery ? null : !lensRequirementsSpecified ? "requirements_not_specified" : alternatives.length ? "verified_matches" : lensReviewNeeded.length ? "needs_spec_review" : "no_verified_match",
+      lens_inventory_absence_established: false,
+      lens_guidance: "Pass a structured lens_requirements object for the desired option, including {} when no technical constraints apply. Current-item descriptions and questions are not alternative requirements. Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. lens_review_needed names are owned items requiring specification review, not verified alternatives. Zero verified matches never proves that we do not own an item or that it is booked; explain missing verification and ask the owner to check. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",
       recording_requirement_checked: !!requirements.recording,
       // Only the recorded mode properties are checked, never arbitrary codecs.
       requirements_match_is_not_codec_verification: true,

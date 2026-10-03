@@ -801,6 +801,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
               const alts: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
                 account_slug: account_slug || "",
                 kind: it.kind,
+                ...(it.kind === "lens" ? {lens_requirements:{}} : {}),
                 item_name: it.name ?? undefined,
                 exclude_name: it.name ?? undefined,
                 start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
@@ -961,6 +962,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
             const glass: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
               account_slug: account_slug || "",
               kind: "lens",
+              lens_requirements: {},
               lens_mount: it.lens_mount,
               start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
             });

@@ -77,7 +77,7 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
 describe("lower-value recommendations use recorded replacement value",()=>{
  const run=async(f:any,name="Canon EF 24-105mm f/4")=>{
   const {find_owned_alternatives}=await import("./renter_bot_tools");
-  return (find_owned_alternatives as any)._handler(f.ctx,{account_slug:"leo",kind:"lens",item_name:name,lower_value_only:true});
+  return (find_owned_alternatives as any)._handler(f.ctx,{account_slug:"leo",kind:"lens",lens_requirements:{},item_name:name,lower_value_only:true});
  };
  function lenses(){const f=fixture();f.tables.items=[
   {_id:"original",name_canonical:"Canon EF 24-105mm f/4",kind:"lens",lens_mount:"EF",qty:1,status:"active",is_marketing_only:false,replacement_cost_gbp:1000},

@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {verifiedLensCapabilities,meetsLensRequirements,requestedLensRequirements,reconcileLensRequirements} from "./lens_requirements";
+import {verifiedLensCapabilities,meetsLensRequirements,assessLensRequirements} from "./lens_requirements";
 const spec={item_name_canonical:"Exact lens",description:"Reviewed",source:"manufacturer-verified",source_url:"https://manufacturer.example/model",verified_model:"model",verified_at:10,lens_capabilities:{focal_min_mm:16,focal_max_mm:35,max_aperture_f:2.8,focus_mode:"autofocus" as const,wide_angle:true,coverage:"full_frame" as const,verified_model:"model",source_url:"https://manufacturer.example/model",verified_at:10}};
 describe("verified lens requirement boundary",()=>{
  it("requires exact identity and current model/source provenance",()=>{
@@ -25,16 +25,12 @@ describe("verified lens requirement boundary",()=>{
   expect(verifiedLensCapabilities({...spec,lens_capabilities:{...spec.lens_capabilities,focal_min_mm:0}},"Exact lens")).toBeNull();
   expect(meetsLensRequirements(verifiedLensCapabilities(spec,"Exact lens"),{focal_mm:-1})).toBe(false);
  });
- it("preserves explicit properties omitted or contradicted by the tool caller",()=>{
-  expect(reconcileLensRequirements(undefined,["wide-angle autofocus lens"])).toEqual({requirements:{wide_angle:true,focus_mode:"autofocus"},conflict:false});
-  expect(reconcileLensRequirements({focus_mode:"manual_focus"},["I need autofocus"] ).conflict).toBe(true);
-  expect(reconcileLensRequirements(undefined,["autofocus or manual-focus"] ).conflict).toBe(true);
-  expect(requestedLensRequirements("I don't need autofocus, but need a wide-angle lens")).toEqual({wide_angle:true});
-  expect(requestedLensRequirements("wide-angle lens, no fisheye")).toEqual({wide_angle:true,excluded_projections:["fisheye"]});
-  expect(requestedLensRequirements("I don't want autofocus")).toEqual({focus_mode:"manual_focus"});
-  expect(requestedLensRequirements("AF wide-angle lens")).toEqual({focus_mode:"autofocus",wide_angle:true});
-  expect(reconcileLensRequirements(undefined,["I don't need autofocus; I want manual-focus"])).toEqual({requirements:{focus_mode:"manual_focus"},conflict:false});
-  expect(meetsLensRequirements({...verifiedLensCapabilities(spec,"Exact lens")!,projection:"fisheye"},{excluded_projections:["fisheye"]})).toBe(false);
-  expect(meetsLensRequirements({...verifiedLensCapabilities(spec,"Exact lens")!,projection:"anamorphic"},{excluded_projections:["fisheye"]})).toBe(true);
+ it("distinguishes missing evidence from a proven mismatch",()=>{
+  const cap=verifiedLensCapabilities(spec,"Exact lens");
+  expect(assessLensRequirements(cap,{focus_mode:"autofocus",wide_angle:true})).toEqual({status:"match",unknown:[],mismatched:[]});
+  expect(assessLensRequirements(null,{focus_mode:"autofocus",wide_angle:true})).toEqual({status:"unknown",unknown:["focus_mode","wide_angle"],mismatched:[]});
+  expect(assessLensRequirements({...cap!,focus_mode:"manual_focus"},{focus_mode:"autofocus",macro:true})).toEqual({status:"mismatch",unknown:["macro"],mismatched:["focus_mode"]});
+  expect(assessLensRequirements(cap,{max_aperture_t:2.8}).status).toBe("unknown");
+  expect(assessLensRequirements(cap,{focal_mm:90}).status).toBe("mismatch");
  });
 });

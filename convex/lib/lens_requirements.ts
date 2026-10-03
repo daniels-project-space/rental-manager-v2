@@ -19,29 +19,18 @@ export function meetsLensRequirements(cap:LensCapabilities|null,req:LensRequirem
  for(const [key,value] of [["max_wide_focal_mm",cap.focal_min_mm],["max_aperture_f",cap.max_aperture_f],["max_aperture_t",cap.max_aperture_t]] as const)if(req[key]!==undefined&&(!Number.isFinite(req[key])||req[key]!<=0||value===undefined||value>req[key]!))return false;
  return true;
 }
-/** Preserve explicit hard properties even if a caller omits structured fields.
- * Negated optional preferences are not converted into opposite requirements. */
-function lensIntent(text:string) {
- const focusModes=new Set<string>(),projections=new Set<string>();
- const req:LensRequirements={};
- const optional=/\b(?:(?:don['’]?t|do not)\s+(?:need|require)|no need (?:for|to use))\s+(?:an?\s+)?(?:auto[- ]?focus|AF|manual[- ]focus|wide[- ]angle|macro|fisheye)\b/gi;
- let s=text.replace(optional,"");
- s=s.replace(/\b(?:non[- ]|no |not (?:an? )?|without |(?:don['’]?t|do not) want (?:an? )?)(fisheye|anamorphic)\b/gi,(_,projection:string)=>{req.excluded_projections=[...(req.excluded_projections??[]),projection.toLowerCase() as "fisheye"|"anamorphic"];return "";});
- s=s.replace(/\b(?:no |without |(?:don['’]?t|do not) want )(auto[- ]?focus|AF|manual[- ]focus)\b/gi,(_,focus:string)=>{req.focus_mode=/^(?:auto|AF$)/i.test(focus)?"manual_focus":"autofocus";focusModes.add(req.focus_mode);return "";});
- if(/\b(?:auto[- ]?focus|AF)\b/i.test(s)){req.focus_mode="autofocus";focusModes.add(req.focus_mode);}
- if(/\bmanual[- ]focus\b/i.test(s)){req.focus_mode="manual_focus";focusModes.add(req.focus_mode);}
- if(/\bwide[- ]angle\b/i.test(s))req.wide_angle=true;
- if(/\bmacro\b/i.test(s))req.macro=true;
- if(/\bfisheye\b/i.test(s)){req.projection="fisheye";projections.add(req.projection);}
- if(/\banamorphic\b/i.test(s)){req.projection="anamorphic";projections.add(req.projection);}
- return {requirements:req,conflict:focusModes.size>1||projections.size>1};
-}
-export function requestedLensRequirements(text:string):LensRequirements {return lensIntent(text).requirements;}
-export function reconcileLensRequirements(explicit:LensRequirements|undefined, texts:string[]) {
- const req:LensRequirements={...explicit};let conflict=false;
- for(const text of texts){const intent=lensIntent(text),parsed=intent.requirements;conflict ||= intent.conflict;
-  for(const [key,value] of Object.entries(parsed)){if(key==="excluded_projections"){req.excluded_projections=[...new Set([...(req.excluded_projections??[]),...(value as Array<"fisheye"|"anamorphic">)])];continue;}if(req[key as keyof LensRequirements]!==undefined&&req[key as keyof LensRequirements]!==value)conflict=true;Object.assign(req,{[key]:value});}
+/** Assess each structured desired-item requirement independently. Missing
+ * reviewed evidence is distinct from a reviewed property that fails it. */
+export function assessLensRequirements(cap: LensCapabilities | null, req: LensRequirements) {
+ const unknown: string[] = [], mismatched: string[] = [];
+ for (const [key,value] of Object.entries(req)) {
+  if(value===undefined||(Array.isArray(value)&&!value.length))continue;
+  const known = key==="focal_mm" ? cap?.focal_min_mm!==undefined&&cap?.focal_max_mm!==undefined
+   : key==="max_wide_focal_mm" ? cap?.focal_min_mm!==undefined
+   : key==="excluded_projections" ? cap?.projection!==undefined
+   : cap?.[key as keyof LensCapabilities]!==undefined;
+  if(!known)unknown.push(key);
+  else if(!meetsLensRequirements(cap,{[key]:value}))mismatched.push(key);
  }
- if(req.projection&&req.excluded_projections?.includes(req.projection))conflict=true;
- return {requirements:req,conflict};
+ return {status:mismatched.length ? "mismatch" as const : unknown.length ? "unknown" as const : "match" as const,unknown,mismatched};
 }
