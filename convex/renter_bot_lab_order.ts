@@ -15,7 +15,7 @@ import type { PriceTier } from "./lib/hygglo_pricing";
 import { inclusiveDays, summarise } from "./lib/renter_order_quote";
 export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate, loadStockSources } from "./lib/renter_stock";
-import { checkOrderRentalStock } from "./lib/renter_order_stock";
+import { checkOrderRentalStock, resolveOrderPhysicalItems, sameOrderPhysicalItems, type OrderPhysicalItem } from "./lib/renter_order_stock";
 import { loadListingInventory } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
@@ -765,7 +765,10 @@ export const simulateVerificationFailure = mutation({
     const now = Date.now();
     await ctx.db.patch(booking._id, { status: "cancelled", order_step: "VERIFICATION_FAILED" });
     await ctx.db.patch(order._id, { changes: [...order.changes, { at: now, summary: "Final verification failure: simulated booking automatically cancelled" }], updated_at: now });
-    await ctx.db.insert("renter_bot_lab_referrals", { code: a.referral_code, source_thread_id: a.thread_id, account_slug: order.account_slug, created_at: now, expires_at: now + 7 * 86400000 });
+    let physicalItems:OrderPhysicalItem[]|undefined;
+    try {const resolved=await resolveOrderPhysicalItems(ctx,order.account_slug,order.items);if(resolved.items.length)physicalItems=[...resolved.items];}
+    catch { /* Final cancellation must still succeed when catalogue identity needs review. */ }
+    await ctx.db.insert("renter_bot_lab_referrals", { code: a.referral_code, source_thread_id: a.thread_id, account_slug: order.account_slug, created_at: now, expires_at: now + 7 * 86400000, ...(physicalItems?{physical_items:physicalItems}:{}) });
     const message = verificationFailureReply(a.referral_code);
     await ctx.db.insert("hygglo_messages", { account_slug: order.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-verification-failed`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
     return { ok: true, already_applied: false, referral_code: a.referral_code, message };
@@ -791,6 +794,9 @@ export const redeemReferral = mutation({
       return { ok: false, error: "Start an empty inquiry for the friend's own booking" };
     if (!source.start_date || !source.end_date || source.start_date < londonToday())
       return { ok: false, error: "Original dates have passed. Choose new dates with the owner" };
+    const identity=await resolveOrderPhysicalItems(ctx,target.account_slug,source.items);
+    if(!sameOrderPhysicalItems(referral.physical_items,[...identity.items]))
+      return {ok:false,error:"The original equipment identity needs review before restoring this basket",reason:"referral_basket_identity_changed_or_unverified"};
     const lines = [];
     for (const old of source.items) {
       if (old.product_id != null) {

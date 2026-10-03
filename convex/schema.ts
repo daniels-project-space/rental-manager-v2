@@ -2590,6 +2590,9 @@ const operationalSchema = defineSchema({
     created_at: v.number(),
     expires_at: v.number(),
     redeemed_by: v.optional(v.string()),
+    /** Immutable tracked physical basket; absent legacy/unresolved snapshots
+     * require owner review rather than silently adopting current mappings. */
+    physical_items: v.optional(v.array(v.object({item_id:v.string(),name:v.string(),quantity:v.number()}))),
   }).index("by_code", ["code"]).index("by_source", ["source_thread_id"]),
 
   renter_bot_lab_orders: defineTable({

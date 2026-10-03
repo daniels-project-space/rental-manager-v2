@@ -72,6 +72,38 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
    const before=structuredClone(f.tables);expect(await redeem(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(before);
   }
  });
+ it("does not silently substitute another available camera when a listing mapping changes",async()=>{
+  const f=setup();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;
+  await fail(f.ctx);
+  expect(f.tables.renter_bot_lab_referrals[0].physical_items).toEqual([{item_id:"camera",name:"Sony FX3",quantity:1}]);
+  f.tables.items.push({...f.tables.items[0],_id:"other-camera",name_canonical:"Sony FX6"});
+  f.tables.listing_resolution_override[0].components=[{item_id:"other-camera",qty:1}];
+  f.tables.online_listings[0].name="Sony FX6";
+  const {checkOrderRentalStock}=await import("./lib/renter_order_stock");
+  expect(await checkOrderRentalStock(f.ctx as any,"leo",f.tables.renter_bot_lab_orders[0].items,"2099-10-06","2099-10-07","__probe__friend")).toMatchObject({available:true});
+  const before=structuredClone(f.tables);
+  expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_basket_identity_changed_or_unverified"});
+  expect(f.tables).toEqual(before);
+ });
+ it("requires review for changed quantities, relabelled inventory identities and legacy referrals",async()=>{
+  for(const change of ["quantity","identity_name","legacy"]) {
+   const f=setup();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;f.tables.items[0].qty=4;
+   await fail(f.ctx);
+   if(change==="quantity")f.tables.listing_resolution_override[0].components[0].qty=2;
+   else if(change==="identity_name")f.tables.items[0].name_canonical="Sony FX6";
+   else delete f.tables.renter_bot_lab_referrals[0].physical_items;
+   const before=structuredClone(f.tables);
+   expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_basket_identity_changed_or_unverified"});
+   expect(f.tables).toEqual(before);
+  }
+ });
+ it("still cancels a final verification failure when the source catalogue is unresolved",async()=>{
+  const f=setup();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;f.tables.listing_resolution_override=[];
+  expect(await fail(f.ctx)).toMatchObject({ok:true});
+  expect(f.tables.renter_bot_lab_bookings[0].status).toBe("cancelled");
+  expect(f.tables.renter_bot_lab_referrals[0].physical_items).toBeUndefined();
+  const before=structuredClone(f.tables);expect(await redeem(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(before);
+ });
 });
 
 describe("lower-value recommendations use recorded replacement value",()=>{
