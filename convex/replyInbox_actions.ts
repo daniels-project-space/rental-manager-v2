@@ -1,4 +1,4 @@
-import { committedAdditionConfirmation } from "./lib/amendment_confirmation";
+import { committedAmendmentConfirmation } from "./lib/amendment_confirmation";
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
@@ -602,6 +602,33 @@ export const generateDraft = action({
       price?: boolean;
       specs?: boolean;
     } = {};
+    const initialMessageId=c.last_message_id,initialEpoch=c.draft_epoch;
+    let nativeRecoveryReason:string|undefined;
+    // A transport failure may hide the tool receipt after its Native write.
+    // Read the current ledger instead of calling the model or edit tool again.
+    const recoverCommittedFailure=async(reason:string):Promise<boolean>=>{
+      if(!initialOrder)return false;
+      try{
+        const fresh=await ctx.runQuery(internal.replyInbox.getThreadContext,{thread_id});
+        if(fresh.last_message_id!==initialMessageId || fresh.draft_epoch!==initialEpoch)return false;
+        const after=await ctx.runQuery(internal.renter_bot_lab_order.__service_get,{thread_id});
+        if(!after || !Array.isArray(after.changes))return false;
+        const transition:DraftContextTransition={source:"native_lab_amendment",thread_id,
+          before_context_key:initialContextKey,after_context_key:fresh.draft_context_key,
+          before_revision:initialOrder.changes.length,after_revision:after.changes.length};
+        const confirmation=committedAmendmentConfirmation({threadId:thread_id,account:fresh.account_slug??"",
+          messageId:initialMessageId??"",beforeKey:initialContextKey,afterKey:fresh.draft_context_key,
+          transitions:[transition],before:initialOrder,after});
+        if(!confirmation)return false;
+        c=fresh;amendmentTransitions=[transition];nativeRecoveryReason=reason;
+        draft=confirmation.text;usedTools=true;mastraOk=true;routeBookingModified=true;
+        routePriceEvidence=confirmation.prices;routePriceRequest=confirmation.request;
+        generationMeta.draft_stage=fresh.rental_stage.stage;
+        generationMeta.evidence={...(generationMeta.evidence??{model_id:generationMeta.model_id??"native-amendment-recovery",stage:fresh.rental_stage.stage,stock:[]}),
+          stage:fresh.rental_stage.stage,prices:confirmation.prices};
+        return true;
+      }catch{return false;}
+    };
     { // One canonical generation path for Lab and human-reviewed drafts.
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
@@ -622,8 +649,9 @@ export const generateDraft = action({
         if (!resp.ok) {
           const generation_error = await canonicalGenerationError(resp);
           console.warn("[generateDraft] canonical generation failed", generation_error);
-          return { status: "skipped", reason: `canonical_generation_http_${resp.status}`, generation_error };
-        }
+          if(!await recoverCommittedFailure(`canonical_generation_http_${resp.status}`))
+            return { status: "skipped", reason: `canonical_generation_http_${resp.status}`, generation_error };
+        } else {
         const j = (await resp.json()) as {
           draft?: string;
           model_id?: string;
@@ -766,15 +794,19 @@ export const generateDraft = action({
             );
           }
         }
+        }
       } catch (error) {
         const kind = error instanceof Error ? error.name.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase() : "unknown";
         console.warn(`[generateDraft] canonical generation failed (${kind})`);
-        return { status: "skipped", reason: `canonical_generation_error_${kind}` };
+        if(!await recoverCommittedFailure(`canonical_generation_error_${kind}`))
+          return { status: "skipped", reason: `canonical_generation_error_${kind}` };
       }
     }
 
-    if (!mastraOk) return { status: "skipped", reason: "canonical_generation_unavailable" };
-    if (!draft) return { status: "ok", draft };
+    if ((!mastraOk || !draft) && !await recoverCommittedFailure(draft ? "canonical_generation_unavailable" : "canonical_generation_empty_reply")) {
+      if(!mastraOk)return { status: "skipped", reason: "canonical_generation_unavailable" };
+      return { status: "ok", draft };
+    }
 
     // ── Grounded self-check (lever 3) ────────────────────────────
     // Run one cheap Haiku pass that hedges any UNSUPPORTED factual claim before
@@ -949,15 +981,16 @@ export const generateDraft = action({
     );
     if (unresolvedCriticalFlags.length > 0 && amendmentTransitions.length === 1 && initialOrder) {
       const after = await ctx.runQuery(internal.renter_bot_lab_order.__service_get, { thread_id });
-      const confirmation = committedAdditionConfirmation({ threadId: thread_id,
+      const confirmation = committedAmendmentConfirmation({ threadId: thread_id,
         account: c.account_slug ?? "", messageId: c.last_message_id ?? "",
         beforeKey: initialContextKey, afterKey: c.draft_context_key,
         transitions: amendmentTransitions, before: initialOrder, after });
       if (confirmation) {
-        const recovered = guardDraft(confirmation, { ...guardOptions, bookingModified: true });
+        const recovered = guardDraft(confirmation.text, { ...guardOptions, bookingModified: true, priceEvidence:confirmation.prices, priceRequest:confirmation.request });
         if (recovered.text.trim() && !recovered.flags.some(f => f.action === "flagged" && f.severity === "critical")) {
           recovered.flags.push({ type: "AMENDMENT_CONFIRMATION_RECOVERED", severity: "medium", action: "rewritten",
-            detail: `Confirmed the stored Native addition after rejecting ${unresolvedCriticalFlags.map(f => f.type).join(", ")}. Original candidate: ${checkedDraft}` });
+            detail: `Confirmed the stored Native ${confirmation.action} after rejecting ${unresolvedCriticalFlags.map(f => f.type).join(", ")}. Original candidate: ${checkedDraft}` });
+          if(generationMeta.evidence)generationMeta.evidence.prices=confirmation.prices;
           guard = recovered;
           unresolvedCriticalFlags = [];
         }
@@ -975,6 +1008,8 @@ export const generateDraft = action({
         ...(thread_id.startsWith("__probe__") ? { rejectedDraft: checkedDraft } : {}) };
     }
 
+    if(nativeRecoveryReason)guard.flags.push({type:"AMENDMENT_CONFIRMATION_RECOVERED",severity:"medium",action:"rewritten",
+      detail:`Confirmed the stored Native edit after ${nativeRecoveryReason}; no edit or model call was repeated.`});
     const finalDraft = guard.text.trim();
 
     const savedDraft = await ctx.runMutation(internal.replyInbox.setDraft, {

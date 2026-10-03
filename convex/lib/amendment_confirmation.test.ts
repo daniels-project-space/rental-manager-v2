@@ -42,3 +42,48 @@ describe("stored addition confirmation recovery", () => {
   ];
   it.each(cases)("retains human review for %s",(_,change)=>{const i=input();change(i);expect(committedAdditionConfirmation(i)).toBeNull();});
 });
+
+import dateFixture from "../../src/lib/fixtures/renter-committed-date.json";
+import removalFixture from "../../src/lib/fixtures/renter-committed-removal.json";
+import { committedAmendmentConfirmation } from "./amendment_confirmation";
+const dateInput=()=>({...structuredClone(dateFixture.input),transitions:structuredClone(dateFixture.input.transitions) as DraftContextTransition[]});
+const removalInput=()=>({...structuredClone(removalFixture.input),transitions:structuredClone(removalFixture.input.transitions) as DraftContextTransition[]});
+describe("Native date and removal failure recovery",()=>{
+ it("confirms the actual date edit with raw-tier £170 and independent Native prices",()=>{
+  const result=committedAmendmentConfirmation(dateInput());
+  expect(result).toMatchObject({action:"set_dates",text:"I've updated your booking dates to 20 October 2026 to 22 October 2026. The updated booking total is £170."});
+  expect(result?.prices[0]).toMatchObject({total_gbp:170,days:3});expect(result?.prices[1]).toMatchObject({daily_rate_gbp:56.67,total_gbp:170});
+ });
+ it("confirms the actual removal while retaining the booked camera and adapter",()=>{
+  const result=committedAmendmentConfirmation(removalInput());
+  expect(result?.action).toBe("remove_item");expect(result?.text).toContain("1x Blazar Remus 100mm");expect(result?.text).toContain("£144");
+  expect(result?.request.items).toHaveLength(2);
+ });
+ for(const makeInput of [input,dateInput,removalInput]){
+  it("passes the normal guard with independently reconstructed Native prices",()=>{
+   const result=committedAmendmentConfirmation(makeInput())!;expect(result).not.toBeNull();
+   const guard=guardDraft(result.text,{history:[],lastRenterMessage:"Please update my booking.",account:"leo",stage:"CONFIRMED_UPCOMING",ownerApproved:true,bookingModified:true,hasItemGrounding:true,priceEvidence:result.prices,priceRequest:result.request,stockRequest:result.request});
+   expect(guard.flags.filter(f=>f.severity==="critical"&&f.action==="flagged")).toEqual([]);
+  });
+ }
+ for(const [label,mutate] of [
+  ["wrong target date",(i:any)=>i.after.changes.at(-1).request_key=JSON.stringify([i.messageId,"set_dates","2026-10-20","2026-10-23"])],
+  ["changed basket",(i:any)=>i.after.lines[0].qty++],
+  ["changed raw rate",(i:any)=>i.after.lines[0].daily_price_gbp++],
+  ["changed captured tiers",(i:any)=>i.after.lines[0].price_tiers[0].pricePerDay++],
+  ["unpriced receipt",(i:any)=>delete i.after.lines[0].daily_price_gbp],
+  ["approximate-rate multiplication",(i:any)=>{i.after.total_gbp=170.01;i.after.lines[0].line_total_gbp=170.01;}],
+  ["unrelated message",(i:any)=>i.messageId+="-new"],
+  ["stale after context",(i:any)=>i.afterKey+="changed"],
+  ["multiple edits",(i:any)=>i.transitions.push(i.transitions[0])],
+  ["no edit",(i:any)=>i.after=structuredClone(i.before)],
+ ] as const){it(`retains review for ${label}`,()=>{const i=dateInput();mutate(i);expect(committedAmendmentConfirmation(i)).toBeNull();});}
+ for(const [label,mutate] of [
+  ["wrong removed product",(i:any)=>i.after.changes.at(-1).removed_item.product_id=999],
+  ["wrong removed quantity",(i:any)=>i.after.changes.at(-1).removed_item.qty=2],
+  ["wrong removal request key",(i:any)=>i.after.changes.at(-1).request_key=JSON.stringify([i.messageId,"remove_item","product:999",1])],
+  ["extra quantity change",(i:any)=>i.after.lines[0].qty++],
+  ["price changed on retained line",(i:any)=>i.after.lines[0].daily_price_gbp++],
+  ["whole booking removed",(i:any)=>{i.after.lines=[];i.after.total_gbp=0;}],
+ ] as const){it(`retains removal review for ${label}`,()=>{const i=removalInput();mutate(i);expect(committedAmendmentConfirmation(i)).toBeNull();});}
+});
