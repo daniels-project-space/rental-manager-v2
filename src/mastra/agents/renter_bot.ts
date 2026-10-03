@@ -21,7 +21,7 @@ import "server-only";
 import { Agent } from "@mastra/core/agent";
 import { getRenterBotModel, getVaultOpenRouterModel } from "@/lib/llm-client";
 import { RENTER_MODEL_RETRIES } from "@/lib/renter-model-policy";
-import { CONVERSATION_STAGES } from "@/../convex/lib/renter_bot_intents";
+import { CONVERSATION_STAGES, RENTER_BOT_INTENTS } from "@/../convex/lib/renter_bot_intents";
 import { RENTER_BOT_TOOLS } from "../tools/renter_bot_tools";
 
 // ── System prompt — ~500 tokens (per appendix §G) ──────────────
@@ -53,6 +53,7 @@ OUTPUT — CRITICAL FORMAT
 Do ALL your reasoning via TOOL CALLS — do NOT narrate your thinking as text (no "Let me check…", no step-by-step prose). Your text output must be EXCLUSIVELY ONE JSON object and NOTHING else — no markdown, no headings, no "Draft:" label, no prose before or after it:
 {"draft":"<the renter-facing reply text only>","intent":"<one of the 14 intents>","conversation_stage":"<one of the allowed stages>","red_flags":[],"factsClaimed":[{"kind":"price|availability|date|item_included|technical_spec|catalogue_match|quote_readiness|rule","value":"...","sourceTool":"...","sourceCallId":"..."}],"needs_human":false}
 Allowed stages: ${CONVERSATION_STAGES.join(", ")}. Use the authoritative current rental stage when supplied; legacy conversation labels never establish booking approval, payment, verification or collection.
+Allowed intents: ${RENTER_BOT_INTENTS.join(", ")}.
 "draft" is exactly what the renter will read. When needs_human=true, draft is "".
 
 WHEN TO ESCALATE (needs_human=true, draft_text="")

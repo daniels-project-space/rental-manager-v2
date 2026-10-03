@@ -1,9 +1,11 @@
 import { expect,it } from "vitest";
-import { parseRenterBotOutput } from "./renter-bot-output";
+import { parseRenterBotOutput, validateRenterBotOutput } from "./renter-bot-output";
 import { canonicalGenerationError } from "../../convex/lib/canonical_generation_error";
 const valid={draft:"The TTArtisan 11mm is manual focus. I can check the owned Sony options before quoting.",intent:"EQUIPMENT_QUESTION",conversation_stage:"CONFIRMED_UPCOMING",red_flags:[],factsClaimed:[],needs_human:false};
 it("validates ordinary and fenced envelopes without turning facts into proof",()=>{
  expect(parseRenterBotOutput(JSON.stringify(valid))).toEqual(valid);
+ expect(validateRenterBotOutput(valid)).toEqual(valid);
+ expect(validateRenterBotOutput({...valid,needs_human:"false"})).toBeNull();
  expect(parseRenterBotOutput("```json\n"+JSON.stringify(valid)+"\n```" )).toEqual(valid);
  const technical={...valid,factsClaimed:[{kind:"technical_spec",value:"manual focus",sourceTool:"prompt",sourceCallId:"prompt"}]};
  expect(parseRenterBotOutput(JSON.stringify(technical))).toEqual(technical);

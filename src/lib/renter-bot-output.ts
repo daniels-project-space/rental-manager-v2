@@ -22,6 +22,12 @@ export const RENTER_BOT_OUTPUT_SCHEMA = z.object({
 
 export type RenterBotOutput = z.infer<typeof RENTER_BOT_OUTPUT_SCHEMA>;
 
+export function validateRenterBotOutput(value: unknown): RenterBotOutput | null {
+ const parsed=RENTER_BOT_OUTPUT_SCHEMA.safeParse(value);
+ if(!parsed.success||!parsed.data.needs_human&&!parsed.data.draft.trim())return null;
+ return parsed.data;
+}
+
 /** Validate the model envelope, not just JSON syntax. No text-only approval:
  * malformed output retains no attested stage, intent or escalation decision. */
 export function parseRenterBotOutput(text: string): RenterBotOutput | null {
@@ -31,8 +37,6 @@ export function parseRenterBotOutput(text: string): RenterBotOutput | null {
   if(fence)json=fence[1].trim();
   const first=json.indexOf("{"),last=json.lastIndexOf("}");
   if(first<0||last<=first)return null;
-  const parsed=RENTER_BOT_OUTPUT_SCHEMA.safeParse(JSON.parse(json.slice(first,last+1)));
-  if(!parsed.success||!parsed.data.needs_human&&!parsed.data.draft.trim())return null;
-  return parsed.data;
+  return validateRenterBotOutput(JSON.parse(json.slice(first,last+1)));
  }catch{return null;}
 }

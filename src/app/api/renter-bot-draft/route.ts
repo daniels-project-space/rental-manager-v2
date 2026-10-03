@@ -1,4 +1,4 @@
-import { parseRenterBotOutput } from "@/lib/renter-bot-output";
+import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
 import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
@@ -1404,6 +1404,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
+        structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
         // Flash (a reasoning model — thinks before it speaks, same behavior
         // documented in /api/walle/health) was returning a completely EMPTY
@@ -1419,6 +1420,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         modelSettings: { maxOutputTokens: 4096 },
       }));
       text = result?.text ?? "";
+      obj = validateRenterBotOutput(result?.object);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       usedTools = ((result?.steps ?? []) as any[]).some(
         (st) => (st?.toolCalls?.length ?? 0) > 0,
@@ -1459,7 +1461,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           `[renter-bot-draft] tokens prompt=${tokenUsage.prompt} cached=${tokenUsage.cached ?? "?"}${pct} completion=${tokenUsage.completion ?? "?"} cost=${tokenUsage.cost ?? "?"}`,
         );
       }
-    obj = parseRenterBotOutput(text);
+    obj ??= parseRenterBotOutput(text);
     }
     if (!obj) {
       // Fail at the model-output boundary. The caller can still recover an
@@ -1509,13 +1511,14 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const retryResult: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
+            structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
             modelSettings: { maxOutputTokens: 4096 },
           }));
           const retryText: string = retryResult?.text ?? "";
           const retryUsedTools = ((retryResult?.steps ?? []) as any[]).some(
             (st) => (st?.toolCalls?.length ?? 0) > 0,
           );
-          const retryObj = parseRenterBotOutput(retryText);
+          const retryObj = validateRenterBotOutput(retryResult?.object) ?? parseRenterBotOutput(retryText);
           if (retryObj && (retryObj.draft || retryObj.needs_human === false)) {
             obj = retryObj;
             usedTools = retryUsedTools;

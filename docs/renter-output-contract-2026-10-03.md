@@ -7,3 +7,9 @@ The agent and both route paths now share one pure output schema and parser. Bool
 The model claim taxonomy now distinguishes technical_spec, catalogue_match and quote_readiness from physical availability and kit inclusion. These remain diagnostic self-reports. This change does not establish semantic truth or completeness of every technical claim, and does not make the bot production-ready by itself.
 
 Verification: 50 focused tests across output parsing, reply review and review records; project/backend typechecks. Two controlled registered-action probes used deployed Native lab queries/mutations. A malformed-output failure with no edit saved review, withheld approval, preserved the order and did not regenerate on ordinary retry. A malformed-output failure after one committed date extension recovered the correct £170 confirmation, saved approval, passed send dry-run, and did not repeat the change. Both owned probes were cleaned. Zero new model calls and no real rental writes/sends. Production rollout and exact alias verification recorded separately.
+
+## Producer contract follow-up
+
+One fresh production lab call was withheld by the new output validator. The persistent review worked, but the error response did not retain the rejected raw envelope, so its exact malformed field cannot be asserted. This is not evidence of successful live producer compatibility. The owned fixture was cleaned.
+
+Inspection then confirmed the declaration was only a schema export: neither agent.generate call received structuredOutput. Both now receive the shared schema through the installed SDK and consume response.object, with the same runtime validation. The prompt lists allowed intents as well as stages. No separate formatting model is configured and the model choice is unchanged. Structured output improves format compliance; it still does not verify semantic factual truth. Subsequent production compatibility proof is recorded separately.
