@@ -1,0 +1,674 @@
+{
+  "provenance": "Actual deployed Lab model candidate; booking was amended once to £194 but KIT_HALLUCINATION rejected the reply. No real rental writes.",
+  "reply": "I've added the Blazar Remus 100mm and the PL to L mount adapter to your booking. Your updated setup now includes the Blackmagic 6K Full Frame kit, the Remus 100mm, and the adapter for 20–21 October, bringing the total to £194.",
+  "priceEvidence": [
+    {
+      "call_id": "prefetch:listing-context",
+      "kind": "replacement",
+      "names": [
+        "BMPCC 6K Full Frame"
+      ],
+      "source": "inventory_replacement_value",
+      "total_gbp": 2200
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "server-price:1",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series ",
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "BMPCC 6K Full Frame"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "selected-price:2",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series ",
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "BMPCC 6K Full Frame"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "post-amendment:lab-order:Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s"
+      ],
+      "quantity": 1,
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 25,
+      "call_id": "post-amendment:lab-order:Blazar Remus 100mm",
+      "daily_rate_gbp": 25,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blazar Remus 100mm"
+      ],
+      "quantity": 1,
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 50
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "post-amendment:lab-order:PL → L adapter",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    },
+    {
+      "call_id": "post-amendment:lab-order",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "quantity": 1
+        },
+        {
+          "name": "Blazar Remus 100mm",
+          "quantity": 1
+        },
+        {
+          "name": "PL → L adapter",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 194
+    },
+    {
+      "call_id": "call_2083819:booking-preview",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "quantity": 1
+        },
+        {
+          "name": "Blazar Remus 100mm",
+          "quantity": 1
+        },
+        {
+          "name": "PL → L adapter",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "proposal": {
+        "added_items": [
+          {
+            "name": "Blazar Remus 100mm",
+            "quantity": 1
+          },
+          {
+            "name": "PL → L adapter",
+            "quantity": 1
+          }
+        ],
+        "added_listings": [
+          {
+            "product_id": 1116294,
+            "quantity": 1
+          },
+          {
+            "product_id": 1172765,
+            "quantity": 1
+          }
+        ],
+        "additional_cost_gbp": 70,
+        "base_items": [
+          {
+            "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+            "quantity": 1
+          }
+        ]
+      },
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 194
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "call_2083819:booking-preview:line:1172450",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "BMPCC 6K Full Frame",
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+      ],
+      "quantity": 1,
+      "quote_role": "proposed_line",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 25,
+      "call_id": "call_2083819:booking-preview:line:1116294",
+      "daily_rate_gbp": 25,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blazar Remus 100mm"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 50
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_2083819:booking-preview:line:1172765",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    },
+    {
+      "call_id": "call_2083819:booking-preview:addition-group",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Blazar Remus 100mm",
+          "quantity": 1
+        },
+        {
+          "name": "PL → L adapter",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "proposal": {
+        "added_items": [
+          {
+            "name": "Blazar Remus 100mm",
+            "quantity": 1
+          },
+          {
+            "name": "PL → L adapter",
+            "quantity": 1
+          }
+        ],
+        "added_listings": [
+          {
+            "product_id": 1116294,
+            "quantity": 1
+          },
+          {
+            "product_id": 1172765,
+            "quantity": 1
+          }
+        ],
+        "additional_cost_gbp": 70,
+        "base_items": [
+          {
+            "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+            "quantity": 1
+          }
+        ]
+      },
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 70
+    },
+    {
+      "base_rate_gbp": 25,
+      "call_id": "call_2083819:booking-preview:addition:1116294",
+      "daily_rate_gbp": 25,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blazar Remus 100mm"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 50
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_2083819:booking-preview:addition:1172765",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_2083819:required-accessory:0",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "kind": "rental",
+      "names": [
+        "PL to L mount",
+        "PL to L Mount Adapter | PL Lens to Leica / Panasonic / Sigma L-Mount Camera Converter (like “PL-L adapter ring / PL to L mount cinema lens adapter”)"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "total_gbp": 20
+    },
+    {
+      "base_rate_gbp": 25,
+      "call_id": "call_2083819",
+      "daily_rate_gbp": 25,
+      "days": 2,
+      "kind": "rental",
+      "names": [
+        "Anamorphic Blazar Remus 100mm",
+        "BLAZAR REMUS 100MM T2.8 ANAMORPHIC LENS – ANAMORPHIC PRIME – CINE LENS – CINEMA LENS – 100MM T2.8 – CAMERA LENS – FILM LENS – LENS FOR FILMMAKING"
+      ],
+      "quantity": 1,
+      "required_accessory_names": [
+        "PL to L mount"
+      ],
+      "source": "hygglo_tier",
+      "total_gbp": 50
+    },
+    {
+      "call_id": "call_2083828:booking-preview",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "quantity": 1
+        },
+        {
+          "name": "PL → L adapter",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "proposal": {
+        "added_items": [
+          {
+            "name": "PL → L adapter",
+            "quantity": 1
+          }
+        ],
+        "added_listings": [
+          {
+            "product_id": 1172765,
+            "quantity": 1
+          }
+        ],
+        "additional_cost_gbp": 20,
+        "base_items": [
+          {
+            "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+            "quantity": 1
+          }
+        ]
+      },
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 144
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "call_2083828:booking-preview:line:1172450",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "BMPCC 6K Full Frame",
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+      ],
+      "quantity": 1,
+      "quote_role": "proposed_line",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_2083828:booking-preview:line:1172765",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_2083828:booking-preview:addition:1172765",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_2083828",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "kind": "rental",
+      "names": [
+        "PL to L mount",
+        "PL to L Mount Adapter | PL Lens to Leica / Panasonic / Sigma L-Mount Camera Converter (like “PL-L adapter ring / PL to L mount cinema lens adapter”)"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "total_gbp": 20
+    },
+    {
+      "call_id": "call_10484811:accepted-quote",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "quantity": 1
+        },
+        {
+          "name": "Blazar Remus 100mm",
+          "quantity": 1
+        },
+        {
+          "name": "PL → L adapter",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "proposal": {
+        "added_items": [
+          {
+            "name": "Blazar Remus 100mm",
+            "quantity": 1
+          },
+          {
+            "name": "PL → L adapter",
+            "quantity": 1
+          }
+        ],
+        "added_listings": [
+          {
+            "product_id": 1116294,
+            "quantity": 1
+          },
+          {
+            "product_id": 1172765,
+            "quantity": 1
+          }
+        ],
+        "additional_cost_gbp": 70,
+        "base_items": [
+          {
+            "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+            "quantity": 1
+          }
+        ]
+      },
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 194
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "call_10484811:accepted-quote:line:1172450",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "BMPCC 6K Full Frame",
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+      ],
+      "quantity": 1,
+      "quote_role": "proposed_line",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 25,
+      "call_id": "call_10484811:accepted-quote:line:1116294",
+      "daily_rate_gbp": 25,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blazar Remus 100mm"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 50
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_10484811:accepted-quote:line:1172765",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    },
+    {
+      "call_id": "call_10484811:accepted-quote:addition-group",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Blazar Remus 100mm",
+          "quantity": 1
+        },
+        {
+          "name": "PL → L adapter",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "proposal": {
+        "added_items": [
+          {
+            "name": "Blazar Remus 100mm",
+            "quantity": 1
+          },
+          {
+            "name": "PL → L adapter",
+            "quantity": 1
+          }
+        ],
+        "added_listings": [
+          {
+            "product_id": 1116294,
+            "quantity": 1
+          },
+          {
+            "product_id": 1172765,
+            "quantity": 1
+          }
+        ],
+        "additional_cost_gbp": 70,
+        "base_items": [
+          {
+            "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+            "quantity": 1
+          }
+        ]
+      },
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 70
+    },
+    {
+      "base_rate_gbp": 25,
+      "call_id": "call_10484811:accepted-quote:addition:1116294",
+      "daily_rate_gbp": 25,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blazar Remus 100mm"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 50
+    },
+    {
+      "base_rate_gbp": 10,
+      "call_id": "call_10484811:accepted-quote:addition:1172765",
+      "daily_rate_gbp": 10,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "PL → L adapter"
+      ],
+      "quantity": 1,
+      "quote_role": "addition",
+      "source": "native_lab_proposal",
+      "start_date": "2026-10-20",
+      "total_gbp": 20
+    }
+  ],
+  "stockRequest": {
+    "end_date": "2026-10-21",
+    "items": [
+      {
+        "aliases": [
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "BMPCC 6K Full Frame",
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+        ],
+        "complete": true,
+        "components": [
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          }
+        ],
+        "name": "BMPCC 6K Full Frame",
+        "quantity": 1
+      }
+    ],
+    "start_date": "2026-10-20"
+  },
+  "priceRequest": {
+    "start_date": "2026-10-20",
+    "end_date": "2026-10-21",
+    "items": [
+      {
+        "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "quantity": 1
+      },
+      {
+        "name": "Blazar Remus 100mm",
+        "quantity": 1
+      },
+      {
+        "name": "PL → L adapter",
+        "quantity": 1
+      }
+    ]
+  }
+}

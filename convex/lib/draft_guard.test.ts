@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { PriceEvidence } from "./price_claims";
+import updatedSetupCapture from "../../src/lib/fixtures/renter-updated-setup-guard.json";
 import { guardDraft } from "./draft_guard";
 import { scoreDraft } from "./renter_bot_rubric";
 
@@ -916,4 +918,17 @@ describe("reasoning cleanup preserves rental facts",()=>{
     expect(result.text).toContain("body kit is available");
     expect(result.flags.some(f=>f.type==="CHAIN_OF_THOUGHT")).toBe(true);
   });
+});
+
+describe("captured updated-setup booking confirmation",()=>{
+ const text=updatedSetupCapture.reply;
+ const opts={history:[],lastRenterMessage:"Yes, please add both.",stage:"confirmed",bookingModified:true,
+  factPack:{kitEvidence:[{names:["BMPCC 6K Full Frame"],contents:["Canon EF 24-105mm lens","EF to L mount"],booked_camera:true}]},
+  stockRequest:updatedSetupCapture.stockRequest,priceRequest:updatedSetupCapture.priceRequest,priceEvidence:updatedSetupCapture.priceEvidence as PriceEvidence[]};
+ it("passes the full guard for the exact actual model wording",()=>{
+  const result=guardDraft(text,opts);expect(result.flags.filter(f=>f.severity==="critical")).toEqual([]);expect(result.text).toBe(text.replace("20–21","20-21"));
+ });
+ it("keeps an explicitly wrong mount blocked",()=>{
+  const result=guardDraft(text.replace("the adapter for","the PL to EF mount adapter for"),opts);expect(result.flags.some(f=>f.type==="KIT_HALLUCINATION")).toBe(true);
+ });
 });

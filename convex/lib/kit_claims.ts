@@ -120,7 +120,7 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     const hasActiveOwner = activeReference !== null && (/^\s*your\b/i.test(activeReference)
       || evidence.some(e => e.names.some(n => n && namesItem(activeReference, n))));
     const wholeBooking = activeReference !== null && bookedNames.length > 0 &&
-      /^\s*(?:your|the|this|current|existing|confirmed)\s+(?:booking|order|basket)\b/i.test(activeReference) &&
+      /^\s*(?:(?:your|the|this|current|existing|confirmed)\s+(?:booking|order|basket)\b|(?:your|the|this)\s+(?:updated|current|confirmed|booked|rental)\s+setup\b)/i.test(activeReference) &&
       !/\b(?:kit|camera|body|lens|adapter)\b/i.test(activeReference) &&
       !/\b(?:which|that)\s+(?:includes?|comes with)|\b(?:kit|camera|body)\s+(?:includes?|comes with)/i.test(claimed);
     const candidates = wholeBooking ? [{names: [], contents: bookingContents}] : hasActiveOwner ? ownersForReference(activeReference!, evidence)

@@ -193,3 +193,20 @@ describe("paid additions in the current booking are separate from original kit c
   for(const reply of ["Your Blackmagic 6K Full Frame kit includes the PL to L mount adapter.","Your booking includes the Blackmagic 6K Full Frame kit, which includes the PL to L mount adapter.","Your booking includes a PL to L mount adapter included with your Blackmagic 6K Full Frame kit.",text.replace("PL to L mount adapter, bringing","PL to EF mount adapter, bringing")]) expect(unsupportedKitClaims(reply,[camera],[names[0]],names),reply).not.toEqual([]);
  });
 });
+
+describe("updated setup refers to the current booking",()=>{
+ const camera={names:renterItemNames("BMPCC 6K Full Frame"),contents:["Canon EF 24-105mm lens","EF to L mount"],booked_camera:true};
+ const names=["BMPCC 6K Full Frame","Blazar Remus 100mm","PL → L adapter"];
+ const captured="I've added the Blazar Remus 100mm and the PL to L mount adapter to your booking. Your updated setup now includes the Blackmagic 6K Full Frame kit, the Remus 100mm, and the adapter for 20–21 October, bringing the total to £194.";
+ it("accepts the exact captured bot confirmation using the Native current basket",()=>expect(unsupportedKitClaims(captured,[camera],[names[0]],names)).toEqual([]));
+ it("requires the named added adapter to exist in the current basket",()=>{
+  const named=captured.replace("the adapter for","the PL to L mount adapter for");
+  expect(unsupportedKitClaims(named,[camera],[names[0]],names.slice(0,2))).not.toEqual([]);
+  expect(unsupportedKitClaims(named,[camera],[names[0]])).not.toEqual([]);
+ });
+ it("retains original camera-kit and nested ownership boundaries",()=>{
+  for(const text of ["Your updated camera setup includes a PL to L mount adapter.","Your updated setup includes the Blackmagic 6K Full Frame kit, which includes a PL to L mount adapter.","Your updated setup includes a PL to L mount adapter included with your camera kit."]){
+   expect(unsupportedKitClaims(text,[camera],[names[0]],names),text).not.toEqual([]);
+  }
+ });
+});

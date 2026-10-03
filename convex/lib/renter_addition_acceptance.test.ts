@@ -53,6 +53,14 @@ describe("exact addition agreement",()=>{
   expect(acceptsAddition("Please add an adapter at £20 extra.",q)).toBe(false);
   expect(acceptsAddition("Please add the PL to L mount adapter at £20 extra.",q)).toBe(true);
  });
+ it("matches agreed money to the penny while tolerating floating-point arithmetic",()=>{
+  const q=quote();
+  expect(acceptsAddition("Please add the Blazar Remus 100mm and PL to L mount for £69.99 extra.",q)).toBe(false);
+  const o=owner();o.quoted_additions[0].additional_cost_gbp=69.99;
+  expect(acceptsAddition("Yes please.",q,o)).toBe(false);
+  q.additional_cost_gbp=69.99999999999999;
+  expect(acceptsAddition("Please add the Blazar Remus 100mm and PL to L mount for £70 extra.",q)).toBe(true);
+ });
  it("does not require another confirmation for a clear lens-only request at the correct price",()=>{
   const q=quote();q.lines=q.lines.slice(0,1);q.total_gbp=174;q.additional_cost_gbp=50;
   expect(acceptsAddition("Don't add your PL to L mount adapter. I already have my own PL-to-L mount adapter. Please add the Blazar Remus 100mm lens only for 20 to 21 October, at £50 extra.",q)).toBe(true);
