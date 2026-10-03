@@ -14,7 +14,8 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
     if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day","native_lab_proposal"].includes(source))return;
     if (!names.length || !days || !Number.isInteger(days) || !quantity || !Number.isInteger(quantity)) return;
     out.push({names,kind:"rental",...(role ? {quote_role:role} : {}),daily_rate_gbp:r.multi_day_basis === "unknown_no_listing" && days !== 1 ? undefined : number(r.daily_rate_gbp),base_rate_gbp:number(base),total_gbp:number(r.listed_total_gbp),days,quantity,
-      start_date:string(r.start_date),end_date:string(r.end_date),call_id:call,source});
+      start_date:string(r.start_date),end_date:string(r.end_date),call_id:call,source,
+      ...(Array.isArray(r.required_accessory_names) ? { required_accessory_names: r.required_accessory_names.filter((name): name is string => typeof name === "string" && !!name.trim()) } : {})});
   };
   const latestOrder=receipts.filter(r=>r.tool==="get_lab_order").at(-1);
   for (const receipt of receipts) {

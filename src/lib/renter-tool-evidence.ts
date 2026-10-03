@@ -39,6 +39,8 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
         visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:booking-preview`,result:result.booking_addition_preview});
       if (payload.toolName === "lookup_pricing" && result.found === true && Array.isArray(result.component_base_offering_quotes))
         result.component_base_offering_quotes.forEach((quote, i) => visit({toolName:"lookup_pricing",toolCallId:`${String(payload.toolCallId ?? "unknown")}:component-base:${i}`,result:quote}));
+      if (payload.toolName === "lookup_pricing" && result.found === true && Array.isArray(result.required_accessory_quotes))
+        result.required_accessory_quotes.forEach((quote, i) => visit({toolName:"lookup_pricing",toolCallId:`${String(payload.toolCallId ?? "unknown")}:required-accessory:${i}`,result:quote}));
       if (!result.error && result.ok !== false && result.found !== false)
         receipts.push({ tool: payload.toolName, call_id: String(payload.toolCallId ?? "unknown"), result });
       if (!result.error && result.ok !== false && ["check_availability","check_basket_availability"].includes(String(payload.toolName)) && Array.isArray(result.components)) {

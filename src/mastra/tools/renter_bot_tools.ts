@@ -23,7 +23,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import { createRequestConvexClient } from "@/lib/convex-request-context";
 import { getFunctionName } from "convex/server";
 import { bindRenterToolArgs, currentRenterToolScope } from "@/lib/renter-tool-scope";
-import { withBookingAdditionPreview } from "@/lib/renter-pricing-preview";
+import { completeMountBasket, withBookingAdditionPreview } from "@/lib/renter-pricing-preview";
 import { api } from "@/../convex/_generated/api";
 // Convex typegen runs against a real deployment via `npx convex dev`.
 // Until the new modules (renter_bot_tools, knowledge, renter_bot_drafts)
@@ -135,7 +135,8 @@ export const lookupPricingTool = createTool({
   execute: async (input) => {
     const client = convex();
     const pricing = await client.query(anyApi.renter_bot_tools.lookup_pricing, input);
-    return await withBookingAdditionPreview(pricing, currentRenterToolScope(), args => client.mutation(anyApi.renter_bot_lab_order.applyChange, args), args => client.query(anyApi.renter_bot_tools.lookup_pricing, args));
+    return await withBookingAdditionPreview(pricing, currentRenterToolScope(), args => client.mutation(anyApi.renter_bot_lab_order.applyChange, args), args => client.query(anyApi.renter_bot_tools.lookup_pricing, args),
+      args => client.query(anyApi.renter_bot_tools.get_addition_mount_requirements, args), args => client.query(anyApi.renter_bot_lab_order.quoteAdditionBasket, args));
   },
 });
 
@@ -421,13 +422,26 @@ export const quoteBookingAdditionTool = createTool({
   outputSchema: z.unknown(),
   execute: async (input) => {
     if (!input.thread_id.startsWith("__probe__")) return {ok:false,error:"Combined booking proposals require an owner quote for real bookings."};
-    if(input.items) {
-      if(input.item_name || input.product_id!=null)return {ok:false,error:"Choose the items array or the single item fields, never both."};
-      return await convex().query(anyApi.renter_bot_lab_order.quoteAdditionBasket,{thread_id:input.thread_id,items:input.items});
+    if(input.items && (input.item_name || input.product_id!=null))return {ok:false,error:"Choose the items array or the single item fields, never both."};
+    const scope = currentRenterToolScope();
+    if (!scope) return { ok: false, error: "Missing verified booking context." };
+    const client = convex();
+    const order = await client.query(anyApi.renter_bot_lab_order.get, { thread_id: scope.threadId }) as { days?: number };
+    let items = input.items;
+    if (!items) {
+      if (!input.item_name) return { ok: false, error: "Supply exact addition items or one exact item_name." };
+      const price = await client.query(anyApi.renter_bot_tools.lookup_pricing, { item_name: input.item_name, product_id: input.product_id, account_slug: scope.accountSlug, days: order?.days, quantity: input.qty ?? 1 }) as { found?: boolean; product_id?: number };
+      if (!price.found || !price.product_id) return { ok: false, error: "Selected offering price is unverified." };
+      items = [{ product_id: price.product_id, qty: input.qty ?? 1 }];
     }
-    if(!input.item_name)return {ok:false,error:"Supply exact addition items or one exact item_name."};
-    const {items:unused,...single}=input;
-    return await convex().mutation(anyApi.renter_bot_lab_order.applyChange,{...single,action:"add_item",preview_only:true});
+    try {
+      const complete = await completeMountBasket(scope, items, order?.days,
+        args => client.query(anyApi.renter_bot_tools.get_addition_mount_requirements, args),
+        args => client.query(anyApi.renter_bot_tools.lookup_pricing, args),
+        args => client.query(anyApi.renter_bot_lab_order.quoteAdditionBasket, args));
+      return { ...(complete.proposal as Record<string, unknown>), required_accessory_names: complete.required.map(item => item.name),
+        required_accessory_quotes: complete.accessoryPrices, renter_supplied_adapters: complete.renterSupplied, setup_quote_guidance: "This read-only quote includes required owner-supplied adapters. Renter-supplied matching adapters are their responsibility and are not charged. Quote the complete extra cost or every component; do not offer a lens-only price as the usable setup cost." };
+    } catch { return { ok: false, error: "The complete compatible setup quote is unverified. No booking changes were made." }; }
   },
 });
 

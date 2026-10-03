@@ -15,9 +15,39 @@ export type PriceEvidence = {
   items?: Array<{name:string;quantity:number}>;
   proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>};
   call_id: string; source: string;
+  required_accessory_names?: string[];
 };
-const norm = (s: string) => s.toLowerCase().replace(/’/g, "'").replace(/\b(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\b/g,(_,from:string,to:string)=>`mountadapter ${from} ${to.replace(/^sony\s+/,"")}`).replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (s: string) => s.toLowerCase().replace(/’/g, "'").replace(/\b(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\b/g,(_,from:string,to:string)=>`mountadapter ${from} ${to.replace(/^sony\s+/,"")}`).replace(/\bmount\s+adapter\b/g,"mountadapter").replace(/[^a-z0-9]+/g, " ").trim();
 const aliases = (names: string[]) => [...new Set(names.flatMap(n => renterItemNames(n).flatMap(a => [norm(a), norm(shortItemName(a)), norm(a.replace(/^Sony\s+(?=(?:FX\d+|A7)\b)/i, ""))])))];
+
+/** A supported lens price does not price the adapter needed to use it. */
+export function incompleteSetupQuotes(text: string, evidence: PriceEvidence[]): string[] {
+  const amounts = (part: string) => [...part.matchAll(/£\s*(\d+(?:\.\d{1,2})?)/g)].map(match => Number(match[1]));
+  const mentions = (part: string, names: string[]) => aliases(names).some(name => name && ` ${norm(part)} `.includes(` ${name} `));
+  const details = new Set<string>();
+  const contexts = [...evidence];
+  for (const basket of evidence) {
+    if (basket.kind !== "basket" || basket.source !== "native_lab_proposal" || !basket.proposal?.added_items) continue;
+    const adapterNames = basket.proposal.added_items.map(item => item.name).filter(name => /\bmountadapter\b/.test(norm(name)));
+    const primaryNames = basket.proposal.added_items.map(item => item.name).filter(name => !adapterNames.includes(name));
+    if (adapterNames.length && primaryNames.length) contexts.push({ ...basket, names: primaryNames, required_accessory_names: adapterNames });
+  }
+  for (const primary of contexts) {
+    if (!primary.required_accessory_names?.length) continue;
+    const quoted = text.split(/(?<=[.!?])\s+|\n+/).some(part => mentions(part, primary.names) && amounts(part).length && !/\b(?:unavailable|not available|can't offer|cannot offer)\b/i.test(part));
+    if (!quoted) continue;
+    for (const accessory of primary.required_accessory_names) {
+      const componentPrices = evidence.filter(item => item.kind === "rental" && samePriceNames(item.names, [accessory]));
+      const pricedSeparately = text.split(/(?<=[.!?])\s+|\n+|[,;]|\b(?:and|plus|with)\b/i).some(part => mentions(part, [accessory]) && amounts(part).some(amount => componentPrices.some(price => amount === price.daily_rate_gbp || amount === price.total_gbp)));
+      const pricedTogether = evidence.some(item => item.kind === "basket" && item.proposal?.added_items && item.total_gbp != null &&
+        item.proposal.added_items.some(line => samePriceNames([line.name], primary.names)) &&
+        item.proposal.added_items.some(line => samePriceNames([line.name], [accessory])) &&
+        amounts(text).includes(item.total_gbp) && /\b(?:total|extra|additional|together|combined|both)\b/i.test(text));
+      if (!pricedSeparately && !pricedTogether) details.add(`The quoted setup requires ${accessory}, but its cost is omitted. Quote every required component or the verified complete additional/basket total; the lens-only price is not the usable setup price.`);
+    }
+  }
+  return [...details];
+}
 export const samePriceNames = (a: string[], b: string[]) => aliases(a).some(n => aliases(b).includes(n));
 const cents = (n: number) => Math.round(n * 100);
 

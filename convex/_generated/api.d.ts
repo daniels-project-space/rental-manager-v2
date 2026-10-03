@@ -192,6 +192,7 @@ import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
 import type * as lib_renter_order_stock from "../lib/renter_order_stock.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
+import type * as lib_required_mount_adapter from "../lib/required_mount_adapter.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
 import type * as lib_reservations_hyggloTiles from "../lib/reservations/hyggloTiles.js";
 import type * as lib_reservations_itemResolution from "../lib/reservations/itemResolution.js";
@@ -512,6 +513,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_order_stock": typeof lib_renter_order_stock;
   "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;
+  "lib/required_mount_adapter": typeof lib_required_mount_adapter;
   "lib/reservations/accounts": typeof lib_reservations_accounts;
   "lib/reservations/hyggloTiles": typeof lib_reservations_hyggloTiles;
   "lib/reservations/itemResolution": typeof lib_reservations_itemResolution;

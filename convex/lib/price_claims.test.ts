@@ -225,3 +225,14 @@ it("checks your updated total against the amended native basket without borrowin
   expect(unsupportedPriceClaims(text,[evidence[0],{...evidence[1],items:[scope.items[0]]}],scope),wording).toHaveLength(1);
  }
 });
+
+it("rejects an incomplete required-adapter quote while allowing grounded component or complete prices", async () => {
+ const { incompleteSetupQuotes } = await import("./price_claims");
+ const evidence: any[] = [{ names: ["Blazar Remus 100mm"], kind: "rental", total_gbp: 50, required_accessory_names: ["PL to L mount"], call_id: "lens", source: "hygglo_tier" },
+  { names: ["PL to L mount"], kind: "rental", daily_rate_gbp: 10, total_gbp: 20, call_id: "adapter", source: "hygglo_tier" },
+  { names: [], kind: "basket", total_gbp: 70, proposal: { base_items: [], added_items: [{ name: "Blazar Remus 100mm", quantity: 1 }, { name: "PL to L mount", quantity: 1 }] }, call_id: "whole", source: "native_lab_proposal" }];
+ expect(incompleteSetupQuotes("Blazar Remus 100mm is £50 for your dates. You need my PL to L mount adapter, which is available.", evidence)).toHaveLength(1);
+ expect(incompleteSetupQuotes("Blazar Remus 100mm is £50 and the PL to L mount adapter is £20 for your dates.", evidence)).toEqual([]);
+ expect(incompleteSetupQuotes("Blazar Remus 100mm with my PL to L mount adapter would be £70 extra in total.", evidence)).toEqual([]);
+ expect(incompleteSetupQuotes("Blazar Remus 100mm is unavailable. Your booking remains £124.", evidence)).toEqual([]);
+});

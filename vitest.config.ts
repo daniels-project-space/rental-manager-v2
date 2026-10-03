@@ -37,6 +37,7 @@ export default defineConfig({
       "convex/lib/stock_claims.test.ts",
       "convex/lib/claim_date_scope.test.ts",
       "convex/lib/price_claims.test.ts",
+      "convex/lib/required_mount_adapter.test.ts",
       "convex/lib/minimum_rental.test.ts",
       "src/lib/renter-price-evidence.test.ts",
       "src/lib/renter-pricing-preview.test.ts",

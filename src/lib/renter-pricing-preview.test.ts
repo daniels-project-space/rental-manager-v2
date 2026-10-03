@@ -81,3 +81,29 @@ describe("pricing with a Native booking preview",()=>{
   });
 
 });
+
+it("quotes lens and required adapter together using a read-only native basket", async () => {
+ const lens = { found: true, source: "hygglo_tier", matched_canonical: "Blazar Remus 100mm", product_id: 1116294, account_slug: "leo", days: 2, quantity: 1, listed_total_gbp: 50 };
+ const adapter = { ...lens, matched_canonical: "PL to L mount", product_id: 1172765, listed_total_gbp: 20 };
+ let basket: unknown;
+ let mutations = 0;
+ const result: any = await withBookingAdditionPreview(lens, { threadId: "__probe__full-quote", accountSlug: "leo" }, async () => { mutations++; }, async () => adapter,
+  async () => ({ status: "required", items: [{ name: "PL to L mount", quantity: 1 }] }), async args => { basket = args; return { ok: true, additional_cost_gbp: 70, quote: { total_gbp: 194 }, addition_quote: { lines: [{ product_id: 1116294, qty: 1 }, { product_id: 1172765, qty: 1 }] } }; });
+ expect(mutations).toBe(0);
+ expect(basket).toEqual({ thread_id: "__probe__full-quote", items: [{ product_id: 1116294, qty: 1 }, { product_id: 1172765, qty: 1 }] });
+ expect(result.required_accessory_names).toEqual(["PL to L mount"]);
+ expect(result.booking_addition_preview).toMatchObject({ ok: true, additional_cost_gbp: 70 });
+ expect(renterToolReceipts([{ toolName: "lookup_pricing", toolCallId: "lens", result }])).toContainEqual(expect.objectContaining({ tool: "lookup_pricing", result: expect.objectContaining({ product_id: 1172765, listed_total_gbp: 20 }) }));
+});
+
+it("retains the required accessory when its exact price fails and never quotes a partial setup", async () => {
+ const { completeMountBasket } = await import("./renter-pricing-preview");
+ let basketCalls=0;
+ const result = await completeMountBasket({ threadId:"__probe__price-failure",accountSlug:"leo" },[{product_id:1116294,qty:1}],2,
+  async()=>({status:"required",items:[{name:"PL to L mount",quantity:1}]}),
+  async()=>({found:true,source:"hygglo_tier",account_slug:"leo",product_id:888,quantity:1,matched_canonical:"PL to EF mount",listed_total_gbp:20}),
+  async()=>{basketCalls++;return {ok:true};});
+ expect(result.proposal).toMatchObject({ok:false,error_code:"required_adapter_quote_unavailable"});
+ expect(result.required).toEqual([{name:"PL to L mount",quantity:1}]);
+ expect(basketCalls).toBe(0);
+});

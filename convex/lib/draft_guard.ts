@@ -1,7 +1,7 @@
 import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
-import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
+import { unsupportedPriceClaims, incompleteSetupQuotes, type PriceEvidence } from "./price_claims";
 import { supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
@@ -1023,6 +1023,9 @@ const ASSERTS_AVAIL_RE =
   }
 
   if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]})) {
+    push("PRICE_HALLUCINATION", detail, "flagged");
+  }
+  if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(text, opts.priceEvidence)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
 
