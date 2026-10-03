@@ -1073,7 +1073,11 @@ const ASSERTS_AVAIL_RE =
     }
   }
 
-  for (const claim of unsupportedKitClaims(text, factPack?.kitEvidence ?? [], opts.stockRequest?.items.map(i => i.name) ?? [])) {
+  // Current order receipts prove paid additions belong to the booking, not
+  // that they were included in the original camera kit.
+  const currentBasket = (opts.priceEvidence ?? []).filter(e => e.kind === "basket" && e.source === "lab_order_quote" && !e.proposal).at(-1);
+  const bookedNames = currentBasket?.items?.map(item => item.quantity === 1 ? item.name : `${item.quantity}x ${item.name}`) ?? [];
+  for (const claim of unsupportedKitClaims(text, factPack?.kitEvidence ?? [], opts.stockRequest?.items.map(i => i.name) ?? [], bookedNames)) {
     push("KIT_HALLUCINATION", `Unverified included ${claim.content}: "${claim.sentence.slice(0, 160)}"`, "flagged");
   }
   for (const claim of unsupportedSensorIdentityClaims(text, opts.stockRequest?.items.map(i => i.name) ?? [])) {

@@ -92,8 +92,10 @@ function inclusionOwners(text: string, evidence: KitEvidence[]) {
   }) : marked };
 }
 /** Negative/optional offers are not claims of included contents. Preserve item attribution. */
-export function unsupportedKitClaims(text: string, evidence: KitEvidence[], initialNames: string[] = []) {
+export function unsupportedKitClaims(text: string, evidence: KitEvidence[], initialNames: string[] = [], bookedNames: string[] = []) {
   evidence = evidence.map(e => ({...e, names: [...new Set(e.names.flatMap(renterItemNames))]}));
+  const bookedAliases = bookedNames.flatMap(renterItemNames);
+  const bookingContents = [...bookedNames, ...evidence.filter(e => e.names.some(name => bookedAliases.some(booked => normalize(name) === normalize(booked)))).flatMap(e => e.contents)];
   const failures: { sentence: string; content: string }[] = [];
   const selected = evidence.filter(e => e.names.some(n => initialNames.some(i => normalize(i) === normalize(n))));
   let subject: KitEvidence[] = selected.length === 1 ? selected : [];
@@ -117,7 +119,11 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     const activeReference = match && match[0].toLowerCase() !== "included" ? sentence.slice(0, match.index) : null;
     const hasActiveOwner = activeReference !== null && (/^\s*your\b/i.test(activeReference)
       || evidence.some(e => e.names.some(n => n && namesItem(activeReference, n))));
-    const candidates = hasActiveOwner ? ownersForReference(activeReference!, evidence)
+    const wholeBooking = activeReference !== null && bookedNames.length > 0 &&
+      /^\s*(?:your|the|this|current|existing|confirmed)\s+(?:booking|order|basket)\b/i.test(activeReference) &&
+      !/\b(?:kit|camera|body|lens|adapter)\b/i.test(activeReference) &&
+      !/\b(?:which|that)\s+(?:includes?|comes with)|\b(?:kit|camera|body)\s+(?:includes?|comes with)/i.test(claimed);
+    const candidates = wholeBooking ? [{names: [], contents: bookingContents}] : hasActiveOwner ? ownersForReference(activeReference!, evidence)
       : named.length ? named : subject.length ? subject : evidence;
     if (!evidence.length) continue; // unknown-kit guard handles missing evidence separately
     for (const [content, pattern] of categories) {

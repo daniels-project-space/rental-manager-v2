@@ -179,3 +179,17 @@ it("checks set counts without treating sets as individual batteries",()=>{
  expect(unsupportedKitClaims("The Sony A7 II includes two NP-FW50 batteries.",e)).toHaveLength(1);
  expect(unsupportedKitClaims("The Sony A7 II includes a 256GB SD card.",e)).toHaveLength(1);
 });
+
+describe("paid additions in the current booking are separate from original kit contents",()=>{
+ const camera={names:renterItemNames("BMPCC 6K Full Frame"),contents:["Canon EF 24-105mm lens","EF to L mount"],booked_camera:true};
+ const names=["BMPCC 6K Full Frame","Blazar Remus 100mm","PL → L adapter"];
+ const text="I've added the Blazar Remus 100mm anamorphic lens and the PL to L mount adapter to your booking. Your booking for 20 to 21 October now includes the Blackmagic 6K Full Frame kit with the Canon EF 24-105mm lens, the Blazar Remus 100mm lens, and the PL to L mount adapter, bringing the total to £194.";
+ it("accepts the actual model's complete current-booking contents from native order evidence",()=>expect(unsupportedKitClaims(text,[camera],[names[0]],names)).toEqual([]));
+ it("requires the adapter to exist in the current booking",()=>{
+  expect(unsupportedKitClaims(text,[camera],[names[0]],names.slice(0,2))).not.toEqual([]);
+  expect(unsupportedKitClaims(text,[camera],[names[0]])).not.toEqual([]);
+ });
+ it("does not transfer a paid adapter into camera-kit or lens contents",()=>{
+  for(const reply of ["Your Blackmagic 6K Full Frame kit includes the PL to L mount adapter.","Your booking includes the Blackmagic 6K Full Frame kit, which includes the PL to L mount adapter.","Your booking includes a PL to L mount adapter included with your Blackmagic 6K Full Frame kit.",text.replace("PL to L mount adapter, bringing","PL to EF mount adapter, bringing")]) expect(unsupportedKitClaims(reply,[camera],[names[0]],names),reply).not.toEqual([]);
+ });
+});
