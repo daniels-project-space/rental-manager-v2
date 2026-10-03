@@ -24,6 +24,7 @@
  * reservations table the CLAUDE.md no-collect rule guards.
  */
 import { query } from "./owner_functions";
+import { inventorySpecMap, inventorySpec, ownedInventoryItem, verifiedLensFocus } from "./lib/inventory_spec_grounding";
 import { v } from "convex/values";
 import {
   findBestMatch,
@@ -52,57 +53,9 @@ function expandQuery(input: string): string {
   return s.trim();
 }
 
-/**
- * Focus type — derived, never stored. The chat kept GUESSING which lenses
- * autofocus (the "everything he says is wrong" complaint) because no field
- * carried it. We classify deterministically: trust the hand-written /
- * grok-generated item_specs prose FIRST (it literally says "Linear motor AF" /
- * "manual focus"), then fall back to unambiguous brand/family heuristics, and
- * return null when genuinely unsure so the chat says "not certain" instead of
- * inventing. Cine/anamorphic glass (Blazar, DZOFilm Vespid, Great Joy) is
- * manual; native Sony E and Canon EF still photo zooms autofocus; fixed-lens
- * action cams (GoPro, Osmo) are "fixed".
- */
-export function classifyFocus(
-  name: string,
-  kind: string | undefined,
-  specText: string | undefined,
-): "autofocus" | "manual_focus" | null {
-  // Focus is a LENS property. Gate here so a name token never leaks a focus tag
-  // onto non-glass — e.g. a Sirui *tripod* was matching the Sirui-anamorphic
-  // heuristic and getting a bogus "manual focus" tag in the inventory index.
-  if (kind !== "lens") return null;
-  const n = (name ?? "").toLowerCase();
-  const s = (specText ?? "").toLowerCase();
-  // 1) Spec prose is authoritative when it speaks plainly.
-  if (/\b(manual[- ]?focus|manual focus only|no autofocus|de-?clicked|cine prime|focus by hand|manual iris)\b/.test(s))
-    return "manual_focus";
-  if (/\b(autofocus|auto-?focus|\baf\b|linear motor|stepping motor|\bxd\b linear|eye[- ]?af|subject[- ]?detect|phase[- ]?detect|fast hybrid af)\b/.test(s))
-    return "autofocus";
-  // 2) Family heuristics on the name (only the unambiguous ones).
-  if (/\b(anamorphic|blazar|remus|dzofilm|vespid|great joy|samyang|rokinon|laowa|irix|7artisans|sirui|tokina cine|cine prime)\b/.test(n))
-    return "manual_focus";
-  // Native AF still-photo systems we own: Sony E (GM / FE / SEL) and Canon EF.
-  if (/\b(sony|gm|fe|sel|canon ef|ef-?s|sigma|tamron|rf)\b/.test(n))
-    return "autofocus";
-  return null;
-}
-
-/** Compact spec record joined from the item_specs corpus. */
-type SpecRec = { description?: string; specs_long?: string };
-
-/** Build name_canonical → spec map from already-collected item_specs rows. */
-function buildSpecMap(
-  rows: Array<{ item_name_canonical?: string; description?: string; specs_long?: string }>,
-): Map<string, SpecRec> {
-  const m = new Map<string, SpecRec>();
-  for (const r of rows) {
-    if (!r.item_name_canonical) continue;
-    // First write wins; rows are 1:1 with items in practice.
-    if (!m.has(r.item_name_canonical))
-      m.set(r.item_name_canonical, { description: r.description, specs_long: r.specs_long });
-  }
-  return m;
+/** Retained export for callers; text must come from the verified item join. */
+export function classifyFocus(_name: string, kind: string | undefined, specText: string | undefined) {
+  return verifiedLensFocus(kind, specText);
 }
 
 /**
@@ -118,12 +71,12 @@ export const index = query({
       ctx.db.query("items").collect(),
       ctx.db.query("item_specs").collect(),
     ]);
-    const specMap = buildSpecMap(specRows);
+    const specMap = inventorySpecMap(specRows);
     return items
-      .filter((i) => i.status === "active" && !i.is_marketing_only)
+      .filter(ownedInventoryItem)
       .map((i) => {
-        const spec = specMap.get(i.name_canonical);
-        const specText = `${spec?.description ?? ""} ${spec?.specs_long ?? ""}`;
+        const spec = inventorySpec(specMap.get(String(i._id)), i.name_canonical);
+        const specText = spec?.text;
         return {
           name: i.name_canonical,
           kind: i.kind,
@@ -158,19 +111,19 @@ export const lookup = query({
       ctx.db.query("items").collect(),
       ctx.db.query("item_specs").collect(),
     ]);
-    const specMap = buildSpecMap(specRows);
+    const specMap = inventorySpecMap(specRows);
     // Never consider archived/inactive rows for "do we have it" answers.
     const live = all.filter(
       (i) => i.status === "active" || i.status === "marketing_only",
     );
     const considered = include_marketing
       ? live
-      : live.filter((i) => !i.is_marketing_only);
+      : live.filter(ownedInventoryItem);
 
     // The resolver matches against the canonical MASTER inventory (active,
     // non-marketing) — that is the authoritative "what Daniel owns" set.
     const masterNames = all
-      .filter((i) => i.status === "active" && !i.is_marketing_only)
+      .filter(ownedInventoryItem)
       .map((i) => i.name_canonical);
     const expanded = expandQuery(q);
     const resolvedCanonical =
@@ -203,15 +156,16 @@ export const lookup = query({
       );
 
     const matches = scored.slice(0, 12).map(({ i }) => {
-      const spec = specMap.get(i.name_canonical);
-      const specText = `${spec?.description ?? ""} ${spec?.specs_long ?? ""}`;
+      const spec = inventorySpec(specMap.get(String(i._id)), i.name_canonical);
+      const specText = spec?.text;
       return {
         name: i.name_canonical,
         kind: i.kind,
         sub_kind: i.sub_kind ?? null,
         qty: i.qty,
         status: i.status,
-        is_marketing_only: i.is_marketing_only,
+        is_marketing_only: i.status === "marketing_only" || !!i.is_marketing_only,
+        owned: ownedInventoryItem(i),
         lens_mount: i.lens_mount ?? null,
         battery_type: i.battery_type ?? null,
         card_type: i.card_type ?? null,
@@ -219,10 +173,11 @@ export const lookup = query({
         // questions are grounded, not recalled from the model's memory.
         focus: classifyFocus(i.name_canonical, i.kind, specText),
         compatibility: i.compatibility ?? null,
-        // The hand-written / grok spec prose — the actual answer source for
-        // "specs of the X", focal length, aperture, autofocus, weight, etc.
-        // Was sitting unused in item_specs; now surfaced to the chat.
+        // Only reviewed specs are usable as technical claims. Unknowns require
+        // verification; listing prose and generated descriptions are not proof.
         spec_description: spec?.description ?? null,
+        spec_verification: spec ? {model: spec.model, source_url: spec.source_url} : null,
+        spec_verification_required: !spec,
         specs_long: spec?.specs_long ?? null,
         notes: i.notes ?? null,
       };

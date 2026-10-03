@@ -143,6 +143,7 @@ import type * as lib_hygglo_pricing from "../lib/hygglo_pricing.js";
 import type * as lib_imageResolution from "../lib/imageResolution.js";
 import type * as lib_imminent_handoffs from "../lib/imminent_handoffs.js";
 import type * as lib_inventory_categories from "../lib/inventory_categories.js";
+import type * as lib_inventory_spec_grounding from "../lib/inventory_spec_grounding.js";
 import type * as lib_item_display_name from "../lib/item_display_name.js";
 import type * as lib_item_matcher from "../lib/item_matcher.js";
 import type * as lib_item_name_match from "../lib/item_name_match.js";
@@ -473,6 +474,7 @@ declare const fullApi: ApiFromModules<{
   "lib/imageResolution": typeof lib_imageResolution;
   "lib/imminent_handoffs": typeof lib_imminent_handoffs;
   "lib/inventory_categories": typeof lib_inventory_categories;
+  "lib/inventory_spec_grounding": typeof lib_inventory_spec_grounding;
   "lib/item_display_name": typeof lib_item_display_name;
   "lib/item_matcher": typeof lib_item_matcher;
   "lib/item_name_match": typeof lib_item_name_match;
