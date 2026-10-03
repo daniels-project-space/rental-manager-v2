@@ -24,3 +24,15 @@ describe("exact renter removal acceptance",()=>{
   });
   it("requires real known Native prices",()=>expect(acceptsRemoval("Remove Blazar Remus 100mm.",[{...booked[1],line_total_gbp:NaN}],{product_id:2,qty:1})).toBe(false));
 });
+
+it("distinguishes the remaining total from the reduction",()=>{
+ for(const text of ["Please remove one Blazar Remus 100mm for £50 less, bringing the total to £150.","Please remove one Blazar Remus 100mm. The current total is £200 and the new total is £150."])
+  expect(acceptsRemoval(text,booked,{product_id:2,qty:1})).toBe(true);
+ for(const text of ["Please remove one Blazar Remus 100mm for £50 total.","Please remove one Blazar Remus 100mm for £150 less.","Please remove one Blazar Remus 100mm for £50 extra.","Please remove one Blazar Remus 100mm for £50/day.","Please remove one Blazar Remus 100mm for a £50 refund.","Please remove one Blazar Remus 100mm for £150.001 total."])
+  expect(acceptsRemoval(text,booked,{product_id:2,qty:1})).toBe(false);
+});
+
+it("does not ignore a different currency or an incorrect GBP-code price",()=>{
+ expect(acceptsRemoval("Please remove one Blazar Remus 100mm for GBP 50 less.",booked,{product_id:2,qty:1})).toBe(true);
+ for(const amount of ["GBP 49.99","$50","50 USD","€50"])expect(acceptsRemoval(`Please remove one Blazar Remus 100mm for ${amount} less.`,booked,{product_id:2,qty:1})).toBe(false);
+});

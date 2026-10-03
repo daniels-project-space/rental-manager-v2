@@ -187,7 +187,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // to £194" still describes a proposal. Never carry this across sentences.
     const sentenceBeforeAmount=text.slice(0,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
     const continuedConditionalTotal=explicitBookingTotal &&
-      /^\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making|increasing|raising)\b/i.test(segment) &&
+      /^\s*(?:(?:extra|additional|more|less|off)\s*)?[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making|increasing|raising)\b/i.test(segment) &&
       /\b(?:would|could)\b/i.test(sentenceBeforeAmount) && /£/.test(sentenceBeforeAmount);
     const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
     const proposalTotal = conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
@@ -236,11 +236,18 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         const claimed=pairedItems??(groupAddition ? group : e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;
       }
-      const start = dateScope.start_date ?? (explicitDays !== null ? undefined : request.start_date);
-      const end = dateScope.end_date ?? (explicitDays !== null ? undefined : request.end_date);
+      // An extension's full total may follow its marginal price within the
+      // same conditional sentence. Carry that sentence's explicit period,
+      // never a date from an unrelated earlier sentence or quote.
+      const effectiveScope=e.date_proposal && continuedConditionalTotal ? claimDateScope(sentenceBeforeAmount,request.start_date) : dateScope;
+      if(!effectiveScope.valid)return false;
+      const start = effectiveScope.start_date ?? (explicitDays !== null ? undefined : request.start_date);
+      const end = effectiveScope.end_date ?? (explicitDays !== null ? undefined : request.end_date);
       if (!base && ((start && e.start_date && e.start_date !== start) || (end && e.end_date && e.end_date !== end))) return false;
       if (daily && base) return e.base_rate_gbp != null && cents(e.base_rate_gbp) === cents(amount);
-      if (days != null && e.days !== days) return false;
+      const effectiveDays=effectiveScope.explicit ? inclusiveRentalDays(effectiveScope.start_date,effectiveScope.end_date) : days;
+      if(explicitDays!==null && effectiveDays!=null && explicitDays!==effectiveDays)return false;
+      if (effectiveDays != null && e.days !== effectiveDays) return false;
       if ((declaredQuantity != null || !daily) && quantity != null && e.kind !== "basket" && e.quantity !== quantity) return false;
       const perUnit = /\b(?:each|per\s+(?:unit|camera|item))\b/i.test(local);
       const groupDaily = daily && !perUnit && (declaredQuantity != null || /\b(?:both|all\s+(?:cameras|items))\b/i.test(local));

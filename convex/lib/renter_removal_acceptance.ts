@@ -1,3 +1,4 @@
+import { amendmentMoneyClaims } from "./renter_amendment_money";
 import { directItemSelection, matchesQuotedDates, type AcceptedAdditionLine } from "./renter_addition_acceptance";
 
 /** Reconcile an explicit removal against the whole Native booked basket. A
@@ -17,7 +18,11 @@ export function acceptsRemoval(text: string, booked: AcceptedAdditionLine[], sel
   if (!line || selected.qty<1 || selected.qty>line.qty) return false;
   const total=booked.reduce((sum,l)=>sum+l.line_total_gbp,0);
   const reduction=line.line_total_gbp*selected.qty/line.qty;
-  const money=[...message.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/g)].map(m=>Number(m[1].replace(/,/g,"")));
+  const money=amendmentMoneyClaims(message);
   return Number.isFinite(total) && Number.isFinite(reduction) && reduction>0
-    && money.every(amount=>[total-reduction,reduction].some(actual=>Math.round(actual*100)===Math.round(amount*100)));
+    && money.every(claim=>{
+      if(["unsupported","daily","increase"].includes(claim.role))return false;
+      const expected=claim.role==="total"?[total-reduction]:claim.role==="reduction"?[reduction]:claim.role==="base"?[total]:[total-reduction,reduction];
+      return expected.some(actual=>Math.round(actual*100)===Math.round(claim.amount*100));
+    });
 }

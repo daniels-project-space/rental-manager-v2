@@ -37,3 +37,16 @@ it("never promotes an extension difference into a verified deposit or delivery f
  const request={items:[{name:"Sony FX3",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
  for(const fee of ["deposit","delivery","replacement cost"])expect(unsupportedPriceClaims(`Extending to 20–22 October requires £40 extra ${fee}.`,evidence,request)).not.toEqual([]);
 });
+
+it("grounds a conditional extension's extra cost and full total in the same sentence",()=>{
+ const evidence=datePriceEvidence(receipt(),"__probe__dates"),request={items:[{name:"Sony FX3",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+ const text="Extending your booking to 20–22 October would cost £40 extra, bringing your booking total to £120.";
+ expect(unsupportedPriceClaims(text,evidence,request)).toEqual([]);
+ for(const wrong of [text.replace("£120","£40"),text.replace("£40","£120"),text.replace("22 October","23 October")])expect(unsupportedPriceClaims(wrong,evidence,request)).not.toEqual([]);
+});
+
+it("does not carry an extension period into an unrelated sentence or ignore explicit wrong duration",()=>{
+ const evidence=datePriceEvidence(receipt(),"__probe__dates"),request={items:[{name:"Sony FX3",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+ expect(unsupportedPriceClaims("Extending to 20–22 October would cost £40 extra, bringing your booking total for 2 days to £120.",evidence,request)).not.toEqual([]);
+ expect(unsupportedPriceClaims("Extending to 20–22 October would cost £40 extra. Your current booking total is £120.",evidence,request)).not.toEqual([]);
+});

@@ -27,3 +27,15 @@ describe("date change agreement",()=>{
   expect(acceptsDateChange("Please move the dates to 20–22 October for £170.",t)).toBe(false);
  });
 });
+
+it("accepts a sent date offer that correctly distinguishes extra cost and full total",()=>{
+ const o=owner();o.body_text="I can extend your booking to 20–22 October for £46 extra, bringing the total to £170.";
+ expect(acceptsDateChange("Yes please.",terms(),o)).toBe(true);
+ expect(acceptsDateChange("Please move the dates to 20–22 October at £46 extra, bringing the total to £170.",terms())).toBe(true);
+ for(const text of [o.body_text.replace("£170","£46"),o.body_text.replace("£46 extra","£170 extra"),o.body_text.replace("£46 extra","£46 total"),o.body_text.replace("£46 extra","£46 less"),o.body_text.replace("£170","£170.001"),o.body_text.replace("£170","£-170")])expect(acceptsDateChange("Yes please.",terms(),{...o,body_text:text})).toBe(false);
+});
+
+it("recognises GBP notation and refuses an unverified different currency",()=>{
+ for(const amount of ["GBP 170","170 GBP","170 pounds"])expect(acceptsDateChange(`Please extend the return to 22 October for ${amount} total.`,terms())).toBe(true);
+ for(const amount of ["$170","170 USD","EUR 170","€170","170.001 GBP"])expect(acceptsDateChange(`Please extend the return to 22 October for ${amount} total.`,terms(),owner())).toBe(false);
+});

@@ -1,10 +1,10 @@
+import { amendmentMoneyClaims as money } from "./renter_amendment_money";
 import { bestMatch, tokenize, isGenericItemQuery } from "./item_name_match";
 import { renterItemNames } from "./renter_item_names";
 import type { SentAdditionProposal } from "./renter_sent_proposal";
 
 export type AcceptedAdditionLine = {product_id:number;name:string;qty:number;line_total_gbp:number;daily_rate_gbp?:number;base_daily_rate_gbp?:number;aliases?:string[];identity_name?:string;primary_removal_aliases?:string[]};
 export type AdditionAcceptanceQuote = {context_key:string;start_date:string;end_date:string;total_gbp:number;additional_cost_gbp:number;lines:AcceptedAdditionLine[]};
-const money = (s:string) => [...s.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/g)].map(m=>({amount:Number(m[1].replace(/,/g,"")),index:m.index!,length:m[0].length}));
 const sameMoney = (a:number,b:number) => Number.isFinite(a) && Number.isFinite(b) && Math.round(a*100)===Math.round(b*100);
 const numbers:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
 const normal = (s:string) => s.replace(/[’‘]/g,"'").replace(/\s+/g," ").trim();
@@ -46,7 +46,7 @@ export function directItemSelection(text:string, lines:AcceptedAdditionLine[], a
     const verb=action==="addition"?"(?:add|include|book|reserve)":"(?:remove|drop)";
     const request=new RegExp(`(?:^(?:(?:yes|yep|okay|ok|sure|please)[,\\s]+)*|\\b(?:please|go ahead(?: and)?|(?:can|could|would) you|(?:I|we)(?:'d| would) like (?:you )?to|(?:I|we) want (?:you )?to)\\s+)${verb}\\s+(.+)`,"i").exec(clause);
     if(!request)continue;
-    let object=request[1].replace(/\b(?:at|for)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s+(?:extra|more|additional))?/gi,"").replace(/\b(?:to|on|in)\s+(?:(?:my|our|the|this)\s+)?(?:booking|basket|order)\b.*$/i,"")
+    let object=request[1].replace(/\s*,?\s*(?:bringing|taking|making)\s+(?:(?:the|your|my)\s+)?(?:(?:new|updated|revised)\s+)?(?:(?:booking|order|rental)\s+)?total\s+(?:to|of)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?[.!?]*$/i,"").replace(/\b(?:at|for)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s+(?:extra|more|additional))?/gi,"").replace(/\b(?:to|on|in)\s+(?:(?:my|our|the|this)\s+)?(?:booking|basket|order)\b.*$/i,"")
       .replace(/\b(?:for|from|at|as quoted|together|only|just)\b.*$/i,"").trim();
     if(action==="removal")object=object.replace(/\s+(?:less|reduction)[.!?]*$/i,"");
     if(/\bor\b/i.test(object))return {named:true,matches:false,items:null};
@@ -70,12 +70,11 @@ function pricesMatch(text:string, quote:AdditionAcceptanceQuote, ownerQuote=fals
   let complete=false;
   const priced=new Set<number>();
   for(const claim of claims){
-    const before=text.slice(Math.max(0,claim.index-35),claim.index);
-    const after=text.slice(claim.index+claim.length,claim.index+claim.length+30);
-    const extra=/\b(?:extra|additional|more|adding|addition)\s*(?:cost|of|is|to|at|comes to|:)?\s*$/i.test(before) || /^\s*(?:extra|additional|more)\b/i.test(after);
-    const total=/\b(?:total|booking|basket|order)\s*(?:of|is|to|at|comes to|:)??\s*$/i.test(before) || /^\s*(?:total|in total)\b/i.test(after);
-    const current=/\b(?:current|existing|original|base)\b/i.test(before+after);
-    if(current && sameMoney(claim.amount,quote.total_gbp-quote.additional_cost_gbp))continue;
+    const before=claim.before;
+    const after=claim.after;
+    if(claim.role==="unsupported"||claim.role==="reduction")return {present:true,matches:false};
+    const extra=claim.role==="increase",total=claim.role==="total",current=claim.role==="base";
+    if(current){if(!sameMoney(claim.amount,quote.total_gbp-quote.additional_cost_gbp))return {present:true,matches:false};continue;}
     if(extra){if(!sameMoney(claim.amount,quote.additional_cost_gbp))return {present:true,matches:false};complete=true;continue;}
     if(total){if(!sameMoney(claim.amount,quote.total_gbp))return {present:true,matches:false};complete=true;continue;}
     if(claims.length===1 && sameMoney(claim.amount,quote.additional_cost_gbp)){complete=true;continue;}

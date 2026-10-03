@@ -1,3 +1,4 @@
+import { amendmentMoneyClaims } from "./renter_amendment_money";
 import type { SentDateProposal } from "./renter_date_proposal";
 type Terms={context_key:string;from_start_date:string;from_end_date:string;start_date:string;end_date:string;total_gbp:number;base_total_gbp:number;today:string};
 const sameMoney=(a:number,b:number)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.round(a*100)===Math.round(b*100);
@@ -40,17 +41,15 @@ function targetMatches(text:string,terms:Terms,offer=false){
   return false;
 }
 function priceMatches(text:string,terms:Terms){
-  const claims=[...text.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/g)];
+  const claims=amendmentMoneyClaims(text);
   if(!claims.length)return {present:false,matches:false};
   let complete=false;
-  for(const m of claims){const amount=Number(m[1].replace(/,/g,""));
-    const before=text.slice(Math.max(0,m.index!-30),m.index!),after=text.slice(m.index!+m[0].length,m.index!+m[0].length+20);
-    if(/\b(?:current|original|existing|old)\b/i.test(before)&&sameMoney(amount,terms.base_total_gbp))continue;
-    const extra=/\b(?:extra|additional|more)\b/i.test(before+after);
-    const reduction=/\b(?:less|reduction)\b/i.test(before+after);
-    const expected=extra?terms.total_gbp-terms.base_total_gbp:reduction?terms.base_total_gbp-terms.total_gbp:terms.total_gbp;
-    if(expected<0 || !sameMoney(amount,expected))return {present:true,matches:false};
-    complete=true;
+  for(const claim of claims){
+    if(claim.role==="unsupported"||claim.role==="daily")return {present:true,matches:false};
+    const expected=claim.role==="base"?terms.base_total_gbp:claim.role==="increase"?terms.total_gbp-terms.base_total_gbp
+      :claim.role==="reduction"?terms.base_total_gbp-terms.total_gbp:terms.total_gbp;
+    if(expected<0 || !sameMoney(claim.amount,expected))return {present:true,matches:false};
+    if(claim.role!=="base")complete=true;
   }
   return {present:true,matches:complete};
 }
