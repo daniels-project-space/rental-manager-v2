@@ -1,0 +1,11 @@
+# One Native renter identity and operational booking stage
+
+The context tool looked up missing renter links by display name and preferred the saved conversation stage over the booking. The main context used different renter-link precedence and a legacy sales-stage translator. Thus tool and preloaded context could disagree about the person, approval/payment/verification, or a cancelled booking.
+
+Both bot context producers now resolve renter history with one shared Native resolver: explicit renter IDs or an exact platform user ID. Names never identify a person. Contradictory links, contradictory platform IDs, multiple profiles for one platform ID and disagreement between a linked and platform-matched profile withhold personal history. The canonical generator persists a critical owner review before calling any model, and ordinary retries stay held. The context tool raises a bounded identity-conflict error. Unlinked people stay unknown and do not inherit another person's trust or blacklist.
+
+Both booked conversation stages now use the existing operational rentalStage resolver, including current dates and terminal verification failure. Saved sales stages remain available for conversations without bookings. The legacy translator remains for historical import callers, outside these live context reads.
+
+Validation: 48 focused tests and project/backend typechecks; controlled registered generator replay over an owned deployed Lab thread, overriding only the Native conflict flag, verifies an actual durable owner review and no draft/model request; a deployed generator retry verifies the hold. Separate actual Native context probes compare both producers during confirmation, outstanding verification and final failed-verification cancellation. No actual model calls, real messages/bookings or catalogue changes. All owned probes are cleaned.
+
+Proofs: /root/rental-renter-identity-review-proof.json and /root/rental-native-context-stage-proof.json. These do not claim a real production identity conflict was injected or repaired. Identity link maintenance, existing duplicate profiles, broader equipment-context drift and fresh model wording remain open audit work. Real Hygglo rollout requires Daniel's separate explicit written consent.

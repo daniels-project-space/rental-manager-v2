@@ -127,6 +127,14 @@ export const generateDraft = action({
         epoch: c.draft_epoch, context_key: c.draft_context_key, stage: c.conversation_stage, reason, flags, evidence, owner_checks: ownerChecks });
     };
 
+    if(c.renter_identity_conflict) {
+      const reason="needs_human:renter_identity_conflict";
+      const flags:DraftFlag[]=[{type:"RENTER_IDENTITY_CONFLICT",severity:"critical",action:"flagged",detail:"Native renter links disagree. Trust and history were withheld; the owner must resolve the identity before drafting."}];
+      const saved=await recordReview(reason,flags);
+      if(!saved.ok)return {status:"skipped",reason:saved.reason};
+      return {status:"skipped",reason,flags,review:saved.review,for_message_id:c.last_message_id};
+    }
+
     // Renter messages (oldest→newest) for negotiation + routing reads.
     const renterMsgs = c.messages
       .filter((m) => m.role === "renter")

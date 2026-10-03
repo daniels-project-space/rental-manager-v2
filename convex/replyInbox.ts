@@ -1,3 +1,4 @@
+import { resolveBotRenter } from "./lib/renter_identity";
 import { ownerCheckValidator } from "./lib/owner_checks";
 import { persistOwnerChecks } from "./renter_bot_owner_checks";
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
@@ -46,7 +47,6 @@ import {
   type OverrideMap,
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
-import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { selectPlaybook, selectLessons, type MemoryRow, type LessonRow } from "./lib/draft_playbook";
 import {
   haversineKm,
@@ -1196,10 +1196,8 @@ export const getThreadContext = internalQuery({
           ? JSON.stringify(business_hours)
           : null;
 
-    const renterId = reservation?.renter_id ?? conv?.renter_id ?? undefined;
-    const renter = renterId
-      ? ((await ctx.db.get(renterId)) as Doc<"renters"> | null)
-      : null;
+    const {renter,identity_conflict}=await resolveBotRenter(ctx,reservation,conv);
+    const renterId=renter?._id;
 
     // Cached low (<4★) reviews for this renter, if any have been fetched — the
     // AI uses them to stay cautious (it must NOT quote them to the renter).
@@ -1261,10 +1259,7 @@ export const getThreadContext = internalQuery({
     // authoritative; a date-less inquiry is read from renter interest signals.
     let conversation_stage: string;
     if (reservation) {
-      conversation_stage = stageFromReservationStatus(
-        reservation.status,
-        reservation.order_step,
-      );
+      conversation_stage = rentalStage(reservation,londonToday()).stage;
     } else {
       const renterText = renterMsgs.join(" ").toLowerCase();
       const interest =
@@ -1633,6 +1628,7 @@ export const getThreadContext = internalQuery({
       account_slug: slug ?? null,
       location: computeLocation(reservation, slug, await loadHubBook(ctx)),
       renter_id: renterId ?? null,
+      renter_identity_conflict:identity_conflict,
       conversation_id: conv?._id ?? null,
       draft_review: conv?.ai_draft_review ?? null,
       draft_epoch: settingsRow?.draft_epoch ?? 0,

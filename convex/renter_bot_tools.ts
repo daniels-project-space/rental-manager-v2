@@ -1,3 +1,4 @@
+import { getBotRenter } from "./lib/renter_identity";
 import { lensRequirementsValidator } from "./lib/owner_checks";
 import { ownerChecksForBot } from "./renter_bot_owner_checks";
 import { draftContextKey } from "./lib/draft_review";
@@ -35,7 +36,6 @@ import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_ide
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { recentThreadMessages } from "./lib/thread_messages";
-import { stageFromReservationStatus } from "./lib/renter_bot_intents";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
 import { tierRateForDays, describeTiers, rentalQuote, type PriceTier } from "./lib/hygglo_pricing";
@@ -52,42 +52,12 @@ export const get_renter_context = query({
 
     const reservation = await getBotBooking(ctx, thread_id);
 
-    let renter: { _id: string; display_name?: string; hygglo_rating?: number; total_rentals_count?: number; total_spend_gbp?: number; blacklisted?: boolean; blacklist?: boolean; blacklist_reason?: string; renter_dna?: unknown } | null = null;
-    if (conversation?.renter_id) {
-      const r = await ctx.db.get(conversation.renter_id);
-      if (r) {
-        renter = {
-          _id: String(r._id),
-          display_name: r.display_name,
-          hygglo_rating: r.hygglo_rating,
-          total_rentals_count: r.total_rentals_count,
-          total_spend_gbp: r.total_spend_gbp,
-          blacklisted: r.blacklisted ?? r.blacklist,
-          blacklist_reason: r.blacklist_reason,
-          renter_dna: r.renter_dna,
-        };
-      }
-    } else if (reservation?.renter_name) {
-      // Fallback by display name when conversation.renter_id is missing.
-      const r = await ctx.db
-        .query("renters")
-        .withIndex("by_display_name", (q) =>
-          q.eq("display_name", reservation.renter_name?.trim() ?? ""),
-        )
-        .first();
-      if (r) {
-        renter = {
-          _id: String(r._id),
-          display_name: r.display_name,
-          hygglo_rating: r.hygglo_rating,
-          total_rentals_count: r.total_rentals_count,
-          total_spend_gbp: r.total_spend_gbp,
-          blacklisted: r.blacklisted ?? r.blacklist,
-          blacklist_reason: r.blacklist_reason,
-          renter_dna: r.renter_dna,
-        };
-      }
-    }
+    const profile=await getBotRenter(ctx,reservation,conversation);
+    const renter=profile?{
+      _id:String(profile._id),display_name:profile.display_name,hygglo_rating:profile.hygglo_rating,
+      total_rentals_count:profile.total_rentals_count,total_spend_gbp:profile.total_spend_gbp,
+      blacklisted:profile.blacklisted??profile.blacklist,blacklist_reason:profile.blacklist_reason,renter_dna:profile.renter_dna,
+    }:null;
 
     // 12, not 3 (2026-08-21). The CONVERSATION_CRAFT anti-repetition rule says
     // "look at the conversation so far — if you have already told this renter
@@ -103,9 +73,9 @@ export const get_renter_context = query({
     // chat messages are short, and the static prefix is cached separately.
     const recentMsgs = await recentThreadMessages(ctx, thread_id, 12);
 
-    const stage =
-      conversation?.conversation_stage ??
-      stageFromReservationStatus(reservation?.status, reservation?.order_step);
+    const stage = reservation
+      ? rentalStage(reservation,londonToday()).stage
+      : conversation?.conversation_stage ?? "INQUIRY";
 
     const ownerChecks=await ownerChecksForBot(ctx,thread_id,draftContextKey(reservation,conversation?.inquiry_items,await getLabOrder(ctx,thread_id)));
 
