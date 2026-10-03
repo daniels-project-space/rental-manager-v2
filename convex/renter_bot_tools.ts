@@ -1,4 +1,6 @@
 import { lensRequirementsValidator } from "./lib/owner_checks";
+import { ownerChecksForBot } from "./renter_bot_owner_checks";
+import { draftContextKey } from "./lib/draft_review";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
@@ -105,6 +107,8 @@ export const get_renter_context = query({
       conversation?.conversation_stage ??
       stageFromReservationStatus(reservation?.status, reservation?.order_step);
 
+    const ownerChecks=await ownerChecksForBot(ctx,thread_id,draftContextKey(reservation,conversation?.inquiry_items,await getLabOrder(ctx,thread_id)));
+
     return {
       thread_id,
       account_slug:
@@ -113,6 +117,7 @@ export const get_renter_context = query({
           : conversation?.account_slug ?? reservation?.account_slug ?? "unknown",
       hygglo_order_id: reservation?.hygglo_order_id ?? thread_id,
       renter,
+      owner_checks: ownerChecks,
       conversation_stage: stage,
       rental_stage: rentalStage(reservation, londonToday()),
       last_message_id: recentMsgs.at(-1)?.message_id ?? null,
@@ -1329,6 +1334,9 @@ export const find_owned_alternatives = query({
       } : null,
       lens_search_outcome: !lensQuery ? null : !lensRequirementsSpecified ? "requirements_not_specified" : alternatives.length ? "verified_matches" : lensReviewNeeded.length ? "needs_spec_review" : "no_verified_match",
       lens_inventory_absence_established: false,
+      owner_review_workflow: lensQuery && lensRequirementsSpecified && !alternatives.length && lensReviewNeeded.length ? {
+        status:"owner_review_required",persistence:"with_saved_draft_or_review",customer_input_required:false,specification_result_verified:false,
+      } : null,
       lens_guidance: "Pass a structured lens_requirements object for the desired option, including {} when no technical constraints apply. Current-item descriptions and questions are not alternative requirements. Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. lens_review_needed names are owned items requiring specification review, not verified alternatives. Zero verified matches never proves that we do not own an item or that it is booked; explain missing verification and ask the owner to check. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",
       recording_requirement_checked: !!requirements.recording,
       // Only the recorded mode properties are checked, never arbitrary codecs.

@@ -13,7 +13,11 @@ export function nativeOwnerChecks(receipts:Array<{tool:string;call_id:string;res
  return receipts.filter(r=>r.tool==="find_owned_alternatives"&&r.call_id&&r.result.owner_check)
   .map(r=>({...r.result.owner_check as Omit<OwnerCheck,"source_call_id">,source_call_id:r.call_id}));
 }
+function ownerCheckScope(check:OwnerCheck) {
+ return [check.kind,normalizeMount(check.lens_mount),check.start_date,check.end_date,check.quantity,
+  Object.entries(check.requirements).filter(([,v])=>v!==undefined).map(([k,v])=>[k,Array.isArray(v)?[...v].sort():v] as [string,unknown]).sort(([a],[b])=>a.localeCompare(b))];
+}
+export function ownerCheckScopeKey(check:OwnerCheck) {return JSON.stringify(ownerCheckScope(check));}
 export function ownerCheckKey(thread:string,message:string,check:OwnerCheck) {
- return JSON.stringify([thread,message,check.kind,normalizeMount(check.lens_mount),check.start_date,check.end_date,check.quantity,
-  Object.entries(check.requirements).filter(([,v])=>v!==undefined).map(([k,v])=>[k,Array.isArray(v)?[...v].sort():v] as [string,unknown]).sort(([a],[b])=>a.localeCompare(b))]);
+ return JSON.stringify([thread,message,...ownerCheckScope(check)]);
 }

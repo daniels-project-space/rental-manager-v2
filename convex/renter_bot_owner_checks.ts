@@ -1,8 +1,8 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { query, mutation } from "./owner_functions";
-import type { MutationCtx } from "./_generated/server";
-import { ownerCheckKey, ownerCheckValidator, type OwnerCheck } from "./lib/owner_checks";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { ownerCheckKey, ownerCheckScopeKey, ownerCheckValidator, type OwnerCheck } from "./lib/owner_checks";
 import { internalQuery } from "./_generated/server";
 import { lensReadinessSubject } from "./lib/catalogue_readiness";
 import { assessLensRequirements, hasLensRequirements, verifiedLensCapabilities } from "./lib/lens_requirements";
@@ -10,6 +10,15 @@ import { sameMount } from "./lib/item_name_match";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
 import { recentThreadMessages } from "./lib/thread_messages";
+/** Workflow state only. Handling notes and equipment facts are deliberately
+ * absent: marking a task handled does not attest a specification or quote. */
+export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:string) {
+ const tasks=await ctx.db.query("renter_bot_owner_checks").withIndex("by_thread",q=>q.eq("thread_id",threadId)).order("desc").take(20);
+ return tasks.map(task=>({task_id:task._id,status:task.status,requirements:task.check.requirements,lens_mount:task.check.lens_mount,
+  start_date:task.check.start_date,end_date:task.check.end_date,quantity:task.check.quantity,candidate_names:task.candidate_names,
+  context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,
+  specification_result_verified:false,customer_input_required:false}));
+}
 /** Recompute capability absence from current Native inventory, independently
  * of model prose, tool-use booleans, stock results and prices. */
 export const readinessEvidence=internalQuery({args:{checks:v.array(ownerCheckValidator)},handler:async(ctx,a)=>{
@@ -47,6 +56,14 @@ export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;mes
   if(!ids.length)continue;
   const key=ownerCheckKey(a.thread_id,a.message_id,check);
   if(await ctx.db.query("renter_bot_owner_checks").withIndex("by_key",q=>q.eq("key",key)).unique())continue;
+  const pending=await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",a.thread_id)).collect();
+  const existing=pending.find(task=>task.account_slug===conv.account_slug&&task.source_context_key===a.context_key&&ownerCheckScopeKey(task.check)===ownerCheckScopeKey(check));
+  if(existing) {
+    // The original source question remains the audit anchor. Refresh candidates
+    // from this Native result rather than creating another task on a follow-up.
+    await ctx.db.patch(existing._id,{check:{...check,candidate_item_ids:ids},candidate_names:names});
+    continue;
+  }
   await ctx.db.insert("renter_bot_owner_checks",{thread_id:a.thread_id,account_slug:conv.account_slug,source_message_id:a.message_id,source_context_key:a.context_key,
    source_epoch:a.epoch,key,check:{...check,candidate_item_ids:ids},candidate_names:names,source_question:source.body_text??"",status:"pending",created_at:Date.now()});
  }
