@@ -174,6 +174,21 @@ export const checkAvailabilityTool = createTool({
   },
 });
 
+/** Joint proposals must share one physical stock allocation. */
+export const checkBasketAvailabilityTool = createTool({
+  id: "check_basket_availability",
+  description: "Check ALL proposed items together in one shared-stock snapshot before saying both/all are available. Separate successful item checks do not prove they can go out together. Include each exact item/listing and quantity. For a confirmed booking choose additional to retain its gear, or replacement with the exact listing to remove. This is read-only and supplies no price or booking change. available:null is unknown. Check the exact requested unavailable items too; a price miss or an available alternative does not prove their stock.",
+  inputSchema: z.object({
+    account_slug:z.string(),thread_id:z.string().optional(),start_date:z.string(),end_date:z.string(),
+    items:z.array(z.object({item_name:z.string(),quantity:z.number().int().min(1).max(20),product_id:z.number().int().positive().optional()})).min(1).max(8),
+    booking_use:z.enum(["standalone","additional","replacement"]).optional(),
+    replace_product_id:z.number().int().positive().optional(),replace_quantity:z.number().int().min(1).max(20).optional(),
+    pickup_time:z.string().optional(),return_time:z.string().optional(),
+  }),
+  outputSchema:z.unknown(),
+  execute:async(input)=>await convex().query(anyApi.renter_bot_tools.check_basket_availability,input),
+});
+
 // ── Tool 5: search_knowledge ──────────────────────────────────
 
 export const searchKnowledgeTool = createTool({
@@ -452,6 +467,7 @@ export const RENTER_BOT_TOOLS = {
   get_listing_context: getListingContextTool,
   lookup_pricing: lookupPricingTool,
   check_availability: checkAvailabilityTool,
+  check_basket_availability: checkBasketAvailabilityTool,
   search_knowledge: searchKnowledgeTool,
   get_negotiation_stance: getNegotiationStanceTool,
   get_template: getTemplateTool,

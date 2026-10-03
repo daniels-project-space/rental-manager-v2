@@ -2160,14 +2160,24 @@ export const recheckCopiedDraftStock = internalQuery({
     const receipts:StockReceipt[]=[];
     const checked=new Set<string>();
     for(const old of evidence.stock) {
-      const key=JSON.stringify([old.item,old.start_date,old.end_date,old.quantity]);
+      // Recompute every aggregate physical unit in a saved joint proof using
+      // this same current Native snapshot; never carry its old verdict forward.
+      const basket=old.basket ? {
+        items:old.basket.items,
+        available:old.basket.items.length>0 && old.basket.items.every(line=>{
+          const resolved=resolveStockItem(line.name,sources.items);
+          return Number.isInteger(line.quantity) && line.quantity>0 && resolved.confident && !!resolved.match
+            && stockForRentalItem(sources,resolved.match,{item_name:line.name,start_date:old.start_date,end_date:old.end_date,quantity:line.quantity,thread_id}).available===true;
+        }),
+      } : undefined;
+      const key=JSON.stringify([old.item,old.start_date,old.end_date,old.quantity,basket?.items]);
       if(checked.has(key))continue;
       checked.add(key);
       const item=resolveStockItem(old.item,sources.items);
       if(!item.confident||!item.match)continue;
       const fresh=stockForRentalItem(sources,item.match,{item_name:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,thread_id});
       receipts.push({item:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,
-        available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,call_id:`send-recheck:${receipts.length}`});
+        available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,basket,call_id:`send-recheck:${receipts.length}`});
     }
     const excluded=(evidence.rental_eligibility?.ineligible_items??[]).filter(name=>{
       const item=resolveStockItem(name,sources.items);

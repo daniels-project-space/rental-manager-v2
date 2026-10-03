@@ -41,7 +41,7 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
         result.component_base_offering_quotes.forEach((quote, i) => visit({toolName:"lookup_pricing",toolCallId:`${String(payload.toolCallId ?? "unknown")}:component-base:${i}`,result:quote}));
       if (!result.error && result.ok !== false && result.found !== false)
         receipts.push({ tool: payload.toolName, call_id: String(payload.toolCallId ?? "unknown"), result });
-      if (!result.error && result.ok !== false && payload.toolName === "check_availability" && Array.isArray(result.components)) {
+      if (!result.error && result.ok !== false && ["check_availability","check_basket_availability"].includes(String(payload.toolName)) && Array.isArray(result.components)) {
         for (const component of result.components) {
           if (component && typeof component === "object") receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:component:${String(component.item_id ?? component.item_name)}`, result: component });
         }

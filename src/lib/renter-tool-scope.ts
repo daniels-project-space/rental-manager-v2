@@ -10,7 +10,7 @@ export function bindRenterToolArgs(functionName: string, args: Record<string, un
   if (!scope) return args;
   const bound = { ...args };
   if ("account_slug" in args || functionName === "renter_bot_tools:lookup_pricing") bound.account_slug = scope.accountSlug;
-  if ("thread_id" in args || functionName === "renter_bot_tools:check_availability") bound.thread_id = scope.threadId;
+  if ("thread_id" in args || ["renter_bot_tools:check_availability","renter_bot_tools:check_basket_availability"].includes(functionName)) bound.thread_id = scope.threadId;
   if (functionName === "renter_bot_lab_order:applyChange") bound.request_message_id = scope.requestMessageId ?? "";
   return bound;
 }

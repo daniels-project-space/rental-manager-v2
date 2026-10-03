@@ -792,7 +792,8 @@ export const check_availability = query({
           product_id,requested_units:candidate.qty,free_units:null,start_date,end_date,checked_at:Date.now(),
           booking_use:basket.use,rental_stage:stage,reason:basket.ok ? check?.reason ?? "missing_account" : basket.reason,
           stock_scope:basket.use==="current" ? "current_booking" : "proposed_basket",
-          components:check?.receipts ?? [],replacement_removed_listings:basket.removed,
+          basket:check ? {available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))} : undefined,
+          components:(check?.receipts ?? []).map(r=>({...r,basket:{available:check!.available,items:check!.receipts.map(c=>({name:c.item_name,quantity:c.requested_units}))}})),replacement_removed_listings:basket.removed,
           conflict_count:check?.receipts.filter(r=>r.available===false).length ?? 0,buffer_violation:false,
           guidance:"This verdict checks the complete basket. Current-booking checks do not prove an extra item. A rejected proposal can be caused by shared components; explain their counts rather than claiming the added item is independently out of stock. Replacement is a read-only scenario, never a booking edit."};
       }
@@ -807,6 +808,42 @@ export const check_availability = query({
     const result = await checkRentalStock(ctx, { item_name, start_date, end_date, quantity, pickup_time, return_time, thread_id });
     return { ...result, start_date, end_date, conflict_count: result.conflicts.length, buffer_violation: false };
 
+  },
+});
+
+/** One Native snapshot for a joint equipment proposal, never an order edit. */
+export const check_basket_availability = query({
+  args:{account_slug:v.string(),thread_id:v.optional(v.string()),start_date:v.string(),end_date:v.string(),
+    items:v.array(v.object({item_name:v.string(),quantity:v.number(),product_id:v.optional(v.number())})),
+    booking_use:v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
+    replace_product_id:v.optional(v.number()),replace_quantity:v.optional(v.number()),
+    pickup_time:v.optional(v.string()),return_time:v.optional(v.string())},
+  handler:async(ctx,a)=>{
+    if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
+    const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
+    if ((booking?.account_slug && booking.account_slug!==a.account_slug) || (labOrder?.account_slug && labOrder.account_slug!==a.account_slug)) throw new Error("The current booking belongs to a different account");
+    const stage=rentalStage(booking,londonToday()).stage;
+    const closed=["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
+    const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
+    const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
+      : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id})) : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
+    const recent=a.thread_id && !closed && existing.length ? await recentThreadMessages(ctx,a.thread_id,12) : [];
+    const expected=explicitRecommendationUse(recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "");
+    const sources=await loadStockSources(ctx);
+    const candidates=a.items.map(line=>{
+      const match=line.product_id==null ? bestMatch(line.item_name,sources.items,i=>i.name_canonical,i=>i.aliases ?? []) : null;
+      return {name:match?.confident ? match.match!.name_canonical : line.item_name,qty:line.quantity,product_id:line.product_id,
+        ...(match?.confident ? {item_id:String(match.match!._id)} : {})};
+    });
+    if (candidates.some(c=>!Number.isInteger(c.qty)||c.qty<1||c.qty>20)) return {available:null,reason:"invalid_quantity",components:[]};
+    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
+      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:a.booking_use,expected_use:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
+    if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
+    const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,a.thread_id ?? "",sources,{pickup_time:a.pickup_time,return_time:a.return_time});
+    const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
+    return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
+      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,
+      guidance:"This is a read-only joint basket verdict. Only available:true proves all proposed gear fits alongside retained items. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
   },
 });
 

@@ -96,3 +96,12 @@ it("retains Native failed recommendation basket checks without a positive altern
   expect(successfulGrounding(receipts)).toMatchObject({availability:false,unavailability:true});
   expect(renterToolReceipts([{toolName:"find_owned_alternatives",args:result}])).toEqual([]);
 });
+
+it("retains joint Native component proofs while ignoring proposed model arguments",()=>{
+ const basket={available:false,items:[{name:"NP-F570 batteries",quantity:15}]};
+ const component={...stock,item_name:"NP-F570 batteries",requested_units:15,available:false,free_units:12,basket,source:"shared_inventory_confirmed_rentals"};
+ const steps=[{toolName:"check_basket_availability",toolCallId:"joint",args:{components:[{...component,available:true}]},result:{available:false,components:[component]}}];
+ expect(stockReceipts(renterToolReceipts(steps))).toHaveLength(1);
+ expect(stockReceipts(renterToolReceipts(steps))[0].result).toEqual(component);
+ expect(stockReceipts(renterToolReceipts([{toolName:"check_basket_availability",args:{components:[component]}}]))).toEqual([]);
+});

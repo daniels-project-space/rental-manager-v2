@@ -262,3 +262,53 @@ describe("booked-kit references versus negative stock claims", () => {
       expect(unsupportedStockClaims(claim,[],request)).toHaveLength(1);
   });
 });
+
+describe("joint recommendation availability",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const names=["Anamorphic Blazar Remus 100mm","PL to L mount adapter"];
+ const independent=names.map(item=>({...stock,item,start_date:scope.start_date!,end_date:scope.end_date!,quantity:1,available:true,free_units:1}));
+ const basket={available:true,items:names.map(name=>({name,quantity:1}))};
+ const joint=independent.map(r=>({...r,basket}));
+ const reply="- Anamorphic Blazar Remus 100mm: £50 for the 2 days (£25/day)\n- PL to L mount adapter: £20 for the 2 days (£10/day)\nBoth are available for 20 to 21 October.";
+ it("requires actual joint basket evidence for a two-item bullet group",()=>{
+  expect(check(reply,joint,scope)).toEqual([]);
+  expect(check(reply,independent,scope)).not.toEqual([]);
+  for(const proof of [{...basket,available:false},{...basket,items:basket.items.slice(0,1)}])
+   expect(check(reply,independent.map(r=>({...r,basket:proof})),scope)).not.toEqual([]);
+  expect(check(reply,joint.map(r=>({...r,end_date:"2026-10-22"})),scope)).not.toEqual([]);
+ });
+ it("does not borrow two bullets across an unknown item, a third item, or an unrelated sentence",()=>{
+  for(const text of [reply.replace("PL to L mount adapter:","PL to E mount adapter:"),reply.replace("Both are","- Unknown lens: £10\nBoth are"),reply.replace("Both are","Your booking is unchanged. Both are")])
+   expect(check(text,joint,scope)).not.toEqual([]);
+ });
+ it("checks explicitly coordinated names and quantities together",()=>{
+  expect(check(`${names[0]} and ${names[1]} are available for 20 to 21 October.`,joint,scope)).toEqual([]);
+  expect(check(`Two ${names[0]} and ${names[1]} are available for 20 to 21 October.`,joint,scope)).not.toEqual([]);
+  expect(check(`${names[0]} and PL to E mount adapter are available.`,joint,scope)).not.toEqual([]);
+ });
+ it("rejects a stale or partial positive group when one member fails",()=>{
+  expect(check(reply,[joint[0],{...joint[1],available:false,free_units:0,basket:{...basket,available:false}}],scope)).not.toEqual([]);
+  expect(check(reply.replace("are available","are unavailable"),joint.map(r=>({...r,available:false,free_units:0,basket:{...basket,available:false}})),scope)).toEqual([]);
+  expect(check(reply.replace("are available","are unavailable"),[joint[0],{...joint[1],available:false}],scope)).not.toEqual([]);
+ });
+});
+
+it("matches Native directional adapter names without confusing mount ends",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const items=[{name:"Anamorphic Blazar Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}];
+ const joint=items.map(i=>({...stock,item:i.name,quantity:i.quantity,start_date:scope.start_date!,end_date:scope.end_date!,available:true,free_units:1,basket:{available:true,items}}));
+ for(const pronoun of ["Both","All","They"])
+  expect(check(`- Anamorphic Blazar Remus 100mm: £50\n- PL to L mount adapter: £20\n${pronoun} are available for 20 to 21 October.`,joint,scope)).toEqual([]);
+ for(const adapter of ["PL to E mount adapter","L to PL mount adapter","EF to L mount adapter"])
+  expect(check(`- Anamorphic Blazar Remus 100mm: £50\n- ${adapter}: £20\nBoth are available.`,joint,scope)).not.toEqual([]);
+});
+
+it("sums shared kit components and scales explicitly requested kit units",()=>{
+ const items=[{name:"Kit A",quantity:1,components:[{name:"NP-F570 batteries",quantity:5}]},{name:"Kit B",quantity:1,components:[{name:"NP-F570 batteries",quantity:5}]}];
+ const scope:StockRequest={...request,items};
+ const proof=(quantity:number):StockReceipt=>({...stock,item:"NP-F570 batteries",quantity,available:true,free_units:quantity,basket:{available:true,items:[{name:"NP-F570 batteries",quantity}]}});
+ expect(check("Kit A and Kit B are available.",[proof(5)],scope)).not.toEqual([]);
+ expect(check("Kit A and Kit B are available.",[proof(10)],scope)).toEqual([]);
+ expect(check("Two Kit A and Kit B are available.",[proof(10)],scope)).not.toEqual([]);
+ expect(check("Two Kit A and Kit B are available.",[proof(15)],scope)).toEqual([]);
+});

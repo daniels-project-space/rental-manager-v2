@@ -1,7 +1,7 @@
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
-import type { StockRequest } from "./lib/stock_claims";
+import type { StockRequest, StockReceipt } from "./lib/stock_claims";
 import type { KitEvidence } from "./lib/kit_claims";
 import { amendedDraftContext, currentDraftReview, type DraftContextTransition, type DraftReview } from "./lib/draft_review";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
@@ -625,7 +625,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
-          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string }>;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
           needs_human?: boolean;
@@ -692,6 +692,9 @@ export const generateDraft = action({
         generationMeta.evidence.stock.forEach(receipt=>{
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
           if(typeof native?.kind === "string")receipt.kind=native.kind;
+          if(native?.basket && (typeof native.basket.available==="boolean" || native.basket.available===null)
+            && Array.isArray(native.basket.items) && native.basket.items.length>0
+            && native.basket.items.every(i=>typeof i.name==="string" && !!i.name && Number.isInteger(i.quantity) && i.quantity>0))receipt.basket=native.basket;
         });
         if (j.needs_human) {
           const reason = `needs_human:${j.needs_human_reason ?? "unknown"}`;

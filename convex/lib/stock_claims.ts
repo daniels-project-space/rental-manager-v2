@@ -6,6 +6,7 @@ export type StockReceipt = {
   available: boolean | null; free_units: number | null;
   checked_at: number; call_id: string;
   kind?: string;
+  basket?: {available:boolean|null;items:Array<{name:string;quantity:number}>};
 };
 export type StockRequest = {
   start_date?: string | null; end_date?: string | null;
@@ -14,6 +15,10 @@ export type StockRequest = {
 
 // Preserve exact model variants. Never resolve a stock claim by fuzzy similarity.
 function identity(name: string) {
+  // Canonical inventory uses "PL to L mount"; renter prose adds "adapter".
+  // Match only an entire directional mount identity, preserving both ends.
+  const adapter=/^\s*(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\s*$/i.exec(name);
+  if(adapter)return `adapter ${adapter[1].toLowerCase()} ${adapter[2].toLowerCase().replace(/^sony\s+/,"")}`;
   return name.toLowerCase()
     .replace(/\ba7\s*(iii|ii|iv|v)\b/g, (_, n: string) => `a7${({ ii: 2, iii: 3, iv: 4, v: 5 } as Record<string, number>)[n]}`)
     .replace(/^\s*sony\s+(?=(?:fx\d+|a7\d+)\b)/, "")
@@ -59,13 +64,29 @@ export function supportsRentalEligibilityDecline(clause: string, request: StockR
 export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest, ineligibleItems: string[] = []) {
   const failures: Array<{ negative: boolean; detail: string }> = [];
   let previousSubjects: StockRequest["items"] = [];
+  let bulletSubjects: StockRequest["items"] = [];
+  let invalidBullet = false;
   const knownSubjects = [...request.items];
   for (const receipt of receipts)
     if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
       knownSubjects.push({name:receipt.item,quantity:1});
+  const withQuantity=(item:StockRequest["items"][number],quantity:number)=>({...item,quantity,
+    components:item.components?.map(c=>({...c,quantity:c.quantity*quantity/item.quantity})),
+  });
   const references = lensClaimReferences(knownSubjects.map(item => ({names:[item.name,...(item.aliases??[])],item})),
     (a,b) => a.some(left => b.some(right => sameItem(left,right))));
   for (const rawClause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+    const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rawClause);
+    const precedingBullets=bulletSubjects;
+    const precedingInvalid=invalidBullet;
+    if (bullet) {
+      const parsed=subjectOf(bullet[1]);
+      const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
+      const focal=references.get(identity(parsed.name.replace(/\s+lens(?:es)?$/i,"")));
+      const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item : undefined;
+      if (!resolved) invalidBullet=true;
+      else bulletSubjects=[...bulletSubjects,withQuantity(resolved,parsed.quantity??resolved.quantity)];
+    } else {bulletSubjects=[];invalidBullet=false;}
     // An unconditional equipment offer is an availability promise. Keep the
     // object, counts and dates intact; service offers and conditional checks
     // do not assert that physical equipment is currently free.
@@ -140,11 +161,36 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const requestedCounts = [...new Set(request.items.map(i => i.quantity))];
       targets = [{ name: subject.name, quantity: subject.quantity ?? (requestedCounts.length === 1 ? requestedCounts[0] : NaN) }];
     }
+    const pluralGroup=/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(prefix.replace(/\s+(?:is|are)\s*$/i,"").trim())
+      || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
+    const coordinated=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim().split(/\s+(?:and|plus|paired with)\s+/i);
+    const jointClaim=pluralGroup || coordinated.length>1;
+    if (pluralGroup) {
+      targets=!precedingInvalid && precedingBullets.length>=2 && (!/^both|^(?:these|those) two/i.test(prefix.trim()) || precedingBullets.length===2) && precedingBullets.every((i,index)=>!precedingBullets.slice(0,index).some(other=>sameItem(i.name,other.name))) ? precedingBullets : [];
+      subject.quantity=undefined;
+    } else if(coordinated.length>1) {
+      targets=coordinated.flatMap(part=>{
+        const parsed=subjectOf(part);
+        const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
+        return exact.length===1 ? [withQuantity(exact[0],parsed.quantity??exact[0].quantity)] : [];
+      });
+      if(targets.length!==coordinated.length)targets=[];
+      subject.quantity=undefined;
+    }
     if (!generic) previousSubjects = targets;
     const start = dateScope.start_date ?? request.start_date;
     const end = dateScope.end_date ?? request.end_date;
     if (negative && supportsRentalEligibilityDecline(clause, { ...request, items: targets }, ineligibleItems)) continue;
-    const proven = targets.length > 0 && targets.every(target => {
+    const requiredJoint:Array<{name:string;quantity:number}>=[];
+    for(const component of targets.flatMap(t=>t.components?.length ? t.components : [{name:t.name,quantity:t.quantity}])) {
+      const previous=requiredJoint.find(i=>sameItem(i.name,component.name));
+      if(previous)previous.quantity+=component.quantity;
+      else requiredJoint.push({...component});
+    }
+    const jointProof=!jointClaim || negative || receipts.some(r=>r.call_id && Number.isFinite(r.checked_at) && r.basket?.available===true
+      && (!start || r.start_date===start) && (!end || r.end_date===end)
+      && requiredJoint.every(c=>Number.isInteger(c.quantity)&&c.quantity>0&&r.basket!.items.some(i=>sameItem(i.name,c.name)&&i.quantity>=c.quantity)));
+    const proven = jointProof && targets.length > 0 && targets.every(target => {
       if (!dateScope.valid) return false;
       if(modifiers.some(raw=>{
         if(/^built[ -]?in\s+ND(?:s|\s+filters?)?$/i.test(raw.trim()))return false; // reviewed separately as an intrinsic camera feature
@@ -167,6 +213,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
             !names.some(n => sameItem(n, r.item)) ||
             (start && r.start_date !== start) || (end && r.end_date !== end)) return false;
           if (r.quantity === quantity) return r.available === !negative;
+          if (jointClaim && !negative && r.available===true && r.basket?.available===true && r.quantity>=quantity
+            && requiredJoint.every(c=>r.basket!.items.some(i=>sameItem(i.name,c.name)&&i.quantity>=c.quantity))) return true;
           // Explicit smaller offers can use capacity from the same stock check.
           return subject.quantity !== undefined && typeof r.free_units === "number" &&
             (negative ? r.free_units < quantity : r.free_units >= quantity);

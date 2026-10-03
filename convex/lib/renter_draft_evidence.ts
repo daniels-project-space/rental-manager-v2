@@ -37,6 +37,7 @@ export const draftEvidenceValidator = v.object({
     free_units: v.union(v.number(), v.null()),
     checked_at: v.number(), call_id: v.string(),
     kind: v.optional(v.string()),
+    basket:v.optional(v.object({available:v.union(v.boolean(),v.null()),items:v.array(v.object({name:v.string(),quantity:v.number()}))})),
   })),
 });
 export type DraftEvidence = Infer<typeof draftEvidenceValidator>;

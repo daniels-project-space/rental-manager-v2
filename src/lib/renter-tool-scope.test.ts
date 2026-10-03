@@ -14,6 +14,7 @@ describe("trusted tool request scope", () => {
     const scope = { threadId: "one", accountSlug: "leo" };
     expect(bindRenterToolArgs("renter_bot_tools:lookup_pricing", {}, scope)).toEqual({ account_slug: "leo" });
     expect(bindRenterToolArgs("renter_bot_tools:check_availability", {}, scope)).toEqual({ thread_id: "one" });
+    expect(bindRenterToolArgs("renter_bot_tools:check_basket_availability", {account_slug:"diogo"}, scope)).toEqual({account_slug:"leo",thread_id:"one"});
     expect(bindRenterToolArgs("settings:get", {}, scope)).toEqual({});
   });
   it("keeps concurrent threads isolated across async tool calls", async () => {
