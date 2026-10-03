@@ -56,12 +56,17 @@ export function normToken(raw: string): string {
   return t;
 }
 
+/** Equivalent aperture spelling, preserving its numeric value and F/T unit. */
+export function normalizeApertureNotation(text:string):string {
+  return text.replace(/\b([ft])\s*\/\s*(\d)/gi,"$1$2");
+}
+
 /** Tokenise a product/listing name into meaningful, variant-preserving tokens. */
 export function tokenize(str: string): Set<string> {
   const out = new Set<string>();
   // Inventory uses f2.8 while renters commonly type f/2.8. Splitting the
   // slash first discarded the f and left a different identity token (2).
-  const surface = str.toLowerCase().replace(/\b([ft])\s*\/\s*(\d)/g, "$1$2");
+  const surface = normalizeApertureNotation(str).toLowerCase();
   for (const raw of surface.match(/[a-z0-9]+/g) ?? []) {
     if (raw.length < 1) continue;
     const t = normToken(raw);

@@ -408,3 +408,15 @@ describe("Native lens and directional adapter references",()=>{
   expect(check(relative,joint.map(r=>({...r,end_date:"2026-10-22"})),scope)).not.toEqual([]);
  });
 });
+
+
+it("binds a lens availability relative clause across equivalent aperture spelling",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",quantity:1}]};
+ const lens:StockReceipt={...stock,item:"Sony GM 16-35mm f2.8",kind:"lens",available:true,free_units:1,quantity:1,start_date:scope.start_date!,end_date:scope.end_date!};
+ const text="For an autofocus full-frame Sony E option reaching at least 16mm, we have the Sony GM 16-35mm f/2.8, which is available for 20 to 21 October.";
+ expect(check(text,[lens],scope)).toEqual([]);
+ expect(check(text.replace("f/2.8","f / 2.8"),[lens],scope)).toEqual([]);
+ for(const wrong of [text.replace("f/2.8","f/4"),text.replace("f/2.8","T/2.8"),text.replace("16-35mm","24-70mm"),text.replace("16-35mm","16-35mm GM II"),text.replace("21 October","22 October")])expect(check(wrong,[lens],scope)).not.toEqual([]);
+ expect(check(text,[],scope)).not.toEqual([]);
+ expect(check(text,[{...lens,available:false,free_units:0}],scope)).not.toEqual([]);
+});

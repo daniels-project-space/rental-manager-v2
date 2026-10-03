@@ -1,3 +1,4 @@
+import { normalizeApertureNotation } from "./item_name_match";
 import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
@@ -20,7 +21,7 @@ export type StockRequest = {
 function identity(name: string) {
   // Preserve both ends and their order in directional adapter identities,
   // including mentions embedded in a sentence.
-  return name.toLowerCase()
+  return normalizeApertureNotation(name).toLowerCase()
     .replace(/\b(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\b/g,
       (_,from:string,to:string)=>`mountadapter ${from} ${to.replace(/^sony\s+/,"")}`)
     .replace(/\ba7\s*(iii|ii|iv|v)\b/g, (_, n: string) => `a7${({ ii: 2, iii: 3, iv: 4, v: 5 } as Record<string, number>)[n]}`)
