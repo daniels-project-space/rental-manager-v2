@@ -2177,7 +2177,7 @@ export const recheckCopiedDraftStock = internalQuery({
       if(!item.confident||!item.match)continue;
       const fresh=stockForRentalItem(sources,item.match,{item_name:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,thread_id});
       receipts.push({item:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,
-        available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,basket,call_id:`send-recheck:${receipts.length}`});
+        available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,owned:fresh.owned,basket,call_id:`send-recheck:${receipts.length}`});
     }
     const excluded=(evidence.rental_eligibility?.ineligible_items??[]).filter(name=>{
       const item=resolveStockItem(name,sources.items);

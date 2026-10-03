@@ -2,7 +2,7 @@ import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
-import { supportsRentalEligibilityDecline, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 /**
@@ -583,9 +583,11 @@ const ASSERTS_AVAIL_RE =
   // A positive result for an alternative cannot authorize a false negative
   // about the requested item. Check actual assertions even with price/spec
   // grounding, and treat negative claims as equally consequential.
-  const negativeStock = /\b(?:(?:isn'?t|aren'?t|is not|are not|not)\s+available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available)|don'?t have (?:that|it|one)|can'?t get (?:that|it|one))\b/i;
+  const negativeStock = /\b(?:(?:isn'?t|aren'?t|is not|are not|not)\s+available|unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i;
   const assertsUnavailable = text.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas)\s+/i).some(sentence => {
     if (/\b(?:check|verify|confirm|know|unsure|uncertain|not sure)\b[^.!?]{0,70}\b(?:whether|if)\b/i.test(sentence)) return false;
+    const refusal=rentalRefusalSubject(sentence);
+    if (refusal) return !supportsRentalEligibilityDecline(sentence,opts.stockRequest ?? {items:[]},marketingItems);
     const match = negativeStock.exec(sentence);
     if (!match) return false;
     const subject = sentence.slice(0, match.index);
@@ -599,8 +601,8 @@ const ASSERTS_AVAIL_RE =
     push("UNGROUNDED_UNAVAILABILITY", "Asserts unavailability without a negative stock verdict; available alternatives and unknown stock do not prove the requested item is unavailable", "flagged");
   }
 
-  if (opts.stockEvidence !== undefined) {
-    for (const failure of unsupportedStockClaims(text, opts.stockEvidence, opts.stockRequest ?? { items: [] }, marketingItems)) {
+  if (opts.stockEvidence !== undefined || text.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+/).some(sentence=>rentalRefusalSubject(sentence))) {
+    for (const failure of unsupportedStockClaims(text, opts.stockEvidence ?? [], opts.stockRequest ?? { items: [] }, marketingItems)) {
       push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
     }
   }

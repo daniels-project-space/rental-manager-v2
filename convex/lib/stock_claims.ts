@@ -6,6 +6,7 @@ export type StockReceipt = {
   available: boolean | null; free_units: number | null;
   checked_at: number; call_id: string;
   kind?: string;
+  owned?: boolean;
   basket?: {available:boolean|null;items:Array<{name:string;quantity:number}>};
 };
 export type StockRequest = {
@@ -15,11 +16,11 @@ export type StockRequest = {
 
 // Preserve exact model variants. Never resolve a stock claim by fuzzy similarity.
 function identity(name: string) {
-  // Canonical inventory uses "PL to L mount"; renter prose adds "adapter".
-  // Match only an entire directional mount identity, preserving both ends.
-  const adapter=/^\s*(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\s*$/i.exec(name);
-  if(adapter)return `adapter ${adapter[1].toLowerCase()} ${adapter[2].toLowerCase().replace(/^sony\s+/,"")}`;
+  // Preserve both ends and their order in directional adapter identities,
+  // including mentions embedded in a sentence.
   return name.toLowerCase()
+    .replace(/\b(pl|ef)\s*(?:to|→)\s*(sony\s+e|l|rf|ef|e)\s*(?:mount\s*)?(?:adapter)?\b/g,
+      (_,from:string,to:string)=>`mountadapter ${from} ${to.replace(/^sony\s+/,"")}`)
     .replace(/\ba7\s*(iii|ii|iv|v)\b/g, (_, n: string) => `a7${({ ii: 2, iii: 3, iv: 4, v: 5 } as Record<string, number>)[n]}`)
     .replace(/^\s*sony\s+(?=(?:fx\d+|a7\d+)\b)/, "")
     .replace(/^\s*(?:blackmagic(?:\s+(?:pocket\s+cinema\s+camera|cinema\s+camera))?|bmpcc)\s+/, "")
@@ -43,12 +44,21 @@ function subjectOf(prefix: string) {
   return { name: s.trim(), quantity: count ? units[count[1].toLowerCase()] ?? Number(count[1]) : undefined };
 }
 
+/** Equipment refusals, excluding missing service information and conditions. */
+export function rentalRefusalSubject(clause:string) {
+  const match=/^\s*(?:(?:sorry|unfortunately)[, ]+)?(?:I|we)\s+(?:currently\s+)?(?:don\'t|do not|can\'t|cannot|can not)\s+(?:currently\s+)?(have|get)\s+(.+?)\s*[.!]?$/i.exec(clause.replace(/’/g,"'"));
+  if (!match || /^(?:(?:that|the|a|an|any|enough|your)\s+)*(?:information|details|answer|price|quote|confirmation|address|refund|discount|support|advice|permission|access|time)\b/i.test(match[2])
+    || /\b(?:if|once|when|after|unless|subject to)\b/i.test(match[2]))return null;
+  return {verb:match[1].toLowerCase(),subject:match[2].replace(/\s+(?:to quote|to rent|for rental|in stock)\s*[.!]?$/i,"").replace(/[.!]$/,"")};
+}
+
 /** Server-supplied catalogue exclusions support a plain rental decline only.
  * They never attest calendar occupancy, stock depletion or a cause of refusal.
  * Resolve every subject independently; one excluded item cannot decline a basket. */
 export function supportsRentalEligibilityDecline(clause: string, request: StockRequest, ineligibleItems: string[]) {
   if (!ineligibleItems.length) return false;
-  const normalized = clause.replace(/’/g, "'");
+  const refusal=rentalRefusalSubject(clause);
+  const normalized = refusal ? `${refusal.subject} is unavailable` : clause.replace(/’/g, "'");
   const match = /\b(?:(?:isn't|aren't|is not|are not|not)\s+available|unavailable)\b/i.exec(normalized);
   if (!match || /\b(?:because|due to|since|booked|booking|rented|stock|repair|maintenance|broken)\b/i.test(normalized.slice(match.index + match[0].length))) return false;
   const subject = subjectOf(normalized.slice(0, match.index).replace(/\s+(?:is|are)\s*$/i, ""));
@@ -64,6 +74,7 @@ export function supportsRentalEligibilityDecline(clause: string, request: StockR
 export function unsupportedStockClaims(text: string, receipts: StockReceipt[], request: StockRequest, ineligibleItems: string[] = []) {
   const failures: Array<{ negative: boolean; detail: string }> = [];
   let previousSubjects: StockRequest["items"] = [];
+  let precedingNamedSubjects: StockRequest["items"] = [];
   let bulletSubjects: StockRequest["items"] = [];
   let invalidBullet = false;
   const knownSubjects = [...request.items];
@@ -76,6 +87,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   const references = lensClaimReferences(knownSubjects.map(item => ({names:[item.name,...(item.aliases??[])],item})),
     (a,b) => a.some(left => b.some(right => sameItem(left,right))));
   for (const rawClause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+    const relativeSubjects=precedingNamedSubjects;
+    precedingNamedSubjects=[];
     const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rawClause);
     const precedingBullets=bulletSubjects;
     const precedingInvalid=invalidBullet;
@@ -93,7 +106,11 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const offer = /^\s*(?:I|we)\s+(?:can|could|am able to|are able to)\s+(?:offer|supply|provide)\s+(.+?)\s*[.!]?$/i.exec(rawClause);
     const service = offer && /^(?:(?:an?|the|your|some)\s+)?(?:refund|discount|delivery|pickup|collection|help|advice|guidance|support|quote|price|information|assistance)\b/i.test(offer[1]);
     const conditionalOffer = offer && /\b(?:if|once|when|after|subject to)\b/i.test(offer[1]);
-    const clause = offer && !service && !conditionalOffer
+    const rentalRefusal=rentalRefusalSubject(rawClause);
+    const refusalSubject=rentalRefusal?.subject ?? "";
+    const clause = rentalRefusal
+      ? `${refusalSubject.replace(/\s+(?=(?:for|from|on)\b)/i," is unavailable ")}${/\b(?:for|from|on)\b/i.test(refusalSubject) ? "" : " is unavailable"}`
+      : offer && !service && !conditionalOffer
       ? `${offer[1].replace(/\s+(?=(?:for|from|on|at)\b)/i, " is available ")}${/\b(?:for|from|on|at)\b/i.test(offer[1]) ? "" : " is available"}`
       : rawClause;
     // Remember an exact native item reference even when that clause merely
@@ -110,7 +127,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
         latestMention=end;longestMention=key.length;mentioned=at < 0 ? [] : [candidate];
       } else if (at >= 0 && end === latestMention && key.length === longestMention && !mentioned.includes(candidate)) mentioned.push(candidate);
     }
-    if (mentioned.length) previousSubjects = mentioned;
+    if (mentioned.length) {previousSubjects = mentioned;precedingNamedSubjects=mentioned;}
     if (/\b(?:check|verify|confirm|know|unsure|uncertain|not sure)\b[^.!?]{0,70}\b(?:whether|if)\b/i.test(clause)) continue;
     // "Your booked kit" is a booking reference, not a claim that stock is
     // unavailable. Keep character positions and continue scanning for any
@@ -140,16 +157,17 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     subject.name=kitParts[0];
     const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|set)\s*$/i.test(subject.name);
     subject.name = subject.name.replace(/\s+(?:kit|set)\s*$/i, "");
-    const lensName=subject.name.replace(/\s+(?:(?:wide[ -]angle|standard|telephoto)\s+)?(?:zoom\s+)?lens(?:es)?$/i, "");
+    const lensName=subject.name.replace(/\s+(?:(?:wide[ -]angle|standard|telephoto|anamorphic)\s+)?(?:zoom\s+)?lens(?:es)?$/i, "");
     if (receipts.some(r=>r.kind === "lens" && sameItem(lensName,r.item))) subject.name=lensName;
     const reference = references.get(identity(subject.name.replace(/\s+lens(?:es)?$/i,"")));
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
-    const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear)?$/i.test(subject.name);
+    const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(subject.name);
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
     let targets = reference ? [reference.item] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
-    if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
+    if (subject.name.toLowerCase()==="which") targets=relativeSubjects.length===1 ? relativeSubjects : [];
+    else if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
     else if (countedUnitReference) targets = previousSubjects.length === 1 ? previousSubjects : [];
     else if (lensReference) {
       // A lens pronoun needs a preceding standalone lens identity, never a
@@ -163,7 +181,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     }
     const pluralGroup=/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(prefix.replace(/\s+(?:is|are)\s*$/i,"").trim())
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
-    const coordinated=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim().split(/\s+(?:and|plus|paired with)\s+/i);
+    const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
+    const coordinated=coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
     const jointClaim=pluralGroup || coordinated.length>1;
     if (pluralGroup) {
       targets=!precedingInvalid && precedingBullets.length>=2 && (!/^both|^(?:these|those) two/i.test(prefix.trim()) || precedingBullets.length===2) && precedingBullets.every((i,index)=>!precedingBullets.slice(0,index).some(other=>sameItem(i.name,other.name))) ? precedingBullets : [];
@@ -171,8 +190,12 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     } else if(coordinated.length>1) {
       targets=coordinated.flatMap(part=>{
         const parsed=subjectOf(part);
-        const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
-        return exact.length===1 ? [withQuantity(exact[0],parsed.quantity??exact[0].quantity)] : [];
+        const lens=parsed.name.replace(/\s+(?:anamorphic\s+)?lens(?:es)?$/i,"");
+        const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n))
+          || receipts.some(r=>r.kind==="lens" && sameItem(r.item,i.name)) && sameItem(lens,i.name));
+        const focal=references.get(identity(lens));
+        const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item : undefined;
+        return resolved ? [withQuantity(resolved,parsed.quantity??resolved.quantity)] : [];
       });
       if(targets.length!==coordinated.length)targets=[];
       subject.quantity=undefined;
@@ -212,6 +235,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
           if (!r.call_id || !Number.isFinite(r.checked_at) || typeof r.available !== "boolean" ||
             !names.some(n => sameItem(n, r.item)) ||
             (start && r.start_date !== start) || (end && r.end_date !== end)) return false;
+          // A calendar refusal does not prove the catalogue lacks that gear.
+          // Undated don't-have claims need current Native rental eligibility.
+          if (rentalRefusal && rentalRefusal.verb==="have" && !dateScope.matched_text && r.owned!==false) return false;
           if (r.quantity === quantity) return r.available === !negative;
           if (jointClaim && !negative && r.available===true && r.basket?.available===true && r.quantity>=quantity
             && requiredJoint.every(c=>r.basket!.items.some(i=>sameItem(i.name,c.name)&&i.quantity>=c.quantity))) return true;

@@ -312,3 +312,52 @@ it("sums shared kit components and scales explicitly requested kit units",()=>{
  expect(check("Two Kit A and Kit B are available.",[proof(10)],scope)).not.toEqual([]);
  expect(check("Two Kit A and Kit B are available.",[proof(15)],scope)).toEqual([]);
 });
+
+describe("exact evidence for equipment refusals",()=>{
+ const missing:StockReceipt={...stock,item:"Sony FX3",available:false,free_units:0,owned:false};
+ const busy:StockReceipt={...missing,owned:true};
+ const options={history:[],lastRenterMessage:"Can you quote a Sony FX3?",hasItemGrounding:true,
+  groundedDuringTurn:{availability:false,unavailability:true},stockRequest:request};
+ it("blocks unrelated negatives, unknown ownership, busy gear and unknown results",()=>{
+  for(const receipt of [{...missing,item:"Sony FX6"},{...missing,owned:undefined},busy,{...missing,available:null}])
+   expect(guardDraft("I don't have that Sony FX3 to quote.",{...options,stockEvidence:[receipt]}).flags)
+    .toContainEqual(expect.objectContaining({type:"UNGROUNDED_UNAVAILABILITY"}));
+  expect(guardDraft("I don't have that Sony FX3 to quote.",options).flags)
+   .toContainEqual(expect.objectContaining({type:"UNGROUNDED_UNAVAILABILITY"}));
+ });
+ it("accepts exact Native exclusions but never transfers them to another model",()=>{
+  for(const text of ["I don't have that Sony FX3 to quote.","We do not have the Sony FX3 for rental.","Unfortunately, we currently don't have that Sony FX3."])
+   expect(guardDraft(text,{...options,stockEvidence:[missing]}).flags.filter(f=>f.type==="UNGROUNDED_UNAVAILABILITY")).toEqual([]);
+  expect(guardDraft("I don't have that Sony FX6 to quote.",{...options,stockEvidence:[missing]}).flags)
+   .toContainEqual(expect.objectContaining({type:"UNGROUNDED_UNAVAILABILITY"}));
+  expect(guardDraft("I don't have that Sony FX3 to quote.",{...options,stockEvidence:[],groundedDuringTurn:{unavailability:false},factPack:{marketingItems:["Sony FX3"]}}).flags.filter(f=>f.type==="UNGROUNDED_UNAVAILABILITY")).toEqual([]);
+ });
+ it("allows scoped date refusals for busy owned gear while preserving counts and dates",()=>{
+  const text="We don't have the Sony FX3 for 2 to 4 October.";
+  expect(check(text,[busy])).toEqual([]);
+  for(const receipt of [{...busy,end_date:"2026-10-05"},{...busy,available:true},{...busy,quantity:2,free_units:null}])expect(check(text,[receipt])).not.toEqual([]);
+ });
+ it("does not treat missing information or a service as an equipment decline",()=>{
+  for(const text of ["I don't have that price.","We can't get a discount.","I don't have enough information.","We do not have your address."])
+   expect(guardDraft(text,{...options,groundedDuringTurn:{unavailability:false},stockEvidence:[]}).flags.filter(f=>f.type==="UNGROUNDED_UNAVAILABILITY")).toEqual([]);
+ });
+});
+
+describe("Native lens and directional adapter references",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const items=[{name:"Anamorphic Blazar Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}];
+ const joint=items.map(i=>({...stock,item:i.name,quantity:i.quantity,start_date:scope.start_date!,end_date:scope.end_date!,available:true,free_units:1,kind:i.name.includes("Remus")?"lens":"accessory",owned:true,basket:{available:true,items}}));
+ const text="Yes, both the Blazar Remus 100mm anamorphic lens and the PL to L mount adapter are available together with your booked gear for 20 to 21 October.";
+ it("resolves the actual model's coordinated sentence without treating both as two lens units",()=>{
+  expect(check(text,joint,scope)).toEqual([]);
+  for(const changed of [text.replace("100mm","85mm"),text.replace("PL to L","PL to E"),text.replace("both the","two"),text.replace("21 October","22 October")])expect(check(changed,joint,scope)).not.toEqual([]);
+  expect(check(text,joint.map(r=>({...r,basket:undefined})),scope)).not.toEqual([]);
+ });
+ it("binds which only to the immediately preceding exact Native item",()=>{
+  const relative="You would also need a PL to L mount adapter, which is available for 20 to 21 October.";
+  expect(check(relative,joint,scope)).toEqual([]);
+  for(const changed of [relative.replace("PL to L","PL to E"),relative.replace(", which",". Pickup is on Saturday, which"),"Which is available for 20 to 21 October."])
+   expect(check(changed,joint,scope)).not.toEqual([]);
+  expect(check(relative,joint.map(r=>({...r,end_date:"2026-10-22"})),scope)).not.toEqual([]);
+ });
+});

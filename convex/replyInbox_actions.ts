@@ -625,7 +625,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
-          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; basket?: StockReceipt["basket"] }>;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
           needs_human?: boolean;
@@ -692,6 +692,7 @@ export const generateDraft = action({
         generationMeta.evidence.stock.forEach(receipt=>{
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
           if(typeof native?.kind === "string")receipt.kind=native.kind;
+          if(typeof native?.owned === "boolean")receipt.owned=native.owned;
           if(native?.basket && (typeof native.basket.available==="boolean" || native.basket.available===null)
             && Array.isArray(native.basket.items) && native.basket.items.length>0
             && native.basket.items.every(i=>typeof i.name==="string" && !!i.name && Number.isInteger(i.quantity) && i.quantity>0))receipt.basket=native.basket;
