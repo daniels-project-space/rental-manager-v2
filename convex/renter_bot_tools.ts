@@ -1,5 +1,5 @@
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
-import { verifiedLensCapabilities, meetsLensRequirements, reconcileLensRequirements, hasLensRequirements } from "./lib/lens_requirements";
+import { verifiedLensCapabilities, meetsLensRequirements, reconcileLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
 import { availabilityBasket } from "./lib/availability_basket";
@@ -214,6 +214,7 @@ export const get_listing_context = query({
       let size_note: string | null = null;
       let replacement_cost_gbp: number | null = null;
       let spec_text: string | null = null;
+      let lens_capabilities: LensCapabilities | null = null;
       let spec_verification: { model: string; source_url: string | null } | null = null;
       // When the renter's wording matches SEVERAL real products (e.g. "BMPCC
       // 6K" fully describes both the 6K Pro and the 6K Full Frame), the bot
@@ -385,9 +386,11 @@ export const get_listing_context = query({
           const sp = await ctx.db
             .query("item_specs")
             .withIndex("by_item", (q) => q.eq("item_id", it._id))
-            .first();
-          const verified = verifiedItemSpec(sp, it.name_canonical);
-          spec_text = verified?.text.slice(0, 1000) ?? null;
+            .collect();
+          const itemSpec = sp.length === 1 ? sp[0] : undefined;
+          const verified = verifiedItemSpec(itemSpec, it.name_canonical);
+          spec_text = verified?.text ?? null;
+          lens_capabilities = it.kind === "lens" ? verifiedLensCapabilities(itemSpec, it.name_canonical) : null;
           spec_verification = verified ? { model: verified.model, source_url: verified.source_url } : null;
       }
       const inventoryComponents = listingInventory?.components ?? (it ? [{
@@ -436,6 +439,7 @@ export const get_listing_context = query({
         size_note,
         replacement_cost_gbp,
         spec_text,
+        lens_capabilities,
         spec_verification,
         ambiguous_with,
         listing_name,

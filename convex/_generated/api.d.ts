@@ -150,6 +150,7 @@ import type * as lib_item_display_name from "../lib/item_display_name.js";
 import type * as lib_item_matcher from "../lib/item_matcher.js";
 import type * as lib_item_name_match from "../lib/item_name_match.js";
 import type * as lib_item_taxonomy from "../lib/item_taxonomy.js";
+import type * as lib_item_technical_context from "../lib/item_technical_context.js";
 import type * as lib_kit_claims from "../lib/kit_claims.js";
 import type * as lib_knowledge_search from "../lib/knowledge_search.js";
 import type * as lib_lab_lifecycle from "../lib/lab_lifecycle.js";
@@ -485,6 +486,7 @@ declare const fullApi: ApiFromModules<{
   "lib/item_matcher": typeof lib_item_matcher;
   "lib/item_name_match": typeof lib_item_name_match;
   "lib/item_taxonomy": typeof lib_item_taxonomy;
+  "lib/item_technical_context": typeof lib_item_technical_context;
   "lib/kit_claims": typeof lib_kit_claims;
   "lib/knowledge_search": typeof lib_knowledge_search;
   "lib/lab_lifecycle": typeof lib_lab_lifecycle;

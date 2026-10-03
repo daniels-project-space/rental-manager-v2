@@ -1,3 +1,4 @@
+import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
 import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
 import { explicitRecommendationUse } from "../../../../convex/lib/recommendation_basket";
 import { minimumRentalContext, minimumRentalPrompt, requestedBasketEvidence, type MinimumRentalContext } from "../../../../convex/lib/minimum_rental";
@@ -779,7 +780,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       if(typeof lc.gross_paid_gbp === "number" && lc.gross_paid_gbp > 0) fixedPriceEvidence.push({names:[],items:priceRequest.items.map(i=>({name:i.name,quantity:i.quantity})),kind:"basket",total_gbp:lc.gross_paid_gbp,days:quoteDays,start_date:lc.start_date,end_date:lc.end_date,call_id:"prefetch:listing-context",source:"booking_gross_amount"});
       groundTruth += "PRICE CLAIM SCOPE: each quoted amount must match the exact item, quantity, duration and purpose. A replacement value is not a hire fee. No courier/deposit amount is verified. Never infer a total by multiplying a displayed base rate or summing alternative options.\n";
       groundTruth += `STOCK CLAIM SCOPE: each availability statement must match the exact checked item, date span and quantity. A free body does not prove its whole mapped kit is free. If a kit component is booked, identify that component rather than calling the free body booked. Alternative offers need the requested quantity; explicitly state any smaller quantity you can supply.\n`;
-      for (const it of (lc.items ?? []) as Array<{ product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []) as Array<ItemTechnicalEvidence & { product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           // Preserve native catalogue identity for eligibility, independently
           // of dated stock receipts. A generic fallback cannot prove identity.
@@ -811,7 +812,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
                   itemsWithKitData.push(a.name);
                   kitEvidence.push({ names: [a.name, a.listing_name].filter(Boolean), contents: a.kit_contents, kind: a.kind });
                 }
-                groundTruth += `  OWNED ALTERNATIVE ${a.name}: mount ${a.lens_mount ?? "unknown"}; recorded kit ${a.included ?? "unknown, confirm exact contents"}; verified specs ${a.spec_text ?? "not verified"}; exact-date quote ${a.quote ? JSON.stringify(a.quote) : "requires price confirmation"}; availability ${a.availability ? JSON.stringify(a.availability) : "dates not checked"}. Advertising title does not establish inclusions.\n`;
+                groundTruth += `  OWNED ALTERNATIVE ${a.name}: mount ${a.lens_mount ?? "unknown"}; recorded kit ${a.included ?? "unknown, confirm exact contents"}; technical evidence ${itemTechnicalContext(a)}; exact-date quote ${a.quote ? JSON.stringify(a.quote) : "requires price confirmation"}; availability ${a.availability ? JSON.stringify(a.availability) : "dates not checked"}. Advertising title does not establish inclusions.\n`;
               }
               // Ranked by SUBSTITUTABILITY (same category, same lens mount,
               // same product family) — the first entry is the closest real
@@ -964,7 +965,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
               start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
             });
             toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-glass:${toolReceipts.length}`, result: glass }]));
-            const all = (glass?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>;
+            const all = (glass?.alternatives ?? []) as Array<ItemTechnicalEvidence & { name?: string; daily_price_gbp?: number }>;
             // Split, don't just filter: the renter needs to hear "already
             // included" about kit glass, which is a stronger answer than
             // silence AND stops it being quoted as an extra.
@@ -978,7 +979,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
             for (const g of keep)
               if (typeof g.daily_price_gbp === "number") offeredPrices.push(g.daily_price_gbp);
             const fits = keep.map(
-              (g) => `${g.name}${g.daily_price_gbp != null ? ` (one-day base £${g.daily_price_gbp}/day)` : ""}`,
+              (g) => `${g.name}${g.daily_price_gbp != null ? ` (one-day base £${g.daily_price_gbp}/day)` : ""}; ${itemTechnicalContext(g)}`,
             );
             if (alreadyIn.length) {
               groundTruth += `  ALREADY IN THIS RENTAL for ${it.name}: ${alreadyIn.join("; ")}. This glass is INCLUDED in the price they already have. Say so as a positive ("it already comes with…") and NEVER offer it as a paid add-on.\n`;
@@ -1066,8 +1067,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         if (structuredKit && it.whats_included) detail.push(`kit per our records: ${it.included_with_rental!.join(", ")}`);
         if (detail.length)
           groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM FACTS (per individual item, not the whole kit — use them, do not say you'll check): ${detail.join("; ")}.\n`;
-        if (it.spec_text)
-          groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM SPEC (per individual item, verified): ${it.spec_text}\n`;
+        groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM TECHNICAL EVIDENCE: ${itemTechnicalContext(it)}\n`;
         if (it.replacement_cost_gbp != null) offeredPrices.push(it.replacement_cost_gbp);
         if (it.replacement_cost_gbp != null)
           groundTruth += `  ${it.inventory_name ?? it.name} insured replacement value per individual item: £${it.replacement_cost_gbp}. Only bring this up if they ask about damage, loss, deposit or insurance — then give the figure plainly rather than dodging, and note cover runs through the platform.\n`;

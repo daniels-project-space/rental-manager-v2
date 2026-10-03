@@ -22,6 +22,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "convex/lib/item_technical_context.test.ts",
       "convex/lib/owner_setup.test.ts",
       "convex/lib/owner_authorization.test.ts",
       "convex/owner_functions.test.ts",

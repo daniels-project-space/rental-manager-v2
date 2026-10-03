@@ -159,7 +159,7 @@ const operationalSchema = defineSchema({
     verified_model: v.optional(v.string()),
     lens_capabilities: v.optional(v.object({
       focus_mode:v.optional(v.union(v.literal("autofocus"),v.literal("manual_focus"))),
-      wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),
+      manual_focus_available:v.optional(v.boolean()),wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),
       projection:v.optional(v.union(v.literal("fisheye"),v.literal("anamorphic"))),coverage:v.optional(v.literal("full_frame")),
       focal_min_mm:v.optional(v.number()),focal_max_mm:v.optional(v.number()),max_aperture_f:v.optional(v.number()),max_aperture_t:v.optional(v.number()),
       verified_model:v.string(),source_url:v.string(),verified_at:v.number(),

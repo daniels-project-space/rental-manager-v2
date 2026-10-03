@@ -3,7 +3,7 @@ import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { REVIEWED_REMUS_SPECS } from "./lib/reviewed_remus_specs";
 /** Partial exact-model profiles only: absent properties remain unknown. */
 const profiles = [
- {name:"Sony FE 90mm f2.8 Macro G OSS",model:"SEL90M28G",capabilities:{focal_min_mm:90,focal_max_mm:90,max_aperture_f:2.8,macro:true,focus_mode:"autofocus" as const,wide_angle:false,coverage:"full_frame" as const}},
+ {name:"Sony FE 90mm f2.8 Macro G OSS",model:"SEL90M28G",capabilities:{focal_min_mm:90,focal_max_mm:90,max_aperture_f:2.8,macro:true,focus_mode:"autofocus" as const,manual_focus_available:true,wide_angle:false,coverage:"full_frame" as const}},
  {name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",model:"TTArtisan 11mm F2.8 Fisheye (Sony E)",capabilities:{focal_min_mm:11,focal_max_mm:11,max_aperture_f:2.8,focus_mode:"manual_focus" as const,projection:"fisheye" as const,coverage:"full_frame" as const}},
  ...REVIEWED_REMUS_SPECS.map(f=>({name:f.name,model:f.model,capabilities:{focal_min_mm:Number(/(\d+)mm/.exec(f.model)![1]),focal_max_mm:Number(/(\d+)mm/.exec(f.model)![1]),max_aperture_t:Number(f.aperture.slice(1)),projection:"anamorphic" as const,coverage:"full_frame" as const}})),
 ];
