@@ -1,5 +1,6 @@
 "use client";
 
+import { OwnerChecksPanel } from "../OwnerChecksPanel";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAction, useQuery } from "convex/react";
@@ -74,6 +75,8 @@ export function RenterBotLabWorkspace() {
           </span>
         </div>
       </div>
+
+      <div className="mx-auto max-w-7xl px-4 pt-4"><OwnerChecksPanel labOnly accountSlug={session?.accountSlug} onOpen={thread=>router.push(`/?thread=${encodeURIComponent(thread)}`)} /></div>
 
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 p-4 sm:p-6 lg:grid-cols-[320px_minmax(0,1fr)]">
         <div className="space-y-4">

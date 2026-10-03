@@ -1,3 +1,5 @@
+import { ownerCheckValidator } from "./lib/owner_checks";
+import { persistOwnerChecks } from "./renter_bot_owner_checks";
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortListingTitle, shortItemName } from "./lib/item_display_name";
@@ -1794,8 +1796,8 @@ export const releaseDraftGeneration = internalMutation({
 
 export const setDraftReview = internalMutation({
   args: { thread_id: v.string(), message_id: v.string(), epoch: v.number(), context_key: v.string(),
-    reason: v.string(), flags: v.array(reviewFlagValidator), stage: v.string(), evidence: v.optional(draftEvidenceValidator) },
-  handler: async (ctx, { thread_id, message_id, epoch, context_key, reason, flags, stage, evidence }) => {
+    reason: v.string(), flags: v.array(reviewFlagValidator), stage: v.string(), evidence: v.optional(draftEvidenceValidator), owner_checks:v.optional(v.array(ownerCheckValidator)) },
+  handler: async (ctx, { thread_id, message_id, epoch, context_key, reason, flags, stage, evidence, owner_checks }) => {
     const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", thread_id)).first();
     if (!conv) return { ok: false as const, reason: "missing_thread" };
     const [latest] = await recentThreadMessages(ctx, thread_id, 1);
@@ -1804,6 +1806,7 @@ export const setDraftReview = internalMutation({
     const labOrder = await getLabOrder(ctx, thread_id);
     if (latest?.message_id !== message_id || (settings?.draft_epoch ?? 0) !== epoch
       || draftContextKey(booking, conv.inquiry_items, labOrder) !== context_key) return { ok: false as const, reason: "stale_inbound" };
+    await persistOwnerChecks(ctx,{thread_id,message_id,epoch,context_key,checks:owner_checks ?? []});
     const review = { for_message_id: message_id, epoch, context_key, reason, flags, stage, evidence, created_at: Date.now() };
     await ctx.db.patch(conv._id, { ai_draft_review: review, ai_draft_text: undefined,
       ai_draft_for_message_id: undefined, ai_draft_generated_at: undefined, ai_draft_epoch: undefined,
@@ -1817,6 +1820,7 @@ export const setDraft = internalMutation({
   args: {
     thread_id: v.string(),
     draft_text: v.string(),
+    owner_checks: v.optional(v.array(ownerCheckValidator)),
     message_id: v.optional(v.string()),
     epoch: v.optional(v.number()),
     context_key: v.optional(v.string()),
@@ -1845,7 +1849,7 @@ export const setDraft = internalMutation({
   },
   handler: async (
     ctx,
-    { thread_id, draft_text, message_id, epoch, context_key, conversation_stage, confidence, flags, evidence },
+    { thread_id, draft_text, message_id, epoch, context_key, conversation_stage, confidence, flags, evidence, owner_checks },
   ) => {
     const conv = await ctx.db
       .query("conversations")
@@ -1861,6 +1865,10 @@ export const setDraft = internalMutation({
     const currentContext = draftContextKey(await getBotBooking(ctx, thread_id), conv.inquiry_items, await getLabOrder(ctx, thread_id));
     if (context_key !== undefined && context_key !== currentContext) {
       return { ok: false, reason: "stale_context" };
+    }
+    if (owner_checks?.length) {
+      if (!message_id || epoch === undefined || !context_key) throw new Error("Owner checks require a scoped draft");
+      await persistOwnerChecks(ctx,{thread_id,message_id,epoch,context_key,checks:owner_checks});
     }
     const patch: Record<string, unknown> = {
       ai_draft_text: draft_text,

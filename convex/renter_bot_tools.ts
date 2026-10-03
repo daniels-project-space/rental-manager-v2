@@ -1,3 +1,4 @@
+import { lensRequirementsValidator } from "./lib/owner_checks";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
@@ -1023,7 +1024,7 @@ export const find_owned_alternatives = query({
         full_width: v.optional(v.boolean()), internal: v.optional(v.boolean()),
       })),
     })),
-    lens_requirements: v.optional(v.object({excluded_projections:v.optional(v.array(v.union(v.literal("fisheye"),v.literal("anamorphic")))),focus_mode:v.optional(v.union(v.literal("autofocus"),v.literal("manual_focus"))),wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),projection:v.optional(v.union(v.literal("fisheye"),v.literal("anamorphic"))),coverage:v.optional(v.literal("full_frame")),focal_mm:v.optional(v.number()),max_wide_focal_mm:v.optional(v.number()),max_aperture_f:v.optional(v.number()),max_aperture_t:v.optional(v.number())})),
+    lens_requirements: v.optional(lensRequirementsValidator),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
     lower_value_only: v.optional(v.boolean()),
@@ -1186,7 +1187,7 @@ export const find_owned_alternatives = query({
       can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expectedUse,replace_product_id,replace_quantity};
     const alternatives: Array<Record<string, unknown>> = [];
     const rejected = { requirements: 0, stock: 0 };
-    const lensReviewNeeded: Array<{name:string;unverified_requirements:string[]}> = [];
+    const lensReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
     const rejectedStockOptions: Array<Record<string,unknown>> = [];
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
@@ -1209,7 +1210,7 @@ export const find_owned_alternatives = query({
         if (it.kind !== "lens" || !lensRequirementsSpecified) {rejected.requirements++; continue;}
         const assessment = assessLensRequirements(lensCapabilities, desiredLensRequirements);
         if (assessment.status !== "match") {
-          if (assessment.status === "unknown") lensReviewNeeded.push({name:it.name_canonical,unverified_requirements:assessment.unknown});
+          if (assessment.status === "unknown") lensReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});
           rejected.requirements++; continue;
         }
       }
@@ -1321,6 +1322,11 @@ export const find_owned_alternatives = query({
       lens_requirements_specified: lensQuery && lensRequirementsSpecified,
       lens_requirement_checked: lensQuery && lensRequirementsSpecified && hasLensRequirements(desiredLensRequirements),
       lens_review_needed: lensQuery ? lensReviewNeeded : [],
+      owner_check: lensQuery && lensRequirementsSpecified && !alternatives.length && lensReviewNeeded.length ? {
+        kind: "lens_recommendation" as const, requirements: desiredLensRequirements,
+        candidate_item_ids: lensReviewNeeded.map(i=>i.item_id), lens_mount: lens_mount ?? null,
+        start_date: start_date ?? null, end_date: end_date ?? null, quantity: quantity ?? 1,
+      } : null,
       lens_search_outcome: !lensQuery ? null : !lensRequirementsSpecified ? "requirements_not_specified" : alternatives.length ? "verified_matches" : lensReviewNeeded.length ? "needs_spec_review" : "no_verified_match",
       lens_inventory_absence_established: false,
       lens_guidance: "Pass a structured lens_requirements object for the desired option, including {} when no technical constraints apply. Current-item descriptions and questions are not alternative requirements. Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. lens_review_needed names are owned items requiring specification review, not verified alternatives. Zero verified matches never proves that we do not own an item or that it is booked; explain missing verification and ask the owner to check. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",

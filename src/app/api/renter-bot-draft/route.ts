@@ -1,3 +1,4 @@
+import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
 import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
 import { explicitRecommendationUse } from "../../../../convex/lib/recommendation_basket";
@@ -1700,6 +1701,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     return NextResponse.json({
       ok: true,
       draft: obj.draft ?? "",
+      owner_checks: nativeOwnerChecks(toolReceipts),
       needs_human: !!obj.needs_human,
       needs_human_reason: obj.needs_human
         ? (needsHumanReason ?? "model_declined")

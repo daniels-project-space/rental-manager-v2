@@ -171,6 +171,7 @@ import type * as lib_monthly_verification from "../lib/monthly_verification.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
 import type * as lib_offering_consent_identity from "../lib/offering_consent_identity.js";
 import type * as lib_owner_authorization from "../lib/owner_authorization.js";
+import type * as lib_owner_checks from "../lib/owner_checks.js";
 import type * as lib_owner_setup from "../lib/owner_setup.js";
 import type * as lib_platform_fallout from "../lib/platform_fallout.js";
 import type * as lib_poller_window from "../lib/poller_window.js";
@@ -299,6 +300,7 @@ import type * as renter_bot_fixture_seed_v1_scenarios from "../renter_bot_fixtur
 import type * as renter_bot_harness from "../renter_bot_harness.js";
 import type * as renter_bot_lab_actions from "../renter_bot_lab_actions.js";
 import type * as renter_bot_lab_order from "../renter_bot_lab_order.js";
+import type * as renter_bot_owner_checks from "../renter_bot_owner_checks.js";
 import type * as renter_bot_probe from "../renter_bot_probe.js";
 import type * as renter_bot_seed from "../renter_bot_seed.js";
 import type * as renter_bot_shadow from "../renter_bot_shadow.js";
@@ -507,6 +509,7 @@ declare const fullApi: ApiFromModules<{
   "lib/notification_events": typeof lib_notification_events;
   "lib/offering_consent_identity": typeof lib_offering_consent_identity;
   "lib/owner_authorization": typeof lib_owner_authorization;
+  "lib/owner_checks": typeof lib_owner_checks;
   "lib/owner_setup": typeof lib_owner_setup;
   "lib/platform_fallout": typeof lib_platform_fallout;
   "lib/poller_window": typeof lib_poller_window;
@@ -635,6 +638,7 @@ declare const fullApi: ApiFromModules<{
   renter_bot_harness: typeof renter_bot_harness;
   renter_bot_lab_actions: typeof renter_bot_lab_actions;
   renter_bot_lab_order: typeof renter_bot_lab_order;
+  renter_bot_owner_checks: typeof renter_bot_owner_checks;
   renter_bot_probe: typeof renter_bot_probe;
   renter_bot_seed: typeof renter_bot_seed;
   renter_bot_shadow: typeof renter_bot_shadow;

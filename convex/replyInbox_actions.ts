@@ -8,6 +8,7 @@ import { amendedDraftContext, currentDraftReview, type DraftContextTransition, t
 import { unknownKitItems } from "./lib/renter_kit_evidence";
 import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/canonical_generation_error";
 "use node";
+import type { OwnerCheck } from "./lib/owner_checks";
 /**
  * Reply Inbox — Node-runtime actions (LLM draft + gated live Hygglo send).
  *
@@ -118,10 +119,11 @@ export const generateDraft = action({
       epoch: c.draft_epoch, context_key: c.draft_context_key });
     if (heldReview && !retry_review) return { status: "skipped", reason: heldReview.reason,
       flags: heldReview.flags, evidence: heldReview.evidence, review: heldReview, for_message_id: c.last_message_id };
+    let ownerChecks: OwnerCheck[] = [];
     const recordReview = async (reason: string, flags: DraftFlag[], evidence?: DraftEvidence) => {
       if (!c.last_message_id) return { ok: false as const, reason: "stale_inbound" };
       return ctx.runMutation(internal.replyInbox.setDraftReview, { thread_id, message_id: c.last_message_id,
-        epoch: c.draft_epoch, context_key: c.draft_context_key, stage: c.conversation_stage, reason, flags, evidence });
+        epoch: c.draft_epoch, context_key: c.draft_context_key, stage: c.conversation_stage, reason, flags, evidence, owner_checks: ownerChecks });
     };
 
     // Renter messages (oldest→newest) for negotiation + routing reads.
@@ -661,6 +663,7 @@ export const generateDraft = action({
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
+          owner_checks?: OwnerCheck[];
           needs_human?: boolean;
           usedTools?: boolean;
           resolvedItems?: Array<{ name: string; dailyRateGbp?: number }>;
@@ -703,6 +706,7 @@ export const generateDraft = action({
             cost: number | null;
           } | null;
         };
+        ownerChecks = j.owner_checks ?? [];
         generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: normalizeClaimedFacts(j.factsClaimed) };
         if (thread_id.startsWith("__probe__")) generationMeta.diagnostic_candidate = j.diagnostic_candidate;
         if (j.bookingContextTransitions?.length) {
@@ -1015,6 +1019,7 @@ export const generateDraft = action({
     const savedDraft = await ctx.runMutation(internal.replyInbox.setDraft, {
       thread_id,
       draft_text: finalDraft,
+      owner_checks: ownerChecks,
       message_id: c.last_message_id ?? undefined,
       epoch: c.draft_epoch,
       context_key: c.draft_context_key,

@@ -1,4 +1,5 @@
 "use client";
+import { OwnerChecksPanel } from "./OwnerChecksPanel";
 import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
 import { draftReviewSummary, sameDraftApproval, type DraftApproval, type DraftReview } from "../../../convex/lib/draft_review";
 import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
@@ -2530,12 +2531,13 @@ export function ReplyInbox() {
   // spoke last), which used to unmount the modal = the "auto-close on send" bug.
   // Cache the last-known row and fall back to it, so the overlay stays open
   // until YOU close it (× ) or tap a notification. (Daniel, 2026-07-03)
+  const openFromCheck = useQuery(api.replyInbox.getThreadById, openId ? {thread_id:openId} : "skip") as ReplyTileData | null | undefined;
   const openFromQueue = openId
     ? (queue ?? []).find((t) => t.thread_id === openId) ?? null
     : null;
   if (openFromQueue) openCacheRef.current = openFromQueue;
   const open = openId
-    ? openFromQueue ??
+    ? openFromQueue ?? openFromCheck ??
       (openCacheRef.current?.thread_id === openId ? openCacheRef.current : null)
     : null;
 
@@ -2639,6 +2641,7 @@ export function ReplyInbox() {
         </div>
       )}
 
+      <OwnerChecksPanel accountSlug={activeAccountSlug ?? undefined} onOpen={setOpenId} />
       {/* Filter + sort */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
         {/* Filter — segmented control (spreads full-width on mobile) */}
