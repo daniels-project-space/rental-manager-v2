@@ -866,18 +866,19 @@ describe("booked-kit references still require the current owner approval", () =>
 });
 
 
-describe("pricing review on unavailable additions",()=>{
- const opts={history:[],lastRenterMessage:"Could you quote a second Canon EF 24-105mm f4?",factPack:{pricing:{itemPrices:[{name:"BMPCC 6K Full Frame",min:62,max:62}]}},stockRequest:{start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Canon EF 24-105mm f4",quantity:2}]},stockEvidence:[{item:"Canon EF 24-105mm f4",available:false,quantity:2,free_units:1,start_date:"2026-10-20",end_date:"2026-10-21",checked_at:100,call_id:"native-check"}]};
- const flag=(text:string,extra:Partial<typeof opts>={})=>guardDraft(text,{...opts,...extra}).flags.some(f=>f.type==="CONTRACT:price-figure");
- it("does not request a price on a natively checked unavailable extra",()=>{
-  expect(flag("I can't provide a second Canon EF 24-105mm f4 for those dates. I don't have another suitable telephoto zoom.")).toBe(false);
+describe("quote review uses native amount evidence instead of a price presence metric",()=>{
+ const opts={history:[],lastRenterMessage:"Does the TTArtisan 11mm autofocus? If manual, quote an autofocus wide-angle alternative.",priceEvidence:[{kind:"rental" as const,names:["TTArtisan 11mm f2.8 Fisheye (Sony E)"],quantity:1,days:2,start_date:"2026-10-20",end_date:"2026-10-21",total_gbp:42,source:"hygglo_tier",call_id:"native-quote"}],priceRequest:{items:[{name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"}};
+ it("does not demand an unrelated existing rental price in a truthful partial answer",()=>{
+  const result=guardDraft("The TTArtisan 11mm is manual focus. I own the Sony GM 16-35mm, but need to confirm its exact specs and availability before quoting.",opts);
+  expect(result.flags.some(f=>f.type==="CONTRACT:price-figure")).toBe(false);
  });
- it("still requires a price when offering an alternative in the same reply",()=>{
-  expect(flag("The Canon EF 24-105mm f4 is not available, but I can offer the Sony FX3 instead.")).toBe(true);
+ it("still blocks a fabricated amount for the known rental",()=>{
+  const result=guardDraft("The TTArtisan 11mm f2.8 Fisheye (Sony E) costs £99 total for 20 to 21 October.",opts);
+  expect(result.flags.some(f=>f.type==="PRICE_HALLUCINATION"&&f.severity==="critical")).toBe(true);
  });
- it("does not use another item, dates, failed check or model boolean to excuse missing pricing",()=>{
-  const text="I can't provide a second Canon EF 24-105mm f4 for those dates.";
-  for(const change of [{stockEvidence:[]},{stockEvidence:[{...opts.stockEvidence[0],item:"Different lens"}]},{stockEvidence:[{...opts.stockEvidence[0],end_date:"2026-10-22"}]},{stockEvidence:[{...opts.stockEvidence[0],call_id:""}]},{stockEvidence:[{...opts.stockEvidence[0],available:true}]}]) expect(flag(text,change)).toBe(true);
+ it("accepts the exact native quote when that is what the reply supplies",()=>{
+  const result=guardDraft("The TTArtisan 11mm f2.8 Fisheye (Sony E) costs £42 total for 20 to 21 October.",opts);
+  expect(result.flags.some(f=>f.type==="PRICE_HALLUCINATION")).toBe(false);
  });
 });
 

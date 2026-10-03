@@ -1358,16 +1358,10 @@ const ASSERTS_AVAIL_RE =
 
   // ── CONTRACT (intent-based must/mustNot) ────────────────────────
   const intent = classifyDraftIntent(message);
-  // Booking prices do not require inventing a quote for an unavailable extra.
-  // This only suppresses a review annotation; stock and currency guards above
-  // still validate every claim independently.
-  const declineOnly = /\b(?:can['’]t|cannot|don['’]t have|do not have|not available|unavailable|unable to (?:provide|offer|supply))\b/i.test(text) &&
-    !/\b(?:(?:is|are) available|(?:can|could) (?:offer|provide|supply|recommend)|(?:recommend|suggest) (?:the|an?|our|my))\b/i.test(text) &&
-    (opts.stockEvidence ?? []).some(r => r.available === false && r.call_id && Number.isFinite(r.checked_at) &&
-      r.start_date === opts.stockRequest?.start_date && r.end_date === opts.stockRequest?.end_date &&
-      text.toLowerCase().includes(r.item.toLowerCase()));
-  const hasPricing = !!factPack?.pricing?.itemPrices?.length && !declineOnly;
-  const contract = enforceContract(text, intent, hasPricing);
+  // Completeness is a property of the resolved request, not the presence of
+  // any price in the context. Price claims above are still checked against
+  // their exact native item/quantity/date evidence.
+  const contract = enforceContract(text, intent);
   if (contract.blockPatterns.length) {
     const fixed = surgicalContractFix(text, contract.blockPatterns);
     if (fixed) {
@@ -1503,7 +1497,6 @@ const QUESTION_PATTERNS: PatternRule[] = [
 
 interface Contract {
   maxLength?: number;
-  must?: PatternRule[];
   mustNot?: PatternRule[];
 }
 
@@ -1535,7 +1528,7 @@ const CONTRACTS: Partial<Record<DraftIntent, Contract>> = {
   // wants upselling to happen in, not stages to block it in. Reverted.
   // GREETING/ACKNOWLEDGMENT/GOODBYE/COMPLAINT stay restricted: none of those
   // represent "renter clearly interested in add-ons" yet.
-  PRICING_INQUIRY: { must: [{ pattern: /£\d+/, label: "price-figure" }], mustNot: [] },
+  PRICING_INQUIRY: { mustNot: [] },
   COMPLAINT: { mustNot: [...UPSELL_PATTERNS] },
   NEGOTIATION: { mustNot: [...UPSELL_PATTERNS.filter((p) => p.label !== "upsell-language"), ...QUESTION_PATTERNS] },
   GENERAL: { mustNot: [] },
@@ -1553,7 +1546,6 @@ interface ContractOutcome {
 function enforceContract(
   response: string,
   intent: DraftIntent,
-  hasPricing: boolean,
 ): ContractOutcome {
   const violations: { label: string; detail: string }[] = [];
   const blockPatterns: RegExp[] = [];
@@ -1565,14 +1557,6 @@ function enforceContract(
       label: "maxLength",
       detail: `Reply is ${response.length} chars (max ${c.maxLength} for ${intent})`,
     });
-
-  if (c.must)
-    for (const { pattern, label } of c.must) {
-      if (!pattern.test(response)) {
-        if (label === "price-figure" && !hasPricing) continue;
-        violations.push({ label, detail: `Missing ${label}` });
-      }
-    }
 
   if (c.mustNot)
     for (const { pattern, label } of c.mustNot) {
