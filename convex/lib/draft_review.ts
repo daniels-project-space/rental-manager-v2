@@ -77,7 +77,7 @@ export function draftReviewSummary(review: Pick<DraftReview, "reason" | "flags">
     MINIMUM_POLICY_DISCLOSURE: "Internal commercial policy was disclosed",
     KIT_HALLUCINATION: "Kit contents need verification", CAMERA_FEATURE_HALLUCINATION: "Camera feature was not verified", CAMERA_MODE_HALLUCINATION: "Camera recording mode needs verification",
     SPEC_HALLUCINATION: "Item specifications need verification", PRICE_HALLUCINATION: "Price needs verification",
-    UNGROUNDED_UNAVAILABILITY: "Availability was not verified", AVAILABILITY_CONTRADICTION: "Stock or quantity conflicts with the reply",
+    UNGROUNDED_UNAVAILABILITY: "Availability was not verified", UNGROUNDED_CATALOGUE_READINESS: "Catalogue readiness was not verified", AVAILABILITY_CONTRADICTION: "Stock or quantity conflicts with the reply",
   };
   const reasons = [...new Set(review.flags.map(f => labels[f.type] ?? "Reply needs verification"))];
   if (reasons.length) return reasons.join(". ") + ".";

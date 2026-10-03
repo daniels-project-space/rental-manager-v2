@@ -9,6 +9,7 @@ import { unknownKitItems } from "./lib/renter_kit_evidence";
 import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/canonical_generation_error";
 "use node";
 import type { OwnerCheck } from "./lib/owner_checks";
+import { unsupportedCatalogueReadinessClaims } from "./lib/catalogue_readiness";
 /**
  * Reply Inbox — Node-runtime actions (LLM draft + gated live Hygglo send).
  *
@@ -867,6 +868,7 @@ export const generateDraft = action({
     const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b|\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.test(checkedDraft)
       ? await ctx.runQuery(internal.renter_bot_tools.__service_get_verified_camera_profiles, {}) : [];
     const guardOptions: Parameters<typeof guardDraft>[1] = {
+      catalogueReadinessEvidence: ownerChecks.length && unsupportedCatalogueReadinessClaims(checkedDraft,[]).length ? await ctx.runQuery(internal.renter_bot_owner_checks.readinessEvidence,{checks:ownerChecks}) : [],
       cameraEvidence,
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,

@@ -37,6 +37,7 @@ export default defineConfig({
       "convex/lib/lens_set_resolution.test.ts",
       "convex/lib/renter_stock.test.ts",
       "convex/lib/stock_claims.test.ts",
+      "convex/lib/catalogue_readiness.test.ts",
       "convex/lib/claim_date_scope.test.ts",
       "convex/lib/price_claims.test.ts",
       "convex/lib/required_mount_adapter.test.ts",

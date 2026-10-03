@@ -123,6 +123,7 @@ import type * as lib_camera_requirements from "../lib/camera_requirements.js";
 import type * as lib_camera_sensor_comparisons from "../lib/camera_sensor_comparisons.js";
 import type * as lib_canonical_generation_error from "../lib/canonical_generation_error.js";
 import type * as lib_capacity_gap from "../lib/capacity_gap.js";
+import type * as lib_catalogue_readiness from "../lib/catalogue_readiness.js";
 import type * as lib_claim_date_scope from "../lib/claim_date_scope.js";
 import type * as lib_claim_duration from "../lib/claim_duration.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
@@ -461,6 +462,7 @@ declare const fullApi: ApiFromModules<{
   "lib/camera_sensor_comparisons": typeof lib_camera_sensor_comparisons;
   "lib/canonical_generation_error": typeof lib_canonical_generation_error;
   "lib/capacity_gap": typeof lib_capacity_gap;
+  "lib/catalogue_readiness": typeof lib_catalogue_readiness;
   "lib/claim_date_scope": typeof lib_claim_date_scope;
   "lib/claim_duration": typeof lib_claim_duration;
   "lib/co_occurrence": typeof lib_co_occurrence;

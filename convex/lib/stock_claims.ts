@@ -1,4 +1,5 @@
 import { shortItemName } from "./item_display_name";
+import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
 import { lensClaimReferences } from "./lens_claim_references";
 import { requestedLensSets, resolveLensSet, lensSetSubjectFamily, lensSetFocalPattern, lensSetSuffixPattern } from "./lens_set_resolution";
@@ -47,6 +48,7 @@ function subjectOf(prefix: string) {
 
 /** Equipment refusals, excluding missing service information and conditions. */
 export function rentalRefusalSubject(clause:string) {
+  if (catalogueReadinessSubject(clause)) return null;
   const match=/^\s*(?:(?:sorry|unfortunately)[, ]+)?(?:I|we)\s+(?:currently\s+)?(?:don\'t|do not|can\'t|cannot|can not)\s+(?:currently\s+)?(have|get)\s+(.+?)\s*[.!]?$/i.exec(clause.replace(/’/g,"'"));
   if (!match || /^(?:(?:that|the|a|an|any|enough|your|verified|confirmed|accurate|current|complete)\s+)*(?:information|details|answer|price|pricing|rates?|quote|confirmation|address|refund|discount|support|advice|permission|access|time)\b/i.test(match[2])
     || /\b(?:if|once|when|after|unless|subject to)\b/i.test(match[2]))return null;

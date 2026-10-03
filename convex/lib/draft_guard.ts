@@ -1,4 +1,5 @@
 import type { MinimumRentalContext } from "./minimum_rental";
+import { unsupportedCatalogueReadinessClaims, type CatalogueReadinessEvidence } from "./catalogue_readiness";
 import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, incompleteSetupQuotes, type PriceEvidence } from "./price_claims";
@@ -44,6 +45,7 @@ export interface GuardResult {
 }
 
 export interface GuardOpts {
+  catalogueReadinessEvidence?: CatalogueReadinessEvidence[];
   stockEvidence?: StockReceipt[];
   priceEvidence?: PriceEvidence[];
   priceRequest?: StockRequest;
@@ -180,6 +182,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   UNFULFILLABLE_BOOKING: "critical",
   UNGROUNDED_AVAILABILITY: "critical",
   UNGROUNDED_UNAVAILABILITY: "critical",
+  UNGROUNDED_CATALOGUE_READINESS: "critical",
   UNGROUNDED_PRICE: "critical",
   VERIFICATION_CIRCUMVENTION: "critical",
   LOCATION_ASK_FOR_DISCOUNT: "high",
@@ -606,6 +609,10 @@ const ASSERTS_AVAIL_RE =
     for (const failure of unsupportedStockClaims(text, opts.stockEvidence ?? [], opts.stockRequest ?? { items: [] }, marketingItems, opts.lastRenterMessage)) {
       push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
     }
+  }
+
+  for (const subject of unsupportedCatalogueReadinessClaims(text,opts.catalogueReadinessEvidence??[])) {
+    push("UNGROUNDED_CATALOGUE_READINESS", `No current Native catalogue evidence for the verified quote-ready class: ${subject}`, "flagged");
   }
 
   // 8c. UNGROUNDED AVAILABILITY / PRICE — FLAG (the inquiry-fabrication bug)

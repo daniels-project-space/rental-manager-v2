@@ -2,12 +2,32 @@ import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { query, mutation } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
-import { ownerCheckKey, type OwnerCheck } from "./lib/owner_checks";
+import { ownerCheckKey, ownerCheckValidator, type OwnerCheck } from "./lib/owner_checks";
+import { internalQuery } from "./_generated/server";
+import { lensReadinessSubject } from "./lib/catalogue_readiness";
 import { assessLensRequirements, hasLensRequirements, verifiedLensCapabilities } from "./lib/lens_requirements";
 import { sameMount } from "./lib/item_name_match";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
 import { recentThreadMessages } from "./lib/thread_messages";
+/** Recompute capability absence from current Native inventory, independently
+ * of model prose, tool-use booleans, stock results and prices. */
+export const readinessEvidence=internalQuery({args:{checks:v.array(ownerCheckValidator)},handler:async(ctx,a)=>{
+ const inventory=await ctx.db.query("items").collect();
+ const owned=inventory.filter(i=>i.kind==="lens"&&i.status==="active"&&!i.is_marketing_only&&i.qty>0);
+ const profiles=await Promise.all(owned.map(async item=>{
+  const specs=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).collect();
+  return {item,cap:verifiedLensCapabilities(specs.length===1?specs[0]:undefined,item.name_canonical)};
+ }));
+ return a.checks.flatMap(check=>{
+  const subject=lensReadinessSubject(check.requirements,check.lens_mount);
+  if(!subject||!check.source_call_id||!hasLensRequirements(check.requirements))return [];
+  const scope=profiles.filter(p=>!check.lens_mount||sameMount(p.item.lens_mount,check.lens_mount));
+  if(scope.some(p=>assessLensRequirements(p.cap,check.requirements).status==="match"))return [];
+  if(!scope.some(p=>check.candidate_item_ids.includes(p.item._id)&&assessLensRequirements(p.cap,check.requirements).status==="unknown"))return [];
+  return [{subject,source_call_id:check.source_call_id}];
+ });
+}});
 /** Same transaction as draft/review persistence; Native identities rechecked. */
 export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;message_id:string;epoch:number;context_key:string;checks:OwnerCheck[]}) {
  if(!a.checks.length)return;
