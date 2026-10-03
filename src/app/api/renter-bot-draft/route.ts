@@ -1,3 +1,4 @@
+import { parseRenterBotOutput } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
 import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
@@ -1458,63 +1459,13 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           `[renter-bot-draft] tokens prompt=${tokenUsage.prompt} cached=${tokenUsage.cached ?? "?"}${pct} completion=${tokenUsage.completion ?? "?"} cost=${tokenUsage.cost ?? "?"}`,
         );
       }
-    try {
-      let js = text.trim();
-      const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
-      if (fence) js = fence[1].trim();
-      const a = js.indexOf("{");
-      const b = js.lastIndexOf("}");
-      if (a >= 0 && b > a) obj = JSON.parse(js.slice(a, b + 1)) as RenterBotOutput;
-    } catch {
-      obj = null;
-    }
+    obj = parseRenterBotOutput(text);
     }
     if (!obj) {
-      // SALVAGE a reply the model wrote as plain prose.
-      //
-      // A parse failure was discarding the entire turn, and a sweep caught one
-      // live. When the output contains no JSON at all the model simply answered
-      // in prose rather than in the envelope — the reply itself may be perfectly
-      // good, and throwing it away costs the renter an answer for a formatting
-      // slip. Salvaging is SAFE here precisely because factsClaimed comes back
-      // empty: that leaves hasItemGrounding false, which arms the blanket
-      // ungrounded-assertion net, so a salvaged draft is checked MORE strictly
-      // than a parsed one, not less. Anything containing braces is a malformed
-      // envelope rather than prose and is still escalated.
-      const prose = text.trim();
-      if (prose.length > 20 && prose.length < 2000 && !prose.includes("{") && !prose.includes("}")) {
-        return NextResponse.json({
-          ok: true,
-          draft: prose,
-          needs_human: false,
-          needs_human_reason: null,
-          salvagedFromProse: true,
-          factsClaimed: [],
-          usedTools,
-          resolvedItems,
-          itemsWithoutKitData,
-          kitEvidence,
-          priceEvidence: currentPriceEvidence(),
-          stockRequest,
-          priceRequest,
-          commercialContext,
-          offeredPrices: [...new Set(offeredPrices)],
-          marketingItems,
-        });
-      }
-      // Couldn't parse a decision — escalate rather than send garbage.
-      //
-      // Named, because "needs_human" with no reason is the same black box the
-      // empty Lab bubble was: a sweep produced six of these and there was no
-      // way to tell a model that DECLINED from output we simply failed to
-      // parse. Those need completely different fixes.
-      return NextResponse.json({
-        ok: true,
-        draft: "",
-        needs_human: true,
-        needs_human_reason: "unparseable_model_output",
-        factsClaimed: [],
-      });
+      // Fail at the model-output boundary. The caller can still recover an
+      // already committed Native amendment from its ledger without rerunning
+      // the model or edit tool. Prose is not a validated decision envelope.
+      return NextResponse.json({ok:false,error:"invalid_model_output",error_code:"invalid_model_output",transient:false}, {status:502});
     }
 
     // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling
@@ -1564,17 +1515,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           const retryUsedTools = ((retryResult?.steps ?? []) as any[]).some(
             (st) => (st?.toolCalls?.length ?? 0) > 0,
           );
-          let retryObj: RenterBotOutput | null = null;
-          try {
-            let js = retryText.trim();
-            const fence = js.match(/```(?:json)?\s*([\s\S]*?)```/i);
-            if (fence) js = fence[1].trim();
-            const a = js.indexOf("{");
-            const b = js.lastIndexOf("}");
-            if (a >= 0 && b > a) retryObj = JSON.parse(js.slice(a, b + 1)) as RenterBotOutput;
-          } catch {
-            retryObj = null;
-          }
+          const retryObj = parseRenterBotOutput(retryText);
           if (retryObj && (retryObj.draft || retryObj.needs_human === false)) {
             obj = retryObj;
             usedTools = retryUsedTools;

@@ -1,4 +1,4 @@
-const codes = ["upstream_timeout", "upstream_throttled", "upstream_unavailable", "upstream_authorization", "cancelled", "generation_failed", "http_failure"] as const;
+const codes = ["upstream_timeout", "upstream_throttled", "upstream_unavailable", "upstream_authorization", "cancelled", "generation_failed", "http_failure", "invalid_model_output"] as const;
 type FailureCode = typeof codes[number];
 export type CanonicalGenerationError = { http_status: number; error_code: FailureCode; upstream_status?: number; transient: boolean; request_id?: string };
 

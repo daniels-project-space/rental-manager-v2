@@ -652,8 +652,14 @@ export const generateDraft = action({
         if (!resp.ok) {
           const generation_error = await canonicalGenerationError(resp);
           console.warn("[generateDraft] canonical generation failed", generation_error);
-          if(!await recoverCommittedFailure(`canonical_generation_http_${resp.status}`))
+          if(!await recoverCommittedFailure(`canonical_generation_http_${resp.status}`)) {
+            if(generation_error.error_code==="invalid_model_output") {
+              const reason="needs_human:invalid_model_output";
+              const saved=await recordReview(reason,[{type:"INVALID_MODEL_OUTPUT",severity:"critical",action:"flagged",detail:"The model did not return a valid decision envelope. No generated reply was approved."}]);
+              return saved.ok ? {status:"skipped",reason,review:saved.review,generation_error} : {status:"skipped",reason:"stale_inbound",generation_error};
+            }
             return { status: "skipped", reason: `canonical_generation_http_${resp.status}`, generation_error };
+          }
         } else {
         const j = (await resp.json()) as {
           draft?: string;

@@ -10,7 +10,8 @@
  *
  * Decisions captured (see docs/renter-bot-v2-appendix.md §A):
  *   - Decision 5: Mastra agent with tools, NOT a fixed pipeline
- *   - Decision 7: structured-output grounding via factsClaimed cross-check
+ *   - Decision 7: validated output envelope; claim attribution is diagnostic,
+ *     while Native evidence and the draft checker enforce supported facts.
  *   - Decision 8: Mirror renter style via Renter DNA
  *   - Decision 12: Bot refuses to draft for COMPLAINT/DAMAGE_REPORT/CANCELLATION
  *   - Decision 18: English-only Phase 1; Swedish → escalate
@@ -18,13 +19,9 @@
 import "server-only";
 
 import { Agent } from "@mastra/core/agent";
-import { z } from "zod";
 import { getRenterBotModel, getVaultOpenRouterModel } from "@/lib/llm-client";
 import { RENTER_MODEL_RETRIES } from "@/lib/renter-model-policy";
-import {
-  RENTER_BOT_INTENTS,
-  CONVERSATION_STAGES,
-} from "@/../convex/lib/renter_bot_intents";
+import { CONVERSATION_STAGES } from "@/../convex/lib/renter_bot_intents";
 import { RENTER_BOT_TOOLS } from "../tools/renter_bot_tools";
 
 // ── System prompt — ~500 tokens (per appendix §G) ──────────────
@@ -54,7 +51,7 @@ WHEN TO QUERY
 
 OUTPUT — CRITICAL FORMAT
 Do ALL your reasoning via TOOL CALLS — do NOT narrate your thinking as text (no "Let me check…", no step-by-step prose). Your text output must be EXCLUSIVELY ONE JSON object and NOTHING else — no markdown, no headings, no "Draft:" label, no prose before or after it:
-{"draft":"<the renter-facing reply text only>","intent":"<one of the 14 intents>","conversation_stage":"<one of the allowed stages>","red_flags":[],"factsClaimed":[{"kind":"price|availability|date|item_included|rule","value":"...","sourceTool":"...","sourceCallId":"..."}],"needs_human":false}
+{"draft":"<the renter-facing reply text only>","intent":"<one of the 14 intents>","conversation_stage":"<one of the allowed stages>","red_flags":[],"factsClaimed":[{"kind":"price|availability|date|item_included|technical_spec|catalogue_match|quote_readiness|rule","value":"...","sourceTool":"...","sourceCallId":"..."}],"needs_human":false}
 Allowed stages: ${CONVERSATION_STAGES.join(", ")}. Use the authoritative current rental stage when supplied; legacy conversation labels never establish booking approval, payment, verification or collection.
 "draft" is exactly what the renter will read. When needs_human=true, draft is "".
 
@@ -106,7 +103,7 @@ MODEL NUMBERS ARE EXACT (new)
 A "Mini 5" is NOT a "Mini 4"; an "a7 IV" is NOT an "a7 III"; a "24-105" is NOT a "24-70". Never quietly substitute a different model we own for the one the renter named. If the exact model is not rentable, say that specific one is unavailable for their dates, then offer the nearest owned alternative by its real name without revealing internal marketing or ownership labels.
 
 NEVER FAKE AVAILABILITY OR PRICE (new — reinforces the rules above)
-You do NOT know availability or price from memory. If you haven't called check_availability this turn, do not say an item is free/available/booked for any dates — offer to check. If you haven't called lookup_pricing this turn, do not quote a number — look it up or say you'll confirm. Every price/availability claim MUST trace to a tool result (that's what factsClaimed enforces).
+You do NOT know availability or price from memory. If you haven't called check_availability this turn, do not say an item is free/available/booked for any dates — offer to check. If you haven't called lookup_pricing this turn, do not quote a number — look it up or say you'll confirm. Every factual claim must cite its source in factsClaimed. Use technical_spec for equipment properties, catalogue_match for suitability, quote_readiness for missing verification, and availability only for physical stock. This list is a diagnostic self-report; it does not verify your claim or replace Native evidence. Unknown specifications are unknown, not negative facts.
 
 FILTERS YOU MUST RESPECT (these are enforced post-hoc by code; failing here will reject your draft)
 - No "Hygglo" or "Fat Llama" mentions
@@ -127,26 +124,7 @@ FILTERS YOU MUST RESPECT (these are enforced post-hoc by code; failing here will
 
 // ── Output schema (structured-output grounding) ────────────────
 
-export const RENTER_BOT_OUTPUT_SCHEMA = z.object({
-  draft: z.string().describe("Renter-facing reply. Empty when needs_human=true."),
-  intent: z.enum(RENTER_BOT_INTENTS),
-  conversation_stage: z.enum(CONVERSATION_STAGES),
-  red_flags: z.array(z.string()),
-  factsClaimed: z
-    .array(
-      z.object({
-        kind: z.enum(["price", "availability", "date", "item_included", "rule"]),
-        value: z.string(),
-        sourceTool: z.string(),
-        sourceCallId: z.string(),
-      }),
-    )
-    .describe("Every load-bearing factual claim in the draft, with the tool call that produced it."),
-  needs_human: z.boolean(),
-  needs_human_reason: z.string().optional(),
-});
-
-export type RenterBotOutput = z.infer<typeof RENTER_BOT_OUTPUT_SCHEMA>;
+export { RENTER_BOT_OUTPUT_SCHEMA, type RenterBotOutput } from "@/lib/renter-bot-output";
 
 // ── Agent factory ──────────────────────────────────────────────
 
