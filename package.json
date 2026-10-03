@@ -56,7 +56,9 @@
     "sharp": "^0.34.5",
     "three": "^0.184.0",
     "web-push": "^3.6.7",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@convex-dev/better-auth": "0.12.5",
+    "better-auth": "1.6.15"
   },
   "optionalDependencies": {
     "@img/sharp-libvips-linux-arm64": "^1.2.0",
@@ -78,6 +80,6 @@
     "trigger.dev": "4.6.4",
     "tsx": "^4.21.0",
     "typescript": "^5",
-    "vitest": "^1.6.1"
+    "vitest": "3.2.7"
   }
 }

@@ -8,8 +8,8 @@ import { fileURLToPath, URL } from "node:url";
  * mastra/lib units that are pure TS + injectable stubs.
  *
  * CSS / PostCSS pipeline is disabled — the project's `postcss.config.mjs`
- * uses Tailwind v4's async plugin loader, which the CJS Vite shipped with
- * vitest 1.x can't evaluate. Unit tests don't touch CSS, so we short-circuit.
+ * uses Tailwind v4's async plugin loader. Unit tests don't touch CSS,
+ * so the unit test runner does not need the PostCSS pipeline.
  */
 export default defineConfig({
   resolve: {
@@ -22,6 +22,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "convex/lib/owner_setup.test.ts",
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_resolution.test.ts",

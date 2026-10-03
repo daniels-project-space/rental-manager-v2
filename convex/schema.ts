@@ -7,6 +7,12 @@ import { draftReviewValidator } from "./lib/draft_review_validator";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  // App owner identity is independent of rental accounts and renter verification.
+  owner_access: defineTable({
+    auth_user_id: v.string(),
+    email: v.string(),
+    created_at: v.number(),
+  }).index("by_auth_user", ["auth_user_id"]),
   // ── To-Do lists (owner personal checklists) ──────────────────
   todo_lists: defineTable({
     name: v.string(),

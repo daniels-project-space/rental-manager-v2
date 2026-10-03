@@ -17,8 +17,10 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
+import { authComponent, createAuth } from "./auth";
 
 const http = httpRouter();
+authComponent.registerRoutes(http, createAuth);
 
 /**
  * Ported Listings — VPS callback sink (Phase 4, Wave 2, ADDITIVE).

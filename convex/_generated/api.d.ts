@@ -40,6 +40,7 @@ import type * as audit_qty_drift_data from "../audit_qty_drift_data.js";
 import type * as audit_reclassification from "../audit_reclassification.js";
 import type * as audit_snapshot from "../audit_snapshot.js";
 import type * as audit_thread_join from "../audit_thread_join.js";
+import type * as auth from "../auth.js";
 import type * as backfill_blackmagic_descriptions from "../backfill_blackmagic_descriptions.js";
 import type * as backfill_blackmagic_queries from "../backfill_blackmagic_queries.js";
 import type * as bundles from "../bundles.js";
@@ -161,6 +162,7 @@ import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_month_projection from "../lib/month_projection.js";
 import type * as lib_monthly_verification from "../lib/monthly_verification.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
+import type * as lib_owner_setup from "../lib/owner_setup.js";
 import type * as lib_platform_fallout from "../lib/platform_fallout.js";
 import type * as lib_poller_window from "../lib/poller_window.js";
 import type * as lib_price_claims from "../lib/price_claims.js";
@@ -262,6 +264,8 @@ import type * as online_listings from "../online_listings.js";
 import type * as online_listings_actions from "../online_listings_actions.js";
 import type * as order_edit from "../order_edit.js";
 import type * as order_step_semantics from "../order_step_semantics.js";
+import type * as owner_access from "../owner_access.js";
+import type * as owner_auth_probe from "../owner_auth_probe.js";
 import type * as poll_clock from "../poll_clock.js";
 import type * as poller_health from "../poller_health.js";
 import type * as ported_listings from "../ported_listings.js";
@@ -354,6 +358,7 @@ declare const fullApi: ApiFromModules<{
   audit_reclassification: typeof audit_reclassification;
   audit_snapshot: typeof audit_snapshot;
   audit_thread_join: typeof audit_thread_join;
+  auth: typeof auth;
   backfill_blackmagic_descriptions: typeof backfill_blackmagic_descriptions;
   backfill_blackmagic_queries: typeof backfill_blackmagic_queries;
   bundles: typeof bundles;
@@ -475,6 +480,7 @@ declare const fullApi: ApiFromModules<{
   "lib/month_projection": typeof lib_month_projection;
   "lib/monthly_verification": typeof lib_monthly_verification;
   "lib/notification_events": typeof lib_notification_events;
+  "lib/owner_setup": typeof lib_owner_setup;
   "lib/platform_fallout": typeof lib_platform_fallout;
   "lib/poller_window": typeof lib_poller_window;
   "lib/price_claims": typeof lib_price_claims;
@@ -576,6 +582,8 @@ declare const fullApi: ApiFromModules<{
   online_listings_actions: typeof online_listings_actions;
   order_edit: typeof order_edit;
   order_step_semantics: typeof order_step_semantics;
+  owner_access: typeof owner_access;
+  owner_auth_probe: typeof owner_auth_probe;
   poll_clock: typeof poll_clock;
   poller_health: typeof poller_health;
   ported_listings: typeof ported_listings;
@@ -658,4 +666,5 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  betterAuth: import("@convex-dev/better-auth/_generated/component.js").ComponentApi<"betterAuth">;
 };
