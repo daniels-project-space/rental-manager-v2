@@ -25,6 +25,7 @@ export default defineConfig({
       "src/mastra/**/*.test.ts",
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_resolution.test.ts",
+      "convex/lib/lens_set_resolution.test.ts",
       "convex/lib/renter_stock.test.ts",
       "convex/lib/stock_claims.test.ts",
       "convex/lib/claim_date_scope.test.ts",

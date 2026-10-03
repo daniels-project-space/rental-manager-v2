@@ -47,7 +47,7 @@ function subjectOf(prefix: string) {
 /** Equipment refusals, excluding missing service information and conditions. */
 export function rentalRefusalSubject(clause:string) {
   const match=/^\s*(?:(?:sorry|unfortunately)[, ]+)?(?:I|we)\s+(?:currently\s+)?(?:don\'t|do not|can\'t|cannot|can not)\s+(?:currently\s+)?(have|get)\s+(.+?)\s*[.!]?$/i.exec(clause.replace(/’/g,"'"));
-  if (!match || /^(?:(?:that|the|a|an|any|enough|your)\s+)*(?:information|details|answer|price|quote|confirmation|address|refund|discount|support|advice|permission|access|time)\b/i.test(match[2])
+  if (!match || /^(?:(?:that|the|a|an|any|enough|your|verified|confirmed|accurate|current|complete)\s+)*(?:information|details|answer|price|pricing|rates?|quote|confirmation|address|refund|discount|support|advice|permission|access|time)\b/i.test(match[2])
     || /\b(?:if|once|when|after|unless|subject to)\b/i.test(match[2]))return null;
   return {verb:match[1].toLowerCase(),subject:match[2].replace(/\s+(?:to quote|to rent|for rental|in stock)\s*[.!]?$/i,"").replace(/[.!]$/,"")};
 }

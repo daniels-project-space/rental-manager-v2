@@ -1,4 +1,5 @@
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
+import { resolveLensSet } from "./lib/lens_set_resolution";
 import { availabilityBasket } from "./lib/availability_basket";
 import { explicitRecommendationUse, recommendationBasket, type RecommendationLine } from "./lib/recommendation_basket";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
@@ -767,6 +768,18 @@ export const check_availability = query({
     replace_quantity: v.optional(v.number()),
   },
   handler: async (ctx, { item_name, start_date, end_date, account_slug, quantity, pickup_time, return_time, thread_id, product_id, booking_use, prefetch_current, replace_product_id, replace_quantity }) => {
+    // A set description is not a single commercial listing. Give the bot
+    // exact inventory identities for its joint tool, without inventing a
+    // dated verdict or bypassing the existing booking's stock requirements.
+    if (product_id == null && /\bset\s*$/i.test(item_name)) {
+      const sources = await loadStockSources(ctx);
+      const set = resolveLensSet(item_name, sources.items);
+      if (set) return { available: null, owned: null, item_name, start_date, end_date,
+        reason: set.ok ? "lens_set_requires_joint_check" : set.reason,
+        resolved_items: set.ok ? set.items.map(item => ({item_name:item.name_canonical,quantity:quantity ?? 1})) : [],
+        guidance: set.ok ? "These are lookup identities, not stock evidence. Call check_basket_availability with all resolved_items, this account/thread, these dates and the correct addition or replacement context. Do not refuse or promise stock from this unknown result."
+          : "The exact lens-set identities are unverified or ambiguous. Ask for the exact lenses or owner clarification; do not call this set unavailable." };
+    }
     if (thread_id) {
       const [booking,labOrder]=await Promise.all([getBotBooking(ctx,thread_id),getLabOrder(ctx,thread_id)]);
       if ((booking?.account_slug && booking.account_slug!==account_slug) || (labOrder?.account_slug && labOrder.account_slug!==account_slug))

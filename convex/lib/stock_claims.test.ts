@@ -338,8 +338,14 @@ describe("exact evidence for equipment refusals",()=>{
   for(const receipt of [{...busy,end_date:"2026-10-05"},{...busy,available:true},{...busy,quantity:2,free_units:null}])expect(check(text,[receipt])).not.toEqual([]);
  });
  it("does not treat missing information or a service as an equipment decline",()=>{
-  for(const text of ["I don't have that price.","We can't get a discount.","I don't have enough information.","We do not have your address."])
+  for(const text of ["I don't have that price.","We can't get a discount.","I don't have enough information.","We do not have your address.",
+    "I don't have verified pricing or availability to quote for the Great Joy anamorphic set right now, so your current booking remains unchanged.",
+    "We don't have confirmed rates for the Sony FX3.","I don't have verified information for the Sony FX3."])
    expect(guardDraft(text,{...options,groundedDuringTurn:{unavailability:false},stockEvidence:[]}).flags.filter(f=>f.type==="UNGROUNDED_UNAVAILABILITY")).toEqual([]);
+ });
+ it("still reviews a separate equipment refusal after missing-price information",()=>{
+  expect(guardDraft("I don't have verified pricing for the Sony FX3. We don't have the Sony FX6 for rental.",{...options,stockEvidence:[]}).flags)
+   .toContainEqual(expect.objectContaining({type:"UNGROUNDED_UNAVAILABILITY"}));
  });
 });
 
