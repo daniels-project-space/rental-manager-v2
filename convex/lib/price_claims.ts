@@ -111,6 +111,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // preceding paragraph discussed another item or the trailing text lists
     // supplied components. It still needs the current order's exact receipt.
     let bookingSubject = /^\s*(?:(?:your|our|my|the|this|current|confirmed)\s+)*(?:booking|order|rental|hire)(?:\s+(?:total|price|cost))?\s+(?:remains|stays|is\s+still)(?:\s+(?:unchanged|the\s+same|set|confirmed|agreed))?(?:\s+(?:at|priced\s+at))?\s*$/i.test(segment);
+    const currentBookingReference = /\b(?:current|existing|confirmed)\s+([^£.!?()]{0,70}?)\s+(?:booking|order)\s*\(\s*$/i.exec(segment);
+    if (currentBookingReference && request.items.length === 1 && aliases([request.items[0].name, ...(request.items[0].aliases ?? [])]).some(name => ` ${name} `.includes(` ${norm(currentBookingReference[1])} `))) bookingSubject = true;
     const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(segment);
     let pairedItems: Array<{names:string[];quantity:number}> | undefined;
     let unresolvedPair = false;
@@ -125,7 +127,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       bookingSubject ||= /^(?:booking|order|rental|hire)\s+(?:remains(?:\s+set)?|stays(?:\s+set)?|is\s+still\s+set)\s+(?:for|on|from)\s+dates(?:\s+as\s+(?:confirmed|agreed))?(?:\s+which)?$/i.test(datedSubject);
       const genericNamed = withoutDurationReference(named, segmentDates.matched_text ? norm(segmentDates.matched_text) : undefined)
         .replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
-        .replace(/^adding\s+(?=(?:it|this|that)\b)/i, "");
+        .replace(/^adding\s+(?=(?:it|this|that|them|these|those)\b)/i, "");
       const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
       const unsupportedQualifiedLens = !exactOffering && declaredLensReferences(genericNamed).find(reference=>!focalSubjects.has(reference));
       if (unsupportedQualifiedLens) { subject=[unsupportedQualifiedLens]; unresolvedPair=true; }
@@ -186,7 +188,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const proposalTotal = conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
     const componentAddition = pricedComponents.length > 1 && /^\s*(?:\/\s*day|per\s+day|a\s+day)?\s*\)?\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making)\s+(?:the\s+)?(?:addition|additions|additional cost)\s+(?:to|of)\s*$/i.test(segment);
-    const group=componentAddition ? pricedComponents : quotedGroup(pos);
+    const group=componentAddition || proposalTotal && pricedComponents.length > 1 ? pricedComponents : quotedGroup(pos);
     const groupAddition=componentAddition || !baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
     const basket = groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
@@ -209,7 +211,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
           // A proposal never certifies an already-applied total or an unrelated basket.
           if ((!proposalTotal && !componentAddition && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
           if(e.proposal.added_items.length>1) {
-            if(!membersMatch(pairedItems??group,e.proposal.added_items) || !e.proposal.added_items.some(i=>same(subject,[i.name])))return false;
+            if(!membersMatch(pairedItems??group,e.proposal.added_items) || !proposalTotal && !e.proposal.added_items.some(i=>same(subject,[i.name])))return false;
           } else if (!same(subject,[e.proposal.added_items[0].name]) ||
               (declaredQuantity??subjectQuantity??1)!==e.proposal.added_items[0].quantity) return false;
         }
@@ -228,7 +230,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         : (perUnit && e.kind === "rental" && e.quantity && e.total_gbp != null ? e.total_gbp/e.quantity : e.total_gbp);
       return expected != null && cents(expected) === cents(amount);
     });
-    if (proven && !basket && !daily && purpose === "rental") {
+    if (proven && !bookingSubject && !basket && !daily && purpose === "rental") {
       const component = { names: [...subject], quantity: declaredQuantity ?? subjectQuantity ?? quantity ?? 1 };
       if (!pricedComponents.some(item => same(item.names, component.names))) pricedComponents.push(component);
     }

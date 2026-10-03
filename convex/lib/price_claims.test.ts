@@ -253,3 +253,30 @@ describe("native component prices followed by their addition total",()=>{
   expect(check(text,[...receipts.slice(0,2),{...receipts[2],items:[added[0]]}],scope)).not.toEqual([]);
  });
 });
+
+it("keeps an existing camera booking in parentheses separate from its multi-component proposal",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Blackmagic 6K Full Frame",quantity:1}]};
+ const added=[{name:"Blazar Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}];
+ const receipts:PriceEvidence[]=[
+ {names:["Blazar Remus 100mm"],kind:"rental",days:2,quantity:1,total_gbp:50,daily_rate_gbp:25,source:"hygglo_tier",call_id:"lens"},
+ {names:["PL to L mount"],kind:"rental",days:2,quantity:1,total_gbp:20,daily_rate_gbp:10,source:"hygglo_tier",call_id:"adapter"},
+ {names:scope.items.map(i=>i.name),kind:"rental",days:2,quantity:1,total_gbp:124,source:"lab_order_quote",call_id:"base"},
+ {names:[],kind:"basket",days:2,total_gbp:194,items:[...scope.items,...added],proposal:{base_items:scope.items,added_items:added},source:"native_lab_proposal",call_id:"proposal"}];
+ const text="The Great Joy 35mm, 50mm and 85mm anamorphic lens set isn't available for 20 to 21 October.\n\nAs a compatible anamorphic option, I have the Blazar Remus 100mm T2.8 anamorphic prime (PL mount), which can be paired with our PL to L mount adapter for the Blackmagic 6K Full Frame. For your 2-day dates (20 to 21 October), the Blazar Remus 100mm is £50 (£25/day) and the PL to L mount adapter is £20 (£10/day). Adding that setup to your existing Blackmagic 6K booking (£124) would bring the total to £194.\n\nYour current booking is completely untouched—let me know if you'd like to add the Blazar Remus setup or if you have any questions!";
+ expect(check(text,receipts,scope)).toEqual([]);
+ for(const wrong of [text.replace("£194","£174"),text.replace("£124","£50"),text.replace("existing Blackmagic 6K booking","existing Sony FX3 booking"),text.replace("2-day dates","3-day dates")]) expect(check(wrong,receipts,scope),wrong).not.toEqual([]);
+ expect(check(text,receipts.slice(0,3),scope)).not.toEqual([]);
+});
+
+it("binds adding those to the exact preceding bullet group",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const added=[{name:"Blazar Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}];
+ const receipts:PriceEvidence[]=[
+ {names:[added[0].name],kind:"rental",days:2,quantity:1,total_gbp:50,daily_rate_gbp:25,source:"hygglo_tier",call_id:"lens"},
+ {names:[added[1].name],kind:"rental",days:2,quantity:1,total_gbp:20,daily_rate_gbp:10,source:"hygglo_tier",call_id:"adapter"},
+ {names:[],kind:"basket",quote_role:"addition",days:2,total_gbp:70,items:added,proposal:{base_items:scope.items,added_items:added},source:"native_lab_proposal",call_id:"addition"}];
+ const text="- Blazar Remus 100mm: £25/day (£50 total)\n- PL to L mount adapter: £10/day (£20 total)\n\nAdding those would be £70.";
+ expect(check(text,receipts,scope)).toEqual([]);
+ expect(check(text.replace("£70","£50"),receipts,scope)).not.toEqual([]);
+ expect(check(text,receipts.slice(0,2),scope)).not.toEqual([]);
+});
