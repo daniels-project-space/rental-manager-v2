@@ -13,7 +13,12 @@ import { recentThreadMessages } from "./lib/thread_messages";
 /** Workflow state only. Handling notes and equipment facts are deliberately
  * absent: marking a task handled does not attest a specification or quote. */
 export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:string) {
- const tasks=await ctx.db.query("renter_bot_owner_checks").withIndex("by_thread",q=>q.eq("thread_id",threadId)).order("desc").take(20);
+ // Unresolved work must not disappear behind a rolling window of handled tasks.
+ const [pending,handled]=await Promise.all([
+  ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",threadId)).order("desc").collect(),
+  ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","handled_by_owner").eq("thread_id",threadId)).order("desc").take(20),
+ ]);
+ const tasks=[...pending,...handled];
  return tasks.map(task=>({task_id:task._id,status:task.status,requirements:task.check.requirements,lens_mount:task.check.lens_mount,
   start_date:task.check.start_date,end_date:task.check.end_date,quantity:task.check.quantity,candidate_names:task.candidate_names,
   context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,

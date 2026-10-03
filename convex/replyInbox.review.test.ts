@@ -1,3 +1,4 @@
+import { ownerChecksForBot } from "./renter_bot_owner_checks";
 import schema from "./schema";
 import { CONVERSATION_STAGES } from "./lib/renter_bot_intents";
 import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
@@ -14,10 +15,12 @@ function database() {
     insert: async (table: string, value: any) => { const id = `${table}:${++serial}`; rows.set(id, { ...value, _id: id, _creationTime: serial, table }); return id; },
     patch: async (id: string, value: any) => { const row = { ...rows.get(id) }; for (const [k, v] of Object.entries(value)) { if (v === undefined) delete row[k]; else row[k] = v; } rows.set(id, row); },
     query: (table: string) => {
-      const filters: Array<(r: any) => boolean> = [];
+      const filters: Array<(r: any) => boolean> = []; let descending=false;
       const chain: any = { eq: (key: string, value: any) => { filters.push(r => r[key] === value); return chain; }, gte: (key: string, value: any) => { filters.push(r => r[key] >= value); return chain; } };
       const query: any = { withIndex: (_name: string, select: any) => { select(chain); return query; },
-        collect: async () => [...rows.values()].filter(r => r.table === table && filters.every(f => f(r))),
+        collect: async () => { const found=[...rows.values()].filter(r => r.table === table && filters.every(f => f(r))); return descending ? found.sort((a,b)=>b._creationTime-a._creationTime) : found; },
+        order: (direction:string) => { descending=direction==="desc"; return query; },
+        take: async (count:number) => (await query.collect()).slice(0,count),
         first: async () => (await query.collect())[0] ?? null };
       return query;
     },
@@ -219,5 +222,27 @@ describe("operational conversation stage storage",()=>{
   const f=await setup();f.rows.delete(f.bookingId);
   expect(await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:draftContextKey(null),conversation_stage:"INTERESTED",draft_text:"A helpful inquiry reply"})).toMatchObject({ok:true});
   expect(f.rows.get(f.convId).conversation_stage).toBe("INTERESTED");
+ });
+});
+
+
+describe("owner checks preserve unresolved work in bot context",()=>{
+ const check={requirements:{focus_mode:"autofocus"},lens_mount:"E",start_date:"2026-10-20",end_date:"2026-10-21",quantity:1};
+ const task=(status:string,thread_id="lab-one",context="current")=>({thread_id,status,check,candidate_names:["Sony lens"],source_context_key:context,source_message_id:"message",handling_note:"Private owner note"});
+ it("keeps an old pending question after more than twenty newer handled checks",async()=>{
+  const {ctx}=database();const pendingId=await ctx.db.insert("renter_bot_owner_checks",task("pending"));
+  for(let i=0;i<25;i++)await ctx.db.insert("renter_bot_owner_checks",task("handled_by_owner"));
+  await ctx.db.insert("renter_bot_owner_checks",task("pending","other-thread"));
+  const checks=await ownerChecksForBot(ctx as any,"lab-one","current");
+  expect(checks).toHaveLength(21);expect(checks[0]).toMatchObject({task_id:pendingId,status:"pending",context_changed:false,specification_result_verified:false,customer_input_required:false});
+  expect(checks.filter(c=>c.status==="handled_by_owner")).toHaveLength(20);
+  expect(JSON.stringify(checks)).not.toContain("Private owner note");
+ });
+ it("retains every pending scope and marks old basket context without borrowing approval",async()=>{
+  const {ctx}=database();
+  for(let i=0;i<23;i++)await ctx.db.insert("renter_bot_owner_checks",task("pending","lab-one",i===0?"old":"current"));
+  const checks=await ownerChecksForBot(ctx as any,"lab-one","current");
+  expect(checks).toHaveLength(23);expect(checks.filter(c=>c.context_changed)).toHaveLength(1);
+  expect(checks.every(c=>!c.specification_result_verified&&!c.customer_input_required)).toBe(true);
  });
 });
