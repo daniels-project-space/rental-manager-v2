@@ -249,6 +249,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
           if (!r.call_id || !Number.isFinite(r.checked_at) || typeof r.available !== "boolean" ||
             !names.some(n => sameItem(n, r.item)) ||
             (start && r.start_date !== start) || (end && r.end_date !== end)) return false;
+          // A physically free body does not promise that its failed/unknown
+          // rental proposal can be supplied with all shared kit components.
+          if (!negative && r.basket && r.basket.available!==true) return false;
           // A calendar refusal does not prove the catalogue lacks that gear.
           // Undated don't-have claims need current Native rental eligibility.
           if (rentalRefusal && rentalRefusal.verb==="have" && !dateScope.matched_text && r.owned!==false) return false;

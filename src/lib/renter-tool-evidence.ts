@@ -88,6 +88,11 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
 export function stockReceipts(receipts: ToolReceipt[]) {
   const keys = new Set<string>();
   return receipts.filter((r) => r.tool === "check_availability" &&
+    // Aggregate proposal/listing results describe the whole physical basket.
+    // Their echoed or commercial name is not an independent stock receipt.
+    // Harvested component receipts carry the exact Native item identities.
+    !["current_booking","proposed_basket"].includes(String(r.result.stock_scope)) &&
+    !(r.result.source === "complete_listing_components" && Array.isArray(r.result.components)) &&
     (typeof r.result.available === "boolean" || r.result.available === null) &&
     typeof r.result.item_name === "string" &&
     typeof r.result.start_date === "string" &&

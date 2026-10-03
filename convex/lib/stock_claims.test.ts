@@ -4,6 +4,12 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+it("does not promise a free camera as an extra when its shared proposal failed or remains unknown",()=>{
+ const positive={...stock,available:true,owned:true,basket:{available:false,items:[{name:stock.item,quantity:1}]}};
+ expect(check("Sony FX3 is available for 2 to 4 October.",[positive])).not.toEqual([]);
+ expect(check("Sony FX3 is available for 2 to 4 October.",[{...positive,basket:{...positive.basket,available:null}}])).not.toEqual([]);
+ expect(check("Sony FX3 is available for 2 to 4 October.",[{...positive,basket:{...positive.basket,available:true}}])).toEqual([]);
+});
 describe("requested lens-set shorthand",()=>{
  const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
  const message="Can you quote your Blackmagic 6K Full Frame with the Great Joy 35mm, 50mm and 85mm anamorphic lens set for 20 to 21 October? Please quote only.";

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
 import { normalizeClaimedFacts } from "../../convex/lib/renter_draft_evidence";
+import { unsupportedStockClaims } from "../../convex/lib/stock_claims";
+import mismatch from "./fixtures/renter-product-name-mismatch.json";
 
 describe("untrusted claimed-fact diagnostics", () => {
   it("accepts missing call attribution without manufacturing proof or crashing Lab persistence", () => {
@@ -16,6 +18,17 @@ describe("untrusted claimed-fact diagnostics", () => {
 });
 
 const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1, free_units: 1, checked_at: 12345 };
+it("rejects the real Native product-ID/name mismatch instead of harvesting its aggregate echo",()=>{
+ const harvested=stockReceipts(renterToolReceipts([{toolName:"check_availability",toolCallId:"captured-native-mismatch",result:mismatch}]));
+ expect(harvested.map(r=>r.result.item_name)).not.toContain("Sony FX3");
+ expect(harvested.map(r=>r.result.item_name)).toContain("BMPCC 6K Pro");
+ const receipts=harvested.map(r=>({item:String(r.result.item_name),start_date:String(r.result.start_date),end_date:String(r.result.end_date),quantity:Number(r.result.requested_units),available:r.result.available as boolean|null,free_units:r.result.free_units as number|null,checked_at:Number(r.result.checked_at),call_id:r.call_id}));
+ expect(unsupportedStockClaims("Sony FX3 is available for 20 to 21 October.",receipts,{start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]})).not.toEqual([]);
+});
+it("does not turn a failed aggregate proposal into an independent negative camera receipt",()=>{
+ const result={...stock,item_name:"BMPCC 6K Pro",available:false,stock_scope:"proposed_basket",components:[{...stock,item_name:"BMPCC 6K Pro"},{...stock,item_name:"NP-F570 batteries",available:false}]};
+ expect(stockReceipts(renterToolReceipts([{toolName:"check_availability",result}])).map(r=>[r.result.item_name,r.result.available])).toEqual([["BMPCC 6K Pro",true],["NP-F570 batteries",false]]);
+});
 describe("successful tool receipts", () => {
   it("carries authoritative alternative kits without accepting call arguments or marketing prose", () => {
     const a = { name: "BMPCC 6K Full Frame", listing_name: "Misleading SEO title", kit_source: "physical_mapping_and_inventory", kit_contents: ["NP-F570 batteries", "1TB CFexpress Type B"] };

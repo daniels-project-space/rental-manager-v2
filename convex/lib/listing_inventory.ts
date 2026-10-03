@@ -57,13 +57,14 @@ export function listingStock(sources: Awaited<ReturnType<typeof loadStockSources
       start_date: request.start_date, end_date: request.end_date, units_per_listing: c.units_per_listing };
   });
   const negative = listing.owned === false || components.some((c) => c.available === false);
-  const available = !listing.valid_quantity ? null : negative ? false
+  const identityVerified=!!listing.listing_name?.trim();
+  const available = !identityVerified || !listing.valid_quantity ? null : negative ? false
     : listing.complete && listing.owned === true && components.length > 0 && components.every((c) => c.available === true) ? true : null;
   const capacity = (key: "free_units" | "total_units") => components.length && components.every((c) => typeof c[key] === "number")
     ? Math.min(...components.map((c) => Math.floor(c[key]! / c.units_per_listing))) : null;
-  return { available, owned: listing.owned, found: listing.complete, item_name: listing.listing_name ?? request.item_name,
+  return { available, owned: identityVerified ? listing.owned : null, found: identityVerified && listing.complete, item_name: listing.listing_name ?? "Unverified listing identity",
     product_id: listing.product_id, requested_units: request.quantity ?? 1, free_units: capacity("free_units"), total_units: capacity("total_units"),
     start_date: request.start_date, end_date: request.end_date, checked_at: Date.now(), source: "complete_listing_components",
-    reason: !listing.valid_quantity ? "invalid_request" : listing.owned === false ? "not_rentable" : negative ? "component_unavailable" : available === true ? "available" : "incomplete_listing_mapping",
+    reason: !identityVerified ? "listing_identity_unverified" : !listing.valid_quantity ? "invalid_request" : listing.owned === false ? "not_rentable" : negative ? "component_unavailable" : available === true ? "available" : "incomplete_listing_mapping",
     components, conflicts: [], mapping_complete: listing.complete };
 }

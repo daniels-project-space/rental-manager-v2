@@ -18,6 +18,11 @@ const sources = (extra: Partial<Awaited<ReturnType<typeof loadStockSources>>> = 
 });
 
 describe("whole listing inventory and stock", () => {
+  it("never copies the requested camera name when the selected Native listing lacks an identity",()=>{
+    const result=listingStock(sources(),{...resolution(),listing_name:null},{...request,item_name:"RED Komodo"});
+    expect(result).toMatchObject({available:null,owned:null,found:false,item_name:"Unverified listing identity",reason:"listing_identity_unverified"});
+    expect(result.components.map(c=>c.item_name)).toEqual(["Sony FX3","Sony GM 24-70mm f2.8"]);
+  });
   it("checks the supplied camera adapter against other confirmed camera hires",()=>{
     const native=[{_id:"ff",name_canonical:"BMPCC 6K Full Frame",kind:"camera",status:"active",qty:2,compatibility:{included_with_rental:["EF to L mount adapter"]}},{_id:"adapter",name_canonical:"EF to L mount",aliases:["EF to L mount adapter"],kind:"adapter",status:"active",qty:1}] as unknown as Doc<"items">[];
     const listing={...resolveListingComponents(native,[{item_id:"ff",qty:1}],"ff"),product_id:10,listing_name:"Full Frame kit"};

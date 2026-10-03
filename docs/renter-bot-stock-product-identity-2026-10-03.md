@@ -1,0 +1,11 @@
+# Exact product identity and stock receipt scope
+
+A real Native Lab probe passed `item_name: Sony FX3` with Blackmagic 6K Pro product ID 1172895 into a confirmed Full Frame booking's additional-stock check. The query correctly checked Blackmagic components, but echoed “Sony FX3” as an affirmative, owned parent result. The normal receipt harvester and stock guard then accepted a constructed “Sony FX3 is available” sentence with that real result. This was a synthetic claim used to verify the bypass, not a model-generated reply.
+
+The confirmed-booking branch now obtains its selected name from the exact account/product record. A missing Native product name stays unverified. Direct listing stock likewise refuses to replace a missing Native identity with the model's requested name.
+
+Receipt harvesting excludes proposal/current-basket aggregate parents and full-listing aggregate results from independent equipment evidence. Exact Native component receipts remain available, including their joint basket. This also prevents a failed whole proposal from becoming a negative camera receipt when the actual failing component is a battery or adapter. Positive equipment claims cannot use a failed or unknown joint basket even if one body component is physically free.
+
+Regression coverage includes the captured real Native mismatch fixture, missing product identity, aggregate versus physical verdicts, and failed/unknown/affirmative basket promises. The original captured bypass is blocked by replay. The updated Native probe identifies the selected Blackmagic product, retains the original £124 booking, and cleans up its own Lab session. Full suite: 1,222 passed and 14 skipped in 92 files; production build and backend typecheck passed. Graphify was updated with its known partial AST warning.
+
+Remaining audit work includes the lens-set delimiter/automatic joint-check path and older quote/recommendation receipts that may lack basket scope. Removing aggregate parents deliberately requires physical receipts to support equipment claims; exact commercial exclusion wording for unmapped marketing offers still needs a dedicated end-to-end review. Real Hygglo sends and booking operations remain gated on explicit owner consent.

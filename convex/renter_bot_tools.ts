@@ -795,7 +795,12 @@ export const check_availability = query({
       if (requiresContext || booking_use || expected) {
         const sources=await loadStockSources(ctx);
         const match=product_id==null ? bestMatch(item_name,sources.items,i=>i.name_canonical,i=>i.aliases ?? []) : null;
-        const candidate={name:match?.confident ? match.match!.name_canonical : item_name,qty:quantity ?? 1,product_id,
+        const selected=product_id==null || !account_slug ? null : await ctx.db.query("hygglo_products")
+          .withIndex("by_account_product",q=>q.eq("accountSlug",account_slug).eq("productId",product_id)).first();
+        if (product_id!=null && !selected?.name?.trim()) return {available:null,owned:null,product_id,
+          item_name:"Unverified listing identity",start_date,end_date,reason:"listing_identity_unverified",components:[],
+          guidance:"The exact product has no verified Native name in this account. Do not reuse the requested name as proof of stock or ownership."};
+        const candidate={name:selected?.name ?? (match?.confident ? match.match!.name_canonical : item_name),qty:quantity ?? 1,product_id,
           ...(match?.confident ? {item_id:String(match.match!._id)} : {})};
         const basket=availabilityBasket(existing,candidate,{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
           can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expected,replace_product_id,replace_quantity,
