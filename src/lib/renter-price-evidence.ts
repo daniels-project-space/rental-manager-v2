@@ -1,3 +1,4 @@
+import { datePriceEvidence } from "./renter-date-price-evidence";
 import { inclusiveRentalDays } from "../../convex/lib/hygglo_pricing";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { ToolReceipt } from "./renter-tool-evidence";
@@ -22,6 +23,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
     const {tool,call_id,result:r}=receipt;
     if(tool==="get_lab_order" && receipt!==latestOrder)continue;
     if (!call_id || r.error || r.ok===false || r.found===false) continue;
+    if(tool==="quote_booking_dates")out.push(...datePriceEvidence(receipt,threadId));
     if (tool === "lookup_pricing" && r.found===true) {
       const aliases=listings.filter(l=>l.product_id===r.product_id && l.account_slug===r.account_slug).flatMap(l=>l.names);
       const names=[...new Set([r.matched_canonical,r.matched_listing,...aliases,...(Array.isArray(r.verified_price_names)?r.verified_price_names:[])].filter((n):n is string=>!!string(n)))];

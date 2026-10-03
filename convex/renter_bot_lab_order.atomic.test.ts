@@ -8,7 +8,7 @@ import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 
 function fixture() {
   const tables: Record<string, any[]> = {
-    hygglo_messages: [{ thread_id:"__probe__atomic", message_id:"fixture-current", sender:"renter", body_text:"Please update my booking.", fetched_at:1, _creationTime:1 }],
+    hygglo_messages: [{ thread_id:"__probe__atomic", message_id:"fixture-current", sender:"renter", body_text:"Please extend the return to 8 October at £120 total.", fetched_at:1, _creationTime:1 }],
     items: [{ _id: "camera", name_canonical: "Sony FX3", status: "active", is_marketing_only: false, qty: 1, kind: "camera_body", aliases: [] }],
     renter_bot_lab_orders: [{ _id: "order", thread_id: "__probe__atomic", account_slug: "leo", start_date: "2026-10-06", end_date: "2026-10-07", changes: [],
       items: [{ item_id: "camera", name: "Sony FX3", qty: 1, daily_price_gbp: 40, pricing_basis: "listing", origin: "seed" }] }],
@@ -255,7 +255,7 @@ describe("amended drafts retain atomic cache safety", () => {
     const f = fixture();
     f.tables.conversations = [{ _id: "conversation", thread_id: "__probe__atomic" }];
     f.tables.settings = [{ _id: "settings", draft_epoch: 20 }];
-    f.tables.hygglo_messages = [{ message_id: "renter-1", thread_id: "__probe__atomic", sender:"renter", body_text:"Please update my booking.", fetched_at: 1, _creationTime: 1 }];
+    f.tables.hygglo_messages = [{ message_id: "renter-1", thread_id: "__probe__atomic", sender:"renter", body_text:"Please extend the return to 8 October at £120 total.", fetched_at: 1, _creationTime: 1 }];
     const before = draftContextKey(f.tables.renter_bot_lab_bookings[0], [], f.tables.renter_bot_lab_orders[0]);
     const result = await extend(f.ctx);
     const key = amendedDraftContext(before, "__probe__atomic", [result.context_transition]);
@@ -504,5 +504,28 @@ describe("consent uses Native offering components, never comparison titles",()=>
   expect(await remove(ctx,"Sony FX3")).toMatchObject({ok:true,action_performed:true});before=structuredClone(tables);
   expect(await remove(ctx,"Sony FX3")).toMatchObject({ok:true,already_applied:true,action_performed:false});expect(tables).toEqual(before);
   expect(tables.renter_bot_lab_orders[0].changes[0].removed_item).toMatchObject({product_id:1,qty:1,identity_name:"Sony FX3"});
+ });
+});
+
+describe("date quotes and positive consent",()=>{
+ it("returns a complete read-only date quote without requiring an edit instruction",async()=>{
+  const f=fixture();f.tables.hygglo_messages[0].body_text="What would one extra day cost?";const before=structuredClone(f.tables);
+  const result=await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"set_dates",start_date:"2026-10-06",end_date:"2026-10-08",preview_only:true});
+  expect(result).toMatchObject({ok:true,preview_only:true,source:"native_lab_date_proposal",base_quote:{total_gbp:80},quote:{total_gbp:120},price_delta_gbp:40});
+  expect(f.tables).toEqual(before);
+ });
+ for(const text of ["How heavy is the Sony FX3?","Please extend it.","Please extend the return to 8 October at £119.99 total.","Please extend the return to 9 October at £120 total."])
+  it(`refuses to change dates after ${text}`,async()=>{
+   const f=fixture();f.tables.hygglo_messages[0].body_text=text;const before=structuredClone(f.tables);
+   expect(await extend(f.ctx)).toMatchObject({ok:false,error_code:"date_consent_unverified"});expect(f.tables).toEqual(before);
+  });
+ it("accepts the exact saved offer and reruns stock before the write",async()=>{
+  const f=fixture();const quote=await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"set_dates",start_date:"2026-10-06",end_date:"2026-10-08",preview_only:true});
+  f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"owner",sender:"owner",body_text:"I can extend your booking to 6–8 October for £120 total.",fetched_at:2,quoted_dates:[{context_key:quote.before_context_key,from_start_date:"2026-10-06",from_end_date:"2026-10-07",start_date:"2026-10-06",end_date:"2026-10-08",total_gbp:120,base_total_gbp:80,epoch:86,quoted_for_message_id:"fixture-current",items:[{name:"Sony FX3",quantity:1}]}]},
+   {thread_id:"__probe__atomic",message_id:"accepted",sender:"renter",body_text:"Yes please extend it.",fetched_at:3});
+  f.tables.owner_unavailability=[{item_id:"camera",start_date:"2026-10-08",end_date:"2026-10-08"}];const blocked=structuredClone(f.tables);
+  expect(await extend(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(blocked);
+  f.tables.owner_unavailability=[];expect(await extend(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:120}});
+  expect(await extend(f.ctx)).toMatchObject({ok:true,action_performed:false});
  });
 });

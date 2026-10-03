@@ -1,4 +1,4 @@
-import { sentAdditionProposals } from "./lib/renter_sent_proposal";
+import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import { friendReferralFromMessage } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
@@ -157,9 +157,10 @@ export const appendAssistantMessage = internalMutation({
     const existing = await ctx.db.query("hygglo_messages").withIndex("by_thread", (q) => q.eq("thread_id", args.thread_id)).collect();
     if (existing.some((m) => m.message_id === messageId)) return;
     const conversation = await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",args.thread_id)).first();
-    const quoted_additions = conversation?.account_slug === args.account_slug ? await sentAdditionProposals(ctx, conversation, args.text) : [];
+    const proposals=conversation?.account_slug === args.account_slug ? await sentBookingProposals(ctx, conversation, args.text) : {additions:[],dates:[]};
+    const quoted_additions=proposals.additions,quoted_dates=proposals.dates;
     const now = Date.now();
-    await ctx.db.insert("hygglo_messages", { account_slug: args.account_slug, thread_id: args.thread_id, message_id: messageId, sender: "owner", sender_name: "Lab owner", body_text: args.text, hygglo_sent_at: now, fetched_at: now, ...(quoted_additions.length ? {quoted_additions} : {}) });
+    await ctx.db.insert("hygglo_messages", { account_slug: args.account_slug, thread_id: args.thread_id, message_id: messageId, sender: "owner", sender_name: "Lab owner", body_text: args.text, hygglo_sent_at: now, fetched_at: now, ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}) });
   },
 });
 

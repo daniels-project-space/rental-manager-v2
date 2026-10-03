@@ -84,3 +84,17 @@ describe("owner message proposal archive",()=>{
     });
   }
 });
+
+describe("sent date offer archive",()=>{
+ for(const path of ["lab","owner"]){
+  it(`${path} archives the exact full quote for later acceptance`,async()=>{
+   const f=fixture();const order=f.tables.renter_bot_lab_orders[0];
+   f.conversation.ai_draft_text="I can extend your booking to 20–22 October for £170 total.";
+   f.conversation.ai_draft_evidence.prices=[{names:[],kind:"basket",source:"native_lab_date_proposal",call_id:"native-date",items:order.items.map((i:any)=>({name:i.name,quantity:i.qty})),total_gbp:170,start_date:"2026-10-20",end_date:"2026-10-22",date_proposal:{before_context_key:f.conversation.ai_draft_context_key,from_start_date:order.start_date,from_end_date:order.end_date,base_total_gbp:124}}];
+   const text=f.conversation.ai_draft_text;
+   if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"date"});
+   else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"date-owner"});
+   expect(f.tables.hygglo_messages.at(-1)).toMatchObject({quoted_dates:[expect.objectContaining({context_key:f.conversation.ai_draft_context_key,from_end_date:"2026-10-21",end_date:"2026-10-22",total_gbp:170,base_total_gbp:124,quoted_for_message_id:"renter-current"})]});
+  });
+ }
+});

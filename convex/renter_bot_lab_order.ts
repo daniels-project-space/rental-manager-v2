@@ -1,4 +1,5 @@
 import { additionMountRequirements } from "./lib/booking_addition_mount";
+import { acceptsDateChange } from "./lib/renter_date_acceptance";
 import { offeringConsentIdentity } from "./lib/offering_consent_identity";
 import { acceptsRemoval } from "./lib/renter_removal_acceptance";
 import { acceptsAddition } from "./lib/renter_addition_acceptance";
@@ -55,6 +56,31 @@ async function additionConsent(ctx:QueryCtx,threadId:string,account:string,text:
     total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,
     lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous);
 }
+
+async function prepareDateChange(ctx:QueryCtx,row:NonNullable<Awaited<ReturnType<typeof getLabOrder>>>,start:string,end:string) {
+  const booking=await getBotBooking(ctx,row.thread_id);
+  const stage=rentalStage(booking,londonToday()).stage;
+  if(booking?.return_date || ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage))return {ok:false as const,error:"This rental is closed. Arrange a new booking instead."};
+  if(!validIsoDate(start) || !validIsoDate(end) || end<start || inclusiveDays(start,end)>366)
+    return {ok:false as const,error:"Use valid pickup and return dates in order, up to 366 rental days."};
+  const collected=!!booking?.pickup_date || booking?.status==="ongoing";
+  if(collected && start!==row.start_date)return {ok:false as const,error:"The rental has already been collected. Keep its original pickup date when extending the return."};
+  if(!collected && start<londonToday())return {ok:false as const,error:"An upcoming rental cannot be backdated. Quote pickup from today or later."};
+  const base_quote=summarise(row.items,row.start_date,row.end_date),quote=summarise(row.items,start,end);
+  if(!base_quote.start_date || !base_quote.end_date || !row.items.length || base_quote.total_gbp==null || quote.total_gbp==null)
+    return {ok:false as const,error_code:"unpriced_booking",error:"The complete booking needs known Native dates and prices before a date quote or edit."};
+  const stock=await checkOrderRentalStock(ctx,row.account_slug,row.items,start,end,row.thread_id);
+  if(stock.available!==true)return {ok:false as const,error_code:"stock_unavailable_or_unknown",error:`Cannot change this basket to ${start} – ${end}: ${stock.reason}. No dates or prices were changed. A failed range check alone does not identify which individual day is booked.`,stock_receipts:stock.receipts};
+  return {ok:true as const,preview_only:true as const,source:"native_lab_date_proposal" as const,thread_id:row.thread_id,
+    before_context_key:await amendmentContext(ctx,row.thread_id),base_items:row.items.map(i=>({name:i.name,quantity:i.qty})),
+    quote,base_quote,price_delta_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts:stock.receipts};
+}
+
+export const quoteDateChange=query({
+  args:{thread_id:v.string(),start_date:v.string(),end_date:v.string()},
+  handler:async(ctx,args)=>{assertLabThread(args.thread_id);const row=await getLabOrder(ctx,args.thread_id);
+    return row ? prepareDateChange(ctx,row,args.start_date,args.end_date) : {ok:false,error:"No simulated order for this session."};},
+});
 
 /**
  * The SIMULATED Hygglo order behind a Renter Bot Lab session.
@@ -426,7 +452,7 @@ export const applyChange = mutation({
   },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
-    if (a.preview_only && a.action !== "add_item") return {ok:false,error:"Read-only proposals only support adding one exact item."};
+    if (a.preview_only && !["add_item","set_dates"].includes(a.action)) return {ok:false,error:"Use a read-only addition or date proposal."};
     const row = await ctx.db
       .query("renter_bot_lab_orders")
       .withIndex("by_thread", (q) => q.eq("thread_id", a.thread_id))
@@ -502,9 +528,15 @@ export const applyChange = mutation({
         return {ok:true,already_applied:true,action_performed:false,unchanged:true,
           note:"The booking already has these dates. No new edit occurred. Say the dates are already set, not that you moved or changed them.",
           order:summarise(lines,row.start_date,row.end_date)};
-      const stock = await checkOrderRentalStock(ctx, row.account_slug, lines, a.start_date, end, a.thread_id);
-      if (stock.available !== true) return { ok: false, error_code: "stock_unavailable_or_unknown",
-        error: `Cannot change this basket to ${a.start_date} – ${end}: ${stock.reason}. No dates or prices were changed. Use the checked full date span for the refusal; a failed range check alone does not prove which individual day is booked.`, stock_receipts: stock.receipts };
+      const prepared=await prepareDateChange(ctx,row,a.start_date,end);
+      if(!prepared.ok)return prepared;
+      if(a.preview_only)return prepared;
+      const messages=await recentThreadMessages(ctx,a.thread_id,2);
+      const owner=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
+      if(!acceptsDateChange(latestMessage!.body_text,{context_key:beforeContext,
+        from_start_date:prepared.base_quote.start_date!,from_end_date:prepared.base_quote.end_date!,
+        start_date:a.start_date,end_date:end,total_gbp:prepared.quote.total_gbp!,base_total_gbp:prepared.base_quote.total_gbp!,today:londonToday()},owner))
+        return {ok:false,action_performed:false,error_code:"date_consent_unverified",error:"The current renter message does not agree to these exact dates and Native price. No dates or prices changed. Use quote_booking_dates, offer its complete period and total, then use clear acceptance without asking again for already agreed terms."};
       await ctx.db.patch(row._id, {
         start_date: a.start_date,
         end_date: end,
@@ -522,8 +554,9 @@ export const applyChange = mutation({
         ok: true,
         action_performed: true,
         applied: `dates set to ${a.start_date} – ${end}`,
-        order: summarise(lines, a.start_date, end),
-        stock_receipts: stock.receipts,
+        order: prepared.quote,
+        verified_date_quote:prepared,
+        stock_receipts: prepared.stock_receipts,
         context_transition: await transition(),
       };
     }

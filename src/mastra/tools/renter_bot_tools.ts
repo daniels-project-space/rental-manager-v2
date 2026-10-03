@@ -445,10 +445,19 @@ export const quoteBookingAdditionTool = createTool({
   },
 });
 
+export const quoteBookingDatesTool=createTool({
+ id:"quote_booking_dates",
+ description:"Read-only Native Lab quote for changing the dates of the COMPLETE current booking. Check the full pickup/return span, duration tiers and every physical kit component before offering the new full total. This never changes or reserves anything. Quote the exact dates and quote.total_gbp (not merely an extra day's base rate); price_delta_gbp is the difference from the current total. Say would change, never changed. After the renter agrees to that unchanged offer, use modify_booking set_dates without asking them to agree again.",
+ inputSchema:z.object({thread_id:z.string(),start_date:z.string(),end_date:z.string()}),outputSchema:z.unknown(),
+ execute:async(input)=>{if(!input.thread_id.startsWith("__probe__"))return {ok:false,error:"Real booking changes require separate written rollout consent."};
+  if(!currentRenterToolScope())return {ok:false,error:"Missing verified booking context."};
+  return convex().query(anyApi.renter_bot_lab_order.quoteDateChange,input);},
+});
+
 export const modifyBookingTool = createTool({
   id: "modify_booking",
   description:
-    "SIMULATION (Renter Bot Lab only): atomically add one item or a complete group of items, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Use add_items with every exact product_id and qty for a quoted setup, including its required owner-supplied adapters. The complete group either succeeds together or nothing is changed. Never make separate add_item calls for parts of the same agreed setup. A missing required adapter returns complete_setup_required: quote the complete setup and ask for its agreement instead of adding an incomplete setup. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
+    "SIMULATION (Renter Bot Lab only): atomically add one item or a complete group of items, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Use add_items with every exact product_id and qty for a quoted setup, including its required owner-supplied adapters. The complete group either succeeds together or nothing is changed. Never make separate add_item calls for parts of the same agreed setup. A missing required adapter returns complete_setup_required: quote the complete setup and ask for its agreement instead of adding an incomplete setup. For date changes, use quote_booking_dates to offer the complete new dates and total before an increase. A clear named/date request at the exact price, or acceptance of that unchanged sent quote, authorizes the edit. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
   inputSchema: z.object({
     thread_id: z.string().describe("The conversation/thread id."),
     action: z
@@ -501,6 +510,7 @@ export const RENTER_BOT_TOOLS = {
   get_order_edit_state: getOrderEditStateTool,
   modify_booking: modifyBookingTool,
   quote_booking_addition: quoteBookingAdditionTool,
+  quote_booking_dates: quoteBookingDatesTool,
   get_renter_context: getRenterContextTool,
   get_listing_context: getListingContextTool,
   lookup_pricing: lookupPricingTool,

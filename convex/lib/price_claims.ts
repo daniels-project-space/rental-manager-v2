@@ -14,6 +14,7 @@ export type PriceEvidence = {
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
   proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number};
+  date_proposal?: import("./renter_date_proposal").DateProposalEvidence;
   call_id: string; source: string;
   required_accessory_names?: string[];
 };
@@ -198,9 +199,20 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
       !/\b(?:would|could|add|adding)\b/i.test(segment);
     const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);
+    const dateAdjustment = /\b(?:extend|extending|extension|date change|shorten|shortening)\b/i.test(segment) && /\b(?:extra|additional|less|reduction)\b/i.test(segment+text.slice(pos+m[0].length,pos+m[0].length+24));
     const candidates = evidence.filter(e => (!additionPrice || basket ||
-      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal) && (groupAddition ? e.quote_role==="addition" : e.quote_role!=="addition") : e.kind !== "basket" && same(subject,e.names)));
+      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (dateAdjustment ? e.kind === "basket" && !!e.date_proposal : basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal || !!e.date_proposal) && (groupAddition ? e.quote_role==="addition" : e.quote_role!=="addition") : e.kind !== "basket" && same(subject,e.names)));
     const proven = candidates.some(e => {
+      if(dateAdjustment){
+        const p=e.date_proposal;
+        if(!p || e.total_gbp==null || daily || !dateScope.valid || !e.items || e.items.length!==request.items.length)return false;
+        if(!request.items.every(i=>e.items!.some(q=>same([i.name,...(i.aliases??[])],[q.name])&&q.quantity===i.quantity)))return false;
+        if(request.start_date && request.start_date!==p.from_start_date && request.start_date!==e.start_date || request.end_date && request.end_date!==p.from_end_date && request.end_date!==e.end_date)return false;
+        if(dateScope.start_date && dateScope.start_date!==e.start_date || dateScope.end_date && dateScope.end_date!==e.end_date || explicitDays!==null && explicitDays!==e.days)return false;
+        const reduction=/\b(?:less|reduction)\b/i.test(segment+text.slice(pos+m[0].length,pos+m[0].length+24));
+        const delta=reduction?p.base_total_gbp-e.total_gbp:e.total_gbp-p.base_total_gbp;
+        return delta>=0&&cents(delta)===cents(amount);
+      }
       if (Number.isNaN(days) || !dateScope.valid || explicitDays !== null && scopedDuration != null && days !== scopedDuration) return false;
       if (purpose === "deposit" || purpose === "delivery") return false; // No verified fee source is held today.
       if (purpose === "replacement") return e.kind === "replacement" && e.total_gbp != null && cents(e.total_gbp) === cents(amount);

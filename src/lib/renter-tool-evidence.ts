@@ -42,6 +42,8 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           result.context_transition && typeof result.context_transition === "object" &&
           (result.context_transition as Record<string, unknown>).source === "native_lab_amendment")
         visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:accepted-quote`,result:result.verified_quote});
+      if(payload.toolName==="modify_booking" && result.ok===true && result.action_performed===true && result.verified_date_quote && typeof result.verified_date_quote==="object" && result.context_transition && typeof result.context_transition==="object" && (result.context_transition as Record<string,unknown>).source==="native_lab_amendment")
+        visit({toolName:"quote_booking_dates",toolCallId:`${String(payload.toolCallId??"unknown")}:accepted-date-quote`,result:result.verified_date_quote});
       if (payload.toolName === "lookup_pricing" && result.found === true && result.booking_addition_preview && typeof result.booking_addition_preview === "object")
         visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:booking-preview`,result:result.booking_addition_preview});
       if (payload.toolName === "lookup_pricing" && result.found === true && Array.isArray(result.component_base_offering_quotes))
@@ -55,11 +57,11 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           if (component && typeof component === "object") receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:component:${String(component.item_id ?? component.item_name)}`, result: component });
         }
       }
-      if ((payload.toolName === "modify_booking" || payload.toolName === "quote_booking_addition") && result.ok === true && result.stock_receipt && typeof result.stock_receipt === "object")
+      if ((["modify_booking","quote_booking_addition","quote_booking_dates"].includes(payload.toolName)) && result.ok === true && result.stock_receipt && typeof result.stock_receipt === "object")
         receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:mutation-stock`, result: result.stock_receipt as Record<string, unknown> });
       // A rejected amendment can still carry a genuine negative calendar
       // check. Retain that check, never turn the failed write into a success.
-      if ((payload.toolName === "modify_booking" || payload.toolName === "quote_booking_addition") && Array.isArray(result.stock_receipts)) {
+      if ((["modify_booking","quote_booking_addition","quote_booking_dates"].includes(payload.toolName)) && Array.isArray(result.stock_receipts)) {
         for (const raw of result.stock_receipts) {
           if (raw && typeof raw === "object" && (raw as Record<string, unknown>).source === "shared_inventory_confirmed_rentals") {
             const r = raw as Record<string, unknown>;

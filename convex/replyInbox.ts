@@ -1,4 +1,4 @@
-import { sentAdditionProposals } from "./lib/renter_sent_proposal";
+import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortListingTitle, shortItemName } from "./lib/item_display_name";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
@@ -1946,7 +1946,8 @@ export const recordSentReply = internalMutation({
       )
       .first();
     if (!existingMessage) {
-      const quoted_additions = !account_slug || account_slug === conv?.account_slug ? await sentAdditionProposals(ctx, conv, text) : [];
+      const proposals = !account_slug || account_slug === conv?.account_slug ? await sentBookingProposals(ctx, conv, text) : {additions:[],dates:[]};
+      const quoted_additions=proposals.additions,quoted_dates=proposals.dates;
       await ctx.db.insert("hygglo_messages", {
         account_slug: account_slug ?? conv?.account_slug ?? "unknown",
         thread_id,
@@ -1957,7 +1958,7 @@ export const recordSentReply = internalMutation({
         hygglo_sent_at: now,
         fetched_at: now,
         raw: "manual_send_optimistic",
-        ...(quoted_additions.length ? {quoted_additions} : {}),
+        ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}),
       });
     }
     if (conv) {

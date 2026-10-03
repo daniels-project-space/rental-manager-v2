@@ -1,3 +1,5 @@
+import type { SentDateProposal } from "./renter_date_proposal";
+import { summarise } from "./renter_order_quote";
 import { v, type Infer } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
@@ -42,14 +44,14 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
 }
 
 /** Called when an owner message is recorded, before its draft is cleared. */
-export async function sentAdditionProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<SentAdditionProposal[]> {
+export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[]}> {
   if (!conversation?.ai_draft_text || text.trim() !== conversation.ai_draft_text.trim() ||
-    !conversation.ai_draft_evidence?.prices?.length) return [];
+    !conversation.ai_draft_evidence?.prices?.length) return {additions:[],dates:[]};
   const [latest] = await recentThreadMessages(ctx, conversation.thread_id, 1);
-  if (latest?.sender !== "renter") return [];
+  if (latest?.sender !== "renter") return {additions:[],dates:[]};
   const settings = await ctx.db.query("settings").first();
   const order = await getLabOrder(ctx, conversation.thread_id);
-  if (!order) return [];
+  if (!order) return {additions:[],dates:[]};
   const context_key = draftContextKey(await getBotBooking(ctx, conversation.thread_id), conversation.inquiry_items, order);
   const epoch = settings?.draft_epoch ?? 0;
   const approval = currentDraftApproval(conversation, {message_id:latest.message_id, context_key, epoch});
@@ -60,6 +62,18 @@ export async function sentAdditionProposals(ctx: QueryCtx, conversation: Doc<"co
   };
   const currentMembers=members(order.items.map(i=>({name:i.name,quantity:i.qty})));
   const pendingPrices=conversation.ai_draft_evidence.prices.filter(p=>p.proposal && members(p.proposal.base_items)===currentMembers);
-  return approval ? additionProposalsFromEvidence(pendingPrices,
-    {message_id:approval.message_id, context_key, epoch}) : [];
+  if(!approval)return {additions:[],dates:[]};
+  const total=summarise(order.items,order.start_date,order.end_date).total_gbp;
+  const dates:SentDateProposal[]=[];
+  for(const price of conversation.ai_draft_evidence.prices){const p=price.date_proposal;
+    if(!p||price.kind!=="basket"||price.source!=="native_lab_date_proposal"||p.before_context_key!==context_key
+      ||p.from_start_date!==order.start_date||p.from_end_date!==order.end_date||total==null||Math.round(total*100)!==Math.round(p.base_total_gbp*100)
+      ||!price.start_date||!price.end_date||!price.total_gbp||!Number.isFinite(price.total_gbp)||!price.items||members(price.items)!==currentMembers)continue;
+    const proposal:SentDateProposal={context_key,epoch,quoted_for_message_id:approval.message_id,from_start_date:p.from_start_date,from_end_date:p.from_end_date,
+      start_date:price.start_date,end_date:price.end_date,total_gbp:price.total_gbp,base_total_gbp:p.base_total_gbp,items:price.items};
+    if(!dates.some(d=>JSON.stringify(d)===JSON.stringify(proposal)))dates.push(proposal);
+  }
+  return {additions:additionProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch}),dates};
 }
+
+export async function sentAdditionProposals(ctx:QueryCtx,conversation:Doc<"conversations">|null,text:string){return (await sentBookingProposals(ctx,conversation,text)).additions;}
