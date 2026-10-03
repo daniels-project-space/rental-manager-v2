@@ -1,3 +1,4 @@
+import { committedAdditionConfirmation } from "./lib/amendment_confirmation";
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
@@ -588,6 +589,10 @@ export const generateDraft = action({
     let routePriceRequest: StockRequest | undefined;
     let routeCommercialContext: MinimumRentalContext | undefined;
     let routeBookingModified = false;
+    const initialContextKey = c.draft_context_key;
+    const initialOrder = thread_id.startsWith("__probe__")
+      ? await ctx.runQuery(internal.renter_bot_lab_order.__service_get, { thread_id }) : null;
+    let amendmentTransitions: DraftContextTransition[] = [];
     let routeHasPairingData = false;
     // Which classes of fact the agent actually established this turn. Empty
     // means "we don't know", which keeps the guard's strict pre-turn behaviour.
@@ -679,6 +684,7 @@ export const generateDraft = action({
           if (fresh.draft_context_key !== amendedKey || fresh.draft_epoch !== c.draft_epoch
             || fresh.last_message_id !== c.last_message_id)
             return { status: "skipped", reason: "stale_context", ...generationMeta };
+          amendmentTransitions = j.bookingContextTransitions;
           c = fresh;
           generationMeta.draft_stage = c.rental_stage.stage;
         }
@@ -824,7 +830,7 @@ export const generateDraft = action({
     const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
     const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b|\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.test(checkedDraft)
       ? await ctx.runQuery(internal.renter_bot_tools.__service_get_verified_camera_profiles, {}) : [];
-    const guard = guardDraft(checkedDraft, {
+    const guardOptions: Parameters<typeof guardDraft>[1] = {
       cameraEvidence,
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,
@@ -912,7 +918,8 @@ export const generateDraft = action({
           .filter((r) => typeof r.available === "boolean")
           .map((r) => ({ name: r.item, available: r.available as boolean, quantity: r.quantity, free_units: r.free_units })),
       } : undefined,
-    });
+    };
+    let guard = guardDraft(checkedDraft, guardOptions);
     // Hard backstop for ANY unresolved critical-severity guardDraft flag.
     // Live-reproduced repeatedly on a bare first-contact "is X available":
     // UNGROUNDED_AVAILABILITY + UNGROUNDED_PRICE (confident "not available" +
@@ -937,9 +944,25 @@ export const generateDraft = action({
     // promise Daniel can't keep). So: any unresolved critical flag escalates
     // instead of drafting. A genuine "let me check and get back to you" is
     // always safe; a confident fabrication is not.
-    const unresolvedCriticalFlags = guard.flags.filter(
+    let unresolvedCriticalFlags = guard.flags.filter(
       (f) => f.action === "flagged" && f.severity === "critical",
     );
+    if (unresolvedCriticalFlags.length > 0 && amendmentTransitions.length === 1 && initialOrder) {
+      const after = await ctx.runQuery(internal.renter_bot_lab_order.__service_get, { thread_id });
+      const confirmation = committedAdditionConfirmation({ threadId: thread_id,
+        account: c.account_slug ?? "", messageId: c.last_message_id ?? "",
+        beforeKey: initialContextKey, afterKey: c.draft_context_key,
+        transitions: amendmentTransitions, before: initialOrder, after });
+      if (confirmation) {
+        const recovered = guardDraft(confirmation, { ...guardOptions, bookingModified: true });
+        if (recovered.text.trim() && !recovered.flags.some(f => f.action === "flagged" && f.severity === "critical")) {
+          recovered.flags.push({ type: "AMENDMENT_CONFIRMATION_RECOVERED", severity: "medium", action: "rewritten",
+            detail: `Confirmed the stored Native addition after rejecting ${unresolvedCriticalFlags.map(f => f.type).join(", ")}. Original candidate: ${checkedDraft}` });
+          guard = recovered;
+          unresolvedCriticalFlags = [];
+        }
+      }
+    }
     if (unresolvedCriticalFlags.length > 0) {
       // Return the flags that caused it. Previously this escalated silently,
       // so "needs_human" was indistinguishable from the agent's own

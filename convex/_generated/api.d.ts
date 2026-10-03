@@ -109,6 +109,7 @@ import type * as item_resolver_queries from "../item_resolver_queries.js";
 import type * as items from "../items.js";
 import type * as knowledge from "../knowledge.js";
 import type * as lib_ai_attribution from "../lib/ai_attribution.js";
+import type * as lib_amendment_confirmation from "../lib/amendment_confirmation.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_availability_basket from "../lib/availability_basket.js";
 import type * as lib_base_listing_identity from "../lib/base_listing_identity.js";
@@ -433,6 +434,7 @@ declare const fullApi: ApiFromModules<{
   items: typeof items;
   knowledge: typeof knowledge;
   "lib/ai_attribution": typeof lib_ai_attribution;
+  "lib/amendment_confirmation": typeof lib_amendment_confirmation;
   "lib/availability": typeof lib_availability;
   "lib/availability_basket": typeof lib_availability_basket;
   "lib/base_listing_identity": typeof lib_base_listing_identity;

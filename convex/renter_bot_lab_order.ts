@@ -4,7 +4,7 @@ import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventor
 import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
-import { internalMutation, mutation, query, internalMutationOf } from "./owner_functions";
+import { internalMutation, mutation, query, internalMutationOf, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { baseListingProductIds } from "./lib/base_listing_identity";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
@@ -768,3 +768,5 @@ export const redeemReferral = mutation({
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_redeemReferral = internalMutationOf(redeemReferral);
+
+export const __service_get = internalQueryOf(get);

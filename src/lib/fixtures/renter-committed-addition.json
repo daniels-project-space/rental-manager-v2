@@ -1,0 +1,166 @@
+{
+  "provenance": "Captured actual Native Lab before/after order; no additional model call",
+  "input": {
+    "threadId": "__probe__lab-1791020604043-yg4lag6r",
+    "account": "leo",
+    "messageId": "__probe__lab-1791020604043-yg4lag6r-m1791020635891-1cfoeuyh",
+    "beforeKey": "{\"stage\":\"CONFIRMED_UPCOMING\",\"obsolete\":false,\"collection\":null,\"start\":\"2026-10-20\",\"end\":\"2026-10-21\",\"returned\":null,\"status\":\"confirmed\",\"booking_status\":null,\"step\":\"BOOKED_AFTER_VERIFIED\",\"pending\":false,\"pickup\":null,\"gross\":null,\"lab_prices\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"id\\\":null,\\\"daily\\\":62,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":62},{\\\"days\\\":3,\\\"pricePerDay\\\":56.666666666666664},{\\\"days\\\":7,\\\"pricePerDay\\\":41.42857142857143},{\\\"days\\\":30}]}\"],\"items\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"qty\\\":1,\\\"product\\\":1172450,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\"]}",
+    "afterKey": "{\"stage\":\"CONFIRMED_UPCOMING\",\"obsolete\":false,\"collection\":null,\"start\":\"2026-10-20\",\"end\":\"2026-10-21\",\"returned\":null,\"status\":\"confirmed\",\"booking_status\":null,\"step\":\"BOOKED_AFTER_VERIFIED\",\"pending\":false,\"pickup\":null,\"gross\":null,\"lab_prices\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"id\\\":null,\\\"daily\\\":62,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":62},{\\\"days\\\":3,\\\"pricePerDay\\\":56.666666666666664},{\\\"days\\\":7,\\\"pricePerDay\\\":41.42857142857143},{\\\"days\\\":30}]}\",\"{\\\"name\\\":\\\"Blazar Remus 100mm\\\",\\\"id\\\":null,\\\"daily\\\":25,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":25},{\\\"days\\\":3,\\\"pricePerDay\\\":20},{\\\"days\\\":7,\\\"pricePerDay\\\":15.714285714285714},{\\\"days\\\":30}]}\",\"{\\\"name\\\":\\\"PL \u2192 L adapter\\\",\\\"id\\\":null,\\\"daily\\\":10,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":10},{\\\"days\\\":3,\\\"pricePerDay\\\":10},{\\\"days\\\":7,\\\"pricePerDay\\\":5.285714285714286},{\\\"days\\\":30}]}\"],\"items\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"qty\\\":1,\\\"product\\\":1172450,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\",\"{\\\"name\\\":\\\"Blazar Remus 100mm\\\",\\\"qty\\\":1,\\\"product\\\":1116294,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\",\"{\\\"name\\\":\\\"PL \u2192 L adapter\\\",\\\"qty\\\":1,\\\"product\\\":1172765,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\"]}",
+    "transitions": [
+      {
+        "after_context_key": "{\"stage\":\"CONFIRMED_UPCOMING\",\"obsolete\":false,\"collection\":null,\"start\":\"2026-10-20\",\"end\":\"2026-10-21\",\"returned\":null,\"status\":\"confirmed\",\"booking_status\":null,\"step\":\"BOOKED_AFTER_VERIFIED\",\"pending\":false,\"pickup\":null,\"gross\":null,\"lab_prices\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"id\\\":null,\\\"daily\\\":62,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":62},{\\\"days\\\":3,\\\"pricePerDay\\\":56.666666666666664},{\\\"days\\\":7,\\\"pricePerDay\\\":41.42857142857143},{\\\"days\\\":30}]}\",\"{\\\"name\\\":\\\"Blazar Remus 100mm\\\",\\\"id\\\":null,\\\"daily\\\":25,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":25},{\\\"days\\\":3,\\\"pricePerDay\\\":20},{\\\"days\\\":7,\\\"pricePerDay\\\":15.714285714285714},{\\\"days\\\":30}]}\",\"{\\\"name\\\":\\\"PL \u2192 L adapter\\\",\\\"id\\\":null,\\\"daily\\\":10,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":10},{\\\"days\\\":3,\\\"pricePerDay\\\":10},{\\\"days\\\":7,\\\"pricePerDay\\\":5.285714285714286},{\\\"days\\\":30}]}\"],\"items\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"qty\\\":1,\\\"product\\\":1172450,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\",\"{\\\"name\\\":\\\"Blazar Remus 100mm\\\",\\\"qty\\\":1,\\\"product\\\":1116294,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\",\"{\\\"name\\\":\\\"PL \u2192 L adapter\\\",\\\"qty\\\":1,\\\"product\\\":1172765,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\"]}",
+        "after_revision": 1,
+        "before_context_key": "{\"stage\":\"CONFIRMED_UPCOMING\",\"obsolete\":false,\"collection\":null,\"start\":\"2026-10-20\",\"end\":\"2026-10-21\",\"returned\":null,\"status\":\"confirmed\",\"booking_status\":null,\"step\":\"BOOKED_AFTER_VERIFIED\",\"pending\":false,\"pickup\":null,\"gross\":null,\"lab_prices\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"id\\\":null,\\\"daily\\\":62,\\\"tiers\\\":[{\\\"days\\\":1,\\\"pricePerDay\\\":62},{\\\"days\\\":3,\\\"pricePerDay\\\":56.666666666666664},{\\\"days\\\":7,\\\"pricePerDay\\\":41.42857142857143},{\\\"days\\\":30}]}\"],\"items\":[\"{\\\"name\\\":\\\"Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s\\\",\\\"qty\\\":1,\\\"product\\\":1172450,\\\"id\\\":null,\\\"slug\\\":null,\\\"type\\\":null}\"]}",
+        "before_revision": 0,
+        "source": "native_lab_amendment",
+        "thread_id": "__probe__lab-1791020604043-yg4lag6r"
+      }
+    ],
+    "before": {
+      "account_slug": "leo",
+      "changes": [],
+      "days": 2,
+      "end_date": "2026-10-21",
+      "lines": [
+        {
+          "daily_price_gbp": 62,
+          "display_name": "BMPCC 6K Full Frame + Canon EF 24-105mm f4",
+          "effective_rate_gbp": 62,
+          "line_total_gbp": 124,
+          "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "origin": "listing",
+          "price_tiers": [
+            {
+              "days": 1,
+              "pricePerDay": 62
+            },
+            {
+              "days": 3,
+              "pricePerDay": 56.666666666666664
+            },
+            {
+              "days": 7,
+              "pricePerDay": 41.42857142857143
+            },
+            {
+              "days": 30
+            }
+          ],
+          "pricing_basis": "listing",
+          "product_id": 1172450,
+          "qty": 1,
+          "tiers": "1 day \u00a362, 3+ days ~\u00a356.67/day (\u00a3170 for 3 days), 7+ days ~\u00a341.43/day (\u00a3290 for 7 days)"
+        }
+      ],
+      "stage": "CONFIRMED_UPCOMING",
+      "start_date": "2026-10-20",
+      "total_gbp": 124,
+      "unpriced": []
+    },
+    "after": {
+      "account_slug": "leo",
+      "changes": [
+        {
+          "at": 1791020638094,
+          "request_key": "[\"__probe__lab-1791020604043-yg4lag6r-m1791020635891-1cfoeuyh\",\"add_items\",[{\"product_id\":1116294,\"qty\":1},{\"product_id\":1172765,\"qty\":1}]]",
+          "summary": "added together: 1x Blazar Remus 100mm, 1x PL \u2192 L adapter"
+        }
+      ],
+      "days": 2,
+      "end_date": "2026-10-21",
+      "lines": [
+        {
+          "daily_price_gbp": 62,
+          "display_name": "BMPCC 6K Full Frame + Canon EF 24-105mm f4",
+          "effective_rate_gbp": 62,
+          "line_total_gbp": 124,
+          "name": "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "origin": "listing",
+          "price_tiers": [
+            {
+              "days": 1,
+              "pricePerDay": 62
+            },
+            {
+              "days": 3,
+              "pricePerDay": 56.666666666666664
+            },
+            {
+              "days": 7,
+              "pricePerDay": 41.42857142857143
+            },
+            {
+              "days": 30
+            }
+          ],
+          "pricing_basis": "listing",
+          "product_id": 1172450,
+          "qty": 1,
+          "tiers": "1 day \u00a362, 3+ days ~\u00a356.67/day (\u00a3170 for 3 days), 7+ days ~\u00a341.43/day (\u00a3290 for 7 days)"
+        },
+        {
+          "daily_price_gbp": 25,
+          "display_name": "Blazar Remus 100mm",
+          "effective_rate_gbp": 25,
+          "line_total_gbp": 50,
+          "name": "Blazar Remus 100mm",
+          "origin": "added",
+          "price_tiers": [
+            {
+              "days": 1,
+              "pricePerDay": 25
+            },
+            {
+              "days": 3,
+              "pricePerDay": 20
+            },
+            {
+              "days": 7,
+              "pricePerDay": 15.714285714285714
+            },
+            {
+              "days": 30
+            }
+          ],
+          "pricing_basis": "listing",
+          "product_id": 1116294,
+          "qty": 1,
+          "tiers": "1 day \u00a325, 3+ days ~\u00a320/day (\u00a360 for 3 days), 7+ days ~\u00a315.71/day (\u00a3110 for 7 days)"
+        },
+        {
+          "daily_price_gbp": 10,
+          "display_name": "PL \u2192 L adapter",
+          "effective_rate_gbp": 10,
+          "line_total_gbp": 20,
+          "name": "PL \u2192 L adapter",
+          "origin": "added",
+          "price_tiers": [
+            {
+              "days": 1,
+              "pricePerDay": 10
+            },
+            {
+              "days": 3,
+              "pricePerDay": 10
+            },
+            {
+              "days": 7,
+              "pricePerDay": 5.285714285714286
+            },
+            {
+              "days": 30
+            }
+          ],
+          "pricing_basis": "listing",
+          "product_id": 1172765,
+          "qty": 1,
+          "tiers": "1 day \u00a310, 3+ days ~\u00a310/day (\u00a330 for 3 days), 7+ days ~\u00a35.29/day (\u00a337 for 7 days)"
+        }
+      ],
+      "stage": "CONFIRMED_UPCOMING",
+      "start_date": "2026-10-20",
+      "total_gbp": 194,
+      "unpriced": []
+    }
+  }
+}
