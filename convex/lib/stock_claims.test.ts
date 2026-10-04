@@ -420,3 +420,18 @@ it("binds a lens availability relative clause across equivalent aperture spellin
  expect(check(text,[],scope)).not.toEqual([]);
  expect(check(text,[{...lens,available:false,free_units:0}],scope)).not.toEqual([]);
 });
+
+describe("offer headings bind only their immediate named basket",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Canon R5",quantity:1}]};
+ const names=["Sony FX3","Sony GM 16-35mm f2.8"];
+ const joint={available:true,items:names.map(name=>({name,quantity:1}))};
+ const proof:StockReceipt[]=names.map((item,index)=>({...stock,item,start_date:scope.start_date!,end_date:scope.end_date!,available:true,free_units:1,basket:joint,kind:index ? "lens":"camera"}));
+ const text="I can offer our Sony setup:\n• Sony FX3 body: £98 for 2 days\n• Sony GM 16-35mm f2.8 lens: £40 for 2 days";
+ it("uses the named lines and positive joint check instead of a prior declined request",()=>expect(unsupportedStockClaims(text,proof,scope)).toEqual([]));
+ it("does not borrow independent, failed or differently dated checks",()=>{
+  for(const changed of [proof.map(r=>({...r,basket:undefined})),proof.map(r=>({...r,basket:{...joint,available:false}})),proof.map(r=>({...r,end_date:"2026-10-22"})),proof.slice(0,1)])expect(unsupportedStockClaims(text,changed,scope)).not.toEqual([]);
+ });
+ it("rejects an unknown item, different heading brand, intervening paragraph or duplicate member",()=>{
+  for(const changed of [text.replace("Sony setup","Canon setup"),text.replace("Sony setup","Sony FX6 setup"),text.replace("Sony GM","Canon RF"),text.replace("\n• Sony FX3","\nPlease let me know.\n• Sony FX3"),text.replace("Sony GM 16-35mm f2.8 lens","Sony FX3 body")])expect(unsupportedStockClaims(changed,proof,scope)).not.toEqual([]);
+ });
+});

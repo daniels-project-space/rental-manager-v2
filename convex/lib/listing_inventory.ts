@@ -5,6 +5,7 @@ import { loadStockSources, stockForItem, type StockRequest } from "./renter_stoc
 
 import { resolveBundleMapping, declaredRentalBlockers } from "./bundle_mapping";
 import { withDefaultAdapters } from "./default_adapter_units";
+import type { PriceTier } from "./hygglo_pricing";
 
 type Component = { item_id: string; qty: number };
 export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string) {
@@ -49,10 +50,17 @@ export async function loadListingInventory(ctx: QueryCtx, account: string, produ
   ]);
   const inventory = sources?.items ?? await ctx.db.query("items").collect();
   return { ...resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity, listing?.description),
-    product_id: productId, listing_name: product?.name ?? null };
+    product_id: productId, listing_name: product?.name ?? null,
+    // Already read for physical resolution: reuse this exact offering's price
+    // instead of another tool call or repeating catalogue reads per component.
+    offering: listing && product?.name?.trim() ? {product_id:productId,name:product.name,
+      qty:quantity,daily_price_gbp:listing.daily_price,price_tiers:(product.prices ?? [])
+        .filter(p=>typeof p.days==="number" && typeof p.pricePerDay==="number" && p.pricePerDay>0)
+        .map(p=>({days:p.days,pricePerDay:p.pricePerDay})) as PriceTier[],
+      pricing_basis:"listing" as const} : null };
 }
 
-export function listingStock(sources: Awaited<ReturnType<typeof loadStockSources>>, listing: Awaited<ReturnType<typeof loadListingInventory>>, request: StockRequest) {
+export function listingStock(sources: Awaited<ReturnType<typeof loadStockSources>>, listing: Omit<Awaited<ReturnType<typeof loadListingInventory>>,"offering">, request: StockRequest) {
   const components = listing.components.filter((c) => c.stock_required).map((c) => {
     const item = sources.items.find((i) => String(i._id) === c.item_id);
     if (!item) return { item_name: c.name ?? "Unmapped component", available: null, free_units: null, total_units: null,

@@ -1,4 +1,5 @@
 import {describe,it,expect} from "vitest";
+import inquiryNativeQuote from "./fixtures/renter-inquiry-native-quote.json";
 import jointNativeQuote from "./fixtures/renter-joint-native-quote.json";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import type {ToolReceipt} from "./renter-tool-evidence";
@@ -138,7 +139,7 @@ describe("same-item marginal proposal evidence",()=>{
   expect(proof.some(p=>p.quote_role==="addition")).toBe(true);
   for(const p of proof)expect(Object.entries(p).filter(([,v])=>v!==undefined).map(([k])=>k).filter(k=>!(k in fields))).toEqual([]);
   expect(fields.quote_role.isOptional).toBe("optional");
-  expect(fields.quote_role.members.map(m=>m.value)).toEqual(["base","proposed_line","addition"]);
+  expect(fields.quote_role.members.map(m=>m.value)).toEqual(["base","proposed_line","addition","inquiry"]);
  });
  it("proves the additional unit, not just the combined two-unit line",()=>{
   const n=native();const proof=renterPriceEvidence([receipt("quote_booking_addition",n)],[],thread);
@@ -224,4 +225,34 @@ it("validates replacement membership before emitting a complete basket receipt",
  for(const changed of [{...native,removed_items:undefined},{...native,removed_items:[{...old,quantity:2}]},{...native,removed_items:[{name:"Sony FX3",quantity:1}]},{...native,change_kind:"addition"},{...native,quote:{...native.quote,total_gbp:42}},{...native,quote:{...native.quote,lines:[{...native.quote.lines[0],qty:2}]}}])expect(adapt(changed)).toEqual([]);
  expect(adapt(native,"__probe__other")).toEqual([]);
  expect(renterPriceEvidence([receipt("quote_booking_addition",native)],[],native.thread_id)).toEqual([]);
+});
+
+describe("captured Native inquiry basket quotes",()=>{
+ const native=inquiryNativeQuote.fx3, thread=native.thread_id;
+ const evidence=(result:Record<string,unknown>=native)=>renterPriceEvidence([receipt("check_basket_availability",result)],[],thread);
+ it("proves the actual captured sales response from joint Native quotes without another model or pricing call",()=>{
+  const proof=renterPriceEvidence([receipt("check_basket_availability",native,"fx3"),receipt("check_basket_availability",inquiryNativeQuote.a7,"a7")],[],thread);
+  expect(proof.filter(e=>e.kind==="basket").map(e=>e.total_gbp)).toEqual([138,124]);
+  expect(unsupportedPriceClaims(inquiryNativeQuote.candidate,proof,inquiryNativeQuote.request,inquiryNativeQuote.renter_message)).toEqual([]);
+  expect(proof.every(e=>e.days===2&&e.start_date==="2026-10-20"&&e.end_date==="2026-10-21")).toBe(true);
+  const fields=draftEvidenceValidator.fields.prices.element.fields;
+  for(const p of proof)expect(Object.keys(p).filter(k=>(p as Record<string,unknown>)[k]!==undefined).every(k=>k in fields)).toBe(true);
+ });
+ it("rejects failed, cross-thread, confirmed-amendment and incomplete or corrupted quotes",()=>{
+  for(const changed of [{...native,available:false},{...native,available:null},{...native,thread_id:"__probe__other"},{...native,booking_use:"additional"},{...native,preview_only:false},{...native,physical_identity_key:null},
+    {...native,end_date:"2026-10-22"},{...native,offered_listings:native.offered_listings.slice(0,1)},
+    {...native,quote:{...native.quote,total_gbp:139}},
+    {...native,quote:{...native.quote,lines:[{...native.quote.lines[0],qty:2},native.quote.lines[1]]}},
+    {...native,quote:{...native.quote,lines:[{...native.quote.lines[0],product_id:1172509},native.quote.lines[1]]}},
+    {...native,quote:{...native.quote,lines:[{...native.quote.lines[0],line_total_gbp:99},native.quote.lines[1]]}},
+  ])expect(evidence(changed),JSON.stringify(changed)).toEqual([]);
+ });
+ it("does not substitute the inquiry offer for the current booking or a different named basket",()=>{
+  const proof=renterPriceEvidence([receipt("check_basket_availability",native,"fx3"),receipt("check_basket_availability",inquiryNativeQuote.a7,"a7")],[],thread);
+  for(const claim of ["Your booking total is £138 for 2 days.","The Sony FX3 and Canon RF 16-35mm are £138 for 2 days.","Sony A7 V body (£98 for 2 days).",
+    inquiryNativeQuote.candidate.replace("£138","£139"),inquiryNativeQuote.candidate.replace("Sony FX3 body","Sony FX6 body"),
+    inquiryNativeQuote.candidate.replace("Sony A7 V body","Sony A7 IV body"),inquiryNativeQuote.candidate.replace("same 16-35mm","same Canon RF 16-35mm"),
+    inquiryNativeQuote.candidate.replace("Sony FX3 body","Two Sony FX3 bodies"),inquiryNativeQuote.candidate.replace("two days","three days")])
+    expect(unsupportedPriceClaims(claim,proof,inquiryNativeQuote.request,inquiryNativeQuote.renter_message),claim).not.toEqual([]);
+ });
 });

@@ -11,7 +11,7 @@ import { amendmentMoneyClaims } from "./renter_amendment_money";
 /** Server-returned quotes. A number alone is never a receipt. */
 export type PriceEvidence = {
   names: string[]; kind: "rental" | "basket" | "replacement";
-  quote_role?: "base" | "proposed_line" | "addition";
+  quote_role?: "base" | "proposed_line" | "addition" | "inquiry";
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
@@ -53,9 +53,16 @@ export function incompleteSetupQuotes(text: string, evidence: PriceEvidence[]): 
 }
 export const samePriceNames = (a: string[], b: string[]) => aliases(a).some(n => aliases(b).includes(n));
 const cents = (n: number) => Math.round(n * 100);
+/** Presentation nouns do not change a fully identified model. Only strip a
+ * trailing category caption here, never variant, kit, mount or feature words. */
+function priceReference<T extends {names:string[]}>(label:string,known:T[]) {
+  const direct=bestMatch(label,known,item=>item.names[0],item=>item.names);
+  if(direct.confident)return direct;
+  return bestMatch(label.replace(/\s+(?:camera\s+body|body|camera|lens)$/i,""),known,item=>item.names[0],item=>item.names);
+}
 
 /** Checks recognised currency claims against their subject, purpose and scope. */
-export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest) {
+export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest, latestRenterMessage="") {
   const failures: string[] = [];
   const moneyRoles = new Map(amendmentMoneyClaims(text).map(claim => [claim.index, claim.role]));
   const known = [...request.items.map(i => ({ names: [i.name, ...(i.aliases ?? [])], quantity: i.quantity })),
@@ -81,7 +88,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       rows.pop();
       const count=/^(\d+|one|two|three|four)(?:\s+[x×]?\s*|[x×]\s*)/i.exec(bullet[1]);
       const label=bullet[1].slice(count?.[0].length??0).trim();
-      const named=known.find(i=>same([label],i.names));
+      const distinct=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
+      const match=priceReference(label,distinct);
+      const named=match.confident ? match.match : null;
       if(!named)return [];
       group.unshift({names:named.names,quantity:count ? ({one:1,two:2,three:3,four:4} as Record<string,number>)[count[1].toLowerCase()]??Number(count[1]) : 1});
     }
@@ -117,12 +126,12 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // A label attached directly to a parenthesized amount owns that amount.
     // Resolve a shortened label only against distinct established identities;
     // unknown model tokens and ambiguous labels must not inherit the prior item.
-    if(/\(\s*$/.test(segment) && claimedRentalDays(segment)===null) {
+    if(/\(\s*$/.test(segment) && claimedRentalDays(segment)===null && !/^\s*(?:\/\s*day|per\s+day|a\s+day)\s*\(/i.test(segment)) {
       const label=segment.replace(/\(\s*$/,"").split(/\b(?:the|your|our|my|an?)\s+/i).at(-1)?.trim()??"";
       const distinct=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
-      const match=bestMatch(label,distinct,item=>item.names[0],item=>item.names);
+      const match=priceReference(label,distinct);
       if(label && match.confident && match.match)subject=match.match.names;
-      else if(match.match && !isGenericItemQuery(label) && /^[\w\s/–.×-]+$/.test(label))subject=[norm(label)];
+      else if(label && !isGenericItemQuery(label))subject=[norm(label)];
     }
     const segmentDates = claimDateScope(segment, request.start_date);
     // An unchanged booking amount belongs to the current order, even when a
@@ -201,6 +210,12 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     if (lastAt >= 0) subjectQuantity = declaredQuantity ?? requested?.quantity ?? 1;
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
     const amount = Number(m[1].replace(/,/g, ""));
+    // This is the renter's spending limit, not a rental price. Ground the
+    // exact number to their current message; a budget word cannot hide a quote.
+    const budgetReference=/\b(?:within|inside|under|below)\s+(?:your|the stated)\s*$/i.test(segment) && /^\s*budget\b(?!\s+(?:price|rate|option|kit))/i.test(following);
+    const renterBudget=[...latestRenterMessage.matchAll(/\bbudget\s*(?:(?:is|of|:|=)\s*)?£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/gi)]
+      .some(b=>cents(Number(b[1].replace(/,/g,"")))===cents(amount));
+    if(budgetReference && renterBudget){consumed=end;continue;}
     const moneyRole = moneyRoles.get(pos);
     // A saving is never the price of an item. It needs a complete Native
     // change quote, even when a coincidental line price equals the difference.
@@ -220,8 +235,24 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     pendingProposalTotal = baselineTotal;
     const componentAddition = pricedComponents.length > 1 && /^\s*(?:\/\s*day|per\s+day|a\s+day)?\s*\)?\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making)\s+(?:the\s+)?(?:addition|additions|additional cost)\s+(?:to|of)\s*$/i.test(segment);
     const group=componentAddition || proposalTotal && pricedComponents.length > 1 ? pricedComponents : quotedGroup(pos);
+    // A single sentence can price a camera in parentheses and then name its
+    // lens before the combined total. Resolve only explicit Native identities.
+    const inlineGroup:Array<{names:string[];quantity:number}>=[];
+    if(/\b(?:paired with|and|plus|with)\b/i.test(sentenceBeforeAmount) &&
+      !declaredLensReferences(norm(sentenceBeforeAmount)).some(reference=>!focalSubjects.has(reference))) {
+      const inline=` ${norm(sentenceBeforeAmount)} `;
+      for(const item of known) if(aliases(item.names).some(name=>inline.includes(` ${name} `)) ||
+        [...focalSubjects].some(([reference,native])=>inline.includes(` ${reference} `)&&same(native,item.names))) {
+        if(!inlineGroup.some(previous=>same(previous.names,item.names))) {
+          const nativeAlias=aliases(item.names).find(name=>inline.includes(` ${name} `));
+          const count=nativeAlias ? /\b(\d+|one|two|three|four)\s*(?:x\s*)?$/.exec(inline.slice(0,inline.lastIndexOf(` ${nativeAlias} `)).trim()) : null;
+          inlineGroup.push({names:item.names,quantity:count ? ({one:1,two:2,three:3,four:4} as Record<string,number>)[count[1]]??Number(count[1]):1});
+        }
+      }
+    }
     const groupAddition=componentAddition || !baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
-    const basket = replacementAdjustment || groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
+    const inlineBasket=inlineGroup.length>1 && /^\s*total\b/i.test(following);
+    const basket = inlineBasket || replacementAdjustment || groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
       !/\b(?:would|could|add|adding)\b/i.test(segment);
     const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);
@@ -280,7 +311,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
             if(e.proposal.removed_items?.length && (proposalTotal || replacementAdjustment) ? !directlyNamed && !previouslyQuoted : !directlyNamed)return false;
           }
         }
-        const claimed=pairedItems??(groupAddition ? group : e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
+        // A new inquiry quote proves its explicitly named alternative basket,
+        // never the current booking, a confirmed amendment or an implied set.
+        if(e.quote_role==="inquiry" && (bookingSubject || explicitBookingTotal || proposalTotal || replacementAdjustment || groupAddition))return false;
+        const claimed=pairedItems??(e.quote_role==="inquiry" ? inlineBasket ? inlineGroup : group : groupAddition ? group : e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;
       }
       // An extension's full total may follow its marginal price within the

@@ -1,5 +1,5 @@
 import { datePriceEvidence } from "./renter-date-price-evidence";
-import { inclusiveRentalDays } from "../../convex/lib/hygglo_pricing";
+import { inclusiveRentalDays, rentalQuote, type PriceTier } from "../../convex/lib/hygglo_pricing";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { ToolReceipt } from "./renter-tool-evidence";
 const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
@@ -12,7 +12,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
   const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown, role?: PriceEvidence["quote_role"]) => {
     const days=number(r.days), quantity=number(r.quantity);
     const source=string(r.source);
-    if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day","native_lab_proposal"].includes(source))return;
+    if(!source || !["hygglo_tier","hygglo_listing","curated_catalog","lab_order_quote","owned_listing_one_day","native_lab_proposal","native_inquiry_basket"].includes(source))return;
     if (!names.length || !days || !Number.isInteger(days) || !quantity || !Number.isInteger(quantity)) return;
     out.push({names,kind:"rental",...(role ? {quote_role:role} : {}),daily_rate_gbp:r.multi_day_basis === "unknown_no_listing" && days !== 1 ? undefined : number(r.daily_rate_gbp),base_rate_gbp:number(base),total_gbp:number(r.listed_total_gbp),days,quantity,
       start_date:string(r.start_date),end_date:string(r.end_date),call_id:call,source,
@@ -24,6 +24,30 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
     if(tool==="get_lab_order" && receipt!==latestOrder)continue;
     if (!call_id || r.error || r.ok===false || r.found===false) continue;
     if(tool==="quote_booking_dates")out.push(...datePriceEvidence(receipt,threadId));
+    if(tool==="check_basket_availability" && r.available===true && r.booking_use==="standalone" && r.preview_only===true &&
+      r.source==="shared_inventory_confirmed_rentals" && !!threadId && r.thread_id===threadId && string(r.account_slug) && string(r.physical_identity_key) &&
+      r.quote && typeof r.quote==="object" && Array.isArray(r.offered_listings)) {
+      const q=r.quote as Record<string,unknown>;
+      const lines=Array.isArray(q.lines) ? q.lines as Array<Record<string,unknown>> : [];
+      const days=number(q.days);
+      const selected=r.offered_listings as Array<Record<string,unknown>>;
+      if(q.source!=="native_inquiry_basket" || !days || days>366 || inclusiveRentalDays(string(q.start_date),string(q.end_date))!==days ||
+        q.start_date!==r.start_date || q.end_date!==r.end_date || !number(q.total_gbp) || !lines.length || lines.length>8 || selected.length!==lines.length)continue;
+      const remaining=[...selected];
+      const valid=lines.every(l=>{
+        const index=remaining.findIndex(s=>s.product_id===l.product_id && s.quantity===l.qty);
+        if(index<0 || !Number.isInteger(l.product_id) || (l.product_id as number)<1 || !string(l.name) || !number(l.daily_price_gbp))return false;
+        remaining.splice(index,1);
+        const calculated=rentalQuote(Array.isArray(l.price_tiers)?l.price_tiers as PriceTier[]:[],l.daily_price_gbp as number,days,l.qty as number);
+        return calculated!=null && calculated.listed_total_gbp===l.line_total_gbp && calculated.daily_rate_gbp===l.effective_rate_gbp;
+      });
+      if(!valid || Math.abs(lines.reduce((sum,l)=>sum+(l.line_total_gbp as number),0)-(q.total_gbp as number))>0.011)continue;
+      out.push({names:[],kind:"basket",quote_role:"inquiry",items:lines.map(l=>({name:l.name as string,quantity:l.qty as number})),
+        total_gbp:q.total_gbp as number,days,start_date:q.start_date as string,end_date:q.end_date as string,call_id,source:"native_inquiry_basket"});
+      for(const l of lines)quote({days,quantity:l.qty,daily_rate_gbp:l.effective_rate_gbp,listed_total_gbp:l.line_total_gbp,
+        start_date:q.start_date,end_date:q.end_date,source:"native_inquiry_basket"},
+        [l.name as string,...(Array.isArray(l.verified_price_names)?l.verified_price_names.filter((n):n is string=>!!string(n)):[])],`${call_id}:line:${l.product_id}`,l.daily_price_gbp);
+    }
     if (tool === "lookup_pricing" && r.found===true) {
       const aliases=listings.filter(l=>l.product_id===r.product_id && l.account_slug===r.account_slug).flatMap(l=>l.names);
       const names=[...new Set([r.matched_canonical,r.matched_listing,...aliases,...(Array.isArray(r.verified_price_names)?r.verified_price_names:[])].filter((n):n is string=>!!string(n)))];

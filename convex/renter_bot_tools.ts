@@ -11,6 +11,9 @@ import { availabilityBasket } from "./lib/availability_basket";
 import { explicitRecommendationUse, recommendationBasket, type RecommendationLine } from "./lib/recommendation_basket";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { renterItemNames } from "./lib/renter_item_names";
+import { summarise } from "./lib/renter_order_quote";
+import { inclusiveRentalDays } from "./lib/hygglo_pricing";
+import { listingDisplayName } from "./lib/item_display_name";
 import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
@@ -767,9 +770,21 @@ async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSou
     if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
     const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,a.thread_id ?? "",sources,{pickup_time:a.pickup_time,return_time:a.return_time});
     const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
+    // A fresh inquiry has no accepted base price to preserve. Reuse the exact
+    // listings already loaded by the shared physical check, with no extra DB
+    // reads. Confirmed amendments retain their dedicated consent/quote path.
+    const itemMap=new Map(sources.items.map(i=>[String(i._id),i]));
+    const quotedLines=check.offerings?.map(l=>({...l,name:listingDisplayName(l.name,
+      {components:sources.overrides.get(`${a.account_slug}#${l.product_id}`) ?? []},
+      itemMap),verified_price_names:[l.name]}));
+    const preview=check.available===true && plan.use==="standalone" && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
+      quotedLines?.length===[...plan.lines,...candidates.slice(1)].length ? summarise(quotedLines,a.start_date,a.end_date) : null;
+    const quote=preview?.total_gbp!=null && preview.total_gbp>0 ? {...preview,source:"native_inquiry_basket" as const} : null;
     return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
-      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,
-      guidance:"This is a read-only joint basket verdict. Only available:true proves all proposed gear fits alongside retained items. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
+      account_slug:a.account_slug,thread_id:a.thread_id ?? null,preview_only:true,physical_identity_key:check.physical_identity_key,
+      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,quote,
+      offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
+      guidance:"Read-only joint stock check. Only available:true proves all proposed gear fits alongside retained items. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
 }
 
 export const check_availability = query({

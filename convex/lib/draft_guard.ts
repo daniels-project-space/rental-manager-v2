@@ -1029,7 +1029,7 @@ const ASSERTS_AVAIL_RE =
     }
   }
 
-  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]})) {
+  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
   if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(text, opts.priceEvidence)) {

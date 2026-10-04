@@ -98,7 +98,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   const requestedSets=requestedLensSets(latestRenterMessage,lenses);
   const setSafeText=text.replace(new RegExp(`\\b${lensSetFocalPattern}${lensSetSuffixPattern}\\b`,"gi"),
     list=>list.replace(/,\s*(?:and|&)\s*/gi,"/").replace(/,/g,"/"));
-  for (const rawClause of setSafeText.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i)) {
+  const clauses=setSafeText.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i);
+  for (const [clauseIndex,rawClause] of clauses.entries()) {
     const relativeSubjects=precedingNamedSubjects;
     precedingNamedSubjects=[];
     const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rawClause);
@@ -118,6 +119,20 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const offer = rentalOfferAssertion(rawClause);
     const service = offer && /^(?:(?:an?|the|your|some)\s+)?(?:refund|discount|delivery|pickup|collection|help|advice|guidance|support|quote|price|information|assistance)\b/i.test(offer[1]);
     const conditionalOffer = offer && /\b(?:if|once|when|after|subject to)\b/i.test(offer[1]);
+    // A generic offer heading names the immediately following exact basket.
+    // It cannot inherit an earlier declined item or borrow unrelated bullets.
+    const heading=offer && /^(?:(?:our|my|the|a)\s+)?(?:(\w+)\s+)?setup\s*:\s*$/i.exec(offer[1]);
+    const forwardTargets:StockRequest["items"]=[];
+    let invalidHeading=false;
+    if(heading)for(const following of clauses.slice(clauseIndex+1)) {
+      if(!following.trim())continue;
+      const row=/^\s*[-*•]\s+([^:]+):/.exec(following);
+      if(!row)break;
+      const parsed=subjectOf(row[1]);
+      const resolved=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name.replace(/\s+lens$/i,""),n)));
+      if(resolved.length!==1 || heading[1] && ![resolved[0].name,...(resolved[0].aliases??[])].some(n=>new RegExp(`\\b${heading[1]}\\b`,"i").test(n))) {invalidHeading=true;break;}
+      forwardTargets.push(withQuantity(resolved[0],parsed.quantity??1));
+    }
     const rentalRefusal=rentalRefusalSubject(rawClause);
     const refusalSubject=rentalRefusal?.subject ?? "";
     const clause = rentalRefusal
@@ -205,7 +220,11 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
     const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
     const coordinated=requestedSet ? [coordinatedPrefix] : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
-    const jointClaim=pluralGroup || coordinated.length>1 || !!requestedSet;
+    const jointClaim=!!heading || pluralGroup || coordinated.length>1 || !!requestedSet;
+    if(heading) {
+      targets=!invalidHeading && forwardTargets.length>=2 && forwardTargets.every((i,index)=>!forwardTargets.slice(0,index).some(previous=>sameItem(i.name,previous.name))) ? forwardTargets : [];
+      subject.quantity=undefined;
+    }
     if (pluralGroup) {
       targets=!precedingInvalid && precedingBullets.length>=2 && (!/^both|^(?:these|those) two/i.test(prefix.trim()) || precedingBullets.length===2) && precedingBullets.every((i,index)=>!precedingBullets.slice(0,index).some(other=>sameItem(i.name,other.name))) ? precedingBullets : [];
       subject.quantity=undefined;

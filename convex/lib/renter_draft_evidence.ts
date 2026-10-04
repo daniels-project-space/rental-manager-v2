@@ -17,7 +17,7 @@ export const draftEvidenceValidator = v.object({
   })),
   prices: v.optional(v.array(v.object({
     names:v.array(v.string()),kind:v.union(v.literal("rental"),v.literal("basket"),v.literal("replacement")),
-    quote_role:v.optional(v.union(v.literal("base"),v.literal("proposed_line"),v.literal("addition"))),
+    quote_role:v.optional(v.union(v.literal("base"),v.literal("proposed_line"),v.literal("addition"),v.literal("inquiry"))),
     daily_rate_gbp:v.optional(v.number()),base_rate_gbp:v.optional(v.number()),total_gbp:v.optional(v.number()),
     days:v.optional(v.number()),quantity:v.optional(v.number()),start_date:v.optional(v.string()),end_date:v.optional(v.string()),
     items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),

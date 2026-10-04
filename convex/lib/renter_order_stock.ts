@@ -11,11 +11,13 @@ export type OrderPhysicalItem = { item_id:string; name:string; quantity:number }
 export async function resolveOrderPhysicalItems(ctx:QueryCtx,account:string,lines:Line[],items?:Doc<"items">[]) {
   const inventory=items??await ctx.db.query("items").collect();
   const required=new Map<string,number>();
+  const offerings:Array<NonNullable<Awaited<ReturnType<typeof loadListingInventory>>["offering"]>>=[];
   for(const line of lines) {
     if(!Number.isInteger(line.qty)||line.qty<1||line.qty>20)return {items:[],available:null,reason:"invalid_quantity"} as const;
     if(line.product_id!=null) {
       const listing=await loadListingInventory(ctx,account,line.product_id,line.qty,{items:inventory});
       if(!listing.complete||listing.owned!==true)return {items:[],available:listing.owned===false?false:null,reason:"listing_not_rentable_or_unmapped"} as const;
+      if(listing.offering)offerings.push(listing.offering);
       for(const c of listing.components.filter(c=>c.stock_required))required.set(c.item_id,(required.get(c.item_id)??0)+c.requested_units);
     }else {
       const matches=inventory.filter(i=>line.item_id?String(i._id)===line.item_id:i.name_canonical.toLowerCase()===line.name.toLowerCase());
@@ -27,7 +29,7 @@ export async function resolveOrderPhysicalItems(ctx:QueryCtx,account:string,line
   }
   if(!required.size)return {items:[],available:null,reason:"no_physical_order_items"} as const;
   const resolved:OrderPhysicalItem[]=[...required].map(([item_id,quantity])=>({item_id,quantity,name:inventory.find(i=>String(i._id)===item_id)!.name_canonical}));
-  return {items:resolved.sort((a,b)=>a.item_id.localeCompare(b.item_id)),reason:"identity_resolved",available:null} as const;
+  return {items:resolved.sort((a,b)=>a.item_id.localeCompare(b.item_id)),offerings,reason:"identity_resolved",available:null} as const;
 }
 export function sameOrderPhysicalItems(before:OrderPhysicalItem[]|undefined,after:OrderPhysicalItem[]) {
   if(!before?.length||!after.length)return false;
@@ -45,5 +47,5 @@ export async function checkOrderRentalStock(ctx: QueryCtx, account: string, line
     return { ...stockForItem(sources, item, { item_name: item.name_canonical, start_date: start, end_date: end, quantity, thread_id: thread, ...times }), start_date: start, end_date: end };
   });
   const available = receipts.some(r => r.available === false) ? false : receipts.every(r => r.available === true) ? true : null;
-  return { available, reason: available === true ? "available" : available === false ? "component_unavailable" : "stock_unknown", receipts,physical_identity_key:orderPhysicalIdentityKey(resolved.items) };
+  return { available, reason: available === true ? "available" : available === false ? "component_unavailable" : "stock_unknown", receipts,physical_identity_key:orderPhysicalIdentityKey(resolved.items),offerings:"offerings" in resolved ? resolved.offerings : undefined };
 }

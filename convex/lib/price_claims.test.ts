@@ -363,3 +363,18 @@ describe("Native replacement price differences", () => {
   for(const changed of [reply.replace("saving","discount"),reply.replace("saving","refund"),reply.replace("£2.","£2/day.")])expect(unsupportedPriceClaims(changed,[receipt],request).length).toBeGreaterThan(0);
  });
 });
+
+describe("item caption and renter budget identity",()=>{
+ const scope={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Canon R5",quantity:1}]};
+ const proof:PriceEvidence[]=[{names:["Sony A7 V"],kind:"rental",total_gbp:84,daily_rate_gbp:42,days:2,quantity:1,start_date:scope.start_date,end_date:scope.end_date,call_id:"native",source:"hygglo_tier"}];
+ it("keeps a caption's known model while preserving wrong variants and extra features",()=>{
+  expect(unsupportedPriceClaims("Sony A7 V body (£84 for 2 days).",proof,scope)).toEqual([]);
+  for(const name of ["Sony A7 IV body","Sony A7 V Pro body","Sony A7 V autofocus lens","Sony A7 V + microphone body"])expect(unsupportedPriceClaims(`${name} (£84 for 2 days).`,proof,scope),name).not.toEqual([]);
+ });
+ it("grounds a budget reference to the actual current renter message",()=>{
+  const text="This fits right inside your £150 budget.";
+  expect(unsupportedPriceClaims(text,[],scope,"My budget is £150 total for those two days.")).toEqual([]);
+  for(const latest of ["","My budget is £120.","Your rental costs £150."])expect(unsupportedPriceClaims(text,[],scope,latest)).not.toEqual([]);
+  for(const changed of ["The total is £150.","The total is your £150 budget.","This fits inside your £150 budget rate."])expect(unsupportedPriceClaims(changed,[],scope,"My budget is £150.")).not.toEqual([]);
+ });
+});
