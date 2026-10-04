@@ -17,6 +17,18 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it('renders a separately checked hire in an active chat without making it a confirmed amendment',()=>{
+  for(const stage of ['CONFIRMED_UPCOMING','IN_USE','RETURN_OVERDUE']){
+   const context={...scope,rentalStage:stage},result={...clone(),rental_stage:stage,booking_use:'separate',new_inquiry:true};
+   const quote=nativeInquiryQuote(result,context)!;expect(quote).not.toBeNull();
+   const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(result as typeof fixtures.first,context)],context);
+   expect(rendered.ok).toBe(true);if(!rendered.ok)continue;
+   expect(rendered.stock_quotes[0].new_inquiry).toBe(true);expect(quote.commercial_context).toBeUndefined();
+   for(const bad of [{...result,new_inquiry:false},{...result,booking_use:'additional'},{...result,rental_stage:'COMPLETED'}])expect(nativeInquiryQuote(bad,context)).toBeNull();
+   const assessed=nativeInquiryQuote(result,{...context,minimumRentalThreshold:40})!;
+   expect(assessed.commercial_context).toMatchObject({stage:'INQUIRY',total_gbp:138,status:'meets'});
+  }
+ });
  it("renders an old record and a new quote as separate Native financial purposes",()=>{
   const context={...scope,rentalStage:"COMPLETED"};
   const record:BookingRecord={thread_id:scope.threadId,account_slug:"leo",stage:"COMPLETED",start_date:"2026-10-01",end_date:"2026-10-02",total_gbp:42,amount_basis:"lab_quote"};
@@ -49,7 +61,7 @@ describe("Native inquiry quote rendering",()=>{
    expect(rendered.stock_quotes[0].new_inquiry).toBe(true);
    const request=stockRequestForInquiryQuote(original,rendered.stock_quotes,stage);
    expect(request.start_date).toBe(fixtures.first.start_date);expect(request.items).toHaveLength(2);expect(original.start_date).toBe("2026-10-01");
-   expect(stockRequestForInquiryQuote(original,rendered.stock_quotes,"IN_USE")).toBe(original);
+   expect(stockRequestForInquiryQuote(original,rendered.stock_quotes,"IN_USE").start_date).toBe(fixtures.first.start_date);
    expect(stockRequestForInquiryQuote(original,rendered.stock_quotes.map(q=>({...q,new_inquiry:undefined})),stage)).toBe(original);
    expect(nativeInquiryQuote({...result,booking_use:"addition"},context)).toBeNull();
    expect(nativeInquiryQuote({...result,rental_stage:"IN_USE"},context)).toBeNull();

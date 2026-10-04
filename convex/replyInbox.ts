@@ -41,7 +41,7 @@ import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
 import { loadStockSources, resolveStockItem, stockForRentalItem } from "./lib/renter_stock";
-import { stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
+import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
 import { reviewFlagValidator } from "./lib/draft_review_validator";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { summarise } from "./lib/renter_order_quote";
@@ -2150,23 +2150,24 @@ export const recheckCopiedDraftStock = internalQuery({
     if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
       return {ok:false,reason:"stale_draft"};
     const currentStage=rentalStage(booking,londonToday());
+    const evidence=conv?.ai_draft_evidence;
+    const newInquiry=evidence?.stock_quotes?.some(q=>q.new_inquiry)||evidence?.stock.some(r=>r.new_inquiry);
     if(unsupportedRenterCameraClaims(text,cameraMessages.filter(message=>message.sender!=="owner").map(message=>message.body_text)).length)
       return {ok:false,reason:"renter_camera_identity_unverified"};
     const permissions=currentStage;
-    if(unsupportedBookingDateClaims(text,currentStage.booking_dates).length || !permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
+    if(unsupportedBookingDateClaims(text,currentStage.booking_dates,newInquiry).length || !permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
       !permissions.can_acknowledge_owner_acceptance && claimsCurrentOwnerApproval(text))return {ok:false,reason:"booking_state_unverified"};
     if(!currentStage.can_share_pickup_address) {
       const accountId=booking?.account_id??conv?.account_id??(await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",account_slug)).first())?._id;
       const profile=accountId?await ctx.db.query("account_profiles").withIndex("by_account",q=>q.eq("account_id",accountId)).first():null;
       if(hasPickupDisclosure(text,pickupPrivacySources(profile)))return {ok:false,reason:"pickup_details_unverified"};
     }
-    const evidence=conv?.ai_draft_evidence;
     if(evidence?.booking_record) {
       const freshRecord=bookingRecord(thread_id,account_slug,currentStage.stage,booking,labOrder);
       if(!freshRecord||!hasSingleBookingRecord(text,freshRecord)||Object.keys(freshRecord).some(key=>freshRecord[key as keyof typeof freshRecord]!==evidence.booking_record![key as keyof typeof freshRecord]))
         return {ok:false,reason:"booking_record_unverified"};
     }
-    const request=stockRequestForInquiryQuote(evidence?.stock_request??{items:[]},evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
+    const request=stockRequestForInquiryQuote(stockRequestForSeparateCheck(evidence?.stock_request??{items:[]},evidence?.stock??[]),evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
     // Human wording edits cannot borrow technical facts from a previous draft.
     // Reuse the generation validators with current exact catalogue reviews.
     if(equipmentClaimsNeedProfiles(text)) {
@@ -2196,7 +2197,7 @@ export const recheckCopiedDraftStock = internalQuery({
         const item=sources.items.find(i=>String(i._id)===line.item_id);
         if(!item || item.name_canonical!==line.name || item.status!=="active" || item.is_marketing_only ||
           !Number.isInteger(line.quantity) || line.quantity<1 ||
-          stockForRentalItem(sources,item,{item_name:line.name,start_date:quote.start_date,end_date:quote.end_date,quantity:line.quantity,thread_id}).available!==true)
+          stockForRentalItem(sources,item,{item_name:line.name,start_date:quote.start_date,end_date:quote.end_date,quantity:line.quantity,thread_id:quote.new_inquiry?"":thread_id}).available!==true)
           return {ok:false,reason:"stock_unverified"};
       }
       const priced=quote.listing_quote;
@@ -2251,15 +2252,15 @@ export const recheckCopiedDraftStock = internalQuery({
         available:old.basket.items.length>0 && old.basket.items.every(line=>{
           const resolved=resolveStockItem(line.name,sources.items);
           return Number.isInteger(line.quantity) && line.quantity>0 && resolved.confident && !!resolved.match
-            && stockForRentalItem(sources,resolved.match,{item_name:line.name,start_date:old.start_date,end_date:old.end_date,quantity:line.quantity,thread_id}).available===true;
+            && stockForRentalItem(sources,resolved.match,{item_name:line.name,start_date:old.start_date,end_date:old.end_date,quantity:line.quantity,thread_id:old.new_inquiry?"":thread_id}).available===true;
         }),
       } : undefined;
-      const key=JSON.stringify([old.item,old.start_date,old.end_date,old.quantity,basket?.items]);
+      const key=JSON.stringify([old.item,old.start_date,old.end_date,old.quantity,basket?.items,old.new_inquiry]);
       if(checked.has(key))continue;
       checked.add(key);
       const item=resolveStockItem(old.item,sources.items);
       if(!item.confident||!item.match)continue;
-      const fresh=stockForRentalItem(sources,item.match,{item_name:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,thread_id});
+      const fresh=stockForRentalItem(sources,item.match,{item_name:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,thread_id:old.new_inquiry?"":thread_id});
       receipts.push({item:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,
         available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,owned:fresh.owned,basket,call_id:`send-recheck:${receipts.length}`});
     }

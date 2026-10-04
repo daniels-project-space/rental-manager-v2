@@ -681,7 +681,7 @@ export const generateDraft = action({
           booking_record?:BookingRecord;
           recommendation_quotes?: RecommendationQuoteEvidence[];
           stock_quotes?: NonNullable<DraftEvidence["stock_quotes"]>;
-          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; new_inquiry?:true; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
           owner_checks?: OwnerCheck[];
@@ -753,6 +753,7 @@ export const generateDraft = action({
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
           if(typeof native?.kind === "string")receipt.kind=native.kind;
           if(typeof native?.owned === "boolean")receipt.owned=native.owned;
+          if(native?.new_inquiry===true)receipt.new_inquiry=true;
           if(Array.isArray(native?.identity_names) && native.identity_names.every(n=>typeof n==="string" && !!n.trim()))receipt.identity_names=native.identity_names;
           if(native?.basket && (typeof native.basket.available==="boolean" || native.basket.available===null)
             && Array.isArray(native.basket.items) && native.basket.items.length>0
@@ -893,6 +894,7 @@ export const generateDraft = action({
       catalogueReadinessEvidence: ownerChecks.length && unsupportedCatalogueReadinessClaims(checkedDraft,[]).length ? await ctx.runQuery(internal.renter_bot_owner_checks.readinessEvidence,{checks:ownerChecks}) : [],
       cameraEvidence:profiles.cameras,lensEvidence:profiles.lenses,
       bookingRecord:generationMeta.evidence?.booking_record,
+      newInquiry:generationMeta.evidence?.stock_quotes?.some(q=>q.new_inquiry)||generationMeta.evidence?.stock.some(r=>r.new_inquiry),
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,
       priceEvidence: routePriceEvidence,

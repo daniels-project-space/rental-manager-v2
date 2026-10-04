@@ -12,7 +12,7 @@ import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-pri
 import type { PriceEvidence } from "../../../../convex/lib/price_claims";
 import { sensorComparisonInstruction } from "../../../../convex/lib/camera_sensor_comparisons";
 import { renterItemNames } from "../../../../convex/lib/renter_item_names";
-import { stockRequestForInquiryQuote, type StockRequest } from "../../../../convex/lib/stock_claims";
+import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, type StockRequest } from "../../../../convex/lib/stock_claims";
 import { inclusiveRentalDays, formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
@@ -1464,7 +1464,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         /* leave false — a claim without proof stays a false claim */
       }
     }
-    stockRequest=stockRequestForInquiryQuote(stockRequest,renderedReply.stock_quotes,authoritativeStage);
+    stockRequest=stockRequestForInquiryQuote(stockRequestForSeparateCheck(stockRequest,stockReceipts(toolReceipts).map(r=>r.result)),renderedReply.stock_quotes,authoritativeStage);
     if (commercialContext) commercialContext=minimumRentalContext(authoritativeStage,commercialContext.threshold_gbp,currentPriceEvidence(),priceRequest,renderedReply.commercial_quotes);
     return NextResponse.json({
       ok: true,

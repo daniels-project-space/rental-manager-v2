@@ -33,9 +33,9 @@ export function requestedBasketEvidence(prices:PriceEvidence[],request:StockRequ
 }
 /** Commercial policy applies before owner acceptance, never retroactively. */
 export function minimumRentalContext(stage: string, threshold: number, prices: PriceEvidence[], request: StockRequest, selectedInquiryQuotes: PriceEvidence[] = []): MinimumRentalContext {
-  // A closed rental remains history. A selected Native standalone quote in
-  // that chat is a separate prospective enquiry with its own commercial scope.
-  if(isClosedRentalStage(stage) && selectedInquiryQuotes.length)stage="INQUIRY";
+  // A selected Native inquiry quote has its own prospective commercial
+  // scope, independent of an existing or historical order in this chat.
+  if(selectedInquiryQuotes.length)stage="INQUIRY";
   const min = Number.isFinite(threshold) && threshold >= 0 ? threshold : 40;
   const context: MinimumRentalContext={stage,threshold_gbp:min,total_gbp:null,status:"unknown",basis:"none"};
   if(min===0)return {...context,status:"disabled"};

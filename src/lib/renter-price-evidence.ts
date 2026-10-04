@@ -25,7 +25,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
     if(tool==="get_lab_order" && receipt!==latestOrder)continue;
     if (!call_id || r.error || r.ok===false || r.found===false) continue;
     if(tool==="quote_booking_dates")out.push(...datePriceEvidence(receipt,threadId));
-    if(tool==="check_basket_availability" && r.available===true && (r.booking_use==="standalone" || r.rental_stage==="INQUIRY" && ["additional","replacement"].includes(String(r.booking_use))) && r.preview_only===true &&
+    if(tool==="check_basket_availability" && r.available===true && (r.booking_use==="standalone" || r.booking_use==="separate"&&r.new_inquiry===true || r.rental_stage==="INQUIRY" && ["additional","replacement"].includes(String(r.booking_use))) && r.preview_only===true &&
       r.source==="shared_inventory_confirmed_rentals" && !!threadId && r.thread_id===threadId && string(r.account_slug) && string(r.physical_identity_key) &&
       r.quote && typeof r.quote==="object" && Array.isArray(r.offered_listings)) {
       const q=r.quote as Record<string,unknown>;

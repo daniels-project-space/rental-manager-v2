@@ -740,14 +740,17 @@ export const lookup_pricing = query({
 
 type JointStockArgs={account_slug:string;thread_id?:string;start_date:string;end_date:string;
   items:Array<{item_name:string;quantity:number;product_id?:number}>;
-  booking_use?:"standalone"|"additional"|"replacement";replace_product_id?:number;replace_quantity?:number;
+  booking_use?:"standalone"|"additional"|"replacement"|"separate";replace_product_id?:number;replace_quantity?:number;
   pickup_time?:string;return_time?:string;recommendation_requirements?:RecommendationRequirement[]};
 export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>,recheck?:{standalone_offer:true;new_inquiry?:true}) {
     if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
     const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
     if ((booking?.account_slug && booking.account_slug!==a.account_slug) || (labOrder?.account_slug && labOrder.account_slug!==a.account_slug)) throw new Error("The current booking belongs to a different account");
     const stage=rentalStage(booking,londonToday()).stage;
-    if(recheck && stage!=="INQUIRY" && !(recheck.new_inquiry && isClosedRentalStage(stage)))return {available:null,reason:"inquiry_offer_stage_changed",components:[]};
+    const separate=a.booking_use==="separate"||recheck?.new_inquiry===true;
+    if(recheck && stage!=="INQUIRY" && !separate)return {available:null,reason:"inquiry_offer_stage_changed",components:[]};
+    // A separate hire keeps the original reservation in the stock ledger.
+    const stockThread=separate?"":a.thread_id??"";
     const closed=isClosedRentalStage(stage);
     const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
     const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
@@ -774,16 +777,16 @@ export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,prelo
     const physical=candidates.map(c=>c.product_id==null ? sources.items.find(i=>String(i._id)===c.item_id) : undefined);
     if (physical.every(Boolean) && physical.some(i=>i!.is_marketing_only || i!.status!=="active" || i!.qty<=0)) {
       const receipts=physical.map((i,index)=>({...stockForItem(sources,i!,{item_name:i!.name_canonical,start_date:a.start_date,end_date:a.end_date,
-        quantity:candidates[index].qty,thread_id:a.thread_id,pickup_time:a.pickup_time,return_time:a.return_time}),start_date:a.start_date,end_date:a.end_date}));
+        quantity:candidates[index].qty,thread_id:stockThread,pickup_time:a.pickup_time,return_time:a.return_time}),start_date:a.start_date,end_date:a.end_date}));
       const basket={available:false,items:receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
-      return {available:false,reason:"not_rentable",source:"native_catalogue_eligibility",stock_scope:"proposed_basket",
-        start_date:a.start_date,end_date:a.end_date,basket,components:receipts.map(r=>({...r,basket})),
+      return {available:false,reason:"not_rentable",source:"native_catalogue_eligibility",stock_scope:"proposed_basket",...(separate?{new_inquiry:true as const}:{}),
+        start_date:a.start_date,end_date:a.end_date,basket,components:receipts.map(r=>({...r,basket,...(separate?{new_inquiry:true as const}:{})})),
         guidance:"At least one exact requested member is not rentable in the Native catalogue. This is not a calendar conflict and does not imply every member is missing. No booking or price changes were made."};
     }
-    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
-      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:a.booking_use,expected_use:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
+    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:!separate&&requiresContext,open_basket:!separate&&!closed && existing.length>0,
+      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:separate?"standalone":a.booking_use as "standalone"|"additional"|"replacement"|undefined,expected_use:separate?undefined:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
     if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
-    const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,a.thread_id ?? "",sources,{pickup_time:a.pickup_time,return_time:a.return_time});
+    const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,stockThread,sources,{pickup_time:a.pickup_time,return_time:a.return_time});
     const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
     // An inquiry has no accepted base price to preserve. Quote the complete
     // proposed set after an explicit addition/replacement plan too, including
@@ -802,9 +805,9 @@ export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,prelo
     }));
     const technical_qualification=qualifyRecommendationBasket(a.recommendation_requirements??[],technicalItems);
     const quote=preview?.total_gbp!=null && preview.total_gbp>0 ? {...preview,source:"native_inquiry_basket" as const} : null;
-    return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
+    return {available:check.available,reason:check.reason,booking_use:separate?"separate":plan.use,...(separate?{new_inquiry:true as const}:{}),stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
       account_slug:a.account_slug,thread_id:a.thread_id ?? null,rental_stage:stage,preview_only:true,physical_identity_key:check.physical_identity_key,
-      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,quote,technical_qualification,
+      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket,...(separate?{new_inquiry:true as const}:{})})),replacement_removed_listings:plan.removed,quote,technical_qualification,
       offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
       guidance:"Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
 }
@@ -894,7 +897,7 @@ export const check_availability = query({
 export const check_basket_availability = query({
   args:{account_slug:v.string(),thread_id:v.optional(v.string()),start_date:v.string(),end_date:v.string(),
     items:v.array(v.object({item_name:v.string(),quantity:v.number(),product_id:v.optional(v.number())})),
-    booking_use:v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
+    booking_use:v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"),v.literal("separate"))),
     replace_product_id:v.optional(v.number()),replace_quantity:v.optional(v.number()),
     pickup_time:v.optional(v.string()),return_time:v.optional(v.string()),recommendation_requirements:v.optional(v.array(recommendationRequirementValidator))},
   handler:async(ctx,a)=>performJointStockCheck(ctx,a),

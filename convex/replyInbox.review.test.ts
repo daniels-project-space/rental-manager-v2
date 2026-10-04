@@ -7,6 +7,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
+import {performJointStockCheck} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -53,6 +54,32 @@ describe("copied bot replies use current Native stock before send",()=>{
   return f;
  }
  const recheck=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval.draft_approval});
+ it("quotes an independent hire without releasing the current rental, and preserves that purpose at approval",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:'camera'});
+  await f.ctx.db.insert('hygglo_products',{accountSlug:'leo',productId:123,name:'Sony FX3',masterItemId:f.itemId,prices:[]});
+  await f.ctx.db.insert('online_listings',{account_slug:'leo',product_id:123,name:'Sony FX3',daily_price:30});
+  await f.ctx.db.insert('listing_resolution_override',{account_slug:'leo',product_id:123,components:[{item_id:f.itemId,qty:1}]});
+  await f.ctx.db.patch(f.bookingId,{status:'confirmed',hygglo_items:[{name:'Sony FX3',qty:1,product_id:123}],expanded_items:[{item_id:f.itemId,qty:1}]});
+  const before=structuredClone(f.rows.get(f.bookingId));
+  const input={account_slug:'leo',thread_id:f.args.thread_id,start_date:'2026-10-02',end_date:'2026-10-04',items:[{item_name:'Sony FX3',product_id:123,quantity:1}]};
+  expect(await performJointStockCheck(f.ctx as any,{...input,booking_use:'standalone'})).toMatchObject({available:null,reason:'choose_addition_or_exact_replacement'});
+  const overlap=await performJointStockCheck(f.ctx as any,{...input,booking_use:'separate'});
+  expect(overlap).toMatchObject({available:false,new_inquiry:true,booking_use:'separate'});
+  expect(overlap.components[0]).toMatchObject({free_units:0,new_inquiry:true});
+  const future=await performJointStockCheck(f.ctx as any,{...input,booking_use:'separate',start_date:'2026-10-22',end_date:'2026-10-24'});
+  expect(future).toMatchObject({available:true,new_inquiry:true,quote:{total_gbp:90},components:[{new_inquiry:true}]});
+  // Availability-only saved evidence must keep the same reservation exclusion.
+  f.args.context_key=draftContextKey(f.rows.get(f.bookingId));
+  const text='Sony FX3 is available for 2 to 4 October.';
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,
+   evidence:{...f.evidence,stock:f.evidence.stock.map(r=>({...r,new_inquiry:true}))}});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:'stock_unverified'});
+  expect(await recheck(f,'Your new rental is confirmed.')).toMatchObject({ok:false,reason:'booking_state_unverified'});
+  expect(await recheck(f,'Your booking is confirmed.')).toMatchObject({ok:false,reason:'booking_state_unverified'});
+  expect(await recheck(f,'Your current rental is confirmed.')).toMatchObject({ok:true});
+  expect(f.rows.get(f.bookingId)).toEqual(before);
+ });
  it("checks camera referents against renter evidence during copied-draft approval",async()=>{
   const f=await stockDraft();
   expect(await recheck(f,"Which Sony body are you using?")).toMatchObject({ok:false,reason:"renter_camera_identity_unverified"});

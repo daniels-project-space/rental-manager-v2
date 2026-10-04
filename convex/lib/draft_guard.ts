@@ -52,6 +52,7 @@ export interface GuardResult {
 
 export interface GuardOpts {
   bookingRecord?: BookingRecord;
+  newInquiry?:boolean;
   catalogueReadinessEvidence?: CatalogueReadinessEvidence[];
   stockEvidence?: StockReceipt[];
   priceEvidence?: PriceEvidence[];
@@ -1216,7 +1217,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   if (permissions && ((!permissions.can_confirm_booking && claimsBookingConfirmation(text)) ||
-      opts.rentalPermissions?.booking_dates && unsupportedBookingDateClaims(text,opts.rentalPermissions.booking_dates).length>0)) {
+      (opts.rentalPermissions?.booking_dates||opts.newInquiry) && unsupportedBookingDateClaims(text,opts.rentalPermissions?.booking_dates??{},opts.newInquiry).length>0)) {
     push("PREMATURE_CONFIRMATION", "Claims confirmation or acceptance outside the current platform order's authority", "flagged");
   }
   if (permissions && !permissions.can_share_pickup_address && hasPickupDisclosure(text,opts.pickupPrivacySources)) {

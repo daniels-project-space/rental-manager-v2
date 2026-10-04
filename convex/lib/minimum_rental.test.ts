@@ -18,7 +18,7 @@ describe("prospective minimum-value context",()=>{
   const expensive={...offer,total_gbp:124,call_id:"other-option"};
   for(const selected of [[offer],[offer,expensive],[expensive,offer]])expect(minimumRentalContext("INQUIRY",40,[old],request,selected)).toMatchObject({status:"below",total_gbp:36,basis:"lowest_selected_inquiry_quote"});
   expect(minimumRentalContext("INQUIRY",40,[old],request,[expensive])).toMatchObject({status:"meets",total_gbp:124});
-  expect(minimumRentalContext("CONFIRMED_UPCOMING",40,[old],request,[offer]).status).toBe("not_applicable");
+  expect(minimumRentalContext("CONFIRMED_UPCOMING",40,[old],request,[offer])).toMatchObject({stage:"INQUIRY",status:"below",total_gbp:36});
   for(const bad of [{...offer,source:"lab_order_quote"},{...offer,end_date:undefined},{...offer,call_id:""},{...offer,items:[]}])expect(minimumRentalContext("INQUIRY",40,[old],request,[bad]).status).toBe("unknown");
  });
  it("keeps prospective instructions scoped to the evaluated quote",()=>{
@@ -36,7 +36,7 @@ describe("prospective minimum-value context",()=>{
    expect(minimumRentalContext(stage,40,[price],request,[{...quote,total_gbp:60}])).toMatchObject({stage:"INQUIRY",status:"meets",total_gbp:60});
    expect(minimumRentalContext(stage,40,[price],request,[{...quote,end_date:undefined}])).toMatchObject({status:"unknown",total_gbp:null});
   }
-  expect(minimumRentalContext("IN_USE",40,[price],request,[quote]).status).toBe("not_applicable");
+  expect(minimumRentalContext("IN_USE",40,[price],request,[quote])).toMatchObject({stage:"INQUIRY",status:"below",total_gbp:21});
   expect(guardDraft("It is available for your new dates.",{history:[],lastRenterMessage:"Can I rent it again?",commercialContext:minimumRentalContext("COMPLETED",40,[price],request,[quote])}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
  });
  it("does not classify partial baskets, unknown dates or mismatched scope",()=>{

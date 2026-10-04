@@ -30,9 +30,11 @@ const monetaryProse=/(?:[£$€]\s*\d|\b\d+(?:\.\d+)?\s*(?:GBP|pounds?|pence)\b|
 /** Identity and arithmetic come from the same Native joint check, not model
  * text or a model-supplied price. The key selects this request's receipt only. */
 export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevision=scope.queryRevision?.()):NativeInquiryQuote|null {
-  if(scope.rentalStage!=="INQUIRY" && !isClosedRentalStage(scope.rentalStage) || !scope.queryRevision || readRevision===undefined || !Number.isInteger(readRevision) || readRevision!==scope.queryRevision())return null;
   const result=record(value),q=record(result?.quote),basket=record(result?.basket);
-  if(isClosedRentalStage(scope.rentalStage) && (result?.booking_use!=="standalone" || result.rental_stage!==scope.rentalStage))return null;
+  const separate=result?.booking_use==="separate"&&result.new_inquiry===true;
+  if(separate&&result?.rental_stage!==scope.rentalStage)return null;
+  if(scope.rentalStage!=="INQUIRY" && !isClosedRentalStage(scope.rentalStage) && !separate || !scope.queryRevision || readRevision===undefined || !Number.isInteger(readRevision) || readRevision!==scope.queryRevision())return null;
+  if(isClosedRentalStage(scope.rentalStage) && (!separate&&result?.booking_use!=="standalone" || result?.rental_stage!==scope.rentalStage))return null;
   if(!result || !q || result.account_slug!==scope.accountSlug || basket?.available!==true ||
     !Array.isArray(q.unpriced) || q.unpriced.length || !Array.isArray(result.components) || !result.components.length)return null;
   if(result.rental_stage!==undefined && result.rental_stage!==scope.rentalStage)return null;
@@ -78,7 +80,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     if(quote && descriptor.quote_key===quote.quote_key){
       quotes.set(quote.quote_key,quote);
       stock.set(quote.quote_key,{quote_key:quote.quote_key,start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
-        ...(isClosedRentalStage(scope.rentalStage)?{new_inquiry:true as const}:{}),
+        ...(isClosedRentalStage(scope.rentalStage)||receipt.result.new_inquiry===true?{new_inquiry:true as const}:{}),
         listing_quote:{total_gbp:(receipt.result.quote as {total_gbp:number}).total_gbp,
           lines:(receipt.result.quote as {lines:Array<{product_id:number;name:string;qty:number;line_total_gbp:number}>}).lines.map(l=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))},
         items:(receipt.result.components as Array<{item_id:string;item_name:string;requested_units:number}>).map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))});
@@ -90,7 +92,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!output.reply_parts?.length) {
-    if((scope.rentalStage==="INQUIRY" || isClosedRentalStage(scope.rentalStage)) && receipts.some(r=>r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
+    if(receipts.some(r=>r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
     return {ok:true,draft:output.draft,quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};

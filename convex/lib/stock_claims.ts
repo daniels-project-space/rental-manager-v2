@@ -1,5 +1,4 @@
 import { normalizeApertureNotation, bestMatch } from "./item_name_match";
-import {isClosedRentalStage} from "./rental_stage";
 import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
@@ -11,6 +10,7 @@ export type StockReceipt = {
   available: boolean | null; free_units: number | null;
   checked_at: number; call_id: string;
   kind?: string;
+  new_inquiry?:true;
   owned?: boolean;
   identity_names?: string[];
   basket?: {available:boolean|null;items:Array<{name:string;quantity:number}>};
@@ -22,10 +22,27 @@ export type StockRequest = {
 /** A rendered single Native offer is the subject of an otherwise empty inquiry.
  * Unselected tool results and multiple alternatives cannot define that subject.
  * This is display/guard scope, never a basket write or a booking promise. */
-export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;new_inquiry?:true;items:Array<{name:string;quantity:number}>}>,stage?:string) {
-  if(quotes.length!==1 || !quotes[0].items.length || request.items.length && !(quotes[0].new_inquiry && isClosedRentalStage(stage)))return request;
+export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;new_inquiry?:true;items:Array<{name:string;quantity:number}>}>,_stage?:string) {
+  if(quotes.length!==1 || !quotes[0].items.length || request.items.length && !quotes[0].new_inquiry)return request;
   const quote=quotes[0];
   return {start_date:quote.start_date,end_date:quote.end_date,items:quote.items.map(i=>({name:i.name,quantity:i.quantity}))};
+}
+/** Availability-only replies still need the independently checked hire's
+ * scope. Multiple dated alternatives remain ambiguous until one is selected. */
+export function stockRequestForSeparateCheck(request:StockRequest,checks:Array<{new_inquiry?:unknown;start_date?:unknown;end_date?:unknown;basket?:unknown}>) {
+  const scopes=new Map<string,StockRequest>();
+  for(const check of checks){
+    if(check.new_inquiry!==true||typeof check.start_date!=="string"||typeof check.end_date!=="string"||!check.basket||typeof check.basket!=="object")continue;
+    const basket=check.basket as {available?:unknown;items?:unknown};
+    const dates=claimDateScope(`${check.start_date} to ${check.end_date}`);
+    if(typeof basket.available!=="boolean"||!Array.isArray(basket.items)||!basket.items.length||
+      !basket.items.every(i=>i&&typeof i.name==="string"&&Number.isInteger(i.quantity)&&i.quantity>0)||
+      !dates.valid||dates.start_date!==check.start_date||dates.end_date!==check.end_date)continue;
+    const items=basket.items.map(i=>({name:i.name as string,quantity:i.quantity as number}));
+    const scope={start_date:check.start_date,end_date:check.end_date,items};
+    scopes.set(JSON.stringify([scope.start_date,scope.end_date,[...items].sort((a,b)=>a.name.localeCompare(b.name))]),scope);
+  }
+  return scopes.size===1?[...scopes.values()][0]:request;
 }
 
 // Preserve exact model variants. Never resolve a stock claim by fuzzy similarity.

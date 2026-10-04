@@ -4,6 +4,11 @@ import {rentalStage,rentalReplyPermissions} from './rental_stage';
 import {guardDraft} from './draft_guard';
 const address='12 Example Road, London, W1A 1AA';
 describe('current rental reply permissions',()=>{
+ it('does not transfer current confirmation to an undated separate inquiry',()=>{
+  const dates={start_date:'2026-10-08',end_date:'2026-10-09'};
+  for(const text of ['Your new rental is confirmed.','Your booking is approved.','You are booked.','Your new rental is confirmed for 8 to 9 October.'])expect(unsupportedBookingDateClaims(text,dates,true)).toEqual([text]);
+  for(const text of ['Your current rental is confirmed.','Your booking is confirmed for 8 to 9 October.','The new rental is not confirmed.','Once your booking is confirmed I can arrange collection.'])expect(unsupportedBookingDateClaims(text,dates,true)).toEqual([]);
+ });
  it('does not lend an existing confirmed order to a different dated hire',()=>{
   const dates={start_date:'2026-10-08',end_date:'2026-10-09'};
   const permissions=rentalStage({status:'confirmed',start_date:dates.start_date,end_date:dates.end_date},'2026-10-04');

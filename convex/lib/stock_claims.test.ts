@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
 describe("named Native stock in an empty inquiry",()=>{
+ it('retains independent dated stock scope even when no financial quote is selected',()=>{
+  const check={new_inquiry:true,start_date:'2026-10-22',end_date:'2026-10-24',basket:{available:true,items:[{name:'Sony FX3',quantity:1}]}};
+  const future=stockRequestForSeparateCheck(request,[check,check]);
+  expect(future).toEqual({start_date:check.start_date,end_date:check.end_date,items:check.basket.items});
+  expect(request.start_date).toBe('2026-10-02');
+  expect(unsupportedStockClaims('It is available for those dates.',[{...stock,start_date:check.start_date,end_date:check.end_date,available:true}],future)).toEqual([]);
+  expect(stockRequestForSeparateCheck(request,[{...check,basket:{...check.basket,available:false}}])).toEqual(future);
+  for(const checks of [[],[{...check,new_inquiry:false}],[check,{...check,end_date:'2026-10-25'}],[{...check,end_date:'unknown'}],[{...check,basket:{...check.basket,available:null}}]])expect(stockRequestForSeparateCheck(request,checks)).toBe(request);
+ });
  const lens:StockReceipt={...stock,item:"TTArtisan 11mm f2.8 Fisheye (Sony E)",kind:"lens",start_date:"2026-10-22",end_date:"2026-10-23",available:true,free_units:1};
  const sentence="The TTArtisan 11mm f/2.8 fisheye lens from your friend's referral is available for 22 to 23 October.";
  const review=(text=sentence,evidence=[lens])=>unsupportedStockClaims(text,evidence,{items:[]});
