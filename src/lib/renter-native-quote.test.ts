@@ -129,3 +129,10 @@ it("does not issue or render an incompatible paired quote even without search cr
  expect(selected.ok).toBe(true);
  if(selected.ok)expect(selected.recommendation_quotes).toMatchObject([{requirements:[],items:fixtures.first.components.map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))}]);
 });
+
+it("renders an unconfirmed replacement total while rejecting a conflicting Native stage",()=>{
+ const result={...fixtures.first,booking_use:"replacement",rental_stage:"INQUIRY"};
+ const selected=receipt(result as typeof fixtures.first),quote=selected.result.renter_quote!;
+ expect(quote).not.toBeNull();expect(renderNativeQuoteReply(parts(quote.quote_key),[selected],scope).ok).toBe(true);
+ expect(nativeInquiryQuote({...result,rental_stage:"CONFIRMED_UPCOMING"},scope)).toBeNull();
+});

@@ -741,7 +741,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       if(typeof lc.gross_paid_gbp === "number" && lc.gross_paid_gbp > 0) fixedPriceEvidence.push({names:[],items:priceRequest.items.map(i=>({name:i.name,quantity:i.quantity})),kind:"basket",total_gbp:lc.gross_paid_gbp,days:quoteDays,start_date:lc.start_date,end_date:lc.end_date,call_id:"prefetch:listing-context",source:"booking_gross_amount"});
       groundTruth += "PRICE CLAIM SCOPE: each quoted amount must match the exact item, quantity, duration and purpose. A replacement value is not a hire fee. No courier/deposit amount is verified. Never infer a total by multiplying a displayed base rate or summing alternative options.\n";
       groundTruth += `STOCK CLAIM SCOPE: each availability statement must match the exact checked item, date span and quantity. A free body does not prove its whole mapped kit is free. If a kit component is booked, identify that component rather than calling the free body booked. Alternative offers need the requested quantity; explicitly state any smaller quantity you can supply.\n`;
-      for (const it of (lc.items ?? []) as Array<ItemTechnicalEvidence & { product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
+      for (const it of (lc.items ?? []) as Array<ItemTechnicalEvidence & { product_id?: number | null; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; units_per_listing: number; stock_required: boolean }>; name?: string; listing_name?: string | null; inventory_name?: string | null; qty?: number; price_tiers?: string | null; kit_contents?: string[]; storage_contents_verification_required?:boolean; storage_guidance?:string|null; card_type?: string | null; battery_type?: string | null; included_with_rental?: string[] | null; size_note?: string | null; replacement_cost_gbp?: number | null; spec_text?: string | null; daily_price_gbp?: number; whats_included?: string; owned?: boolean; kind?: string | null; lens_mount?: string | null; ambiguous_with?: Array<{ name: string; lens_mount?: string | null; kind?: string | null }> }>) {
         if (it.owned === false) {
           // Preserve native catalogue identity for eligibility, independently
           // of dated stock receipts. A generic fallback cannot prove identity.
@@ -798,20 +798,23 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         const mappedKit = it.mapping_complete === true && it.inventory_components?.length
           ? it.inventory_components.map((c) => `${c.units_per_listing} × ${c.name}`).join(", ")
           : null;
-        const kitText = mappedKit
+        const nativeKit=Array.isArray(it.kit_contents)&&it.kit_contents.every(c=>typeof c==="string")?it.kit_contents:undefined;
+        const hasKnownKit=nativeKit!==undefined?nativeKit.length>0:!!(mappedKit||structuredKit||it.whats_included?.trim());
+        const kitText = nativeKit!==undefined ? nativeKit.join(", ") || "(NOT LISTED — exact inclusions need owner review.)" : mappedKit
           ? `${mappedKit} (per listing mapped physical gear; standard accessories from the body record: ${structuredKit ?? "not recorded"}). The inventory mapping and verified specs take precedence over conflicting advertising prose.`
           : structuredKit ?? it.whats_included ??
             "(NOT LISTED — do not invent kit contents; exact inclusions need owner review.)";
-        if (mappedKit || structuredKit || it.whats_included?.trim()) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
-        if (mappedKit || structuredKit || it.whats_included?.trim()) {
+        if (hasKnownKit) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
+        if (hasKnownKit) {
           kitEvidence.push({ names: [...new Set([it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n).flatMap(renterItemNames))],
             booked_camera: lc.is_confirmed === true && /^camera(?:_body)?$/.test(it.kind ?? ""),
             booked_item: lc.is_confirmed === true,
             kind: it.kind ?? undefined,
-            contents: mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.units_per_listing} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""] });
+            contents: nativeKit ?? (mappedKit ? [...(it.inventory_components ?? []).map(c => `${c.units_per_listing} × ${c.name ?? ""}`), ...(it.included_with_rental ?? [])] : it.included_with_rental?.length ? it.included_with_rental : [it.whats_included ?? ""]) });
           groundTruth += `  LISTING TITLE IS ADVERTISING, NOT KIT EVIDENCE: accessories named in the title or comparison models are not included unless recorded in the mapped gear or body inclusions above. Answer exact-kit questions from those records; do not append title accessories.\n`;
           groundTruth += `  PARTIAL KIT RECORD: known inclusions per listing, not an exhaustive manifest. Missing accessories are unverified, not proven absent. Stock mapping completeness does not establish every supplied accessory. Answer the known part and identify exact unrecorded details for owner review.\n`;
           groundTruth += `  INCLUDED-CONTENTS LIMIT: state only the recorded contents above. A charger, case or other customary accessory is NOT established merely because this is a camera rental. Do not add customary items to the list.\n`;
+          if(it.storage_contents_verification_required)groundTruth += `  SUPPLIED STORAGE NEEDS OWNER REVIEW: ${it.storage_guidance??"Type, capacity and count are not reconciled. Use only known kit contents."}\n`;
           const suppliedCards=kitEvidence.at(-1)?.contents.filter(c=>/\bcard\b/i.test(c))??[];
           if(suppliedCards.some(c=>!(/\b(?:sd(?:hc|xc)?|micro\s*sd|cfast|cf\s*express)\b/i.test(c)))) groundTruth += `  SUPPLIED CARD FORMAT: unrecorded for the generic card entries. State only their recorded capacity; the camera's "takes ... cards" compatibility field does not establish the supplied format. Do not invent SD/CFexpress or card counts from the camera's slot specification.\n`;
           groundTruth += `  INCLUDED-QUANTITY LIMIT: duplicate descriptions of a component are not additional units. A battery "set" does not establish an individual battery count. State exact types, storage capacities and individual counts only where explicitly recorded for that component; otherwise explain that the exact detail needs checking.\n`;

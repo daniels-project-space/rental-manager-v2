@@ -1,3 +1,4 @@
+import pairedQuotes from "./fixtures/renter-native-quotes.json";
 import {describe,it,expect} from "vitest";
 import inquiryNativeQuote from "./fixtures/renter-inquiry-native-quote.json";
 import jointNativeQuote from "./fixtures/renter-joint-native-quote.json";
@@ -255,4 +256,14 @@ describe("captured Native inquiry basket quotes",()=>{
     inquiryNativeQuote.candidate.replace("Sony FX3 body","Two Sony FX3 bodies"),inquiryNativeQuote.candidate.replace("two days","three days")])
     expect(unsupportedPriceClaims(claim,proof,inquiryNativeQuote.request,inquiryNativeQuote.renter_message),claim).not.toEqual([]);
  });
+});
+
+it("recognizes complete unconfirmed addition/replacement proposals only with Native inquiry stage",()=>{
+ const native=pairedQuotes.first;
+ for(const booking_use of ["additional","replacement"]){
+  const scoped={...native,booking_use,rental_stage:"INQUIRY"};
+  expect(renterPriceEvidence([receipt("check_basket_availability",scoped)],[],native.thread_id)).toContainEqual(expect.objectContaining({kind:"basket",quote_role:"inquiry",total_gbp:138}));
+  for(const rental_stage of [undefined,"CONFIRMED_UPCOMING","IN_USE"])
+   expect(renterPriceEvidence([receipt("check_basket_availability",{...scoped,rental_stage})],[],native.thread_id).filter(p=>p.quote_role==="inquiry")).toEqual([]);
+ }
 });

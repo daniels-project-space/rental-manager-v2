@@ -44,3 +44,23 @@ it("does not list the same five physical batteries twice through mapping and inv
  expect(kit.contents).toEqual(["5 × NP-F570 batteries","camera cage"]);
  expect(recordedKit([{name:"NP-F570 batteries",qty:5}],["10x NP-F570 battery","1x BMPCC battery pack"]).contents).toEqual(["5 × NP-F570 batteries","10x NP-F570 battery","1x BMPCC battery pack"]);
 });
+
+describe("mapped media and accessory-note identity",()=>{
+ it("keeps the actual generic card without inventing its format or a second card",()=>{
+  const kit=recordedKit([{name:"256GB card",qty:1}],["CF Express Type A card","2× battery sets"]);
+  expect(kit.contents).toEqual(["1 × 256GB card","2× battery sets"]);
+  expect(kit.unreconciled_contents).toEqual(["CF Express Type A card"]);
+ });
+ it("collapses a note already established by one exact mapped medium",()=>{
+  const kit=recordedKit([{name:"256GB CFexpress Type A card",qty:1}],["CF Express Type A card","1x 256GB CFexpress Type A card"]);
+  expect(kit.contents).toEqual(["1 × 256GB CFexpress Type A card"]);expect(kit.unreconciled_contents).toEqual([]);
+ });
+ it("retains provably different media without merging card capacities or formats",()=>{
+  expect(recordedKit([{name:"256GB SD card",qty:1}],["1TB CFexpress Type A card"]).contents).toEqual(["1 × 256GB SD card","1TB CFexpress Type A card"]);
+  expect(recordedKit([{name:"256GB card",qty:1}],["1TB CFexpress Type B card"]).unreconciled_contents).toEqual([]);
+ });
+ it("does not add mismatched counts or assign an unqualified note across two possible units",()=>{
+  expect(recordedKit([{name:"256GB SD card",qty:1}],["2x 256GB SD card"]).unreconciled_contents).toEqual(["2x 256GB SD card"]);
+  expect(recordedKit([{name:"256GB CFexpress Type A card",qty:1},{name:"512GB CFexpress Type A card",qty:1}],["CFexpress Type A card"]).unreconciled_contents).toEqual(["CFexpress Type A card"]);
+ });
+});

@@ -22,6 +22,7 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
   const result=record(value),q=record(result?.quote),basket=record(result?.basket);
   if(!result || !q || result.account_slug!==scope.accountSlug || basket?.available!==true ||
     !Array.isArray(q.unpriced) || q.unpriced.length || !Array.isArray(result.components) || !result.components.length)return null;
+  if(result.rental_stage!==undefined && result.rental_stage!==scope.rentalStage)return null;
   const requirementsKey=recommendationRequirementsKey(scope.recommendationRequirements??[]),qualification=record(result.technical_qualification);
   if(scope.recommendationRequirements?.length && (qualification?.verified!==true||qualification.requirements_key!==requirementsKey))return null;
   const physical=result.components.map(record);

@@ -381,9 +381,12 @@ export const get_listing_context = query({
         inventoryComponents.map(c => ({ name: c.name, qty: c.units_per_listing })),
         included_with_rental ?? [],
       );
+      storageNeedsReview ||= kit.unreconciled_contents.length>0;
+      included_with_rental=(included_with_rental??[]).filter(text=>!kit.unreconciled_contents.includes(text));
       items.push({
+        unreconciled_kit_contents:kit.unreconciled_contents,
         storage_contents_verification_required:storageNeedsReview,
-        storage_guidance:storageNeedsReview ? "Supplied storage records conflict with listing capacities. Ask the owner before promising any SSD/card capacity; supported recording formats do not prove supplied media." : null,
+        storage_guidance:storageNeedsReview ? "Supplied storage records conflict or may describe the same physical medium. Use only kit_contents as known inclusions; do not add unreconciled notes as extra cards or infer a generic card format from camera compatibility. Ask the owner to verify linked type, capacity and count." : null,
         kit_contents: kit.contents,
         kit_completeness: kit.completeness,
         kit_source: kit.source,
@@ -772,14 +775,15 @@ async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSou
     if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
     const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,a.thread_id ?? "",sources,{pickup_time:a.pickup_time,return_time:a.return_time});
     const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
-    // A fresh inquiry has no accepted base price to preserve. Reuse the exact
-    // listings already loaded by the shared physical check, with no extra DB
-    // reads. Confirmed amendments retain their dedicated consent/quote path.
+    // An inquiry has no accepted base price to preserve. Quote the complete
+    // proposed set after an explicit addition/replacement plan too, including
+    // retained request items. Reuse the same loaded listings; confirmed
+    // amendments retain their dedicated consent/quote path.
     const itemMap=new Map(sources.items.map(i=>[String(i._id),i]));
     const quotedLines=check.offerings?.map(l=>({...l,name:listingDisplayName(l.name,
       {components:sources.overrides.get(`${a.account_slug}#${l.product_id}`) ?? []},
       itemMap),verified_price_names:[l.name]}));
-    const preview=check.available===true && plan.use==="standalone" && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
+    const preview=check.available===true && (plan.use==="standalone" || stage==="INQUIRY") && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
       quotedLines?.length===[...plan.lines,...candidates.slice(1)].length ? summarise(quotedLines,a.start_date,a.end_date) : null;
     const paired=check.receipts.some(r=>["camera","camera_body"].includes(r.kind??""))&&check.receipts.some(r=>r.kind==="lens");
     const technicalItems=await Promise.all((a.recommendation_requirements?.length||paired?check.receipts:[]).map(async r=>{
@@ -789,7 +793,7 @@ async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSou
     const technical_qualification=qualifyRecommendationBasket(a.recommendation_requirements??[],technicalItems);
     const quote=preview?.total_gbp!=null && preview.total_gbp>0 ? {...preview,source:"native_inquiry_basket" as const} : null;
     return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
-      account_slug:a.account_slug,thread_id:a.thread_id ?? null,preview_only:true,physical_identity_key:check.physical_identity_key,
+      account_slug:a.account_slug,thread_id:a.thread_id ?? null,rental_stage:stage,preview_only:true,physical_identity_key:check.physical_identity_key,
       start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,quote,technical_qualification,
       offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
       guidance:"Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
@@ -1245,9 +1249,10 @@ export const find_owned_alternatives = query({
       const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
       const mapping = ovAll.find(o => o.account_slug === account_slug && o.product_id === altPid);
       const storedContents=(it.compatibility as {included_with_rental?:string[]} | undefined)?.included_with_rental ?? [];
-      const storageNeedsReview=["camera","camera_body"].includes(it.kind ?? "") && listingMediaConflict(storedContents,listings.filter(l=>candidatePids.includes(l.product_id)).map(l=>l.name ?? ""));
+      let storageNeedsReview=["camera","camera_body"].includes(it.kind ?? "") && listingMediaConflict(storedContents,listings.filter(l=>candidatePids.includes(l.product_id)).map(l=>l.name ?? ""));
       const safeItem=storageNeedsReview ? {...it,compatibility:{...(it.compatibility ?? {}),included_with_rental:withoutUnverifiedMediaCapacity(storedContents)}} : it;
       const kit = recommendationKit(safeItem, mapping, allInventory);
+      storageNeedsReview ||= kit.unreconciled_contents.length>0;
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
@@ -1259,7 +1264,8 @@ export const find_owned_alternatives = query({
         replacement_removed_listings: basket.removed,
         replacement_changes_kit_contents: basket.removed.length>0,
         storage_contents_verification_required:storageNeedsReview,
-        storage_guidance:storageNeedsReview ? "Supplied storage capacity is conflicting and unverified. Do not copy the listing title or quote a recorded capacity until the owner confirms it." : null,
+        storage_guidance:storageNeedsReview ? "Supplied media records conflict or overlap. kit_contents contains the known part; unreconciled_kit_contents does not establish another card or a generic card format. Ask the owner to verify linked type, capacity and count. Camera compatibility does not prove supplied media." : null,
+        unreconciled_kit_contents:kit.unreconciled_contents,
         name: it.name_canonical,
         kind: it.kind,
         replacement_cost_gbp: it.replacement_cost_gbp ?? null,
