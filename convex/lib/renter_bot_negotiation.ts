@@ -90,11 +90,13 @@ export function computeNegotiationStance(
   let framing: string = FRAMING.NONE;
   let authority: NegotiationOutput["discountAuthority"] = "none";
 
-  if (objectionCount === 0 && !competitorMentioned) {
+  // History is context, not authority to negotiate on a logistics/acceptance
+  // turn. Activate the ladder only for a current price objection.
+  if (!NEGOTIATION_PATTERNS.test(input.latestMessage)) {
     return {
       stance: "NONE",
-      objectionCount: 0,
-      competitorMentioned: false,
+      objectionCount,
+      competitorMentioned,
       suggestedFraming: FRAMING.NONE,
       lastPriceOfferedGbp: input.lastPriceOfferedGbp ?? null,
       discountAuthority: "none",

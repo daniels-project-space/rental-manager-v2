@@ -1,3 +1,4 @@
+import {computeNegotiationStance} from "./lib/renter_bot_negotiation";
 import type {Id} from "./_generated/dataModel";
 import {handle as handleOwnerCheck, ownerChecksForBot } from "./renter_bot_owner_checks";
 import {ownerCheckScopeKey, nativeOwnerChecks } from "./lib/owner_checks";
@@ -581,5 +582,17 @@ describe("Native negotiation history",()=>{
  it("does not fabricate negotiation on a thread without renter messages",async()=>{
   const f=await setup();const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");await f.ctx.db.patch(first._id,{sender:"owner"});
   expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id,latest_message:"Any discount?"})).toMatchObject({objectionCount:0,stance:"NONE",competitorMentioned:false});
+ });
+});
+
+describe('negotiation applies to the current price turn',()=>{
+ const history=['That is too expensive.','Any discount?','I found it cheaper elsewhere.'];
+ it('keeps history without price pressure on accepted offers or logistics',()=>{
+  for(const latestMessage of ['That works, I accept the quote.','Can I collect at 5pm?','Thanks, how do I return it?','I need another rental for next month.']){
+   expect(computeNegotiationStance({priorRenterMessages:history,latestMessage})).toMatchObject({stance:'NONE',objectionCount:3,competitorMentioned:true,discountAuthority:'none'});
+  }
+ });
+ it('can resume a genuine price discussion without forgetting real earlier objections',()=>{
+  expect(computeNegotiationStance({priorRenterMessages:history,latestMessage:'Can you do the lens for £40?'})).toMatchObject({stance:'SOFT_YIELD',objectionCount:4,discountAuthority:'may_escalate'});
  });
 });
