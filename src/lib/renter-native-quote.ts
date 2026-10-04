@@ -67,6 +67,8 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     if(quote && descriptor.quote_key===quote.quote_key){
       quotes.set(quote.quote_key,quote);
       stock.set(quote.quote_key,{quote_key:quote.quote_key,start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
+        listing_quote:{total_gbp:(receipt.result.quote as {total_gbp:number}).total_gbp,
+          lines:(receipt.result.quote as {lines:Array<{product_id:number;name:string;qty:number;line_total_gbp:number}>}).lines.map(l=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))},
         items:(receipt.result.components as Array<{item_id:string;item_name:string;requested_units:number}>).map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))});
       const basket=renterPriceEvidence([receipt],[],scope.threadId).find(p=>p.kind==="basket"&&p.source==="native_inquiry_basket"&&p.quote_role==="inquiry");
       if(basket)commercial.set(quote.quote_key,basket);

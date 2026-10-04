@@ -42,6 +42,7 @@ describe("Native inquiry quote rendering",()=>{
   const rendered=renderNativeQuoteReply({...base,reply_parts:[{type:"quote",quote_key:first.quote_key}]},[receipt(),receipt(fixtures.second)],scope);
   expect(rendered.ok).toBe(true);
   if(rendered.ok)expect(rendered.stock_quotes).toEqual([{quote_key:first.quote_key,start_date:fixtures.first.start_date,end_date:fixtures.first.end_date,
+    listing_quote:{total_gbp:fixtures.first.quote.total_gbp,lines:fixtures.first.quote.lines.map(l=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))},
     items:fixtures.first.components.map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))}]);
  });
  it("retains the quote descriptor through real tool receipt harvesting",()=>{

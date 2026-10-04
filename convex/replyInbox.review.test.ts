@@ -43,6 +43,15 @@ describe("copied bot replies use current Native stock before send",()=>{
   const approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
   return {...f,itemId,text,approval,evidence};
  }
+ async function inquiryStockDraft() {
+  const f=await stockDraft();
+  await f.ctx.db.patch(f.bookingId,{is_obsolete:true});
+  f.args.thread_id="__probe__price-review";
+  await f.ctx.db.patch(f.convId,{thread_id:f.args.thread_id});
+  for(const row of f.rows.values())if(row.table==="hygglo_messages")await f.ctx.db.patch(row._id,{thread_id:f.args.thread_id});
+  f.args.context_key=draftContextKey(null);
+  return f;
+ }
  const recheck=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval.draft_approval});
  it("rejects a competing confirmed booking created after a previously available draft",async()=>{
   const f=await stockDraft();expect(await recheck(f)).toMatchObject({ok:true});
@@ -52,8 +61,11 @@ describe("copied bot replies use current Native stock before send",()=>{
   expect(await recheck(f,"Thanks for checking. I'll review the options and get back to you.")).toMatchObject({ok:true});
  });
  it("rechecks selected price-only baskets even without an availability assertion or technical requirements",async()=>{
-  const f=await stockDraft();const text="For 3 days: 1 × Sony FX3: £98. Total: £98.";
-  const evidence={model_id:"native-test",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected-native",start_date:"2026-10-02",end_date:"2026-10-04",items:[{item_id:f.itemId,name:"Sony FX3",quantity:1}]}]};
+  const f=await inquiryStockDraft();const text="For 3 days: 1 × Sony FX3: £90. Total: £90.";
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:123,name:"Sony FX3",masterItemId:f.itemId,prices:[]});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:123,name:"Sony FX3",daily_price:30});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:123,components:[{item_id:f.itemId,qty:1}]});
+  const evidence={model_id:"native-test",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected-native",start_date:"2026-10-02",end_date:"2026-10-04",listing_quote:{total_gbp:90,lines:[{product_id:123,name:"Sony FX3",quantity:1,total_gbp:90}]},items:[{item_id:f.itemId,name:"Sony FX3",quantity:1}]}]};
   await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
   f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
   expect(await recheck(f,text)).toMatchObject({ok:true});
@@ -65,6 +77,57 @@ describe("copied bot replies use current Native stock before send",()=>{
   expect(await recheck(f,text)).toMatchObject({ok:false});
   await f.ctx.db.patch(f.itemId,{is_marketing_only:false,name_canonical:"Sony FX30"});
   expect(await recheck(f,text)).toMatchObject({ok:false});
+ });
+ it("rejects changed listing prices and tiers even when current stock still passes",async()=>{
+  const f=await inquiryStockDraft(),text="For 3 days: 1 × Sony FX3: £90. Total: £90.";
+  const product=await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:123,name:"Sony FX3",masterItemId:f.itemId,prices:[]});
+  const listing=await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:123,name:"Sony FX3",daily_price:30});
+  const mapping=await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:123,components:[{item_id:f.itemId,qty:1}]});
+  const evidence={model_id:"native-test",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected-native",start_date:"2026-10-02",end_date:"2026-10-04",
+    listing_quote:{total_gbp:90,lines:[{product_id:123,name:"Sony FX3",quantity:1,total_gbp:90}]},items:[{item_id:f.itemId,name:"Sony FX3",quantity:1}]}]};
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  // Recheck a complete Native offer after an inquiry already has gear. The
+  // original message's addition semantics must not add that base basket again.
+  const order={thread_id:f.args.thread_id,account_slug:"leo",items:[{name:"Sony FX3",product_id:123,qty:1,daily_price_gbp:30,pricing_basis:"listing"}],start_date:"2026-10-02",end_date:"2026-10-04",changes:[],updated_at:1};
+  await f.ctx.db.insert("renter_bot_lab_orders",order);
+  f.args.context_key=draftContextKey(null,undefined,order as any);
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  const inbound=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(inbound._id,{sender:"renter",body_text:"Please add a lens to my basket."});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(listing,{daily_price:40});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"price_unverified"});
+  await f.ctx.db.patch(listing,{daily_price:30});
+  await f.ctx.db.patch(product,{prices:[{days:3,pricePerDay:25}]});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"price_unverified"});
+  await f.ctx.db.patch(product,{prices:[]});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(listing,{daily_price:undefined});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"price_unverified"});
+  await f.ctx.db.patch(listing,{daily_price:30});
+  const different=await f.ctx.db.insert("items",{name_canonical:"Sony FX30",qty:1,status:"active",is_marketing_only:false});
+  await f.ctx.db.patch(mapping,{components:[{item_id:different,qty:1}]});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"stock_unverified"});
+ });
+ it("checks each quoted line when changed rates leave the combined total unchanged",async()=>{
+  const f=await inquiryStockDraft();await f.ctx.db.patch(f.itemId,{qty:2});
+  const listings=[];
+  for(const [productId,rate] of [[123,20],[124,10]]){
+   await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId,name:"Sony FX3",masterItemId:f.itemId,prices:[]});
+   listings.push(await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:productId,name:"Sony FX3",daily_price:rate}));
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:productId,components:[{item_id:f.itemId,qty:1}]});
+  }
+  const text="For 3 days: Sony FX3 £60; Sony FX3 £30. Total £90.";
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,
+   evidence:{model_id:"native-test",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected-native",start_date:"2026-10-02",end_date:"2026-10-04",
+     listing_quote:{total_gbp:90,lines:[{product_id:123,name:"Sony FX3",quantity:1,total_gbp:60},{product_id:124,name:"Sony FX3",quantity:1,total_gbp:30}]},items:[{item_id:f.itemId,name:"Sony FX3",quantity:2}]}]}});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(listings[0],{daily_price:22});await f.ctx.db.patch(listings[1],{daily_price:8});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"price_unverified"});
  });
  it("rechecks catalogue changes and does not borrow old free capacity or changed dates",async()=>{
   const f=await stockDraft();await f.ctx.db.patch(f.itemId,{is_marketing_only:true});
@@ -125,7 +188,7 @@ describe("copied bot replies use current Native stock before send",()=>{
  });
  it("checks copied stock before even dry-run success and fails closed when the check errors",async()=>{
   const f=await stockDraft();
-  for(const result of [{ok:false,reason:"stock_unverified"},{ok:false,reason:"technical_requirements_unverified"},{ok:true}]) {
+  for(const result of [{ok:false,reason:"stock_unverified"},{ok:false,reason:"price_unverified"},{ok:false,reason:"technical_requirements_unverified"},{ok:true}]) {
    const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockResolvedValueOnce(result)};
    expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,draft_approval:f.approval.draft_approval,dryRun:true})).toMatchObject(result.ok?{status:"sent",reason:"DRY_RUN"}:{status:"failed",reason:result.reason});
    expect(ctx.runQuery).toHaveBeenCalledTimes(2);

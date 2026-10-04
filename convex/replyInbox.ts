@@ -1,3 +1,4 @@
+import { performJointStockCheck } from "./renter_bot_tools";
 import { qualifyRecommendationBasket } from "./lib/recommendation_qualification";
 import { renterHistory } from "./lib/renter_history";
 import { conversationStageValidator } from "./lib/conversation_stage_validator";
@@ -2153,6 +2154,24 @@ export const recheckCopiedDraftStock = internalQuery({
           stockForRentalItem(sources,item,{item_name:line.name,start_date:quote.start_date,end_date:quote.end_date,quantity:line.quantity,thread_id}).available!==true)
           return {ok:false,reason:"stock_unverified"};
       }
+      const priced=quote.listing_quote;
+      if(!priced || !Number.isFinite(priced.total_gbp) || priced.total_gbp<=0 || !priced.lines.length || priced.lines.length>8 ||
+        new Set(priced.lines.map(l=>l.product_id)).size!==priced.lines.length || priced.lines.some(l=>!Number.isInteger(l.product_id)||l.product_id<1||
+          !Number.isInteger(l.quantity)||l.quantity<1||l.quantity>20||!Number.isFinite(l.total_gbp)||l.total_gbp<=0))
+        return {ok:false,reason:"price_unverified"};
+      // Reuse the same Native stock/price/listing resolution as the original
+      // offer. Physical IDs alone cannot establish the price of a listing.
+      const fresh=await performJointStockCheck(ctx,{account_slug,thread_id,start_date:quote.start_date,end_date:quote.end_date,booking_use:"standalone",
+        items:priced.lines.map(l=>({product_id:l.product_id,item_name:l.name,quantity:l.quantity}))},sources,{standalone_offer:true});
+      const identity=JSON.stringify(quote.items.map(l=>[l.item_id,l.name,l.quantity]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+      if(fresh.available!==true || !("physical_identity_key" in fresh) || fresh.physical_identity_key!==identity)
+        return {ok:false,reason:"stock_unverified"};
+      const current="quote" in fresh?fresh.quote:null;
+      const cents=(n:number)=>Math.round(n*100);
+      if(!current || current.total_gbp==null || current.unpriced.length || current.lines.length!==priced.lines.length ||
+        cents(current.total_gbp)!==cents(priced.total_gbp) || priced.lines.some(l=>!current.lines.some(c=>c.product_id===l.product_id && c.qty===l.quantity &&
+          c.line_total_gbp!=null && cents(c.line_total_gbp)===cents(l.total_gbp))))
+        return {ok:false,reason:"price_unverified"};
     }
     const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
     // A copied recommendation must still qualify even when its prose says

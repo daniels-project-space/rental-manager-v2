@@ -11,6 +11,8 @@ export type RecommendationQuoteEvidence=Infer<typeof recommendationQuoteEvidence
 
 export const stockQuoteEvidenceValidator=v.object({
   quote_key:v.string(),start_date:v.string(),end_date:v.string(),
+  // Optional for schema compatibility; old drafts are invalidated on release.
+  listing_quote:v.optional(v.object({total_gbp:v.number(),lines:v.array(v.object({product_id:v.number(),name:v.string(),quantity:v.number(),total_gbp:v.number()}))})),
   items:v.array(v.object({item_id:v.string(),name:v.string(),quantity:v.number()})),
 });
 export type StockQuoteEvidence=Infer<typeof stockQuoteEvidenceValidator>;
