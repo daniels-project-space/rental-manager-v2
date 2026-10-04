@@ -23,7 +23,7 @@ export const draftEvidenceValidator = v.object({
   })),
   commercial: v.optional(v.object({stage:v.string(),threshold_gbp:v.number(),total_gbp:v.union(v.number(),v.null()),
     status:v.union(v.literal("below"),v.literal("meets"),v.literal("unknown"),v.literal("not_applicable"),v.literal("disabled")),
-    basis:v.union(v.literal("current_booking"),v.literal("complete_requested_quote"),v.literal("none")),
+    basis:v.union(v.literal("current_booking"),v.literal("complete_requested_quote"),v.literal("lowest_selected_inquiry_quote"),v.literal("none")),
   })),
   prices: v.optional(v.array(v.object({
     names:v.array(v.string()),kind:v.union(v.literal("rental"),v.literal("basket"),v.literal("replacement")),

@@ -12,6 +12,15 @@ describe("prospective minimum-value context",()=>{
   expect(context()).toMatchObject({status:"meets",total_gbp:60,basis:"complete_requested_quote"});
   expect(context([{...price,quantity:1,total_gbp:30}],{...request,items:[{name:"Sony FX3",quantity:1}]})).toMatchObject({status:"below",total_gbp:30});
  });
+ it("evaluates selected inquiry alternatives separately from the original request",()=>{
+  const offer:PriceEvidence={names:[],items:[{name:"Sony 28-70mm",quantity:1}],kind:"basket",days:2,start_date:request.start_date!,end_date:request.end_date!,total_gbp:36,source:"native_inquiry_basket",quote_role:"inquiry",call_id:"native-selected"};
+  const old:PriceEvidence={...offer,items:request.items,total_gbp:90,source:"lab_order_quote",quote_role:undefined};
+  const expensive={...offer,total_gbp:124,call_id:"other-option"};
+  for(const selected of [[offer],[offer,expensive],[expensive,offer]])expect(minimumRentalContext("INQUIRY",40,[old],request,selected)).toMatchObject({status:"below",total_gbp:36,basis:"lowest_selected_inquiry_quote"});
+  expect(minimumRentalContext("INQUIRY",40,[old],request,[expensive])).toMatchObject({status:"meets",total_gbp:124});
+  expect(minimumRentalContext("CONFIRMED_UPCOMING",40,[old],request,[offer]).status).toBe("not_applicable");
+  for(const bad of [{...offer,source:"lab_order_quote"},{...offer,end_date:undefined},{...offer,call_id:""},{...offer,items:[]}])expect(minimumRentalContext("INQUIRY",40,[old],request,[bad]).status).toBe("unknown");
+ });
  it("does not classify partial baskets, unknown dates or mismatched scope",()=>{
   const mixed={...request,items:[...request.items,{name:"Sony A7 V",quantity:1}]};
   for(const [p,r] of [[[price],mixed],[[price],{...request,end_date:undefined}],[[{...price,quantity:1}],request],[[{...price,start_date:"2026-10-04"}],request]] as Array<[PriceEvidence[],StockRequest]>)expect(context(p,r).status).toBe("unknown");

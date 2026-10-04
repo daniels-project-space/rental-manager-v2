@@ -1196,7 +1196,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         ? await getRenterBotAgentForModel(modelOverride)
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, queryRevision:querySession.getRevision,recommendationRequirements }, () => (agent as any).generate(baseMessages, {
+      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, minimumRentalThreshold:commercialContext?.threshold_gbp, queryRevision:querySession.getRevision,recommendationRequirements }, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
         structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
@@ -1303,7 +1303,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           ];
           const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, queryRevision:querySession.getRevision,recommendationRequirements }, () => (retryAgent as any).generate(retryMessages, {
+          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, minimumRentalThreshold:commercialContext?.threshold_gbp, queryRevision:querySession.getRevision,recommendationRequirements }, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
             structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
             modelSettings: { maxOutputTokens: 4096 },
@@ -1438,11 +1438,12 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         /* leave false — a claim without proof stays a false claim */
       }
     }
-    if (commercialContext) commercialContext=minimumRentalContext(authoritativeStage,commercialContext.threshold_gbp,currentPriceEvidence(),priceRequest);
+    if (commercialContext) commercialContext=minimumRentalContext(authoritativeStage,commercialContext.threshold_gbp,currentPriceEvidence(),priceRequest,renderedReply.commercial_quotes);
     return NextResponse.json({
       ok: true,
       draft: obj.draft ?? "",
       rendered_quote_keys:renderedReply.quote_keys,
+      selectedInquiryQuotes:renderedReply.commercial_quotes,
       recommendation_quotes:renderedReply.recommendation_quotes,
       owner_checks: nativeOwnerChecks(toolReceipts),
       needs_human: !!obj.needs_human,
