@@ -36,6 +36,18 @@ describe("hard camera requirements before stock ranking", () => {
     expect(assessCameraRequirements({...reviewed,native_mount:undefined},{recording},"E")).toMatchObject({status:"unknown",unknown:["native_mount","recording"]});
     expect(assessCameraRequirements(reviewed,{recording:{resolution:"4k",min_fps:0}}).status).toBe("mismatch");
   });
+  it("excludes physically impossible capture without inventing missing mode facts",()=>{
+    const recording={resolution:"dci_4k" as const,min_fps:60,capture_format:"full_frame" as const,full_width:true,internal:true};
+    for(const sensor_format of ["small_sensor","aps_c","super35"] as const)
+      expect(assessCameraRequirements({...full,sensor_format},{recording})).toMatchObject({status:"mismatch",mismatched:["capture_format"]});
+    expect(assessCameraRequirements(action,{internal_4k:true,recording},"E")).toMatchObject({status:"mismatch",mismatched:["capture_format"]});
+    expect(assessCameraRequirements(full,{recording})).toMatchObject({status:"unknown",unknown:["recording"],mismatched:[]});
+    expect(assessCameraRequirements(null,{recording})).toMatchObject({status:"unknown",mismatched:[]});
+    // Cropped modes remain possible, but still need their own positive proof.
+    expect(assessCameraRequirements(full,{recording:{...recording,capture_format:"aps_c"}}).status).toBe("unknown");
+    expect(assessCameraRequirements({...full,sensor_format:"aps_c"},{recording:{...recording,capture_format:"super35"}}).status).toBe("unknown");
+    expect(assessCameraRequirements(action,{recording:{...recording,capture_format:"small_sensor"}}).status).toBe("unknown");
+  });
   it("rejects stale or wrong-model mode proof independently of a valid body profile", () => {
     const spec = { item_name_canonical: "Body", description: "Reviewed", source: "manufacturer-verified", source_url: "https://manufacturer.example/body", verified_model: "model", verified_at: 2,
       camera_capabilities: { ...full, verified_model: "model", verified_at: 2, source_url: "https://manufacturer.example/body", recording_modes: [mode(120, "aps_c", false), { ...mode(60, "full_frame", true), verified_at: 2 }, { ...mode(120, "full_frame", true), verified_at: 2, verified_model: "other-model" }] } };

@@ -76,6 +76,14 @@ export function assessCameraRequirements(capabilities:CameraCapabilities|null,re
   const recording=requirements.recording;
   if(recording) {
     if(recording.internal===true && (capabilities?.internal_4k===false||requirements.internal_4k===false))mismatched.push("internal_4k");
+    // Recording capture describes the area actually read from the sensor.
+    // Missing positive mode rows remain unknown, but cannot make a smaller
+    // reviewed physical sensor a possible full-frame capture candidate. Keep
+    // APS-C/Super35 together: their exact dimensions vary by model, so this
+    // comparison only establishes unequivocal sensor-class impossibilities.
+    const sensorClass:Record<SensorFormat,number>={small_sensor:1,aps_c:2,super35:2,full_frame:3};
+    if(recording.capture_format && capabilities?.sensor_format &&
+      sensorClass[recording.capture_format]>sensorClass[capabilities.sensor_format])mismatched.push("capture_format");
     if(!RECORDING_REQUIREMENT_RESOLUTIONS.includes(recording.resolution) || recording.min_fps!==undefined&&(!Number.isFinite(recording.min_fps)||recording.min_fps<=0))mismatched.push("recording");
     else if(!capabilities?.recording_modes?.some(mode=>matchesRecordingRequirement(mode,recording)))unknown.push("recording");
   }
