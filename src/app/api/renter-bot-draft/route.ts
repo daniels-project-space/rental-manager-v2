@@ -1308,6 +1308,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const hits: any = await convex.query(api.knowledge.search, {
+          threadId: thread_id,
           query: lastRenter,
           limit: 3,
         });

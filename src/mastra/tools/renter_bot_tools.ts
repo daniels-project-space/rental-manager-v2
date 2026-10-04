@@ -273,7 +273,7 @@ export const getTemplateTool = createTool({
     "Fetch a verbatim template's text by name. Use when you've identified a template via search_knowledge (e.g. 'DB Cinema Welcome Text', 'DB Cinema Arrival Reminder', 'DB Cinema Price Match'). Returns only an exact template identity for the Native thread account; a missing or ambiguous template returns found:false. Use current facts and negotiation strategy rather than substituting another template.",
   inputSchema: z.object({
     name: z.string(),
-    thread_id: z.string(),
+    thread_id: z.string().optional(),
     account_slug: z.string().optional(),
   }),
   outputSchema: z.unknown(),

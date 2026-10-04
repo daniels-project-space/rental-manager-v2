@@ -10,6 +10,13 @@ describe("trusted tool request scope", () => {
     const result = withRenterToolScope({ threadId: "thread-one", accountSlug: "leo" }, () => bindRenterToolArgs("renter_bot_tools:check_availability", { thread_id: "someone-else", account_slug: "diogo", item_name: "Sony FX3" }));
     expect(result).toMatchObject({ thread_id: "thread-one", account_slug: "leo", item_name: "Sony FX3" });
   });
+  it("binds exact template retrieval to the trusted request without model-supplied context", () => {
+    const scope = {threadId:"native-thread",accountSlug:"leo"};
+    for(const args of [{name:"Template: Leo Adams Welcome Text"},{name:"Template: Leo Adams Welcome Text",threadId:"foreign",accountSlug:"dbcinema"}]){
+      expect(bindRenterToolArgs("knowledge:getTemplate",args,scope)).toEqual({name:"Template: Leo Adams Welcome Text",threadId:"native-thread",accountSlug:"leo"});
+      expect(bindRenterToolArgs("knowledge:search",{query:"travel discount",threadId:args.threadId,accountSlug:args.accountSlug},scope)).toEqual({query:"travel discount",threadId:"native-thread",accountSlug:"leo"});
+    }
+  });
   it("fills omitted pricing account and stock exclusion thread", () => {
     const scope = { threadId: "one", accountSlug: "leo" };
     expect(bindRenterToolArgs("renter_bot_tools:lookup_pricing", {}, scope)).toEqual({ account_slug: "leo" });

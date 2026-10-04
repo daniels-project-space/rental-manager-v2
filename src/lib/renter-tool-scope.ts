@@ -13,6 +13,10 @@ export function bindRenterToolArgs(functionName: string, args: Record<string, un
     throw new Error("Booking changes are disabled for this diagnostic candidate");
   }
   const bound = { ...args };
+  if (["knowledge:getTemplate", "knowledge:search"].includes(functionName)) {
+    bound.threadId = scope.threadId;
+    bound.accountSlug = scope.accountSlug;
+  }
   if ("account_slug" in args || functionName === "renter_bot_tools:lookup_pricing") bound.account_slug = scope.accountSlug;
   if ("hygglo_order_id" in args) bound.hygglo_order_id = scope.threadId;
   if ("thread_id" in args || ["renter_bot_tools:check_availability","renter_bot_tools:check_basket_availability","renter_bot_tools:find_owned_alternatives"].includes(functionName)) bound.thread_id = scope.threadId;
