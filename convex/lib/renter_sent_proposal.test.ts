@@ -122,6 +122,15 @@ describe("ordinary Native inquiry offer history",()=>{
   else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"owner-sent"});
   expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([{context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote:f.conversation.ai_draft_evidence.stock_quotes[0]}]);
  });
+ for(const path of ["lab","owner"])it(`${path} retains each selected Native alternative rather than losing the whole offer`,async()=>{
+  const f=quoted(),first=f.conversation.ai_draft_evidence.stock_quotes[0];
+  const second={...structuredClone(first),quote_key:"longer-native",end_date:"2026-10-28",listing_quote:{total_gbp:90,lines:[{...first.listing_quote.lines[0],total_gbp:90}]}};
+  f.conversation.ai_draft_evidence.stock_quotes.push(second);
+  f.conversation.ai_draft_text+=" Alternatively, 7 days to 28 October: £90 total.";const text=f.conversation.ai_draft_text;
+  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"quote-options"});
+  else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"options-owner"});
+  expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([first,second].map(quote=>({context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote})));
+ });
  it("cannot archive edited, stale, unscoped, ambiguous or inconsistent offers",async()=>{
   for(const variant of ["edit","stale","unscoped","ambiguous","total"]){
    const f=quoted();let text=f.conversation.ai_draft_text;

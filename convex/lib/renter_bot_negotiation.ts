@@ -49,9 +49,12 @@ export function negotiationFromMessages(messages:Array<{sender:string;body_text:
   // Native owner-message evidence describes the historical offered amount;
   // its dates and request context remain attached. It never grants current
   // price/stock authority or approval to create a booking.
-  const latestOffer=messages.filter(message=>message.sender==="owner").flatMap(message=>message.quoted_inquiries??[]).at(-1)??null;
+  const latestOptions=messages.filter(message=>message.sender==="owner"&&message.quoted_inquiries?.length).at(-1)?.quoted_inquiries??[];
+  // Multiple verified alternatives are history, not a selected price. Preserve
+  // their terms together without arbitrarily using the last option.
+  const latestOffer=latestOptions.length===1?latestOptions[0]:null;
   return {...computeNegotiationStance({latestMessage:renterMessages.at(-1)??"",priorRenterMessages:renterMessages.slice(0,-1),
-    lastPriceOfferedGbp:latestOffer?.quote.listing_quote?.total_gbp??null}),lastInquiryOffer:latestOffer};
+    lastPriceOfferedGbp:latestOffer?.quote.listing_quote?.total_gbp??null}),lastInquiryOffer:latestOffer,...(latestOptions.length>1?{lastInquiryOptions:latestOptions}:{})};
 }
 
 // Price objections require price language; another hire or a delivery request

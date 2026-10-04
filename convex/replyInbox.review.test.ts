@@ -620,3 +620,13 @@ describe('discount eligibility comes from Native evidence',()=>{
   }
  });
 });
+
+
+it('retains the latest Native alternative group without treating its last option as the selected price',()=>{
+ const scope={context_key:'booking',epoch:2,quoted_for_message_id:'request'};
+ const quote={quote_key:'a',new_inquiry:true as const,start_date:'2026-10-22',end_date:'2026-10-24',items:[{item_id:'sony',name:'Sony lens',quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:123,name:'Sony lens',quantity:1,total_gbp:50}]}};
+ const options=[{...scope,quote},{...scope,quote:{...quote,quote_key:'b',end_date:'2026-10-28',listing_quote:{total_gbp:90,lines:[{product_id:123,name:'Sony lens',quantity:1,total_gbp:90}]}}}];
+ const result=negotiationFromMessages([{sender:'owner',body_text:'Two options',quoted_inquiries:options},{sender:'renter',body_text:'Any discount?'}]);
+ expect(result).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null,lastInquiryOptions:options,objectionCount:1,stance:'HOLD_FIRM'});
+ expect(negotiationFromMessages([{sender:'owner',body_text:'Two options',quoted_inquiries:options},{sender:'owner',body_text:'Chosen exact Native offer',quoted_inquiries:[options[0]]}])).toMatchObject({lastPriceOfferedGbp:50,lastInquiryOffer:options[0]});
+});
