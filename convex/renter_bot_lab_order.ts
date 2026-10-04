@@ -341,7 +341,7 @@ export const seed = internalMutation({
  */
 /** A single read-only quote for multiple exact offerings and retained gear. */
 /** Preparation is shared by quoting and the single acceptance transaction. */
-async function prepareAdditionBasket(ctx: QueryCtx, a: {thread_id:string;items:Array<{product_id:number;qty:number}>}) {
+async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;items:Array<{product_id:number;qty:number}>;replacement?:{product_id:number;qty:number}}) {
     assertLabThread(a.thread_id);
     if(!a.items.length || a.items.length>8 || a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20))
       return {ok:false,error:"Use one to eight exact listing IDs with whole quantities from 1 to 20."};
@@ -352,6 +352,16 @@ async function prepareAdditionBasket(ctx: QueryCtx, a: {thread_id:string;items:A
     if(booking?.return_date || ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(rentalStage(booking,londonToday()).stage))
       return {ok:false,error:"This rental is closed. Arrange a new booking rather than quoting additions."};
     if(!row.start_date || !row.end_date)return {ok:false,error:"Confirm pickup and return dates before quoting additions."};
+    let retained=row.items;
+    let removed:typeof row.items=[];
+    if(a.replacement) {
+      if(booking?.pickup_date || booking?.status==="ongoing")return {ok:false,error:"Collected equipment needs owner return confirmation before a replacement quote."};
+      const selected=row.items.filter(l=>l.product_id===a.replacement!.product_id);
+      if(selected.length!==1 || !Number.isInteger(a.replacement.product_id) || a.replacement.product_id<1 || !Number.isInteger(a.replacement.qty) || a.replacement.qty<1 || a.replacement.qty>selected[0].qty)
+        return {ok:false,error:"Select an exact current listing and a valid quantity to replace."};
+      removed=[{...selected[0],qty:a.replacement.qty}];
+      retained=row.items.flatMap(l=>l!==selected[0]?[l]:l.qty>a.replacement!.qty?[{...l,qty:l.qty-a.replacement!.qty}]:[]);
+    }
     const sources=await loadStockSources(ctx);
     const catalog=await listingDisplayCatalog(ctx,row.account_slug);
     const added:OrderLine[]=[];
@@ -368,7 +378,7 @@ async function prepareAdditionBasket(ctx: QueryCtx, a: {thread_id:string;items:A
       else added.push(line);
     }
     if(added.some(l=>l.qty>20))return {ok:false,error:"The aggregate quantity per offering exceeds 20."};
-    const lines:OrderLine[]=row.items.map(l=>({...l,item_id:l.item_id?String(l.item_id):undefined}));
+    const lines:OrderLine[]=retained.map(l=>({...l,item_id:l.item_id?String(l.item_id):undefined}));
     for(const line of added) {
       const same=lines.find(l=>l.product_id===line.product_id && l.daily_price_gbp===line.daily_price_gbp && JSON.stringify(l.price_tiers??[])===JSON.stringify(line.price_tiers??[]));
       if(same)same.qty+=line.qty;
@@ -384,14 +394,25 @@ async function prepareAdditionBasket(ctx: QueryCtx, a: {thread_id:string;items:A
     return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,
       physical_identity_key:stock.physical_identity_key,
       base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
+      ...(a.replacement?{removed_items:removed.map(l=>({name:l.name,quantity:l.qty})),change_kind:"replacement" as const,price_delta_gbp:quote.total_gbp-base_quote.total_gbp}:{}),
       quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,proposed_lines:lines};
 }
 
 export const quoteAdditionBasket = query({
   args:{thread_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
   handler:async(ctx,a)=>{
-    const result = await prepareAdditionBasket(ctx,a);
+    const result = await prepareEquipmentProposal(ctx,a);
     if ("proposed_lines" in result) { const {proposed_lines: _private, ...quote} = result; return quote; }
+    return result;
+  },
+});
+
+/** Exact replacement quote uses the same pricing and joint stock preparation, never a mutation. */
+export const quoteReplacementBasket=query({
+  args:{thread_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()})),replace_product_id:v.number(),replace_quantity:v.number()},
+  handler:async(ctx,a)=>{
+    const result=await prepareEquipmentProposal(ctx,{thread_id:a.thread_id,items:a.items,replacement:{product_id:a.replace_product_id,qty:a.replace_quantity}});
+    if("proposed_lines" in result){const {proposed_lines:_private,...quote}=result;return quote;}
     return result;
   },
 });
@@ -420,8 +441,8 @@ export const applyAdditionBasket = mutation({
     const plan=await additionMountRequirements(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,items});
     if(plan.status!=="none") return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,
       error:"The selected setup is incomplete or its compatibility is unverified. Quote the complete setup and obtain agreement to its required accessories; then include every selected listing in one add_items request. No booking changes were made."};
-    const prepared=await prepareAdditionBasket(ctx,{thread_id:a.thread_id,items});
-    if(!prepared.ok || !prepared.proposed_lines || !prepared.added_items) return {...prepared,action_performed:false};
+    const prepared=await prepareEquipmentProposal(ctx,{thread_id:a.thread_id,items});
+    if(!prepared.ok || !("proposed_lines" in prepared)) return {...prepared,action_performed:false};
     if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items))
       return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected items conflict with a named renter restriction, or the restriction cannot be reconciled. No booking changes were made. Clarify the restricted item instead of ignoring it."};
     if(!await additionConsent(ctx,a.thread_id,row.account_slug,latest.body_text,prepared.quote,prepared.addition_quote,prepared.additional_cost_gbp))

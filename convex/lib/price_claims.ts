@@ -1,3 +1,4 @@
+import { bestMatch, isGenericItemQuery } from "./item_name_match";
 import { inclusiveRentalDays } from "./hygglo_pricing";
 import { claimDateScope } from "./claim_date_scope";
 import { renterItemNames } from "./renter_item_names";
@@ -13,7 +14,7 @@ export type PriceEvidence = {
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
-  proposal?: {base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number;physical_identity_key?:string};
+  proposal?: {removed_items?:Array<{name:string;quantity:number}>;base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number;physical_identity_key?:string};
   date_proposal?: import("./renter_date_proposal").DateProposalEvidence;
   call_id: string; source: string;
   required_accessory_names?: string[];
@@ -107,6 +108,16 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // "lens is £50 (£25/day) and the adapter is £20" names only the adapter
     // for £20. Never treat "day" as an unreceipted member of a combined kit.
     const segment = rawSegment.replace(/^\s*(?:(?:\/\s*day|per\s+day|a\s+day)\s*\)?|\))\s*(?:and|plus)\s+/i, "");
+    // A label attached directly to a parenthesized amount owns that amount.
+    // Resolve a shortened label only against distinct established identities;
+    // unknown model tokens and ambiguous labels must not inherit the prior item.
+    if(/\(\s*$/.test(segment) && claimedRentalDays(segment)===null) {
+      const label=segment.replace(/\(\s*$/,"").split(/\b(?:the|your|our|my|an?)\s+/i).at(-1)?.trim()??"";
+      const distinct=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
+      const match=bestMatch(label,distinct,item=>item.names[0],item=>item.names);
+      if(label && match.confident && match.match)subject=match.match.names;
+      else if(match.match && !isGenericItemQuery(label) && /^[\w\s/–.×-]+$/.test(label))subject=[norm(label)];
+    }
     const segmentDates = claimDateScope(segment, request.start_date);
     // An unchanged booking amount belongs to the current order, even when a
     // preceding paragraph discussed another item or the trailing text lists
@@ -190,7 +201,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       /^\s*(?:(?:extra|additional|more|less|off)\s*)?[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making|increasing|raising)\b/i.test(segment) &&
       /\b(?:would|could)\b/i.test(sentenceBeforeAmount) && /£/.test(sentenceBeforeAmount);
     const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
-    const proposalTotal = conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
+    const proposalTotal = explicitBookingTotal && !baselineTotal && /\b(?:would|could)\b/i.test(segment) || conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
     const componentAddition = pricedComponents.length > 1 && /^\s*(?:\/\s*day|per\s+day|a\s+day)?\s*\)?\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making)\s+(?:the\s+)?(?:addition|additions|additional cost)\s+(?:to|of)\s*$/i.test(segment);
     const group=componentAddition || proposalTotal && pricedComponents.length > 1 ? pricedComponents : quotedGroup(pos);
@@ -226,12 +237,31 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
           return a.length===b.length && a.every(c=>{const index=remaining.findIndex(i=>same(c.names,[i.name])&&c.quantity===i.quantity);if(index<0)return false;remaining.splice(index,1);return true;});
         };
         if (e.proposal) {
+          if(e.proposal.removed_items?.length) {
+            const proposed=requestedItems.map(i=>({...i}));
+            for(const removed of e.proposal.removed_items) {
+              const index=proposed.findIndex(i=>same(i.names,[removed.name]));
+              if(index<0 || !Number.isInteger(removed.quantity) || removed.quantity<1 || removed.quantity>proposed[index].quantity)return false;
+              proposed[index].quantity-=removed.quantity;
+              if(!proposed[index].quantity)proposed.splice(index,1);
+            }
+            for(const added of e.proposal.added_items) {
+              const existing=proposed.find(i=>same(i.names,[added.name]));
+              if(existing)existing.quantity+=added.quantity;else proposed.push({names:[added.name],quantity:added.quantity});
+            }
+            if(!e.items || !membersMatch(proposed,e.items))return false;
+          }
           // A proposal never certifies an already-applied total or an unrelated basket.
           if ((!proposalTotal && !componentAddition && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
           if(e.proposal.added_items.length>1) {
             if(!membersMatch(pairedItems??group,e.proposal.added_items) || !proposalTotal && !e.proposal.added_items.some(i=>same(subject,[i.name])))return false;
-          } else if (!same(subject,[e.proposal.added_items[0].name]) ||
-              (declaredQuantity??subjectQuantity??1)!==e.proposal.added_items[0].quantity) return false;
+          } else {
+            const added=e.proposal.added_items[0];
+            if(!added)return false;
+            const directlyNamed=same(subject,[added.name]) && (declaredQuantity??subjectQuantity??1)===added.quantity;
+            const previouslyQuoted=pricedComponents.some(c=>same(c.names,[added.name]) && c.quantity===added.quantity);
+            if(e.proposal.removed_items?.length && proposalTotal ? !directlyNamed && !previouslyQuoted : !directlyNamed)return false;
+          }
         }
         const claimed=pairedItems??(groupAddition ? group : e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
         if(!claimed.length || !e.items?.length || e.items.length!==claimed.length || !claimed.every(c=>e.items!.some(i=>same(c.names,[i.name])&&c.quantity===i.quantity)))return false;

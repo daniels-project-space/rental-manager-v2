@@ -36,7 +36,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
       if(a.quote && typeof a.quote==="object") quote(a.quote as Record<string,unknown>,names,`${call_id}:${a.name}`,a.daily_price_gbp);
       else if(number(a.daily_price_gbp)) quote({daily_rate_gbp:a.daily_price_gbp,listed_total_gbp:a.daily_price_gbp,days:1,quantity:1,source:"owned_listing_one_day"},names,`${call_id}:${a.name}`,a.daily_price_gbp);
     }
-    if (tool === "quote_booking_addition" && !!threadId && r.thread_id===threadId && r.preview_only===true && r.source==="native_lab_proposal" && r.quote && typeof r.quote==="object") {
+    if (["quote_booking_addition","quote_booking_replacement"].includes(tool) && !!threadId && r.thread_id===threadId && r.preview_only===true && r.source==="native_lab_proposal" && r.quote && typeof r.quote==="object") {
       const q=r.quote as Record<string,unknown>;
       const validMembers=(a:unknown):a is Array<{name:string;quantity:number}>=>Array.isArray(a)&&a.length>0&&a.every(i=>i&&typeof i==="object"&&string(i.name)&&number(i.quantity)&&Number.isInteger(i.quantity));
       if (validMembers(r.base_items)&&validMembers(r.added_items)&&r.added_items.length<=8&&Array.isArray(q.lines)&&q.lines.length>0&&number(q.total_gbp)&&number(q.days)&&string(q.start_date)&&string(q.end_date)&&q.lines.every(l=>l&&typeof l==="object"&&string(l.name)&&number(l.qty)&&Number.isInteger(l.qty)&&number(l.line_total_gbp))) {
@@ -45,12 +45,26 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
           for(const row of rows) {const key=row.name.trim().toLowerCase();totals.set(key,(totals.get(key)??0)+row.quantity);}
           return totals;
         };
-        const expected=members([...r.base_items,...r.added_items]);
+        const replacement=tool==="quote_booking_replacement";
+        if(replacement && (r.change_kind!=="replacement" || !validMembers(r.removed_items)))continue;
+        if(!replacement && r.removed_items!=null)continue;
+        const expected=members([...r.base_items]);
+        if(replacement) {
+          let invalid=false;
+          for(const removed of r.removed_items as Array<{name:string;quantity:number}>) {
+            const key=removed.name.trim().toLowerCase(),current=expected.get(key);
+            if(current==null || removed.quantity>current){invalid=true;break;}
+            if(current===removed.quantity)expected.delete(key);else expected.set(key,current-removed.quantity);
+          }
+          if(invalid)continue;
+        }
+        for(const added of r.added_items){const key=added.name.trim().toLowerCase();expected.set(key,(expected.get(key)??0)+added.quantity);}
         const actual=members(q.lines.map(l=>({name:l.name,quantity:l.qty})));
         if(inclusiveRentalDays(string(q.start_date),string(q.end_date))!==q.days ||
           expected.size!==actual.size || [...expected].some(([name,qty])=>actual.get(name)!==qty) ||
           Math.abs(q.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(q.total_gbp as number))>0.011) continue;
         const proposal: NonNullable<PriceEvidence["proposal"]> = {base_items:r.base_items,added_items:r.added_items,
+          ...(replacement?{removed_items:r.removed_items as Array<{name:string;quantity:number}>}:{}),
           ...(string(r.physical_identity_key)?{physical_identity_key:r.physical_identity_key as string}:{})};
         out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal,total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
         // Keep the native per-line quote as well as the proposed grand total.
@@ -83,7 +97,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
           return actual.size===required.size && [...required].every(([name,qty])=>actual.get(name)===qty) &&
             Math.abs(part.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(part.total_gbp as number))<0.011;
         };
-        if (validPart(baseQuote,r.base_items) && validPart(additionQuote,r.added_items) &&
+        if (!replacement && validPart(baseQuote,r.base_items) && validPart(additionQuote,r.added_items) &&
           number(r.additional_cost_gbp) &&
           Math.abs((q.total_gbp as number)-(baseQuote!.total_gbp as number)-(additionQuote!.total_gbp as number))<0.011 &&
           Math.abs((r.additional_cost_gbp as number)-(additionQuote!.total_gbp as number))<0.011) {

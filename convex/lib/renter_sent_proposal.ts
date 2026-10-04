@@ -29,7 +29,7 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
     const selections = price.proposal?.added_listings;
     const additional = price.proposal?.additional_cost_gbp;
     if (price.source !== "native_lab_proposal" || price.kind !== "basket" || price.quote_role ||
-      !selections?.length || selections.length > 8 ||
+      price.proposal?.removed_items?.length || !selections?.length || selections.length > 8 ||
       selections.some(i => !Number.isInteger(i.product_id) || i.product_id < 1 || !Number.isInteger(i.quantity) || i.quantity < 1 || i.quantity > 20) ||
       !price.start_date || !price.end_date || !Number.isFinite(price.total_gbp) || (price.total_gbp ?? 0) <= 0 ||
       !Number.isFinite(additional) || (additional ?? 0) <= 0 || additional! > price.total_gbp! ||

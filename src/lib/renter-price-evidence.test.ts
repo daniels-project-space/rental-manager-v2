@@ -213,3 +213,15 @@ describe("complete multi-item Native addition quotes",()=>{
   expect(unsupportedPriceClaims(claim.replace("Adding both would be","Adding both is").replace("which would bring your total booking to","bringing your total to"),proof(),scope)).not.toEqual([]);
  });
 });
+
+it("validates replacement membership before emitting a complete basket receipt",()=>{
+ const old={name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",quantity:1},next={name:"Sony GM 16-35mm f2.8",quantity:1};
+ const native={ok:true,preview_only:true,source:"native_lab_proposal",change_kind:"replacement",thread_id:"__probe__swap",base_items:[old],removed_items:[old],added_items:[next],quote:{days:2,start_date:"2026-10-20",end_date:"2026-10-21",total_gbp:40,lines:[{name:next.name,qty:1,product_id:1115113,daily_price_gbp:20,effective_rate_gbp:20,line_total_gbp:40}]}};
+ const adapt=(r:Record<string,unknown>,thread=native.thread_id)=>renterPriceEvidence([receipt("quote_booking_replacement",r)],[],thread);
+ const got=adapt(native);
+ expect(got[0]).toMatchObject({kind:"basket",total_gbp:40,proposal:{base_items:[old],removed_items:[old],added_items:[next]}});
+ expect(got[1]).toMatchObject({kind:"rental",total_gbp:40});
+ for(const changed of [{...native,removed_items:undefined},{...native,removed_items:[{...old,quantity:2}]},{...native,removed_items:[{name:"Sony FX3",quantity:1}]},{...native,change_kind:"addition"},{...native,quote:{...native.quote,total_gbp:42}},{...native,quote:{...native.quote,lines:[{...native.quote.lines[0],qty:2}]}}])expect(adapt(changed)).toEqual([]);
+ expect(adapt(native,"__probe__other")).toEqual([]);
+ expect(renterPriceEvidence([receipt("quote_booking_addition",native)],[],native.thread_id)).toEqual([]);
+});

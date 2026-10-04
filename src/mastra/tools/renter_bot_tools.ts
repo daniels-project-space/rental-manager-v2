@@ -453,6 +453,26 @@ export const quoteBookingAdditionTool = createTool({
   },
 });
 
+export const quoteBookingReplacementTool=createTool({
+ id:"quote_booking_replacement",
+ description:"Read-only Lab quote for replacing exact current listing units with selected offerings. Returns the complete retained-plus-replacement basket, joint component stock, dates, total and price difference. Use before quoting a replacement booking total; an alternative item quote alone cannot prove that total. Supply exact listing IDs from Native tools. No booking is changed. Collected rentals and real bookings require owner review.",
+ inputSchema:z.object({thread_id:z.string(),items:z.array(z.object({product_id:z.number().int().positive(),qty:z.number().int().min(1).max(20)})).min(1).max(8),replace_product_id:z.number().int().positive(),replace_quantity:z.number().int().min(1).max(20)}),
+ outputSchema:z.unknown(),
+ execute:async(input)=>{
+   const scope=currentRenterToolScope();
+   if(!scope?.threadId.startsWith("__probe__"))return {ok:false,error:"Real replacement quotes require owner review and separate rollout consent."};
+   const client=convex();
+   const order=await client.query(anyApi.renter_bot_lab_order.get,{thread_id:scope.threadId}) as {days?:number};
+   try {
+     const complete=await completeMountBasket(scope,input.items,order?.days,
+       args=>client.query(anyApi.renter_bot_tools.get_addition_mount_requirements,args),
+       args=>client.query(anyApi.renter_bot_tools.lookup_pricing,args),
+       args=>client.query(anyApi.renter_bot_lab_order.quoteReplacementBasket,{...args,replace_product_id:input.replace_product_id,replace_quantity:input.replace_quantity}));
+     return {...(complete.proposal as Record<string,unknown>),required_accessory_names:complete.required.map(i=>i.name),required_accessory_quotes:complete.accessoryPrices,renter_supplied_adapters:complete.renterSupplied};
+   }catch{return {ok:false,error:"The complete replacement setup quote is unverified. No booking changes were made."};}
+ },
+});
+
 export const quoteBookingDatesTool=createTool({
  id:"quote_booking_dates",
  description:"Read-only Native Lab quote for changing the dates of the COMPLETE current booking. Check the full pickup/return span, duration tiers and every physical kit component before offering the new full total. This never changes or reserves anything. Quote the exact dates and quote.total_gbp (not merely an extra day's base rate); price_delta_gbp is the difference from the current total. Say would change, never changed. After the renter agrees to that unchanged offer, use modify_booking set_dates without asking them to agree again.",
@@ -514,6 +534,7 @@ export const modifyBookingTool = createTool({
 
 export const RENTER_BOT_TOOLS = {
   find_owned_alternatives: findOwnedAlternativesTool,
+  quote_booking_replacement:quoteBookingReplacementTool,
   check_location: checkLocationTool,
   get_order_edit_state: getOrderEditStateTool,
   modify_booking: modifyBookingTool,

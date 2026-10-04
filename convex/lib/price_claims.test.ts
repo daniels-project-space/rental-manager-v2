@@ -296,3 +296,27 @@ describe("prices in compatibility relative clauses",()=>{
   expect(check(text,receipts.slice(0,1),scope)).not.toEqual([]);
  });
 });
+
+describe("replacement quote identity and full basket scope",()=>{
+ const old="TTArtisan 11mm f2.8 Fisheye (Sony E)",next="Sony GM 16-35mm f2.8";
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:old,quantity:1}]};
+ const lines:PriceEvidence[]=[{names:[old],kind:"rental",days:2,quantity:1,total_gbp:42,daily_rate_gbp:21,call_id:"old",source:"lab_order_quote"},{names:[next],kind:"rental",days:2,quantity:1,total_gbp:40,daily_rate_gbp:20,call_id:"alternative",source:"hygglo_tier"}];
+ const proposal:PriceEvidence={names:[],kind:"basket",days:2,total_gbp:40,call_id:"native-replacement",source:"native_lab_proposal",items:[{name:next,quantity:1}],proposal:{base_items:scope.items,removed_items:scope.items,added_items:[{name:next,quantity:1}]}};
+ const text="Sony GM 16-35mm f2.8 is £40 for the 2 days (£20/day). If you'd like to swap out the TTArtisan (£42), the updated booking total would be £40.";
+ it("requires a complete replacement receipt instead of deriving the booking total from an item price",()=>{
+  expect(unsupportedPriceClaims(text,[...lines,proposal],scope)).toEqual([]);
+  expect(unsupportedPriceClaims("Swapping the TTArtisan for Sony GM 16-35mm f2.8 would bring your booking total to £40.",[...lines,proposal],scope)).toEqual([]);
+  const failure=unsupportedPriceClaims(text,lines,scope);
+  expect(failure).toHaveLength(1);
+  expect(failure[0]).toContain("£40");
+ });
+ it("rejects unknown and ambiguous parenthesized models rather than borrowing the prior offer",()=>{
+  expect(unsupportedPriceClaims(text.replace("the TTArtisan (","the TTArtisan 50mm ("),[...lines,proposal],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(text,[...lines,{...lines[0],names:["TTArtisan 50mm f2"],call_id:"another-tt"},proposal],scope)).not.toEqual([]);
+  expect(unsupportedPriceClaims(text.replace("TTArtisan (£42)","TTArtisan (£40)"),[...lines,proposal],scope)).not.toEqual([]);
+ });
+ it("keeps exact basket members, base context, dates and quantities binding",()=>{
+  for(const changed of [{...proposal,total_gbp:41},{...proposal,start_date:"2026-10-22"},{...proposal,items:[{name:old,quantity:1}]},{...proposal,proposal:{...proposal.proposal!,base_items:[{name:"Sony FX3",quantity:1}]}},{...proposal,proposal:{...proposal.proposal!,added_items:[{name:next,quantity:2}]}}])
+   expect(unsupportedPriceClaims(text,[...lines,changed],scope)).not.toEqual([]);
+ });
+});
