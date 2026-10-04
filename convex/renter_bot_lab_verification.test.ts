@@ -31,6 +31,7 @@ function setup() {
  Object.assign(f.tables.renter_bot_lab_bookings[0],{pickup_date:undefined,status:"pending_review",order_step:"VERIFIED",start_date:"2099-10-06",end_date:"2099-10-07"});
  Object.assign(f.tables.renter_bot_lab_orders[0],{start_date:"2099-10-06",end_date:"2099-10-07"});
  f.tables.renter_bot_lab_orders.push({_id:"friend",thread_id:"__probe__friend",account_slug:"leo",items:[],changes:[]});
+ f.tables.hygglo_messages=[{thread_id:"__probe__friend",message_id:"friend-inbound",sender:"renter",body_text:`My friend sent me referral ${code}. Please restore the same basket.`,hygglo_sent_at:1}];
  f.tables.conversations=[{_id:"friend-conv",thread_id:"__probe__friend",inquiry_items:[]}];
  f.tables.online_listings=[{account_slug:"leo",product_id:1,name:"Sony FX3",daily_price:55}];
  f.tables.hygglo_product_index=[{account_slug:"leo",product_id:1,item_id:"camera"}];
@@ -42,8 +43,8 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
   const f=setup(); expect(await fail(f.ctx)).toMatchObject({ok:true,already_applied:false});
   expect(f.tables.renter_bot_lab_bookings[0]).toMatchObject({status:"cancelled",order_step:"VERIFICATION_FAILED"});
   expect(await fail(f.ctx)).toMatchObject({already_applied:true});
-  expect(f.tables.hygglo_messages).toHaveLength(1);expect(f.tables.renter_bot_lab_referrals).toHaveLength(1);
-  expect(f.tables.hygglo_messages[0].body_text).toContain("approval isn't guaranteed");
+  expect(f.tables.hygglo_messages.filter(m=>m.thread_id==="__probe__atomic")).toHaveLength(1);expect(f.tables.renter_bot_lab_referrals).toHaveLength(1);
+  expect(f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__atomic").body_text).toContain("approval isn't guaranteed");
   expect(f.tables.renter_bot_lab_orders[0].items).toHaveLength(1);
  });
  it("rejects real threads and stages other than awaiting verification without changes",async()=>{
@@ -61,6 +62,48 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
   expect(f.tables.renter_bot_lab_orders[1].items[0]).toMatchObject({item_id:"camera",qty:1,daily_price_gbp:55});
   expect(f.tables.renter_bot_lab_bookings).toHaveLength(1);
   expect(await redeem(f.ctx)).toMatchObject({ok:true,already_applied:true});expect(f.tables.renter_bot_lab_orders[1].items).toHaveLength(1);
+ });
+ it("preserves a friend's own dates and reprices the whole restored duration",async()=>{
+  const f=setup();await fail(f.ctx);
+  Object.assign(f.tables.renter_bot_lab_orders[1],{start_date:"2099-10-08",end_date:"2099-10-10"});
+  const result=await redeem(f.ctx);expect(result).toMatchObject({ok:true,order:{start_date:"2099-10-08",end_date:"2099-10-10",total_gbp:165}});
+  expect(result.stock_receipts.every((r:any)=>r.start_date==="2099-10-08"&&r.end_date==="2099-10-10")).toBe(true);
+  expect(f.tables.renter_bot_lab_orders[0]).toMatchObject({start_date:"2099-10-06",end_date:"2099-10-07"});
+ });
+ it("checks stock for the friend's dates rather than the available original dates",async()=>{
+  const f=setup();await fail(f.ctx);
+  Object.assign(f.tables.renter_bot_lab_orders[1],{start_date:"2099-10-08",end_date:"2099-10-10"});
+  f.tables.vacation_periods=[{is_active:true,start_date:"2099-10-08",end_date:"2099-10-10"}];
+  const before=structuredClone(f.tables);const result=await redeem(f.ctx);expect(result).toMatchObject({ok:false});
+  expect(result.stock_receipts).toEqual(expect.arrayContaining([expect.objectContaining({available:false,start_date:"2099-10-08",end_date:"2099-10-10"})]));expect(f.tables).toEqual(before);
+ });
+ it("can restore gear for the friend's future trip after the original dates have passed",async()=>{
+  const f=setup();await fail(f.ctx);
+  Object.assign(f.tables.renter_bot_lab_orders[0],{start_date:"2020-10-06",end_date:"2020-10-07"});
+  Object.assign(f.tables.renter_bot_lab_orders[1],{start_date:"2099-10-08",end_date:"2099-10-10"});
+  expect(await redeem(f.ctx)).toMatchObject({ok:true,order:{total_gbp:165}});
+ });
+ it("holds incomplete, invalid, reversed or past friend dates without consumption or changes",async()=>{
+  for(const dates of [{start_date:"2099-10-08"},{end_date:"2099-10-10"},{start_date:"2099-02-30",end_date:"2099-03-01"},{start_date:"2099-10-10",end_date:"2099-10-08"},{start_date:"2020-10-08",end_date:"2020-10-10"}]){
+   const f=setup();await fail(f.ctx);Object.assign(f.tables.renter_bot_lab_orders[1],dates);const before=structuredClone(f.tables);
+   expect(await redeem(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(before);
+  }
+ });
+ it("previews without changing either request, consuming the code or claiming restoration",async()=>{
+  const f=setup();await fail(f.ctx);const inbound=f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__friend");
+  inbound.body_text=`My friend sent me referral ${code}, but do not add their gear or change my basket. Quote only.`;
+  const before=structuredClone(f.tables);
+  const preview=await (redeemReferral as any)._handler(f.ctx,{thread_id:"__probe__friend",code,preview_only:true});
+  expect(preview).toMatchObject({ok:true,preview_only:true,action_performed:false,order:{total_gbp:110}});expect(preview.message).toContain("basket preview");expect(preview.message).not.toContain("I've restored");expect(f.tables).toEqual(before);
+  expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_restore_not_authorized"});expect(f.tables).toEqual(before);
+  inbound.body_text=`My friend sent me referral ${code}. Please restore the same basket.`;
+  expect(await redeem(f.ctx)).toMatchObject({ok:true,already_applied:false});
+ });
+ it("holds native restoration without a current renter instruction, including after an owner preview",async()=>{
+  for(const sender of ["owner",null]){const f=setup();await fail(f.ctx);
+   const inbound=f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__friend");if(sender)inbound.sender=sender;else f.tables.hygglo_messages=f.tables.hygglo_messages.filter(m=>m!==inbound);
+   const before=structuredClone(f.tables);expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_restore_not_authorized"});expect(f.tables).toEqual(before);
+  }
  });
  it("does not link a stranger or a used, expired or wrong-account referral",async()=>{
   const f=setup();await fail(f.ctx);const before=structuredClone(f.tables);expect(await redeem(f.ctx,"Sam sent me")).toMatchObject({ok:false});expect(f.tables).toEqual(before);

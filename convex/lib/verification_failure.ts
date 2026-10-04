@@ -11,6 +11,7 @@ export function friendReferralFromMessage(text: string): string | null {
   return codes.length === 1 ? codes[0].toLowerCase() : null;
 }
 
-export function friendBasketReply(order: { start_date: string | null; end_date: string | null; total_gbp: number | null; lines: { name: string; qty: number }[] }) {
-  return `Your friend's basket referral was recognised. I've restored the basket for your own new request after checking current prices and availability for ${order.start_date} to ${order.end_date}.\n\nBasket:\n${order.lines.map(line => `${line.qty}× ${line.name}`).join("\n")}\n\nCurrent rental total: £${order.total_gbp}. This is a new request, not a confirmed booking. Please book from your own account and complete the platform's approval, payment and verification steps. Previous approval, payment and verification don't transfer, even if your account was verified before.`;
+export function friendBasketReply(order: { start_date: string | null; end_date: string | null; total_gbp: number | null; lines: { name: string; qty: number }[] }, preview=false) {
+  const action=preview ? "Here is the basket preview with current prices and availability" : "I've restored the basket for your own new request after checking current prices and availability";
+  return `Your friend's basket referral was recognised. ${action} for ${order.start_date} to ${order.end_date}.${preview?" No items or dates were added or changed, and the referral hasn't been used.":""}\n\nBasket:\n${order.lines.map(line => `${line.qty}× ${line.name}`).join("\n")}\n\nCurrent rental total: £${order.total_gbp}. This is a new request, not a confirmed booking. Please book from your own account and complete the platform's approval, payment and verification steps. Previous approval, payment and verification don't transfer, even if your account was verified before.`;
 }

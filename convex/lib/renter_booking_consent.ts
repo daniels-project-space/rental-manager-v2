@@ -3,7 +3,10 @@ import { bestMatch } from "./item_name_match";
 /** Explicit renter restrictions, read from the server's current message.
  * This is a deny gate, not a substitute for action/target reconciliation. */
 export function renterRequestsReadOnly(text: string, action: "add_item" | "remove_item" | "set_dates") {
-  const message=text.replace(/[’‘]/g,"'").replace(/\s+/g," ").trim();
+  const message=text.replace(/[’‘]/g,"'").replace(/\s+/g," ").trim()
+    // "Do not add gear or change my basket" scopes the same prohibition over
+    // both verbs. Expand that coordination before the shared action checks.
+    .replace(/\b(do not|don't|dont|never)\s+([^.!?;]+?)\s+(?:or|nor)\s+(?=(?:change|edit|modify|amend|update|touch|add|include|book|reserve|remove|drop|move|extend)\b)/gi,"$1 $2 or $1 ");
   if (/\b(?:(?:quote|quotation|estimate|pricing)\s+only|only\s+(?:an?\s+)?(?:quote|quotation|estimate)|just\s+(?:an?\s+)?(?:quote|quotation|estimate)|(?:quote|price)\s+(?:it|this|that|the gear)\s+(?:for now|first))\b/i.test(message)) return true;
   const no=/\b(?:do not|don't|dont|please don't|never)\s+(?:(?:actually|yet|just)\s+)?(?:change|edit|modify|amend|update|touch)\s+(?:(?:my|the|this|our|any|your)\s+)?(?:booking|order|basket|rental|anything|items?|gear)\b/i;
   if(/\b(?:(?:do not|don't|dont)\s+make\s+(?:any\s+)?changes|without\s+making\s+(?:any\s+)?changes|leave\s+(?:my|the|our)\s+(?:booking|order)\s+unchanged)\b/i.test(message))return true;

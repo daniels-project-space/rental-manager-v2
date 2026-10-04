@@ -1,6 +1,11 @@
 import {describe,it,expect} from "vitest";
 import {renterRequestsReadOnly,renterProhibitsItemChange} from "./renter_booking_consent";
 const actions=["add_item","remove_item","set_dates"] as const;
+it("keeps a coordinated prohibition across verbs without changing a separate affirmative clause",()=>{
+ expect(renterRequestsReadOnly("Do not add their gear or change my basket.","add_item")).toBe(true);
+ expect(renterRequestsReadOnly("Don't remove it or add anything.","add_item")).toBe(true);
+ expect(renterRequestsReadOnly("Don't remove anything; please add the lens.","add_item")).toBe(false);
+});
 describe("server message restrictions",()=>{
  it("keeps quote-only and no-booking-change messages read-only for every edit",()=>{
   for(const text of ["Quote only, do not change my booking.","Just a quote please.","Only an estimate please.","Don't edit anything yet.","Please quote it first.","No booking changes.","Don’t make any changes to my booking.","Please price it without making any changes.","Leave my booking unchanged.","Can you add the lens? Quote only for now."])
