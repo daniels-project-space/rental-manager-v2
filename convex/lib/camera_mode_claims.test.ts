@@ -37,6 +37,21 @@ describe("recording mode claims use exact model and capture area", () => {
       expect(unsupportedCameraModeClaims(text, evidence)).toEqual([]);
     }
   });
+  it("preserves the actual canonical requirement-review reply without attesting its mode", () => {
+    const reply = "Hi! The Canon R5 kit isn't available for 20–21 October. For a Sony E-mount full-frame camera recording uncropped internal DCI 4K at 60fps, I'm checking the exact recording specs across my bodies (like the Sony FX3, A7 V, and A7 III) to ensure I match your exact requirements before confirming the option and quoting the 2-day price.";
+    expect(unsupportedCameraModeClaims(reply, evidence)).toEqual([]);
+    const result = guardDraft(reply, { history: [], lastRenterMessage: "I need uncropped internal DCI 4K60fps", cameraEvidence: evidence });
+    expect(result.flags.filter(f => f.type === "CAMERA_MODE_HALLUCINATION")).toEqual([]);
+    expect(unsupportedCameraModeClaims("I'm checking whether Sony FX3 records uncropped DCI 4K60fps.", evidence)).toEqual([]);
+  });
+  it("does not let a later review predicate excuse a body assertion or separate promise", () => {
+    for (const text of [
+      "For Sony FX3 recording uncropped DCI 4K60fps, I'm checking the price.",
+      "For a camera that records uncropped DCI 4K60fps, I can offer Sony FX3.",
+      "For a camera recording uncropped DCI 4K60fps, I'm checking the specs, but Sony FX3 records uncropped DCI 4K60fps.",
+      "For a camera recording uncropped DCI 4K60fps, I'm checking the specs. Sony FX3 records uncropped DCI 4K60fps.",
+    ]) expect(unsupportedCameraModeClaims(text, evidence).length).toBeGreaterThan(0);
+  });
   it("preserves the actual live cropped-mode explanations and lower-FPS compromise", () => {
     for (const text of [
       "Sony A7 V won't meet that requirement—internal 4K at 120fps requires APS-C / Super 35 mode (its full-frame 4K tops out at 60fps).",

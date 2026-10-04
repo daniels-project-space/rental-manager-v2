@@ -40,7 +40,17 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       const independentAssertion = clauseNamed.length > 0 || explicitCameraModel.test(clause) ||
         /\b(?:records?|shoots?|supports?|achieves?|can|does|is|has|offers?|tops\s*out|requires?)\b/i.test(clause.slice(0, match.index! - start));
       const polarityScope = start > 0 && sentence[start - 1] === "," && !independentAssertion ? sentence.slice(0, end) : clause;
-      if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check)\b|^\s*(?:none of|neither\b)/i.test(polarityScope) || /\byou\s+(?:want|need|require|prefer)\b/i.test(polarityScope)) continue;
+      // A fronted request phrase has its governing predicate AFTER the comma:
+      // "For a camera recording ..., I'm checking the recording specs." It
+      // describes the search target, not a verified capability. Only carry that
+      // predicate back to the request phrase; never to a named-body assertion
+      // or a later independent promise in the same sentence.
+      const reviewTarget = start === 0 && !clauseNamed.length && !explicitCameraModel.test(clause) &&
+        /^\s*(?:for|regarding|about)\b/i.test(clause) &&
+        !/\b(?:records?|shoots?|supports?|achieves?|can|does|is|has|offers?)\b/i.test(clause) &&
+        /^\s*,\s*I(?:['’]m| am|['’]ll| will)\s+(?:checking|check|verifying|verify|confirming|confirm)\b/i.test(sentence.slice(end));
+      if (reviewTarget) continue;
+      if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check(?:ing|ed)?)\b|^\s*(?:none of|neither\b)/i.test(polarityScope) || /\byou\s+(?:want|need|require|prefer)\b/i.test(polarityScope)) continue;
       const nominalFps = fps === 119 ? 120 : fps === 59 ? 60 : fps === 29 ? 30 : fps === 23 ? 24 : fps;
       const hasApsc = /\b(?:aps.c|super\s*35)\b/i.test(clause) &&
         !/\b(?:without|not|no|rather than|instead of)\b[^,;]{0,30}\b(?:aps.c|super\s*35)\b|\b(?:aps.c|super\s*35)(?:\s*\/\s*S35)?\s+(?:shooting|mode)\s+(?:is\s+)?off\b/i.test(clause);
