@@ -190,7 +190,9 @@ describe("copied bot replies use current Native stock before send",()=>{
   const f=await stockDraft();
   for(const result of [{ok:false,reason:"stock_unverified"},{ok:false,reason:"price_unverified"},{ok:false,reason:"technical_requirements_unverified"},{ok:true}]) {
    const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockResolvedValueOnce(result)};
-   expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,draft_approval:f.approval.draft_approval,dryRun:true})).toMatchObject(result.ok?{status:"sent",reason:"DRY_RUN"}:{status:"failed",reason:result.reason});
+   const sent=await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,draft_approval:f.approval.draft_approval,dryRun:true});
+   expect(sent).toMatchObject(result.ok?{status:"sent",reason:"DRY_RUN"}:{status:"failed",reason:result.reason});
+   if(result.reason==="price_unverified")expect(sent.error).toContain("price");
    expect(ctx.runQuery).toHaveBeenCalledTimes(2);
   }
   const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockRejectedValueOnce(new Error("Native check unavailable"))};

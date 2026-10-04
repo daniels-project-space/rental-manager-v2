@@ -1146,11 +1146,13 @@ export const sendRenterReply = action({
         const stock = await ctx.runQuery(internal.replyInbox.recheckCopiedDraftStock,{thread_id,account_slug,text:body,draft_approval:approvalContext.draft_approval});
         if (!stock.ok) return {status:"failed",reason:stock.reason,error:stock.reason === "stale_draft"
           ? "This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."
+          : stock.reason === "price_unverified"
+          ? "The quoted price no longer matches the current listing rates. Generate a fresh draft before sending this quote."
           : stock.reason === "technical_requirements_unverified"
           ? "The recommended equipment no longer has verified specifications for the requirements in this draft. Generate a fresh draft, or clear the copied draft and review the equipment yourself."
-          : "Availability in this reply could not be verified against current stock. Review it and redraft, or remove the availability claim before sending."};
+          : "The quoted equipment or availability no longer matches current inventory. Generate a fresh draft, or clear the copied draft and review the gear before sending."};
       } catch {
-        return {status:"failed",reason:"stock_recheck_failed",error:"Current stock could not be checked. Your reply has been kept; try again before sending."};
+        return {status:"failed",reason:"stock_recheck_failed",error:"Current quote and stock could not be checked. Your reply has been kept; try again before sending."};
       }
     }
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
