@@ -30,6 +30,7 @@ describe("named Native stock in an empty inquiry",()=>{
   const text="Hey! I've checked the gear from your friend's referral for 22–23 October, and it is available. Here's the quote:";
   const scope=stockRequestForInquiryQuote({items:[]},[quote]);
   expect(unsupportedStockClaims(text,[lens],scope)).toEqual([]);
+  expect(unsupportedStockClaims("I checked the gear, and it's available.",[lens],scope)).toEqual([]);
   expect(unsupportedStockClaims("The gear from the earlier conversation is available.",[lens],scope)).toEqual([]);
   for(const failed of [{items:[]},stockRequestForInquiryQuote({items:[]},[quote,quote])])expect(unsupportedStockClaims(text,[lens],failed)).not.toEqual([]);
   expect(stockRequestForInquiryQuote(request,[quote])).toBe(request);

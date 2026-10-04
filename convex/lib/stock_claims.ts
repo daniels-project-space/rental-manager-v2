@@ -51,7 +51,7 @@ export function rentalOfferAssertion(clause:string) {
   return /^\s*(?:(?:but|however|whereas|while)\s+)?(?:I|we)\s+(?:can|could|am able to|are able to)\s+(?:offer|supply|provide)\s+(.+?)\s*[.!]?$/i.exec(clause);
 }
 function subjectOf(prefix: string) {
-  let s = prefix.trim().replace(/^(?:and|but|however|whereas|while|so|therefore)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
+  let s = prefix.trim().replace(/^(?:and|but|however|whereas|while|so|therefore)(?:\s+|$)/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
   s = s.replace(/^(?:exact|specific|particular|requested|selected)\s+/i, "");
   const ordinal = /^(second|third|fourth|2nd|3rd|4th)\s+/i.exec(s);
