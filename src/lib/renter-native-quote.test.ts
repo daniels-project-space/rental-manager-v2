@@ -57,6 +57,24 @@ describe("Native inquiry quote rendering",()=>{
   expect(renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,next)],next).ok).toBe(true);
   expect(renderNativeQuoteReply(parts(quote.quote_key),[receipt()],next).ok).toBe(false);
  });
+ it("renders an atomic inquiry write through the existing quote, stock and price evidence path",()=>{
+  const next={...scope,queryRevision:()=>2},quote=nativeInquiryQuote(fixtures.first,next)!;
+  const result={ok:true,action_performed:true,source:"native_lab_amendment",context_transition:{source:"native_lab_amendment"},stock_receipts:fixtures.first.components,verified_inquiry_quote:{...fixtures.first,renter_quote:quote}};
+  const receipts=renterToolReceipts([{toolName:"restore_referral_basket",toolCallId:"restore-once",result}]);
+  const rendered=renderNativeQuoteReply(parts(quote.quote_key),receipts,next);
+  expect(rendered.ok).toBe(true);expect(stockReceipts(receipts)).toHaveLength(fixtures.first.components.length);
+  expect(renterPriceEvidence(receipts,[],scope.threadId)).toContainEqual(expect.objectContaining({source:"native_inquiry_basket",quote_role:"inquiry",total_gbp:138}));
+  if(rendered.ok)expect(unsupportedPriceClaims(rendered.draft,renterPriceEvidence(receipts,[],scope.threadId),{items:[]})).toEqual([]);
+  expect(renderNativeQuoteReply(parts(nativeInquiryQuote(fixtures.first,scope)!.quote_key),receipts,next).ok).toBe(false);
+  for(const changed of [{...result,ok:false},{...result,action_performed:false},{...result,context_transition:{source:"unverified"}}]){
+   const invalid=renterToolReceipts([{toolName:"restore_referral_basket",toolCallId:"invalid",result:changed}]);
+   expect(renderNativeQuoteReply(parts(quote.quote_key),invalid,next).ok).toBe(false);
+  }
+  const failed=renterToolReceipts([{toolName:"restore_referral_basket",toolCallId:"failed",result:{ok:false,error:"Stock unavailable",action_performed:false,stock_receipts:fixtures.first.components.map(c=>({...c,available:false}))}}]);
+  expect(stockReceipts(failed)).toHaveLength(fixtures.first.components.length);
+  expect(stockReceipts(failed).every(r=>r.result.available===false)).toBe(true);
+  expect(renterPriceEvidence(failed,[],scope.threadId)).toEqual([]);
+ });
  it("does not issue a descriptor for inconsistent physical identities, quantities, prices or dates",()=>{
   const wrongName=clone();wrongName.quote.lines[0].name="Sony FX30";
   const price=clone();price.quote.lines[0].line_total_gbp=97;

@@ -32,6 +32,13 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
     if (typeof payload.toolName === "string" && output && typeof output === "object" && !Array.isArray(output) && !handledOutputs.has(output)) {
       handledOutputs.add(output);
       const result = output as Record<string, unknown>;
+      // An atomic inquiry write carries the same Native basket receipt as a
+      // read-only quote. Harvest it once through the shared quote/stock path.
+      const inquiryReceipt=result.ok===true && result.action_performed===true && result.source==="native_lab_amendment" &&
+        result.context_transition && typeof result.context_transition==="object" &&
+        (result.context_transition as Record<string,unknown>).source==="native_lab_amendment" &&
+        result.verified_inquiry_quote && typeof result.verified_inquiry_quote==="object"?result.verified_inquiry_quote:null;
+      if(inquiryReceipt)visit({toolName:"check_basket_availability",toolCallId:`${String(payload.toolCallId??"unknown")}:accepted-inquiry-quote`,result:inquiryReceipt});
       // The pricing adapter performs a real read-only Native proposal check.
       // Harvest its result through the same validation path as an explicit
       // quote tool, including negative shared-stock receipts from refusals.
@@ -61,7 +68,7 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
         receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:mutation-stock`, result: result.stock_receipt as Record<string, unknown> });
       // A rejected amendment can still carry a genuine negative calendar
       // check. Retain that check, never turn the failed write into a success.
-      if ((["modify_booking","quote_booking_addition","quote_booking_replacement","quote_booking_dates"].includes(payload.toolName)) && Array.isArray(result.stock_receipts)) {
+      if (!inquiryReceipt && Array.isArray(result.stock_receipts)) {
         for (const raw of result.stock_receipts) {
           if (raw && typeof raw === "object" && (raw as Record<string, unknown>).source === "shared_inventory_confirmed_rentals") {
             const r = raw as Record<string, unknown>;

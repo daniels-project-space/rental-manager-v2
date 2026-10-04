@@ -735,7 +735,7 @@ type JointStockArgs={account_slug:string;thread_id?:string;start_date:string;end
   items:Array<{item_name:string;quantity:number;product_id?:number}>;
   booking_use?:"standalone"|"additional"|"replacement";replace_product_id?:number;replace_quantity?:number;
   pickup_time?:string;return_time?:string;recommendation_requirements?:RecommendationRequirement[]};
-async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>) {
+export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>) {
     if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
     const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
     if ((booking?.account_slug && booking.account_slug!==a.account_slug) || (labOrder?.account_slug && labOrder.account_slug!==a.account_slug)) throw new Error("The current booking belongs to a different account");

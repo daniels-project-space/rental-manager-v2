@@ -564,10 +564,17 @@ export const modifyBookingTool = createTool({
 
 export const restoreReferralBasketTool=createTool({
   id:"restore_referral_basket",
-  description:"Restore selected original friend-referral gear into the renter's empty Lab inquiry. get_listing_context supplies the verified code and exact original listing IDs. Only use for the CURRENT renter's direct instruction to restore/add/use that basket. A code, an information question or a quote is not consent. Respect their current dates, quantities and exclusions; never inherit the source's approval/payment/verification. Native rechecks original equipment identity, selected stock and current prices atomically. Does not create or confirm a booking. For quotes use check_basket_availability instead. After success, previous stock/quote receipts are stale: check the actual restored basket once for a current renter_quote before replying with financial amounts. Real Hygglo writes are unavailable.",
+  description:"Restore selected original friend-referral gear into the renter's empty Lab inquiry. get_listing_context supplies the verified code and exact original listing IDs. Only use for the CURRENT renter's direct instruction to restore/add/use that basket. A code, an information question or a quote is not consent. Respect their current dates, quantities and exclusions; never inherit the source's approval/payment/verification. Native rechecks original equipment identity, joint stock and prices atomically and returns renter_quote for the applied basket. Select its quote_key through a quote reply_part to show the checked amounts; no second stock or pricing call is needed. Previous quote receipts are stale after restoration. A missing renter_quote needs real review before quoting a price. Does not create or confirm a booking. For read-only quotes use check_basket_availability instead. Real Hygglo writes are unavailable.",
   inputSchema:z.object({thread_id:z.string(),code:z.string().uuid(),start_date:z.string(),end_date:z.string(),items:z.array(z.object({product_id:z.number().int().positive(),qty:z.number().int().min(1).max(20)})).min(1).max(8)}),
   outputSchema:z.unknown(),
-  execute:async(input)=>await convex().mutation(anyApi.renter_bot_lab_order.redeemReferral,input),
+  execute:async(input)=>{
+    const scope=currentRenterToolScope();
+    if(!scope?.requestMessageId)throw new Error("Restoration needs a scoped current renter request");
+    const result=await convex().mutation(anyApi.renter_bot_lab_order.redeemReferral,{...input,recommendation_requirements:structuredClone(scope.recommendationRequirements??[])});
+    const renter_quote=result.ok===true&&result.action_performed===true?nativeInquiryQuote(result.verified_inquiry_quote,scope):null;
+    return {...result,message:result.ok===true&&result.action_performed===true?"Selected referral equipment was restored to this new inquiry. No booking was created or confirmed. Use renter_quote through a quote reply_part for the checked dates and prices.":result.message,
+      renter_quote,verified_inquiry_quote:result.verified_inquiry_quote?{...result.verified_inquiry_quote,renter_quote}:null};
+  },
 });
 
 export const RENTER_BOT_TOOLS = {

@@ -24,6 +24,8 @@ import type { QueryCtx } from "./_generated/server";
 import { rentalStage } from "./lib/rental_stage";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { londonToday } from "./lib/effectiveDates";
+import { performJointStockCheck } from "./renter_bot_tools";
+import { recommendationRequirementValidator } from "./lib/recommendation_qualification";
 
 async function prohibitsSelectedItems(ctx: QueryCtx, accountSlug:string, text:string, action:"add_item"|"remove_item", lines:Array<{product_id?:number;item_id?:string;name?:string;qty:number}>) {
   const inventory=await ctx.db.query("items").collect();
@@ -854,7 +856,7 @@ export const simulateVerificationFailure = mutation({
 /** Explicit basket handoff. No inherited verification, payment or approval. */
 export const redeemReferral = mutation({
   args: { thread_id: v.string(), code: v.string(), preview_only:v.optional(v.boolean()), request_message_id:v.optional(v.string()),
-    start_date:v.optional(v.string()),end_date:v.optional(v.string()),items:v.optional(v.array(v.object({product_id:v.number(),qty:v.number()}))) },
+    start_date:v.optional(v.string()),end_date:v.optional(v.string()),items:v.optional(v.array(v.object({product_id:v.number(),qty:v.number()}))),recommendation_requirements:v.optional(v.array(recommendationRequirementValidator)) },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
     const referral = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code", q => q.eq("code", a.code)).unique();
@@ -893,14 +895,20 @@ export const redeemReferral = mutation({
     if(selected && (!selected.length || selected.length>8 || new Set(selected.map(l=>l.product_id)).size!==selected.length || selected.some(l=>!Number.isInteger(l.product_id)||!Number.isInteger(l.qty)||l.qty<1||l.qty>20||!source.items.some(s=>s.product_id===l.product_id))))
       return {ok:false,action_performed:false,error:"Select exact original listing references and valid quantities. Other gear needs its own normal inquiry",reason:"invalid_referral_selection"};
     const requested=selected?selected.map(l=>({...source.items.find(s=>s.product_id===l.product_id)!,qty:l.qty})):source.items;
+    const allListingIds=requested.every(l=>l.product_id!=null);
     if(!a.preview_only && await prohibitsSelectedItems(ctx,target.account_slug,latest!.body_text,"add_item",requested))
       return {ok:false,action_performed:false,error:"The current renter request excludes selected equipment. No basket was changed",reason:"referral_restore_not_authorized"};
     const lines = [];
     for (const old of requested) {
       if (old.product_id != null) {
-        const listing = await ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", target.account_slug).eq("product_id", old.product_id!)).unique();
-        if (!listing || typeof listing.daily_price !== "number") return { ok: false, error: "A basket listing is no longer priced. Ask the owner to check it" };
-        lines.push({ ...old, name: listing.name ?? old.name, daily_price_gbp: listing.daily_price, price_tiers: await tiersForProduct(ctx, target.account_slug, old.product_id), pricing_basis: "listing" as const });
+        // The shared inquiry engine below reads this exact listing's current
+        // prices together with its physical mapping; do not price it twice.
+        if(allListingIds)lines.push({...old});
+        else {
+          const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",target.account_slug).eq("product_id",old.product_id!)).unique();
+          if(!listing||typeof listing.daily_price!=="number")return {ok:false,error:"A basket listing is no longer priced. Ask the owner to check it"};
+          lines.push({...old,name:listing.name??old.name,daily_price_gbp:listing.daily_price,price_tiers:await tiersForProduct(ctx,target.account_slug,old.product_id),pricing_basis:"listing" as const});
+        }
       } else if (old.item_id) {
         const item = await ctx.db.get(old.item_id);
         if (!item || item.status !== "active" || item.is_marketing_only || (item.qty ?? 0) < old.qty) return { ok: false, error: "An item is no longer owned and available" };
@@ -910,23 +918,32 @@ export const redeemReferral = mutation({
         lines.push({ ...old, name: item.name_canonical, daily_price_gbp: daily, price_tiers: await tiersForProduct(ctx, target.account_slug, pid), pricing_basis: "listing" as const });
       } else return { ok: false, error: "Unresolved item identity: ask the owner to check the basket" };
     }
-    const stock = await checkOrderRentalStock(ctx, target.account_slug, lines, start, end, a.thread_id,sources);
+    // Exact listing restores use the SAME stock/price/qualification engine as
+    // an ordinary inquiry. Its atomic receipt can render the reply directly.
+    const verified_inquiry_quote=allListingIds?await performJointStockCheck(ctx,{account_slug:target.account_slug,thread_id:a.thread_id,start_date:start,end_date:end,booking_use:"standalone",
+      items:lines.map(l=>({product_id:l.product_id!,item_name:l.name,quantity:l.qty})),recommendation_requirements:a.recommendation_requirements},sources):null;
+    const stock=verified_inquiry_quote?{available:verified_inquiry_quote.available,receipts:verified_inquiry_quote.components}:await checkOrderRentalStock(ctx, target.account_slug, lines, start, end, a.thread_id,sources);
     if (stock.available !== true) return { ok: false, error: "Original basket is no longer available for these dates", stock_receipts: stock.receipts };
-    const quote = summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), start, end);
+    const quote = verified_inquiry_quote&&"quote" in verified_inquiry_quote?verified_inquiry_quote.quote:summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), start, end);
+    if(!quote)return {ok:false,error:"Basket needs a verified current Native quote before restoring it"};
     if (quote.total_gbp == null || quote.unpriced.length) return { ok: false, error: "Basket needs current pricing; ask the owner before restoring it" };
+    if(verified_inquiry_quote && lines.some(l=>!quote.lines.some(q=>q.product_id===l.product_id && q.qty===l.qty)))
+      return {ok:false,error:"Current quote does not identify every selected listing. No basket was changed"};
+    const pricedLines=verified_inquiry_quote?lines.map(l=>{const current=quote.lines.find(q=>q.product_id===l.product_id && q.qty===l.qty)!;return {...l,name:current.name,daily_price_gbp:current.daily_price_gbp,price_tiers:current.price_tiers,pricing_basis:"listing" as const};}):lines;
     const display = await listingDisplayCatalog(ctx, target.account_slug);
     const message = friendBasketReply({ ...quote, lines: lines.map(l => ({ qty: l.qty, name: l.product_id != null ? display.name(target.account_slug, l.product_id, l.name) : shortItemName(l.name) })) },a.preview_only);
     if(a.preview_only)return {ok:true,preview_only:true,action_performed:false,order:quote,message,stock_receipts:stock.receipts};
     const beforeContext=await amendmentContext(ctx,a.thread_id),beforeRevision=target.changes.length;
     const now = Date.now();
-    await ctx.db.patch(target._id, { items: lines, start_date: start, end_date: end, changes: [{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required" }], updated_at: now });
+    await ctx.db.patch(target._id, { items: pricedLines, start_date: start, end_date: end, changes: [{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required" }], updated_at: now });
     const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", a.thread_id)).first();
-    if (conv) await ctx.db.patch(conv._id, { inquiry_items: lines.map(l => ({ name: l.name, qty: l.qty, ...(l.product_id != null ? { product_id: l.product_id } : {}) })) });
+    if (conv) await ctx.db.patch(conv._id, { inquiry_items: pricedLines.map(l => ({ name: l.name, qty: l.qty, ...(l.product_id != null ? { product_id: l.product_id } : {}) })) });
     await ctx.db.patch(referral._id, { redeemed_by: a.thread_id });
     // Agent calls publish one reviewed reply through the canonical draft path.
     // Legacy owner-driven Lab redemption still records its event reply here.
     if(a.request_message_id==null)await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
     return { ok: true, already_applied: false, action_performed:true, source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:target.account_slug,order: quote, message, stock_receipts: stock.receipts,
+      verified_inquiry_quote:verified_inquiry_quote?{...verified_inquiry_quote,guidance:"Native stock, price and qualification receipt for the basket applied by this transaction. This receipt proves the quote; the parent action_performed and context_transition prove restoration. No booking was created or confirmed."}:null,
       context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1} };
   },
 });

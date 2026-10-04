@@ -34,6 +34,7 @@ function setup() {
  f.tables.hygglo_messages=[{thread_id:"__probe__friend",message_id:"friend-inbound",sender:"renter",body_text:`My friend sent me referral ${code}. Please restore the same basket.`,hygglo_sent_at:1}];
  f.tables.conversations=[{_id:"friend-conv",thread_id:"__probe__friend",inquiry_items:[]}];
  f.tables.online_listings=[{account_slug:"leo",product_id:1,name:"Sony FX3",daily_price:55}];
+ f.tables.hygglo_products=[{accountSlug:"leo",productId:1,name:"Sony FX3",masterItemId:"camera",prices:[]}];
  f.tables.hygglo_product_index=[{account_slug:"leo",product_id:1,item_id:"camera"}];
  f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1}]}];
  return f;
@@ -106,6 +107,7 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
   const result=await (redeemReferral as any)._handler(f.ctx,{thread_id:"__probe__friend",code,request_message_id:"friend-inbound",start_date:"2099-10-08",end_date:"2099-10-10",items:[{product_id:1,qty:2}]});
   expect(result).toMatchObject({ok:true,action_performed:true,order:{start_date:"2099-10-08",end_date:"2099-10-10",total_gbp:330},context_transition:{source:"native_lab_amendment",thread_id:"__probe__friend",before_revision:0,after_revision:1}});
   expect(result.context_transition.before_context_key).not.toBe(result.context_transition.after_context_key);
+  expect(result.verified_inquiry_quote).toMatchObject({thread_id:"__probe__friend",account_slug:"leo",rental_stage:"INQUIRY",basket:{available:true},quote:{source:"native_inquiry_basket",total_gbp:330,start_date:"2099-10-08",end_date:"2099-10-10"}});
   expect(f.tables.renter_bot_lab_orders[0]).toEqual(sourceBefore);expect(f.tables.renter_bot_lab_orders[1].items[0].qty).toBe(2);
   expect(f.tables.hygglo_messages).toHaveLength(messagesBefore);expect(f.tables.renter_bot_lab_bookings).toHaveLength(1);
  });
