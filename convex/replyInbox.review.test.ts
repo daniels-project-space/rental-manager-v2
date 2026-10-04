@@ -88,6 +88,10 @@ describe("copied bot replies use current Native stock before send",()=>{
   await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
   f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
   expect(await recheck(f,text)).toMatchObject({ok:true});
+  expect(await recheck(f,text.replaceAll("£90","£60"))).toMatchObject({ok:false,reason:"price_unverified"});
+  expect(await recheck(f,`Thanks for checking. ${text} Let me know when you're ready.`)).toMatchObject({ok:true});
+  expect(await recheck(f,text.replace("1 ×","2 ×"))).toMatchObject({ok:false,reason:"price_unverified"});
+  expect(await recheck(f,text+" Delivery is £10.")).toMatchObject({ok:false,reason:"price_unverified"});
   // Recheck a complete Native offer after an inquiry already has gear. The
   // original message's addition semantics must not add that base basket again.
   const order={thread_id:f.args.thread_id,account_slug:"leo",items:[{name:"Sony FX3",product_id:123,qty:1,daily_price_gbp:30,pricing_basis:"listing"}],start_date:"2026-10-02",end_date:"2026-10-04",changes:[],updated_at:1};
@@ -120,7 +124,7 @@ describe("copied bot replies use current Native stock before send",()=>{
    listings.push(await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:productId,name:"Sony FX3",daily_price:rate}));
    await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:productId,components:[{item_id:f.itemId,qty:1}]});
   }
-  const text="For 3 days: Sony FX3 £60; Sony FX3 £30. Total £90.";
+  const text="For 3 days (2 October 2026 to 4 October 2026):\n- 1 × Sony FX3: £60\n- 1 × Sony FX3: £30\nTotal: £90";
   await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,
    evidence:{model_id:"native-test",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected-native",start_date:"2026-10-02",end_date:"2026-10-04",
      listing_quote:{total_gbp:90,lines:[{product_id:123,name:"Sony FX3",quantity:1,total_gbp:60},{product_id:124,name:"Sony FX3",quantity:1,total_gbp:30}]},items:[{item_id:f.itemId,name:"Sony FX3",quantity:2}]}]}});

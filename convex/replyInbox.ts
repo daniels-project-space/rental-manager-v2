@@ -1,3 +1,5 @@
+import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
+import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
 import { performJointStockCheck } from "./renter_bot_tools";
 import { qualifyRecommendationBasket } from "./lib/recommendation_qualification";
 import { renterHistory } from "./lib/renter_history";
@@ -2137,8 +2139,15 @@ export const recheckCopiedDraftStock = internalQuery({
       return {ok:false,reason:"stale_draft"};
     const evidence=conv?.ai_draft_evidence;
     const request=evidence?.stock_request??{items:[]};
-    if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length)
+    // A copied reply's edited amounts must still belong to its Native proof.
+    // Selected inquiry offers use fresh receipts only; an unselected pricing
+    // lookup cannot authorize a different amount in the outgoing reply.
+    const prices:PriceEvidence[]=evidence?.stock_quotes?.length?[]:evidence?.prices??[];
+    const inbound=latest?.sender!=="owner"?latest?.body_text??"":"";
+    if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length) {
+      if(unsupportedPriceClaims(text,prices,request,inbound).length)return {ok:false,reason:"price_unverified"};
       return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
+    }
     const sources=await loadStockSources(ctx);
     // Selected Native offers are commitments to a particular physical basket,
     // even when the rendered reply mentions only its price. Recheck each offer
@@ -2172,7 +2181,9 @@ export const recheckCopiedDraftStock = internalQuery({
         cents(current.total_gbp)!==cents(priced.total_gbp) || priced.lines.some(l=>!current.lines.some(c=>c.product_id===l.product_id && c.qty===l.quantity &&
           c.line_total_gbp!=null && cents(c.line_total_gbp)===cents(l.total_gbp))))
         return {ok:false,reason:"price_unverified"};
+      prices.push(...renterPriceEvidence([{tool:"check_basket_availability",call_id:`send-quote:${quote.quote_key}`,result:fresh}],[],thread_id));
     }
+    if(unsupportedPriceClaims(text,prices,request,inbound).length)return {ok:false,reason:"price_unverified"};
     const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
     // A copied recommendation must still qualify even when its prose says
     // only "this setup". Reuse the initial Native criteria and physical IDs;
