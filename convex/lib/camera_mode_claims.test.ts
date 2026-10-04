@@ -43,10 +43,13 @@ describe("recording mode claims use exact model and capture area", () => {
     const result = guardDraft(reply, { history: [], lastRenterMessage: "I need uncropped internal DCI 4K60fps", cameraEvidence: evidence });
     expect(result.flags.filter(f => f.type === "CAMERA_MODE_HALLUCINATION")).toEqual([]);
     expect(unsupportedCameraModeClaims("I'm checking whether Sony FX3 records uncropped DCI 4K60fps.", evidence)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Hi! I'm checking the exact recording specifications across my Sony full-frame E-mount cameras (including the FX3, A7 III, and A7 V) to verify which model meets your requirement for uncropped internal DCI 4K at 60fps. Once that capability is verified, I can give you the exact camera recommendation and the 2-day price for 20–21 October.", evidence)).toEqual([]);
   });
   it("does not let a later review predicate excuse a body assertion or separate promise", () => {
     for (const text of [
       "For Sony FX3 recording uncropped DCI 4K60fps, I'm checking the price.",
+      "I'm checking the price (Sony FX3 records uncropped DCI 4K60fps).",
+      "I'm checking the price (including Sony FX3), it records uncropped DCI 4K60fps.",
       "For a camera that records uncropped DCI 4K60fps, I can offer Sony FX3.",
       "For a camera recording uncropped DCI 4K60fps, I'm checking the specs, but Sony FX3 records uncropped DCI 4K60fps.",
       "For a camera recording uncropped DCI 4K60fps, I'm checking the specs. Sony FX3 records uncropped DCI 4K60fps.",

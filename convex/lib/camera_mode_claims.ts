@@ -26,7 +26,13 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       // Use positions: repeated "4K120p" in the conditional and promise must
       // not select the first clause for both occurrences.
       let start = 0, end = sentence.length;
-      for (const separator of sentence.matchAll(/[,;()]|\bbut\b/gi)) {
+      // Parenthetical subject lists are aside phrases, not a new governing
+      // predicate. Preserve their positions while masking boundaries when the
+      // recording claim lies outside them. A claim INSIDE an aside keeps its
+      // own scope, so "checking ... (FX3 records DCI 4K)" is still checked.
+      const boundaries = sentence.replace(/\([^()]*\)/g, (aside, offset: number) =>
+        match.index! >= offset && match.index! < offset + aside.length ? aside : " ".repeat(aside.length));
+      for (const separator of boundaries.matchAll(/[,;()]|\bbut\b/gi)) {
         if (separator.index! < match.index!) start = separator.index! + separator[0].length;
         else { end = separator.index!; break; }
       }
