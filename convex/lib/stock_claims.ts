@@ -18,6 +18,14 @@ export type StockRequest = {
   start_date?: string | null; end_date?: string | null;
   items: Array<{ name: string; quantity: number; aliases?: string[]; complete?: boolean; components?: Array<{ name: string; quantity: number }> }>;
 };
+/** A rendered single Native offer is the subject of an otherwise empty inquiry.
+ * Unselected tool results and multiple alternatives cannot define that subject.
+ * This is display/guard scope, never a basket write or a booking promise. */
+export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;items:Array<{name:string;quantity:number}>}>) {
+  if(request.items.length || quotes.length!==1 || !quotes[0].items.length)return request;
+  const quote=quotes[0];
+  return {start_date:quote.start_date,end_date:quote.end_date,items:quote.items.map(i=>({name:i.name,quantity:i.quantity}))};
+}
 
 // Preserve exact model variants. Never resolve a stock claim by fuzzy similarity.
 function identity(name: string) {
@@ -43,7 +51,7 @@ export function rentalOfferAssertion(clause:string) {
   return /^\s*(?:(?:but|however|whereas|while)\s+)?(?:I|we)\s+(?:can|could|am able to|are able to)\s+(?:offer|supply|provide)\s+(.+?)\s*[.!]?$/i.exec(clause);
 }
 function subjectOf(prefix: string) {
-  let s = prefix.trim().replace(/^(?:but|however|whereas|while|so|therefore)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
+  let s = prefix.trim().replace(/^(?:and|but|however|whereas|while|so|therefore)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
   s = s.replace(/^(?:exact|specific|particular|requested|selected)\s+/i, "");
   const ordinal = /^(second|third|fourth|2nd|3rd|4th)\s+/i.exec(s);
@@ -227,7 +235,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const reference = references.get(identity(subject.name.replace(/\s+lens(?:es)?$/i,"")));
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
-    const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(subject.name);
+    const sourceSubject=subject.name.split(/\s+from\s+/i)[0];
+    const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(sourceSubject);
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
     const namedItem=namedSubject(subject.name);
@@ -243,7 +252,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     if (requestedSet) targets=[{name:subject.name,quantity:setQuantity,complete:true,
       components:requestedSet.items.map(i=>({name:i.name_canonical,quantity:setQuantity}))}];
     if (subject.name.toLowerCase()==="which") targets=relativeSubjects.length===1 ? relativeSubjects : [];
-    else if (generic) targets = /^(?:kit|gear)$/i.test(subject.name) ? request.items : previousSubjects.length ? previousSubjects : request.items;
+    else if (generic) targets = /^(?:kit|gear)$/i.test(sourceSubject) ? request.items : previousSubjects.length ? previousSubjects : request.items;
     else if (countedUnitReference) targets = previousSubjects.length === 1 ? previousSubjects : [];
     else if (lensReference) {
       // A lens pronoun needs a preceding standalone lens identity, never a
@@ -255,6 +264,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const requestedCounts = [...new Set(request.items.map(i => i.quantity))];
       targets = [{ name: subject.name, quantity: subject.quantity ?? (requestedCounts.length === 1 ? requestedCounts[0] : NaN) }];
     }
+    if(generic && /^(?:camera|body)$/i.test(sourceSubject))targets=targets.filter(t=>receipts.some(r=>sameItem(t.name,r.item)&&
+      (r.kind===undefined || ["camera","camera_body"].includes(r.kind))));
     const pluralGroup=/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(prefix.replace(/\s+(?:is|are)\s*$/i,"").trim())
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
     const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
@@ -287,7 +298,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       if(unambiguous)modifiers.splice(0); // explicitly quoted members, not kit-inclusion modifiers
       dateScope=itemQuoteDateScope(clause,offeredGroup.header,request.start_date);
     }
-    const jointClaim=!!heading || !!offeredGroup || pluralGroup || coordinated.length>1 || !!requestedSet;
+    const jointClaim=!!heading || !!offeredGroup || pluralGroup || coordinated.length>1 || !!requestedSet || generic && targets.length>1;
     if(heading) {
       targets=!invalidHeading && forwardTargets.length>=2 && forwardTargets.every((i,index)=>!forwardTargets.slice(0,index).some(previous=>sameItem(i.name,previous.name))) ? forwardTargets : [];
       subject.quantity=undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
@@ -24,6 +24,24 @@ describe("named Native stock in an empty inquiry",()=>{
   expect(review(sentence,[lens,{...lens,start_date:"2027-10-22",end_date:"2027-10-23"}])).not.toEqual([]);
   expect(review(sentence.replace("f/2.8 ",""),[lens,{...lens,item:"TTArtisan 11mm f4 Fisheye (Sony E)"}])).not.toEqual([]);
   expect(review(sentence.replace("22 to 23 October","22 to 23 October 2027"))).not.toEqual([]);
+ });
+ it("anchors a generic reference to one rendered Native offer, never unselected alternatives",()=>{
+  const quote={start_date:lens.start_date,end_date:lens.end_date,items:[{name:lens.item,quantity:1}]};
+  const text="Hey! I've checked the gear from your friend's referral for 22–23 October, and it is available. Here's the quote:";
+  const scope=stockRequestForInquiryQuote({items:[]},[quote]);
+  expect(unsupportedStockClaims(text,[lens],scope)).toEqual([]);
+  expect(unsupportedStockClaims("The gear from the earlier conversation is available.",[lens],scope)).toEqual([]);
+  for(const failed of [{items:[]},stockRequestForInquiryQuote({items:[]},[quote,quote])])expect(unsupportedStockClaims(text,[lens],failed)).not.toEqual([]);
+  expect(stockRequestForInquiryQuote(request,[quote])).toBe(request);
+  for(const wrong of ["A camera is available.","Two copies are available.","It is available for 24 to 25 October.","Sony FX3 is unavailable, and it is available."])expect(unsupportedStockClaims(wrong,[lens],scope)).not.toEqual([]);
+ });
+ it("requires the entire selected generic basket to share a positive joint check",()=>{
+  const members=[{name:lens.item,quantity:1},{name:"Sony FX3",quantity:1}],quote={start_date:lens.start_date,end_date:lens.end_date,items:members};
+  const scope=stockRequestForInquiryQuote({items:[]},[quote]);
+  const receipts=[lens,{...lens,item:"Sony FX3",kind:"camera"}];
+  expect(unsupportedStockClaims("It is available.",receipts,scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("It is available.",receipts.map(r=>({...r,basket:{available:true,items:members}})),scope)).toEqual([]);
+  expect(unsupportedStockClaims("It is available.",receipts.map((r,i)=>({...r,available:i===0,basket:{available:false,items:members}})),scope)).not.toEqual([]);
  });
 });
 it("does not promise a free camera as an extra when its shared proposal failed or remains unknown",()=>{
