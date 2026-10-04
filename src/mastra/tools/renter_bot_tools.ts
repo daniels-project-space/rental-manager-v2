@@ -346,14 +346,16 @@ export const getActiveVacationsTool = createTool({
 export const getOrderEditStateTool = createTool({
   id: "get_order_edit_state",
   description:
-    "Read the live booking for an order: its current items, rental price + total, and dates. Use to ground replies about what's actually on the booking. Read-only — you cannot change the order from here.",
+    "Read the current Native Lab booking: actual items, price, total, dates, stage and change ledger. This read stays in the current server-bound thread and never calls the marketplace. Use its returned state after a retry; historical change summaries do not prove what is currently booked.",
   inputSchema: z.object({
     account_slug: z.string(),
     hygglo_order_id: z.string().describe("The Hygglo order id (same as the chat thread id)."),
   }),
   outputSchema: z.unknown(),
-  execute: async (input) => {
-    return await convex().action(anyApi.order_edit.getOrderState, input);
+  execute: async (_input) => {
+    const scope=currentRenterToolScope();
+    if(!scope?.threadId.startsWith("__probe__"))return {ok:false,error:"Real booking state requires separate rollout authorization."};
+    return await convex().query(anyApi.renter_bot_lab_order.get,{thread_id:scope.threadId});
   },
 });
 
@@ -485,13 +487,15 @@ export const quoteBookingDatesTool=createTool({
 export const modifyBookingTool = createTool({
   id: "modify_booking",
   description:
-    "SIMULATION (Renter Bot Lab only): atomically add one item or a complete group of items, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Use add_items with every exact product_id and qty for a quoted setup, including its required owner-supplied adapters. The complete group either succeeds together or nothing is changed. Never make separate add_item calls for parts of the same agreed setup. A missing required adapter returns complete_setup_required: quote the complete setup and ask for its agreement instead of adding an incomplete setup. For date changes, use quote_booking_dates to offer the complete new dates and total before an increase. A clear named/date request at the exact price, or acceptance of that unchanged sent quote, authorizes the edit. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
+    "SIMULATION (Renter Bot Lab only): atomically add one item or a complete group of items, remove an item, or change the dates on the test booking, and get back the updated line items, day count and total. Call this when the renter ASKS you to add/remove gear or move dates and has already said yes — do not ask them to confirm something they just asked for. Use replace_items for an agreed swap, with every selected listing and adapter plus the exact current replace_product_id and replace_quantity from quote_booking_replacement. Never split a swap into remove_item and add_item calls: the transaction succeeds together or leaves the existing booking unchanged. Use add_items with every exact product_id and qty for a quoted setup, including its required owner-supplied adapters. The complete group either succeeds together or nothing is changed. Never make separate add_item calls for parts of the same agreed setup. A missing required adapter returns complete_setup_required: quote the complete setup and ask for its agreement instead of adding an incomplete setup. For date changes, use quote_booking_dates to offer the complete new dates and total before an increase. A clear named/date request at the exact price, or acceptance of that unchanged sent quote, authorizes the edit. Returns ok:false with a reason if the item can't be identified or this is a real conversation; if ok is false you must NOT claim any change was made. If action_performed is false or already_applied is true, no new edit occurred: describe the CURRENT returned order as already set/containing the requested items, never say I moved/added/removed them. previous_change_summary is history, not a new change or proof that those items are still present.",
   inputSchema: z.object({
     thread_id: z.string().describe("The conversation/thread id."),
     action: z
-      .enum(["add_item", "add_items", "remove_item", "set_dates"])
+      .enum(["add_item", "add_items", "replace_items", "remove_item", "set_dates"])
       .describe("What to do to the booking."),
     items: z.array(z.object({product_id:z.number().int().positive(),qty:z.number().int().min(1).max(20)})).min(1).max(8).optional().describe("For add_items: every exact listing and quantity accepted together, including required adapters."),
+    replace_product_id:z.number().int().positive().optional().describe("For replace_items: exact current listing selected in the agreed replacement quote."),
+    replace_quantity:z.number().int().min(1).max(20).optional().describe("For replace_items: exact agreed current units removed."),
     item_name: z.string().optional().describe("Exact item name for add_item/remove_item."),
     product_id: z.number().int().positive().optional().describe("Exact Native listing ID when selecting a specific priced kit or booked offering. Preserves its components and chooses the correct line."),
     qty: z.number().optional().describe("Units to add or remove (defaults to 1). To remove all units of a model, read get_lab_order and pass that exact booked quantity. Never guess a quantity or remove a different model."),
@@ -508,6 +512,11 @@ export const modifyBookingTool = createTool({
       };
     }
     const client=convex();
+    if(input.action==="replace_items") {
+      if(!input.items||input.replace_product_id==null||input.replace_quantity==null||input.item_name||input.product_id!=null||input.qty!=null||input.start_date||input.end_date)return {ok:false,error:"Use the complete accepted items array and exact current replacement listing/quantity."};
+      return await client.mutation(anyApi.renter_bot_lab_order.applyReplacementBasket,{thread_id:input.thread_id,request_message_id:"",items:input.items,replace_product_id:input.replace_product_id,replace_quantity:input.replace_quantity});
+    }
+    if(input.replace_product_id!=null||input.replace_quantity!=null)return {ok:false,error:"Replacement fields require replace_items."};
     if (input.action==="add_item" || input.action==="add_items") {
       if (input.action==="add_items" && (!input.items || input.item_name || input.product_id!=null || input.qty!=null)) return {ok:false,error:"Use only the items array for add_items."};
       if (input.action==="add_item" && input.items) return {ok:false,error:"Use add_items for a complete group."};
@@ -527,7 +536,7 @@ export const modifyBookingTool = createTool({
       return await client.mutation(anyApi.renter_bot_lab_order.applyAdditionBasket,{thread_id:input.thread_id,request_message_id:"",items});
     }
     if(input.items)return {ok:false,error:"Items arrays apply only to add_items."};
-    const {items:_unused,...legacy}=input;
+    const {items:_unused,replace_product_id:_replace,replace_quantity:_replaceQty,...legacy}=input;
     return await client.mutation(anyApi.renter_bot_lab_order.applyChange,legacy);
   },
 });

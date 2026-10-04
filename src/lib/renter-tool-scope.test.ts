@@ -49,7 +49,9 @@ it("blocks booking tools in a read-only diagnostic while preserving scoped reads
 });
 
 it("binds and disables atomic setup acceptance just like other booking writes",()=>{
- const name="renter_bot_lab_order:applyAdditionBasket";
+ for(const name of ["renter_bot_lab_order:applyAdditionBasket","renter_bot_lab_order:applyReplacementBasket"]){
  expect(bindRenterToolArgs(name,{thread_id:"other",request_message_id:"fabricated",items:[{product_id:1,qty:1}]},{threadId:"__probe__one",accountSlug:"leo",requestMessageId:"current"})).toMatchObject({thread_id:"__probe__one",request_message_id:"current"});
  expect(()=>bindRenterToolArgs(name,{items:[]},{threadId:"__probe__one",accountSlug:"leo",bookingWritesAllowed:false})).toThrow("disabled");
+}
+ expect(bindRenterToolArgs("order_edit:getOrderState",{hygglo_order_id:"foreign",account_slug:"diogo"},{threadId:"__probe__one",accountSlug:"leo"})).toEqual({hygglo_order_id:"__probe__one",account_slug:"leo"});
 });

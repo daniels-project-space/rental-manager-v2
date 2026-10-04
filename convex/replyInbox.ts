@@ -1923,8 +1923,8 @@ export const recordSentReply = internalMutation({
       )
       .first();
     if (!existingMessage) {
-      const proposals = !account_slug || account_slug === conv?.account_slug ? await sentBookingProposals(ctx, conv, text) : {additions:[],dates:[]};
-      const quoted_additions=proposals.additions,quoted_dates=proposals.dates;
+      const proposals = !account_slug || account_slug === conv?.account_slug ? await sentBookingProposals(ctx, conv, text) : {additions:[],dates:[],replacements:[]};
+      const quoted_additions=proposals.additions,quoted_dates=proposals.dates,quoted_replacements=proposals.replacements;
       await ctx.db.insert("hygglo_messages", {
         account_slug: account_slug ?? conv?.account_slug ?? "unknown",
         thread_id,
@@ -1935,7 +1935,7 @@ export const recordSentReply = internalMutation({
         hygglo_sent_at: now,
         fetched_at: now,
         raw: "manual_send_optimistic",
-        ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}),
+        ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}), ...(quoted_replacements.length ? {quoted_replacements} : {}),
       });
     }
     if (conv) {

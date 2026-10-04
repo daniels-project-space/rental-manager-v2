@@ -2,7 +2,7 @@ const lensBrands = "canon|sony|nikon|sigma|tamron|panasonic|fujifilm|fuji|zeiss|
 const lensMounts = "ef s|ef m|rf s|ef|rf|fe|e|l|pl|f|z|x|gfx";
 /** Explicit brand/mount references cannot borrow a bare range's receipt. */
 export function declaredLensReferences(normalizedReference: string) {
-  return [...normalizedReference.matchAll(new RegExp(`\\b(?:(?:${lensBrands})(?:\\s+(?:${lensMounts}))?|(?:${lensMounts}))\\s+(?:\\d+\\s+){1,3}\\d+mm\\b`, "g"))].map(m=>m[0]);
+  return [...normalizedReference.matchAll(new RegExp(`\\b(?:(?:${lensBrands})(?:\\s+(?:${lensMounts}))?|(?:${lensMounts}))\\s+(?:\\d+\\s+){0,3}\\d+mm\\b`, "g"))].map(m=>m[0]);
 }
 
 /** Narrow references derived from exact native item identities. A kit title
@@ -12,7 +12,7 @@ export function lensClaimReferences<T extends { names: string[] }>(entries: T[],
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   for (const entry of entries) for (const name of entry.names) {
     if (/[+]|\b(?:kit|set|bundle|with|and|plus|camera|body|bmpcc|blackmagic|pyxis|fx\d+|a7\s*(?:ii|iii|iv|v|\d+)|adapter|converter|filter|case|bag|cage|gimbal|tripod|battery|batteries|charger|card|monitor|mic|microphone|rig|screen|cap)\b/i.test(name)) continue;
-    const ranges = [...name.matchAll(/\b(\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*mm)\b/gi)];
+    const ranges = [...name.matchAll(/\b(\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm)\b/gi)];
     if (ranges.length !== 1) continue;
     const range = ranges[0];
     const keys = [normalize(range[1])];

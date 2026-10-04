@@ -17,8 +17,8 @@ export function amendmentMoneyClaims(text:string){
   else if(suffix==="total")role="total";
   else if(/\b(?:current|original|existing|old|base)\s+(?:booking|order|rental|hire)\s*(?:is|of|at|:)?\s*$/i.test(before) || /\b(?:current|original|existing|old|base)\s+(?:(?:booking|order|rental|hire)\s+)?(?:total|price|cost|amount)\s*(?:is|of|at|:)?\s*$/i.test(before)
     ||/\b(?:total|price|cost|amount)\b[^£.!?]*\bfrom\s*$/i.test(before))role="base";
-  else if(/\b(?:total|booking|basket|order)\s*(?:is|of|to|at|comes to|:)?\s*$/i.test(before))role="total";
-  else if(["extra","additional","more"].includes(suffix??"")||/\b(?:extra|additional|more|addition|additions)\s*(?:cost|amount)?\s*(?:is|of|to|at|comes to|:)?\s*$/i.test(before))role="increase";
+  else if(/\b(?:total|booking|basket|order)\s*(?:is|of|to|at|comes to|would be|will be|would come to|will come to|:)?\s*$/i.test(before))role="total";
+  else if(["extra","additional","more"].includes(suffix??"")||/\b(?:extra|additional|more|addition|additions)\s*(?:cost|amount)?\s*(?:is|of|to|at|comes to|would be|will be|would come to|will come to|:)?\s*$/i.test(before))role="increase";
   else if(["less","off","reduction"].includes(suffix??"")||/\b(?:less|reduction|saving|discount)\s*(?:of|by|is|at|:)?\s*$/i.test(before))role="reduction";
   if(/\b(?:deposit|refund|courier|delivery|replacement|insured|security hold)\b/i.test(before)||/^\s*(?:deposit|refund|courier|delivery|replacement|insured|security hold)\b/i.test(after))role="unsupported";
   return {amount:Number((m[1]??m[2]).replace(/,/g,"")),index,length,before,after,role};

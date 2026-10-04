@@ -320,3 +320,13 @@ describe("replacement quote identity and full basket scope",()=>{
    expect(unsupportedPriceClaims(text,[...lines,changed],scope)).not.toEqual([]);
  });
 });
+
+it("resolves prime focal references from Native lens identities without borrowing another mount or brand",()=>{
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"Sony FX3",quantity:1}]};
+ const lens:PriceEvidence={names:["TTArtisan 11mm f2.8 Fisheye (Sony E)"],kind:"rental",days:2,quantity:1,total_gbp:42,call_id:"native-prime",source:"hygglo_tier"};
+ expect(unsupportedPriceClaims("TTArtisan 11mm is £42 for the two days.",[lens],scope)).toEqual([]);
+ expect(unsupportedPriceClaims("11mm is £42 for the two days.",[lens],scope)).toEqual([]);
+ expect(unsupportedPriceClaims("Laowa 11mm is £42 for the two days.",[lens],scope)).not.toEqual([]);
+ expect(unsupportedPriceClaims("TTArtisan RF 11mm is £42 for the two days.",[lens],scope)).not.toEqual([]);
+ expect(unsupportedPriceClaims("11mm is £42 for the two days.",[lens,{...lens,names:["Laowa 11mm f4"],call_id:"another-prime"}],scope)).not.toEqual([]);
+});

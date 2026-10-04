@@ -1,3 +1,4 @@
+import {replacementProposalsFromEvidence,type SentReplacementProposal} from "./renter_replacement_proposal";
 import type { SentDateProposal } from "./renter_date_proposal";
 import { summarise } from "./renter_order_quote";
 import { v, type Infer } from "convex/values";
@@ -46,14 +47,14 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
 }
 
 /** Called when an owner message is recorded, before its draft is cleared. */
-export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[]}> {
+export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[];replacements:SentReplacementProposal[]}> {
   if (!conversation?.ai_draft_text || text.trim() !== conversation.ai_draft_text.trim() ||
-    !conversation.ai_draft_evidence?.prices?.length) return {additions:[],dates:[]};
+    !conversation.ai_draft_evidence?.prices?.length) return {additions:[],dates:[],replacements:[]};
   const [latest] = await recentThreadMessages(ctx, conversation.thread_id, 1);
-  if (latest?.sender !== "renter") return {additions:[],dates:[]};
+  if (latest?.sender !== "renter") return {additions:[],dates:[],replacements:[]};
   const settings = await ctx.db.query("settings").first();
   const order = await getLabOrder(ctx, conversation.thread_id);
-  if (!order) return {additions:[],dates:[]};
+  if (!order) return {additions:[],dates:[],replacements:[]};
   const context_key = draftContextKey(await getBotBooking(ctx, conversation.thread_id), conversation.inquiry_items, order);
   const epoch = settings?.draft_epoch ?? 0;
   const approval = currentDraftApproval(conversation, {message_id:latest.message_id, context_key, epoch});
@@ -64,7 +65,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
   };
   const currentMembers=members(order.items.map(i=>({name:i.name,quantity:i.qty})));
   const pendingPrices=conversation.ai_draft_evidence.prices.filter(p=>p.proposal && members(p.proposal.base_items)===currentMembers);
-  if(!approval)return {additions:[],dates:[]};
+  if(!approval)return {additions:[],dates:[],replacements:[]};
   const total=summarise(order.items,order.start_date,order.end_date).total_gbp;
   const dates:SentDateProposal[]=[];
   for(const price of conversation.ai_draft_evidence.prices){const p=price.date_proposal;
@@ -76,7 +77,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
       start_date:price.start_date,end_date:price.end_date,total_gbp:price.total_gbp,base_total_gbp:p.base_total_gbp,items:price.items};
     if(!dates.some(d=>JSON.stringify(d)===JSON.stringify(proposal)))dates.push(proposal);
   }
-  return {additions:additionProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch}),dates};
+  return {additions:additionProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch}),dates,replacements:replacementProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch})};
 }
 
 export async function sentAdditionProposals(ctx:QueryCtx,conversation:Doc<"conversations">|null,text:string){return (await sentBookingProposals(ctx,conversation,text)).additions;}

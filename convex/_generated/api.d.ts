@@ -211,6 +211,8 @@ import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
 import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
 import type * as lib_renter_order_stock from "../lib/renter_order_stock.js";
 import type * as lib_renter_removal_acceptance from "../lib/renter_removal_acceptance.js";
+import type * as lib_renter_replacement_acceptance from "../lib/renter_replacement_acceptance.js";
+import type * as lib_renter_replacement_proposal from "../lib/renter_replacement_proposal.js";
 import type * as lib_renter_sent_proposal from "../lib/renter_sent_proposal.js";
 import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
@@ -556,6 +558,8 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_order_quote": typeof lib_renter_order_quote;
   "lib/renter_order_stock": typeof lib_renter_order_stock;
   "lib/renter_removal_acceptance": typeof lib_renter_removal_acceptance;
+  "lib/renter_replacement_acceptance": typeof lib_renter_replacement_acceptance;
+  "lib/renter_replacement_proposal": typeof lib_renter_replacement_proposal;
   "lib/renter_sent_proposal": typeof lib_renter_sent_proposal;
   "lib/renter_stock": typeof lib_renter_stock;
   "lib/renters": typeof lib_renters;

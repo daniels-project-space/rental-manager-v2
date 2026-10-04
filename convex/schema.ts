@@ -1,3 +1,4 @@
+import {sentReplacementProposalValidator} from "./lib/renter_replacement_proposal";
 import { lensFactFields, lensVariantReviewValidator } from "./lib/lens_variant_review";
 import { conversationStageValidator } from "./lib/conversation_stage_validator";
 import { ownerCheckValidator } from "./lib/owner_checks";
@@ -955,6 +956,7 @@ const operationalSchema = defineSchema({
     fetched_at: v.number(),
     raw: v.optional(v.string()),
     quoted_additions: v.optional(v.array(sentAdditionProposalValidator)),
+    quoted_replacements:v.optional(v.array(sentReplacementProposalValidator)),
     quoted_dates: v.optional(v.array(sentDateProposalValidator)),
   }).index("by_account", ["account_slug"])
     .index("by_thread", ["thread_id"])

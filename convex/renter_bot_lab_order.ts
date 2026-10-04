@@ -1,3 +1,4 @@
+import {acceptsReplacement,requiresReplacementTransaction} from "./lib/renter_replacement_acceptance";
 import { additionMountRequirements } from "./lib/booking_addition_mount";
 import { acceptsDateChange } from "./lib/renter_date_acceptance";
 import { offeringConsentIdentity } from "./lib/offering_consent_identity";
@@ -364,6 +365,8 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
       retained=row.items.flatMap(l=>l!==selected[0]?[l]:l.qty>a.replacement!.qty?[{...l,qty:l.qty-a.replacement!.qty}]:[]);
     }
     const sources=await loadStockSources(ctx);
+    const basePhysical=a.replacement?await resolveOrderPhysicalItems(ctx,row.account_slug,row.items,sources.items):null;
+    if(a.replacement && !basePhysical?.items.length)return {ok:false,error:"The current basket physical identity is unverified. No booking changes were made."};
     const catalog=await listingDisplayCatalog(ctx,row.account_slug);
     const added:OrderLine[]=[];
     for(const input of a.items) {
@@ -395,7 +398,7 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
     return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,
       physical_identity_key:stock.physical_identity_key,
       base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
-      ...(a.replacement?{removed_items:removed.map(l=>({name:l.name,quantity:l.qty})),change_kind:"replacement" as const,price_delta_gbp:quote.total_gbp-base_quote.total_gbp}:{}),
+      ...(a.replacement?{removed_items:removed.map(l=>({name:l.name,quantity:l.qty})),change_kind:"replacement" as const,price_delta_gbp:quote.total_gbp-base_quote.total_gbp,base_physical_identity_key:orderPhysicalIdentityKey(basePhysical!.items),removed_listings:removed.map(l=>({product_id:l.product_id!,quantity:l.qty}))}:{}),
       quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,proposed_lines:lines};
 }
 
@@ -439,6 +442,8 @@ export const applyAdditionBasket = mutation({
     const previous=row.changes.find(change=>change.request_key===requestKey);
     if(previous) return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,
       note:"No new edit was made. Describe the CURRENT returned order, not a historical change.",order:summarise(row.items,row.start_date,row.end_date)};
+    const preceding=(await recentThreadMessages(ctx,a.thread_id,2)).at(-2);
+    if(requiresReplacementTransaction(latest.body_text,preceding?.sender==="owner"?preceding:undefined))return {ok:false,action_performed:false,error_code:"atomic_replacement_required",error:"Use the complete agreed replacement transaction, never independent removal/addition calls. No booking changes were made."};
     const plan=await additionMountRequirements(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,items});
     if(plan.status!=="none") return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,
       error:"The selected setup is incomplete or its compatibility is unverified. Quote the complete setup and obtain agreement to its required accessories; then include every selected listing in one add_items request. No booking changes were made."};
@@ -458,6 +463,44 @@ export const applyAdditionBasket = mutation({
       context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,
         after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
   },
+});
+
+/** One consent-bound transaction: a refused replacement leaves the old basket intact. */
+export const applyReplacementBasket=mutation({
+ args:{thread_id:v.string(),request_message_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()})),replace_product_id:v.number(),replace_quantity:v.number()},
+ handler:async(ctx,a)=>{
+  assertLabThread(a.thread_id);
+  if(!a.items.length||a.items.length>8||a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20)||!Number.isInteger(a.replace_product_id)||a.replace_product_id<1||!Number.isInteger(a.replace_quantity)||a.replace_quantity<1||a.replace_quantity>20)return {ok:false,action_performed:false,error:"Use exact listing IDs and whole quantities from 1 to 20."};
+  const row=await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).unique();
+  if(!row)return {ok:false,action_performed:false,error:"No simulated order."};
+  const messages=await recentThreadMessages(ctx,a.thread_id,2),latest=messages.at(-1);
+  if(!a.request_message_id||latest?.sender!=="renter"||latest.message_id!==a.request_message_id)return {ok:false,action_performed:false,error_code:"stale_inbound",error:"Use the current renter message. No booking changes were made."};
+  if(renterRequestsReadOnly(latest.body_text,"add_item")||renterRequestsReadOnly(latest.body_text,"remove_item"))return {ok:false,action_performed:false,error_code:"renter_requested_read_only",error:"The renter requested pricing only or prohibited changes. No booking changes were made."};
+  const totals=new Map<number,number>();for(const i of a.items)totals.set(i.product_id,(totals.get(i.product_id)??0)+i.qty);
+  const items=[...totals].sort((a,b)=>a[0]-b[0]).map(([product_id,qty])=>({product_id,qty}));
+  if(items.some(i=>i.qty>20))return {ok:false,action_performed:false,error:"The aggregate quantity exceeds 20."};
+  const requestKey=JSON.stringify([a.request_message_id,"replace_items",a.replace_product_id,a.replace_quantity,items]);
+  const previous=row.changes.find(c=>c.request_key===requestKey);
+  if(previous)return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,order:summarise(row.items,row.start_date,row.end_date),note:"No new edit occurred. Describe the current returned basket, not a historical swap."};
+  const plan=await additionMountRequirements(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,items});
+  if(plan.status!=="none")return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,error:"Quote and agree to the complete compatible replacement setup, including required adapters. No booking changes were made."};
+  const prepared=await prepareEquipmentProposal(ctx,{thread_id:a.thread_id,items,replacement:{product_id:a.replace_product_id,qty:a.replace_quantity}});
+  if(!prepared.ok||!("proposed_lines" in prepared)||!prepared.removed_items||!prepared.base_physical_identity_key)return {...prepared,action_performed:false};
+  if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items)||await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"remove_item",[{product_id:a.replace_product_id,qty:a.replace_quantity}]))return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The replacement conflicts with a named renter restriction. No booking changes were made."};
+  const inventory=await ctx.db.query("items").collect();
+  const addedLines=prepared.addition_quote.lines;
+  const removedLines=prepared.base_quote.lines.filter(l=>l.product_id===a.replace_product_id).map(l=>({...l,qty:a.replace_quantity}));
+  const identities=await Promise.all([...addedLines,...removedLines].map(l=>offeringConsentIdentity(ctx,row.account_slug,l,inventory)));
+  if(identities.some(i=>!i))return {ok:false,action_performed:false,error:"The replacement identities need owner review. No booking changes were made."};
+  const consentLine=(l:typeof addedLines[number],index:number)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp});
+  const settings=await ctx.db.query("settings").first(),beforeContext=await amendmentContext(ctx,a.thread_id);
+  if(!acceptsReplacement(latest.body_text,{context_key:beforeContext,epoch:settings?.draft_epoch??0,physical_identity_key:prepared.physical_identity_key,base_physical_identity_key:prepared.base_physical_identity_key,start_date:prepared.quote.start_date!,end_date:prepared.quote.end_date!,total_gbp:prepared.quote.total_gbp!,base_total_gbp:prepared.base_quote.total_gbp!,added:addedLines.map(consentLine),removed:removedLines.map((l,index)=>consentLine(l,addedLines.length+index))},messages.at(-2)?.sender==="owner"?messages.at(-2):undefined))return {ok:false,action_performed:false,error_code:"replacement_consent_unverified",error:"The current renter message does not agree to these exact removed and replacement units, dates and complete Native price. Quote the full swap or reconcile their request. No booking changes were made."};
+  const {proposed_lines:_private,...verified_quote}=prepared;
+  const beforeRevision=row.changes.length;
+  const summary=`replaced ${prepared.removed_items.map(i=>`${i.quantity}x ${i.name}`).join(", ")} with ${prepared.added_items.map(i=>`${i.quantity}x ${i.name}`).join(", ")}`;
+  await ctx.db.patch(row._id,{items:prepared.proposed_lines.map(l=>({...l,item_id:l.item_id as never})),changes:[...row.changes,{at:Date.now(),summary,request_key:requestKey}],updated_at:Date.now()});
+  return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summary,order:prepared.quote,verified_quote,stock_receipts:prepared.stock_receipts,context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
+ },
 });
 
 export const applyChange = mutation({
@@ -527,6 +570,10 @@ export const applyChange = mutation({
       note:"This request was applied previously. NO new edit was made. Describe the CURRENT order below, using already set to or already contains where appropriate; never say I moved, added or removed it this time. A later edit may have changed the order since that earlier action.",
       order:summarise(row.items,row.start_date,row.end_date)};
 
+    if(!a.preview_only && ["add_item","remove_item"].includes(a.action)) {
+      const preceding=(await recentThreadMessages(ctx,a.thread_id,2)).at(-2);
+      if(requiresReplacementTransaction(latestMessage?.body_text??"",preceding?.sender==="owner"?preceding:undefined))return {ok:false,action_performed:false,error_code:"atomic_replacement_required",error:"An agreed swap must be applied together through replace_items. No booking changes were made."};
+    }
     const beforeContext = await amendmentContext(ctx, a.thread_id);
     const beforeRevision = row.changes.length;
     const transition = async () => ({ source: "native_lab_amendment" as const,

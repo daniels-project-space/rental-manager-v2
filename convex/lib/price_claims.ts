@@ -14,7 +14,7 @@ export type PriceEvidence = {
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
-  proposal?: {removed_items?:Array<{name:string;quantity:number}>;base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number;physical_identity_key?:string};
+  proposal?: {base_physical_identity_key?:string;base_total_gbp?:number;removed_listings?:Array<{product_id:number;quantity:number}>;removed_items?:Array<{name:string;quantity:number}>;base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number;physical_identity_key?:string};
   date_proposal?: import("./renter_date_proposal").DateProposalEvidence;
   call_id: string; source: string;
   required_accessory_names?: string[];

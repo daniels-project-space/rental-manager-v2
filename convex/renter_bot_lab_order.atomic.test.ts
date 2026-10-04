@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyChange, applyAdditionBasket, quoteAdditionBasket } from "./renter_bot_lab_order";
+import { applyChange, applyAdditionBasket, quoteAdditionBasket, applyReplacementBasket } from "./renter_bot_lab_order";
 import { amendedDraftContext, draftContextKey } from "./lib/draft_review";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { setDraft } from "./replyInbox";
@@ -555,5 +555,43 @@ describe("date quotes and positive consent",()=>{
   expect(await extend(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(blocked);
   f.tables.owner_unavailability=[];expect(await extend(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:120}});
   expect(await extend(f.ctx)).toMatchObject({ok:true,action_performed:false});
+ });
+});
+
+
+describe("atomic replacement acceptance",()=>{
+ const setup=()=>{
+  const f=fixture();f.tables.items[0].lens_mount="E";
+  f.tables.items.push({_id:"old",name_canonical:"TTArtisan 11mm f2.8",status:"active",is_marketing_only:false,qty:1,kind:"lens",lens_mount:"E",aliases:[]},{_id:"new",name_canonical:"Sony GM 16-35mm f2.8",status:"active",is_marketing_only:false,qty:1,kind:"lens",lens_mount:"E",aliases:[]});
+  const row=f.tables.renter_bot_lab_orders[0];row.items[0].product_id=1;row.start_date="2026-10-20";row.end_date="2026-10-21";
+  row.items.push({name:"TTArtisan 11mm f2.8",product_id:2,qty:1,daily_price_gbp:21,pricing_basis:"listing",origin:"seed"});
+  f.tables.renter_bot_lab_bookings[0]={...f.tables.renter_bot_lab_bookings[0],status:"confirmed",order_step:"BOOKED_AFTER_VERIFIED",start_date:row.start_date,end_date:row.end_date,pickup_date:undefined};
+  f.tables.online_listings=[{account_slug:"leo",product_id:1,name:"Sony FX3",daily_price:40},{account_slug:"leo",product_id:2,name:"TTArtisan 11mm f2.8",daily_price:21},{account_slug:"leo",product_id:3,name:"Sony GM 16-35mm f2.8",daily_price:20}];
+  f.tables.listing_resolution_override=[{account_slug:"leo",product_id:1,components:[{item_id:"camera",qty:1}]},{account_slug:"leo",product_id:2,components:[{item_id:"old",qty:1}]},{account_slug:"leo",product_id:3,components:[{item_id:"new",qty:1}]}];
+  f.tables.hygglo_messages[0].body_text="Please replace TTArtisan 11mm f2.8 with Sony GM 16-35mm f2.8 for £120 total.";
+  return f;
+ };
+ const args={thread_id:"__probe__atomic",request_message_id:"fixture-current",items:[{product_id:3,qty:1}],replace_product_id:2,replace_quantity:1};
+ const swap=(ctx:any,a={})=>(applyReplacementBasket as any)._handler(ctx,{...args,...a});
+ it("preserves retained gear and applies the complete replacement once",async()=>{
+  const f=setup();const result=await swap(f.ctx);expect(result,JSON.stringify(result)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:120},context_transition:{before_revision:0,after_revision:1}});
+  expect(f.tables.renter_bot_lab_orders[0].items.map((l:any)=>l.product_id)).toEqual([1,3]);
+  expect(f.tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  const after=structuredClone(f.tables.renter_bot_lab_orders[0]);
+  expect(await swap(f.ctx)).toMatchObject({ok:true,already_applied:true,action_performed:false});
+  expect(f.tables.renter_bot_lab_orders[0]).toEqual(after);
+ });
+ it("leaves the original basket intact for a rejected full price or read-only request",async()=>{
+  for(const message of ["Please replace TTArtisan 11mm f2.8 with Sony GM 16-35mm f2.8 for £119 total.","Quote only. Please replace TTArtisan 11mm f2.8 with Sony GM 16-35mm f2.8 for £120 total.","Please replace TTArtisan 11mm f2.8 with Sony GM 16-35mm f2.8 for £120 total. Do not remove the TTArtisan 11mm f2.8."]){const f=setup();f.tables.hygglo_messages[0].body_text=message;const before=structuredClone(f.tables.renter_bot_lab_orders[0]);expect(await swap(f.ctx)).toMatchObject({ok:false,action_performed:false});expect(f.tables.renter_bot_lab_orders[0]).toEqual(before);}
+ });
+ it("leaves every old line intact when stock, marketing eligibility or selection fails",async()=>{
+  for(const mode of ["stock","marketing","shared"]){const f=setup();if(mode==="stock")f.tables.items[2].qty=0;if(mode==="marketing")f.tables.items[2].is_marketing_only=true;if(mode==="shared")f.tables.listing_resolution_override[2].components.push({item_id:"camera",qty:1});const before=structuredClone(f.tables.renter_bot_lab_orders[0]);expect(await swap(f.ctx)).toMatchObject({ok:false,action_performed:false});expect(f.tables.renter_bot_lab_orders[0]).toEqual(before);}
+  for(const fields of [{request_message_id:"older"},{replace_quantity:2},{replace_product_id:99},{items:[{product_id:3,qty:21}]}]){const f=setup();const before=structuredClone(f.tables.renter_bot_lab_orders[0]);expect(await swap(f.ctx,fields)).toMatchObject({ok:false,action_performed:false});expect(f.tables.renter_bot_lab_orders[0]).toEqual(before);}
+ });
+ it("refuses splitting a swap into independent legacy edits",async()=>{
+  const f=setup(),before=structuredClone(f.tables.renter_bot_lab_orders[0]);
+  expect(await (applyAdditionBasket as any)._handler(f.ctx,{thread_id:args.thread_id,request_message_id:args.request_message_id,items:args.items})).toMatchObject({ok:false,error_code:"atomic_replacement_required"});
+  expect(await applyCurrentChange(f.ctx,{thread_id:args.thread_id,action:"remove_item",product_id:2,qty:1,item_name:"TTArtisan 11mm f2.8"})).toMatchObject({ok:false,error_code:"atomic_replacement_required"});
+  expect(f.tables.renter_bot_lab_orders[0]).toEqual(before);
  });
 });

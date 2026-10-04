@@ -84,19 +84,30 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
         const completeLines=q.lines;
         const baseQuote=r.base_quote as Record<string,unknown> | undefined;
         const additionQuote=r.addition_quote as Record<string,unknown> | undefined;
-        const validPart=(part:Record<string,unknown>|undefined, expected:Array<{name:string;quantity:number}>) => {
+        const validPart=(part:Record<string,unknown>|undefined, expected:Array<{name:string;quantity:number}>,requireFullIdentity=true) => {
           if (!part || part.days!==q.days || part.start_date!==q.start_date || part.end_date!==q.end_date ||
             !Array.isArray(part.lines) || !number(part.total_gbp) || !part.lines.length) return false;
           if (!part.lines.every(l=>l && string(l.name) && number(l.qty) && Number.isInteger(l.qty) &&
             number(l.line_total_gbp) && (string(l.item_id)||number(l.product_id)) && number(l.effective_rate_gbp) && number(l.daily_price_gbp) &&
             Math.abs(l.effective_rate_gbp*(q.days as number)*l.qty-l.line_total_gbp)<0.011 &&
-            completeLines.some(full=>full.name===l.name && full.item_id===l.item_id && full.product_id===l.product_id &&
-              full.effective_rate_gbp===l.effective_rate_gbp && full.daily_price_gbp===l.daily_price_gbp))) return false;
+            (!requireFullIdentity || completeLines.some(full=>full.name===l.name && full.item_id===l.item_id && full.product_id===l.product_id &&
+              full.effective_rate_gbp===l.effective_rate_gbp && full.daily_price_gbp===l.daily_price_gbp)))) return false;
           const actual=members(part.lines.map(l=>({name:l.name,quantity:l.qty})));
           const required=members(expected);
           return actual.size===required.size && [...required].every(([name,qty])=>actual.get(name)===qty) &&
             Math.abs(part.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(part.total_gbp as number))<0.011;
         };
+        if(replacement && validPart(baseQuote,r.base_items,false) && validPart(additionQuote,r.added_items,false) && string(r.base_physical_identity_key) && Array.isArray(r.removed_listings) && r.removed_listings.length===(r.removed_items as Array<{name:string;quantity:number}>).length) {
+          const removed=r.removed_listings as Array<{product_id:number;quantity:number}>;
+          const added=additionQuote!.lines as Array<Record<string,unknown>>;
+          const base=baseQuote!.lines as Array<Record<string,unknown>>;
+          if(removed.every(i=>Number.isInteger(i.product_id)&&i.product_id>0&&Number.isInteger(i.quantity)&&i.quantity>0&&base.some(l=>l.product_id===i.product_id&&(l.qty as number)>=i.quantity&&(r.removed_items as Array<{name:string;quantity:number}>).some((n:{name:string;quantity:number})=>n.name===l.name&&n.quantity===i.quantity))) && new Set(removed.map(i=>i.product_id)).size===removed.length && added.every(l=>Number.isInteger(l.product_id)&&(l.product_id as number)>0)) {
+            proposal.removed_listings=removed;
+            proposal.added_listings=added.map(l=>({product_id:l.product_id as number,quantity:l.qty as number}));
+            proposal.base_total_gbp=baseQuote!.total_gbp as number;
+            proposal.base_physical_identity_key=r.base_physical_identity_key as string;
+          }
+        }
         if (!replacement && validPart(baseQuote,r.base_items) && validPart(additionQuote,r.added_items) &&
           number(r.additional_cost_gbp) &&
           Math.abs((q.total_gbp as number)-(baseQuote!.total_gbp as number)-(additionQuote!.total_gbp as number))<0.011 &&

@@ -41,7 +41,7 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           result.source === "native_lab_amendment" && result.verified_quote && typeof result.verified_quote === "object" &&
           result.context_transition && typeof result.context_transition === "object" &&
           (result.context_transition as Record<string, unknown>).source === "native_lab_amendment")
-        visit({toolName:"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:accepted-quote`,result:result.verified_quote});
+        visit({toolName:(result.verified_quote as Record<string,unknown>).change_kind==="replacement"?"quote_booking_replacement":"quote_booking_addition",toolCallId:`${String(payload.toolCallId ?? "unknown")}:accepted-quote`,result:result.verified_quote});
       if(payload.toolName==="modify_booking" && result.ok===true && result.action_performed===true && result.verified_date_quote && typeof result.verified_date_quote==="object" && result.context_transition && typeof result.context_transition==="object" && (result.context_transition as Record<string,unknown>).source==="native_lab_amendment")
         visit({toolName:"quote_booking_dates",toolCallId:`${String(payload.toolCallId??"unknown")}:accepted-date-quote`,result:result.verified_date_quote});
       if (payload.toolName === "lookup_pricing" && result.found === true && result.booking_addition_preview && typeof result.booking_addition_preview === "object")
