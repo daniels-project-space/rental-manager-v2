@@ -70,7 +70,7 @@ export const getRenterContextTool = createTool({
     rental_stage: z.unknown(),
     last_message_id: z.string().nullable(),
     owner_checks: z.array(z.object({
-      kind:z.enum(["lens_recommendation","listing_mapping"]),product_id:z.number().nullable(),
+      kind:z.enum(["lens_recommendation","camera_recommendation","listing_mapping"]),product_id:z.number().nullable(),
       task_id:z.string(),status:z.enum(["pending","handled_by_owner"]),requirements:z.unknown(),lens_mount:z.string().nullable(),
       start_date:z.string().nullable(),end_date:z.string().nullable(),quantity:z.number(),candidate_names:z.array(z.string()),
       context_changed:z.boolean(),source_message_id:z.string(),specification_result_verified:z.literal(false),customer_input_required:z.literal(false),
