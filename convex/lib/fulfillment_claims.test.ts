@@ -1,5 +1,6 @@
 import {describe,it,expect} from "vitest";
 import {forbiddenFulfillmentClaims} from "./fulfillment_claims";
+import {unsupportedStockClaims} from "./stock_claims";
 const blocked=["RED Komodo"],known=["RED Komodo","Sony FX3"];
 describe("item-scoped fulfillment assertions",()=>{
  it.each([
@@ -25,5 +26,17 @@ describe("item-scoped fulfillment assertions",()=>{
   expect(forbiddenFulfillmentClaims("The Sony FX3 is available.",["Sony FX30"],["Sony FX3"])).toEqual([]);
   expect(forbiddenFulfillmentClaims("The Sony FX30 is available.",["Sony FX30"],["Sony FX3"])).toContain("Sony FX30");
   expect(forbiddenFulfillmentClaims("The Sony 24-70mm f2.8 is available.",["Sony 24-70mm f2.8"],[])).toContain("Sony 24-70mm f2.8");
+ });
+ it("does not attach an explicitly stated alternative setup to the preceding declined camera",()=>{
+  const text="Hi! The Canon R5 kit isn't available for 20–21 October, but for a full-frame 4K walkthrough with autofocus, I can offer our Sony setup:\n\n• Sony FX3 body: £98 for the 2 days (£49/day)\n• Sony GM 16-35mm f/2.8 lens: £40 for the 2 days (£20/day)";
+  expect(forbiddenFulfillmentClaims(text,["Canon R5"],["Canon R5","Sony FX3","Sony GM 16-35mm f2.8"])).toEqual([]);
+ });
+ it.each(["I can offer it.","I can supply one.","I can provide our camera."])("keeps a generic offer bound to its declined item: %s",offer=>{
+  expect(forbiddenFulfillmentClaims(`The RED Komodo isn't available. ${offer}`,blocked,known)).toContain("RED Komodo");
+ });
+ it("leaves an unknown explicit offer ungrounded rather than certifying its stock",()=>{
+  const text="The RED Komodo isn't available, but I can offer our Sony setup.";
+  expect(forbiddenFulfillmentClaims(text,blocked,known)).toEqual([]);
+  expect(unsupportedStockClaims(text,[],{start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"RED Komodo",quantity:1}]},blocked)).toEqual(expect.arrayContaining([expect.objectContaining({negative:false})]));
  });
 });

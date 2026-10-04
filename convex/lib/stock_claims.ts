@@ -36,6 +36,10 @@ function sameItem(a: string, b: string) {
   return left.some(n => right.includes(n));
 }
 const units: Record<string, number> = { one: 1, single: 1, two: 2, both: 2, three: 3, four: 4 };
+/** Preserve the stated object of an equipment offer across all claim checks. */
+export function rentalOfferAssertion(clause:string) {
+  return /^\s*(?:(?:but|however|whereas|while)\s+)?(?:I|we)\s+(?:can|could|am able to|are able to)\s+(?:offer|supply|provide)\s+(.+?)\s*[.!]?$/i.exec(clause);
+}
 function subjectOf(prefix: string) {
   let s = prefix.trim().replace(/^(?:but|however|whereas|while|so|therefore)\s+/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
@@ -111,7 +115,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // An unconditional equipment offer is an availability promise. Keep the
     // object, counts and dates intact; service offers and conditional checks
     // do not assert that physical equipment is currently free.
-    const offer = /^\s*(?:I|we)\s+(?:can|could|am able to|are able to)\s+(?:offer|supply|provide)\s+(.+?)\s*[.!]?$/i.exec(rawClause);
+    const offer = rentalOfferAssertion(rawClause);
     const service = offer && /^(?:(?:an?|the|your|some)\s+)?(?:refund|discount|delivery|pickup|collection|help|advice|guidance|support|quote|price|information|assistance)\b/i.test(offer[1]);
     const conditionalOffer = offer && /\b(?:if|once|when|after|subject to)\b/i.test(offer[1]);
     const rentalRefusal=rentalRefusalSubject(rawClause);

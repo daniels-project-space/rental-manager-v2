@@ -1,4 +1,5 @@
 import { renterItemNames } from "./renter_item_names";
+import { rentalOfferAssertion } from "./stock_claims";
 
 const norm=(s:string)=>s.toLowerCase().replace(/’/g,"'").replace(/[^a-z0-9']+/g," ").trim();
 /** Classify the subject of fulfillment assertions. Other items still require
@@ -28,7 +29,13 @@ export function forbiddenFulfillmentClaims(text:string, forbidden:string[], know
       const named=lastAt===undefined?undefined:preceding.find(m=>m.at===lastAt);
       const following=/^(?:i|we|you|go ahead|feel free|book |rent )/.test(assertion[0]) ? mentions.find(m=>m.at>=at+assertion[0].length && m.at-at<70 &&
         clause.slice(at+assertion[0].length,m.at).trim().split(/\s+/).every(w=>!w || ["the","a","an","my","our","another","you","also","instead"].includes(w))):undefined;
-      const current=following??named??subject;
+      // An explicitly stated new object cannot inherit the prior refusal's
+      // item. Unknown offers still need independent stock evidence; only a
+      // deictic offer ("I can offer it/one") refers back to the prior subject.
+      const offer=rentalOfferAssertion(clause.slice(at));
+      const object=offer?.[1].replace(/^(?:(?:the|a|an|my|our|your|you|another)\s+)+/i,"").trim();
+      const explicitObject=object && !/^(?:(?:it|them|one|ones|this|that|these|those|gear|camera|body|kit|set|option)(?:\s+(?:for|on|from|instead|if|once|when|after)\b.*)?|\d+)$/i.test(object);
+      const current=following??(explicitObject?{name:"",blocked:false}:named??subject);
       const wholeBooking=/\b(?:your|the|this|that) (?:booking|rental|request|order) (?:is|has been|will be)\s*$/.test(prefix);
       if(current.blocked || wholeBooking)hits.add(current.blocked?current.name:forbidden[0]);
     }
