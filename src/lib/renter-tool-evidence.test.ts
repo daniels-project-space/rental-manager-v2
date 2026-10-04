@@ -1,3 +1,5 @@
+import optionsNative from "./fixtures/renter-sales-options-native.json";
+import {forbiddenFulfillmentClaims} from "../../convex/lib/fulfillment_claims";
 import listNative from "./fixtures/renter-sales-list-native.json";
 import breakdownNative from "./fixtures/renter-sales-breakdown-native.json";
 import pairedNative from "./fixtures/renter-sales-paired-native.json";
@@ -208,5 +210,21 @@ describe("captured priced-list sales reply",()=>{
  });
  it("does not carry a list through unrelated text or an unknown extra row",()=>{
   for(const text of [listNative.candidate.replace("Total:","Some unrelated note.\nTotal:"),listNative.candidate.replace("Total:","- Unknown microphone: £0\nTotal:"),listNative.candidate.replace("Total:","- Sony GM 16-35mm f/2.8: £40\nTotal:")]){expect(priceCheck(text),text).not.toEqual([]);expect(stockCheck(text),text).not.toEqual([]);}
+ });
+});
+
+
+describe("captured requirement-filtered Sony setup options",()=>{
+ const check=(text=optionsNative.candidate,evidence=optionsNative.prices as PriceEvidence[])=>unsupportedPriceClaims(text,evidence,optionsNative.stock_request,optionsNative.renter_message);
+ it("keeps bulleted totals separate from equipment rows and checks both complete Native baskets",()=>{
+  expect(check()).toEqual([]);
+  expect(unsupportedStockClaims(optionsNative.candidate,optionsNative.stock,optionsNative.stock_request,["Canon R5"],optionsNative.renter_message)).toEqual([]);
+  expect(forbiddenFulfillmentClaims(optionsNative.candidate,["Canon R5"],optionsNative.prices.flatMap(e=>e.names))).toEqual([]);
+ });
+ it("rejects wrong option totals, amounts, durations and cameras",()=>{
+  for(const text of [optionsNative.candidate.replace("£138","£124"),optionsNative.candidate.replace("£124","£138"),optionsNative.candidate.replace("£49/day","£42/day"),optionsNative.candidate.replace("£98 for 2 days","£84 for 2 days"),optionsNative.candidate.replace("• Total: £138 for the 2 days","• Total: £138 for the 3 days"),optionsNative.candidate.replace("• FX3 body:","• FX30 body:")])expect(check(text),text).not.toEqual([]);
+  expect(check(optionsNative.candidate.replace("1. Sony FX3 + Sony GM 16-35mm f2.8","1. Sony FX3 + Sony GM 16-35mm f2.8 for 22–23 October"))).not.toEqual([]);
+  expect(check(optionsNative.candidate.replace("1. Sony FX3 + Sony GM 16-35mm f2.8","1. Sony FX3 + Sony GM 16-35mm f2.8 for 20–21 October"))).toEqual([]);
+  expect(check(optionsNative.candidate,optionsNative.prices.filter(e=>e.kind!=="basket") as PriceEvidence[])).not.toEqual([]);
  });
 });

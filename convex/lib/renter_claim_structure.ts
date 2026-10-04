@@ -1,3 +1,4 @@
+import { claimedRentalDays, withoutDurationReference } from "./claim_duration";
 import { claimDateScope } from "./claim_date_scope";
 /** Currency syntax only. Identity, quantities and prices are validated by the
  * caller against Native receipts; these spans never constitute evidence. */
@@ -46,14 +47,17 @@ export function itemReferenceLabel(label:string,category:"camera"|"lens") {
 /** Explicit list syntax anchors the following summary to its immediate rows.
  * The caller still resolves every row and validates the complete Native basket. */
 export function itemQuoteRow(line:string):string|null {
-  return /^\s*[-*•]\s+([^:]+):/.exec(line)?.[1]??null;
+  const reference=/^\s*[-*•]\s+([^:]+):/.exec(line)?.[1];
+  return reference && !itemQuoteTotalPrefix(reference+":") ? reference : null;
 }
 export function itemQuoteTotalPrefix(prefix:string):boolean {
-  return /^\s*(?:combined\s+)?total\s*:\s*$/i.test(prefix);
+  return /^\s*(?:[-*•]\s+)?(?:combined\s+)?total\s*:\s*$/i.test(prefix);
 }
 export function itemQuoteTotalLine(line:string):boolean {
-  const amount=/£\s*\d+(?:,\d{3})*(?:\.\d+)?\s*[.!]?\s*$/.exec(line);
-  return !!amount && itemQuoteTotalPrefix(line.slice(0,amount.index));
+  const amount=/£\s*\d+(?:,\d{3})*(?:\.\d+)?/.exec(line);
+  if(!amount || !itemQuoteTotalPrefix(line.slice(0,amount.index)))return false;
+  const suffix=line.slice(amount.index+amount[0].length).trim();
+  return /^[.!]?$/.test(suffix) || Number.isFinite(claimedRentalDays(suffix)) && /^[.!]?$/.test(withoutDurationReference(suffix));
 }
 
 export type ItemQuoteGroup={start:number;end:number;header:string};
@@ -69,7 +73,8 @@ export function itemQuoteGroups(text:string):ItemQuoteGroup[] {
     while(index+1<lines.length && itemQuoteRow(lines[index+1].text))index++;
     let before=first-1;
     while(before>=0&&!lines[before].text.trim())before--;
-    const header=before>=0 && /:\s*$/.test(lines[before].text) && !itemQuoteRow(lines[before].text) ? lines[before].text : "";
+    const preceding=before>=0 ? lines[before].text : "";
+    const header=!itemQuoteRow(preceding) && (/:\s*$/.test(preceding) || claimDateScope(preceding).explicit || claimedRentalDays(preceding)!==null) ? preceding : "";
     let after=index+1;
     while(after<lines.length&&!lines[after].text.trim())after++;
     if(after<lines.length&&itemQuoteTotalLine(lines[after].text))index=after;

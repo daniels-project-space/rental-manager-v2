@@ -40,3 +40,11 @@ describe("item-scoped fulfillment assertions",()=>{
   expect(unsupportedStockClaims(text,[],{start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"RED Komodo",quantity:1}]},blocked)).toEqual(expect.arrayContaining([expect.objectContaining({negative:false})]));
  });
 });
+
+
+it("separates a named alternative class from a prior denial without allowing blocked members",()=>{
+ const known=["Canon R5","Sony FX3","Sony A7 V"];
+ expect(forbiddenFulfillmentClaims("The Canon R5 kit isn't available for 20–21 October, but I have a couple of great full-frame Sony options with autofocus wide-angle glass that fit your budget:",["Canon R5"],known)).toEqual([]);
+ for(const text of ["I have a couple of Canon R5 kits.","I have the Sony FX3 and the Canon R5.","I can offer Sony FX3 plus Canon R5.","I can supply Sony FX3 with Canon R5."])expect(forbiddenFulfillmentClaims(text,["Canon R5"],known),text).toContain("Canon R5");
+ expect(forbiddenFulfillmentClaims("I have the Sony FX3 instead of the Canon R5.",["Canon R5"],known)).toEqual([]);
+});

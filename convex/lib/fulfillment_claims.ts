@@ -33,9 +33,15 @@ export function forbiddenFulfillmentClaims(text:string, forbidden:string[], know
       // item. Unknown offers still need independent stock evidence; only a
       // deictic offer ("I can offer it/one") refers back to the prior subject.
       const offer=rentalOfferAssertion(clause.slice(at));
-      const object=offer?.[1].replace(/^(?:(?:the|a|an|my|our|your|you|another)\s+)+/i,"").trim();
+      const possession=/^(?:i|we)(?:'ve)? (?:have(?: got)?|got|stock|carry) (.+)$/.exec(clause.slice(at));
+      const object=(offer?.[1]??possession?.[1])?.split(/\b(?:instead of|rather than|to replace|as an alternative to)\b/i)[0]
+        .replace(/^(?:(?:the|a|an|my|our|your|you|another)\s+)+/i,"").trim();
       const explicitObject=object && !/^(?:(?:it|them|one|ones|this|that|these|those|gear|camera|body|kit|set|option)(?:\s+(?:for|on|from|instead|if|once|when|after)\b.*)?|\d+)$/i.test(object);
-      const current=following??(explicitObject?{name:"",blocked:false}:named??subject);
+      // All explicitly offered blocked members count, even when a different
+      // owned item occurs first or a quantity separates verb and model name.
+      if(object)for(const item of identities.filter(i=>i.blocked && ` ${object} `.includes(` ${i.alias} `)))hits.add(item.name);
+      const relativePossession=possession && named && ` ${prefix.trim()} `.endsWith(` ${named.alias} `);
+      const current=relativePossession ? named : following??(explicitObject?{name:"",blocked:false}:named??subject);
       const wholeBooking=/\b(?:your|the|this|that) (?:booking|rental|request|order) (?:is|has been|will be)\s*$/.test(prefix);
       if(current.blocked || wholeBooking)hits.add(current.blocked?current.name:forbidden[0]);
     }
