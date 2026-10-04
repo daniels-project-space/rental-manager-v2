@@ -1,3 +1,4 @@
+import {negotiationFromMessages,NEGOTIATION_HISTORY_LIMIT} from "./lib/renter_bot_negotiation";
 import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
 import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources,unsupportedBookingDateClaims} from "./lib/booking_reply_claims";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
@@ -1228,7 +1229,8 @@ export const getThreadContext = internalQuery({
         .slice(0, 3);
     }
 
-    const msgs = await recentThreadMessages(ctx, thread_id, 40);
+    const negotiationMsgs = await recentThreadMessages(ctx, thread_id, NEGOTIATION_HISTORY_LIMIT);
+    const msgs = negotiationMsgs.slice(-40);
     const recent = msgs.slice(-15).map((m) => ({
       role: m.sender === "owner" ? "owner" : "renter",
       content: m.body_text,
@@ -1700,6 +1702,7 @@ export const getThreadContext = internalQuery({
       currency: reservation?.currency ?? "GBP",
       messages: recent,
       renter_camera_messages: renterMsgs,
+      negotiation:negotiationFromMessages(negotiationMsgs),
       last_message_id: latest?.message_id ?? null,
     };
   },

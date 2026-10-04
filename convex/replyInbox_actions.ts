@@ -36,7 +36,6 @@ import { sameDraftApproval } from "./lib/draft_review";
 import { renterBotRuntimeAllowed } from "./lib/renter_bot_runtime";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
 import { dnaSummary } from "./lib/renter_dna";
-import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
 import {
   sendManualRenterMessage,
   manualApproveOrder,
@@ -146,12 +145,7 @@ export const generateDraft = action({
 
     // Phase 4 negotiation ladder (harvested from the dormant renter_bot stack):
     // objection count → HOLD_FIRM / OFFER_ALTERNATIVES / SOFT_YIELD framing.
-    const negotiation = computeNegotiationStance({
-      latestMessage: lastRenter,
-      priorRenterMessages: renterMsgs.slice(0, -1),
-      lastPriceOfferedGbp: c.gross_paid_gbp ?? null,
-      isHighValue: (c.prior_rentals ?? 0) >= 3,
-    });
+    const negotiation = c.negotiation;
 
     // Phase 4 model routing: high-stakes turns go to the stronger model.
     const lr = lastRenter.toLowerCase();

@@ -41,6 +41,13 @@ export interface NegotiationOutput {
   discountAuthority: "none" | "may_offer_alternatives" | "may_escalate";
 }
 
+/** Same bounded Native history for drafting and the Mastra tool. */
+export const NEGOTIATION_HISTORY_LIMIT=50;
+export function negotiationFromMessages(messages:Array<{sender:string;body_text:string}>) {
+  const renterMessages=messages.filter(message=>message.sender==="renter").map(message=>message.body_text);
+  return computeNegotiationStance({latestMessage:renterMessages.at(-1)??"",priorRenterMessages:renterMessages.slice(0,-1)});
+}
+
 // Price objections require price language; another hire or a delivery request
 // alone is not negotiation. Shared by drafting and the Native Mastra tool.
 

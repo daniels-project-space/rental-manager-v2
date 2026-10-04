@@ -47,7 +47,7 @@ import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_ide
 import { rentalStage,isClosedRentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { recentThreadMessages } from "./lib/thread_messages";
-import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
+import { negotiationFromMessages,NEGOTIATION_HISTORY_LIMIT } from "./lib/renter_bot_negotiation";
 import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
 import { tierRateForDays, describeTiers, rentalQuote, type PriceTier } from "./lib/hygglo_pricing";
 
@@ -912,15 +912,8 @@ export const get_negotiation_stance = query({
     latest_message: v.optional(v.string()),
   },
   handler: async (ctx, { thread_id }) => {
-    const all = await recentThreadMessages(ctx, thread_id, 50);
-    const renterMsgs = all
-      .filter((m) => m.sender === "renter")
-      .map((m) => m.body_text);
-
-    return computeNegotiationStance({
-      latestMessage: renterMsgs.at(-1) ?? "",
-      priorRenterMessages: renterMsgs.slice(0, -1),
-    });
+    const all = await recentThreadMessages(ctx, thread_id, NEGOTIATION_HISTORY_LIMIT);
+    return negotiationFromMessages(all);
   },
 });
 
