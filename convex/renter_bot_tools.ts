@@ -455,6 +455,14 @@ export const get_listing_context = query({
 
 // ── Tool 3: lookup_pricing ───────────────────────────────────
 
+// Pricing supplies base amounts. A model-selected flag is not location evidence
+// or approval for a different amount; keep unknown separate from ineligible.
+const UNVERIFIED_DISTANCE_DISCOUNT = {
+  distance_discount_applies: null,
+  distance_discount_verification: "unverified" as const,
+  distance_discount_guidance: "The quoted total is the base price; no distance discount has been applied. A discounted offer requires verified eligibility and a verified reduced quote or recorded owner approval.",
+};
+
 export const lookup_pricing = query({
   args: {
     item_name: v.string(),
@@ -462,11 +470,12 @@ export const lookup_pricing = query({
     account_slug: v.optional(v.string()),
     days: v.optional(v.number()),
     quantity: v.optional(v.number()),
+    // Legacy caller compatibility only; never used as eligibility evidence.
     listing_location_non_central: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { item_name, product_id, account_slug, days = 1, quantity = 1, listing_location_non_central },
+    { item_name, product_id, account_slug, days = 1, quantity = 1 },
   ) => {
     if (product_id != null && !account_slug) return {found:false as const,item_name,message:"An exact listing quote requires its account"};
     if (!Number.isInteger(days) || days < 1 || days > 366 || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return { found: false as const, item_name, note: "Use a whole rental duration from 1 to 366 days" };
@@ -684,7 +693,7 @@ export const lookup_pricing = query({
           one_day_rate_gbp: Math.round(oneDay * 100) / 100,
           days,
           price_tiers: describeTiers(tiers),
-          distance_discount_applies: !!listing_location_non_central,
+          ...UNVERIFIED_DISTANCE_DISCOUNT,
         };
       }
     }
@@ -715,7 +724,6 @@ export const lookup_pricing = query({
     const top = rows[0];
 
     const dailyRate = top.daily_price_min;
-    const distanceDiscountApplies = !!listing_location_non_central;
     return {
       found: true as const,
       item_name,
@@ -728,7 +736,7 @@ export const lookup_pricing = query({
       quantity,
       listed_total_gbp: days === 1 ? Math.round(dailyRate * quantity * 100) / 100 : null,
       guidance: days > 1 ? "Only a curated daily price is known. No verified duration tier exists; confirm the exact total with the owner. Never invent a discount." : "Curated daily price; no listing tier data available.",
-      distance_discount_applies: distanceDiscountApplies,
+      ...UNVERIFIED_DISTANCE_DISCOUNT,
       // Internal — kept off-limits to renter per disclosure rules.
       is_bundle: !!top.is_bundle,
       marketing_only: !!top.marketing_only,

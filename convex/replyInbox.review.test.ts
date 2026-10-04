@@ -8,7 +8,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {performJointStockCheck,check_availability,get_negotiation_stance} from './renter_bot_tools';
+import {performJointStockCheck,check_availability,get_negotiation_stance,lookup_pricing} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -605,5 +605,18 @@ describe("Native offered price provenance",()=>{
   expect(negotiationFromMessages([{sender:"owner",body_text:"Total: £50",quoted_inquiries:[offer]},text])).toMatchObject({lastPriceOfferedGbp:50,lastInquiryOffer:offer});
   expect(negotiationFromMessages([{...text,quoted_inquiries:[offer]}])).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null});
   expect(negotiationFromMessages([{sender:"owner",body_text:"Total: £500"},text])).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null});
+ });
+});
+
+
+describe('discount eligibility comes from Native evidence',()=>{
+ it('does not let a caller flag approve a discount or fabricate a reduced catalogue total',async()=>{
+  const f=database();
+  await f.ctx.db.insert('items',{name_canonical:'Sony FX3',status:'active',qty:2,is_marketing_only:false,kind:'camera'});
+  await f.ctx.db.insert('pricing_catalog',{item_name_canonical:'Sony FX3',daily_price_min:40,daily_price_max:40,marketing_only:false,is_bundle:false});
+  for(const days of [1,3])for(const listing_location_non_central of [undefined,false,true]){
+   const result=await invoke(lookup_pricing,f.ctx,{item_name:'Sony FX3',days,quantity:1,listing_location_non_central});
+   expect(result).toMatchObject({found:true,distance_discount_applies:null,distance_discount_verification:'unverified',listed_total_gbp:days===1?40:null});
+  }
  });
 });
