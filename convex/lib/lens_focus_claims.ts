@@ -11,7 +11,20 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
  const initial=evidence.filter(e=>e.names.some(n=>initialNames.some(i=>normal(i)===normal(n))));
  let subject=initial.length===1?initial:[];
  const failures:string[]=[];
+ const resolve=(reference:string)=>{
+  const declared=declaredLensReferences(normal(reference));
+  const candidates=evidence.filter(e=>declared.every(key=>normal(refs.get(key)?.item.names[0]??"")===normal(e.names[0])));
+  const match=bestMatch(reference,candidates,e=>e.names[0],e=>e.names.slice(1));
+  if(match.confident&&match.match)return [match.match];
+  // Copies may share model identity, but all current reviews must agree.
+  if(match.match&&match.ambiguousWith.length&&match.ambiguousWith.every(e=>normal(e.names[0])===normal(match.match!.names[0])))return [match.match,...match.ambiguousWith];
+  return [];
+ };
  for(const clause of text.replace(/’/g,"'").split(/(?<=[.!?])\s+|\n+|[,;]|\b(?:but|while|whereas)\b/i)) {
+  // Bind an explicit recommendation even when it contains no focus claim.
+  // Otherwise a later "it" incorrectly inherits the original rented lens.
+  const recommendation=/\b(?:recommend|suggest)\s+(?:(?:the|a|an)\s+)?(.+?)[.!?]?\s*$/i.exec(clause)?.[1];
+  if(recommendation)subject=resolve(itemReferenceLabel(recommendation,"lens"));
   for(const focus of clause.matchAll(/\b(auto[- ]?focus|manual[- ]focus(?:\s+only)?|AF)\b/gi)) {
   if(/^\s*(?:does|do|can|could|would|is|are)\b/i.test(clause) && /\?\s*$/.test(clause))continue;
   const prefix=clause.slice(0,focus.index);
@@ -23,18 +36,17 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
   // already-bound lens. Never let a named target borrow that prior proof.
   const existential=/^\s*(?:so\s+)?there(?:'s|\s+is|\s+are)\s+(?:(?:no|an?|any)\s+)?$/i.test(prefix);
   const target=existential?clause.slice(focus.index!+focus[0].length).match(/^\s+(?:on|in|for|with)\s+(.+?)(?=[—!?]|\.(?:\s|$)|$)/i)?.[1]:undefined;
-  const noun=(existential?target??"":predicate?prefix.slice(0,predicate.index):prefix).trim().replace(/^(?:(?:the|a|an|my|our|your|this|that)\s+)+/i,"");
+  // A leading pronoun is the grammatical subject regardless of the verb
+  // ("it provides ... with autofocus"). Do not turn descriptive prose into
+  // an item name or allow another explicitly named model to borrow its proof.
+  const pronoun=/^\s*(?:so\s+)?(it|this|that|one)\b/i.exec(prefix)?.[1];
+  const namedTarget=declaredLensReferences(normal(prefix)).length>0||cameraNames.some(name=>normal(prefix).includes(normal(name)));
+  const noun=(existential?target??"":pronoun?(namedTarget?prefix:pronoun):predicate?prefix.slice(0,predicate.index):prefix).trim().replace(/^(?:(?:the|a|an|my|our|your|this|that)\s+)+/i,"");
   const reference=itemReferenceLabel(noun.split(/\s+from\s+/i)[0],"lens");
   const generic=/^(?:it|this|that|one|the same lens|lens|this lens|that lens)?$/i.test(reference);
   if(!generic && bestMatch(reference,cameraNames,n=>n).confident){subject=[];continue;}
   if(!generic) {
-   const declared=declaredLensReferences(normal(reference));
-   const candidates=evidence.filter(e=>declared.every(key=>normal(refs.get(key)?.item.names[0]??"")===normal(e.names[0])));
-   const match=bestMatch(reference,candidates,e=>e.names[0],e=>e.names.slice(1));
-   subject=match.confident&&match.match?[match.match]:[];
-   // Identical physical copies share model identity, but every current review
-   // must prove the feature. Different variants remain ambiguous.
-   if(!subject.length && match.match && match.ambiguousWith.length && match.ambiguousWith.every(e=>normal(e.names[0])===normal(match.match!.names[0])))subject=[match.match,...match.ambiguousWith];
+   subject=resolve(reference);
   }
   const polarity=prefix.split(/\s+and\s+/i).at(-1)!;
   const negative=/\b(?:not|no|without|isn't|aren't|doesn't|does not|don't|do not|cannot|can't|lacks?)\b/i.test(polarity);

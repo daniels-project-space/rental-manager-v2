@@ -42,6 +42,19 @@ describe("reviewed lens focus assertions",()=>{
   expect(check("It is manual-focus only.",[{...lens,capabilities:null}])).not.toEqual([]);
   expect(check("It supports autofocus.",[lens,sony],[])).not.toEqual([]);
  });
+ it("binds a recommendation before validating a later pronoun with a descriptive predicate",()=>{
+  const actual="For wide-angle landscapes on Sony E-mount without the fisheye curvature of the 11mm, I'd recommend the Sony FE 16-35mm f/2.8 GM. It provides rectilinear wide-angle coverage from 16mm to 35mm with a constant f/2.8 maximum aperture and autofocus.";
+  expect(check(actual)).toEqual([]);
+  expect(check(actual,[lens,{...sony,capabilities:null}])).not.toEqual([]);
+  expect(check(actual.replace("GM.","GM II."))).not.toEqual([]);
+  expect(check("I'd recommend the TTArtisan 11mm f2.8 Fisheye (Sony E). It provides autofocus.")).not.toEqual([]);
+  expect(check("I'd recommend the Sony FE 16-35mm F2.8 GM or the TTArtisan 11mm f2.8 Fisheye (Sony E). It provides autofocus.")).not.toEqual([]);
+ });
+ it("does not let pronoun phrasing transfer proof to a different named lens or camera",()=>{
+  expect(check("It provides smooth autofocus.",[lens,sony],[sony.names[0]])).toEqual([]);
+  for(const text of ["It provides the TTArtisan 11mm f2.8 lens with autofocus.","It gives the Sony FE 16-35mm F2.8 GM II autofocus.","It gives the Sony FX3 autofocus."])
+   expect(check(text,[lens,sony],[sony.names[0]])).not.toEqual([]);
+ });
  it("connects the exact same rejection to the production draft guard",()=>{
   const result=guardDraft("The TTArtisan 11mm f/2.8 fisheye (E) supports autofocus.",{lensEvidence:[lens],history:[],lastRenterMessage:"Does the lens have autofocus?"});
   expect(result.flags.some(f=>f.type==="LENS_FOCUS_HALLUCINATION"&&f.severity==="high")).toBe(true);
