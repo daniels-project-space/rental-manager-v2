@@ -258,7 +258,6 @@ export const getNegotiationStanceTool = createTool({
     "Compute Daniel's negotiation ladder state for this conversation. Returns objection count, whether a competitor was mentioned, stance (NONE | HOLD_FIRM | OFFER_ALTERNATIVES | SOFT_YIELD), and the suggested framing. Call WHEN the renter pushes back on price or mentions a cheaper option elsewhere.",
   inputSchema: z.object({
     thread_id: z.string(),
-    latest_message: z.string(),
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {

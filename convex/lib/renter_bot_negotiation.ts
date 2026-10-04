@@ -41,13 +41,14 @@ export interface NegotiationOutput {
   discountAuthority: "none" | "may_offer_alternatives" | "may_escalate";
 }
 
-// ── V1 regex banks (verbatim) ─────────────────────────────────
+// Price objections require price language; another hire or a delivery request
+// alone is not negotiation. Shared by drafting and the Native Mastra tool.
 
 const NEGOTIATION_PATTERNS =
-  /\b(too expensive|lower price|better deal|best price|negotiate|can you do .* for|feels? steep|saw.*cheaper|over.?priced|rip.?off|found.*cheaper|another.*rental|price match|beat.*price|cheaper.*elsewhere|match.*price|any discount|any deal)\b/i;
+  /\b(too expensive|lower price|better deal|best price|negotiate|can you do .* for\s*(?:£\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:pounds?|quid)|GBP\s*\d+(?:\.\d+)?)|feels? steep|saw.*cheaper|over.?priced|rip.?off|found.*cheaper|price match|beat.*price|cheaper.*elsewhere|match.*price|any discount|any deal)\b/i;
 
 const COMPETITOR_PATTERNS =
-  /\b(saw.*cheaper|found.*cheaper|another.*rental|competitor|cheaper.*elsewhere|price.*match|beat.*price)\b/i;
+  /\b(saw.*cheaper|found.*cheaper|competitor|cheaper.*elsewhere|price.*match|beat.*price)\b/i;
 
 function countObjections(messages: string[]): number {
   let n = 0;

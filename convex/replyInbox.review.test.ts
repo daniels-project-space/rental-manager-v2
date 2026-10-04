@@ -7,7 +7,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {performJointStockCheck,check_availability} from './renter_bot_tools';
+import {performJointStockCheck,check_availability,get_negotiation_stance} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -546,5 +546,40 @@ describe("camera owner checks use Native facts and preserve human workflow",()=>
   await invoke(setDraftReview,f.ctx,{...f.args,message_id:"renter-new",owner_checks:[f.check]});
   await expect(invoke(handleOwnerCheck,f.ctx,{id:task._id,note:"I reviewed the old question.",expected_request_message_id:"renter-1"})).rejects.toThrow("changed");
   expect(tasks(f)[0].status).toBe("pending");
+ });
+});
+
+
+describe("Native negotiation history",()=>{
+ it("counts the latest renter objection once and ignores a supplied rewrite",async()=>{
+  const f=await setup();const message=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(message._id,{sender:"renter",body_text:"That is too expensive."});
+  for(const latest_message of [undefined,"That is too expensive.","Any discount? I found it cheaper elsewhere."]){
+   expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id,latest_message})).toMatchObject({objectionCount:1,stance:"HOLD_FIRM",competitorMentioned:false});
+  }
+ });
+ it("does not confuse another hire or delivery arrangements with price objections",async()=>{
+  for(const text of ["I want another rental for next month.","Can you do delivery for Tuesday?"]){
+   const f=await setup();const message=[...f.rows.values()].find(r=>r.table==="hygglo_messages");await f.ctx.db.patch(message._id,{sender:"renter",body_text:text});
+   expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:0,stance:"NONE",competitorMentioned:false});
+  }
+ });
+ it("retains actual counteroffers and cheaper competitor comparisons",async()=>{
+  for(const text of ["Can you do the lens for £40?","Can you do the lens for 40 pounds?","I found another rental cheaper."]){
+   const f=await setup();const message=[...f.rows.values()].find(r=>r.table==="hygglo_messages");await f.ctx.db.patch(message._id,{sender:"renter",body_text:text});
+   expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:1,stance:"HOLD_FIRM",competitorMentioned:text.includes("cheaper")});
+  }
+ });
+ it("counts separate real repeated objections while excluding owner and system copy",async()=>{
+  const f=await setup();const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(first._id,{sender:"renter",body_text:"Any discount?"});
+  for(const [index,sender] of ["owner","system","renter"].entries())await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:`turn-${index}`,sender,body_text:"Any discount?",fetched_at:f.now+index+1,hygglo_sent_at:f.now+index+1});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:2,stance:"OFFER_ALTERNATIVES"});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"third-objection",sender:"renter",body_text:"Any discount?",fetched_at:f.now+4,hygglo_sent_at:f.now+4});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:3,stance:"SOFT_YIELD"});
+ });
+ it("does not fabricate negotiation on a thread without renter messages",async()=>{
+  const f=await setup();const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");await f.ctx.db.patch(first._id,{sender:"owner"});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id,latest_message:"Any discount?"})).toMatchObject({objectionCount:0,stance:"NONE",competitorMentioned:false});
  });
 });

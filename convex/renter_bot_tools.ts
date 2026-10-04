@@ -908,17 +908,18 @@ export const check_basket_availability = query({
 export const get_negotiation_stance = query({
   args: {
     thread_id: v.string(),
-    latest_message: v.string(),
+    // Compatibility with older clients; Native history is the authority.
+    latest_message: v.optional(v.string()),
   },
-  handler: async (ctx, { thread_id, latest_message }) => {
+  handler: async (ctx, { thread_id }) => {
     const all = await recentThreadMessages(ctx, thread_id, 50);
     const renterMsgs = all
-      .filter((m) => m.sender !== "owner")
+      .filter((m) => m.sender === "renter")
       .map((m) => m.body_text);
 
     return computeNegotiationStance({
-      latestMessage: latest_message,
-      priorRenterMessages: renterMsgs,
+      latestMessage: renterMsgs.at(-1) ?? "",
+      priorRenterMessages: renterMsgs.slice(0, -1),
     });
   },
 });
