@@ -156,6 +156,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item ?? lensSubject(parsed.name) : undefined;
       if (!resolved) invalidBullet=true;
       else bulletSubjects=[...bulletSubjects,withQuantity(resolved,parsed.quantity??resolved.quantity)];
+      // A rendered quote establishes its exact basket, including quantities.
+      // Do not replace this group with just the last name found in its prose.
+      previousSubjects=invalidBullet ? [] : bulletSubjects;
     } else if(!itemQuoteTotalLine(rawClause) || bulletSubjects.length<2) {bulletSubjects=[];invalidBullet=false;}
     // An unconditional equipment offer is an availability promise. Keep the
     // object, counts and dates intact; service offers and conditional checks
@@ -198,7 +201,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
         latestMention=end;longestMention=key.length;mentioned=at < 0 ? [] : [candidate];
       } else if (at >= 0 && end === latestMention && key.length === longestMention && !mentioned.includes(candidate)) mentioned.push(candidate);
     }
-    if (mentioned.length) {previousSubjects = mentioned;precedingNamedSubjects=mentioned;}
+    if (mentioned.length && !bullet) {previousSubjects = mentioned;precedingNamedSubjects=mentioned;}
     if (/\b(?:check|verify|confirm|know|unsure|uncertain|not sure)\b[^.!?]{0,70}\b(?:whether|if)\b/i.test(clause)) continue;
     // "Your booked kit" is a booking reference, not a claim that stock is
     // unavailable. Keep character positions and continue scanning for any
@@ -242,7 +245,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const sourceSubject=subject.name.split(/\s+from\s+/i)[0];
     const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(sourceSubject);
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
-    const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
+    const lensReference = /^(?:units?\s+of\s+)?(?:(?:that|this|(?:the )?same)\s+)?(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
     const namedItem=namedSubject(subject.name);
     let targets = reference ? [reference.item] : namedItem ? [namedItem] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     // Only the explicit latest requested members can define an abbreviated
@@ -262,7 +265,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       // A lens pronoun needs a preceding standalone lens identity, never a
       // camera bundle that happens to mention a focal length in its name.
       const lensOwners = new Set([...references.values()].map(r => r.item));
-      targets = previousSubjects.length === 1 && lensOwners.has(previousSubjects[0]) ? previousSubjects : [];
+      const antecedents=previousSubjects.filter(item=>[...lensOwners].some(lens=>sameItem(lens.name,item.name)));
+      targets = antecedents.length===1 ? antecedents : [];
     }
     else if (!targets.length) {
       const requestedCounts = [...new Set(request.items.map(i => i.quantity))];

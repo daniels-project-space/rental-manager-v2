@@ -52,6 +52,32 @@ describe("named Native stock in an empty inquiry",()=>{
   expect(unsupportedStockClaims("It is available.",receipts.map((r,i)=>({...r,available:i===0,basket:{available:false,items:members}})),scope)).not.toEqual([]);
  });
 });
+describe("category references to a rendered Native quote",()=>{
+ const lens:StockReceipt={...stock,item:"TTArtisan 11mm f2.8 Fisheye (Sony E)",kind:"lens",start_date:"2026-10-22",end_date:"2026-10-24",available:true,free_units:1};
+ const scope:StockRequest={start_date:lens.start_date,end_date:lens.end_date,items:[{name:lens.item,quantity:1}]};
+ const text="Here are the details for your completed TTArtisan lens rental:\n\nCompleted rental record (1 October 2026 to 2 October 2026):\nRecorded quoted total: £42\n\nSeparately, here is the quote for the same lens for 22 to 24 October:\n\nFor 3 days (22 October 2026 to 24 October 2026):\n- 1 × TTArtisan 11mm f/2.8 fisheye (E): £60\nTotal: £60\n\nThe lens is available for those dates. Let me know whenever you'd like to book it!";
+ it("resolves the actual failed reply without masking the historical record",()=>{
+  expect(unsupportedStockClaims(text,[lens],scope)).toEqual([]);
+  for(const reference of ["This lens","That lens","The same lens","The exact lens"])
+   expect(unsupportedStockClaims(text.replace("The lens is",`${reference} is`),[lens],scope)).toEqual([]);
+ });
+ it("retains the quoted quantity and rejects missing, negative or differently dated stock",()=>{
+  for(const receipts of [[],[{...lens,available:false}],[{...lens,available:null}],[{...lens,end_date:"2026-10-23"}],[{...lens,item:lens.item.replace("Sony E","RF")} ]])
+   expect(unsupportedStockClaims(text,receipts,scope)).not.toEqual([]);
+  for(const wrong of [text.replace("1 ×","2 ×"),text.replace("The lens is","A second lens is"),text.replace("for those dates.","for 25 to 27 October.")])
+   expect(unsupportedStockClaims(wrong,[lens],scope)).not.toEqual([]);
+ });
+ it("requires an identified standalone lens and rejects ambiguous or unresolved quote rows",()=>{
+  const other={...lens,item:"Canon EF 24-105mm f4"};
+  const camera={...lens,item:"Sony FX3",kind:"camera"};
+  const review=(rows:string,receipts:StockReceipt[])=>unsupportedStockClaims(`For 3 days (22 to 24 October):\n${rows}\nTotal: £60\nThe lens is available for those dates.`,receipts,{...scope,items:receipts.map(r=>({name:r.item,quantity:1}))});
+  expect(review(`- 1 × ${camera.item}: £20\n- 1 × ${lens.item}: £40`,[camera,lens])).toEqual([]);
+  expect(review(`- 1 × ${lens.item}: £30\n- 1 × ${other.item}: £30`,[lens,other])).not.toEqual([]);
+  expect(review(`- 1 × ${lens.item}: £30\n- 1 × Unknown lens: £30`,[lens])).not.toEqual([]);
+  expect(review(`- 1 × ${camera.item}: £60`,[camera,lens])).not.toEqual([]);
+  expect(unsupportedStockClaims("The lens is available for those dates.",[lens],scope)).not.toEqual([]);
+ });
+});
 it("does not promise a free camera as an extra when its shared proposal failed or remains unknown",()=>{
  const positive={...stock,available:true,owned:true,basket:{available:false,items:[{name:stock.item,quantity:1}]}};
  expect(check("Sony FX3 is available for 2 to 4 October.",[positive])).not.toEqual([]);
