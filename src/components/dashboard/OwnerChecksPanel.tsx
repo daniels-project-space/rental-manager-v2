@@ -20,11 +20,17 @@ export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug
   if(!results.length)return null;
   return <section aria-label="Owner checks" className="mb-4 rounded-xl border border-amber-400/25 bg-amber-400/[0.04] p-3">
     <div className="text-sm font-semibold text-amber-200">Owner checks · {results.length}{status!=="Exhausted"?"+":""}</div>
-    <p className="mt-1 text-xs text-[#a3aab8]">These follow-ups stay open after a reply. Confirm a suitable lens, availability and price, or handle the question yourself.</p>
+    <p className="mt-1 text-xs text-[#a3aab8]">These follow-ups stay open after a reply. Confirm the missing equipment details or handle the question yourself.</p>
     <div className="mt-3 space-y-3">{results.map(task=><div key={task._id} className="rounded-lg bg-black/20 p-3 text-xs">
-      <div className="font-medium text-[#e5e7eb]">{criteria(task.check.requirements)} · {task.check.lens_mount??"Confirm mount"} · {task.account_slug}{task.is_lab?" · Lab":""}</div>
-      <div className="mt-1 text-[#a3aab8]">{task.check.quantity} lens{task.check.quantity!==1?"es":""} · {task.check.start_date??"Start date needed"} to {task.check.end_date??"Return date needed"}</div>
-      <div className="mt-2 text-[#cbd5e1]">Owned candidates to check: {task.candidate_names.map(shortItemName).join(", ")}</div>
+      <div className="font-medium text-[#e5e7eb]">{task.check.kind==="listing_mapping"?"Check kit contents":`${criteria(task.check.requirements)} · ${task.check.lens_mount??"Confirm mount"}`} · {task.account_slug}{task.is_lab?" · Lab":""}</div>
+      <div className="mt-1 text-[#a3aab8]">{task.check.quantity} {task.check.kind==="listing_mapping"?"rental":"lens"}{task.check.quantity!==1?(task.check.kind==="listing_mapping"?"s":"es"):""} · {task.check.start_date??"Dates not set"}{task.check.end_date?` to ${task.check.end_date}`:""}</div>
+      <div className="mt-2 text-[#cbd5e1]">{task.check.kind==="listing_mapping"?"Listing to check":"Owned candidates to check"}: {task.candidate_names.map(shortItemName).join(", ")}</div>
+      {task.mapping_details&&<div className="mt-2 text-[#cbd5e1]">
+        {task.mapping_details.missing.map(c=><p key={c.item_id}>Missing from kit mapping: {c.qty} × {shortItemName(c.name)}</p>)}
+        {task.mapping_details.unresolved.map((name,i)=><p key={i}>Unresolved equipment: {name}</p>)}
+        {task.mapping_details.complete&&<p>Kit mapping is now complete. Review the current conversation before closing this check.</p>}
+        {!task.mapping_details.complete&&!task.mapping_details.missing.length&&!task.mapping_details.unresolved.length&&<p>Confirm every required item and quantity in this listing’s kit mapping.</p>}
+      </div>}
       <blockquote className="mt-2 text-[#a3aab8] line-clamp-3">“{task.source_question}”</blockquote>
       {(task.context_changed||task.newer_renter_message)&&<p className="mt-2 text-amber-200">The booking or renter message has changed. Review the current conversation before handling this check.</p>}
       <div className="mt-3 flex gap-2"><button className="rounded bg-white/10 px-3 py-1.5" onClick={()=>onOpen(task.thread_id)}>Open conversation</button>

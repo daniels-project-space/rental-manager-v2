@@ -1,4 +1,5 @@
 import { ownerChecksForBot } from "./renter_bot_owner_checks";
+import { nativeOwnerChecks } from "./lib/owner_checks";
 import schema from "./schema";
 import { CONVERSATION_STAGES } from "./lib/renter_bot_intents";
 import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
@@ -12,6 +13,7 @@ import { canonicalGenerationError, generationFailure } from "./lib/canonical_gen
 function database() {
   const rows = new Map<string, any>(); let serial = 0;
   const db = {
+    get: async (id:string) => rows.get(id)??null,
     insert: async (table: string, value: any) => { const id = `${table}:${++serial}`; rows.set(id, { ...value, _id: id, _creationTime: serial, table }); return id; },
     patch: async (id: string, value: any) => { const row = { ...rows.get(id) }; for (const [k, v] of Object.entries(value)) { if (v === undefined) delete row[k]; else row[k] = v; } rows.set(id, row); },
     query: (table: string) => {
@@ -21,7 +23,8 @@ function database() {
         collect: async () => { const found=[...rows.values()].filter(r => r.table === table && filters.every(f => f(r))); return descending ? found.sort((a,b)=>b._creationTime-a._creationTime) : found; },
         order: (direction:string) => { descending=direction==="desc"; return query; },
         take: async (count:number) => (await query.collect()).slice(0,count),
-        first: async () => (await query.collect())[0] ?? null };
+        first: async () => (await query.collect())[0] ?? null,
+        unique: async () => {const found=await query.collect();if(found.length>1)throw new Error("Duplicate rows");return found[0]??null;} };
       return query;
     },
   };
@@ -227,7 +230,7 @@ describe("operational conversation stage storage",()=>{
 
 
 describe("owner checks preserve unresolved work in bot context",()=>{
- const check={requirements:{focus_mode:"autofocus"},lens_mount:"E",start_date:"2026-10-20",end_date:"2026-10-21",quantity:1};
+ const check={kind:"lens_recommendation",requirements:{focus_mode:"autofocus"},lens_mount:"E",start_date:"2026-10-20",end_date:"2026-10-21",quantity:1};
  const task=(status:string,thread_id="lab-one",context="current")=>({thread_id,status,check,candidate_names:["Sony lens"],source_context_key:context,source_message_id:"message",handling_note:"Private owner note"});
  it("keeps an old pending question after more than twenty newer handled checks",async()=>{
   const {ctx}=database();const pendingId=await ctx.db.insert("renter_bot_owner_checks",task("pending"));
@@ -244,5 +247,56 @@ describe("owner checks preserve unresolved work in bot context",()=>{
   const checks=await ownerChecksForBot(ctx as any,"lab-one","current");
   expect(checks).toHaveLength(23);expect(checks.filter(c=>c.context_changed)).toHaveLength(1);
   expect(checks.every(c=>!c.specification_result_verified&&!c.customer_input_required)).toBe(true);
+ });
+});
+
+describe("kit owner checks persist through the real review mutation",()=>{
+ async function kit() {
+  const f=await setup();await f.ctx.db.patch(f.convId,{account_slug:"leo"});
+  const camera=await f.ctx.db.insert("items",{name_canonical:"Sony FX3",kind:"camera",qty:4,status:"active"});
+  const lens=await f.ctx.db.insert("items",{name_canonical:"Sony GM 24-70mm f2.8",kind:"lens",qty:4,status:"active"});
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:10,name:"FX3 lens kit",masterItemId:camera});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:10,description:"Included in this kit: • 1x Sony FX3 • 1x Sony GM 24-70mm f2.8"});
+  const override=await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:10,components:[{item_id:camera,qty:1}]});
+  await f.ctx.db.patch(f.bookingId,{account_slug:"leo",hygglo_items:[{name:"FX3 lens kit",product_id:10,qty:1}]});
+  for(const m of f.rows.values())if(m.table==="hygglo_messages")await f.ctx.db.patch(m._id,{sender:"renter",body_text:"Does the kit come with the lens?"});
+  f.args.context_key=draftContextKey(f.rows.get(f.bookingId));
+  const check={kind:"listing_mapping" as const,source_call_id:"native-listing-context",product_id:10,start_date:"2026-10-02",end_date:"2026-10-04",quantity:1};
+  return {...f,camera,lens,override,check};
+ }
+ const tasks=(f:Awaited<ReturnType<typeof kit>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("harvests actual listing receipts, ignores prose/other tools, and saves durable work",async()=>{
+  const f=await kit();const {source_call_id,...check}=f.check;
+  const checks=nativeOwnerChecks([{tool:"get_listing_context",call_id:source_call_id,result:{owner_checks:[check]}},{tool:"search",call_id:"untrusted",result:{owner_checks:[check]}}]);
+  expect(checks).toEqual([f.check]);
+  expect(await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks})).toMatchObject({ok:true});
+  expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0]).toMatchObject({status:"pending",candidate_names:["FX3 lens kit"],source_question:"Does the kit come with the lens?",check:f.check});
+  const context=await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key);
+  expect(context[0]).toMatchObject({kind:"listing_mapping",product_id:10,requirements:null,customer_input_required:false,specification_result_verified:false});
+ });
+ it("reuses the unresolved task on retries and a follow-up message with the same basket",async()=>{
+  const f=await kit();const save=()=>invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  await save();await save();expect(tasks(f)).toHaveLength(1);
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"renter-2",sender:"renter",body_text:"Any update?",fetched_at:f.now+1,hygglo_sent_at:f.now+1});
+  f.args.message_id="renter-2";await save();expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0].source_message_id).toBe("renter-1");
+ });
+ it("keeps the task after saving a helpful reply instead of a blocked review",async()=>{
+  const f=await kit();
+  const saved=await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:f.args.epoch,context_key:f.args.context_key,
+   draft_text:"I’ll check the lens included in this kit and get back to you.",owner_checks:[f.check]});
+  expect(saved).toMatchObject({ok:true});expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0].status).toBe("pending");
+ });
+ it("rechecks current mapping rather than trusting a formerly incomplete receipt",async()=>{
+  const f=await kit();await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1},{item_id:f.lens,qty:1}]});
+  expect(await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]})).toMatchObject({ok:true});expect(tasks(f)).toEqual([]);
+ });
+ it("does not turn a known marketing denial into an owner suitability question",async()=>{
+  const f=await kit();await f.ctx.db.patch(f.lens,{is_marketing_only:true});
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});expect(tasks(f)).toEqual([]);
+ });
+ it("rejects foreign listing, changed quantity and changed dates from task input",async()=>{
+  const f=await kit();for(const change of [{product_id:11},{quantity:2},{start_date:"2026-10-03"}])
+   await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[{...f.check,...change}]});
+  expect(tasks(f)).toEqual([]);
  });
 });

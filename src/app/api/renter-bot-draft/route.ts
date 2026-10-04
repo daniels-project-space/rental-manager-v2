@@ -571,6 +571,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
+    toolReceipts.push({tool:"get_listing_context",call_id:"prefetch:listing-context",result:lc});
     if (lc?.found) {
       bookingConfirmed = lc.is_confirmed === true;
       const req: string[] = [];

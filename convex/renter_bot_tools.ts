@@ -1,6 +1,6 @@
 import { renterHistory } from "./lib/renter_history";
 import { getBotRenter } from "./lib/renter_identity";
-import { lensRequirementsValidator } from "./lib/owner_checks";
+import { lensRequirementsValidator, listingMappingOwnerCheck } from "./lib/owner_checks";
 import { ownerChecksForBot } from "./renter_bot_owner_checks";
 import { draftContextKey } from "./lib/draft_review";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
@@ -15,7 +15,7 @@ import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilitie
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
-import { getBotBooking, getLabOrder } from "./lib/renter_booking";
+import { getBotBooking, getLabOrder, requestedListingContext } from "./lib/renter_booking";
 import { additionMountRequirements } from "./lib/booking_addition_mount";
 /**
  * Convex queries that back the Mastra renter-bot tools (5 of the 7 — the
@@ -119,27 +119,9 @@ export const get_listing_context = query({
       (reservation?.account_slug ?? null) ||
       ((conv as { account_slug?: string } | null)?.account_slug ?? null);
 
-    // The items actually being requested, WITH their product_id — from the
-    // reservation (authoritative once booked) or the inquiry (before that).
-    type Line = { name: string; qty: number; product_id: number | null };
-    let lines: Line[] = [];
-    if (simOrder) {
-      lines = simOrder.items.map((i) => ({ name: i.name, qty: i.qty, product_id: i.product_id ?? null }));
-    } else if (reservation?.hygglo_items?.length) {
-      lines = reservation.hygglo_items.map((h) => ({
-        name: h.name,
-        qty: h.qty ?? 1,
-        product_id: (h as { product_id?: number }).product_id ?? null,
-      }));
-    } else if ((conv as { inquiry_items?: unknown[] } | null)?.inquiry_items?.length) {
-      lines = ((conv as { inquiry_items: Array<{ name?: string; qty?: number; product_id?: number }> }).inquiry_items).map((it) => ({
-        name: it.name ?? "",
-        qty: it.qty ?? 1,
-        product_id: it.product_id ?? null,
-      }));
-    } else if (reservation?.items?.length) {
-      lines = reservation.items.map((i) => ({ name: i.item_name, qty: i.qty ?? 1, product_id: null }));
-    }
+    const request = requestedListingContext(reservation,simOrder,conv?.inquiry_items);
+    const lines = request.lines;
+    const owner_checks: Array<NonNullable<ReturnType<typeof listingMappingOwnerCheck>>> = [];
 
     // Enrich each REQUESTED item with its REAL per-account Hygglo listing:
     // the daily price + the description (= what is IN the set). Keyed by
@@ -318,9 +300,11 @@ export const get_listing_context = query({
         }
       }
       const listingInventory = account_slug && typeof l.product_id === "number"
-        ? await loadListingInventory(ctx, account_slug, l.product_id, l.qty)
+        ? await loadListingInventory(ctx, account_slug, l.product_id, l.qty, {items:allItems})
         : null;
       if (listingInventory) {
+        const check=listingMappingOwnerCheck(listingInventory,{start_date:request.start_date,end_date:request.end_date,quantity:l.qty});
+        if(check)owner_checks.push(check);
         owned = listingInventory.owned;
         ownership_source = listingInventory.source;
         const main = listingInventory.primary_camera ?? listingInventory.components.find((c) => ["camera", "camera_body"].includes(c.kind ?? ""))
@@ -429,6 +413,7 @@ export const get_listing_context = query({
 
     return {
       thread_id,
+      owner_checks,
       found: items.length > 0,
       is_inquiry: !reservation,
       account_slug,

@@ -67,6 +67,7 @@ export const getRenterContextTool = createTool({
     rental_stage: z.unknown(),
     last_message_id: z.string().nullable(),
     owner_checks: z.array(z.object({
+      kind:z.enum(["lens_recommendation","listing_mapping"]),product_id:z.number().nullable(),
       task_id:z.string(),status:z.enum(["pending","handled_by_owner"]),requirements:z.unknown(),lens_mount:z.string().nullable(),
       start_date:z.string().nullable(),end_date:z.string().nullable(),quantity:z.number(),candidate_names:z.array(z.string()),
       context_changed:z.boolean(),source_message_id:z.string(),specification_result_verified:z.literal(false),customer_input_required:z.literal(false),
@@ -92,7 +93,7 @@ export const getRenterContextTool = createTool({
 export const getListingContextTool = createTool({
   id: "get_listing_context",
   description:
-    "Fetch the listing/items context for a thread. Returns the items on the booking (with qty), expanded items (after bundle decomposition), start_date, end_date, gross_paid, order_step. Call when the renter references the gear or asks what's included. whats_included and kit_contents contain recorded inventory contents per listing, never advertising prose. kit_completeness is partial or unknown: an absent accessory is unverified, not excluded; mapping_complete refers only to stock mapping.",
+    "Fetch the listing/items context for a thread. Returns items, dates, prices, recorded kit contents and owner_checks for unresolved selected kit mappings. Those checks become persistent owner tasks when the draft or review is saved; no extra tool call or renter input is needed for an internal mapping gap. whats_included and kit_contents contain recorded inventory contents per listing, never advertising prose. kit_completeness is partial or unknown: an absent accessory is unverified, not excluded; mapping_complete refers only to stock mapping.",
   inputSchema: z.object({
     thread_id: z.string(),
   }),
