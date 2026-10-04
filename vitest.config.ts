@@ -124,6 +124,7 @@ export default defineConfig({
       "src/lib/chat/dashboard-tools.schema.test.ts",
       "src/lib/renter-bot-policy.test.ts",
       "src/lib/renter-bot-output.test.ts",
+      "src/lib/renter-native-quote.test.ts",
       "convex/lib/renter_bot_rubric.test.ts",
       "src/lib/booking-time-transcript.test.ts",
       "src/lib/booking-time-extraction.test.ts",

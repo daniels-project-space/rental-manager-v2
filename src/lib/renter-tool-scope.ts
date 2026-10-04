@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; bookingWritesAllowed?: boolean };
+export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; bookingWritesAllowed?: boolean; rentalStage?: string; queryRevision?:()=>number };
 const storage = new AsyncLocalStorage<RenterScope>();
 export const withRenterToolScope = <T>(scope: RenterScope, run: () => T): T => storage.run(scope, run);
 export const currentRenterToolScope = () => storage.getStore();

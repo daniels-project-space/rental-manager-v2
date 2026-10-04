@@ -50,9 +50,11 @@ describe("shared Native query session", () => {
   it.each(["mutation", "action"] as const)("re-reads after %s rather than keeping pre-write stock", async method => {
     const f = fixture();
     expect(await f.client.query(stock, {})).toEqual({ revision: 0 });
+    expect(f.getRevision()).toBe(0);
     if (method === "mutation") await f.client.mutation(edit, {});
     else await f.client.action(action, {});
     expect(await f.client.query(stock, {})).toEqual({ revision: 1 });
+    expect(f.getRevision()).toBe(2);
     expect(f.raw.query).toHaveBeenCalledTimes(2);
   });
   it("never memoizes a read while a write is outstanding", async () => {

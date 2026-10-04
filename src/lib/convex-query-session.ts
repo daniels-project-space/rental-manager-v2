@@ -64,5 +64,5 @@ export function createConvexQuerySession(client: ConvexHttpClient, observe?: Que
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
-  return { client: scoped, stats };
+  return { client: scoped, stats, getRevision:()=>revision };
 }
