@@ -7,6 +7,7 @@
  */
 import { action, internalMutation, internalQuery, internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
+import { ownerCheckValidator } from "./lib/owner_checks";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { internal } from "./_generated/api";
 import { scoreDraft, scoreSkippedGeneration } from "./lib/renter_bot_rubric";
@@ -34,6 +35,19 @@ export const listActiveFixtures = internalQuery({
     ),
 });
 
+/** Snapshot before the Lab appends an assistant message or cleans up a fixture.
+ * Match the actual saved draft, inbound message and Native context so historical
+ * work cannot falsely complete or fail an unrelated generation. */
+export const pendingOwnerChecksForDraft=internalQuery({
+  args:{thread_id:v.string(),draft_text:v.string()},handler:async(ctx,a)=>{
+    const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).first();
+    if(!conv?.ai_draft_for_message_id||!conv.ai_draft_context_key||conv.ai_draft_text!==a.draft_text)return null;
+    const tasks=await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",a.thread_id)).collect();
+    return tasks.filter(task=>task.account_slug===conv.account_slug&&task.source_context_key===conv.ai_draft_context_key&&
+      (task.last_requested_message_id??task.source_message_id)===conv.ai_draft_for_message_id).map(task=>task.check);
+  }
+});
+
 const rubricResultValidator = v.object({
   category: v.string(),
   status: v.union(
@@ -49,6 +63,7 @@ const rubricResultValidator = v.object({
 export const insertRun = internalMutation({
   args: {
     draft_evidence: v.optional(draftEvidenceValidator),
+    pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
     fixture_id: v.optional(v.id("renter_bot_fixtures")),
     session_thread_id: v.optional(v.string()),
     run_batch_id: v.optional(v.string()),
@@ -158,7 +173,9 @@ export const runFixture = action({
         verified: f.verified,
       }));
 
+      const pendingOwnerChecks=await ctx.runQuery(internal.renter_bot_harness.pendingOwnerChecksForDraft,{thread_id:threadId,draft_text:draftText});
       const rubric = scoreDraft({
+        pendingOwnerChecks:pendingOwnerChecks??undefined,
         accountSlug: fixture.account_slug,
         draftText,
         factsClaimed,
@@ -179,6 +196,7 @@ export const runFixture = action({
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
         facts_claimed: draftResult.facts_claimed,
         draft_evidence: draftResult.evidence,
+        pending_owner_checks:pendingOwnerChecks??undefined,
         model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
@@ -365,7 +383,9 @@ export const runMultiTurnScenario = action({
         verified: f.verified,
       }));
 
+      const pendingOwnerChecks=await ctx.runQuery(internal.renter_bot_harness.pendingOwnerChecksForDraft,{thread_id:threadId,draft_text:draftText});
       const rubric = scoreDraft({
+        pendingOwnerChecks:pendingOwnerChecks??undefined,
         accountSlug: args.accountSlug,
         draftText,
         factsClaimed,
@@ -385,6 +405,7 @@ export const runMultiTurnScenario = action({
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
         facts_claimed: draftResult.facts_claimed,
         draft_evidence: draftResult.evidence,
+        pending_owner_checks:pendingOwnerChecks??undefined,
         model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,

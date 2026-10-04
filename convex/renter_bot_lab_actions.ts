@@ -319,7 +319,9 @@ export const sendTestMessage = action({
       value: f.value,
       verified: f.verified,
     }));
+    const pendingOwnerChecks=await ctx.runQuery(internal.renter_bot_harness.pendingOwnerChecksForDraft,{thread_id:args.threadId,draft_text:draftText});
     const rubric = scoreDraft({
+      pendingOwnerChecks:pendingOwnerChecks??undefined,
       accountSlug: args.accountSlug,
       draftText,
       factsClaimed,
@@ -340,6 +342,7 @@ export const sendTestMessage = action({
         draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
         facts_claimed: draftResult.facts_claimed,
         draft_evidence: draftResult.evidence,
+        pending_owner_checks:pendingOwnerChecks??undefined,
         model_id: draftResult.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,

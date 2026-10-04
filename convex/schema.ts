@@ -2669,6 +2669,7 @@ const operationalSchema = defineSchema({
   // that fixture plus rubric scoring. Never a live send — no relationship to
   // renter_bot_drafts or any Hygglo write path.
   renter_bot_harness_runs: defineTable({
+    pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
     draft_evidence: v.optional(draftEvidenceValidator),
     // Optional: Lab UI live/freeform sessions (triggered_by="lab_ui_manual")
     // aren't always tied to a persisted fixture.

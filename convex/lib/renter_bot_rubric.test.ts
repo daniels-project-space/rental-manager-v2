@@ -1,3 +1,4 @@
+import type {OwnerCheck} from "./owner_checks";
 import type {PriceEvidence} from "./price_claims";
 import { describe, it, expect } from "vitest";
 import { scoreDraft, scoreSkippedGeneration } from "./renter_bot_rubric";
@@ -179,5 +180,20 @@ describe("Native price grading",()=>{
  it("distinguishes a supplied empty production guard result from a missing result",()=>{
   expect(score().results.find(r=>r.category==="production_guard")?.status).toBe("pass");
   expect(scoreDraft({accountSlug:"leo",draftText:"Thanks!"}).results.find(r=>r.category==="production_guard")?.status).toBe("n_a");
+ });
+});
+
+
+describe("Native owner-review completion",()=>{
+ const score=(pendingOwnerChecks?:OwnerCheck[])=>scoreDraft({accountSlug:"leo",draftText:"I will check the lens details and get back to you.",productionFlags:[],pendingOwnerChecks});
+ it("flags unresolved work without treating a truthful deferral as fabrication",()=>{
+  const result=score([{kind:"listing_mapping",source_call_id:"native-listing-call",product_id:123,start_date:"2026-10-22",end_date:"2026-10-24",quantity:1}]);
+  expect(result.results.find(r=>r.category==="owner_review_completion")?.status).toBe("flag");
+  expect(result.overall_status).toBe("flag");
+  expect(result.results.some(r=>r.status==="fail")).toBe(false);
+ });
+ it("distinguishes an inspected empty task set from missing workflow evidence",()=>{
+  expect(score([]).results.find(r=>r.category==="owner_review_completion")?.status).toBe("pass");
+  expect(score().results.find(r=>r.category==="owner_review_completion")?.status).toBe("n_a");
  });
 });

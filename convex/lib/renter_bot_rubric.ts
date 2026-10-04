@@ -1,3 +1,4 @@
+import type {OwnerCheck} from "./owner_checks";
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
 import type {StockRequest} from "./stock_claims";
 import type { BookingRecord } from "./booking_record";
@@ -51,6 +52,8 @@ export interface RubricInput {
   priceRequest?: StockRequest;
   lastRenterMessage?: string;
   bookingRecord?: BookingRecord;
+  /** Persisted Native review tasks for this exact generated draft/context. */
+  pendingOwnerChecks?: OwnerCheck[];
 }
 
 export type RubricStatus = "pass" | "fail" | "flag" | "n_a";
@@ -251,6 +254,12 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   } else {
     add("anti_manipulation_rule_adherence", "pass", "No manipulation/rule-adherence violations detected.");
   }
+
+  add("owner_review_completion",input.pendingOwnerChecks===undefined?"n_a":input.pendingOwnerChecks.length?"flag":"pass",
+    input.pendingOwnerChecks===undefined?"Persisted owner-review state was not supplied; completion is unverified.":input.pendingOwnerChecks.length
+      ?"Native owner-review work remains pending. A safe deferral does not complete the renter request."
+      :"No pending Native owner-review task is attached to this draft; this alone does not prove the whole request is fulfilled.",
+    input.pendingOwnerChecks?.map(check=>`${check.kind}: ${check.source_call_id}`).join("; ")||undefined);
 
   // ── Problem solving ──
   add(
