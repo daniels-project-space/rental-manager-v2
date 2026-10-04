@@ -43,7 +43,10 @@ export function unsupportedRenterCameraClaims(text: string, messages: string[]):
       // a particular model. Token boundaries preserve FX3 versus FX30.
       const supported = identities.some(identity => {
         const words = identity.toLowerCase().split(/\s+/);
-        return normal(identity) === claim || words.some((_, index) => normal(words.slice(0, index + 1).join(" ")) === claim);
+        return normal(identity) === claim || words.some((_, index) =>
+          normal(words.slice(0, index + 1).join(" ")) === claim ||
+          /\d/.test(claim) && normal(words.slice(index).join(" ")) === claim,
+        );
       });
       if (!supported) failures.push(sentence.trim());
     }

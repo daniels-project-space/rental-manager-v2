@@ -14,6 +14,8 @@ describe("renter camera identity provenance", () => {
     const renter = ["I'm shooting with a Sony FX3."];
     expect(check("On your Sony body, focus manually.", renter)).toEqual([]);
     expect(check("Your Sony FX3 camera has a focus ring.", renter)).toEqual([]);
+    expect(check("Which FX3 camera are you using?", renter)).toEqual([]);
+    expect(check("Which FX30 camera are you using?", renter)).toHaveLength(1);
     expect(check("Your Sony FX30 camera has a focus ring.", renter)).toHaveLength(1);
   });
   it("does not turn a brand into a model", () => {
