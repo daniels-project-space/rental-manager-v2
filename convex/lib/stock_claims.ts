@@ -1,4 +1,4 @@
-import { normalizeApertureNotation } from "./item_name_match";
+import { normalizeApertureNotation, bestMatch } from "./item_name_match";
 import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
@@ -10,6 +10,7 @@ export type StockReceipt = {
   checked_at: number; call_id: string;
   kind?: string;
   owned?: boolean;
+  identity_names?: string[];
   basket?: {available:boolean|null;items:Array<{name:string;quantity:number}>};
 };
 export type StockRequest = {
@@ -85,10 +86,25 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   let precedingNamedSubjects: StockRequest["items"] = [];
   let bulletSubjects: StockRequest["items"] = [];
   let invalidBullet = false;
-  const knownSubjects = [...request.items];
+  const knownSubjects:StockRequest["items"] = request.items.map(i=>({...i,aliases:[...(i.aliases??[])]}));
   for (const receipt of receipts)
     if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
       knownSubjects.push({name:receipt.item,quantity:1});
+  for(const receipt of receipts) {
+    const item=knownSubjects.find(i=>sameItem(i.name,receipt.item));
+    if(item && receipt.identity_names?.length)item.aliases=[...new Set([...(item.aliases??[]),...receipt.identity_names])];
+  }
+  const lensSubject=(reference:string)=>{
+    // These words describe a lens's capabilities/category, not its identity.
+    // Stock evidence does not attest them; technical evidence remains separate.
+    const label=reference.replace(/(?:\s+(?:wide[ -]angle|autofocus|manual[ -]focus|zoom|lens))+$/i,"").trim();
+    const focal=/\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.exec(label)?.[0];
+    if(!focal)return undefined;
+    const candidates=knownSubjects.filter(i=>receipts.some(r=>r.kind==="lens"&&sameItem(r.item,i.name)) &&
+      [i.name,...(i.aliases??[])].some(n=>{const range=/\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.exec(n)?.[0];return range && identity(range)===identity(focal);}));
+    const match=bestMatch(label,candidates,i=>i.name,i=>i.aliases??[]);
+    return match.confident ? match.match ?? undefined : undefined;
+  };
   const withQuantity=(item:StockRequest["items"][number],quantity:number)=>({...item,quantity,
     components:item.components?.map(c=>({...c,quantity:c.quantity*quantity/item.quantity})),
   });
@@ -109,7 +125,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const parsed=subjectOf(bullet[1]);
       const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
       const focal=references.get(identity(parsed.name.replace(/\s+lens(?:es)?$/i,"")));
-      const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item : undefined;
+      const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item ?? lensSubject(parsed.name) : undefined;
       if (!resolved) invalidBullet=true;
       else bulletSubjects=[...bulletSubjects,withQuantity(resolved,parsed.quantity??resolved.quantity)];
     } else {bulletSubjects=[];invalidBullet=false;}
@@ -179,7 +195,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const datedPrefix = dateScope.matched_text ? prefix.replace(dateScope.matched_text, "__stock_date__") : prefix;
     const extensionSubject = /^I\s+(?:can't|cannot|can not|am not able to)\s+extend\s+(.+?)\s+(?:through|until|to)\s+__stock_date__\s+(?:as|because)\s+(?:it's|it is)\s*$/i.exec(datedPrefix.trim());
     const subject = subjectOf(extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
-    const kitParts=subject.name.split(/\s+with\s+/i);
+    // "paired with" coordinates two offered items; it does not assert that
+    // the lens is included inside each member's existing kit.
+    const kitParts=/\bpaired\s+with\b/i.test(subject.name) ? [subject.name] : subject.name.split(/\s+with\s+/i);
     const modifiers=kitParts.slice(1).flatMap(p=>p.split(/\s+(?:and|plus)\s+/i));
     subject.name=kitParts[0];
     const namedKit = modifiers.length>0 || /(?:^|\s)(?:kit|sets?)\s*$/i.test(subject.name);
@@ -192,7 +210,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(subject.name);
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
-    let targets = reference ? [reference.item] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
+    const namedLens=lensSubject(subject.name);
+    let targets = reference ? [reference.item] : namedLens ? [namedLens] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     // Only the explicit latest requested members can define an abbreviated
     // set. Unrelated negative lens receipts cannot invent its contents.
     const statedSet=namedKit && !modifiers.length ? resolveLensSet(`${subject.name} set`,lenses) : null;
@@ -235,7 +254,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
         const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n))
           || receipts.some(r=>r.kind==="lens" && sameItem(r.item,i.name)) && sameItem(lens,i.name));
         const focal=references.get(identity(lens));
-        const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item : undefined;
+        const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item ?? lensSubject(parsed.name) : undefined;
         return resolved ? [withQuantity(resolved,parsed.quantity??resolved.quantity)] : [];
       });
       if(targets.length!==coordinated.length)targets=[];

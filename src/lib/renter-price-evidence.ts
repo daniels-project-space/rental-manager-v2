@@ -2,6 +2,7 @@ import { datePriceEvidence } from "./renter-date-price-evidence";
 import { inclusiveRentalDays, rentalQuote, type PriceTier } from "../../convex/lib/hygglo_pricing";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { ToolReceipt } from "./renter-tool-evidence";
+import { reviewedLensNames } from "../../convex/lib/renter_item_names";
 const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
 const string = (s: unknown) => typeof s === "string" && s.trim() ? s : undefined;
 /** Aliases from native owned listing context, never model arguments or title tokens. */
@@ -56,7 +57,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
     if (tool === "find_owned_alternatives" && Array.isArray(r.alternatives)) for(const raw of r.alternatives) {
       if (!raw || typeof raw!=="object") continue;
       const a=raw as Record<string,unknown>; if(!string(a.name) || a.price_requires_owner_confirmation===true) continue;
-      const names=[a.name,a.listing_name].filter((n):n is string=>!!string(n));
+      const names=[...new Set([...reviewedLensNames({...a,name:a.name as string}),a.listing_name].filter((n):n is string=>!!string(n)))];
       if(a.quote && typeof a.quote==="object") quote(a.quote as Record<string,unknown>,names,`${call_id}:${a.name}`,a.daily_price_gbp);
       else if(number(a.daily_price_gbp)) quote({daily_rate_gbp:a.daily_price_gbp,listed_total_gbp:a.daily_price_gbp,days:1,quantity:1,source:"owned_listing_one_day"},names,`${call_id}:${a.name}`,a.daily_price_gbp);
     }

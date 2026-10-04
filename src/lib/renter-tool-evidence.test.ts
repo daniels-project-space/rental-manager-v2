@@ -1,3 +1,6 @@
+import pairedNative from "./fixtures/renter-sales-paired-native.json";
+import {unsupportedPriceClaims,type PriceEvidence} from "../../convex/lib/price_claims";
+import {renterPriceEvidence} from "./renter-price-evidence";
 import { describe, expect, it } from "vitest";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
 import { normalizeClaimedFacts } from "../../convex/lib/renter_draft_evidence";
@@ -117,4 +120,38 @@ it("retains joint Native component proofs while ignoring proposed model argument
  expect(stockReceipts(renterToolReceipts(steps))).toHaveLength(1);
  expect(stockReceipts(renterToolReceipts(steps))[0].result).toEqual(component);
  expect(stockReceipts(renterToolReceipts([{toolName:"check_basket_availability",args:{components:[component]}}]))).toEqual([]);
+});
+
+describe("captured paired lens sales reply",()=>{
+ const receipts=(native=pairedNative.lens_result)=>renterToolReceipts([{toolName:"find_owned_alternatives",toolCallId:"native-reviewed",result:native}]);
+ const stock=(native=pairedNative.lens_result)=>stockReceipts(receipts(native)).map(r=>({item:r.result.item_name as string,quantity:r.result.requested_units as number,start_date:r.result.start_date as string,end_date:r.result.end_date as string,available:r.result.available as boolean,free_units:r.result.free_units as number,call_id:r.call_id,checked_at:r.result.checked_at as number,kind:r.result.kind as string,identity_names:r.result.identity_names as string[]}));
+ const check=(text=pairedNative.candidate,evidence=[...pairedNative.stock,...stock()])=>unsupportedStockClaims(text,evidence,pairedNative.request,["Canon R5"],pairedNative.renter_message);
+ it("retains the reviewed lens family through actual tool receipt harvesting and joint stock checks",()=>{
+  expect(stock()[0].identity_names).toContain("Sony FE 16-35mm F2.8 GM");
+  expect(stock()[0].identity_names).not.toContain("SEL1635GM2");
+  expect(check()).toEqual([]);
+  expect(check("Sony FE 16-35mm f/2.8 GM wide-angle autofocus zoom is available for 20 to 21 October.")).toEqual([]);
+  expect(unsupportedPriceClaims(pairedNative.candidate,pairedNative.prices as PriceEvidence[],pairedNative.request,pairedNative.renter_message)).toEqual([]);
+  const reviewedPrice=renterPriceEvidence(receipts());
+  expect(unsupportedPriceClaims("Sony FE 16-35mm f/2.8 GM costs £40 for 2 days.",reviewedPrice,pairedNative.request)).toEqual([]);
+  expect(unsupportedPriceClaims("Sony FE 16-35mm f/2.8 GM II costs £40 for 2 days.",reviewedPrice,pairedNative.request)).not.toEqual([]);
+ });
+ it("does not invent the reviewed identity from advertising, missing or mismatched spec records",()=>{
+  const alternative=pairedNative.lens_result.alternatives[0];
+  for(const patch of [{spec_verification:null},{lens_capabilities:null},{spec_verification:{...alternative.spec_verification,model:"Other lens"}},{spec_verification:{...alternative.spec_verification,source_url:"https://other.example"}},{lens_capabilities:{...alternative.lens_capabilities,reviewed_models:[]}}]) {
+   const native={...pairedNative.lens_result,alternatives:[{...alternative,...patch}]} as typeof pairedNative.lens_result;
+   expect(stock(native)[0].identity_names).not.toContain("Sony FE 16-35mm F2.8 GM");
+   expect(check(pairedNative.candidate,[...pairedNative.stock,...stock(native)])).not.toEqual([]);
+  }
+ });
+ it("keeps wrong mount, model generation, aperture, focal range, quantity and joint verdict unverified",()=>{
+  for(const label of ["Canon RF 16-35mm f/2.8 GM wide-angle autofocus zoom","Sony FE 16-35mm f/2.8 GM II wide-angle autofocus zoom","Sony FE 16-35mm f/4 GM wide-angle autofocus zoom","Sony FE 16mm f/2.8 GM wide-angle autofocus zoom","Sony FE 24-70mm f/2.8 GM wide-angle autofocus zoom","two Sony FE 16-35mm f/2.8 GM wide-angle autofocus zoom"])
+   expect(check(pairedNative.candidate.replace("Sony FE 16-35mm f/2.8 GM wide-angle autofocus zoom",label)),label).not.toEqual([]);
+  expect(check(pairedNative.candidate,[...pairedNative.stock.map(r=>({...r,basket:{...r.basket,available:false}})),...stock()])).not.toEqual([]);
+ });
+ it("does not confuse the camera's parenthesized contents with a combined lens price",()=>{
+  for(const changed of [pairedNative.candidate.replace("£40","£41"),pairedNative.candidate.replace("16-35mm f/2.8 GM is","Canon RF 16-35mm f/2.8 GM is"),pairedNative.candidate.replace("£138","£139")])expect(unsupportedPriceClaims(changed,pairedNative.prices as PriceEvidence[],pairedNative.request,pairedNative.renter_message)).not.toEqual([]);
+  const nested=pairedNative.candidate.replace("(includes 2x NP-FZ100 battery sets and a CFexpress Type A card)","(includes batteries (two sets) and a card)");
+  expect(unsupportedPriceClaims(nested,pairedNative.prices as PriceEvidence[],pairedNative.request,pairedNative.renter_message)).toEqual([]);
+ });
 });

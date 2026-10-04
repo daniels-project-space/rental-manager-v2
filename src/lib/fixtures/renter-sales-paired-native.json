@@ -1,0 +1,315 @@
+{
+  "candidate": "Hi! The Canon R5 kit isn't available for those dates, but I can offer the Sony FX3 paired with the Sony FE 16-35mm f/2.8 GM wide-angle autofocus zoom, which would be ideal for an indoor walkthrough.\n\nFor the 2-day rental from 20 to 21 October, the Sony FX3 is \u00a398 (includes 2x NP-FZ100 battery sets and a CFexpress Type A card) and the 16-35mm f/2.8 GM is \u00a340, coming to \u00a3138 total.\n\nBoth are available for your dates\u2014let me know if you'd like to go ahead with this setup!",
+  "renter_message": "Hi, I was looking at your Canon R5 kit. I need a full-frame 4K camera with an autofocus wide-angle lens for a moving indoor walkthrough on 20\u201321 October. If the R5 kit isn't available, I'm happy to use Sony. My budget is \u00a3150 total for those two days. What camera-and-lens option can you offer and what's the exact total? Quote only, please don't change or confirm a booking.",
+  "request": {
+    "end_date": "2026-10-21",
+    "items": [
+      {
+        "aliases": [
+          "Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k",
+          "Canon R5",
+          "Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k"
+        ],
+        "complete": false,
+        "components": [
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          }
+        ],
+        "name": "Canon R5",
+        "quantity": 1
+      }
+    ],
+    "start_date": "2026-10-20"
+  },
+  "prices": [
+    {
+      "call_id": "call_16989656",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Sony FX3",
+          "quantity": 1
+        },
+        {
+          "name": "Sony 16-35mm f2.8 GM",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "quote_role": "inquiry",
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 138
+    },
+    {
+      "base_rate_gbp": 49,
+      "call_id": "call_16989656:line:1097510",
+      "daily_rate_gbp": 49,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony FX3",
+        "Sony fx 3 cinema camera full frame mirrorless 4k sony fx3 (same sensor as a7siii"
+      ],
+      "quantity": 1,
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 98
+    },
+    {
+      "base_rate_gbp": 20,
+      "call_id": "call_16989656:line:1115113",
+      "daily_rate_gbp": 20,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony 16-35mm f2.8 GM",
+        "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series"
+      ],
+      "quantity": 1,
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 40
+    }
+  ],
+  "stock": [
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Sony GM 16-35mm f2.8",
+            "quantity": 1
+          },
+          {
+            "name": "Sony FX3",
+            "quantity": 1
+          }
+        ]
+      },
+      "call_id": "call_16989656:component:kn73ga9tdczw4azpvv41qm3dw186b9pb",
+      "checked_at": 1791084732680,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony GM 16-35mm f2.8",
+      "kind": "lens",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Sony GM 16-35mm f2.8",
+            "quantity": 1
+          },
+          {
+            "name": "Sony FX3",
+            "quantity": 1
+          }
+        ]
+      },
+      "call_id": "call_16989656:component:kn7bw2cr1ye5hqj3x770b332ks86atzw",
+      "checked_at": 1791084732680,
+      "end_date": "2026-10-21",
+      "free_units": 3,
+      "item": "Sony FX3",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    }
+  ],
+  "lens_result": {
+    "alternatives": [
+      {
+        "availability": {
+          "available": true,
+          "basis": "standalone",
+          "checked_at": 1791085062291,
+          "end_date": "2026-10-21",
+          "free_units": 1,
+          "quantity": 1,
+          "reason": "available",
+          "start_date": "2026-10-20"
+        },
+        "booking_use": "standalone",
+        "camera_capabilities": null,
+        "daily_price_gbp": 20,
+        "included": "1 \u00d7 Sony GM 16-35mm f2.8",
+        "includes_lens": null,
+        "kind": "lens",
+        "kit_contents": [
+          "1 \u00d7 Sony GM 16-35mm f2.8"
+        ],
+        "kit_source": "physical_mapping_and_inventory",
+        "lens_capabilities": {
+          "coverage": "full_frame",
+          "focal_max_mm": 35,
+          "focal_min_mm": 16,
+          "focus_mode": "autofocus",
+          "max_aperture_f": 2.8,
+          "model": "Sony FE 16-35mm F2.8 GM / GM II (generation unconfirmed)",
+          "model_scope": "shared_variants",
+          "reviewed_models": [
+            {
+              "model": "SEL1635GM",
+              "source_urls": [
+                "https://www.sony.co.uk/electronics/support/lenses-e-mount-lenses/sel1635gm/specifications",
+                "https://www.sony.co.uk/electronics/camera-lenses/sel1635gm"
+              ]
+            },
+            {
+              "model": "SEL1635GM2",
+              "source_urls": [
+                "https://www.sony.co.uk/electronics/support/lenses-e-mount-lenses/sel1635gm2/specifications",
+                "https://www.sony.co.uk/lenses/products/sel1635gm2"
+              ]
+            }
+          ],
+          "source_url": "https://www.sony.co.uk/electronics/support/lenses-e-mount-lenses/sel1635gm/specifications",
+          "wide_angle": true
+        },
+        "lens_mount": "Sony E-mount (full frame)",
+        "listing_name": "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series",
+        "mapping_complete": true,
+        "name": "Sony GM 16-35mm f2.8",
+        "price_requires_owner_confirmation": false,
+        "price_tiers": "1 day \u00a320, 3+ days ~\u00a316.67/day (\u00a350 for 3 days), 7+ days ~\u00a314.29/day (\u00a3100 for 7 days)",
+        "quote": {
+          "daily_rate_gbp": 20,
+          "daily_rate_is_approximate": false,
+          "days": 2,
+          "end_date": "2026-10-21",
+          "listed_total_gbp": 40,
+          "matched_listing": "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series",
+          "product_id": 1115113,
+          "quantity": 1,
+          "source": "hygglo_tier",
+          "start_date": "2026-10-20",
+          "total_rounding": "whole_pound"
+        },
+        "replacement_changes_kit_contents": false,
+        "replacement_cost_gbp": 900,
+        "replacement_removed_listings": [],
+        "spec_text": "Sony FE 16-35mm f/2.8 E-mount full-frame autofocus zoom. These capabilities are shared by GM and GM II. The owned generation is unconfirmed; do not claim GM II or generation-specific weight, dimensions, AF motors, performance or kit contents.",
+        "spec_verification": {
+          "model": "Sony FE 16-35mm F2.8 GM / GM II (generation unconfirmed)",
+          "source_url": "https://www.sony.co.uk/electronics/support/lenses-e-mount-lenses/sel1635gm/specifications"
+        },
+        "stock_context_reason": null,
+        "stock_receipts": [
+          {
+            "available": true,
+            "buffer_minutes": 60,
+            "checked_at": 1791085062291,
+            "conflicts": [],
+            "end_date": "2026-10-21",
+            "free_units": 1,
+            "is_marketing_only": false,
+            "item_id": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+            "item_name": "Sony GM 16-35mm f2.8",
+            "kind": "lens",
+            "owned": true,
+            "per_day": [
+              {
+                "booked": 0,
+                "date": "2026-10-20",
+                "free": 1,
+                "repair": 0,
+                "total": 1
+              },
+              {
+                "booked": 0,
+                "date": "2026-10-21",
+                "free": 1,
+                "repair": 0,
+                "total": 1
+              }
+            ],
+            "reason": "available",
+            "requested_units": 1,
+            "source": "shared_inventory_confirmed_rentals",
+            "start_date": "2026-10-20",
+            "total_units": 1
+          }
+        ],
+        "storage_contents_verification_required": false,
+        "storage_guidance": null
+      }
+    ],
+    "booking_context_required": false,
+    "booking_use": "standalone",
+    "camera_requirements": null,
+    "count": 1,
+    "current_booking_listings": [],
+    "kind": "lens",
+    "kind_fell_back": false,
+    "lens_guidance": "Pass a structured lens_requirements object for the desired option, including {} when no technical constraints apply. Current-item descriptions and questions are not alternative requirements. Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. lens_review_needed names are owned items requiring specification review, not verified alternatives. Zero verified matches never proves that we do not own an item or that it is booked; explain missing verification and ask the owner to check. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",
+    "lens_inventory_absence_established": false,
+    "lens_requirement_checked": true,
+    "lens_requirements": {
+      "coverage": "full_frame",
+      "focus_mode": "autofocus",
+      "wide_angle": true
+    },
+    "lens_requirements_specified": true,
+    "lens_review_needed": [
+      {
+        "item_id": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+        "name": "Sony GM 24-70mm f2.8",
+        "unverified_requirements": [
+          "wide_angle"
+        ]
+      },
+      {
+        "item_id": "kn741p3xbx9e9yvby7qcmvvnj586akhv",
+        "name": "Sony GM 70-200mm f2.8",
+        "unverified_requirements": [
+          "coverage",
+          "focus_mode",
+          "wide_angle"
+        ]
+      },
+      {
+        "item_id": "kn74ggzk8jjvpxdy0g5zh0f15h86b2hq",
+        "name": "Sony 28-70mm",
+        "unverified_requirements": [
+          "coverage",
+          "focus_mode",
+          "wide_angle"
+        ]
+      }
+    ],
+    "lens_search_outcome": "verified_matches",
+    "lower_value_only": false,
+    "lower_value_reason": null,
+    "matched_by": "kind",
+    "message_booking_use": null,
+    "owner_check": null,
+    "owner_review_workflow": null,
+    "recording_requirement_checked": false,
+    "rejected": {
+      "requirements": 5,
+      "stock": 0
+    },
+    "rejected_stock_options": [],
+    "rental_stage": "INQUIRY",
+    "requirements_match_is_not_codec_verification": true,
+    "stock_guidance": "Availability applies only to the returned booking_use. For a confirmed booking, choose additional or replacement with the exact current replace_product_id. Replacement removes that entire listing's specified units, including its kit contents; explain what changes. In-use replacements require return confirmation. Unknown context or missing dates cannot prove availability. Prices are for each suggested offering, not a combined booking total. No booking was changed.",
+    "target": null,
+    "target_identity_resolved": false,
+    "target_replacement_cost_gbp": null,
+    "verification_approval_guaranteed": false
+  }
+}

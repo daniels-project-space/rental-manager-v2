@@ -60,6 +60,22 @@ function priceReference<T extends {names:string[]}>(label:string,known:T[]) {
   if(direct.confident)return direct;
   return bestMatch(label.replace(/\s+(?:camera\s+body|body|camera|lens)$/i,""),known,item=>item.names[0],item=>item.names);
 }
+/** A completed contents parenthesis belongs to the preceding amount. Its
+ * internal conjunctions cannot turn the next item's price into a basket. */
+function priceClauseAfterAmount(segment:string) {
+  const trimmed=segment.trimStart();
+  if(!trimmed.startsWith("("))return segment;
+  let depth=0;
+  for(let index=0;index<trimmed.length;index++) {
+    if(trimmed[index]==="£")return segment;
+    if(trimmed[index]==="(")depth++;
+    else if(trimmed[index]===")" && --depth===0) {
+      const rest=trimmed.slice(index+1);
+      return /^\s*(?:and|plus)\s+/i.test(rest) ? rest.replace(/^\s*(?:and|plus)\s+/i,"") : segment;
+    }
+  }
+  return segment;
+}
 
 /** Checks recognised currency claims against their subject, purpose and scope. */
 export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest, latestRenterMessage="") {
@@ -122,7 +138,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // After the prior currency amount, a rate suffix belongs to that amount:
     // "lens is £50 (£25/day) and the adapter is £20" names only the adapter
     // for £20. Never treat "day" as an unreceipted member of a combined kit.
-    const segment = rawSegment.replace(/^\s*(?:(?:\/\s*day|per\s+day|a\s+day)\s*\)?|\))\s*(?:and|plus)\s+/i, "");
+    const segment = priceClauseAfterAmount(rawSegment.replace(/^\s*(?:(?:\/\s*day|per\s+day|a\s+day)\s*\)?|\))\s*(?:and|plus)\s+/i, ""));
     // A label attached directly to a parenthesized amount owns that amount.
     // Resolve a shortened label only against distinct established identities;
     // unknown model tokens and ambiguous labels must not inherit the prior item.
@@ -144,7 +160,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // adapter owns the amount. “with” is compatibility, not a joint price.
     const relativePriceSubject = /\b(?:pairs|paired|works|used)\s+with\s+([^£.!?]{1,90}?),?\s+which\s+(is|are|costs?)\s*$/i.exec(segment);
     const priceSubjectSegment = relativePriceSubject ? `${relativePriceSubject[1].replace(/,\s*$/, "")} ${relativePriceSubject[2]}` : segment;
-    const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(priceSubjectSegment);
+    const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|(?:(?:would|will)\s+)?costs?|(?:would|will)\s+be)\s*$/i.exec(priceSubjectSegment);
     let pairedItems: Array<{names:string[];quantity:number}> | undefined;
     let unresolvedPair = false;
     // Booking-total labels are a monetary scope, not an equipment identity.
@@ -164,7 +180,21 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         .replace(/^adding\s+(?=(?:it|this|that|them|these|those)\b)/i, "");
       const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
       const unsupportedQualifiedLens = !exactOffering && declaredLensReferences(genericNamed).find(reference=>!focalSubjects.has(reference));
+      const referenceLabel=withoutDurationReference(explicitSubject[1],segmentDates.matched_text)
+        .replace(/^(?:(?:one|two|three|four|\d+)\s+)?(?:extra|additional)\s+/i,"");
+      const namedLensStarts=declaredLensReferences(norm(referenceLabel)).some(reference=>norm(referenceLabel).startsWith(reference)) ||
+        /^\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.test(referenceLabel) ||
+        names.some(name=>norm(referenceLabel).startsWith(`${name} `));
       if (unsupportedQualifiedLens) { subject=[unsupportedQualifiedLens]; unresolvedPair=true; }
+      else if(!exactOffering && namedLensStarts && /\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.test(explicitSubject[1]) &&
+        !/\b(?:and|with|plus)\b/i.test(explicitSubject[1])) {
+        const label=referenceLabel;
+        const lensKnown=known.filter(item=>[...focalSubjects.values()].some(names=>same(names,item.names)));
+        const distinct=lensKnown.filter((item,index)=>!lensKnown.slice(0,index).some(previous=>same(previous.names,item.names)));
+        const reference=priceReference(label,distinct);
+        subject=reference.confident && reference.match ? reference.match.names : [norm(label)];
+        unresolvedPair=!reference.confident;
+      }
       else if (!generic && !bookingSubject && !exactOffering && !names.some(n => (` ${named} `).includes(` ${n} `))) subject=[named];
       if (/\b(?:and|with|plus)\b/.test(named) && !exactOffering && !names.includes(named)) {
         pairedItems=[];

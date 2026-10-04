@@ -675,7 +675,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
-          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; basket?: StockReceipt["basket"] }>;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
           owner_checks?: OwnerCheck[];
@@ -746,6 +746,7 @@ export const generateDraft = action({
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
           if(typeof native?.kind === "string")receipt.kind=native.kind;
           if(typeof native?.owned === "boolean")receipt.owned=native.owned;
+          if(Array.isArray(native?.identity_names) && native.identity_names.every(n=>typeof n==="string" && !!n.trim()))receipt.identity_names=native.identity_names;
           if(native?.basket && (typeof native.basket.available==="boolean" || native.basket.available===null)
             && Array.isArray(native.basket.items) && native.basket.items.length>0
             && native.basket.items.every(i=>typeof i.name==="string" && !!i.name && Number.isInteger(i.quantity) && i.quantity>0))receipt.basket=native.basket;

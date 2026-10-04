@@ -1,4 +1,4 @@
-import { renterItemNames } from "../../convex/lib/renter_item_names";
+import { renterItemNames, reviewedLensNames } from "../../convex/lib/renter_item_names";
 /** Independent receipts from tool RESULTS, never the model's arguments or prose. */
 export type ToolReceipt = { tool: string; call_id: string; result: Record<string, unknown> };
 
@@ -76,7 +76,8 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           if (!Array.isArray(a.stock_receipts)) continue;
           for (const raw of a.stock_receipts) {
             if (raw && typeof raw === "object" && raw.source === "shared_inventory_confirmed_rentals")
-              receipts.push({tool:"check_availability",call_id:`${String(payload.toolCallId ?? "unknown")}:${String(a.name)}:basket:${String(raw.item_id)}`,result:raw});
+              receipts.push({tool:"check_availability",call_id:`${String(payload.toolCallId ?? "unknown")}:${String(a.name)}:basket:${String(raw.item_id)}`,result:{...raw,
+                ...(typeof a.name==="string" && raw.item_name===a.name && a.kind==="lens" ? {identity_names:reviewedLensNames({...a,name:a.name})} : {})}});
           }
         }
       }
@@ -85,7 +86,8 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
           const a = alternative as Record<string, unknown>;
           const stock = a.availability as Record<string, unknown> | null;
           if (stock?.available === true && typeof a.name === "string")
-            receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:${a.name}`, result: { ...stock, item_name: a.name, owned: true, requested_units: stock.quantity, ...(typeof a.kind === "string" && a.kind.trim() ? {kind:a.kind} : {}) } });
+            receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:${a.name}`, result: { ...stock, item_name: a.name, owned: true, requested_units: stock.quantity, ...(typeof a.kind === "string" && a.kind.trim() ? {kind:a.kind} : {}),
+              ...(a.kind==="lens" ? {identity_names:reviewedLensNames({...a,name:a.name})} : {}) } });
         }
       }
     }
