@@ -578,6 +578,12 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
     toolReceipts.push({tool:"get_listing_context",call_id:"prefetch:listing-context",result:lc});
+    // Rental stage belongs to the conversation, including an empty inquiry.
+    // Item resolution cannot gate the stage used by tools and quote rendering.
+    if (lc?.rental_stage) {
+      authoritativeStage = lc.rental_stage.stage;
+      groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
+    }
     if(lc?.referral_context)groundTruth += `FRIEND BASKET REFERENCE (Native listing context already gathered, not an applied booking): ${JSON.stringify(lc.referral_context)}\n`;
     if (lc?.found) {
       bookingConfirmed = lc.is_confirmed === true;
@@ -595,10 +601,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
       req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
-      if (lc.rental_stage) {
-        authoritativeStage = lc.rental_stage.stage;
-        groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
-      }
 
       // ALREADY-GATHERED CONTEXT.
       //
