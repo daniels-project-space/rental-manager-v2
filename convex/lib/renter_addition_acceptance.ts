@@ -79,8 +79,12 @@ function pricesMatch(text:string, quote:AdditionAcceptanceQuote, ownerQuote=fals
     if(total){if(!sameMoney(claim.amount,quote.total_gbp))return {present:true,matches:false};complete=true;continue;}
     if(claims.length===1 && sameMoney(claim.amount,quote.additional_cost_gbp)){complete=true;continue;}
     // Itemised prices must identify their actual Native commercial line.
-    const clause=text.slice(Math.max(text.lastIndexOf('.',claim.index),text.lastIndexOf(';',claim.index),text.lastIndexOf(',',claim.index),(text.lastIndexOf(' and ',claim.index)<0?-1:text.lastIndexOf(' and ',claim.index)+4),(text.lastIndexOf(' plus ',claim.index)<0?-1:text.lastIndexOf(' plus ',claim.index)+5))+1,
-      Math.min(...[text.indexOf('.',claim.index+claim.length),text.indexOf(';',claim.index+claim.length),text.indexOf(',',claim.index+claim.length),text.indexOf(' and ',claim.index+claim.length),text.indexOf(' plus ',claim.index+claim.length),text.length].filter(i=>i>=0)));
+    // Decimal apertures and prices belong to their item, not a new sentence.
+    // Native quote rows are independent clauses even without punctuation.
+    const boundaries=[...text.matchAll(/[.!?](?=\s|$)|[;\n,]|\s+(?:and|plus)\s+/gi)];
+    const beforeBoundary=boundaries.filter(b=>b.index!+b[0].length<=claim.index).at(-1);
+    const afterBoundary=boundaries.find(b=>b.index!>=claim.index+claim.length);
+    const clause=text.slice(beforeBoundary?beforeBoundary.index!+beforeBoundary[0].length:0,afterBoundary?.index??text.length);
     const daily=/^\s*(?:\/\s*day|per day|a day|daily)\b/i.test(after) || /\bdaily (?:rate|price)\s*(?:is|of|:)?\s*$/i.test(before);
     const days=(Date.parse(quote.end_date)-Date.parse(quote.start_date))/86400000+1;
     const line=quote.lines.find(l=>hasLineName(clause,l) && sameMoney(claim.amount,daily?(l.daily_rate_gbp??l.line_total_gbp/(l.qty*days)):l.line_total_gbp));

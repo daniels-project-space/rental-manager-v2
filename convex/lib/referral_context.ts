@@ -1,4 +1,4 @@
-import { previousReferralOffer } from "./referral_offer";
+import { previousReferralOffer, renterAcceptsReferralOffer } from "./referral_offer";
 import { draftContextKey } from "./draft_review";
 import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
@@ -33,8 +33,9 @@ export async function referralContext(ctx:QueryCtx,thread:string,account:string,
   const previous=requested.get(line.product_id);
   requested.set(line.product_id,{product_id:line.product_id,name:shortItemName(line.name),quantity:(previous?.quantity??0)+line.qty});
  }
+ const pending_offer=pending?.referral_code===code && pending.context_key===draftContextKey(await getBotBooking(ctx,thread),(await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread)).first())?.inquiry_items,await getLabOrder(ctx,thread))?pending:null;
  return {ok:true,code,already_linked:false,source_start_date:source.start_date??null,source_end_date:source.end_date??null,
   items:[...requested.values()],physical_items:[...physical.items],
-  pending_offer:pending?.referral_code===code && pending.context_key===draftContextKey(await getBotBooking(ctx,thread),(await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread)).first())?.inquiry_items,await getLabOrder(ctx,thread))?pending:null,
-  guidance:"Shared equipment reference only. No basket has been applied, no booking created, and approval/payment/verification never transfer. Respect the friend's CURRENT message for dates, quantities and intent. For a quote use these exact listing IDs with check_basket_availability, the requested dates/quantities and standalone use. Original dates/quantities are defaults only when the friend asks for the same terms without changes. Info or quote-only requests are read-only. For an explicit basket restoration use restore_referral_basket with exact terms. All real Hygglo writes still require separate written rollout consent."};
+  pending_offer,renter_accepts_sent_terms:renterAcceptsReferralOffer(pending_offer,messages),
+  guidance:"Shared equipment reference only. No basket has been applied, no booking created, and approval/payment/verification never transfer. renter_accepts_sent_terms=true means the CURRENT renter accepted the immediately preceding Native offer: call restore_referral_basket with pending_offer's exact terms rather than quote again or ask for the same consent. That tool rechecks current stock, prices and qualifications; only its successful action receipt proves restoration. Respect current dates, quantities and exclusions; source terms are defaults only. Info or quote-only requests are read-only. A direct restoration request also uses restore_referral_basket. All real Hygglo writes still require separate written rollout consent."};
 }

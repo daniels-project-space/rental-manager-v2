@@ -14,6 +14,7 @@ import { recentThreadMessages } from "./thread_messages";
 export const sentAdditionProposalValidator = v.object({
   context_key: v.string(), epoch: v.number(), quoted_for_message_id: v.string(),
   physical_identity_key:v.optional(v.string()),referral_code:v.optional(v.string()),recommendation_requirements:v.optional(v.array(recommendationRequirementValidator)),
+  quoted_lines:v.optional(v.array(v.object({product_id:v.number(),name:v.string(),qty:v.number(),line_total_gbp:v.number()}))),
   items: v.array(v.object({ product_id: v.number(), qty: v.number() })),
   base_items: v.array(v.object({ name: v.string(), quantity: v.number() })),
   added_items: v.array(v.object({ name: v.string(), quantity: v.number() })),
@@ -91,6 +92,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
     if(offer.referral_code && priced?.lines.length && priced.total_gbp>0)additions.push({context_key,epoch,quoted_for_message_id:approval.message_id,
       referral_code:offer.referral_code,recommendation_requirements:conversation.ai_draft_evidence!.recommendation_quotes?.find(q=>q.quote_key===offer.quote_key)?.requirements??[],physical_identity_key:JSON.stringify(offer.items.map(l=>[l.item_id,l.name,l.quantity]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))),
       items:priced.lines.map(l=>({product_id:l.product_id,qty:l.quantity})),base_items:[],added_items:priced.lines.map(l=>({name:l.name,quantity:l.quantity})),
+      quoted_lines:priced.lines.map(l=>({product_id:l.product_id,name:l.name,qty:l.quantity,line_total_gbp:l.total_gbp})),
       start_date:offer.start_date,end_date:offer.end_date,total_gbp:priced.total_gbp,additional_cost_gbp:priced.total_gbp});
   }
   return {additions,dates,replacements:replacementProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch})};
