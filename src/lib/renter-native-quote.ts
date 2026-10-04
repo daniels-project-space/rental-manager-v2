@@ -1,6 +1,6 @@
 import { minimumRentalContext, minimumRentalPrompt, type MinimumRentalContext } from "../../convex/lib/minimum_rental";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
-import type { RecommendationQuoteEvidence } from "../../convex/lib/renter_draft_evidence";
+import type { RecommendationQuoteEvidence, StockQuoteEvidence } from "../../convex/lib/renter_draft_evidence";
 import { recommendationRequirementsKey, type RecommendationRequirement } from "../../convex/lib/recommendation_qualification";
 import { createHash } from "node:crypto";
 import { renterPriceEvidence } from "./renter-price-evidence";
@@ -54,9 +54,10 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
 /** Render before any guard or persistence. Unknown references, hand-written
  * money in structured prose, and receipts from before a write fail closed. */
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
-  {ok:true;draft:string;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];commercial_quotes:PriceEvidence[]}|{ok:false;reason:string} {
-  if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],commercial_quotes:[]};
+  {ok:true;draft:string;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[]}|{ok:false;reason:string} {
+  if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   const quotes=new Map<string,NativeInquiryQuote>();
+  const stock=new Map<string,StockQuoteEvidence>();
   const qualified=new Map<string,RecommendationQuoteEvidence>();
   const commercial=new Map<string,PriceEvidence>();
   for(const receipt of receipts)if(receipt.tool==="check_basket_availability") {
@@ -65,6 +66,8 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     const quote=nativeInquiryQuote(receipt.result,scope,descriptor.request_revision);
     if(quote && descriptor.quote_key===quote.quote_key){
       quotes.set(quote.quote_key,quote);
+      stock.set(quote.quote_key,{quote_key:quote.quote_key,start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
+        items:(receipt.result.components as Array<{item_id:string;item_name:string;requested_units:number}>).map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))});
       const basket=renterPriceEvidence([receipt],[],scope.threadId).find(p=>p.kind==="basket"&&p.source==="native_inquiry_basket"&&p.quote_role==="inquiry");
       if(basket)commercial.set(quote.quote_key,basket);
       if(scope.recommendationRequirements?.length || record(record(receipt.result.technical_qualification)?.setup)?.applied===true)qualified.set(quote.quote_key,{quote_key:quote.quote_key,
@@ -74,7 +77,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   }
   if(!output.reply_parts?.length) {
     if(scope.rentalStage==="INQUIRY" && receipts.some(r=>r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
-    return {ok:true,draft:output.draft,quote_keys:[],recommendation_quotes:[],commercial_quotes:[]};
+    return {ok:true,draft:output.draft,quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};
   const used=new Set<string>(),parts:string[]=[];
@@ -89,5 +92,5 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
-  return {ok:true,draft:parts.join("\n\n"),quote_keys:[...used],commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
+  return {ok:true,draft:parts.join("\n\n"),quote_keys:[...used],stock_quotes:[...used].map(key=>stock.get(key)!),commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }

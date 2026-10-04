@@ -37,6 +37,13 @@ describe("Native inquiry quote rendering",()=>{
   const result=renderNativeQuoteReply(parts(q.quote_key),[receipt(fixtures.first,context),receipt(fixtures.second,context)],context);
   expect(result.ok).toBe(true);if(result.ok){expect(result.commercial_quotes.map(p=>p.total_gbp)).toEqual([138]);expect(result.draft).not.toContain(q.commercial_guidance!);}
  });
+ it("saves exact stock scope only for selected Native quotes, without inventing technical criteria",()=>{
+  const first=nativeInquiryQuote(fixtures.first,scope)!;
+  const rendered=renderNativeQuoteReply({...base,reply_parts:[{type:"quote",quote_key:first.quote_key}]},[receipt(),receipt(fixtures.second)],scope);
+  expect(rendered.ok).toBe(true);
+  if(rendered.ok)expect(rendered.stock_quotes).toEqual([{quote_key:first.quote_key,start_date:fixtures.first.start_date,end_date:fixtures.first.end_date,
+    items:fixtures.first.components.map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))}]);
+ });
  it("retains the quote descriptor through real tool receipt harvesting",()=>{
   const quote=nativeInquiryQuote(fixtures.first,scope)!;
   const receipts=renterToolReceipts([{toolName:"check_basket_availability",toolCallId:"native",result:{...fixtures.first,renter_quote:quote}}]);
@@ -94,8 +101,8 @@ describe("Native inquiry quote rendering",()=>{
    expect(renderNativeQuoteReply({...parts(),reply_parts:[{type:"text",text},...parts().reply_parts!.slice(1)]},[receipt()],scope).ok).toBe(false);
   expect(renderNativeQuoteReply({...parts(),draft:"Another reply"},[receipt()],scope).ok).toBe(false);
   expect(renderNativeQuoteReply({...base,draft:"The total is £138."},[receipt()],scope).ok).toBe(false);
-  expect(renderNativeQuoteReply({...base,draft:"Yes, that lens is already included."},[receipt()],scope)).toEqual({ok:true,draft:"Yes, that lens is already included.",quote_keys:[],recommendation_quotes:[],commercial_quotes:[]});
-  expect(renderNativeQuoteReply({...base,needs_human:true},[receipt()],scope)).toEqual({ok:true,draft:"",quote_keys:[],recommendation_quotes:[],commercial_quotes:[]});
+  expect(renderNativeQuoteReply({...base,draft:"Yes, that lens is already included."},[receipt()],scope)).toEqual({ok:true,draft:"Yes, that lens is already included.",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]});
+  expect(renderNativeQuoteReply({...base,needs_human:true},[receipt()],scope)).toEqual({ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]});
  });
 });
 

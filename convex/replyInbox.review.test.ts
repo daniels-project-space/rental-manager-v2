@@ -51,6 +51,21 @@ describe("copied bot replies use current Native stock before send",()=>{
   expect(await recheck(f,"I can offer the Sony FX3 for 2 to 4 October.")).toMatchObject({ok:false,reason:"stock_unverified"});
   expect(await recheck(f,"Thanks for checking. I'll review the options and get back to you.")).toMatchObject({ok:true});
  });
+ it("rechecks selected price-only baskets even without an availability assertion or technical requirements",async()=>{
+  const f=await stockDraft();const text="For 3 days: 1 × Sony FX3: £98. Total: £98.";
+  const evidence={model_id:"native-test",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected-native",start_date:"2026-10-02",end_date:"2026-10-04",items:[{item_id:f.itemId,name:"Sony FX3",quantity:1}]}]};
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  const blocker=await f.ctx.db.insert("reservations",{hygglo_order_id:"price-only-blocker",status:"confirmed",start_date:"2026-10-02",end_date:"2026-10-04",expanded_items:[{item_id:f.itemId,qty:1}]});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"stock_unverified"});
+  await f.ctx.db.patch(blocker,{status:"cancelled"});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(f.itemId,{is_marketing_only:true});
+  expect(await recheck(f,text)).toMatchObject({ok:false});
+  await f.ctx.db.patch(f.itemId,{is_marketing_only:false,name_canonical:"Sony FX30"});
+  expect(await recheck(f,text)).toMatchObject({ok:false});
+ });
  it("rechecks catalogue changes and does not borrow old free capacity or changed dates",async()=>{
   const f=await stockDraft();await f.ctx.db.patch(f.itemId,{is_marketing_only:true});
   expect(await recheck(f)).toMatchObject({ok:false});

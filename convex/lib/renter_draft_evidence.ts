@@ -9,7 +9,14 @@ export const recommendationQuoteEvidenceValidator=v.object({
 });
 export type RecommendationQuoteEvidence=Infer<typeof recommendationQuoteEvidenceValidator>;
 
+export const stockQuoteEvidenceValidator=v.object({
+  quote_key:v.string(),start_date:v.string(),end_date:v.string(),
+  items:v.array(v.object({item_id:v.string(),name:v.string(),quantity:v.number()})),
+});
+export type StockQuoteEvidence=Infer<typeof stockQuoteEvidenceValidator>;
+
 export const draftEvidenceValidator = v.object({
+  stock_quotes:v.optional(v.array(stockQuoteEvidenceValidator)),
   model_id: v.string(),
   recommendation_quotes:v.optional(v.array(recommendationQuoteEvidenceValidator)),
   stage: v.string(),

@@ -2136,9 +2136,24 @@ export const recheckCopiedDraftStock = internalQuery({
       return {ok:false,reason:"stale_draft"};
     const evidence=conv?.ai_draft_evidence;
     const request=evidence?.stock_request??{items:[]};
-    if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length)
+    if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length)
       return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
     const sources=await loadStockSources(ctx);
+    // Selected Native offers are commitments to a particular physical basket,
+    // even when the rendered reply mentions only its price. Recheck each offer
+    // independently; separate alternatives must not consume each other's units.
+    for(const quote of evidence?.stock_quotes??[]) {
+      if(!quote.items.length || new Set(quote.items.map(i=>i.item_id)).size!==quote.items.length ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(quote.start_date) || !/^\d{4}-\d{2}-\d{2}$/.test(quote.end_date) || quote.start_date>quote.end_date)
+        return {ok:false,reason:"stock_unverified"};
+      for(const line of quote.items) {
+        const item=sources.items.find(i=>String(i._id)===line.item_id);
+        if(!item || item.name_canonical!==line.name || item.status!=="active" || item.is_marketing_only ||
+          !Number.isInteger(line.quantity) || line.quantity<1 ||
+          stockForRentalItem(sources,item,{item_name:line.name,start_date:quote.start_date,end_date:quote.end_date,quantity:line.quantity,thread_id}).available!==true)
+          return {ok:false,reason:"stock_unverified"};
+      }
+    }
     const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
     // A copied recommendation must still qualify even when its prose says
     // only "this setup". Reuse the initial Native criteria and physical IDs;
