@@ -9,6 +9,29 @@ const baseOpts = {
   lastRenterMessage: "hygglo is asking me to verify my identity before I can book, how does that work",
 };
 
+describe("contract follows a proven booking transition", () => {
+  const liveReply = "All sorted! I've swapped the TTArtisan 11mm for the Sony FE 16-35mm f/2.8 GM on your booking for 20-21 October. Your updated total is £40.\n\nPickup is at 5 Pall Mall, London SW1Y 5LU during my collection windows (10:00 to 12:00 or 19:00 to 21:00). Just drop a message saying 'arrived' when you get there, no need to head inside.";
+  const opts = { history: [], lastRenterMessage: "Yes please", stage: "CONFIRMED_UPCOMING" };
+  it("does not apply the acknowledgment length limit to the actual amendment reply", () => {
+    const result = guardDraft(liveReply, { ...opts, bookingModified: true });
+    expect(result.flags.some(f => f.type === "CONTRACT:maxLength")).toBe(false);
+    expect(result.text).toContain("swapped the TTArtisan 11mm");
+    expect(result.text).toContain("updated total is £40");
+  });
+  it("retains the acknowledgment limit without a server-proven transition", () => {
+    for (const bookingModified of [false, undefined]) {
+      expect(guardDraft(liveReply, { ...opts, bookingModified }).flags).toContainEqual(
+        expect.objectContaining({ type: "CONTRACT:maxLength", detail: expect.stringContaining("ACKNOWLEDGMENT") }),
+      );
+    }
+  });
+  it("keeps unsolicited upselling restricted after an amendment", () => {
+    const result = guardDraft(liveReply + " You might want to add a microphone.", { ...opts, bookingModified: true });
+    expect(result.text).not.toContain("You might want");
+    expect(result.flags).toContainEqual(expect.objectContaining({ type: "CONTRACT", action: "stripped" }));
+  });
+});
+
 describe("recommendation cleanup preserves offer content", () => {
   const opts = { history: [], lastRenterMessage: "Recommend two Sony bodies that record 4K internally and show each three-day price." };
   it("preserves both offers in the actual Lab candidate with bold model names", () => {

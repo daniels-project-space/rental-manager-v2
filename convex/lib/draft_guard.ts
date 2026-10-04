@@ -1364,7 +1364,10 @@ const ASSERTS_AVAIL_RE =
   if (text !== before) push("FORMATTING", "Cleaned formatting artifacts", "stripped");
 
   // ── CONTRACT (intent-based must/mustNot) ────────────────────────
-  const intent = classifyDraftIntent(message);
+  // A short acceptance can complete an actual booking amendment. Use the
+  // server-proven transition, rather than treating the incoming words alone
+  // as an acknowledgment (or trusting the model's declared intent).
+  const intent = opts.bookingModified ? "BOOKING_ACTION" : classifyDraftIntent(message);
   // Completeness is a property of the resolved request, not the presence of
   // any price in the context. Price claims above are still checked against
   // their exact native item/quantity/date evidence.
@@ -1507,7 +1510,12 @@ interface Contract {
   mustNot?: PatternRule[];
 }
 
-const CONTRACTS: Partial<Record<DraftIntent, Contract>> = {
+type ContractIntent = DraftIntent | "BOOKING_ACTION";
+
+const CONTRACTS: Partial<Record<ContractIntent, Contract>> = {
+  // An amendment needs its resulting equipment, dates and total. It is still
+  // a completion reply, so unsolicited upselling remains restricted.
+  BOOKING_ACTION: { mustNot: [...UPSELL_PATTERNS] },
   GOODBYE: { maxLength: 150, mustNot: [...UPSELL_PATTERNS, ...QUESTION_PATTERNS] },
   ACKNOWLEDGMENT: { maxLength: 200, mustNot: [...UPSELL_PATTERNS] },
   // 2026-08-17: GREETING previously had no upsell restriction at all, even
@@ -1552,7 +1560,7 @@ interface ContractOutcome {
 
 function enforceContract(
   response: string,
-  intent: DraftIntent,
+  intent: ContractIntent,
 ): ContractOutcome {
   const violations: { label: string; detail: string }[] = [];
   const blockPatterns: RegExp[] = [];
