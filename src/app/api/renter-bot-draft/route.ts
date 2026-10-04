@@ -20,7 +20,9 @@ import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-too
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
 import { withServiceRoute } from "@/lib/owner-http-route";
-import { getFunctionName, makeFunctionReference } from "convex/server";
+import { withConvexClientFactory } from "@/lib/convex-request-context";
+import { createConvexQuerySession } from "@/lib/convex-query-session";
+import { makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import {
   getRenterBotAgent,
@@ -342,58 +344,16 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       ? body.model_override
       : null;
 
-  /**
-   * Request-scoped query memo.
-   *
-   * Building the fact pack fires up to five Convex queries PER ITEM inside the
-   * item loop (availability, pairings, owned alternatives on three branches),
-   * and several repeat with identical arguments — `settings.get` alone was
-   * fetched twice per request, and `find_owned_alternatives` refetches the same
-   * kind for every item of that kind. Each one is a separate HTTPS round trip
-   * from Vercel to Convex, all of them before the LLM is even called, and the
-   * renter waits for the lot.
-   *
-   * Memoising by (function, arguments) removes the duplicates without
-   * restructuring the loop. Safe because a single draft request is a point-in-
-   * time read: two identical queries within one request are meant to return the
-   * same thing, and if they didn't the fact pack would already be incoherent.
-   * The map dies with the request, so nothing is cached across drafts.
-   */
+  // Hydration and Mastra tools share one verified, request-scoped reader.
+  // Identical reads are reused until a mutation/action invalidates the session.
   const priceSources: ToolReceipt[] = [];
   const fixedPriceEvidence: PriceEvidence[] = [];
   const priceListingIdentities: PriceListingIdentity[] = [];
-  const recordPriceQuery = (functionName: string, promise: Promise<unknown>) => promise.then(value => {
+  const querySession = createConvexQuerySession(rawConvex, (functionName, value) => {
     const tool = ({ "renter_bot_tools:lookup_pricing": "lookup_pricing", "renter_bot_tools:find_owned_alternatives": "find_owned_alternatives", "renter_bot_lab_order:get": "get_lab_order" } as Record<string,string>)[functionName];
     if (tool && value && typeof value === "object" && !Array.isArray(value)) priceSources.push({tool,call_id:`server-price:${priceSources.length}`,result:value as Record<string,unknown>});
-    return value;
   });
-  const queryMemo = new Map<string, Promise<unknown>>();
-  let memoHits = 0;
-  const convex = {
-    query: (<T,>(fn: Parameters<typeof rawConvex.query>[0], args: unknown): Promise<T> => {
-      let key: string;
-      try {
-        const functionName = getFunctionName(fn);
-        // An agent mutation can change the simulated order during this turn.
-        // Re-read it to prove the action and get its current total.
-        if (functionName === "renter_bot_lab_order:get") return recordPriceQuery(functionName, rawConvex.query(fn, args as never)) as Promise<T>;
-        key = `${functionName}|${JSON.stringify(args ?? {})}`;
-      } catch {
-        // Unserialisable args — skip the memo rather than risk a wrong hit.
-        return rawConvex.query(fn, args as never) as Promise<T>;
-      }
-      const hit = queryMemo.get(key);
-      if (hit) {
-        memoHits++;
-        return hit as Promise<T>;
-      }
-      const p = recordPriceQuery(getFunctionName(fn), rawConvex.query(fn, args as never));
-      queryMemo.set(key, p);
-      return p as Promise<T>;
-    }) as typeof rawConvex.query,
-    action: rawConvex.action.bind(rawConvex),
-    mutation: rawConvex.mutation.bind(rawConvex),
-  };
+  const convex = querySession.client;
 
   let account_slug = "";
   let lastRenter = "";
@@ -1408,7 +1368,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         ? await getRenterBotAgentForModel(modelOverride)
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (agent as any).generate(baseMessages, {
+      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
         structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
@@ -1424,7 +1384,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         // "512 was enough" baseline from the WallE health probe, sized for
         // this agent's actual multi-field structured JSON output.
         modelSettings: { maxOutputTokens: 4096 },
-      }));
+      })));
       text = result?.text ?? "";
       obj = validateRenterBotOutput(result?.object);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1515,11 +1475,11 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           ];
           const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (retryAgent as any).generate(retryMessages, {
+          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId }, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
             structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
             modelSettings: { maxOutputTokens: 4096 },
-          }));
+          })));
           const retryText: string = retryResult?.text ?? "";
           const retryUsedTools = ((retryResult?.steps ?? []) as any[]).some(
             (st) => (st?.toolCalls?.length ?? 0) > 0,
@@ -1678,7 +1638,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       // Convex round trips saved by the request-scoped memo, and how many were
       // actually issued. Reported so the hydration cost stays visible rather
       // than being assumed fixed.
-      hydration: { queries: queryMemo.size, dedupedRoundTrips: memoHits },
+      hydration: { ...querySession.stats },
       // WHAT THIS TURN ESTABLISHED, per claim.
       //
       // toolStats already knew exactly which tools ran, and was only ever

@@ -28,6 +28,7 @@ export default defineConfig({
       "convex/owner_functions.test.ts",
       "src/lib/convex-service.test.ts",
       "src/lib/convex-request-context.test.ts",
+      "src/lib/convex-query-session.test.ts",
       "src/lib/owner-http-route.test.ts",
       "src/app/api/renter-bot-ab/route.test.ts",
       "src/app/api/push/renew/route.test.ts",

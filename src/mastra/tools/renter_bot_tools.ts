@@ -34,11 +34,18 @@ const anyApi = api as any;
 
 function convex(): ConvexHttpClient {
   const client = createRequestConvexClient();
-  for (const method of ["query", "mutation", "action"] as const) {
-    const invoke = client[method].bind(client) as (fn: Parameters<typeof client.query>[0], args: Record<string, unknown>) => Promise<unknown>;
-    Object.assign(client, { [method]: (fn: Parameters<typeof client.query>[0], args: Record<string, unknown> = {}) => invoke(fn, bindRenterToolArgs(getFunctionName(fn), args)) });
-  }
-  return client;
+  // A request can share its reader with hydration. Bind each invocation
+  // without rewriting the shared client's methods or stacking wrappers.
+  return new Proxy(client, {
+    get(target, key) {
+      if (key === "query" || key === "mutation" || key === "action") {
+        const invoke = target[key].bind(target) as (fn: Parameters<typeof client.query>[0], args: Record<string, unknown>) => Promise<unknown>;
+        return (fn: Parameters<typeof client.query>[0], args: Record<string, unknown> = {}) => invoke(fn, bindRenterToolArgs(getFunctionName(fn), args));
+      }
+      const value = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 // ── Tool 1: get_renter_context ────────────────────────────────
