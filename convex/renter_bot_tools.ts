@@ -323,7 +323,7 @@ export const get_listing_context = query({
       if (listingInventory) {
         owned = listingInventory.owned;
         ownership_source = listingInventory.source;
-        const main = listingInventory.components.find((c) => c.kind === "camera")
+        const main = listingInventory.primary_camera ?? listingInventory.components.find((c) => ["camera", "camera_body"].includes(c.kind ?? ""))
           ?? listingInventory.components.find((c) => c.stock_required);
         if (main?.name) { inventory_name = main.name; kind = main.kind; }
       }

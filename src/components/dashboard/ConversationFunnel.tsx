@@ -74,7 +74,7 @@ export function ConversationFunnel() {
   const data = useStableQuery(api.reservations.getConversionFunnel, {
     accountSlug: activeAccountSlug,
     days,
-  }) as FunnelData | undefined;
+  }) as FunnelData | null | undefined;
 
   const dayOpts: Days[] = [7, 30, 90];
 
@@ -102,9 +102,11 @@ export function ConversationFunnel() {
         }
       />
 
-      {data !== undefined && (data.excluded_marketing_only ?? 0) > 0 && <p className="mb-3 text-[10px] text-slate-500">{data.excluded_marketing_only} marketing-only requests excluded from this funnel.</p>}
+      {data && (data.excluded_marketing_only ?? 0) > 0 && <p className="mb-3 text-[10px] text-slate-500">{data.excluded_marketing_only} marketing-only requests excluded from this funnel.</p>}
       {data === undefined ? (
         <SkeletonBlock className="h-56 w-full" />
+      ) : data === null ? (
+        <p className="text-xs text-[#8b8fa3] py-8 text-center">Funnel figures are being refreshed.</p>
       ) : data.inquiries === 0 ? (
         <p className="text-xs text-[#8b8fa3] py-8 text-center">
           No renter made first contact in the last {days} days.

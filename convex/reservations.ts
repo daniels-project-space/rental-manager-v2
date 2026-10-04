@@ -1,6 +1,7 @@
-import { internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
+import { action, internalAction, internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
+import { anyApi } from "convex/server";
 import type { Id } from "./_generated/dataModel";
-import { loadMarketingOnlyRequestIds } from "./lib/marketing_only_requests";
+import { loadPagedFunnelSources } from "./lib/funnel_sources";
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import {
@@ -361,82 +362,38 @@ export const getConversionFunnel = query({
     _bypassMv: v.optional(v.boolean()),
   },
   handler: async (ctx, { accountSlug, days, _bypassMv }) => {
-    if (!_bypassMv) {
-      const accountKey = accountSlug ?? "all";
-      const cached = await ctx.db
-        .query("mv_conversion_funnel")
-        .withIndex("by_account_days", (q) =>
-          q.eq("account", accountKey).eq("days", days),
-        )
-        .first();
-      if (cached) return cached.payload;
-    }
-    return await computeFunnelLive(ctx, accountSlug, days);
+    if (_bypassMv) throw new Error("Use computeConversionFunnelMatrix action for a fresh paginated funnel");
+    const cached = await ctx.db.query("mv_conversion_funnel").withIndex("by_account_days", q =>
+      q.eq("account", accountSlug ?? "all").eq("days", days)).first();
+    return cached?.payload ?? null;
   },
 });
 
-/**
- * Live compute for ONE (account, window) cell. Rebuilt 2026-09-02 — see
- * convex/lib/conversation_funnel.ts for why the previous implementation
- * (conversations._creationTime cohorts + undatable denial_records) was
- * replaced wholesale.
- *
- * Reads hygglo_messages in full because the cohort key is each thread's FIRST
- * renter message: you cannot know which messages are "first" from a windowed
- * slice, and hygglo_sent_at has no index. This is why the query is MV-backed —
- * see mv/conversion_funnel.ts, which now does ONE scan for every account and
- * window instead of one per cell.
- */
-async function computeFunnelLive(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ctx: any,
-  accountSlug: string | null,
-  days: number,
-): Promise<FunnelPayload> {
-  const messages = await ctx.db.query("hygglo_messages").collect(); // check-patterns:ok — first-message cohort needs the whole thread history
-  const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — joined by hygglo_order_id, not by date
-  return computeConversationFunnel({
-    threads: buildThreadContacts(messages),
-    reservationsByOrderId: indexReservationsByOrderId(reservations),
-    marketingOnlyRequestIds: await loadMarketingOnlyRequestIds(ctx, reservations),
-    now: Date.now(),
-    days,
-    accountSlug,
-  });
-}
-
-/**
- * Every (account, window) cell from a SINGLE pass over messages+reservations.
- * The MV refresher used to call getConversionFunnel once per cell — 5 accounts
- * x 4 windows = 20 full scans per refresh. This does one.
- */
-export const computeConversionFunnelMatrix = internalQuery({
+/** Whole-history matrix from bounded pages; publish only after the full pass. */
+export const computeConversionFunnelMatrix = internalAction({
   args: { accounts: v.array(v.union(v.string(), v.null())), windows: v.array(v.number()) },
   handler: async (ctx, { accounts, windows }) => {
-    const messages = await ctx.db.query("hygglo_messages").collect(); // check-patterns:ok — see computeFunnelLive
-    const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — see computeFunnelLive
-    const marketingOnlyRequestIds = await loadMarketingOnlyRequestIds(ctx, reservations);
-    const threads = buildThreadContacts(messages);
-    const reservationsByOrderId = indexReservationsByOrderId(reservations);
     const now = Date.now();
+    const sources = await loadPagedFunnelSources(ctx, now);
+    const threads = buildThreadContacts(sources.messages);
+    const reservationsByOrderId = indexReservationsByOrderId(sources.reservations);
     const cells: Array<{ accountSlug: string | null; days: number; payload: FunnelPayload }> = [];
-    for (const accountSlug of accounts) {
-      for (const days of windows) {
-        cells.push({
-          accountSlug,
-          days,
-          payload: computeConversationFunnel({
-            threads,
-            reservationsByOrderId,
-            marketingOnlyRequestIds,
-            now,
-            days,
-            accountSlug,
-          }),
-        });
-      }
+    for (const accountSlug of accounts) for (const days of windows) {
+      cells.push({accountSlug,days,payload:computeConversationFunnel({threads,reservationsByOrderId,
+        marketingOnlyRequestIds:sources.marketingOnlyRequestIds,now,days,accountSlug})});
     }
+    console.info("Funnel paginated sources", sources.counts);
     return cells;
+  },
+});
+
+/** Read-only fresh calculation for owner tools requesting an uncached window. */
+export const getConversionFunnelFresh = action({
+  args:{accountSlug:v.union(v.string(),v.null()),days:v.number()},
+  handler:async(ctx,{accountSlug,days}):Promise<FunnelPayload>=>{
+    if(!Number.isFinite(days)||days<1||days>365)throw new Error("Invalid funnel window");
+    const cells=await ctx.runAction(anyApi.reservations.computeConversionFunnelMatrix,{accounts:[accountSlug],windows:[days]});
+    return cells[0].payload;
   },
 });
 

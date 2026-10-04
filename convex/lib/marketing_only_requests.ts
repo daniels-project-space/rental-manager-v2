@@ -1,17 +1,24 @@
-import type { QueryCtx } from "../_generated/server";
 import { normalizeItemName } from "./item_matcher";
 import { buildProductIndexMap, buildOverrideMap, reservationItemUnits, type ResolvableRes } from "./reservations/itemUnits";
+import { resolveBundleMapping, declaredRentalBlockers } from "./bundle_mapping";
 
 type Request = ResolvableRes & {
   hygglo_order_id?: string;
   items?: Array<{ item_name?: string }>;
 };
-type InventoryItem = { _id: string; name_canonical?: string; is_marketing_only?: boolean };
+type InventoryItem = { _id: string; name_canonical?: string; is_marketing_only?: boolean; kind?: string; qty?: number; status?: string; aliases?: string[]; lens_mount?: string | null };
+
+export function declaredMarketingListingKeys(listings: Array<{account_slug: string; product_id: number; description?: string}>, items: InventoryItem[]) {
+  const inventory = items.filter((i): i is InventoryItem & {name_canonical:string} => !!i.name_canonical);
+  return new Set(listings.filter(l => declaredRentalBlockers(resolveBundleMapping(l.description ?? "", inventory), inventory)
+    .some(blocker => blocker.reason === "marketing_only")).map(l => `${l.account_slug}#${l.product_id}`));
+}
 
 /** Only explicit internal inventory labels exclude demand; unknown items stay. */
 export function marketingOnlyRequestIds(
   reservations: Request[], items: InventoryItem[], productIndex: Map<string, string>,
   overrides?: ReturnType<typeof buildOverrideMap>,
+  declaredMarketingListings: Set<string> = new Set(),
 ): Set<string> {
   const marketingIds = new Set(items.filter((i) => i.is_marketing_only).map((i) => String(i._id)));
   const names = items.filter((i) => i.name_canonical).map((i) => ({
@@ -21,7 +28,8 @@ export function marketingOnlyRequestIds(
   for (const r of reservations) {
     if (!r.hygglo_order_id) continue;
     const units = reservationItemUnits(r, productIndex, overrides);
-    let marketing = [...units.keys()].some((id) => marketingIds.has(id));
+    let marketing = [...units.keys()].some((id) => marketingIds.has(id)) ||
+      (r.hygglo_items ?? []).some(i => i.product_id !== undefined && declaredMarketingListings.has(`${r.account_slug ?? ""}#${i.product_id}`));
     const allOverridden = (r.hygglo_items?.length ?? 0) > 0 &&
       (r.hygglo_items ?? []).every((i) => i.product_id !== undefined && overrides?.has(`${r.account_slug ?? ""}#${i.product_id}`));
     if (!marketing && !allOverridden) {
@@ -41,13 +49,4 @@ export function marketingOnlyRequestIds(
     if (marketing) excluded.add(`${r.account_slug ?? ""}#${r.hygglo_order_id}`);
   }
   return excluded;
-}
-
-export async function loadMarketingOnlyRequestIds(ctx: QueryCtx, reservations: Request[]) {
-  const [items, productRows, overrideRows] = await Promise.all([
-    ctx.db.query("items").collect(),
-    ctx.db.query("hygglo_product_index").collect(),
-    ctx.db.query("listing_resolution_override").collect(),
-  ]);
-  return marketingOnlyRequestIds(reservations, items, buildProductIndexMap(productRows), buildOverrideMap(overrideRows));
 }

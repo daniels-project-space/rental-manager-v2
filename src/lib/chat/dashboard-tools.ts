@@ -988,12 +988,10 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
       }),
       execute: async ({ days }: { days?: number }) => {
         const d = days ?? 30;
-        return cached(`funnel:${d}`, () =>
-          convex.query(api.reservations.getConversionFunnel, {
-            accountSlug: null,
-            days: d,
-          }),
-        );
+        return cached(`funnel:${d}`, async () => {
+          const result = await convex.query(api.reservations.getConversionFunnel, {accountSlug:null,days:d});
+          return result ?? await convex.action(api.reservations.getConversionFunnelFresh, {accountSlug:null,days:d});
+        });
       },
     }),
     query_calendar: tool({

@@ -2,7 +2,7 @@
  * MV: mv_conversion_funnel (pass 11c, 2026-05-25)
  *
  * Wraps reservations.getConversionFunnel. Per Convex billing: ~100GB/month.
- * Reads full reservations + conversations + denial_records for ratio calc.
+ * Reads paginated message/reservation/catalog projections; publishes atomically.
  *
  * Refresher: daily for 3 standard windows (30/90/365 days).
  */
@@ -33,37 +33,29 @@ export async function refreshAll(
   ];
   // 2026-09-02: this used to call getConversionFunnel once per (account,
   // window) — 5 x 4 = 20 COMPLETE scans of hygglo_messages + reservations per
-  // refresh. The matrix query builds the per-thread first-contact index once
+  // refresh. The paginated matrix action builds the per-thread first-contact index once
   // and slices it in memory, so a refresh is now a single scan.
   const cells: Array<{ accountSlug: string | null; days: number; payload: unknown }> =
-    await ctx.runQuery(anyApi.reservations.computeConversionFunnelMatrix, {
+    await ctx.runAction(anyApi.reservations.computeConversionFunnelMatrix, {
       accounts: slugs.map((s) => s.arg),
       windows: [...STANDARD_WINDOWS],
     });
   const keyForArg = new Map<string | null, string>(slugs.map((s) => [s.arg, s.key]));
-  let written = 0;
-  for (const cell of cells) {
-    await ctx.runMutation(anyApi.mv.conversion_funnel.write, {
-      account: keyForArg.get(cell.accountSlug) ?? ACCOUNT_ALL,
-      days: cell.days,
-      payload: cell.payload,
-      generatedAt: startedAt,
-    });
-    written += 1;
-  }
-  return { ok: true, written, durationMs: Date.now() - startedAt };
+  const matrix = cells.map(cell => ({account:keyForArg.get(cell.accountSlug) ?? ACCOUNT_ALL,days:cell.days,payload:cell.payload}));
+  await ctx.runMutation(anyApi.mv.conversion_funnel.writeMatrix, {cells:matrix,generatedAt:startedAt});
+  return {ok:true,written:matrix.length,durationMs:Date.now()-startedAt};
 }
 
-export const write = internalMutation({
-  args: { account: v.string(), days: v.number(), payload: v.any(), generatedAt: v.number() },
-  handler: async (ctx, { account, days, payload, generatedAt }) => {
-    const existing = await ctx.db
-      .query("mv_conversion_funnel")
-      .withIndex("by_account_days", (q) => q.eq("account", account).eq("days", days))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, { payload, generatedAt });
-    else await ctx.db.insert("mv_conversion_funnel", { account, days, payload, generatedAt });
-    return { ok: true };
+/** Publish every account/window in one transaction after all sources succeed. */
+export const writeMatrix = internalMutation({
+  args:{cells:v.array(v.object({account:v.string(),days:v.number(),payload:v.any()})),generatedAt:v.number()},
+  handler:async(ctx,{cells,generatedAt})=>{
+    for(const {account,days,payload} of cells){
+      const existing=await ctx.db.query("mv_conversion_funnel").withIndex("by_account_days",q=>q.eq("account",account).eq("days",days)).first();
+      if(existing)await ctx.db.patch(existing._id,{payload,generatedAt});
+      else await ctx.db.insert("mv_conversion_funnel",{account,days,payload,generatedAt});
+    }
+    return {ok:true,written:cells.length};
   },
 });
 

@@ -94,6 +94,31 @@ describe("whole listing inventory and stock", () => {
 
 describe("declared kit coverage", () => {
   const desc="Included in this rental: • 1x Sony FX3 • 1x Sony GM 24-70mm f2.8";
+  it("does not let a lens-only override hide an explicitly marketing-only body", () => {
+    const description="Included in this rental: • 1x RED Komodo • 1x Sony GM 24-70mm f2.8";
+    const listing={...resolveListingComponents(inventory,[{item_id:"lens",qty:1}],"lens",1,description),product_id:1,listing_name:"RED Komodo kit"};
+    expect(listing).toMatchObject({complete:false,owned:false,primary_camera:{item_id:"marketing",name:"RED Komodo"}});
+    expect(listing.ownership_blockers).toEqual([{item_id:"marketing",name:"RED Komodo",kind:"camera",reason:"marketing_only"}]);
+    expect(listing.components.map(c=>c.item_id)).toEqual(["lens"]);
+    expect(listingStock(sources(),listing,request)).toMatchObject({available:false,owned:false,reason:"not_rentable"});
+  });
+  it("recognizes camera_body identity without assigning it unverified physical stock", () => {
+    const r5={_id:"r5",name_canonical:"Canon R5",kind:"camera_body",status:"active",qty:1,is_marketing_only:true} as unknown as Doc<"items">;
+    const listing=resolveListingComponents([...inventory,r5],[{item_id:"lens",qty:1}],"lens",1,"Included in this rental: • 1x Canon R5 • 1x Sony GM 24-70mm f2.8");
+    expect(listing.primary_camera).toMatchObject({item_id:"r5",kind:"camera_body"});
+    expect(listing.owned).toBe(false);
+  });
+  it("keeps owned missing gear unknown and exposes known zero/inactive blockers", () => {
+    expect(resolveListingComponents(inventory,[{item_id:"camera",qty:1}],undefined,1,desc).owned).toBeNull();
+    for(const changed of [{...inventory[1],qty:0},{...inventory[1],status:"inactive"}]){
+      const listing=resolveListingComponents([inventory[0],changed],[{item_id:"camera",qty:1}],undefined,1,desc);
+      expect(listing.owned).toBe(false);expect(listing.complete).toBe(false);
+    }
+  });
+  it("does not invent a body for ambiguous or unresolved camera declarations", () => {
+    for(const text of ["Included in this rental: • 1x Mystery camera", "Included in this rental: • 1x Sony FX3 • 1x RED Komodo"])
+      expect(resolveListingComponents(inventory,[{item_id:"lens",qty:1}],undefined,1,text).primary_camera).toBeNull();
+  });
   it("does not prove a whole kit from a valid body-only override", () => {
     const listing={...resolveListingComponents(inventory,[{item_id:"camera",qty:1}],undefined,1,desc),product_id:1,listing_name:"FX3 kit"};
     expect(listing.complete).toBe(false);expect(listing.owned).toBeNull();

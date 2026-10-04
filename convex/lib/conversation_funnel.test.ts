@@ -9,7 +9,7 @@ import {
   indexReservationsByOrderId,
 } from "./conversation_funnel";
 
-import { marketingOnlyRequestIds } from "./marketing_only_requests";
+import { marketingOnlyRequestIds, declaredMarketingListingKeys } from "./marketing_only_requests";
 
 const NOW = Date.parse("2026-09-02T12:00:00Z");
 const HOUR = 3_600_000;
@@ -263,6 +263,27 @@ describe("regression guards for the old funnel's defects", () => {
 describe("marketing-only requests", () => {
   const items = [{ _id: "owned", name_canonical: "Sony FX3", is_marketing_only: false },
     { _id: "marketing", name_canonical: "Canon EOS R5", is_marketing_only: true }];
+  it("excludes a declared marketing component omitted by a partial authoritative override", () => {
+    const declarations=declaredMarketingListingKeys([
+      {account_slug:"leo",product_id:1,description:"Included in this rental: • 1x Canon EOS R5 • 1x Sony FX3"},
+      {account_slug:"diogo",product_id:1,description:"Included in this rental: • 1x Sony FX3"},
+    ],items);
+    const excluded=marketingOnlyRequestIds([
+      {hygglo_order_id:"partial",account_slug:"leo",hygglo_items:[{product_id:1}]},
+      {hygglo_order_id:"owned",account_slug:"diogo",hygglo_items:[{product_id:1}]},
+    ],items,new Map([["leo#1","owned"],["diogo#1","owned"]]),new Map([["leo#1",[{item_id:"owned",qty:1}]]]),declarations);
+    expect([...excluded]).toEqual(["leo#partial"]);
+  });
+  it("does not exclude unknown, ambiguous or zero-quantity demand without a marketing label", () => {
+    const inventory=[...items,{_id:"zero",name_canonical:"Sony A7 V",qty:0},{_id:"unknownFlag",name_canonical:"Canon EOS R6"}];
+    const declarations=declaredMarketingListingKeys([
+      {account_slug:"leo",product_id:2,description:"Included in this rental: • 1x Sony A7 V"},
+      {account_slug:"leo",product_id:3,description:"Included in this rental: • 1x Unknown camera"},
+      {account_slug:"leo",product_id:4,description:"Canon EOS R5 is an optional upgrade."},
+      {account_slug:"leo",product_id:5,description:"Included in this rental: • 1x Canon EOS R"},
+    ],inventory);
+    expect(declarations.size).toBe(0);
+  });
   it("excludes only explicitly labelled inventory and scopes product mappings by account", () => {
     const excluded = marketingOnlyRequestIds([
       { hygglo_order_id: "one", account_slug: "leo", resolved_items: [{ item_id: "marketing" }] },

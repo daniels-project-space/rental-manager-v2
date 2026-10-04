@@ -94,6 +94,7 @@ import type * as draft_learning_actions from "../draft_learning_actions.js";
 import type * as extract_booking_times from "../extract_booking_times.js";
 import type * as extract_booking_times_q from "../extract_booking_times_q.js";
 import type * as feature_flags from "../feature_flags.js";
+import type * as funnel_sources from "../funnel_sources.js";
 import type * as grounding_audit from "../grounding_audit.js";
 import type * as health from "../health.js";
 import type * as historical_revenue from "../historical_revenue.js";
@@ -144,6 +145,7 @@ import type * as lib_draft_review_validator from "../lib/draft_review_validator.
 import type * as lib_effectiveDates from "../lib/effectiveDates.js";
 import type * as lib_feature_flags_helper from "../lib/feature_flags_helper.js";
 import type * as lib_fulfillment_claims from "../lib/fulfillment_claims.js";
+import type * as lib_funnel_sources from "../lib/funnel_sources.js";
 import type * as lib_gatedGenerate from "../lib/gatedGenerate.js";
 import type * as lib_hygglo_pricing from "../lib/hygglo_pricing.js";
 import type * as lib_imageResolution from "../lib/imageResolution.js";
@@ -441,6 +443,7 @@ declare const fullApi: ApiFromModules<{
   extract_booking_times: typeof extract_booking_times;
   extract_booking_times_q: typeof extract_booking_times_q;
   feature_flags: typeof feature_flags;
+  funnel_sources: typeof funnel_sources;
   grounding_audit: typeof grounding_audit;
   health: typeof health;
   historical_revenue: typeof historical_revenue;
@@ -491,6 +494,7 @@ declare const fullApi: ApiFromModules<{
   "lib/effectiveDates": typeof lib_effectiveDates;
   "lib/feature_flags_helper": typeof lib_feature_flags_helper;
   "lib/fulfillment_claims": typeof lib_fulfillment_claims;
+  "lib/funnel_sources": typeof lib_funnel_sources;
   "lib/gatedGenerate": typeof lib_gatedGenerate;
   "lib/hygglo_pricing": typeof lib_hygglo_pricing;
   "lib/imageResolution": typeof lib_imageResolution;

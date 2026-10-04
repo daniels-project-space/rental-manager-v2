@@ -2,7 +2,7 @@ import { bestMatch } from "./item_name_match";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { extractComponents } from "./bundle_description_parse";
 
-type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null };
+type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
 const tokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
@@ -63,4 +63,16 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     else resolved.push({ item_id: String(item._id), name: item.name_canonical, qty: component.qty, kind: item.kind ?? "unknown" });
   }
   return { components: resolved, unmatched, structured: usedBullets, explicit: hasContentsSection };
+}
+
+/** An incomplete override cannot hide a known non-rentable advertised component.
+ * Declarations identify blockers; they never add stock to the physical mapping. */
+export function declaredRentalBlockers(declared: ReturnType<typeof resolveBundleMapping> | null, items: Inventory[]) {
+  if (!declared?.explicit) return [];
+  return declared.components.flatMap(component => {
+    const item = items.find(i => String(i._id) === component.item_id);
+    const reason = item?.is_marketing_only ? "marketing_only" : item?.status !== undefined && item.status !== "active" ? "inactive"
+      : item?.qty !== undefined && item.qty <= 0 ? "zero_quantity" : null;
+    return reason ? [{ item_id: component.item_id, name: component.name, kind: component.kind, reason }] : [];
+  });
 }
