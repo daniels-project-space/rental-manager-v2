@@ -799,6 +799,7 @@ const operationalSchema = defineSchema({
       )
     ),
     inquiry_image_url: v.optional(v.string()),
+    referral_reference:v.optional(v.object({codes:v.array(v.string()),message_id:v.string()})),
     created_at: v.number(),
   }).index("by_thread", ["thread_id"])
     .index("by_last_sender", ["last_sender"])

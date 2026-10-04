@@ -85,6 +85,7 @@ export default defineConfig({
       "convex/renter_bot_lab_order.atomic.test.ts",
       "convex/lib/renter_sent_proposal.test.ts",
       "convex/lib/referral_offer.test.ts",
+      "convex/lib/thread_referral_reference.test.ts",
       "convex/lib/renter_addition_acceptance.test.ts",
       "convex/lib/renter_replacement_acceptance.test.ts",
       "convex/lib/renter_date_acceptance.test.ts",

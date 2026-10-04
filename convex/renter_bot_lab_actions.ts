@@ -1,4 +1,6 @@
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
+import {friendReferralCodesFromMessage} from "./lib/verification_failure";
+import {loadThreadReferralReference} from "./lib/thread_referral_reference";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
@@ -137,7 +139,11 @@ export const appendRenterMessage = internalMutation({
       .withIndex("by_thread", (q) => q.eq("thread_id", args.thread_id))
       .first();
     if (conv) {
+      const codes=friendReferralCodesFromMessage(args.text);
+      const reference=codes.length?{codes,message_id:messageId}:
+        conv.referral_reference??await loadThreadReferralReference(ctx,args.thread_id)??{codes:[],message_id:messageId};
       await ctx.db.patch(conv._id, {
+        referral_reference:reference,
         last_msg_at: now,
         last_sender: "renter",
         last_renter_msg_at: now,

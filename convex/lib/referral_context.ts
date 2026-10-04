@@ -4,7 +4,7 @@ import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { getBotBooking, getLabOrder } from "./renter_booking";
 import { recentThreadMessages } from "./thread_messages";
-import { friendReferralCode } from "./verification_failure";
+import { loadThreadReferralReference,referralReferenceSelection } from "./thread_referral_reference";
 import { resolveOrderPhysicalItems, sameOrderPhysicalItems } from "./renter_order_stock";
 import { rentalStage } from "./rental_stage";
 import { londonToday } from "./effectiveDates";
@@ -15,7 +15,7 @@ import { shortItemName } from "./item_display_name";
 export async function referralContext(ctx:QueryCtx,thread:string,account:string,inventory?:Doc<"items">[]) {
  if(!thread.startsWith("__probe__"))return null;
  const messages=await recentThreadMessages(ctx,thread,12);
- const supplied=friendReferralCode(messages),pending=previousReferralOffer(messages);
+ const supplied=referralReferenceSelection(await loadThreadReferralReference(ctx,thread)),pending=previousReferralOffer(messages);
  const code=supplied.code??(!supplied.ambiguous?pending?.referral_code:undefined),ambiguous=supplied.ambiguous;
  if(!code)return ambiguous?{ok:false,error:"Multiple basket references need an explicit choice"}:null;
  const ref=await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code",q=>q.eq("code",code)).unique();

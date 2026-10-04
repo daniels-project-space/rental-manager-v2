@@ -6,7 +6,8 @@ import { offeringConsentIdentity } from "./lib/offering_consent_identity";
 import { acceptsRemoval } from "./lib/renter_removal_acceptance";
 import { acceptsAddition } from "./lib/renter_addition_acceptance";
 import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventoryItem } from "./lib/renter_booking_consent";
-import { friendBasketReply, verificationFailureReply, requestsFriendBasketRestore, friendReferralCode } from "./lib/verification_failure";
+import { friendBasketReply, verificationFailureReply, requestsFriendBasketRestore } from "./lib/verification_failure";
+import { loadThreadReferralReference,referralReferenceSelection } from "./lib/thread_referral_reference";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { internalMutation, mutation, query, internalMutationOf, internalQueryOf } from "./owner_functions";
@@ -870,7 +871,8 @@ export const redeemReferral = mutation({
       return {ok:false,action_performed:false,error:"Use the current renter message. No basket was changed",reason:"stale_inbound"};
     if(!a.preview_only && (!latest || latest.sender!=="renter" || renterRequestsReadOnly(latest.body_text,"add_item") ))
       return {ok:false,action_performed:false,error:"Restoring this basket needs a current renter request that allows basket changes. Use a read-only referral preview otherwise",reason:"referral_restore_not_authorized"};
-    if((friendReferralCode(messages).code??(!friendReferralCode(messages).ambiguous?previousReferralOffer(messages)?.referral_code:undefined))!==a.code)
+    const selectedReference=referralReferenceSelection(await loadThreadReferralReference(ctx,a.thread_id));
+    if((selectedReference.code??(!selectedReference.ambiguous?previousReferralOffer(messages)?.referral_code:undefined))!==a.code)
       return {ok:false,action_performed:false,error:"Use the exact basket reference supplied by this renter. No basket was changed",reason:"referral_not_in_current_context"};
     const target = await getLabOrder(ctx, a.thread_id);
     const source = await getLabOrder(ctx, referral.source_thread_id);

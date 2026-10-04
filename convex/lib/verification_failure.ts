@@ -6,15 +6,14 @@ export function verificationFailureReply(code: string) {
 
 /** Require an explicit referral and one opaque code; names never link renters. */
 export function friendReferralFromMessage(text: string): string | null {
-  if (!/\b(?:friend|sent me|referral|same basket)\b/i.test(text)) return null;
-  const codes = text.match(/\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/gi) ?? [];
+  const codes=friendReferralCodesFromMessage(text);
   return codes.length === 1 ? codes[0].toLowerCase() : null;
 }
 
-export function friendReferralCode(messages:ReadonlyArray<{sender:string;body_text:string}>) {
-  const latest=messages.at(-1),current=latest?.sender==="renter"?friendReferralFromMessage(latest.body_text):null;
-  const codes=[...new Set(messages.filter(m=>m.sender==="renter").map(m=>friendReferralFromMessage(m.body_text)).filter((c):c is string=>!!c))];
-  return {code:current??(codes.length===1?codes[0]:null),ambiguous:!current&&codes.length>1};
+/** Preserve ambiguity instead of silently falling back to an older code. */
+export function friendReferralCodesFromMessage(text:string):string[] {
+ if(!/\b(?:friends?|sent me|referrals?|same basket)\b/i.test(text))return [];
+ return [...new Set((text.match(/\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/gi)??[]).map(c=>c.toLowerCase()))];
 }
 
 /** Recognition is not consent. A write requires a current direct instruction;
