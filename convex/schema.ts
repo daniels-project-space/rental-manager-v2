@@ -2573,11 +2573,11 @@ const operationalSchema = defineSchema({
   }).index("by_name", ["item_name_canonical"]),
 
   renter_bot_owner_checks: defineTable({
-    thread_id: v.string(), account_slug: v.string(), source_message_id: v.string(),
+    thread_id: v.string(), account_slug: v.string(), source_message_id: v.string(), last_requested_message_id:v.optional(v.string()),
     source_context_key: v.string(), source_epoch: v.number(), key: v.string(),
     check: ownerCheckValidator, candidate_names:v.array(v.string()), source_question:v.string(), status: v.union(v.literal("pending"),v.literal("handled_by_owner")),
     created_at: v.number(), handled_at: v.optional(v.number()), handled_by_auth_subject:v.optional(v.string()), handling_note: v.optional(v.string()),
-  }).index("by_key",["key"]).index("by_thread",["thread_id"])
+  }).index("by_key",["key"]).index("by_thread",["thread_id"]).index("by_last_request",["thread_id","last_requested_message_id"])
     .index("by_status",["status"]).index("by_account_status",["account_slug","status"])
     .index("by_status_thread",["status","thread_id"]).index("by_account_status_thread",["account_slug","status","thread_id"]),
 

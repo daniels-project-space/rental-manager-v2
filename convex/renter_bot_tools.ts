@@ -1,3 +1,4 @@
+import {cameraRequirementsValidator} from "./lib/camera_requirement_validator";
 import { renterHistory } from "./lib/renter_history";
 import { getBotRenter } from "./lib/renter_identity";
 import { lensRequirementsValidator, listingMappingOwnerCheck } from "./lib/owner_checks";
@@ -14,7 +15,7 @@ import { renterItemNames } from "./lib/renter_item_names";
 import { summarise } from "./lib/renter_order_quote";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { listingDisplayName } from "./lib/item_display_name";
-import { RECORDING_REQUIREMENT_RESOLUTIONS, meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
+import { assessCameraRequirements, hasCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
@@ -991,16 +992,7 @@ export const find_owned_alternatives = query({
     account_slug: v.string(),
     kind: v.optional(v.string()),
     lens_mount: v.optional(v.string()),
-    camera_requirements: v.optional(v.object({
-      role: v.optional(v.union(v.literal("action"), v.literal("interchangeable_lens"))),
-      sensor_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
-      internal_4k: v.optional(v.boolean()), built_in_nd: v.optional(v.boolean()),
-      recording: v.optional(v.object({
-        resolution: v.union(...RECORDING_REQUIREMENT_RESOLUTIONS.map(r=>v.literal(r))), min_fps: v.optional(v.number()),
-        capture_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
-        full_width: v.optional(v.boolean()), internal: v.optional(v.boolean()),
-      })),
-    })),
+    camera_requirements: v.optional(cameraRequirementsValidator),
     lens_requirements: v.optional(lensRequirementsValidator),
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
@@ -1165,6 +1157,7 @@ export const find_owned_alternatives = query({
     const alternatives: Array<Record<string, unknown>> = [];
     const rejected = { requirements: 0, stock: 0 };
     const lensReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
+    const cameraReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
     const rejectedStockOptions: Array<Record<string,unknown>> = [];
     const stockSources = start_date && end_date ? await loadStockSources(ctx) : null;
     for (const it of ranked) {
@@ -1191,7 +1184,13 @@ export const find_owned_alternatives = query({
           rejected.requirements++; continue;
         }
       }
-      if (cameraQuery && !meetsCameraRequirements(capabilities, requirements, lens_mount)) { rejected.requirements++; continue; }
+      if(cameraQuery) {
+        const assessment=assessCameraRequirements(capabilities,requirements,lens_mount);
+        if(assessment.status!=="match") {
+          if(assessment.status==="unknown")cameraReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});
+          rejected.requirements++;continue;
+        }
+      }
       // With a known target, keep suggestions in the same category. Offering a
       // lens as a substitute for a camera body is never useful.
       const requiredKind = normKind(target?.kind ?? kind);
@@ -1276,6 +1275,13 @@ export const find_owned_alternatives = query({
       // on every subsequent agent step.
       if (alternatives.length >= 6) break;
     }
+    const ownerCheck=!alternatives.length ? lensQuery && lensRequirementsSpecified && lensReviewNeeded.length ? {
+      kind:"lens_recommendation" as const,requirements:desiredLensRequirements,candidate_item_ids:lensReviewNeeded.map(i=>i.item_id),lens_mount:lens_mount??null,
+      start_date:start_date??null,end_date:end_date??null,quantity:quantity??1,
+    } : cameraQuery && hasCameraRequirements(requirements,lens_mount) && cameraReviewNeeded.length ? {
+      kind:"camera_recommendation" as const,requirements,candidate_item_ids:cameraReviewNeeded.map(i=>i.item_id),lens_mount:lens_mount??null,
+      start_date:start_date??null,end_date:end_date??null,quantity:quantity??1,
+    } : null : null;
     void account_slug;
     return {
       rental_stage:stage,
@@ -1299,14 +1305,14 @@ export const find_owned_alternatives = query({
       lens_requirements_specified: lensQuery && lensRequirementsSpecified,
       lens_requirement_checked: lensQuery && lensRequirementsSpecified && hasLensRequirements(desiredLensRequirements),
       lens_review_needed: lensQuery ? lensReviewNeeded : [],
-      owner_check: lensQuery && lensRequirementsSpecified && !alternatives.length && lensReviewNeeded.length ? {
-        kind: "lens_recommendation" as const, requirements: desiredLensRequirements,
-        candidate_item_ids: lensReviewNeeded.map(i=>i.item_id), lens_mount: lens_mount ?? null,
-        start_date: start_date ?? null, end_date: end_date ?? null, quantity: quantity ?? 1,
-      } : null,
+      owner_check:ownerCheck,
+      camera_review_needed:cameraQuery?cameraReviewNeeded:[],
+      camera_search_outcome:!cameraQuery?null:alternatives.length?"verified_matches":cameraReviewNeeded.length?"needs_spec_review":"no_verified_match",
+      camera_inventory_absence_established:false,
+      camera_guidance:"Missing mode proof is not camera absence or dated unavailability. camera_review_needed identifies owned candidates requiring exact-model specification review, not verified alternatives. Explain the missing proof and proceed with the owner review. Reviewed modes are positive evidence, not an exhaustive list of unsupported modes. A handled task is not specification, stock or price proof.",
       lens_search_outcome: !lensQuery ? null : !lensRequirementsSpecified ? "requirements_not_specified" : alternatives.length ? "verified_matches" : lensReviewNeeded.length ? "needs_spec_review" : "no_verified_match",
       lens_inventory_absence_established: false,
-      owner_review_workflow: lensQuery && lensRequirementsSpecified && !alternatives.length && lensReviewNeeded.length ? {
+      owner_review_workflow: ownerCheck ? {
         status:"owner_review_required",persistence:"with_saved_draft_or_review",customer_input_required:false,specification_result_verified:false,
       } : null,
       lens_guidance: "Pass a structured lens_requirements object for the desired option, including {} when no technical constraints apply. Current-item descriptions and questions are not alternative requirements. Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. lens_review_needed names are owned items requiring specification review, not verified alternatives. Zero verified matches never proves that we do not own an item or that it is booked; explain missing verification and ask the owner to check. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",

@@ -57,13 +57,31 @@ export function requestedCameraRole(name: string | null | undefined, kind?: stri
   return null;
 }
 
+export function hasCameraRequirements(requirements:CameraRequirements,nativeMount?:string|null) {
+  return !!nativeMount?.trim() || Object.values(requirements).some(value=>value!==undefined);
+}
+/** Positive mode reviews are not an exhaustive negative specification. A
+ * missing mode therefore needs review; known body/mount mismatches exclude it. */
+export function assessCameraRequirements(capabilities:CameraCapabilities|null,requirements:CameraRequirements,nativeMount?:string|null) {
+  const unknown:string[]=[],mismatched:string[]=[];
+  for(const key of ["role","sensor_format","internal_4k","built_in_nd"] as const) {
+    if(requirements[key]===undefined)continue;
+    if(capabilities?.[key]===undefined)unknown.push(key);
+    else if(capabilities[key]!==requirements[key])mismatched.push(key);
+  }
+  if(nativeMount) {
+    if(!capabilities?.native_mount)unknown.push("native_mount");
+    else if(!sameMount(capabilities.native_mount,nativeMount))mismatched.push("native_mount");
+  }
+  const recording=requirements.recording;
+  if(recording) {
+    if(recording.internal===true && (capabilities?.internal_4k===false||requirements.internal_4k===false))mismatched.push("internal_4k");
+    if(!RECORDING_REQUIREMENT_RESOLUTIONS.includes(recording.resolution) || recording.min_fps!==undefined&&(!Number.isFinite(recording.min_fps)||recording.min_fps<=0))mismatched.push("recording");
+    else if(!capabilities?.recording_modes?.some(mode=>matchesRecordingRequirement(mode,recording)))unknown.push("recording");
+  }
+  return {status:mismatched.length?"mismatch" as const:unknown.length?"unknown" as const:"match" as const,unknown,mismatched};
+}
 /** Unknown does not satisfy a hard requirement. Stock is checked separately. */
 export function meetsCameraRequirements(capabilities: CameraCapabilities | null, requirements: CameraRequirements, nativeMount?: string) {
-  if (!Object.keys(requirements).length && !nativeMount) return true;
-  if (!capabilities) return false;
-  for (const key of ["role", "sensor_format", "internal_4k", "built_in_nd"] as const) {
-    if (requirements[key] !== undefined && capabilities[key] !== requirements[key]) return false;
-  }
-  if (requirements.recording && !capabilities.recording_modes?.some(m => matchesRecordingRequirement(m, requirements.recording!))) return false;
-  return !nativeMount || sameMount(capabilities.native_mount, nativeMount);
+  return assessCameraRequirements(capabilities,requirements,nativeMount).status==="match";
 }

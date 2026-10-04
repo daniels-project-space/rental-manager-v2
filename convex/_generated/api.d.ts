@@ -122,6 +122,7 @@ import type * as lib_booking_addition_mount from "../lib/booking_addition_mount.
 import type * as lib_bundle_description_parse from "../lib/bundle_description_parse.js";
 import type * as lib_bundle_mapping from "../lib/bundle_mapping.js";
 import type * as lib_camera_mode_claims from "../lib/camera_mode_claims.js";
+import type * as lib_camera_requirement_validator from "../lib/camera_requirement_validator.js";
 import type * as lib_camera_requirements from "../lib/camera_requirements.js";
 import type * as lib_camera_sensor_comparisons from "../lib/camera_sensor_comparisons.js";
 import type * as lib_canonical_generation_error from "../lib/canonical_generation_error.js";
@@ -472,6 +473,7 @@ declare const fullApi: ApiFromModules<{
   "lib/bundle_description_parse": typeof lib_bundle_description_parse;
   "lib/bundle_mapping": typeof lib_bundle_mapping;
   "lib/camera_mode_claims": typeof lib_camera_mode_claims;
+  "lib/camera_requirement_validator": typeof lib_camera_requirement_validator;
   "lib/camera_requirements": typeof lib_camera_requirements;
   "lib/camera_sensor_comparisons": typeof lib_camera_sensor_comparisons;
   "lib/canonical_generation_error": typeof lib_canonical_generation_error;

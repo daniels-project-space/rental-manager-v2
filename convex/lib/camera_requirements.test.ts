@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraCapabilities, type RecordingMode } from "./camera_requirements";
+import { assessCameraRequirements, meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraCapabilities, type RecordingMode } from "./camera_requirements";
 const full: CameraCapabilities = { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "L", internal_4k: true };
 const action: CameraCapabilities = { role: "action", sensor_format: "small_sensor", internal_4k: true };
 describe("hard camera requirements before stock ranking", () => {
@@ -23,6 +23,18 @@ describe("hard camera requirements before stock ranking", () => {
     expect(meetsCameraRequirements({...full,recording_modes:[uhd]},{recording:{...requirement.recording,resolution:"dci_4k"}})).toBe(false);
     expect(meetsCameraRequirements({...full,recording_modes:[dci]},{recording:{...requirement.recording,resolution:"uhd_4k"}})).toBe(false);
     for(const recording_modes of [[],[{...dci,capture_format:"aps_c" as const}],[{...dci,full_width:false}],[{...dci,internal:false}],[{...dci,nominal_fps:[30]}]])expect(meetsCameraRequirements({...full,recording_modes},requirement)).toBe(false);
+  });
+  it("separates missing mode proof from a known incompatible body or mount",()=>{
+    const reviewed={...full,recording_modes:[mode(60,"full_frame",true)],built_in_nd:false};
+    const recording={resolution:"dci_4k" as const,min_fps:60,full_width:true};
+    expect(assessCameraRequirements(reviewed,{recording})).toMatchObject({status:"unknown",unknown:["recording"],mismatched:[]});
+    expect(assessCameraRequirements(null,{sensor_format:"full_frame",built_in_nd:true})).toMatchObject({status:"unknown",unknown:["sensor_format","built_in_nd"]});
+    expect(assessCameraRequirements({...reviewed,internal_4k:false},{recording:{...recording,internal:true}})).toMatchObject({status:"mismatch",mismatched:["internal_4k"]});
+    expect(assessCameraRequirements(reviewed,{recording,built_in_nd:true})).toMatchObject({status:"mismatch",mismatched:["built_in_nd"]});
+    expect(assessCameraRequirements(action,{role:"interchangeable_lens",recording})).toMatchObject({status:"mismatch",mismatched:["role"]});
+    expect(assessCameraRequirements(reviewed,{recording},"E")).toMatchObject({status:"mismatch",mismatched:["native_mount"]});
+    expect(assessCameraRequirements({...reviewed,native_mount:undefined},{recording},"E")).toMatchObject({status:"unknown",unknown:["native_mount","recording"]});
+    expect(assessCameraRequirements(reviewed,{recording:{resolution:"4k",min_fps:0}}).status).toBe("mismatch");
   });
   it("rejects stale or wrong-model mode proof independently of a valid body profile", () => {
     const spec = { item_name_canonical: "Body", description: "Reviewed", source: "manufacturer-verified", source_url: "https://manufacturer.example/body", verified_model: "model", verified_at: 2,
