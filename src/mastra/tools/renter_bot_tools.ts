@@ -576,8 +576,10 @@ export const restoreReferralBasketTool=createTool({
         kind:requirement.kind,[requirement.kind==="camera"?"camera_requirements":"lens_requirements"]:requirement.requirements,
         requested_quantity:requirement.quantity,required_native_mount:requirement.native_mount,target_item_id:requirement.target_item_id});
     const renter_quote=result.ok===true&&result.action_performed===true?nativeInquiryQuote(result.verified_inquiry_quote,scope):null;
+    const referral_context=result.ok===true && (result.action_performed===true || result.already_applied===true)?
+      {ok:true,code:input.code,already_linked:true,guidance:"The referral is linked to this destination inquiry. Use the applied basket and current stage; do not offer restoration again. No booking was created or confirmed."}:undefined;
     return {...result,message:result.ok===true&&result.action_performed===true?"Selected referral equipment was restored to this new inquiry. No booking was created or confirmed. Use renter_quote through a quote reply_part for the checked dates and prices.":result.message,
-      renter_quote,verified_inquiry_quote:result.verified_inquiry_quote?{...result.verified_inquiry_quote,renter_quote}:null};
+      referral_context,renter_quote,verified_inquiry_quote:result.verified_inquiry_quote?{...result.verified_inquiry_quote,renter_quote}:null};
   },
 });
 

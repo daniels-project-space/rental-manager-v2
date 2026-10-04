@@ -10,7 +10,7 @@ import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 import { shortItemName } from "../../convex/lib/item_display_name";
 
-export type NativeQuoteScope={referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
+export type NativeQuoteScope={referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number;commercial_context?:MinimumRentalContext;commercial_guidance?:string};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
 const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
@@ -93,7 +93,10 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
       if(!quote || used.has(part.quote_key))return {ok:false,reason:"Quote selection is missing, stale or duplicated"};
       if(part.offer_action) {
         const referral=scope.referralContext,selected=stock.get(part.quote_key)!;
-        if(!referral?.ok || !referral.code || referral.already_linked || !referral.items?.length ||
+        // A fresh quote cannot make a pre-write context snapshot current.
+        // Use the same request revision boundary as every Native quote.
+        if(!scope.queryRevision || !Number.isInteger(scope.referralContextRevision) || scope.referralContextRevision!==scope.queryRevision() ||
+          !referral?.ok || !referral.code || referral.already_linked || !referral.items?.length ||
           output.reply_parts.filter(p=>p.type==="quote").length!==1 ||
           selected.listing_quote!.lines.some(l=>!referral.items!.some(i=>i.product_id===l.product_id)))
           return {ok:false,reason:"Referral offers require one verified original basket selection"};

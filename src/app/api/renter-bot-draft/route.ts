@@ -354,7 +354,13 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   const priceListingIdentities: PriceListingIdentity[] = [];
   const recommendationRequirements:RecommendationRequirement[]=[];
   const qualificationScope={threadId:thread_id,accountSlug:"",recommendationRequirements};
+  let nativeReferralContext:NativeQuoteScope["referralContext"];
+  let nativeReferralContextRevision:number|undefined;
   const querySession = createConvexQuerySession(rawConvex, (functionName, value) => {
+    if(functionName==="renter_bot_tools:get_listing_context" && value && typeof value==="object") {
+      nativeReferralContext=(value as {referral_context?:NativeQuoteScope["referralContext"]}).referral_context;
+      nativeReferralContextRevision=querySession.getRevision();
+    }
     if(functionName==="renter_bot_tools:find_owned_alternatives")recordRecommendationRequirements(qualificationScope,value);
     const tool = ({ "renter_bot_tools:lookup_pricing": "lookup_pricing", "renter_bot_tools:find_owned_alternatives": "find_owned_alternatives", "renter_bot_lab_order:get": "get_lab_order" } as Record<string,string>)[functionName];
     if (tool && value && typeof value === "object" && !Array.isArray(value)) priceSources.push({tool,call_id:`server-price:${priceSources.length}`,result:value as Record<string,unknown>});
@@ -472,7 +478,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   // Daniel's pickup locations to anyone who asks.
   let bookingConfirmed = false;
   let authoritativeStage = "UNKNOWN";
-  let nativeReferralContext:NativeQuoteScope["referralContext"];
   // Structured echo of whatever real facts made it into groundTruth above,
   // for the ORDER-linked path and the fresh-inquiry path below alike.
   // replyInbox_actions.ts's hasItemGrounding / guardDraft's factPack only
@@ -585,6 +590,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
     }
     nativeReferralContext=lc?.referral_context;
+    nativeReferralContextRevision=querySession.getRevision();
     if(lc?.referral_context)groundTruth += `FRIEND BASKET REFERENCE (Native listing context already gathered, not an applied booking): ${JSON.stringify(lc.referral_context)}\n`;
     if(!lc?.found && (lc?.start_date || lc?.end_date))groundTruth += `CURRENT REQUEST DATE FIELDS (this renter's own request): ${JSON.stringify({start_date:lc.start_date,end_date:lc.end_date})}. Use these for the same terms unless the current renter asks to change them; do not overwrite them with referral defaults. An incomplete period needs confirmation.\n`;
     if (lc?.found) {
@@ -1331,7 +1337,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
     }
 
-    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements,referralContext:nativeReferralContext});
+    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
     if(!renderedReply.ok)return NextResponse.json({ok:false,error:"invalid_native_quote_selection",error_code:"invalid_model_output",transient:false}, {status:502});
     obj.draft=renderedReply.draft;
     const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;

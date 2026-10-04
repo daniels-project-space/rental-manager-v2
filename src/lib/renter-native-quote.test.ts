@@ -9,7 +9,7 @@ import fixtures from "./fixtures/renter-native-quotes.json";
 import sales from "./fixtures/renter-sales-structured-native.json";
 import {unsupportedStockClaims,type StockReceipt} from "../../convex/lib/stock_claims";
 import {forbiddenFulfillmentClaims} from "../../convex/lib/fulfillment_claims";
-const scope={threadId:fixtures.first.thread_id,accountSlug:"leo",requestMessageId:"renter-1",rentalStage:"INQUIRY",queryRevision:()=>0};
+const scope={threadId:fixtures.first.thread_id,accountSlug:"leo",requestMessageId:"renter-1",rentalStage:"INQUIRY",queryRevision:()=>0,referralContextRevision:0};
 const receipt=(result=fixtures.first,context=scope)=>({tool:"check_basket_availability",call_id:"real-native",result:{...result,renter_quote:nativeInquiryQuote(result,context)}});
 const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_stage:"INQUIRY",needs_human:false,red_flags:[],factsClaimed:[]};
 const clone=()=>structuredClone(fixtures.first);
@@ -24,6 +24,19 @@ describe("Native inquiry quote rendering",()=>{
   for(const context of [undefined,{...referralContext,ok:false},{...referralContext,already_linked:true},{...referralContext,items:[]}])expect(renderNativeQuoteReply(output,[receipt()],{...scope,referralContext:context}).ok).toBe(false);
   expect(renderNativeQuoteReply({...base,reply_parts:output.reply_parts},[receipt()],scope).ok).toBe(false);
   const plain=renderNativeQuoteReply(parts(),[receipt()],{...scope,referralContext});if(plain.ok)expect(plain.stock_quotes[0].referral_code).toBeUndefined();
+ });
+
+ it("cannot renew a referral proposal using pre-write context and a fresh post-write quote",()=>{
+  const referralContext={ok:true,code:"native-code",already_linked:false,items:fixtures.first.quote.lines.map(l=>({product_id:l.product_id}))};
+  const post={...scope,queryRevision:()=>2,referralContext};
+  const quote=nativeInquiryQuote(fixtures.first,post)!;
+  const output={...base,reply_parts:[{type:"quote" as const,quote_key:quote.quote_key,offer_action:"restore_referral" as const}]};
+  expect(renderNativeQuoteReply(output,[receipt(fixtures.first,post)],post).ok).toBe(false);
+  // A read after an unsuccessful attempt can legitimately prove that a new
+  // proposal is still possible. Revisions alone never imply restoration.
+  expect(renderNativeQuoteReply(output,[receipt(fixtures.first,post)],{...post,referralContextRevision:2}).ok).toBe(true);
+  expect(renderNativeQuoteReply(output,[receipt(fixtures.first,post)],{...post,referralContextRevision:2,referralContext:{...referralContext,already_linked:true}}).ok).toBe(false);
+  expect(renderNativeQuoteReply({...output,reply_parts:[{type:"quote" as const,quote_key:quote.quote_key}]},[receipt(fixtures.first,post)],post).ok).toBe(true);
  });
 
  it("renders the selected real Native basket without trusting model amounts or names",()=>{
