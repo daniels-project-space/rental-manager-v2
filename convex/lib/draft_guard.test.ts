@@ -956,3 +956,23 @@ describe("captured updated-setup booking confirmation",()=>{
   const result=guardDraft(text.replace("the adapter for","the PL to EF mount adapter for"),opts);expect(result.flags.some(f=>f.type==="KIT_HALLUCINATION")).toBe(true);
  });
 });
+
+
+describe("business intent survives courtesy wording",()=>{
+ it("uses the real canonical pricing request instead of its greeting prefix",async()=>{
+  const {classifyDraftIntent}=await import("./draft_guard");
+  const message="Hi, I was looking at your Canon R5 kit. I need a full-frame 4K camera with an autofocus wide-angle lens for a moving indoor walkthrough on 20–21 October. If the R5 kit isn't available, I'm happy to use Sony. My budget is £150 total for those two days. What camera-and-lens option can you offer and what's the exact total? Quote only, please don't change or confirm a booking.";
+  expect(classifyDraftIntent(message)).toBe("PRICING_INQUIRY");
+  const result=guardDraft("Hi! I can offer the requested camera paired with the requested autofocus lens. Here is the requested quote: camera £84, lens £40, total £124. "+"This responds to your shoot requirements. ".repeat(8),{history:[],lastRenterMessage:message});
+  expect(result.flags.filter(f=>f.type.startsWith("CONTRACT:"))).toEqual([]);
+ });
+ it("keeps operational, equipment, negotiation and complaint signals ahead of greetings",async()=>{
+  const {classifyDraftIntent}=await import("./draft_guard");
+  for(const [message,intent] of [["Hello, is it available?","AVAILABILITY_CHECK"],["Hi, what time is pickup?","LOGISTICS"],["Hey, does it work with this mount?","EQUIPMENT_QUESTION"],["Hi, can you give a discount?","NEGOTIATION"],["Hello, it is broken; what is the price?","COMPLAINT"]])expect(classifyDraftIntent(message)).toBe(intent);
+ });
+ it("preserves real social restrictions and avoids inventing acknowledgment for short unknown questions",async()=>{
+  const {classifyDraftIntent}=await import("./draft_guard");
+  expect(classifyDraftIntent("Hi!")).toBe("GREETING");expect(classifyDraftIntent("Okay.")).toBe("ACKNOWLEDGMENT");expect(classifyDraftIntent("Yes please")).toBe("ACKNOWLEDGMENT");expect(classifyDraftIntent("Thanks, goodbye")).toBe("GOODBYE");expect(classifyDraftIntent("FX3?")).toBe("GENERAL");
+  expect(guardDraft("Camera £84, lens £40, total £124.",{history:[],lastRenterMessage:"Hi!"}).flags).toContainEqual(expect.objectContaining({type:"CONTRACT:price-dump-on-greeting"}));
+ });
+});

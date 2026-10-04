@@ -1455,17 +1455,20 @@ export function classifyDraftIntent(msg: string): DraftIntent {
   add("EQUIPMENT_QUESTION", /\b(does it|can it|spec|specs|compatible|work with|mount|battery|card|resolution|autofocus|weight|include[ds]?|comes with|what'?s in)\b/, 2);
   add("GREETING", /^(hi|hey|hello|good (morning|afternoon|evening)|yo)\b/, 2);
   add("GOODBYE", /\b(thanks|thank you|cheers|bye|goodbye|see you|appreciate it|no worries|all good)\b/, 1);
-  add("ACKNOWLEDGMENT", /^(ok|okay|sure|got it|yes|yep|yeah|cool|great|perfect|sounds good|will do|fine|alright)\b[.! ]*$/, 3);
-  let best: DraftIntent = "GENERAL";
-  let bestScore = 0;
-  for (const k of Object.keys(scores) as DraftIntent[])
-    if (scores[k] > bestScore) {
-      best = k;
-      bestScore = scores[k];
+  add("ACKNOWLEDGMENT", /^(ok|okay|sure|got it|yes|yep|yeah|cool|great|perfect|sounds good|will do|fine|alright)\b(?:\s*,?\s*(?:please|thanks|thank you))?[.! ]*$/, 3);
+  // Courtesy words describe how a request is introduced or closed, not its
+  // business intent. Resolve substantive signals first; only a message with
+  // none of those signals falls back to the social contracts. This prevents
+  // object insertion order from letting "Hi" win a pricing/equipment tie.
+  const select = (intents: DraftIntent[]): DraftIntent | null => {
+    let best: DraftIntent | null = null, bestScore = 0;
+    for (const intent of intents) if (scores[intent] > bestScore) {
+      best = intent; bestScore = scores[intent];
     }
-  // Short pure-affirmations are acknowledgments even without a strong score.
-  if (bestScore === 0 && m.length <= 15) return "ACKNOWLEDGMENT";
-  return best;
+    return best;
+  };
+  return select(["COMPLAINT", "NEGOTIATION", "PRICING_INQUIRY", "AVAILABILITY_CHECK", "LOGISTICS", "EQUIPMENT_QUESTION"])
+    ?? select(["GREETING", "ACKNOWLEDGMENT", "GOODBYE"]) ?? "GENERAL";
 }
 
 // ── Contract enforcement (port of contract.ts) ────────────────────
