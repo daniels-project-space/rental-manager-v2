@@ -552,7 +552,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
    * nothing. The order row is the authority on whether it changed; the
    * framework's result shape is an implementation detail that can drift.
    */
-  let orderChangesBefore: number | null = null;
   let toolStats: ReturnType<typeof toolTelemetry> | null = null;
   /**
    * Which fact sections actually reached the prompt.
@@ -585,6 +584,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
     }
     if(lc?.referral_context)groundTruth += `FRIEND BASKET REFERENCE (Native listing context already gathered, not an applied booking): ${JSON.stringify(lc.referral_context)}\n`;
+    if(!lc?.found && (lc?.start_date || lc?.end_date))groundTruth += `CURRENT REQUEST DATE FIELDS (this renter's own request): ${JSON.stringify({start_date:lc.start_date,end_date:lc.end_date})}. Use these for the same terms unless the current renter asks to change them; do not overwrite them with referral defaults. An incomplete period needs confirmation.\n`;
     if (lc?.found) {
       bookingConfirmed = lc.is_confirmed === true;
       const req: string[] = [];
@@ -676,7 +676,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
             })
             .join("; ");
           groundTruth += `CURRENT BOOKING (live, you CAN change it with modify_booking): ${rows || "(empty)"}. Dates: ${ord.start_date ?? "not set"} to ${ord.end_date ?? "not set"} = ${ord.days} day(s). Total: ${ord.total_gbp != null ? `£${ord.total_gbp}` : `NOT CALCULABLE (no price for ${ord.unpriced.join(", ")}) — do not quote a total`}.\n`;
-          orderChangesBefore = (ord.changes ?? []).length;
           groundTruth += `  Before offering an uncommitted combined total, call quote_booking_addition for the exact extra item and quantity. This checks the existing kit plus the extra without changes. Say it would bring the total to the quote, never say a proposal was added. If an addition fails, quote a smaller available extra before offering its complete total. Individual item prices alone do not prove a combined booking total.\n`;
           groundTruth += `  When the renter asks you to add or remove gear or move dates, CALL modify_booking and then state what changed and the new total. Do NOT ask them to confirm a change they just asked for.\n`;
           groundTruth += `  PRICING IS TIERED: the per-day rate DROPS at 3 and 7 days, and the tiers above are what Hygglo charges. Daily displays can be approximate: quote the provided line/grand total, never recalculate from a rounded daily display. Quote the rate for the length they actually asked for, and when a longer hire is better value, say so using the tier numbers above and nothing else. Never multiply the 1-day rate across a longer booking, and never invent a rate that is not in the tiers.\n`;
@@ -1429,11 +1428,13 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     const bookingContextTransitions=toolReceipts.filter(r=>r.result.ok===true &&
       (r.result.context_transition as {source?:string}|undefined)?.source==="native_lab_amendment")
       .map(r=>r.result.context_transition);
-    if (orderChangesBefore !== null) {
+    if (bookingContextTransitions.length) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const after: any = await convex.query(api.renter_bot_lab_order.get, { thread_id });
-        bookingModified = bookingContextTransitions.length>0 && ((after?.changes ?? []).length as number) > orderChangesBefore;
+        const transition=bookingContextTransitions.at(-1) as {before_revision?:number;after_revision?:number};
+        bookingModified = typeof transition.before_revision==="number" && typeof transition.after_revision==="number" &&
+          transition.after_revision>transition.before_revision && (after?.changes??[]).length===transition.after_revision;
         if (bookingModified && Array.isArray(after?.lines)) {
           stockRequest = { ...stockRequest, start_date: after.start_date, end_date: after.end_date };
           priceRequest = {start_date:after.start_date,end_date:after.end_date,items:after.lines.map((l: {name:string;qty:number})=>({name:l.name,quantity:l.qty}))};

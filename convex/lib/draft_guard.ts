@@ -6,6 +6,7 @@ import { unsupportedPriceClaims, incompleteSetupQuotes, type PriceEvidence } fro
 import { supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
+import { renterItemNames } from "./renter_item_names";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -61,7 +62,7 @@ export interface GuardOpts {
   account?: string;
   /** Lowercased rental stage (booked / confirmed / completed / …). */
   stage?: string;
-  /** True when a modify_booking call actually succeeded this turn (Lab sim). */
+  /** True when a Native basket/booking transition succeeded this turn (Lab sim). */
   bookingModified?: boolean;
   /** True when REAL co-rental counts were supplied for something discussed. */
   hasPairingData?: boolean;
@@ -730,7 +731,11 @@ const ASSERTS_AVAIL_RE =
         opts.factPack?.verifiedListingItem ?? "",
         ...(opts.factPack?.marketingItems ?? []),
         ...(opts.factPack?.itemsWithoutKitData ?? []),
-      ].filter((n): n is string => !!n && n.length > 2);
+        ...(opts.stockEvidence??[]).filter(r=>r.owned===true).flatMap(r=>[r.item,...(r.identity_names??[])]),
+        ...(opts.priceEvidence??[]).filter(p=>p.source==="native_inquiry_basket").flatMap(p=>[...p.names,...(p.items??[]).map(i=>i.name)]),
+      ].filter((n): n is string => !!n && n.length > 2)
+        .flatMap(n=>renterItemNames(n).flatMap(alias=>[alias,alias.replace(/\s+\([^()]*\)\s*$/,"")]))
+        .sort((a,b)=>b.length-a.length);
       // Blank out the item names before looking for specs, so only numbers the
       // draft introduced ITSELF are considered.
       let probe = text;

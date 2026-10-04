@@ -765,6 +765,15 @@ describe("guardDraft — UNGROUNDED_SPEC stops flagging non-claims", () => {
     const r = guardDraft("The Blazar Remus full frame 33mm t1.8 is a great lens.", base);
     expect(r.flags.some((f) => f.type === "UNGROUNDED_SPEC")).toBe(false);
   });
+  it("recognises Native quoted identity names in an empty inquiry without treating them as fetched specs",()=>{
+    const options={...base,factPack:undefined,
+      priceEvidence:[{call_id:"native-basket",source:"native_inquiry_basket",kind:"basket" as const,quote_role:"inquiry" as const,names:[],items:[{name:"TTArtisan 11mm f/2.8 fisheye (E)",quantity:1}],total_gbp:42,days:2,start_date:"2026-10-22",end_date:"2026-10-23"}]};
+    const name="I've restored the TTArtisan 11mm f/2.8 fisheye to your inquiry.";
+    expect(guardDraft(name,options).flags.some(f=>f.type==="UNGROUNDED_SPEC")).toBe(false);
+    for(const extra of [" It weighs 2.4kg."," It records internally at 8K."," It has a 7 inch screen."])
+      expect(guardDraft(name+extra,options).flags.some(f=>f.type==="UNGROUNDED_SPEC")).toBe(true);
+    expect(guardDraft("I've restored the TTArtisan 7mm f/1.2 fisheye.",options).flags.some(f=>f.type==="UNGROUNDED_SPEC")).toBe(true);
+  });
 
   it("does not flag a DENIAL of the spec", () => {
     const r = guardDraft(
