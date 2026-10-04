@@ -1,3 +1,4 @@
+import { REFERRAL_RESTORE_OFFER } from "./referral_offer";
 import { describe, expect, it } from "vitest";
 import { additionProposalsFromEvidence, sentAdditionProposals } from "./renter_sent_proposal";
 import { draftContextKey } from "./draft_review";
@@ -60,6 +61,17 @@ function fixture(){
 }
 
 describe("owner message proposal archive",()=>{
+ it("archives only an actually displayed explicit Native referral action for an empty inquiry",async()=>{
+  const f=fixture(),order=f.tables.renter_bot_lab_orders[0];order.items=[];order.changes=[];
+  f.conversation.ai_draft_context_key=draftContextKey(null,undefined,order);
+  const text="For 2 days:\n- 1 × Sony FX3: £98\nTotal: £98\n\n"+REFERRAL_RESTORE_OFFER;
+  f.conversation.ai_draft_text=text;f.conversation.ai_draft_evidence={model_id:"native",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected",referral_code:"ref-code",offer_text:text,start_date:"2026-10-20",end_date:"2026-10-21",items:[{item_id:"fx3",name:"Sony FX3",quantity:1}],listing_quote:{total_gbp:98,lines:[{product_id:123,name:"Sony FX3",quantity:1,total_gbp:98}]}}]};
+  expect(await sentAdditionProposals(f.ctx,f.conversation,text)).toMatchObject([{referral_code:"ref-code",base_items:[],items:[{product_id:123,qty:1}],total_gbp:98,additional_cost_gbp:98}]);
+  expect(await sentAdditionProposals(f.ctx,f.conversation,"Thanks!\n\n"+text+"\nLet me know.")).toHaveLength(1);
+  expect(await sentAdditionProposals(f.ctx,f.conversation,text.replaceAll("£98","£90"))).toEqual([]);
+  f.conversation.ai_draft_text=text.replace(REFERRAL_RESTORE_OFFER,"");expect(await sentAdditionProposals(f.ctx,f.conversation,f.conversation.ai_draft_text)).toEqual([]);
+ });
+
   for(const path of ["lab","owner"]){
     it(`${path} attaches the exact approved quote before clearing or rotating its draft`,async()=>{
       const f=fixture();const text=f.conversation.ai_draft_text;

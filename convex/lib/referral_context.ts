@@ -1,3 +1,5 @@
+import { previousReferralOffer } from "./referral_offer";
+import { draftContextKey } from "./draft_review";
 import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { getBotBooking, getLabOrder } from "./renter_booking";
@@ -13,7 +15,8 @@ import { shortItemName } from "./item_display_name";
 export async function referralContext(ctx:QueryCtx,thread:string,account:string,inventory?:Doc<"items">[]) {
  if(!thread.startsWith("__probe__"))return null;
  const messages=await recentThreadMessages(ctx,thread,12);
- const {code,ambiguous}=friendReferralCode(messages);
+ const supplied=friendReferralCode(messages),pending=previousReferralOffer(messages);
+ const code=supplied.code??(!supplied.ambiguous?pending?.referral_code:undefined),ambiguous=supplied.ambiguous;
  if(!code)return ambiguous?{ok:false,error:"Multiple basket references need an explicit choice"}:null;
  const ref=await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code",q=>q.eq("code",code)).unique();
  if(!ref||ref.expires_at<=Date.now()||ref.account_slug!==account||ref.source_thread_id===thread)
@@ -32,5 +35,6 @@ export async function referralContext(ctx:QueryCtx,thread:string,account:string,
  }
  return {ok:true,code,already_linked:false,source_start_date:source.start_date??null,source_end_date:source.end_date??null,
   items:[...requested.values()],physical_items:[...physical.items],
+  pending_offer:pending?.referral_code===code && pending.context_key===draftContextKey(await getBotBooking(ctx,thread),(await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread)).first())?.inquiry_items,await getLabOrder(ctx,thread))?pending:null,
   guidance:"Shared equipment reference only. No basket has been applied, no booking created, and approval/payment/verification never transfer. Respect the friend's CURRENT message for dates, quantities and intent. For a quote use these exact listing IDs with check_basket_availability, the requested dates/quantities and standalone use. Original dates/quantities are defaults only when the friend asks for the same terms without changes. Info or quote-only requests are read-only. For an explicit basket restoration use restore_referral_basket with exact terms. All real Hygglo writes still require separate written rollout consent."};
 }

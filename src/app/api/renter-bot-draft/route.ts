@@ -1,6 +1,6 @@
 import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import type { RecommendationRequirement } from "../../../../convex/lib/recommendation_qualification";
-import { renderNativeQuoteReply } from "@/lib/renter-native-quote";
+import { renderNativeQuoteReply, type NativeQuoteScope } from "@/lib/renter-native-quote";
 import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
@@ -472,6 +472,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   // Daniel's pickup locations to anyone who asks.
   let bookingConfirmed = false;
   let authoritativeStage = "UNKNOWN";
+  let nativeReferralContext:NativeQuoteScope["referralContext"];
   // Structured echo of whatever real facts made it into groundTruth above,
   // for the ORDER-linked path and the fresh-inquiry path below alike.
   // replyInbox_actions.ts's hasItemGrounding / guardDraft's factPack only
@@ -583,6 +584,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       authoritativeStage = lc.rental_stage.stage;
       groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
     }
+    nativeReferralContext=lc?.referral_context;
     if(lc?.referral_context)groundTruth += `FRIEND BASKET REFERENCE (Native listing context already gathered, not an applied booking): ${JSON.stringify(lc.referral_context)}\n`;
     if(!lc?.found && (lc?.start_date || lc?.end_date))groundTruth += `CURRENT REQUEST DATE FIELDS (this renter's own request): ${JSON.stringify({start_date:lc.start_date,end_date:lc.end_date})}. Use these for the same terms unless the current renter asks to change them; do not overwrite them with referral defaults. An incomplete period needs confirmation.\n`;
     if (lc?.found) {
@@ -1329,7 +1331,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
     }
 
-    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements});
+    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements,referralContext:nativeReferralContext});
     if(!renderedReply.ok)return NextResponse.json({ok:false,error:"invalid_native_quote_selection",error_code:"invalid_model_output",transient:false}, {status:502});
     obj.draft=renderedReply.draft;
     const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;

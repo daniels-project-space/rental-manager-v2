@@ -1,3 +1,4 @@
+import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {describe,it,expect} from "vitest";
 import {nativeInquiryQuote,renderNativeQuoteReply} from "./renter-native-quote";
 import {renterPriceEvidence} from "./renter-price-evidence";
@@ -14,6 +15,17 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it("renders and records a single explicit referral proposal without applying a basket",()=>{
+  const key=nativeInquiryQuote(fixtures.first,scope)!.quote_key;
+  const referralContext={ok:true,code:"native-code",already_linked:false,items:fixtures.first.quote.lines.map(l=>({product_id:l.product_id}))};
+  const output={...base,reply_parts:[{type:"quote" as const,quote_key:key,offer_action:"restore_referral" as const}]};
+  const rendered=renderNativeQuoteReply(output,[receipt()],{...scope,referralContext});
+  expect(rendered.ok).toBe(true);if(rendered.ok){expect(rendered.draft).toContain(REFERRAL_RESTORE_OFFER);expect(rendered.stock_quotes[0].referral_code).toBe("native-code");}
+  for(const context of [undefined,{...referralContext,ok:false},{...referralContext,already_linked:true},{...referralContext,items:[]}])expect(renderNativeQuoteReply(output,[receipt()],{...scope,referralContext:context}).ok).toBe(false);
+  expect(renderNativeQuoteReply({...base,reply_parts:output.reply_parts},[receipt()],scope).ok).toBe(false);
+  const plain=renderNativeQuoteReply(parts(),[receipt()],{...scope,referralContext});if(plain.ok)expect(plain.stock_quotes[0].referral_code).toBeUndefined();
+ });
+
  it("renders the selected real Native basket without trusting model amounts or names",()=>{
   const quote=nativeInquiryQuote(fixtures.first,scope)!;expect(quote).not.toBeNull();
   expect(quote.display_text).toContain("1 × Sony FX3: £98");expect(quote.display_text).toContain("Total: £138");

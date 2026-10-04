@@ -5,7 +5,7 @@ export const RENTER_BOT_OUTPUT_SCHEMA = z.object({
   draft: z.string().describe("Renter-facing reply when reply_parts is omitted. Empty when reply_parts is used or needs_human=true."),
   reply_parts: z.array(z.discriminatedUnion("type",[
     z.object({type:z.literal("text"),text:z.string()}),
-    z.object({type:z.literal("quote"),quote_key:z.string().regex(/^inquiry_[a-f0-9]{32}$/)}),
+    z.object({type:z.literal("quote"),quote_key:z.string().regex(/^inquiry_[a-f0-9]{32}$/),offer_action:z.literal("restore_referral").optional()}),
   ])).min(1).max(12).optional().describe("For Native inquiry quotes, use text parts without money and quote parts selecting renter_quote.quote_key from check_basket_availability. Leave draft empty; the server renders the verified quote. Omit for replies without a Native inquiry quote."),
   intent: z.enum(RENTER_BOT_INTENTS),
   conversation_stage: z.enum(CONVERSATION_STAGES),

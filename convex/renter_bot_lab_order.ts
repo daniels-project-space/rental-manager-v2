@@ -1,3 +1,4 @@
+import { previousReferralOffer } from "./lib/referral_offer";
 import {acceptsReplacement,requiresReplacementTransaction} from "./lib/renter_replacement_acceptance";
 import { additionMountRequirements } from "./lib/booking_addition_mount";
 import { acceptsDateChange } from "./lib/renter_date_acceptance";
@@ -25,7 +26,7 @@ import { rentalStage } from "./lib/rental_stage";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { londonToday } from "./lib/effectiveDates";
 import { performJointStockCheck } from "./renter_bot_tools";
-import { recommendationRequirementValidator } from "./lib/recommendation_qualification";
+import { recommendationRequirementValidator, recommendationRequirementsKey } from "./lib/recommendation_qualification";
 
 async function prohibitsSelectedItems(ctx: QueryCtx, accountSlug:string, text:string, action:"add_item"|"remove_item", lines:Array<{product_id?:number;item_id?:string;name?:string;qty:number}>) {
   const inventory=await ctx.db.query("items").collect();
@@ -46,7 +47,7 @@ async function amendmentContext(ctx: QueryCtx, threadId: string) {
 }
 
 async function additionConsent(ctx:QueryCtx,threadId:string,account:string,text:string,
-  complete:ReturnType<typeof summarise>,addition:ReturnType<typeof summarise>,additionalCost:number) {
+  complete:ReturnType<typeof summarise>,addition:ReturnType<typeof summarise>,additionalCost:number,referralCode?:string) {
   if(!complete.start_date || !complete.end_date || complete.total_gbp==null ||
     addition.lines.some(l=>!Number.isInteger(l.product_id) || !l.product_id || l.line_total_gbp==null))return false;
   const messages=await recentThreadMessages(ctx,threadId,2);
@@ -60,7 +61,7 @@ async function additionConsent(ctx:QueryCtx,threadId:string,account:string,text:
   return acceptsAddition(text,{context_key:await amendmentContext(ctx,threadId),start_date:complete.start_date,end_date:complete.end_date,
     physical_identity_key:orderPhysicalIdentityKey(physical.items),
     total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,
-    lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous);
+    lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous && referralCode?{...previous,quoted_additions:previous.quoted_additions?.filter(p=>p.referral_code===referralCode)}:previous);
 }
 
 async function prepareDateChange(ctx:QueryCtx,row:NonNullable<Awaited<ReturnType<typeof getLabOrder>>>,start:string,end:string) {
@@ -867,9 +868,9 @@ export const redeemReferral = mutation({
     const messages=await recentThreadMessages(ctx,a.thread_id,12),latest=messages.at(-1);
     if(a.request_message_id!=null && (!a.request_message_id || latest?.sender!=="renter" || latest.message_id!==a.request_message_id))
       return {ok:false,action_performed:false,error:"Use the current renter message. No basket was changed",reason:"stale_inbound"};
-    if(!a.preview_only && (!latest || latest.sender!=="renter" || renterRequestsReadOnly(latest.body_text,"add_item") || !requestsFriendBasketRestore(latest.body_text)))
+    if(!a.preview_only && (!latest || latest.sender!=="renter" || renterRequestsReadOnly(latest.body_text,"add_item") ))
       return {ok:false,action_performed:false,error:"Restoring this basket needs a current renter request that allows basket changes. Use a read-only referral preview otherwise",reason:"referral_restore_not_authorized"};
-    if(friendReferralCode(messages).code!==a.code)
+    if((friendReferralCode(messages).code??(!friendReferralCode(messages).ambiguous?previousReferralOffer(messages)?.referral_code:undefined))!==a.code)
       return {ok:false,action_performed:false,error:"Use the exact basket reference supplied by this renter. No basket was changed",reason:"referral_not_in_current_context"};
     const target = await getLabOrder(ctx, a.thread_id);
     const source = await getLabOrder(ctx, referral.source_thread_id);
@@ -920,8 +921,16 @@ export const redeemReferral = mutation({
     }
     // Exact listing restores use the SAME stock/price/qualification engine as
     // an ordinary inquiry. Its atomic receipt can render the reply directly.
+    const pendingOffer=previousReferralOffer(messages);
+    const inheritedRequirements=!requestsFriendBasketRestore(latest?.body_text??"") && pendingOffer?.referral_code===a.code?
+      pendingOffer.recommendation_requirements??[]:[];
+    const combinedRequirements=[...inheritedRequirements,...a.recommendation_requirements??[]];
+    const currentRequirements=combinedRequirements.filter((r,i)=>combinedRequirements.findIndex(other=>recommendationRequirementsKey([r])===recommendationRequirementsKey([other]))===i);
     const verified_inquiry_quote=allListingIds?await performJointStockCheck(ctx,{account_slug:target.account_slug,thread_id:a.thread_id,start_date:start,end_date:end,booking_use:"standalone",
-      items:lines.map(l=>({product_id:l.product_id!,item_name:l.name,quantity:l.qty})),recommendation_requirements:a.recommendation_requirements},sources):null;
+      items:lines.map(l=>({product_id:l.product_id!,item_name:l.name,quantity:l.qty})),recommendation_requirements:currentRequirements},sources):null;
+    const qualification=verified_inquiry_quote && "technical_qualification" in verified_inquiry_quote?verified_inquiry_quote.technical_qualification:undefined;
+    if((currentRequirements.length || qualification?.setup.applied) && qualification?.verified!==true)
+      return {ok:false,action_performed:false,error:"The current gear no longer has verified qualification for this offer. Review the requirements before restoring it",reason:"technical_requirements_unverified"};
     const stock=verified_inquiry_quote?{available:verified_inquiry_quote.available,receipts:verified_inquiry_quote.components}:await checkOrderRentalStock(ctx, target.account_slug, lines, start, end, a.thread_id,sources);
     if (stock.available !== true) return { ok: false, error: "Original basket is no longer available for these dates", stock_receipts: stock.receipts };
     const quote = verified_inquiry_quote&&"quote" in verified_inquiry_quote?verified_inquiry_quote.quote:summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), start, end);
@@ -929,6 +938,9 @@ export const redeemReferral = mutation({
     if (quote.total_gbp == null || quote.unpriced.length) return { ok: false, error: "Basket needs current pricing; ask the owner before restoring it" };
     if(verified_inquiry_quote && lines.some(l=>!quote.lines.some(q=>q.product_id===l.product_id && q.qty===l.qty)))
       return {ok:false,error:"Current quote does not identify every selected listing. No basket was changed"};
+    if(!a.preview_only && !requestsFriendBasketRestore(latest!.body_text) &&
+      !await additionConsent(ctx,a.thread_id,target.account_slug,latest!.body_text,quote,quote,quote.total_gbp,a.code))
+      return {ok:false,action_performed:false,error:"Accept the exact basket offer or explicitly request restoration. No basket was changed",reason:"referral_restore_not_authorized"};
     const pricedLines=verified_inquiry_quote?lines.map(l=>{const current=quote.lines.find(q=>q.product_id===l.product_id && q.qty===l.qty)!;return {...l,name:current.name,daily_price_gbp:current.daily_price_gbp,price_tiers:current.price_tiers,pricing_basis:"listing" as const};}):lines;
     const display = await listingDisplayCatalog(ctx, target.account_slug);
     const message = friendBasketReply({ ...quote, lines: lines.map(l => ({ qty: l.qty, name: l.product_id != null ? display.name(target.account_slug, l.product_id, l.name) : shortItemName(l.name) })) },a.preview_only);
@@ -943,7 +955,7 @@ export const redeemReferral = mutation({
     // Legacy owner-driven Lab redemption still records its event reply here.
     if(a.request_message_id==null)await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
     return { ok: true, already_applied: false, action_performed:true, source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:target.account_slug,order: quote, message, stock_receipts: stock.receipts,
-      verified_inquiry_quote:verified_inquiry_quote?{...verified_inquiry_quote,guidance:"Native stock, price and qualification receipt for the basket applied by this transaction. This receipt proves the quote; the parent action_performed and context_transition prove restoration. No booking was created or confirmed."}:null,
+      verified_inquiry_quote:verified_inquiry_quote?{...verified_inquiry_quote,recommendation_requirements:currentRequirements,guidance:"Native stock, price and qualification receipt for the basket applied by this transaction. This receipt proves the quote; the parent action_performed and context_transition prove restoration. No booking was created or confirmed."}:null,
       context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1} };
   },
 });

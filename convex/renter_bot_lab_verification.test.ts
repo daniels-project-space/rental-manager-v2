@@ -1,3 +1,5 @@
+import { REFERRAL_RESTORE_OFFER } from "./lib/referral_offer";
+import { draftContextKey } from "./lib/draft_review";
 import { describe, expect, it } from "vitest";
 import { simulateVerificationFailure, redeemReferral, applyChange } from "./renter_bot_lab_order";
 function fixture() {
@@ -40,6 +42,27 @@ function setup() {
  return f;
 }
 describe("authoritative Lab verification failure and friend handoff",()=>{
+ it("accepts yes only against the exact sent Native referral offer with fresh prices and dates",async()=>{
+  for(const variant of ["valid","no_offer","wrong_referral","wrong_price","old_context","read_only","missing_technical_proof","valid_technical_proof"]){
+   const f=setup();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;await fail(f.ctx);
+   const target=f.tables.renter_bot_lab_orders[1];
+   const proposal={context_key:draftContextKey(null,[],target),epoch:1,quoted_for_message_id:"friend-inbound",referral_code:code,
+    physical_identity_key:JSON.stringify([["camera","Sony FX3",1]]),items:[{product_id:1,qty:1}],base_items:[],added_items:[{name:"Sony FX3",quantity:1}],
+    start_date:"2099-10-08",end_date:"2099-10-09",total_gbp:110,additional_cost_gbp:110};
+   if(["missing_technical_proof","valid_technical_proof"].includes(variant))(proposal as any).recommendation_requirements=[{kind:"camera",quantity:1,requirements:{internal_4k:true}}];
+   if(variant==="valid_technical_proof")f.tables.item_specs=[{item_id:"camera",item_name_canonical:"Sony FX3",description:"Reviewed body",source:"owner-verified",verified_model:"Sony FX3",verified_at:1,
+    camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",verified_at:1}}];
+   if(variant==="wrong_referral")proposal.referral_code="other";if(variant==="wrong_price")proposal.total_gbp=120;if(variant==="old_context")proposal.context_key="old";
+   f.tables.hygglo_messages.push({thread_id:"__probe__friend",message_id:"owner-offer",sender:"owner",body_text:"For 2 days (8 October 2099 to 9 October 2099):\n- 1 × Sony FX3: £110\nTotal: £110\n\n"+REFERRAL_RESTORE_OFFER,
+     quoted_additions:variant==="no_offer"?[]:[proposal],hygglo_sent_at:2},
+    {thread_id:"__probe__friend",message_id:"accepted",sender:"renter",body_text:variant==="read_only"?"Yes please, quote only, do not add anything.":"yes please",hygglo_sent_at:3});
+   const before=structuredClone(f.tables);
+   const result=await (redeemReferral as any)._handler(f.ctx,{thread_id:"__probe__friend",code,request_message_id:"accepted",start_date:"2099-10-08",end_date:"2099-10-09",items:[{product_id:1,qty:1}]});
+   if(variant==="valid"||variant==="valid_technical_proof"){expect(result).toMatchObject({ok:true,action_performed:true,order:{start_date:"2099-10-08",end_date:"2099-10-09",total_gbp:110}});expect(f.tables.renter_bot_lab_bookings).toHaveLength(1);}
+   else {expect(result,variant).toMatchObject({ok:false});expect(f.tables,variant).toEqual(before);}
+  }
+ });
+
  it("automatically cancels only the simulated booking and sends one policy message on replay",async()=>{
   const f=setup(); expect(await fail(f.ctx)).toMatchObject({ok:true,already_applied:false});
   expect(f.tables.renter_bot_lab_bookings[0]).toMatchObject({status:"cancelled",order_step:"VERIFICATION_FAILED"});

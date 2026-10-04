@@ -1,3 +1,4 @@
+import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import { minimumRentalContext, minimumRentalPrompt, type MinimumRentalContext } from "../../convex/lib/minimum_rental";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { RecommendationQuoteEvidence, StockQuoteEvidence } from "../../convex/lib/renter_draft_evidence";
@@ -9,7 +10,7 @@ import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 import { shortItemName } from "../../convex/lib/item_display_name";
 
-export type NativeQuoteScope={threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
+export type NativeQuoteScope={referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number;commercial_context?:MinimumRentalContext;commercial_guidance?:string};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
 const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
@@ -90,7 +91,16 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     } else {
       const quote=quotes.get(part.quote_key);
       if(!quote || used.has(part.quote_key))return {ok:false,reason:"Quote selection is missing, stale or duplicated"};
+      if(part.offer_action) {
+        const referral=scope.referralContext,selected=stock.get(part.quote_key)!;
+        if(!referral?.ok || !referral.code || referral.already_linked || !referral.items?.length ||
+          output.reply_parts.filter(p=>p.type==="quote").length!==1 ||
+          selected.listing_quote!.lines.some(l=>!referral.items!.some(i=>i.product_id===l.product_id)))
+          return {ok:false,reason:"Referral offers require one verified original basket selection"};
+        stock.set(part.quote_key,{...selected,referral_code:referral.code,offer_text:`${quote.display_text}\n\n${REFERRAL_RESTORE_OFFER}`});
+      }
       used.add(part.quote_key);parts.push(quote.display_text);
+      if(part.offer_action)parts.push(REFERRAL_RESTORE_OFFER);
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
