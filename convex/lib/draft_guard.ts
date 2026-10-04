@@ -1595,11 +1595,18 @@ function enforceContract(
 
 function surgicalContractFix(response: string, blockPatterns: RegExp[]): string | null {
   if (!blockPatterns.length) return null;
-  const sentences = response.split(/(?<=[.!?])\s+/);
-  if (sentences.length <= 1) return null;
-  const clean = sentences.filter((s) => !blockPatterns.some((p) => p.test(s)));
-  if (clean.length === 0 || clean.length === sentences.length) return null;
-  const result = clean.join(" ").trim();
+  // Native quote blocks have line totals, not sentence punctuation. A closing
+  // sentence must not pull the preceding financial paragraph into its removal.
+  let removed=false;
+  const clean=response.split(/\n{2,}/).map(paragraph=>{
+    const sentences=paragraph.split(/(?<=[.!?])\s+/);
+    return sentences.filter(sentence=>{
+      if(!blockPatterns.some(p=>p.test(sentence)))return true;
+      removed=true;return false;
+    }).join(" ");
+  }).filter(paragraph=>paragraph.trim());
+  if(!removed || !clean.length)return null;
+  const result = clean.join("\n\n").trim();
   if (result.length < 60) return null;
   return result;
 }

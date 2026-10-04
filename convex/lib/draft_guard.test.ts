@@ -30,6 +30,15 @@ describe("contract follows a proven booking transition", () => {
     expect(result.text).not.toContain("You might want");
     expect(result.flags).toContainEqual(expect.objectContaining({ type: "CONTRACT", action: "stripped" }));
   });
+  it("preserves the captured Native financial paragraph when cleaning an unrelated closing",()=>{
+    const financial="For 2 days (22 October 2026 to 23 October 2026):\n- 1 × TTArtisan 11mm f/2.8 fisheye (E): £42\nTotal: £42";
+    const response="I've restored the TTArtisan 11mm f/2.8 fisheye into your inquiry basket for 22 to 23 October. Here are the details:\n\n"+financial+"\n\nLet me know when you're ready to proceed with booking or if you need anything else!";
+    const result=guardDraft(response,{history:[],lastRenterMessage:"Please restore the same gear for 22–23 October instead of 20–21.",stage:"INQUIRY",bookingModified:true});
+    expect(result.text).toContain(financial);
+    expect(result.text).toContain("restored the TTArtisan");
+    expect(result.text).not.toContain("need anything else");
+    expect(result.flags).toContainEqual(expect.objectContaining({type:"CONTRACT",action:"stripped"}));
+  });
 });
 
 describe("recommendation cleanup preserves offer content", () => {
