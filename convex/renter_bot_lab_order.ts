@@ -349,13 +349,14 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
     const booking=await getBotBooking(ctx,a.thread_id);
     if(!row)return {ok:false,error:"No simulated order for this session."};
     if(!row.items.length)return {ok:false,error:"There is no existing basket. Use exact standalone item pricing for a new inquiry."};
-    if(booking?.return_date || ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(rentalStage(booking,londonToday()).stage))
+    const stage=rentalStage(booking,londonToday()).stage;
+    if(booking?.return_date || ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage))
       return {ok:false,error:"This rental is closed. Arrange a new booking rather than quoting additions."};
     if(!row.start_date || !row.end_date)return {ok:false,error:"Confirm pickup and return dates before quoting additions."};
     let retained=row.items;
     let removed:typeof row.items=[];
     if(a.replacement) {
-      if(booking?.pickup_date || booking?.status==="ongoing")return {ok:false,error:"Collected equipment needs owner return confirmation before a replacement quote."};
+      if(booking?.pickup_date || ["IN_USE","RETURN_OVERDUE"].includes(stage))return {ok:false,error:"Collected equipment needs owner return confirmation before a replacement quote."};
       const selected=row.items.filter(l=>l.product_id===a.replacement!.product_id);
       if(selected.length!==1 || !Number.isInteger(a.replacement.product_id) || a.replacement.product_id<1 || !Number.isInteger(a.replacement.qty) || a.replacement.qty<1 || a.replacement.qty>selected[0].qty)
         return {ok:false,error:"Select an exact current listing and a valid quantity to replace."};
