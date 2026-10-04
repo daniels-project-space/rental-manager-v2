@@ -17,6 +17,11 @@ describe("reviewed lens focus assertions",()=>{
   expect(check("It's manual-focus only and has autofocus.")).not.toEqual([]);
   expect(check("It does not have autofocus and supports autofocus.")).not.toEqual([]);
   expect(check("It does not have autofocus and supports manual focus.")).toEqual([]);
+  expect(check("It's a manual focus lens, so there's no autofocus on this one—you'll focus it manually.")).toEqual([]);
+  expect(check("There is autofocus on this lens.")).not.toEqual([]);
+  expect(check("There's no autofocus on the Sony FE 16-35mm F2.8 GM.")).not.toEqual([]);
+  expect(check("There's autofocus on the Sony FE 16-35mm F2.8 GM.")).toEqual([]);
+  expect(check("There's autofocus on the Sony FE 16-35mm F2.8 GM II.")).not.toEqual([]);
  });
  it("keeps manufacturer, mount and generation identities separate",()=>{
   for(const name of ["Sony 11mm f/2.8 fisheye","TTArtisan 11mm f/2.8 fisheye (RF)","Sony FE 16-35mm F2.8 GM II"])expect(check(`The ${name} supports autofocus.`)).not.toEqual([]);

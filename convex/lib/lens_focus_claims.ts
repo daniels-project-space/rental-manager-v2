@@ -18,9 +18,14 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
   if(/\b(?:if|whether|check(?:ing)?|verify(?:ing)?|confirm(?:ing)?|want|need|require|prefer|looking for)\b[^;:]{0,100}$/i.test(prefix))continue;
   const predicates=[...prefix.matchAll(/\b(?:it's|that's|they're|has|have|supports?|offers?|uses?|features?|is|are|can(?:not|'t)?|does(?:n't| not)?|do(?:n't| not)?)\b/gi)];
   const predicate=predicates[0];
-  const noun=(predicate?prefix.slice(0,predicate.index):prefix).trim().replace(/^(?:(?:the|a|an|my|our|your|this|that)\s+)+/i,"");
+  // Existential clauses have a dummy grammatical subject ("there"),
+  // while the equipment subject is either a following target or the
+  // already-bound lens. Never let a named target borrow that prior proof.
+  const existential=/^\s*(?:so\s+)?there(?:'s|\s+is|\s+are)\s+(?:(?:no|an?|any)\s+)?$/i.test(prefix);
+  const target=existential?clause.slice(focus.index!+focus[0].length).match(/^\s+(?:on|in|for|with)\s+(.+?)(?=[—!?]|\.(?:\s|$)|$)/i)?.[1]:undefined;
+  const noun=(existential?target??"":predicate?prefix.slice(0,predicate.index):prefix).trim().replace(/^(?:(?:the|a|an|my|our|your|this|that)\s+)+/i,"");
   const reference=itemReferenceLabel(noun.split(/\s+from\s+/i)[0],"lens");
-  const generic=/^(?:it|this|that|the same lens|lens|this lens|that lens)?$/i.test(reference);
+  const generic=/^(?:it|this|that|one|the same lens|lens|this lens|that lens)?$/i.test(reference);
   if(!generic && bestMatch(reference,cameraNames,n=>n).confident){subject=[];continue;}
   if(!generic) {
    const declared=declaredLensReferences(normal(reference));
