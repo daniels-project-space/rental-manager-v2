@@ -1,9 +1,26 @@
 import {describe,it,expect} from 'vitest';
-import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure} from './booking_reply_claims';
+import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,unsupportedBookingDateClaims} from './booking_reply_claims';
 import {rentalStage,rentalReplyPermissions} from './rental_stage';
 import {guardDraft} from './draft_guard';
 const address='12 Example Road, London, W1A 1AA';
 describe('current rental reply permissions',()=>{
+ it('does not lend an existing confirmed order to a different dated hire',()=>{
+  const dates={start_date:'2026-10-08',end_date:'2026-10-09'};
+  const permissions=rentalStage({status:'confirmed',start_date:dates.start_date,end_date:dates.end_date},'2026-10-04');
+  expect(permissions.can_confirm_booking).toBe(true);
+  expect(permissions.booking_dates).toEqual(dates);
+  for(const text of ['Your new rental is confirmed for 22 to 24 October.','Your booking is approved for 2026-10-22 to 2026-10-24.','You are booked for 8 to 10 October.','Your rental is confirmed for 31 February 2026.']){
+   expect(unsupportedBookingDateClaims(text,dates)).toEqual([text]);
+   expect(guardDraft(text,{history:[],lastRenterMessage:'Quote a separate new hire.',stage:permissions.stage,rentalPermissions:permissions}).flags.some(f=>f.type==='PREMATURE_CONFIRMATION')).toBe(true);
+  }
+  for(const text of ['Your booking is confirmed for 8 to 9 October.','You are booked for 8 October.','Your booking is approved for 2026-10-08 to 2026-10-09.','Your current rental is confirmed for 8 to 9 October. The new enquiry for 22 to 24 October is not confirmed.','Once your rental is confirmed for 22 to 24 October I can arrange collection.'])expect(unsupportedBookingDateClaims(text,dates)).toEqual([]);
+ });
+ it('requires original date authority rather than a stock or quote span',()=>{
+  const text='Your new rental is confirmed for 22 to 24 October.';
+  expect(unsupportedBookingDateClaims(text,{})).toEqual([text]);
+  const permissions=rentalStage({status:'confirmed',start_date:'2026-10-08',end_date:'2026-10-09'},'2026-10-04');
+  expect(guardDraft(text,{history:[],lastRenterMessage:'Quote only.',stage:permissions.stage,rentalPermissions:permissions,stockRequest:{start_date:'2026-10-22',end_date:'2026-10-24',items:[]}}).flags.some(f=>f.type==='PREMATURE_CONFIRMATION')).toBe(true);
+ });
  it('retains historical confirmation without granting a new booking or pickup permission',()=>{
   const stage=rentalStage({status:'completed',order_step:'REVIEWED'},'2026-10-04');
   expect(stage).toMatchObject({stage:'COMPLETED',booking_confirmed:true,can_confirm_booking:false,can_share_pickup_address:false});

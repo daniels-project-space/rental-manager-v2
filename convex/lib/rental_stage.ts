@@ -63,6 +63,7 @@ export function rentalStage(row: {
   const confirmed = ["confirmed", "ongoing", "completed"].includes(status ?? "") && !row?.is_obsolete && row?.awaiting_owner_action !== true && !["CANCELED", "VERIFICATION_FAILED", "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"].includes(step ?? "");
   const permissions=rentalReplyPermissions(stage);
   return { stage, guidance, booking_confirmed: confirmed,
+    booking_dates:{start_date:start??null,end_date:end??null},
     can_confirm_booking:confirmed&&permissions.can_confirm_booking,
     can_share_pickup_address:confirmed&&permissions.can_share_pickup_address,
     can_acknowledge_owner_acceptance:permissions.can_acknowledge_owner_acceptance&&

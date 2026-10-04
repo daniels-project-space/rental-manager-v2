@@ -1,4 +1,19 @@
 /** Shared generation/send-time interpretation of booking-state assertions. */
+import {claimDateScope} from './claim_date_scope';
+export type BookingDateAuthority={start_date?:string|null;end_date?:string|null};
+/** Confirmation and acceptance belong to the current Native order's dates.
+ * Stock checks for another span never extend that order's authority. */
+export function unsupportedBookingDateClaims(text:string,dates:BookingDateAuthority) {
+ return text.split(/(?<=[.!?])\s+|\n+/).filter(sentence=>{
+  if(!claimsBookingConfirmation(sentence)&&!claimsCurrentOwnerApproval(sentence))return false;
+  const scope=claimDateScope(sentence,dates.start_date);
+  if(!scope.explicit)return false;
+  if(!scope.valid||!scope.start_date||!scope.end_date||!dates.start_date||!dates.end_date)return true;
+  return scope.start_date===scope.end_date
+   ? scope.start_date<dates.start_date||scope.end_date>dates.end_date
+   : scope.start_date!==dates.start_date||scope.end_date!==dates.end_date;
+ });
+}
 export function assertsOutsideConditional(text: string, assertion: RegExp): boolean {
   return text.split(/(?<=[.!?])\s+|\n+/).some(sentence => {
     const match = assertion.exec(sentence);

@@ -1,5 +1,5 @@
 import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
-import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources} from "./lib/booking_reply_claims";
+import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources,unsupportedBookingDateClaims} from "./lib/booking_reply_claims";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
 import { performJointStockCheck } from "./renter_bot_tools";
@@ -2153,7 +2153,7 @@ export const recheckCopiedDraftStock = internalQuery({
     if(unsupportedRenterCameraClaims(text,cameraMessages.filter(message=>message.sender!=="owner").map(message=>message.body_text)).length)
       return {ok:false,reason:"renter_camera_identity_unverified"};
     const permissions=currentStage;
-    if(!permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
+    if(unsupportedBookingDateClaims(text,currentStage.booking_dates).length || !permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
       !permissions.can_acknowledge_owner_acceptance && claimsCurrentOwnerApproval(text))return {ok:false,reason:"booking_state_unverified"};
     if(!currentStage.can_share_pickup_address) {
       const accountId=booking?.account_id??conv?.account_id??(await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",account_slug)).first())?._id;

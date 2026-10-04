@@ -1,7 +1,7 @@
 import {rentalReplyPermissions} from "./rental_stage";
 import { unsupportedRenterCameraClaims } from "./renter_camera_identity";
 import { hasSingleBookingRecord, type BookingRecord } from "./booking_record";
-import {assertsOutsideConditional,claimsCurrentOwnerApproval,claimsBookingConfirmation,hasPickupDisclosure} from "./booking_reply_claims";
+import {assertsOutsideConditional,claimsCurrentOwnerApproval,claimsBookingConfirmation,hasPickupDisclosure,unsupportedBookingDateClaims,type BookingDateAuthority} from "./booking_reply_claims";
 import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedCatalogueReadinessClaims, type CatalogueReadinessEvidence } from "./catalogue_readiness";
 import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
@@ -112,7 +112,7 @@ export interface GuardOpts {
   ownerApproved?: boolean;
   /** Native configured pickup details, never model-provided strings. */
   pickupPrivacySources?: string[];
-  rentalPermissions?: ReturnType<typeof rentalReplyPermissions>;
+  rentalPermissions?: ReturnType<typeof rentalReplyPermissions>&{booking_dates?:BookingDateAuthority};
   /** Booked items we can't fulfil (marketing/SEO listing, not owned). The draft
    *  must not confirm them. */
   unfulfillableItems?: string[];
@@ -1215,8 +1215,9 @@ const ASSERTS_AVAIL_RE =
       );
   }
 
-  if (permissions && !permissions.can_confirm_booking && claimsBookingConfirmation(text)) {
-    push("PREMATURE_CONFIRMATION", "Claims a confirmed booking without a current confirmed platform order", "flagged");
+  if (permissions && ((!permissions.can_confirm_booking && claimsBookingConfirmation(text)) ||
+      opts.rentalPermissions?.booking_dates && unsupportedBookingDateClaims(text,opts.rentalPermissions.booking_dates).length>0)) {
+    push("PREMATURE_CONFIRMATION", "Claims confirmation or acceptance outside the current platform order's authority", "flagged");
   }
   if (permissions && !permissions.can_share_pickup_address && hasPickupDisclosure(text,opts.pickupPrivacySources)) {
     push("PICKUP_DETAILS_EARLY", "Shares pickup details without a current confirmed platform order", "flagged");
