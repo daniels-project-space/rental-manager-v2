@@ -87,3 +87,15 @@ describe("structured quote basket references from the fresh model capture",()=>{
   for(const altered of [stock.map(r=>({...r,basket:undefined})),stock.map(r=>({...r,start_date:"2026-10-22",end_date:"2026-10-23"})),stock.map(r=>r.item==="Sony FX3"?{...r,available:false,free_units:0}:r)])expect(unsupportedStockClaims(sales.draft,altered,sales.request,sales.ineligible_items)).not.toEqual([]);
  });
 });
+
+it("cannot quote price/stock proof as technical qualification",()=>{
+ const recommendationRequirements=[{kind:"camera" as const,quantity:1,native_mount:"E",requirements:{recording:{resolution:"dci_4k" as const,min_fps:60,capture_format:"full_frame" as const}}}];
+ const qualifiedScope={...scope,recommendationRequirements};
+ expect(nativeInquiryQuote(fixtures.first,qualifiedScope)).toBeNull();
+ const requirements_key=JSON.stringify([{kind:"camera",native_mount:"E",quantity:1,requirements:{recording:{capture_format:"full_frame",min_fps:60,resolution:"dci_4k"}}}]);
+ const result={...fixtures.first,technical_qualification:{verified:false,requirements_key}};
+ expect(nativeInquiryQuote(result,qualifiedScope)).toBeNull();
+ expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key}},qualifiedScope)).not.toBeNull();
+ expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key:"wrong"}},qualifiedScope)).toBeNull();
+ expect(renderNativeQuoteReply(parts(),[receipt()],qualifiedScope).ok).toBe(false);
+});

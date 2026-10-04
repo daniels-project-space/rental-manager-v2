@@ -56,3 +56,19 @@ it("binds and disables atomic setup acceptance just like other booking writes",(
 }
  expect(bindRenterToolArgs("order_edit:getOrderState",{hygglo_order_id:"foreign",account_slug:"diogo"},{threadId:"__probe__one",accountSlug:"leo"})).toEqual({hygglo_order_id:"__probe__one",account_slug:"leo"});
 });
+
+it("keeps Native requirements across weaker searches without trusting caller mutation",async()=>{
+ const {recordRecommendationRequirements}=await import("./renter-tool-scope");
+ const scope:import("./renter-tool-scope").RenterScope={threadId:"one",accountSlug:"leo"};
+ const recording={resolution:"dci_4k",min_fps:60,capture_format:"full_frame"};
+ recordRecommendationRequirements(scope,{kind:"camera",camera_requirements:{recording},required_native_mount:"E",requested_quantity:2});
+ recordRecommendationRequirements(scope,{kind:"camera",camera_requirements:{recording:{capture_format:"full_frame",min_fps:60,resolution:"dci_4k"}},required_native_mount:"E",requested_quantity:2});
+ expect(scope.recommendationRequirements).toHaveLength(1);
+ recording.min_fps=30;
+ recordRecommendationRequirements(scope,{kind:"camera",camera_requirements:{},required_native_mount:null,requested_quantity:1});
+ expect(scope.recommendationRequirements).toHaveLength(1);
+ expect(scope.recommendationRequirements?.[0]).toMatchObject({quantity:2,requirements:{recording:{min_fps:60}}});
+ const other:import("./renter-tool-scope").RenterScope={threadId:"two",accountSlug:"leo"};
+ recordRecommendationRequirements(other,{kind:"lens",lens_requirements:{focus_mode:"autofocus"},required_native_mount:"E",requested_quantity:1});
+ expect(other.recommendationRequirements).toHaveLength(1);expect(scope.recommendationRequirements).toHaveLength(1);
+});

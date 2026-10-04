@@ -18,6 +18,7 @@ import { RECORDING_REQUIREMENT_RESOLUTIONS, canonicalRecordingResolution } from 
  */
 import "server-only";
 
+import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import { nativeInquiryQuote } from "@/lib/renter-native-quote";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
@@ -191,7 +192,7 @@ export const checkAvailabilityTool = createTool({
 /** Joint proposals must share one physical stock allocation. */
 export const checkBasketAvailabilityTool = createTool({
   id: "check_basket_availability",
-  description: "Check ALL proposed items together in one shared-stock snapshot before saying both/all are available. Separate successful item checks do not prove they can go out together. Include each exact item/listing and quantity. For a confirmed booking choose additional to retain its gear, or replacement with the exact listing to remove. For a new inquiry, exact listing IDs return joint stock AND a verified combined quote in this one call. Use quote.total_gbp and its line totals instead of another pricing call or arithmetic. quote:null means price is unverified. When renter_quote is returned, select its quote_key in a quote reply_part; the server renders its exact financial block. Do not rewrite its amounts in prose. Confirmed amendments use quote_booking_addition/replacement for their prices. Read-only, no booking changes. available:null is unknown. Check the exact requested unavailable items too; a price miss or an available alternative does not prove their stock.",
+  description: "Check ALL proposed items together in one shared-stock snapshot before saying both/all are available. Separate successful item checks do not prove they can go out together. Include each exact item/listing and quantity. For a confirmed booking choose additional to retain its gear, or replacement with the exact listing to remove. For a new inquiry, exact listing IDs return joint stock AND a verified combined quote in this one call. Use quote.total_gbp and its line totals instead of another pricing call or arithmetic. quote:null means price is unverified. Native automatically rechecks the camera/lens requirements already established by your searches against the selected physical basket. Stock and price can be verified while technical_qualification.verified is false; renter_quote:null then means do not offer its price as a suitable option. Continue the real specification review. When renter_quote is returned, select its quote_key in a quote reply_part; the server renders its exact financial block. Do not rewrite its amounts in prose. Confirmed amendments use quote_booking_addition/replacement for their prices. Read-only, no booking changes. available:null is unknown. Check the exact requested unavailable items too; a price miss or an available alternative does not prove their stock.",
   inputSchema: z.object({
     account_slug:z.string(),thread_id:z.string().optional(),start_date:z.string(),end_date:z.string(),
     items:z.array(z.object({item_name:z.string(),quantity:z.number().int().min(1).max(20),product_id:z.number().int().positive().optional()})).min(1).max(8),
@@ -202,8 +203,9 @@ export const checkBasketAvailabilityTool = createTool({
   outputSchema:z.unknown(),
   execute:async(input)=>{
     const scope=currentRenterToolScope(),revision=scope?.queryRevision?.();
-    const result=await convex().query(anyApi.renter_bot_tools.check_basket_availability,input);
-    return {...result,renter_quote:scope?nativeInquiryQuote(result,scope,revision):null};
+    const result=await convex().query(anyApi.renter_bot_tools.check_basket_availability,{...input,recommendation_requirements:structuredClone(scope?.recommendationRequirements??[])});
+    const renter_quote=scope?nativeInquiryQuote(result,scope,revision):null;
+    return {...result,renter_quote,renter_quote_reason:renter_quote?null:result.technical_qualification?.verified===false?"technical_requirements_unverified":"quote_unverified_or_stale"};
   },
 });
 
@@ -422,9 +424,11 @@ export const findOwnedAlternativesTool = createTool({
   outputSchema: z.unknown(),
   execute: async (input) => {
     const recording=input.camera_requirements?.recording;
-    return await convex().query(anyApi.renter_bot_tools.find_owned_alternatives, recording
+    const result=await convex().query(anyApi.renter_bot_tools.find_owned_alternatives, recording
       ? {...input,camera_requirements:{...input.camera_requirements,recording:{...recording,resolution:canonicalRecordingResolution(recording.resolution)}}}
       : input);
+    recordRecommendationRequirements(currentRenterToolScope(),result);
+    return result;
   },
 });
 

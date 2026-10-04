@@ -1,3 +1,5 @@
+import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
+import type { RecommendationRequirement } from "../../../../convex/lib/recommendation_qualification";
 import { renderNativeQuoteReply } from "@/lib/renter-native-quote";
 import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
@@ -350,7 +352,10 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   const priceSources: ToolReceipt[] = [];
   const fixedPriceEvidence: PriceEvidence[] = [];
   const priceListingIdentities: PriceListingIdentity[] = [];
+  const recommendationRequirements:RecommendationRequirement[]=[];
+  const qualificationScope={threadId:thread_id,accountSlug:"",recommendationRequirements};
   const querySession = createConvexQuerySession(rawConvex, (functionName, value) => {
+    if(functionName==="renter_bot_tools:find_owned_alternatives")recordRecommendationRequirements(qualificationScope,value);
     const tool = ({ "renter_bot_tools:lookup_pricing": "lookup_pricing", "renter_bot_tools:find_owned_alternatives": "find_owned_alternatives", "renter_bot_lab_order:get": "get_lab_order" } as Record<string,string>)[functionName];
     if (tool && value && typeof value === "object" && !Array.isArray(value)) priceSources.push({tool,call_id:`server-price:${priceSources.length}`,result:value as Record<string,unknown>});
   });
@@ -1188,7 +1193,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         ? await getRenterBotAgentForModel(modelOverride)
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, queryRevision:querySession.getRevision }, () => (agent as any).generate(baseMessages, {
+      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, queryRevision:querySession.getRevision,recommendationRequirements }, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
         structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
@@ -1295,7 +1300,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           ];
           const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, queryRevision:querySession.getRevision }, () => (retryAgent as any).generate(retryMessages, {
+          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, queryRevision:querySession.getRevision,recommendationRequirements }, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
             structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
             modelSettings: { maxOutputTokens: 4096 },
@@ -1319,7 +1324,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
     }
 
-    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision});
+    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements});
     if(!renderedReply.ok)return NextResponse.json({ok:false,error:"invalid_native_quote_selection",error_code:"invalid_model_output",transient:false}, {status:502});
     obj.draft=renderedReply.draft;
     const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;

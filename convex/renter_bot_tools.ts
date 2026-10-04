@@ -1,3 +1,4 @@
+import { qualifyRecommendationBasket, recommendationRequirementValidator, type RecommendationRequirement } from "./lib/recommendation_qualification";
 import {cameraRequirementsValidator} from "./lib/camera_requirement_validator";
 import { renterHistory } from "./lib/renter_history";
 import { getBotRenter } from "./lib/renter_identity";
@@ -728,7 +729,7 @@ export const lookup_pricing = query({
 type JointStockArgs={account_slug:string;thread_id?:string;start_date:string;end_date:string;
   items:Array<{item_name:string;quantity:number;product_id?:number}>;
   booking_use?:"standalone"|"additional"|"replacement";replace_product_id?:number;replace_quantity?:number;
-  pickup_time?:string;return_time?:string};
+  pickup_time?:string;return_time?:string;recommendation_requirements?:RecommendationRequirement[]};
 async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>) {
     if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
     const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
@@ -780,10 +781,15 @@ async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSou
       itemMap),verified_price_names:[l.name]}));
     const preview=check.available===true && plan.use==="standalone" && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
       quotedLines?.length===[...plan.lines,...candidates.slice(1)].length ? summarise(quotedLines,a.start_date,a.end_date) : null;
+    const technicalItems=await Promise.all((a.recommendation_requirements?.length?check.receipts:[]).filter(r=>["camera","camera_body","lens"].includes(r.kind??"")).map(async r=>{
+      const item=itemMap.get(r.item_id),specs=item?await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).collect():[];
+      return {item_id:r.item_id,name:r.item_name,kind:r.kind??"",quantity:r.requested_units,native_mount:item?.lens_mount,spec:specs.length===1?specs[0]:null};
+    }));
+    const technical_qualification=qualifyRecommendationBasket(a.recommendation_requirements??[],technicalItems);
     const quote=preview?.total_gbp!=null && preview.total_gbp>0 ? {...preview,source:"native_inquiry_basket" as const} : null;
     return {available:check.available,reason:check.reason,booking_use:plan.use,stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
       account_slug:a.account_slug,thread_id:a.thread_id ?? null,preview_only:true,physical_identity_key:check.physical_identity_key,
-      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,quote,
+      start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,quote,technical_qualification,
       offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
       guidance:"Read-only joint stock check. Only available:true proves all proposed gear fits alongside retained items. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
 }
@@ -875,7 +881,7 @@ export const check_basket_availability = query({
     items:v.array(v.object({item_name:v.string(),quantity:v.number(),product_id:v.optional(v.number())})),
     booking_use:v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
     replace_product_id:v.optional(v.number()),replace_quantity:v.optional(v.number()),
-    pickup_time:v.optional(v.string()),return_time:v.optional(v.string())},
+    pickup_time:v.optional(v.string()),return_time:v.optional(v.string()),recommendation_requirements:v.optional(v.array(recommendationRequirementValidator))},
   handler:async(ctx,a)=>performJointStockCheck(ctx,a),
 });
 
@@ -1296,11 +1302,13 @@ export const find_owned_alternatives = query({
       kind_fell_back: kindFellBack,
       target: target?.name ?? null,
       target_identity_resolved: targetId != null,
+      target_item_id:targetId!=null?String(targetId):null,
       lower_value_only: lower_value_only === true,
       target_replacement_cost_gbp: targetValue,
       lower_value_reason: lower_value_only && targetValue == null ? "Original item identity or replacement value is unverified; ask the owner before suggesting a lower-value option" : null,
       verification_approval_guaranteed: false,
       camera_requirements: cameraQuery ? requirements : null,
+      required_native_mount:lens_mount??null,requested_quantity:quantity??1,
       lens_requirements: lensQuery ? desiredLensRequirements : null,
       lens_requirements_specified: lensQuery && lensRequirementsSpecified,
       lens_requirement_checked: lensQuery && lensRequirementsSpecified && hasLensRequirements(desiredLensRequirements),

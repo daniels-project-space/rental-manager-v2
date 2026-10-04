@@ -1,3 +1,4 @@
+import { recommendationRequirementsKey, type RecommendationRequirement } from "../../convex/lib/recommendation_qualification";
 import { createHash } from "node:crypto";
 import { renterPriceEvidence } from "./renter-price-evidence";
 import type { ToolReceipt } from "./renter-tool-evidence";
@@ -5,7 +6,7 @@ import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 import { shortItemName } from "../../convex/lib/item_display_name";
 
-export type NativeQuoteScope={threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;queryRevision?:()=>number};
+export type NativeQuoteScope={threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
 const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
@@ -20,6 +21,8 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
   const result=record(value),q=record(result?.quote),basket=record(result?.basket);
   if(!result || !q || result.account_slug!==scope.accountSlug || basket?.available!==true ||
     !Array.isArray(q.unpriced) || q.unpriced.length || !Array.isArray(result.components) || !result.components.length)return null;
+  const requirementsKey=recommendationRequirementsKey(scope.recommendationRequirements??[]),qualification=record(result.technical_qualification);
+  if(scope.recommendationRequirements?.length && (qualification?.verified!==true||qualification.requirements_key!==requirementsKey))return null;
   const physical=result.components.map(record);
   if(physical.some(c=>!c || c.owned!==true || c.is_marketing_only!==false || c.available!==true ||
     c.start_date!==result.start_date || c.end_date!==result.end_date || typeof c.item_id!=="string" || typeof c.item_name!=="string" ||
@@ -34,7 +37,7 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
   if(lines.some(l=>!l || typeof l.name!=="string" || /[\r\n]/.test(l.name) || !Number.isInteger(l.qty) || (l.qty as number)<1 || (l.qty as number)>20 ||
     !physical.some(c=>c!.requested_units===l.qty&&itemIdentity(c!.item_name as string).some(n=>itemIdentity(l.name as string).includes(n))) ||
     !prices.some(p=>p.kind==="rental"&&p.call_id===`native-render:line:${l.product_id}`&&p.quantity===l.qty&&p.total_gbp===l.line_total_gbp)))return null;
-  const quote_key=`inquiry_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",readRevision,result.physical_identity_key,total.start_date,total.end_date,
+  const quote_key=`inquiry_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",readRevision,requirementsKey,result.physical_identity_key,total.start_date,total.end_date,
     lines.map(l=>[l!.product_id,l!.name,l!.qty,l!.line_total_gbp]),total.total_gbp])).digest("hex").slice(0,32)}`;
   const period=total.start_date===total.end_date?date(total.start_date):`${date(total.start_date)} to ${date(total.end_date)}`;
   const rows=lines.map(l=>`- ${l!.qty} × ${shortItemName(l!.name as string)}: ${money(l!.line_total_gbp as number)}`);
