@@ -37,3 +37,32 @@ describe("Native basket technical qualification",()=>{
   expect(recommendationRequirementsKey([requirement])).not.toBe(recommendationRequirementsKey([{...requirement,quantity:2}]));
  });
 });
+
+describe("selected camera and lens setup qualification",()=>{
+ const body={...item,native_mount:"E"};
+ const lens:QualificationItem={item_id:"lens",name:"Lens",kind:"lens",quantity:1,native_mount:"E",spec:{item_name_canonical:"Lens",description:"Reviewed lens",source:"manufacturer-verified",source_url,verified_at,verified_model:"lens",lens_capabilities:{focus_mode:"autofocus",coverage:"full_frame",source_url,verified_at,verified_model:"lens"}}};
+ const criteria:RecommendationRequirement[]=[{kind:"camera",quantity:1,requirements:{internal_4k:true}},{kind:"lens",quantity:1,requirements:{focus_mode:"autofocus"}}];
+ it("checks paired mounts even when search criteria omitted them, including an empty criteria ledger",()=>{
+  expect(qualifyRecommendationBasket(criteria,[body,lens])).toMatchObject({verified:true,setup:{status:"match"}});
+  expect(qualifyRecommendationBasket([],[body,lens])).toMatchObject({verified:true,setup:{applied:true,status:"match"}});
+  for(const requirements of [criteria,[]])expect(qualifyRecommendationBasket(requirements,[body,{...lens,native_mount:"PL"}])).toMatchObject({verified:false,setup:{status:"unknown",unknown:["mount_adapter",...(requirements.length?["adapted_autofocus"]:[])]}});
+ });
+ it("does not borrow lens coverage from the camera's full-frame sensor",()=>{
+  const unknown={...lens,spec:{...lens.spec!,lens_capabilities:{...lens.spec!.lens_capabilities!,coverage:undefined}}};
+  expect(qualifyRecommendationBasket(criteria,[body,unknown])).toMatchObject({verified:false,setup:{unknown:["lens_sensor_coverage"]}});
+  const cropped=[{kind:"camera" as const,quantity:1,requirements:{recording:{resolution:"uhd_4k" as const,capture_format:"aps_c" as const}}}];
+  expect(qualifyRecommendationBasket(cropped,[body,unknown]).setup.unknown).toContain("lens_sensor_coverage");
+ });
+ it("requires current matching mount identity and a known camera/lens assignment",()=>{
+  expect(qualifyRecommendationBasket(criteria,[{...body,native_mount:"L"},lens])).toMatchObject({verified:false,setup:{mismatched:["camera_mount_identity"]}});
+  expect(qualifyRecommendationBasket(criteria,[body,{...body,item_id:"second",native_mount:"L"},lens]).setup.unknown).toContain("camera_lens_assignment");
+  expect(qualifyRecommendationBasket(criteria,[{...body,spec:null},lens]).verified).toBe(false);
+ });
+ it("counts a selected mechanical adapter without treating it as autofocus evidence",()=>{
+  const pl={...lens,native_mount:"PL"};
+  const adapter:QualificationItem={item_id:"adapter",name:"PL to E mount",kind:"accessory",quantity:1,spec:null};
+  expect(qualifyRecommendationBasket(criteria,[body,pl,adapter])).toMatchObject({verified:false,setup:{unknown:["adapted_autofocus"]}});
+  expect(qualifyRecommendationBasket([],[body,pl,adapter])).toMatchObject({verified:true,setup:{status:"match"}});
+  expect(qualifyRecommendationBasket([],[{...body,quantity:2},{...pl,quantity:2},adapter])).toMatchObject({verified:false,setup:{mismatched:["missing_mount_adapter"]}});
+ });
+});

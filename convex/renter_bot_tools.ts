@@ -781,8 +781,9 @@ async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSou
       itemMap),verified_price_names:[l.name]}));
     const preview=check.available===true && plan.use==="standalone" && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
       quotedLines?.length===[...plan.lines,...candidates.slice(1)].length ? summarise(quotedLines,a.start_date,a.end_date) : null;
-    const technicalItems=await Promise.all((a.recommendation_requirements?.length?check.receipts:[]).filter(r=>["camera","camera_body","lens"].includes(r.kind??"")).map(async r=>{
-      const item=itemMap.get(r.item_id),specs=item?await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).collect():[];
+    const paired=check.receipts.some(r=>["camera","camera_body"].includes(r.kind??""))&&check.receipts.some(r=>r.kind==="lens");
+    const technicalItems=await Promise.all((a.recommendation_requirements?.length||paired?check.receipts:[]).map(async r=>{
+      const item=itemMap.get(r.item_id),specs=item&&["camera","camera_body","lens"].includes(r.kind??"")?await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).collect():[];
       return {item_id:r.item_id,name:r.item_name,kind:r.kind??"",quantity:r.requested_units,native_mount:item?.lens_mount,spec:specs.length===1?specs[0]:null};
     }));
     const technical_qualification=qualifyRecommendationBasket(a.recommendation_requirements??[],technicalItems);
@@ -791,7 +792,7 @@ async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSou
       account_slug:a.account_slug,thread_id:a.thread_id ?? null,preview_only:true,physical_identity_key:check.physical_identity_key,
       start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket})),replacement_removed_listings:plan.removed,quote,technical_qualification,
       offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
-      guidance:"Read-only joint stock check. Only available:true proves all proposed gear fits alongside retained items. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
+      guidance:"Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
 }
 
 export const check_availability = query({

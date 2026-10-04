@@ -29,6 +29,8 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
     c.start_date!==result.start_date || c.end_date!==result.end_date || typeof c.item_id!=="string" || typeof c.item_name!=="string" ||
     !Number.isInteger(c.requested_units) || (c.requested_units as number)<1 || typeof c.free_units!=="number" || c.free_units<(c.requested_units as number)))return null;
   if(new Set(physical.map(c=>c!.item_id)).size!==physical.length)return null;
+  const paired=physical.some(c=>["camera","camera_body"].includes(String(c!.kind)))&&physical.some(c=>c!.kind==="lens");
+  if(paired && (record(qualification?.setup)?.status!=="match" || qualification?.verified!==true))return null;
   const identity=physical.map(c=>[c!.item_id,c!.item_name,c!.requested_units]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
   if(JSON.stringify(identity)!==result.physical_identity_key)return null;
   const prices=renterPriceEvidence([{tool:"check_basket_availability",call_id:"native-render",result}],[],scope.threadId);
@@ -58,8 +60,8 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     const quote=nativeInquiryQuote(receipt.result,scope,descriptor.request_revision);
     if(quote && descriptor.quote_key===quote.quote_key){
       quotes.set(quote.quote_key,quote);
-      if(scope.recommendationRequirements?.length)qualified.set(quote.quote_key,{quote_key:quote.quote_key,
-        requirements:structuredClone(scope.recommendationRequirements),
+      if(scope.recommendationRequirements?.length || record(record(receipt.result.technical_qualification)?.setup)?.applied===true)qualified.set(quote.quote_key,{quote_key:quote.quote_key,
+        requirements:structuredClone(scope.recommendationRequirements??[]),
         items:(receipt.result.components as Array<{item_id:string;item_name:string;requested_units:number}>).map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))});
     }
   }

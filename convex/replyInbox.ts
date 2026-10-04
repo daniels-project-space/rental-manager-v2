@@ -2144,14 +2144,14 @@ export const recheckCopiedDraftStock = internalQuery({
     // only "this setup". Reuse the initial Native criteria and physical IDs;
     // an old model claim or old review is never current technical proof.
     for(const quote of evidence?.recommendation_quotes??[]) {
-      if(!quote.requirements.length || !quote.items.length || new Set(quote.items.map(i=>i.item_id)).size!==quote.items.length)
+      if(!quote.items.length || new Set(quote.items.map(i=>i.item_id)).size!==quote.items.length)
         return {ok:false,reason:"technical_requirements_unverified"};
       const physical=quote.items.map(line=>({line,item:sources.items.find(i=>String(i._id)===line.item_id)}));
       if(physical.some(({line,item})=>!item || item.name_canonical!==line.name || item.status!=="active" || item.is_marketing_only ||
         !Number.isInteger(line.quantity) || line.quantity<1 || item.qty<line.quantity))return {ok:false,reason:"technical_requirements_unverified"};
-      const items=await Promise.all(physical.filter(({item})=>["camera","camera_body","lens"].includes(item?.kind??"")).map(async ({line,item})=>{
+      const items=await Promise.all(physical.map(async ({line,item})=>{
         let read=currentSpecs.get(line.item_id);
-        if(!read){read=ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item!._id)).collect();currentSpecs.set(line.item_id,read);}
+        if(!read){read=["camera","camera_body","lens"].includes(item!.kind??"")?ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item!._id)).collect():Promise.resolve([]);currentSpecs.set(line.item_id,read);}
         const specs=await read;
         return {item_id:line.item_id,name:item!.name_canonical,quantity:line.quantity,kind:item!.kind??"",native_mount:item!.lens_mount,spec:specs.length===1?specs[0]:null};
       }));

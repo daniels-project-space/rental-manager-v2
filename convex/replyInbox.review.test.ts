@@ -93,6 +93,21 @@ describe("copied bot replies use current Native stock before send",()=>{
   await f.ctx.db.patch(f.itemId,{name_canonical:"Sony FX30"});
   expect(await recheck(f,text)).toMatchObject({ok:false,reason:"technical_requirements_unverified"});
  });
+ it("rechecks camera/lens setup identity even when the selected quote had no search criteria",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera",lens_mount:"E"});
+  await f.ctx.db.insert("item_specs",{item_id:f.itemId,item_name_canonical:"Sony FX3",description:"Reviewed body",source:"owner-verified",verified_model:"Sony FX3",verified_at:1,
+   camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",verified_at:1}});
+  const lensId=await f.ctx.db.insert("items",{name_canonical:"Lens",kind:"lens",lens_mount:"E",qty:1,status:"active",is_marketing_only:false});
+  await f.ctx.db.insert("item_specs",{item_id:lensId,item_name_canonical:"Lens",description:"Reviewed lens",source:"manufacturer-verified",source_url:"https://example.test/lens",verified_model:"Lens",verified_at:1,
+   lens_capabilities:{focus_mode:"autofocus",coverage:"full_frame",verified_model:"Lens",verified_at:1,source_url:"https://example.test/lens"}});
+  const text="Here is the setup for those dates.";
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,
+   evidence:{...f.evidence,recommendation_quotes:[{quote_key:"selected-native",requirements:[],items:[{item_id:f.itemId,name:"Sony FX3",quantity:1},{item_id:lensId,name:"Lens",quantity:1}]}]}});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(lensId,{lens_mount:"PL"});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"technical_requirements_unverified"});
+ });
  it("checks copied stock before even dry-run success and fails closed when the check errors",async()=>{
   const f=await stockDraft();
   for(const result of [{ok:false,reason:"stock_unverified"},{ok:false,reason:"technical_requirements_unverified"},{ok:true}]) {

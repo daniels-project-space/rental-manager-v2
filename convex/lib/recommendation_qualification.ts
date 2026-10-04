@@ -4,6 +4,7 @@ import { lensRequirementsValidator } from "./owner_checks";
 import { assessCameraRequirements, verifiedCameraCapabilities, type CameraSpec } from "./camera_requirements";
 import { assessLensRequirements, verifiedLensCapabilities, type LensSpec } from "./lens_requirements";
 import { sameMount } from "./item_name_match";
+import { requiredMountAdapters } from "./required_mount_adapter";
 export const recommendationRequirementValidator=v.union(
  v.object({kind:v.literal("camera"),requirements:cameraRequirementsValidator,native_mount:v.optional(v.string()),target_item_id:v.optional(v.string()),quantity:v.number()}),
  v.object({kind:v.literal("lens"),requirements:lensRequirementsValidator,native_mount:v.optional(v.string()),target_item_id:v.optional(v.string()),quantity:v.number()}));
@@ -15,10 +16,43 @@ function canonical(value:unknown):unknown {
 }
 export const recommendationRequirementsKey=(requirements:RecommendationRequirement[])=>JSON.stringify(canonical(requirements));
 export type QualificationItem={item_id:string;name:string;kind:string;quantity:number;native_mount?:string|null;spec:CameraSpec&LensSpec|null};
+/** Individual capabilities do not prove a usable camera/lens pair. Check the
+ * selected physical set even when a search omitted mount or lens coverage. */
+function qualifyCameraLensSetup(requirements:RecommendationRequirement[],items:QualificationItem[]) {
+ const cameras=items.filter(i=>["camera","camera_body"].includes(i.kind)),lenses=items.filter(i=>i.kind==="lens");
+ if(!cameras.length||!lenses.length)return {applied:false,status:"not_applicable" as const,unknown:[] as string[],mismatched:[] as string[]};
+ const unknown:string[]=[],mismatched:string[]=[],caps=cameras.map(i=>verifiedCameraCapabilities(i.spec,i.name));
+ cameras.forEach((camera,index)=>{
+  const cap=caps[index];
+  if(!cap?.role)unknown.push("camera_role");else if(cap.role!=="interchangeable_lens")mismatched.push("camera_role");
+  if(!cap?.native_mount||!camera.native_mount)unknown.push("camera_mount");
+  else if(!sameMount(cap.native_mount,camera.native_mount))mismatched.push("camera_mount_identity");
+ });
+ if(cameras.some(c=>!sameMount(c.native_mount,cameras[0].native_mount)))unknown.push("camera_lens_assignment");
+ lenses.forEach(lens=>{if(!lens.native_mount)unknown.push("lens_mount");});
+ const mountItems=items.map(i=>({id:i.item_id,name:i.name,kind:i.kind,mount:i.native_mount}));
+ const units=items.map(i=>({item_id:i.item_id,quantity:i.quantity}));
+ const mount=requiredMountAdapters(mountItems,units.filter(u=>!lenses.some(l=>l.item_id===u.item_id)),units.filter(u=>lenses.some(l=>l.item_id===u.item_id)));
+ if(mount.status==="unknown")unknown.push("mount_adapter");
+ if(mount.status==="required")mismatched.push("missing_mount_adapter");
+ const adapted=lenses.some(l=>!sameMount(l.native_mount,cameras[0].native_mount));
+ // A mechanical mount adapter does not establish electronic autofocus support.
+ if(adapted&&requirements.some(r=>r.kind==="lens"&&r.requirements.focus_mode==="autofocus"))unknown.push("adapted_autofocus");
+ // Current reviewed lens coverage records attest full-frame coverage only,
+ // which also covers the smaller supported capture classes. Missing coverage
+ // cannot attest any capture class; cropping is not proof of an image circle.
+ for(const lens of lenses){
+  const cap=verifiedLensCapabilities(lens.spec??undefined,lens.name);
+  if(cap?.coverage!=="full_frame")unknown.push("lens_sensor_coverage");
+ }
+ return {applied:true,status:mismatched.length?"mismatch" as const:unknown.length?"unknown" as const:"match" as const,
+  unknown:[...new Set(unknown)],mismatched:[...new Set(mismatched)]};
+}
 /** Requirements for one resolved request target describe the same requested item. A matching
  * item must meet all of them; different bodies cannot each satisfy one half.
  * Additional basket accessories do not become the qualifying primary item. */
 export function qualifyRecommendationBasket(requirements:RecommendationRequirement[],items:QualificationItem[]) {
+ const setup=qualifyCameraLensSetup(requirements,items);
  const slots=[...new Set(requirements.map(r=>JSON.stringify([r.kind,r.target_item_id??null])))];
  const groups=slots.map(slot=>{
   const constraints=requirements.filter(r=>JSON.stringify([r.kind,r.target_item_id??null])===slot),kind=constraints[0].kind,required_units=Math.max(...constraints.map(r=>r.quantity));
@@ -52,5 +86,5 @@ export function qualifyRecommendationBasket(requirements:RecommendationRequireme
   allocated+=units;
  }
  const allocations=groups.flatMap((g,i)=>items.flatMap((item,j)=>{const units=capacity[i+1][groups.length+j+1]-residual[i+1][groups.length+j+1];return units>0?[{kind:g.kind,target_item_id:g.target_item_id,item_id:item.item_id,units}]:[];}));
- return {requirements_key:recommendationRequirementsKey(requirements),requirements_applied:groups.length>0,verified:groups.length?groups.every(g=>g.verified)&&allocated===groups.reduce((n,g)=>n+g.required_units,0):null,groups,allocations};
+ return {requirements_key:recommendationRequirementsKey(requirements),requirements_applied:groups.length>0,verified:groups.length||setup.applied?(!setup.applied||setup.status==="match")&&groups.every(g=>g.verified)&&allocated===groups.reduce((n,g)=>n+g.required_units,0):null,setup,groups,allocations};
 }

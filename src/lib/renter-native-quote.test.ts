@@ -93,17 +93,17 @@ it("cannot quote price/stock proof as technical qualification",()=>{
  const qualifiedScope={...scope,recommendationRequirements};
  expect(nativeInquiryQuote(fixtures.first,qualifiedScope)).toBeNull();
  const requirements_key=JSON.stringify([{kind:"camera",native_mount:"E",quantity:1,requirements:{recording:{capture_format:"full_frame",min_fps:60,resolution:"dci_4k"}}}]);
- const result={...fixtures.first,technical_qualification:{verified:false,requirements_key}};
+ const result={...fixtures.first,technical_qualification:{verified:false,requirements_key,setup:fixtures.first.technical_qualification.setup}};
  expect(nativeInquiryQuote(result,qualifiedScope)).toBeNull();
- expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key}},qualifiedScope)).not.toBeNull();
- expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key:"wrong"}},qualifiedScope)).toBeNull();
+ expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key,setup:fixtures.first.technical_qualification.setup}},qualifiedScope)).not.toBeNull();
+ expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key:"wrong",setup:fixtures.first.technical_qualification.setup}},qualifiedScope)).toBeNull();
  expect(renderNativeQuoteReply(parts(),[receipt()],qualifiedScope).ok).toBe(false);
 });
 
 it("retains only selected qualified Native baskets and snapshots their criteria for approval",()=>{
  const recommendationRequirements=[{kind:"camera" as const,quantity:1,requirements:{internal_4k:true}}];
  const qualifiedScope={...scope,recommendationRequirements};
- const result={...fixtures.first,technical_qualification:{verified:true,requirements_key:'[{"kind":"camera","quantity":1,"requirements":{"internal_4k":true}}]'}};
+ const result={...fixtures.first,technical_qualification:{verified:true,setup:fixtures.first.technical_qualification.setup,requirements_key:'[{"kind":"camera","quantity":1,"requirements":{"internal_4k":true}}]'}};
  const selected=receipt(result as typeof fixtures.first,qualifiedScope);
  const quote=selected.result.renter_quote!;
  const rendered=renderNativeQuoteReply(parts(quote.quote_key),[selected,receipt(fixtures.second)],qualifiedScope);
@@ -115,4 +115,17 @@ it("retains only selected qualified Native baskets and snapshots their criteria 
   recommendationRequirements[0].requirements.internal_4k=false;
   expect(rendered.recommendation_quotes[0].requirements[0].requirements).toEqual({internal_4k:true});
  }
+});
+
+it("does not issue or render an incompatible paired quote even without search criteria",()=>{
+ for(const status of ["unknown","mismatch"]){
+  const result={...fixtures.first,technical_qualification:{...fixtures.first.technical_qualification,verified:false,setup:{...fixtures.first.technical_qualification.setup,status}}};
+  expect(nativeInquiryQuote(result,scope)).toBeNull();
+  expect(renderNativeQuoteReply(parts(),[receipt(result as typeof fixtures.first)],scope).ok).toBe(false);
+ }
+ const legacy={...fixtures.first,technical_qualification:undefined};
+ expect(nativeInquiryQuote(legacy,scope)).toBeNull();
+ const selected=renderNativeQuoteReply(parts(),[receipt()],scope);
+ expect(selected.ok).toBe(true);
+ if(selected.ok)expect(selected.recommendation_quotes).toMatchObject([{requirements:[],items:fixtures.first.components.map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))}]);
 });
