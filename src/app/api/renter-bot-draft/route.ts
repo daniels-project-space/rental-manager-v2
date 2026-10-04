@@ -710,18 +710,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         /* best-effort */
       }
 
-      // What this listing ALREADY includes. Anything in here must never be
-      // offered as a paid extra: live-caught on a bundle whose own kit is a
-      // body plus the Canon 16-35 and 24-105, where the bot offered both
-      // lenses as add-ons at £12 and £20/day. Quoting a renter for gear they
-      // are already paying for reads as either a scam or incompetence, and it
-      // buries the bundle's actual selling point.
-      const kitNames = new Set(
-        ((lc.items ?? []) as Array<{ name?: string; inventory_components?: Array<{ name?: string }> }>)
-          .flatMap((i) => [i.name ?? "", ...(i.inventory_components ?? []).map((c) => c.name ?? "")])
-          .map((name) => name.toLowerCase().trim())
-          .filter(Boolean),
-      );
       stockRequest = { start_date: lc.start_date, end_date: lc.end_date,
         items: (lc.items ?? []).map((i: { name: string; qty?: number; inventory_name?: string; listing_name?: string; mapping_complete?: boolean; inventory_components?: Array<{ name: string | null; requested_units: number; stock_required: boolean }> }) => ({
           name: i.inventory_name ?? i.name, quantity: i.qty ?? 1,
@@ -752,142 +740,16 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           // Preserve native catalogue identity for eligibility, independently
           // of dated stock receipts. A generic fallback cannot prove identity.
           marketingItems.push(...[it.name, it.inventory_name, it.listing_name].filter((n): n is string => !!n));
-          let altText = "";
-          // Real bug (2026-08-17): the Mastra TOOL now requires `kind` so the
-          // agent can never omit it (see renter_bot_tools.ts), but THIS is a
-          // direct server-side query call that bypasses that Zod validation.
-          // Without kind, the underlying query falls back to weak name-token
-          // similarity, which can rank a wrong-category item near the top (a
-          // lens sharing only "Sony" with an unavailable camera, in the case
-          // that surfaced this). Skip the substitute entirely rather than
-          // risk offering the wrong kind of gear — no suggestion is safer
-          // than a nonsensical one.
-          if (it.kind) {
-            try {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const alts: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
-                account_slug: account_slug || "",
-                kind: it.kind,
-                ...(it.kind === "lens" ? {lens_requirements:{}} : {}),
-                item_name: it.name ?? undefined,
-                exclude_name: it.name ?? undefined,
-                start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
-              });
-              toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-alternatives:${toolReceipts.length}`, result: alts }]));
-              for (const a of alts.alternatives ?? []) {
-                if (a.quote?.listed_total_gbp != null) offeredPrices.push(a.quote.listed_total_gbp);
-                if (a.kit_contents?.length) {
-                  itemsWithKitData.push(a.name);
-                  kitEvidence.push({ names: [a.name, a.listing_name].filter(Boolean), contents: a.kit_contents, kind: a.kind });
-                }
-                groundTruth += `  OWNED ALTERNATIVE ${a.name}: mount ${a.lens_mount ?? "unknown"}; recorded kit ${a.included ?? "unknown, confirm exact contents"}; technical evidence ${itemTechnicalContext(a)}; exact-date quote ${a.quote ? JSON.stringify(a.quote) : "requires price confirmation"}; availability ${a.availability ? JSON.stringify(a.availability) : "dates not checked"}. Advertising title does not establish inclusions.\n`;
-              }
-              // Ranked by SUBSTITUTABILITY (same category, same lens mount,
-              // same product family) — the first entry is the closest real
-              // match, not just anything sharing a kind. Carry the mount and
-              // the lens-inclusion flag so the agent can answer "does it come
-              // with a lens?" from data instead of guessing.
-              const list = ((alts?.alternatives ?? []) as Array<{
-                name?: string;
-                daily_price_gbp?: number;
-                lens_mount?: string | null;
-                includes_lens?: boolean | null;
-              }>)
-                .slice(0, 5)
-                .map((a) => {
-                  const price = a.daily_price_gbp != null ? ` one-day base £${a.daily_price_gbp}/day` : "";
-                  const mount = a.lens_mount ? `, ${a.lens_mount}` : "";
-                  const lens =
-                    a.includes_lens === true
-                      ? ", INCLUDES a lens"
-                      : a.includes_lens === false
-                        ? ", body only (no lens)"
-                        : "";
-                  return `${a.name}(${price}${mount}${lens})`;
-                });
-              // Register the alternatives as GROUNDED items. Without this the
-              // system contradicted itself: the instruction below REQUIRES
-              // naming an alternative with its real price, but the item under
-              // discussion is marketing-only so hasItemGrounding was false,
-              // and guardDraft then flagged the (correct, real) price as
-              // UNGROUNDED_PRICE — critical — so every single marketing-only
-              // inquiry escalated to Daniel and no renter ever got the
-              // alternative. These prices come from find_owned_alternatives'
-              // real listing lookup, so they are grounded by construction.
-              for (const a of (alts?.alternatives ?? []) as Array<{
-                name?: string;
-                daily_price_gbp?: number;
-              }>) {
-                if (a.name && typeof a.daily_price_gbp === "number") {
-                  resolvedItems.push({ name: a.name, dailyRateGbp: a.daily_price_gbp });
-                }
-              }
-              // Glass for a body-only ALTERNATIVE. Previously lens options
-              // were only attached to the REQUESTED item, so when the answer
-              // was a substitute the bot could say "that one's body only" and
-              // then pivot to whichever other camera happened to ship with a
-              // lens — instead of offering to add glass to the body they were
-              // actually discussing.
-              // Glass for EVERY body-only option we're about to name, not just
-              // the first one found. A `.find()` here picked whichever
-              // body-only alternative happened to sort first (a Sony A7 III)
-              // and supplied E-mount glass, while the reply actually
-              // recommended a Blackmagic — so the renter was told "body only"
-              // with no offer, which is the exact gap this closes. One line
-              // per distinct mount among the options being offered.
-              const offered = ((alts?.alternatives ?? []) as Array<{
-                name?: string;
-                lens_mount?: string | null;
-                includes_lens?: boolean | null;
-              }>).slice(0, 5);
-              const mountsNeeded: Array<{ mount: string; body: string }> = [];
-              for (const a of offered) {
-                if (!a.lens_mount || a.includes_lens !== false) continue;
-                if (mountsNeeded.some((m) => m.mount === a.lens_mount)) continue;
-                mountsNeeded.push({ mount: a.lens_mount, body: a.name ?? "that body" });
-                if (mountsNeeded.length >= 2) break;
-              }
-              let lensForAltText = "";
-              for (const need of mountsNeeded) {
-                try {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const g: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
-                    account_slug: account_slug || "",
-                    kind: "lens",
-                    lens_mount: need.mount,
-                    start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
-                  });
-                  toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-glass:${toolReceipts.length}`, result: g }]));
-                  const fits = ((g?.alternatives ?? []) as Array<{ name?: string; daily_price_gbp?: number }>)
-                    .slice(0, 2)
-                    .map((x) => `${x.name}${x.daily_price_gbp != null ? ` (one-day base £${x.daily_price_gbp}/day)` : ""}`);
-                  if (fits.length) {
-                    lensForAltText += ` ${need.body} goes out body-only (${need.mount}); glass we own that natively fits it: ${fits.join("; ")}.`;
-                  }
-                } catch {
-                  /* best-effort */
-                }
-              }
-              if (lensForAltText) {
-                lensForAltText +=
-                  ` If they ask about a lens, OFFER the matching glass to go WITH the body they're considering, by name and price — do not just point them at a different camera that happens to include one.`;
-              }
-              if (list.length)
-                altText =
-                  ` Closest real alternatives WE OWN, best first: ${list.join("; ")}.` +
-                  ` Offer the FIRST one unless the renter's stated need clearly favours another. Stay in the same product family/mount where possible — do NOT jump brand or system (e.g. answering a Blackmagic request with a Sony body) unless nothing closer exists, and if you must, say plainly that it's a different system.` +
-                  lensForAltText;
-            } catch {
-              /* best-effort alternatives */
-            }
-          }
+          // Recommendation searches belong to Mastra's typed tools: the agent
+          // supplies the renter's requirements and selected setup, rather than
+          // receiving speculative alternatives and glass for several mounts.
           // Say it ONCE. After that, repeating the unavailability line instead
           // of answering the question they actually asked is the exact defect
           // this whole pass exists to remove.
           const framing = alreadySaidUnavailable
             ? `You have ALREADY told this renter it isn't available — do NOT say it again. Answer THIS message's actual question about the alternative(s) instead, and do not re-open with the unavailability line.`
             : `Frame it ONLY as not available for their dates, then IMMEDIATELY recommend a real alternative BY NAME.`;
-          groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". ${framing} Do NOT ask them what focal length / mount / type of shoot they want — just offer the alternative(s).${altText}\n`;
+          groundTruth += `- ${it.name}: we CANNOT rent this to the renter. Do NOT confirm or quote it, and NEVER say why — no "stock", "own", "have (one/that)", "on hand", "inventory", "marketing", "display". ${framing} Recommendation candidates have not been loaded. Use find_owned_alternatives for the requested category and requirements before offering a substitute.\n`;
           continue;
         }
         if (it.inventory_components?.length) {
@@ -919,47 +781,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         // withheld the reply as a KIT_HALLUCINATION for saying so.
         if (!it.whats_included && !it.included_with_rental?.length && it.name)
           itemsWithoutKitData.push(it.name);
-        // A camera with no kit text still supports a USEFUL lens answer: we
-        // know its mount, and we know what glass we own that fits. Without
-        // this the honest reply degrades to "let me check and come back",
-        // which loses the booking and the upsell in one line.
-        if (it.kind === "camera" && it.lens_mount) {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const glass: any = await convex.query(api.renter_bot_tools.find_owned_alternatives, {
-              account_slug: account_slug || "",
-              kind: "lens",
-              lens_requirements: {},
-              lens_mount: it.lens_mount,
-              start_date: lc.start_date ?? undefined, end_date: lc.end_date ?? undefined, quantity: it.qty ?? 1, thread_id,
-            });
-            toolReceipts.push(...renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: `prefetch-glass:${toolReceipts.length}`, result: glass }]));
-            const all = (glass?.alternatives ?? []) as Array<ItemTechnicalEvidence & { name?: string; daily_price_gbp?: number }>;
-            // Split, don't just filter: the renter needs to hear "already
-            // included" about kit glass, which is a stronger answer than
-            // silence AND stops it being quoted as an extra.
-            const alreadyIn = all
-              .filter((g) => kitNames.has((g.name ?? "").toLowerCase().trim()))
-              .map((g) => g.name)
-              .filter(Boolean);
-            const keep = all
-              .filter((g) => !kitNames.has((g.name ?? "").toLowerCase().trim()))
-              .slice(0, 3);
-            for (const g of keep)
-              if (typeof g.daily_price_gbp === "number") offeredPrices.push(g.daily_price_gbp);
-            const fits = keep.map(
-              (g) => `${g.name}${g.daily_price_gbp != null ? ` (one-day base £${g.daily_price_gbp}/day)` : ""}; ${itemTechnicalContext(g)}`,
-            );
-            if (alreadyIn.length) {
-              groundTruth += `  ALREADY IN THIS RENTAL for ${it.name}: ${alreadyIn.join("; ")}. This glass is INCLUDED in the price they already have. Say so as a positive ("it already comes with…") and NEVER offer it as a paid add-on.\n`;
-            }
-            if (fits.length) {
-              groundTruth += `  LENS OPTIONS for ${it.name} (${it.lens_mount}) — real, owned, NOT already in this rental, and a native fit: ${fits.join("; ")}. If they ask about a lens, or if the body goes out without one, OFFER one of these BY NAME with its price rather than saying you'll check.\n`;
-            }
-          } catch {
-            /* best-effort */
-          }
-        }
         // STRUCTURED KIT beats "I'll confirm". When the listing carries no
         // description we used to tell the bot it knew nothing about the kit —
         // while items.compatibility.included_with_rental held the answer. That
@@ -1312,8 +1133,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   //
   // ORDERING IS LOAD-BEARING: a cache prefix must be byte-stable, so anything
   // volatile (dates, ground truth, the renter's message) must come AFTER this.
-  const cameraProfiles = /\b4k\b|\b4k\d{2,3}p\b|\b(?:fps|uncropped)\b/i.test(lastRenter)
-    ? await convex.query(api.renter_bot_tools.get_verified_camera_profiles, {}) : [];
   const baseMessages = [
     {
       role: "system" as const,
@@ -1336,7 +1155,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         marketingDirective,
         `TODAY IS ${today} (Europe/London). Compute any relative dates the renter uses from TODAY; never guess a date.`,
         "UNKNOWN stock is neither available nor unavailable. Do not say an unverified item is booked, unavailable or not available for the dates. You can offer a separately verified owned alternative without inventing a negative about the original.",
-        cameraProfiles.length ? `REVIEWED CAMERA RECORDING EVIDENCE (technical facts only; check dated stock and current-duration price separately):\n${JSON.stringify(cameraProfiles)}\nPhysical sensor size is not recording capture area. Use camera_requirements.recording for explicit FPS/capture-area/full-width requirements. Explain mandatory mode settings and reduced angle of view. An unrecorded mode, codec or bit depth is unknown. If an alternative relaxes a requested mode, label it clearly as a compromise rather than saying it meets the original requirement.` : "",
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
         renterContext ? `RENTER CONTEXT (internal tone and relationship context):\n${JSON.stringify(renterContext)}\nPlatform completed rentals are Hygglo-wide. Recorded rentals with this business establish prior business here. Missing identity or counts are unknown; they do not establish first-time rental experience. Keep profile/trust details internal.` : "",
