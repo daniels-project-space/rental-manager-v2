@@ -7,7 +7,7 @@ import type { Doc } from "../_generated/dataModel";
 export const FUNNEL_SOURCE_FIELDS = {
   hygglo_messages: ["thread_id", "account_slug", "sender", "hygglo_sent_at", "fetched_at"],
   reservations: ["hygglo_order_id", "account_slug", "status", "hygglo_system_signal", "net_to_owner_gbp", "items", "hygglo_items", "resolved_items", "expanded_items"],
-  items: ["_id", "name_canonical", "aliases", "kind", "status", "qty", "is_marketing_only", "lens_mount"],
+  items: ["_id", "name_canonical", "aliases", "kind", "status", "qty", "is_marketing_only", "lens_mount", "track_independent_stock"],
   hygglo_product_index: ["account_slug", "product_id", "item_id"],
   listing_resolution_override: ["account_slug", "product_id", "components"],
   online_listings: ["account_slug", "product_id", "description"],

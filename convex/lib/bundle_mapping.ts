@@ -2,7 +2,7 @@ import { bestMatch } from "./item_name_match";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { extractComponents } from "./bundle_description_parse";
 
-type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean };
+type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
 const tokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
@@ -19,10 +19,10 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     if (/^\d{1,2}\s*x\s+/i.test(component.name)) {
       unmatched.push(`Ambiguous quantity: ${component.qty}x ${component.name}`); continue;
     }
-    // Recording media/power supplied with a body are described by its owner
-    // inventory record. A "5x batteries" line is not five battery-pack rentals.
+    // Generic bundled accessories must not become battery-pack rentals.
+    // Named independently tracked pools still participate in kit coverage.
     const majorEquipment = /\b(?:camera(?!\s+(?:batter|cage))|bmpcc|blackmagic|fx\d|a7\w*|gimbal|lens(?:es)?|tripod|mic(?:rophone)?|rig|monitor|lights?|led)\b/i;
-    if (incidental.test(component.name) && !majorEquipment.test(component.name)) continue;
+    const incidentalComponent = incidental.test(component.name) && !majorEquipment.test(component.name);
     const name = component.name.replace(/\bdzo(?:film)?\b/gi, "DZOFilm");
     const lineTokens = new Set(tokens(name));
     const explicitMount = name.match(/\bCanon\s+(EF|RF)\b|\b(EF|RF|PL|E|L)[ -]?mount\b/i);
@@ -36,7 +36,7 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     let specificity = 0;
     let ambiguous = false;
     for (const item of candidates) {
-      if (isStandardAccessory(item.kind, item.name_canonical)) continue;
+      if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
       const aliases = [item.name_canonical, ...(item.aliases ?? [])];
       // A missing aperture or set size may be omitted from a contents line.
       // Keep explicit values and require a unique manufacturer/model identity.
@@ -53,10 +53,13 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
         else if (required.length === specificity && picked?._id !== item._id) ambiguous = true;
       }
     }
-    const match = !ambiguous && picked ? picked : bestMatch(name, candidates, item => item.name_canonical, item => item.aliases ?? []);
-    const item = ambiguous ? null : "name_canonical" in match ? match : match.match && match.confident ? match.match : null;
+    // An incidental line needs the full canonical/alias identity, not a fuzzy
+    // guess from "batteries" or "card" to an unrelated stock pool.
+    const match = !ambiguous && picked ? picked : incidentalComponent ? null : bestMatch(name, candidates, item => item.name_canonical, item => item.aliases ?? []);
+    const item = ambiguous || !match ? null : "name_canonical" in match ? match : match.match && match.confident ? match.match : null;
+    if (!item && incidentalComponent && !ambiguous) continue;
     if (!item || !Number.isInteger(component.qty) || component.qty < 1) { unmatched.push(`${component.qty}x ${component.name}`); continue; }
-    if (isStandardAccessory(item.kind, item.name_canonical)) continue;
+    if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
     const existing = resolved.find(row => row.item_id === String(item._id));
     // Explicit contents bullets state units; stock capacity must not reduce them.
     if (existing) existing.qty += component.qty;

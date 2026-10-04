@@ -17,6 +17,51 @@ const sources = (extra: Partial<Awaited<ReturnType<typeof loadStockSources>>> = 
   items: inventory, reservations: [], productIndex: new Map(), overrides: new Map(), claims: [], blackouts: [], vacations: [], ...extra,
 });
 
+describe("declared independently tracked accessory pools", () => {
+  const body = {...inventory[0],name_canonical:"BMPCC 6K Pro"};
+  const battery = { _id: "battery", name_canonical: "NP-F570 batteries", aliases: ["NP-F570 battery"], kind: "power", unit_kind:"unit", status: "active", qty: 12, track_independent_stock: true };
+  const native = [body, battery] as unknown as Doc<"items">[];
+  const description = "Included in this rental: • 1x BMPCC 6K Pro • 5x NP-F570 batteries";
+  it("cannot certify a kit whose override omitted its named battery pool", () => {
+    const result = resolveListingComponents(native, [{item_id:"camera",qty:1}], "camera", 1, description);
+    expect(result).toMatchObject({complete:false,owned:null,coverage:{missing:[{item_id:"battery",qty:5}]}});
+  });
+  it("preserves supplied units and checks other confirmed rentals against the same pool", () => {
+    const result = {...resolveListingComponents(native, [{item_id:"camera",qty:1},{item_id:"battery",qty:5}], "camera", 1, description), product_id:10, listing_name:"Camera kit"};
+    expect(result).toMatchObject({complete:true,owned:true});
+    const hire = {status:"confirmed",start_date:request.start_date,end_date:request.end_date,expanded_items:[{item_id:"battery",qty:8}]} as unknown as Doc<"reservations">;
+    const stock = listingStock({...sources(),items:native,reservations:[hire]}, result, request);
+    expect(stock.available).toBe(false);
+    expect(stock.components.find(c=>c.item_name===battery.name_canonical)).toMatchObject({requested_units:5,free_units:4,available:false});
+  });
+  it("does not infer a model or turn generic camera batteries into five battery-pack rentals", () => {
+    const result = resolveListingComponents(native, [{item_id:"camera",qty:1}], "camera", 1, "Included in this rental: • 1x BMPCC 6K Pro • 5x Camera batteries • 1x NP-FZ100 battery");
+    expect(result).toMatchObject({complete:true,owned:true,coverage:{missing:[]}});
+  });
+  it("honours the same metadata for named media pools without requiring a battery-specific rule", () => {
+    const card = {...inventory[2], name_canonical:"CFexpress Type A card", track_independent_stock:true};
+    const result = resolveListingComponents([body,card], [{item_id:"camera",qty:1}], "camera", 1, "Included in this rental: • 1x BMPCC 6K Pro • 2x CFexpress Type A cards");
+    expect(result).toMatchObject({complete:false,coverage:{missing:[{item_id:"card",qty:2}]}});
+    const untracked = resolveListingComponents([body,{...card,track_independent_stock:false}], [{item_id:"camera",qty:1}], "camera", 1, "Included in this rental: • 1x BMPCC 6K Pro • 2x CFexpress Type A cards");
+    expect(untracked).toMatchObject({complete:true,coverage:{missing:[]}});
+  });
+  it("retains a known marketing battery declaration as a whole-kit blocker", () => {
+    const result = resolveListingComponents([body,{...battery,is_marketing_only:true}] as unknown as Doc<"items">[], [{item_id:"camera",qty:1}], "camera", 1, description);
+    expect(result).toMatchObject({complete:false,owned:false,ownership_blockers:[{item_id:"battery",reason:"marketing_only"}]});
+  });
+  it("does not let a five-battery body default certify a listing declaring six", () => {
+    const withDefaults = {...body,supplied_stock:[{item_id:"battery",qty:5,source:"recorded kit"}]};
+    const result = resolveListingComponents([withDefaults,battery] as unknown as Doc<"items">[], [{item_id:"camera",qty:1}], "camera", 1, description.replace("5x", "6x"));
+    expect(result.components.find(c=>c.item_id==="battery")).toMatchObject({units_per_listing:5});
+    expect(result).toMatchObject({complete:false,coverage:{missing:[{item_id:"battery",qty:6}]}});
+  });
+  it("keeps a named accessory unresolved when two tracked pools share its alias", () => {
+    const duplicate = {...battery,_id:"other",name_canonical:"Other battery pool",aliases:["NP-F570 batteries"]};
+    const result = resolveListingComponents([...native,duplicate] as unknown as Doc<"items">[], [{item_id:"camera",qty:1}], "camera", 1, description);
+    expect(result).toMatchObject({complete:false,owned:null,coverage:{unresolved:["5x NP-F570 batteries"]}});
+  });
+});
+
 describe("whole listing inventory and stock", () => {
   it("never copies the requested camera name when the selected Native listing lacks an identity",()=>{
     const result=listingStock(sources(),{...resolution(),listing_name:null},{...request,item_name:"RED Komodo"});
