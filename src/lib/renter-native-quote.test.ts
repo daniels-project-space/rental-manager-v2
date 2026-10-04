@@ -17,6 +17,13 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it('requires independent financial selection after a separate-hire availability or recommendation check',()=>{
+  const checked=[{tool:'check_availability',call_id:'separate-native-stock',result:{new_inquiry:true,available:true}}];
+  const context={...scope,rentalStage:'CONFIRMED_UPCOMING'};
+  expect(renderNativeQuoteReply({...base,draft:'The new hire costs £90.'},checked,context)).toMatchObject({ok:false,reason:'Use the Native quote selection for inquiry prices'});
+  expect(renderNativeQuoteReply({...base,draft:'I can check the price for this separate hire.'},checked,context).ok).toBe(true);
+  expect(renderNativeQuoteReply({...base,draft:'Your recorded current rental total is £90.'},[],context).ok).toBe(true);
+ });
  it('renders a separately checked hire in an active chat without making it a confirmed amendment',()=>{
   for(const stage of ['CONFIRMED_UPCOMING','IN_USE','RETURN_OVERDUE']){
    const context={...scope,rentalStage:stage},result={...clone(),rental_stage:stage,booking_use:'separate',new_inquiry:true};
