@@ -1,3 +1,4 @@
+import type { RecommendationQuoteEvidence } from "../../convex/lib/renter_draft_evidence";
 import { recommendationRequirementsKey, type RecommendationRequirement } from "../../convex/lib/recommendation_qualification";
 import { createHash } from "node:crypto";
 import { renterPriceEvidence } from "./renter-price-evidence";
@@ -47,18 +48,24 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
 /** Render before any guard or persistence. Unknown references, hand-written
  * money in structured prose, and receipts from before a write fail closed. */
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
-  {ok:true;draft:string;quote_keys:string[]}|{ok:false;reason:string} {
-  if(output.needs_human)return {ok:true,draft:"",quote_keys:[]};
+  {ok:true;draft:string;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[]}|{ok:false;reason:string} {
+  if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[]};
   const quotes=new Map<string,NativeInquiryQuote>();
+  const qualified=new Map<string,RecommendationQuoteEvidence>();
   for(const receipt of receipts)if(receipt.tool==="check_basket_availability") {
     const descriptor=record(receipt.result.renter_quote);
     if(typeof descriptor?.request_revision!=="number")continue;
     const quote=nativeInquiryQuote(receipt.result,scope,descriptor.request_revision);
-    if(quote && descriptor.quote_key===quote.quote_key)quotes.set(quote.quote_key,quote);
+    if(quote && descriptor.quote_key===quote.quote_key){
+      quotes.set(quote.quote_key,quote);
+      if(scope.recommendationRequirements?.length)qualified.set(quote.quote_key,{quote_key:quote.quote_key,
+        requirements:structuredClone(scope.recommendationRequirements),
+        items:(receipt.result.components as Array<{item_id:string;item_name:string;requested_units:number}>).map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))});
+    }
   }
   if(!output.reply_parts?.length) {
     if(scope.rentalStage==="INQUIRY" && receipts.some(r=>r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
-    return {ok:true,draft:output.draft,quote_keys:[]};
+    return {ok:true,draft:output.draft,quote_keys:[],recommendation_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};
   const used=new Set<string>(),parts:string[]=[];
@@ -73,5 +80,5 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
-  return {ok:true,draft:parts.join("\n\n"),quote_keys:[...used]};
+  return {ok:true,draft:parts.join("\n\n"),quote_keys:[...used],recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }

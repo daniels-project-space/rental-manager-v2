@@ -75,11 +75,29 @@ describe("copied bot replies use current Native stock before send",()=>{
   expect(await recheck(f)).toMatchObject({ok:false});
   expect(await recheck(f,"Thank you. I'll check the options.")).toMatchObject({ok:true});
  });
+ it("rechecks saved technical requirements even when the copied reply makes only an implicit recommendation",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera",lens_mount:"E"});
+  const specId=await f.ctx.db.insert("item_specs",{item_id:f.itemId,item_name_canonical:"Sony FX3",description:"Reviewed camera",source:"owner-verified",verified_model:"Sony FX3",verified_at:1,
+   camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",verified_at:1}});
+  const text="Here is an option for those dates.";
+  const evidence={...f.evidence,recommendation_quotes:[{quote_key:"native-inquiry-test",requirements:[{kind:"camera",requirements:{internal_4k:true,sensor_format:"full_frame"},quantity:1}],items:[{item_id:f.itemId,name:"Sony FX3",quantity:1}]}]};
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(specId,{camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:false,verified_model:"Sony FX3",verified_at:1}});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"technical_requirements_unverified"});
+  await f.ctx.db.patch(specId,{camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",verified_at:1},verified_at:2});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"technical_requirements_unverified"});
+  await f.ctx.db.patch(specId,{verified_at:1});
+  expect(await recheck(f,text)).toMatchObject({ok:true});
+  await f.ctx.db.patch(f.itemId,{name_canonical:"Sony FX30"});
+  expect(await recheck(f,text)).toMatchObject({ok:false,reason:"technical_requirements_unverified"});
+ });
  it("checks copied stock before even dry-run success and fails closed when the check errors",async()=>{
   const f=await stockDraft();
-  for(const result of [{ok:false,reason:"stock_unverified"},{ok:true}]) {
+  for(const result of [{ok:false,reason:"stock_unverified"},{ok:false,reason:"technical_requirements_unverified"},{ok:true}]) {
    const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockResolvedValueOnce(result)};
-   expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,draft_approval:f.approval.draft_approval,dryRun:true})).toMatchObject(result.ok?{status:"sent",reason:"DRY_RUN"}:{status:"failed",reason:"stock_unverified"});
+   expect(await invoke(sendRenterReply,ctx,{thread_id:f.args.thread_id,account_slug:"leo",text:f.text,draft_approval:f.approval.draft_approval,dryRun:true})).toMatchObject(result.ok?{status:"sent",reason:"DRY_RUN"}:{status:"failed",reason:result.reason});
    expect(ctx.runQuery).toHaveBeenCalledTimes(2);
   }
   const ctx={runQuery:vi.fn().mockResolvedValueOnce(f.approval).mockRejectedValueOnce(new Error("Native check unavailable"))};

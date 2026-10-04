@@ -1,3 +1,4 @@
+import { qualifyRecommendationBasket } from "./lib/recommendation_qualification";
 import { renterHistory } from "./lib/renter_history";
 import { conversationStageValidator } from "./lib/conversation_stage_validator";
 import type { ConversationStage } from "./lib/renter_bot_intents";
@@ -2119,7 +2120,8 @@ export const getDraftApprovalContext = query({
 });
 
 /** Recheck the copied text and approval in one database snapshot. Old model
- * receipts identify what to check; only current Native stock proves a claim. */
+ * receipts identify what to check; current Native stock and reviewed specifications
+ * must still qualify copied recommendations. */
 export const recheckCopiedDraftStock = internalQuery({
   args: {thread_id:v.string(),account_slug:v.string(),text:v.string(),
     draft_approval:v.object({message_id:v.string(),context_key:v.string(),epoch:v.number(),generated_at:v.number()})},
@@ -2134,10 +2136,30 @@ export const recheckCopiedDraftStock = internalQuery({
       return {ok:false,reason:"stale_draft"};
     const evidence=conv?.ai_draft_evidence;
     const request=evidence?.stock_request??{items:[]};
+    if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length)
+      return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
+    const sources=await loadStockSources(ctx);
+    const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
+    // A copied recommendation must still qualify even when its prose says
+    // only "this setup". Reuse the initial Native criteria and physical IDs;
+    // an old model claim or old review is never current technical proof.
+    for(const quote of evidence?.recommendation_quotes??[]) {
+      if(!quote.requirements.length || !quote.items.length || new Set(quote.items.map(i=>i.item_id)).size!==quote.items.length)
+        return {ok:false,reason:"technical_requirements_unverified"};
+      const physical=quote.items.map(line=>({line,item:sources.items.find(i=>String(i._id)===line.item_id)}));
+      if(physical.some(({line,item})=>!item || item.name_canonical!==line.name || item.status!=="active" || item.is_marketing_only ||
+        !Number.isInteger(line.quantity) || line.quantity<1 || item.qty<line.quantity))return {ok:false,reason:"technical_requirements_unverified"};
+      const items=await Promise.all(physical.filter(({item})=>["camera","camera_body","lens"].includes(item?.kind??"")).map(async ({line,item})=>{
+        let read=currentSpecs.get(line.item_id);
+        if(!read){read=ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item!._id)).collect();currentSpecs.set(line.item_id,read);}
+        const specs=await read;
+        return {item_id:line.item_id,name:item!.name_canonical,quantity:line.quantity,kind:item!.kind??"",native_mount:item!.lens_mount,spec:specs.length===1?specs[0]:null};
+      }));
+      if(qualifyRecommendationBasket(quote.requirements,items).verified!==true)return {ok:false,reason:"technical_requirements_unverified"};
+    }
     // Missing legacy scope cannot qualify a stock assertion, but a human's
     // edited reply with no such assertion does not need old stock receipts.
     if (!evidence?.stock_request) return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
-    const sources=await loadStockSources(ctx);
     const receipts:StockReceipt[]=[];
     const checked=new Set<string>();
     for(const old of evidence.stock) {

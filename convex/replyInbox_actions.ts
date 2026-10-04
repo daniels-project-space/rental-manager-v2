@@ -1,3 +1,4 @@
+import type { RecommendationQuoteEvidence } from "./lib/renter_draft_evidence";
 import { committedAmendmentConfirmation } from "./lib/amendment_confirmation";
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
@@ -675,6 +676,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
+          recommendation_quotes?: RecommendationQuoteEvidence[];
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
           factsClaimed?: unknown;
@@ -740,7 +742,7 @@ export const generateDraft = action({
         routePriceRequest = j.priceRequest;
         routeCommercialContext = j.commercialContext ? minimumRentalContext(c.rental_stage.stage,
           j.commercialContext.threshold_gbp, j.priceEvidence ?? [], j.priceRequest ?? {items:[]}) : undefined;
-        generationMeta.evidence = { camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        generationMeta.evidence = { recommendation_quotes: j.recommendation_quotes, camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         generationMeta.evidence.stock_request = routeStockRequest;
         generationMeta.evidence.stock.forEach(receipt=>{
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
@@ -1142,6 +1144,8 @@ export const sendRenterReply = action({
         const stock = await ctx.runQuery(internal.replyInbox.recheckCopiedDraftStock,{thread_id,account_slug,text:body,draft_approval:approvalContext.draft_approval});
         if (!stock.ok) return {status:"failed",reason:stock.reason,error:stock.reason === "stale_draft"
           ? "This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."
+          : stock.reason === "technical_requirements_unverified"
+          ? "The recommended equipment no longer has verified specifications for the requirements in this draft. Generate a fresh draft, or clear the copied draft and review the equipment yourself."
           : "Availability in this reply could not be verified against current stock. Review it and redraft, or remove the availability claim before sending."};
       } catch {
         return {status:"failed",reason:"stock_recheck_failed",error:"Current stock could not be checked. Your reply has been kept; try again before sending."};

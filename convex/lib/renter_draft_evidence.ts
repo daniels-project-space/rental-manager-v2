@@ -1,7 +1,17 @@
 import { v, type Infer } from "convex/values";
+import { recommendationRequirementValidator } from "./recommendation_qualification";
+
+/** Selected Native quotes retain physical identity and the criteria checked for them.
+ * At approval, current catalogue reviews must satisfy these criteria again. */
+export const recommendationQuoteEvidenceValidator=v.object({
+  quote_key:v.string(),requirements:v.array(recommendationRequirementValidator),
+  items:v.array(v.object({item_id:v.string(),name:v.string(),quantity:v.number()})),
+});
+export type RecommendationQuoteEvidence=Infer<typeof recommendationQuoteEvidenceValidator>;
 
 export const draftEvidenceValidator = v.object({
   model_id: v.string(),
+  recommendation_quotes:v.optional(v.array(recommendationQuoteEvidenceValidator)),
   stage: v.string(),
   cost_usd: v.optional(v.number()),
   camera_comparisons: v.optional(v.array(v.object({

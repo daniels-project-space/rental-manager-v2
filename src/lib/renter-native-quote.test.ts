@@ -70,8 +70,8 @@ describe("Native inquiry quote rendering",()=>{
    expect(renderNativeQuoteReply({...parts(),reply_parts:[{type:"text",text},...parts().reply_parts!.slice(1)]},[receipt()],scope).ok).toBe(false);
   expect(renderNativeQuoteReply({...parts(),draft:"Another reply"},[receipt()],scope).ok).toBe(false);
   expect(renderNativeQuoteReply({...base,draft:"The total is £138."},[receipt()],scope).ok).toBe(false);
-  expect(renderNativeQuoteReply({...base,draft:"Yes, that lens is already included."},[receipt()],scope)).toEqual({ok:true,draft:"Yes, that lens is already included.",quote_keys:[]});
-  expect(renderNativeQuoteReply({...base,needs_human:true},[receipt()],scope)).toEqual({ok:true,draft:"",quote_keys:[]});
+  expect(renderNativeQuoteReply({...base,draft:"Yes, that lens is already included."},[receipt()],scope)).toEqual({ok:true,draft:"Yes, that lens is already included.",quote_keys:[],recommendation_quotes:[]});
+  expect(renderNativeQuoteReply({...base,needs_human:true},[receipt()],scope)).toEqual({ok:true,draft:"",quote_keys:[],recommendation_quotes:[]});
  });
 });
 
@@ -98,4 +98,21 @@ it("cannot quote price/stock proof as technical qualification",()=>{
  expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key}},qualifiedScope)).not.toBeNull();
  expect(nativeInquiryQuote({...result,technical_qualification:{verified:true,requirements_key:"wrong"}},qualifiedScope)).toBeNull();
  expect(renderNativeQuoteReply(parts(),[receipt()],qualifiedScope).ok).toBe(false);
+});
+
+it("retains only selected qualified Native baskets and snapshots their criteria for approval",()=>{
+ const recommendationRequirements=[{kind:"camera" as const,quantity:1,requirements:{internal_4k:true}}];
+ const qualifiedScope={...scope,recommendationRequirements};
+ const result={...fixtures.first,technical_qualification:{verified:true,requirements_key:'[{"kind":"camera","quantity":1,"requirements":{"internal_4k":true}}]'}};
+ const selected=receipt(result as typeof fixtures.first,qualifiedScope);
+ const quote=selected.result.renter_quote!;
+ const rendered=renderNativeQuoteReply(parts(quote.quote_key),[selected,receipt(fixtures.second)],qualifiedScope);
+ expect(rendered.ok).toBe(true);
+ if(rendered.ok){
+  expect(rendered.recommendation_quotes).toHaveLength(1);
+  expect(rendered.recommendation_quotes[0]).toEqual({quote_key:quote.quote_key,requirements:recommendationRequirements,
+   items:fixtures.first.components.map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))});
+  recommendationRequirements[0].requirements.internal_4k=false;
+  expect(rendered.recommendation_quotes[0].requirements[0].requirements).toEqual({internal_4k:true});
+ }
 });

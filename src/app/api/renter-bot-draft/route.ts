@@ -1440,6 +1440,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       ok: true,
       draft: obj.draft ?? "",
       rendered_quote_keys:renderedReply.quote_keys,
+      recommendation_quotes:renderedReply.recommendation_quotes,
       owner_checks: nativeOwnerChecks(toolReceipts),
       needs_human: !!obj.needs_human,
       needs_human_reason: obj.needs_human
