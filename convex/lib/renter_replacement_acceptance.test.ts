@@ -12,6 +12,12 @@ describe("Native replacement consent",()=>{
   expect(acceptsReplacement("Yes please",full,owner)).toBe(true);
  });
  it("accepts an exact directional request at the Native full price",()=>expect(acceptsReplacement("Please replace TTArtisan 11mm f2.8 with Sony GM 16-35mm f2.8 for £40 total.",q)).toBe(true));
+ it("checks a saving against the Native delta while retaining full-total consent",()=>{
+  const direction="Please swap TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8 for £40 total, a saving of £2.";
+  expect(acceptsReplacement(direction,q)).toBe(true);
+  for(const changed of [direction.replace("£2","£3"),direction.replace("saving","discount"),direction.replace("saving","refund"),direction.replace("a saving of £2","£2 extra"),direction.replace("£40 total, ","")])expect(acceptsReplacement(changed,q),changed).toBe(false);
+  expect(acceptsReplacement(direction.replace("a saving of £2","£3 extra").replace("£40 total","£45 total"),{...q,total_gbp:45,added:[{...next,line_total_gbp:45}]})).toBe(true);
+ });
  it("does not accept yes or an unpriced direction without a transmitted quote",()=>{expect(acceptsReplacement("yes",q)).toBe(false);expect(acceptsReplacement("please swap TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8",q)).toBe(false);});
  it("keeps the removal and addition directions and quantities exact",()=>{for(const text of ["Please swap Sony GM 16-35mm f2.8 for TTArtisan 11mm f2.8 for £40 total.","Please replace TTArtisan 11mm f2.8 with two Sony GM 16-35mm f2.8 for £40 total.","Please swap two TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8 for £40 total.","Please swap TTArtisan 50mm f2 for Sony GM 16-35mm f2.8 for £40 total.","Please swap TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8 or Sony 24-70mm for £40 total."])expect(acceptsReplacement(text,q,owner),text).toBe(false);});
  it("rejects changed basket mappings, dates, prices, epoch, context and selections",()=>{for(const changed of [{...q,physical_identity_key:"changed"},{...q,base_physical_identity_key:"changed"},{...q,start_date:"2026-10-22"},{...q,total_gbp:41},{...q,base_total_gbp:43},{...q,epoch:110},{...q,context_key:"changed"},{...q,added:[{...next,product_id:99}]},{...q,removed:[{...old,qty:2}]}])expect(acceptsReplacement("yes",changed,owner)).toBe(false);});

@@ -6,6 +6,7 @@ import { shortItemName } from "./item_display_name";
 import type { StockRequest } from "./stock_claims";
 import { lensClaimReferences, declaredLensReferences } from "./lens_claim_references";
 import { claimedRentalDays, withoutDurationReference } from "./claim_duration";
+import { amendmentMoneyClaims } from "./renter_amendment_money";
 
 /** Server-returned quotes. A number alone is never a receipt. */
 export type PriceEvidence = {
@@ -56,6 +57,7 @@ const cents = (n: number) => Math.round(n * 100);
 /** Checks recognised currency claims against their subject, purpose and scope. */
 export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest) {
   const failures: string[] = [];
+  const moneyRoles = new Map(amendmentMoneyClaims(text).map(claim => [claim.index, claim.role]));
   const known = [...request.items.map(i => ({ names: [i.name, ...(i.aliases ?? [])], quantity: i.quantity })),
     ...evidence.filter(e => e.kind !== "basket").map(e => ({ names: e.names, quantity: undefined })),
     ...evidence.flatMap(e=>(e.proposal?.added_items??[]).map(i=>({names:[i.name],quantity:undefined})))];
@@ -103,6 +105,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const models = [...before.matchAll(/\b(?:pyxis(?:\s+\d+k)?|fx\s*\d+[a-z]*|a7\s*(?:iii|ii|iv|v|\d+)|(?:canon\s+)?(?:r5c?|r6|c70)|(?:blackmagic|bmpcc)\s+(?!(?:kit|set|booking)\b)[^£.!?]{0,55})\b/g)];
     const unknown = models.at(-1);
     if (unknown && unknown.index! > Math.max(-1, lastAt) && !names.some(n => (` ${n} `).includes(` ${unknown[0].trim()} `))) subject = [norm(unknown[0])];
+    // The last qualified lens can occur in an earlier offer sentence. A
+    // shared focal range must not erase its explicit brand or mount.
+    const declaredLens = declaredLensReferences(before).at(-1);
+    if (declaredLens && !focalSubjects.has(declaredLens) && before.lastIndexOf(declaredLens)+declaredLens.length >= lastEnd-1) subject=[declaredLens];
     const rawSegment = text.slice(consumed,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
     // After the prior currency amount, a rate suffix belongs to that amount:
     // "lens is £50 (£25/day) and the adapter is £20" names only the adapter
@@ -132,7 +138,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const explicitSubject = /^\s*(?:(?:the|our|my|your|an?|this|that)\s+)?(.{1,90}?)\s+(?:is|are|costs?|would\s+be|will\s+be)\s*$/i.exec(priceSubjectSegment);
     let pairedItems: Array<{names:string[];quantity:number}> | undefined;
     let unresolvedPair = false;
-    if (explicitSubject) {
+    // Booking-total labels are a monetary scope, not an equipment identity.
+    // Preserve the actual named equipment from the preceding offer sentence.
+    const totalReference = explicitSubject && /^(?:(?:your|our|my|the|this|current|existing|new|updated|revised|complete|full)\s+)*(?:(?:booking|basket|order|rental|hire)\s+)?total$/i.test(explicitSubject[1]);
+    if (explicitSubject && !totalReference) {
       const named = norm(explicitSubject[1].replace(/\+/g," plus "));
       const exactOffering = known.find(k => aliases(k.names).includes(norm(explicitSubject[1])));
       if (exactOffering) subject = exactOffering.names;
@@ -178,7 +187,8 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const local = text.slice(Math.max(consumed, text.lastIndexOf("\n", pos)+1), pos) + m[0] + after;
     const daily = /^\s*(?:\/\s*day|per\s+day|a\s+day|daily)\b/i.test(following) || /\b(?:daily\s+(?:rate|price)|per\s+day)\s*(?:is|of|:)\s*$/i.test(text.slice(consumed,pos));
     const base = /\b(?:one[ -]day|1[ -]day|base|usual|normally|standard)\b/i.test(local);
-    const purpose = /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
+    const purpose = /\b(?:discount|refund)\b/i.test(local) ? "adjustment"
+      : /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
       : /\b(?:delivery|courier|postage)\b/i.test(local) ? "delivery" : "rental";
     const dateScope = claimDateScope(segment + m[0] + after, request.start_date);
@@ -191,6 +201,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     if (lastAt >= 0) subjectQuantity = declaredQuantity ?? requested?.quantity ?? 1;
     const quantity = declaredQuantity ?? requested?.quantity ?? (request.items.length && new Set(request.items.map(i=>i.quantity)).size===1 ? request.items[0].quantity : undefined);
     const amount = Number(m[1].replace(/,/g, ""));
+    const moneyRole = moneyRoles.get(pos);
+    // A saving is never the price of an item. It needs a complete Native
+    // change quote, even when a coincidental line price equals the difference.
+    const replacementAdjustment = moneyRole === "reduction" || moneyRole === "increase" &&
+      evidence.some(e => e.kind === "basket" && !!e.proposal?.removed_items?.length);
     const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised|complete|full)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:(?:new|updated|revised|complete|full)\s+)?(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
     const conditionalTotal = /\b(?:would|could)\s+(?:bring|take|make|increase|raise)\b[^£.!?]{0,90}\btotal\b/i.test(segment);
     // A prior amount ends the local currency segment, but does not end its
@@ -206,7 +221,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const componentAddition = pricedComponents.length > 1 && /^\s*(?:\/\s*day|per\s+day|a\s+day)?\s*\)?\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making)\s+(?:the\s+)?(?:addition|additions|additional cost)\s+(?:to|of)\s*$/i.test(segment);
     const group=componentAddition || proposalTotal && pricedComponents.length > 1 ? pricedComponents : quotedGroup(pos);
     const groupAddition=componentAddition || !baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
-    const basket = groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
+    const basket = replacementAdjustment || groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
       !/\b(?:would|could|add|adding)\b/i.test(segment);
     const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);
@@ -227,7 +242,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         return delta>=0&&cents(delta)===cents(amount);
       }
       if (Number.isNaN(days) || !dateScope.valid || explicitDays !== null && scopedDuration != null && days !== scopedDuration) return false;
-      if (purpose === "deposit" || purpose === "delivery") return false; // No verified fee source is held today.
+      if (purpose === "deposit" || purpose === "delivery" || purpose === "adjustment") return false; // No verified fee/discount/refund source is held today.
       if (purpose === "replacement") return e.kind === "replacement" && e.total_gbp != null && cents(e.total_gbp) === cents(amount);
       if (e.kind === "replacement") return false;
       if (e.kind === "basket") {
@@ -238,7 +253,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         };
         if (e.proposal) {
           if(e.proposal.removed_items?.length) {
-            const proposed=requestedItems.map(i=>({...i}));
+            const proposed=e.proposal.base_items.map(i=>({names:[i.name],quantity:i.quantity}));
             for(const removed of e.proposal.removed_items) {
               const index=proposed.findIndex(i=>same(i.names,[removed.name]));
               if(index<0 || !Number.isInteger(removed.quantity) || removed.quantity<1 || removed.quantity>proposed[index].quantity)return false;
@@ -252,7 +267,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
             if(!e.items || !membersMatch(proposed,e.items))return false;
           }
           // A proposal never certifies an already-applied total or an unrelated basket.
-          if ((!proposalTotal && !componentAddition && !/\b(?:would|could)\b/i.test(segment)) || !membersMatch(requestedItems,e.proposal.base_items)) return false;
+          const currentScopeMatches=membersMatch(requestedItems,e.proposal.base_items) ||
+            replacementAdjustment && !!e.items && membersMatch(requestedItems,e.items);
+          if ((!replacementAdjustment && !proposalTotal && !componentAddition && !/\b(?:would|could)\b/i.test(segment)) || !currentScopeMatches) return false;
           if(e.proposal.added_items.length>1) {
             if(!membersMatch(pairedItems??group,e.proposal.added_items) || !proposalTotal && !e.proposal.added_items.some(i=>same(subject,[i.name])))return false;
           } else {
@@ -260,7 +277,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
             if(!added)return false;
             const directlyNamed=same(subject,[added.name]) && (declaredQuantity??subjectQuantity??1)===added.quantity;
             const previouslyQuoted=pricedComponents.some(c=>same(c.names,[added.name]) && c.quantity===added.quantity);
-            if(e.proposal.removed_items?.length && proposalTotal ? !directlyNamed && !previouslyQuoted : !directlyNamed)return false;
+            if(e.proposal.removed_items?.length && (proposalTotal || replacementAdjustment) ? !directlyNamed && !previouslyQuoted : !directlyNamed)return false;
           }
         }
         const claimed=pairedItems??(groupAddition ? group : e.proposal ? e.items?.map(i=>({names:[i.name],quantity:i.quantity}))??[] : requestedItems);
@@ -279,6 +296,12 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       if(explicitDays!==null && effectiveDays!=null && explicitDays!==effectiveDays)return false;
       if (effectiveDays != null && e.days !== effectiveDays) return false;
       if ((declaredQuantity != null || !daily) && quantity != null && e.kind !== "basket" && e.quantity !== quantity) return false;
+      if (replacementAdjustment) {
+        if (daily || purpose !== "rental" || !e.proposal?.removed_items?.length ||
+          !Number.isFinite(e.proposal.base_total_gbp) || !Number.isFinite(e.total_gbp)) return false;
+        const delta = moneyRole === "reduction" ? e.proposal.base_total_gbp! - e.total_gbp! : e.total_gbp! - e.proposal.base_total_gbp!;
+        return delta >= 0 && cents(delta) === cents(amount);
+      }
       const perUnit = /\b(?:each|per\s+(?:unit|camera|item))\b/i.test(local);
       const groupDaily = daily && !perUnit && (declaredQuantity != null || /\b(?:both|all\s+(?:cameras|items))\b/i.test(local));
       const expected = daily ? (e.daily_rate_gbp != null ? e.daily_rate_gbp * (groupDaily ? quantity ?? 1 : 1) : undefined)

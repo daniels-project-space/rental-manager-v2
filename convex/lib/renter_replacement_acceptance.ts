@@ -31,8 +31,12 @@ export function acceptsReplacement(text:string,q:ReplacementAcceptanceQuote,owne
  if(!message||/\b(?:if|unless|maybe|might|consider|thinking|suppose|example|said|says|told|after|when|later|wait|hold off|not|don't|do not|without)\b/i.test(message)||!matchesQuotedDates(message,q))return false;
  const money=amendmentMoneyClaims(message);
  const total=money.filter(m=>m.role==="total"||money.length===1&&m.role==="unlabelled");
- // Every amount must represent the exact complete quote or its unchanged base.
- if(money.some(m=>m.role==="base"?!sameMoney(m.amount,q.base_total_gbp):!total.includes(m)||!sameMoney(m.amount,q.total_gbp)))return false;
+ // Delta explanations do not replace consent to the full Native total.
+ if(money.some(m=>{
+  const expected=m.role==="base"?q.base_total_gbp:m.role==="increase"?q.total_gbp-q.base_total_gbp
+   :m.role==="reduction"?q.base_total_gbp-q.total_gbp:total.includes(m)?q.total_gbp:NaN;
+  return !Number.isFinite(expected)||expected<0||!sameMoney(m.amount,expected);
+ }))return false;
  const swap=/^(?:(?:yes|yep|okay|ok|sure|please)[,\s]+|(?:go ahead(?: and)?|(?:can|could|would) you|(?:I|we)(?:'d| would) like (?:you )?to|(?:I|we) want (?:you )?to)\s+)*(?:swap|replace)\s+(.+?)\s+(?:with|for)\s+(.+)$/i.exec(message);
  if(swap){
   const old=directItemSelection(`remove ${swap[1]}`,q.removed,"removal");

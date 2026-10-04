@@ -330,3 +330,36 @@ it("resolves prime focal references from Native lens identities without borrowin
  expect(unsupportedPriceClaims("TTArtisan RF 11mm is £42 for the two days.",[lens],scope)).not.toEqual([]);
  expect(unsupportedPriceClaims("11mm is £42 for the two days.",[lens,{...lens,names:["Laowa 11mm f4"],call_id:"another-prime"}],scope)).not.toEqual([]);
 });
+
+describe("Native replacement price differences", () => {
+ const request={items:[{name:"TTArtisan 11mm f2.8",quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+ const added={name:"Sony GM 16-35mm f2.8",quantity:1};
+ const receipt:PriceEvidence={names:[],kind:"basket",items:[added],days:2,start_date:request.start_date,end_date:request.end_date,total_gbp:40,source:"native_lab_proposal",call_id:"actual-swap",proposal:{base_items:request.items,added_items:[added],removed_items:request.items,base_total_gbp:42}};
+ const reply="Swapping the TTArtisan 11mm for the Sony GM 16-35mm f2.8 would bring your total to £40, a saving of £2.";
+ it("validates the difference independently of the complete rental total",()=>{
+  expect(unsupportedPriceClaims(reply,[receipt],request)).toEqual([]);
+  expect(unsupportedPriceClaims(reply.replace("saving of £2","saving of £3"),[receipt],request)).toHaveLength(1);
+  expect(unsupportedPriceClaims(reply.replace("saving of £2","£2 extra"),[receipt],request)).toHaveLength(1);
+  expect(unsupportedPriceClaims(reply.replace("£40","£45").replace("saving of £2","£3 extra"),[{...receipt,total_gbp:45}],request)).toEqual([]);
+ });
+ it("retains the named lens across a separate booking-total sentence",()=>{
+  const text="I can swap the TTArtisan 11mm for the Sony GM 16-35mm f2.8. Your updated booking total would be £40, a saving of £2. Shall I make that swap?";
+  expect(unsupportedPriceClaims(text,[receipt],request)).toEqual([]);
+  expect(unsupportedPriceClaims(text.replace("Sony GM 16-35mm f2.8","Laowa 16-35mm f2.8"),[receipt],request).length).toBeGreaterThan(0);
+ });
+ it("allows a post-amendment saving with the same Native resulting basket",()=>{
+  expect(unsupportedPriceClaims("The Sony GM 16-35mm f2.8 is now in your basket, a saving of £2.",[receipt],{...request,items:[added]})).toEqual([]);
+ });
+ it("does not use an ordinary lens price to prove a saving",()=>{
+  const lens:PriceEvidence={names:[added.name],kind:"rental",days:2,quantity:1,start_date:request.start_date,end_date:request.end_date,total_gbp:2,source:"hygglo_tier",call_id:"unrelated-item-price"};
+  const failures=unsupportedPriceClaims(reply,[lens],request);
+  expect(failures.some(f=>f.includes("£2"))).toBe(true);
+ });
+ it("requires unchanged scope, both basket sides and an actual base total",()=>{
+  for(const changed of [{...receipt,proposal:{...receipt.proposal!,base_total_gbp:undefined}},{...receipt,proposal:{...receipt.proposal!,base_items:[{name:"Sony FX3",quantity:1}]}},{...receipt,proposal:{...receipt.proposal!,removed_items:[{name:request.items[0].name,quantity:2}]}},{...receipt,items:[{...added,quantity:2}]},{...receipt,start_date:"2026-10-22"},{...receipt,days:3}])expect(unsupportedPriceClaims(reply,[changed],request).length).toBeGreaterThan(0);
+  expect(unsupportedPriceClaims(reply,[receipt],{...request,items:[{name:"Sony FX3",quantity:1}]}).length).toBeGreaterThan(0);
+ });
+ it("does not relabel a price difference as a discount, refund or daily rate",()=>{
+  for(const changed of [reply.replace("saving","discount"),reply.replace("saving","refund"),reply.replace("£2.","£2/day.")])expect(unsupportedPriceClaims(changed,[receipt],request).length).toBeGreaterThan(0);
+ });
+});
