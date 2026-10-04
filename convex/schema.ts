@@ -1,3 +1,4 @@
+import { RECORDING_MODE_RESOLUTIONS } from "./lib/camera_requirements";
 import {sentReplacementProposalValidator} from "./lib/renter_replacement_proposal";
 import { lensFactFields, lensVariantReviewValidator } from "./lib/lens_variant_review";
 import { conversationStageValidator } from "./lib/conversation_stage_validator";
@@ -174,7 +175,7 @@ const operationalSchema = defineSchema({
       // Optional for migration; reader requires these before qualification.
       verified_model: v.optional(v.string()), source_url: v.optional(v.string()), verified_at: v.optional(v.number()),
       recording_modes: v.optional(v.array(v.object({
-        resolution: v.literal("uhd_4k"), nominal_fps: v.array(v.number()),
+        resolution: v.union(...RECORDING_MODE_RESOLUTIONS.map(r=>v.literal(r))), nominal_fps: v.array(v.number()),
         capture_format: v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor")),
         full_width: v.boolean(), internal: v.boolean(), conditions: v.array(v.string()),
         verified_model: v.string(), source_url: v.string(), verified_at: v.number(),

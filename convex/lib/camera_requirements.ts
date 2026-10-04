@@ -3,8 +3,17 @@ import { verifiedItemSpec, type SpecRecord } from "./verified_item_spec";
 
 export type CameraRole = "action" | "interchangeable_lens";
 export type SensorFormat = "full_frame" | "super35" | "aps_c" | "small_sensor";
+// A requirement can ask for the 4K family. Recorded evidence always names
+// a concrete mode; an unspecified family must never attest UHD or DCI.
+export const RECORDING_MODE_RESOLUTIONS = ["uhd_4k", "dci_4k"] as const;
+export const RECORDING_REQUIREMENT_RESOLUTIONS = ["4k", ...RECORDING_MODE_RESOLUTIONS] as const;
+export type RecordingResolution = typeof RECORDING_MODE_RESOLUTIONS[number];
+export type RecordingRequirementResolution = typeof RECORDING_REQUIREMENT_RESOLUTIONS[number];
+export function canonicalRecordingResolution(value: RecordingRequirementResolution | "4K"): RecordingRequirementResolution {
+  return value === "4K" ? "4k" : value;
+}
 export type RecordingMode = {
-  resolution: "uhd_4k";
+  resolution: RecordingResolution;
   nominal_fps: number[];
   capture_format: SensorFormat;
   full_width: boolean;
@@ -14,7 +23,7 @@ export type RecordingMode = {
   source_url: string;
   verified_at: number;
 };
-export type RecordingRequirement = { resolution: "uhd_4k"; min_fps: number; capture_format?: SensorFormat; full_width?: boolean; internal?: boolean };
+export type RecordingRequirement = { resolution: RecordingRequirementResolution; min_fps?: number; capture_format?: SensorFormat; full_width?: boolean; internal?: boolean };
 export type CameraCapabilities = { role: CameraRole; sensor_format: SensorFormat; native_mount?: string; internal_4k: boolean; built_in_nd?: boolean; recording_modes?: RecordingMode[] };
 export type CameraRequirements = { role?: CameraRole; sensor_format?: SensorFormat; internal_4k?: boolean; built_in_nd?: boolean; recording?: RecordingRequirement };
 export type CameraSpec = SpecRecord & { camera_capabilities?: CameraCapabilities & { verified_model?: string; source_url?: string; verified_at?: number } };
@@ -31,8 +40,9 @@ export function verifiedCameraCapabilities(spec: CameraSpec | null | undefined, 
 }
 
 export function matchesRecordingRequirement(mode: RecordingMode, requirement: RecordingRequirement) {
-  return mode.resolution === requirement.resolution && Number.isFinite(requirement.min_fps) && requirement.min_fps > 0 &&
-    mode.nominal_fps.some(f => f >= requirement.min_fps) &&
+  const resolutionMatches=requirement.resolution==="4k" ? RECORDING_MODE_RESOLUTIONS.some(r=>r===mode.resolution) : mode.resolution===requirement.resolution;
+  return resolutionMatches && (requirement.min_fps===undefined || Number.isFinite(requirement.min_fps) && requirement.min_fps > 0 &&
+    mode.nominal_fps.some(f => f >= requirement.min_fps!)) &&
     (requirement.capture_format === undefined || mode.capture_format === requirement.capture_format) &&
     (requirement.full_width === undefined || mode.full_width === requirement.full_width) &&
     (requirement.internal === undefined || mode.internal === requirement.internal);

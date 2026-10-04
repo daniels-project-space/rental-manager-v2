@@ -14,7 +14,7 @@ import { renterItemNames } from "./lib/renter_item_names";
 import { summarise } from "./lib/renter_order_quote";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { listingDisplayName } from "./lib/item_display_name";
-import { meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
+import { RECORDING_REQUIREMENT_RESOLUTIONS, meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
 import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
@@ -996,7 +996,7 @@ export const find_owned_alternatives = query({
       sensor_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
       internal_4k: v.optional(v.boolean()), built_in_nd: v.optional(v.boolean()),
       recording: v.optional(v.object({
-        resolution: v.literal("uhd_4k"), min_fps: v.number(),
+        resolution: v.union(...RECORDING_REQUIREMENT_RESOLUTIONS.map(r=>v.literal(r))), min_fps: v.optional(v.number()),
         capture_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
         full_width: v.optional(v.boolean()), internal: v.optional(v.boolean()),
       })),

@@ -47,6 +47,21 @@ describe("recording mode claims use exact model and capture area", () => {
   it("blocks a positive promise after a conditional clause", () => {
     expect(unsupportedCameraModeClaims("If you need 4K120p, Sony A7 V records uncropped full-frame 4K120p.", evidence)).toHaveLength(1);
   });
+  it("does not use a UHD review to attest explicit DCI, or vice versa",()=>{
+    const dci=[{...evidence[1],capabilities:{...evidence[1].capabilities,recording_modes:[{...mode(60,"full_frame",true),resolution:"dci_4k" as const}]}}];
+    expect(unsupportedCameraModeClaims("Sony FX3 records full-width 4K60p.",dci)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony FX3 records DCI 4K.",dci)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony FX3 records DCI 4K.",evidence)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 cannot record DCI 4K.",evidence)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony FX3 is an option. Do you need DCI 4K?",evidence)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony FX3 records UHD 4K.",dci)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records full-width DCI 4K60p.",dci)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony FX3 records full-width UHD 4K60p.",dci)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records full-width DCI 4K60p.",evidence)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records full-width UHD and DCI 4K60p.",evidence)).toHaveLength(1);
+    const guard=guardDraft("Sony FX3 records full-width DCI 4K60p.",{history:[],lastRenterMessage:"I need DCI 4K60p",cameraEvidence:evidence});
+    expect(guard.flags).toContainEqual(expect.objectContaining({type:"CAMERA_MODE_HALLUCINATION",severity:"critical"}));
+  });
   it("reaches the real guard as an unresolved critical review flag", () => {
     const result = guardDraft("Sony A7 V records uncropped full-frame 4K120p.", { history: [], lastRenterMessage: "I need uncropped 4K120p", cameraEvidence: evidence });
     expect(result.flags).toContainEqual(expect.objectContaining({ type: "CAMERA_MODE_HALLUCINATION", severity: "critical", action: "flagged" }));

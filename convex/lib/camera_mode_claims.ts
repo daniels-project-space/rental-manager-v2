@@ -1,4 +1,4 @@
-import { matchesRecordingRequirement, type CameraCapabilities, type RecordingRequirement } from "./camera_requirements";
+import { matchesRecordingRequirement, type CameraCapabilities, type RecordingRequirement, type RecordingResolution } from "./camera_requirements";
 
 export type CameraEvidence = { names: string[]; capabilities: CameraCapabilities };
 function mentionsCamera(text: string, name: string) {
@@ -16,7 +16,11 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
     if (named.length) subject = named;
     else if (explicitCameraModel.test(sentence)) subject = [];
     const mode = /\b4k\s*(?:at\s*|up to\s*)?(\d{2,3})(?:\.\d+)?\s*(?:p|fps|frames?\s*(?:per|\/)\s*second)\b|\b4k\b[^.!?]{0,35}?\b(\d{2,3})(?:\.\d+)?\s*(?:fps|p)\b|\b(\d{2,3})(?:\.\d+)?\s*fps\b[^.!?]{0,25}?\b4k\b/gi;
-    for (const match of sentence.matchAll(mode)) {
+    const claims=[...sentence.matchAll(mode)].map(match=>({match,fps:Number(match[1]??match[2]??match[3])}));
+    // Format proof is still required when no frame rate is stated. Rate claims
+    // above are checked separately, so a format-only match cannot weaken them.
+    for(const match of sentence.matchAll(/\b(?:UHD|DCI)\s+4k\b|\b4k\s+(?:UHD|DCI)\b/gi))claims.push({match,fps:NaN});
+    for (const {match,fps} of claims) {
       // A negative/conditional recording claim is not a promise that a mode
       // can be supplied. Do not let a different clause excuse an assertion.
       // Use positions: repeated "4K120p" in the conditional and promise must
@@ -36,18 +40,24 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       const independentAssertion = clauseNamed.length > 0 || explicitCameraModel.test(clause) ||
         /\b(?:records?|shoots?|supports?|achieves?|can|does|is|has|offers?|tops\s*out|requires?)\b/i.test(clause.slice(0, match.index! - start));
       const polarityScope = start > 0 && sentence[start - 1] === "," && !independentAssertion ? sentence.slice(0, end) : clause;
-      if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check)\b|^\s*(?:none of|neither\b)/i.test(polarityScope)) continue;
-      const fps = Number(match[1] ?? match[2] ?? match[3]);
+      if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check)\b|^\s*(?:none of|neither\b)/i.test(polarityScope) || /\byou\s+(?:want|need|require|prefer)\b/i.test(polarityScope)) continue;
       const nominalFps = fps === 119 ? 120 : fps === 59 ? 60 : fps === 29 ? 30 : fps === 23 ? 24 : fps;
       const hasApsc = /\b(?:aps.c|super\s*35)\b/i.test(clause) &&
         !/\b(?:without|not|no|rather than|instead of)\b[^,;]{0,30}\b(?:aps.c|super\s*35)\b|\b(?:aps.c|super\s*35)(?:\s*\/\s*S35)?\s+(?:shooting|mode)\s+(?:is\s+)?off\b/i.test(clause);
       const fullWidth = /\b(?:uncropped|full.width|full.sensor.width|entire sensor|full.frame image area)\b|\b(?:no|without|zero)\s+(?:any\s+)?crop\b/i.test(clause);
-      const requirement: RecordingRequirement = { resolution: "uhd_4k", min_fps: nominalFps,
+      // A generic 4K claim can use either concrete reviewed 4K format.
+      // An explicit UHD/DCI claim needs that exact format's own mode proof.
+      const formats:RecordingResolution[]=[...clause.matchAll(/\b(UHD|DCI)\b/gi)].flatMap(label=>{
+        const before=clause.slice(0,label.index);
+        return /\b(?:not|without|rather than|instead of)\s*$/i.test(before) ? [] : [label[1].toUpperCase()==="UHD" ? "uhd_4k" : "dci_4k"];
+      });
+      const requirement: RecordingRequirement = { resolution: "4k", ...(Number.isFinite(nominalFps)?{min_fps:nominalFps}:{}),
         ...(hasApsc ? { capture_format: "aps_c" } : /\bfull.frame\b/i.test(clause) ? { capture_format: "full_frame" } : {}),
         ...(fullWidth ? { full_width: true } : {}) };
       const candidates = clauseNamed.length ? clauseNamed : subject;
       if (!candidates.length || !candidates.every(e => e.capabilities.recording_modes?.some(m =>
-        m.nominal_fps.includes(nominalFps) && matchesRecordingRequirement(m, requirement)))) failures.push(sentence.trim());
+        (Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps)) && matchesRecordingRequirement(m, requirement))
+        && formats.every(resolution=>e.capabilities.recording_modes?.some(m=>(Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps))&&matchesRecordingRequirement(m,{...requirement,resolution}))))) failures.push(sentence.trim());
     }
   }
   return [...new Set(failures)];

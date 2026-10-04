@@ -1,3 +1,4 @@
+import { RECORDING_REQUIREMENT_RESOLUTIONS, canonicalRecordingResolution } from "../../../convex/lib/camera_requirements";
 /**
  * Renter-bot Mastra tools (7) — thin wrappers over Convex queries.
  *
@@ -401,7 +402,7 @@ export const findOwnedAlternativesTool = createTool({
       sensor_format: z.enum(["full_frame", "super35", "aps_c", "small_sensor"]).optional(),
       internal_4k: z.boolean().optional(), built_in_nd: z.boolean().optional(),
       recording: z.object({
-        resolution: z.literal("uhd_4k"), min_fps: z.number().positive(),
+        resolution: z.enum([...RECORDING_REQUIREMENT_RESOLUTIONS,"4K"]).transform(canonicalRecordingResolution).describe("Use 4k/4K for generic 4K; uhd_4k or dci_4k only when that exact format is required. Do not infer a specific resolution format or frame rate from generic 4K."), min_fps: z.number().positive().optional().describe("Only set a minimum recording frame rate when the renter requires one."),
         capture_format: z.enum(["full_frame", "super35", "aps_c", "small_sensor"]).optional(),
         full_width: z.boolean().optional(), internal: z.boolean().optional(),
       }).optional(),
@@ -420,7 +421,10 @@ export const findOwnedAlternativesTool = createTool({
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {
-    return await convex().query(anyApi.renter_bot_tools.find_owned_alternatives, input);
+    const recording=input.camera_requirements?.recording;
+    return await convex().query(anyApi.renter_bot_tools.find_owned_alternatives, recording
+      ? {...input,camera_requirements:{...input.camera_requirements,recording:{...recording,resolution:canonicalRecordingResolution(recording.resolution)}}}
+      : input);
   },
 });
 

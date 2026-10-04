@@ -14,6 +14,16 @@ describe("hard camera requirements before stock ranking", () => {
     expect(meetsCameraRequirements(a7v, { recording: { ...requirement.recording, min_fps: 60, full_width: true } })).toBe(true);
     expect(meetsCameraRequirements(full, requirement)).toBe(false);
   });
+  it("keeps a generic 4K requirement separate from explicit UHD/DCI mode proof",()=>{
+    const uhd=mode(60,"full_frame",true),dci={...uhd,resolution:"dci_4k" as const};
+    expect(meetsCameraRequirements({...full,recording_modes:[dci]},{recording:{resolution:"dci_4k"}})).toBe(true);
+    expect(meetsCameraRequirements({...full,recording_modes:[uhd]},{recording:{resolution:"dci_4k"}})).toBe(false);
+    const requirement={recording:{resolution:"4k" as const,min_fps:60,capture_format:"full_frame" as const,full_width:true,internal:true}};
+    for(const recording_modes of [[uhd],[dci]])expect(meetsCameraRequirements({...full,recording_modes},requirement)).toBe(true);
+    expect(meetsCameraRequirements({...full,recording_modes:[uhd]},{recording:{...requirement.recording,resolution:"dci_4k"}})).toBe(false);
+    expect(meetsCameraRequirements({...full,recording_modes:[dci]},{recording:{...requirement.recording,resolution:"uhd_4k"}})).toBe(false);
+    for(const recording_modes of [[],[{...dci,capture_format:"aps_c" as const}],[{...dci,full_width:false}],[{...dci,internal:false}],[{...dci,nominal_fps:[30]}]])expect(meetsCameraRequirements({...full,recording_modes},requirement)).toBe(false);
+  });
   it("rejects stale or wrong-model mode proof independently of a valid body profile", () => {
     const spec = { item_name_canonical: "Body", description: "Reviewed", source: "manufacturer-verified", source_url: "https://manufacturer.example/body", verified_model: "model", verified_at: 2,
       camera_capabilities: { ...full, verified_model: "model", verified_at: 2, source_url: "https://manufacturer.example/body", recording_modes: [mode(120, "aps_c", false), { ...mode(60, "full_frame", true), verified_at: 2 }, { ...mode(120, "full_frame", true), verified_at: 2, verified_model: "other-model" }] } };
