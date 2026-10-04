@@ -1,3 +1,4 @@
+import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 /**
  * renter_bot_harness — runs renter_bot_fixtures through the REAL
  * generateDraft pipeline (same code path production uses) and scores each
@@ -44,7 +45,7 @@ export const pendingOwnerChecksForDraft=internalQuery({
     if(!conv?.ai_draft_for_message_id||!conv.ai_draft_context_key||conv.ai_draft_text!==a.draft_text)return null;
     const tasks=await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",a.thread_id)).collect();
     return tasks.filter(task=>task.account_slug===conv.account_slug&&task.source_context_key===conv.ai_draft_context_key&&
-      (task.last_requested_message_id??task.source_message_id)===conv.ai_draft_for_message_id).map(task=>task.check);
+      ownerCheckRequestMessageId(task)===conv.ai_draft_for_message_id).map(task=>task.check);
   }
 });
 

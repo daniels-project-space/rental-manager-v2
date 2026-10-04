@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { CameraRequirements } from "../../../convex/lib/camera_requirements";
 import type { LensRequirements } from "../../../convex/lib/lens_requirements";
+import { ownerCheckRequestMessageId } from "../../../convex/lib/owner_check_request";
 import { shortItemName } from "../../../convex/lib/item_display_name";
 function criteria(r:LensRequirements) {
   return [r.focus_mode==="autofocus"?"Autofocus":r.focus_mode==="manual_focus"?"Manual focus":null,
@@ -29,7 +30,7 @@ function cameraCriteria(r:CameraRequirements) {
 export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug?:string;labOnly?:boolean;onOpen:(thread:string)=>void}) {
   const {results,status,loadMore}=usePaginatedQuery(api.renter_bot_owner_checks.list,{account_slug:accountSlug,lab_only:labOnly},{initialNumItems:10});
   const handle=useMutation(api.renter_bot_owner_checks.handle);
-  const [editing,setEditing]=useState<Id<"renter_bot_owner_checks">|null>(null),[note,setNote]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
+  const [editing,setEditing]=useState<Id<"renter_bot_owner_checks">|null>(null),[editingRequest,setEditingRequest]=useState<string|null>(null),[note,setNote]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
   if(!results.length)return null;
   return <section aria-label="Owner checks" className="mb-4 rounded-xl border border-amber-400/25 bg-amber-400/[0.04] p-3">
     <div className="text-sm font-semibold text-amber-200">Owner checks · {results.length}{status!=="Exhausted"?"+":""}</div>
@@ -47,8 +48,8 @@ export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug
       <blockquote className="mt-2 text-[#a3aab8] line-clamp-3">“{task.source_question}”</blockquote>
       {(task.context_changed||task.newer_renter_message)&&<p className="mt-2 text-amber-200">The booking or renter message has changed. Review the current conversation before handling this check.</p>}
       <div className="mt-3 flex gap-2"><button className="rounded bg-white/10 px-3 py-1.5" onClick={()=>onOpen(task.thread_id)}>Open conversation</button>
-        <button className="rounded bg-white/10 px-3 py-1.5" onClick={()=>{setEditing(task._id);setNote("");setError(null);}}>Handled by me</button></div>
-      {editing===task._id&&<form className="mt-3 space-y-2" onSubmit={async e=>{e.preventDefault();setBusy(true);setError(null);try{await handle({id:task._id,note});setEditing(null);}catch(err){setError(err instanceof Error?err.message:"Could not save handling note");}finally{setBusy(false);}}}>
+        <button className="rounded bg-white/10 px-3 py-1.5" onClick={()=>{setEditing(task._id);setEditingRequest(ownerCheckRequestMessageId(task));setNote("");setError(null);}}>Handled by me</button></div>
+      {editing===task._id&&<form className="mt-3 space-y-2" onSubmit={async e=>{e.preventDefault();setBusy(true);setError(null);try{await handle({id:task._id,note,expected_request_message_id:editingRequest!});setEditing(null);}catch(err){setError(err instanceof Error?err.message:"Could not save handling note");}finally{setBusy(false);}}}>
         <label className="block">What did you confirm or how did you handle the question?<textarea aria-label="Handling note" required minLength={4} maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} className="mt-1 block w-full rounded bg-black/30 p-2"/></label>
         <p className="text-[#a3aab8]">This records your handling note. It does not send a message, change the rental or verify inventory specifications.</p>
         {error&&<p role="alert" className="text-red-300">{error}</p>}

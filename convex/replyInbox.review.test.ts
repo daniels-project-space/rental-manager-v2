@@ -511,7 +511,7 @@ describe("camera owner checks use Native facts and preserve human workflow",()=>
   const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
   await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"renter-2",sender:"renter",body_text:"Any update?",fetched_at:f.now+1,hygglo_sent_at:f.now+1});
   const args={...f.args,message_id:"renter-2",owner_checks:[f.check]};await invoke(setDraftReview,f.ctx,args);
-  (f.ctx as any).auth={getUserIdentity:async()=>({subject:"test-owner"})};await invoke(handleOwnerCheck,f.ctx,{id:tasks(f)[0]._id,note:"I handled this question myself."});
+  (f.ctx as any).auth={getUserIdentity:async()=>({subject:"test-owner"})};await invoke(handleOwnerCheck,f.ctx,{id:tasks(f)[0]._id,note:"I handled this question myself.",expected_request_message_id:tasks(f)[0].last_requested_message_id??tasks(f)[0].source_message_id});
   await invoke(setDraftReview,f.ctx,args);expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0].last_requested_message_id).toBe("renter-2");
   await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"renter-3",sender:"renter",body_text:"Please check again before a quote.",fetched_at:f.now+2,hygglo_sent_at:f.now+2});
   await invoke(setDraftReview,f.ctx,{...args,message_id:"renter-3"});expect(tasks(f)).toHaveLength(2);expect(tasks(f)[1].status).toBe("pending");
@@ -525,9 +525,26 @@ describe("camera owner checks use Native facts and preserve human workflow",()=>
  it("records handling without turning the note into specification proof or bot input",async()=>{
   const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
   const task=tasks(f)[0];(f.ctx as any).auth={getUserIdentity:async()=>({subject:"test-owner"})};
-  expect(await invoke(handleOwnerCheck,f.ctx,{id:task._id,note:"I handled this camera question myself."})).toMatchObject({ok:true});
+  expect(await invoke(handleOwnerCheck,f.ctx,{id:task._id,note:"I handled this camera question myself.",expected_request_message_id:task.last_requested_message_id??task.source_message_id})).toMatchObject({ok:true});
   const context=await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key);
   expect(context[0]).toMatchObject({status:"handled_by_owner",specification_result_verified:false,customer_input_required:false});
   expect(JSON.stringify(context)).not.toContain("handled this camera question");
+ });
+ it("handling old work cannot silently suppress a newer renter request",async()=>{
+  const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  const task=tasks(f)[0];(f.ctx as any).auth={getUserIdentity:async()=>({subject:"test-owner"})};
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"renter-new",sender:"renter",body_text:"Please check again before quoting.",fetched_at:f.now+1,hygglo_sent_at:f.now+1});
+  await invoke(handleOwnerCheck,f.ctx,{id:task._id,note:"I handled the original question.",expected_request_message_id:task.last_requested_message_id??task.source_message_id});
+  expect(tasks(f)[0].last_requested_message_id??tasks(f)[0].source_message_id).toBe("renter-1");
+  await invoke(setDraftReview,f.ctx,{...f.args,message_id:"renter-new",owner_checks:[f.check]});
+  expect(tasks(f)).toHaveLength(2);expect(tasks(f)[1].status).toBe("pending");
+ });
+ it("rejects closing a task refreshed after the owner opened its handling form",async()=>{
+  const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  const task=tasks(f)[0];(f.ctx as any).auth={getUserIdentity:async()=>({subject:"test-owner"})};
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"renter-new",sender:"renter",body_text:"Any update?",fetched_at:f.now+1,hygglo_sent_at:f.now+1});
+  await invoke(setDraftReview,f.ctx,{...f.args,message_id:"renter-new",owner_checks:[f.check]});
+  await expect(invoke(handleOwnerCheck,f.ctx,{id:task._id,note:"I reviewed the old question.",expected_request_message_id:"renter-1"})).rejects.toThrow("changed");
+  expect(tasks(f)[0].status).toBe("pending");
  });
 });

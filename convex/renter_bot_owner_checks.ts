@@ -1,3 +1,4 @@
+import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 import {assessCameraRequirements,hasCameraRequirements,verifiedCameraCapabilities} from "./lib/camera_requirements";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
@@ -25,7 +26,7 @@ export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:
  return tasks.map(task=>({task_id:task._id,status:task.status,kind:task.check.kind,product_id:task.check.kind==="listing_mapping"?task.check.product_id:null,
   requirements:task.check.kind==="listing_mapping"?null:task.check.requirements,lens_mount:task.check.kind==="listing_mapping"?null:task.check.lens_mount,
   start_date:task.check.start_date,end_date:task.check.end_date,quantity:task.check.quantity,candidate_names:task.candidate_names,
-  context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,last_requested_message_id:task.last_requested_message_id??task.source_message_id,
+  context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,last_requested_message_id:ownerCheckRequestMessageId(task),
   specification_result_verified:false,customer_input_required:false}));
 }
 /** Recompute capability absence from current Native inventory, independently
@@ -120,14 +121,14 @@ export const list=query({args:{account_slug:v.optional(v.string()),lab_only:v.op
   const recent=await recentThreadMessages(ctx,task.thread_id,12),latestRenter=recent.filter(m=>m.sender==="renter").at(-1);
   const physical=task.check.kind==="listing_mapping"&&inventory?await loadListingInventory(ctx,task.account_slug,task.check.product_id,task.check.quantity,{items:inventory}):null;
   return {...task,mapping_details:physical?{complete:physical.complete,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
-   context_changed:!conv||draftContextKey(booking,conv.inquiry_items,order)!==task.source_context_key,newer_renter_message:latestRenter?.message_id!==task.source_message_id,is_lab:task.thread_id.startsWith("__probe__")};
+   context_changed:!conv||draftContextKey(booking,conv.inquiry_items,order)!==task.source_context_key,newer_renter_message:latestRenter?.message_id!==ownerCheckRequestMessageId(task),is_lab:task.thread_id.startsWith("__probe__")};
  }))};
 }});
 /** Records human handling, never verifies specs, sends a message or edits a rental. */
-export const handle=mutation({args:{id:v.id("renter_bot_owner_checks"),note:v.string()},handler:async(ctx,a)=>{
+export const handle=mutation({args:{id:v.id("renter_bot_owner_checks"),note:v.string(),expected_request_message_id:v.string()},handler:async(ctx,a)=>{
  const note=a.note.trim();if(note.length<4||note.length>2000)throw new Error("Add a brief note about how you handled this check");
  const task=await ctx.db.get(a.id);if(!task)throw new Error("Check not found");if(task.status!=="pending")return {ok:true,already_handled:true};
+ if(ownerCheckRequestMessageId(task)!==a.expected_request_message_id)throw new Error("This check changed while you were reviewing it. Reopen the handling form and review the current request.");
  const identity=await ctx.auth.getUserIdentity();
- const latestRenter=(await recentThreadMessages(ctx,task.thread_id,12)).filter(message=>message.sender==="renter").at(-1);
- await ctx.db.patch(task._id,{last_requested_message_id:latestRenter?.message_id??task.last_requested_message_id??task.source_message_id,status:"handled_by_owner",handled_at:Date.now(),handled_by_auth_subject:identity?.subject,handling_note:note});return {ok:true,already_handled:false};
+ await ctx.db.patch(task._id,{status:"handled_by_owner",handled_at:Date.now(),handled_by_auth_subject:identity?.subject,handling_note:note});return {ok:true,already_handled:false};
 }});
