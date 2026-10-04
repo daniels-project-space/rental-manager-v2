@@ -6,6 +6,26 @@ export type ItemTechnicalEvidence = {
   lens_capabilities?: LensCapabilities | null;
 };
 
+type RequestedEquipment = {
+  inventory_components?: Array<{ name: string | null; kind?: string | null; owned?: boolean | null }>;
+};
+
+/** Physical rental contents establish supplied bodies, not which body the
+ * renter is using. In particular, a lens mount is never a camera identity. */
+export function equipmentUsageContext(items: RequestedEquipment[]) {
+  const supplied_camera_bodies = [...new Set(items.flatMap(item =>
+    (item.inventory_components ?? []).filter(component =>
+      component.owned === true && ["camera", "camera_body"].includes(component.kind ?? "") && component.name?.trim(),
+    ).map(component => component.name!),
+  ))];
+  return {
+    supplied_camera_bodies,
+    source: "native_rental_components" as const,
+    renter_camera_body: null,
+    guidance: "These are recorded rental contents, not proof of the renter's chosen camera. Establish the body from the renter's explicit statement before body-specific setup advice; a lens brand or mount does not identify it. Answer verified lens facts immediately. When the body is unspecified, give general manual-focus advice and ask its model only for camera-specific controls. With several supplied bodies, do not choose one implicitly.",
+  };
+}
+
 /** Preserve the same reviewed evidence in requested-item and recommendation
  * prompts. Names, mount, advertising and old messages are lookup context,
  * not a substitute for a missing technical property. */
@@ -20,6 +40,6 @@ export function itemTechnicalContext(item: ItemTechnicalEvidence): string {
   if (lens) {
     sections.push(`Reviewed lens capabilities: ${JSON.stringify(lens)}. Omitted properties are unknown.`);
   }
-  sections.push("Use this evidence for technical claims. A listing name, brand, mount or prior reply does not establish an unrecorded property.");
+  sections.push("Use this evidence for technical claims. A listing name, brand, mount or prior reply does not establish an unrecorded property. Focus mode does not establish electronic contacts, EXIF transmission or camera menu settings; those require their own reviewed evidence. Body-specific controls also require the actual body model from the renter, not the lens mount.");
   return sections.join(" ");
 }

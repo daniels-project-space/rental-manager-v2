@@ -96,7 +96,7 @@ export const getRenterContextTool = createTool({
 export const getListingContextTool = createTool({
   id: "get_listing_context",
   description:
-    "Fetch the listing/items context for a thread. Returns items, dates, prices, recorded kit contents and owner_checks for unresolved selected kit mappings. Those checks become persistent owner tasks when the draft or review is saved; no extra tool call or renter input is needed for an internal mapping gap. whats_included and kit_contents contain recorded inventory contents per listing, never advertising prose. kit_completeness is partial or unknown: an absent accessory is unverified, not excluded; mapping_complete refers only to stock mapping.",
+    "Fetch the listing/items context for a thread. Returns items, dates, prices, recorded kit contents, equipment_usage and owner_checks for unresolved selected kit mappings. equipment_usage separates supplied camera bodies from the renter's unknown chosen body; lens mount never identifies their camera. Those checks become persistent owner tasks when the draft or review is saved; no extra tool call or renter input is needed for an internal mapping gap. whats_included and kit_contents contain recorded inventory contents per listing, never advertising prose. kit_completeness is partial or unknown: an absent accessory is unverified, not excluded; mapping_complete refers only to stock mapping.",
   inputSchema: z.object({
     thread_id: z.string(),
   }),
