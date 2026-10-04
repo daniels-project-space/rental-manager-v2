@@ -867,9 +867,13 @@ const ASSERTS_AVAIL_RE =
     }
   }
 
+  // A below-value prospective quote explicitly permits a shoot question when
+  // no relevant extra is established. Preserve that fallback across both checks.
+  const commercialShootQuestion = opts.commercialContext?.status === "below" &&
+    QUALIFY_PATTERNS.some(pattern=>pattern.test(text));
   // 11. QUALIFY QUESTION SPAM (non-greeting) — STRIP with safety
   if (
-    /\b(price|cost|how much|£|deliver|pickup|return|time|slot|available|cancel|refund|discount|cheaper|expensive|address|where|when)\b/i.test(
+    !commercialShootQuestion && /\b(price|cost|how much|£|deliver|pickup|return|time|slot|available|cancel|refund|discount|cheaper|expensive|address|where|when)\b/i.test(
       message,
     )
   ) {
@@ -1351,7 +1355,7 @@ const ASSERTS_AVAIL_RE =
     const hasUpsell =
       /\b(also|add|pair|bundle|minimum|booking total|complement|together with|suggest|recommend)\b/i.test(
         text,
-      );
+      ) || commercialShootQuestion;
     if (accepts && !hasUpsell)
       push("LOW_VALUE_BLOCK", "Offers a prospective low-value booking without a relevant optional add-on", "flagged");
   }

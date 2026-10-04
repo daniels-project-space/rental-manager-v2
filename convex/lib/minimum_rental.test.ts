@@ -80,6 +80,15 @@ describe("prospective minimum-value context",()=>{
   expect(guardDraft("Minimum focus distance is 30cm, and the kit is £60.",opts).flags.some(f=>f.type==="MINIMUM_POLICY_DISCLOSURE")).toBe(false);
   expect(guardDraft("It is available for those dates.",{...opts,commercialContext:context([price],request,"CONFIRMED_UPCOMING")}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
  });
+ it("keeps the relevant shoot-question fallback required by the Native commercial guidance",()=>{
+  const question="It is available for those dates. What kind of project are you shooting?";
+  const opts={history:[],lastRenterMessage:"Is it available and what does it cost?",hasItemGrounding:true,commercialContext:context([{...price,total_gbp:30}])};
+  const reviewed=guardDraft(question,opts);
+  expect(reviewed.text).toContain("What kind of project");
+  expect(reviewed.flags.filter(f=>["LOW_VALUE_BLOCK","QUALIFY_QUESTION_SPAM"].includes(f.type))).toEqual([]);
+  expect(guardDraft("It is available. Do you need anything else?",opts).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
+  expect(guardDraft(question,{...opts,commercialContext:context([price],request,"IN_USE")}).flags.some(f=>f.type==="QUALIFY_QUESTION_SPAM")).toBe(true);
+ });
  it("uses authoritative completion for receipt acknowledgements but never for invented inspection",()=>{
   const opts={history:[],lastRenterMessage:"Everything returned, thanks."};
   const acknowledgement="Thanks for bringing everything back!";

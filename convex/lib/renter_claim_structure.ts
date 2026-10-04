@@ -41,7 +41,10 @@ export function itemReferenceLabel(label:string,category:"camera"|"lens") {
   return category==="camera" ? reference
     .replace(/^(?:(?:full[ -]frame|\d+k|mirrorless|cinema)\s+)+/i,"")
     .replace(/(?:\s+(?:camera\s+body|body|camera))+$/i,"").trim()
-    : reference.replace(/(?:\s+(?:wide[ -]angle|autofocus|manual[ -]focus|zoom|lens))+$/i,"").trim();
+    // "E mount" and "E-mount" name the same lens mount as "E".
+    // Keep the mount code: E, RF and L must never borrow one another's proof.
+    : reference.replace(/\b(ef|rf|e|l|pl|mft|m43)[ -]+mount\b/gi,"$1")
+      .replace(/(?:\s+(?:wide[ -]angle|autofocus|manual[ -]focus|zoom|lens))+$/i,"").trim();
 }
 
 /** Explicit list syntax anchors the following summary to its immediate rows.

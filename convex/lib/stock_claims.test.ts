@@ -14,6 +14,13 @@ describe("named Native stock in an empty inquiry",()=>{
   expect(review(`The ${lens.item} is available for 22 to 23 October.`)).toEqual([]);
   expect(review("Sony FX3 is available for 22 to 23 October.",[{...lens,item:"Sony FX3",kind:"camera"}])).toEqual([]);
  });
+ it("resolves mount notation in the actual returning-renter quote without borrowing a different mount",()=>{
+  const text="The TTArtisan 11mm f/2.8 Sony E mount lens is available for 22 October 2026.";
+  const evidence=[{...lens,end_date:lens.start_date}];
+  expect(review(text,evidence)).toEqual([]);
+  expect(review(text.replace("E mount","E-mount"),evidence)).toEqual([]);
+  for(const wrong of [text.replace("E mount","RF mount"),text.replace("11mm","12mm"),text.replace("f/2.8","f/1.8"),text.replace("22 October","23 October"),text.replace("The TTArtisan","Two TTArtisan")])expect(review(wrong,evidence)).not.toEqual([]);
+ });
  it("keeps exact quantities, dates, model tokens and included components",()=>{
   for(const text of [sentence.replace("22 to 23","24 to 25"),sentence.replace("The TTArtisan","Two TTArtisan"),sentence.replace("11mm","12mm"),sentence.replace("f/2.8","f/1.8"),sentence.replace("TTArtisan","Sony"),sentence.replace("lens from","lens with Sony FX3 from")])expect(review(text)).not.toEqual([]);
   expect(review(sentence.replace("fisheye lens","fisheye (RF) lens"))).not.toEqual([]);
