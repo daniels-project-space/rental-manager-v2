@@ -270,15 +270,17 @@ export const getNegotiationStanceTool = createTool({
 export const getTemplateTool = createTool({
   id: "get_template",
   description:
-    "Fetch a verbatim template's text by name. Use when you've identified a template via search_knowledge (e.g. 'DB Cinema Welcome Text', 'DB Cinema Arrival Reminder', 'DB Cinema Price Match'). Returns the exact text to quote in the draft.",
+    "Fetch a verbatim template's text by name. Use when you've identified a template via search_knowledge (e.g. 'DB Cinema Welcome Text', 'DB Cinema Arrival Reminder', 'DB Cinema Price Match'). Returns only an exact template identity for the Native thread account; a missing or ambiguous template returns found:false. Use current facts and negotiation strategy rather than substituting another template.",
   inputSchema: z.object({
     name: z.string(),
+    thread_id: z.string(),
     account_slug: z.string().optional(),
   }),
   outputSchema: z.unknown(),
-  execute: async ({ name, account_slug }) => {
+  execute: async ({ name, thread_id, account_slug }) => {
     return await convex().query(anyApi.knowledge.getTemplate, {
       name,
+      threadId: thread_id,
       accountSlug: account_slug,
     });
   },

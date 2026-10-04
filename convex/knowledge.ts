@@ -13,6 +13,7 @@
 import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { rankKnowledge } from "./lib/knowledge_search";
+import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 
 export const search = query({
   args: {
@@ -46,54 +47,41 @@ export const search = query({
   },
 });
 
-/**
- * Verbatim template fetch by title (or tag match). Used by `get_template`
- * tool — agent identifies the template name via search_knowledge first,
- * then this returns the exact text for inclusion.
- */
+/** Exact template identity; discovery belongs to search_knowledge. */
 export const getTemplate = query({
   args: {
     name: v.string(),
-    accountSlug: v.optional(v.string()),   // "dbcinema" | "leo" — filters templates
+    accountSlug: v.optional(v.string()),
+    threadId: v.optional(v.string()),
   },
-  handler: async (ctx, { name, accountSlug }) => {
-    const rows = await ctx.db
-      .query("memories")
-      .withIndex("by_scope", (q) => q.eq("scope", "template"))
-      .collect();
-    const wanted = name.toLowerCase();
-    const account = accountSlug?.toLowerCase();
-    let best: (typeof rows)[number] | null = null;
-    let bestScore = 0;
-    for (const r of rows) {
-      const title = (r.title ?? "").toLowerCase();
-      const tagStr = (r.tags ?? []).join(" ").toLowerCase();
-      const hay = `${title} ${tagStr}`;
-      // Skip mismatched account when an account is provided AND the
-      // template tags name an account.
-      if (account) {
-        const accountTagPresent =
-          tagStr.includes("dbcinema") || tagStr.includes("leo");
-        if (accountTagPresent && !tagStr.includes(account)) continue;
-      }
-      let score = 0;
-      for (const t of wanted.split(/\s+/).filter((s) => s.length >= 3)) {
-        if (hay.includes(t)) score += 1;
-      }
-      if (score > bestScore) {
-        best = r;
-        bestScore = score;
-      }
+  handler: async (ctx, { name, accountSlug, threadId }) => {
+    const missing = () => ({ found: false as const, name, content: null, lastModified: null });
+    let account = accountSlug?.trim().toLowerCase();
+    if (threadId !== undefined) {
+      const conversation = await ctx.db.query("conversations")
+        .withIndex("by_thread", q => q.eq("thread_id", threadId)).first();
+      const nativeAccount = conversation?.account_slug?.trim().toLowerCase();
+      if (!nativeAccount || (account !== undefined && account !== nativeAccount)) return missing();
+      account = nativeAccount;
     }
-    if (!best) {
-      return { found: false as const, name, content: null, lastModified: null };
-    }
-    return {
-      found: true as const,
-      name: best.title ?? "(untitled)",
-      content: best.content,
-      lastModified: best.updated_at ?? best._creationTime,
-    };
+    if (account !== undefined && !(ACCOUNT_SLUGS as readonly string[]).includes(account)) return missing();
+    const identity = (value: string) => value.normalize("NFC").trim()
+      .replace(/^template:\s*/i, "").replace(/\s+/g, " ").toLowerCase();
+    const wanted = identity(name);
+    if (!wanted) return missing();
+    const rows = await ctx.db.query("memories")
+      .withIndex("by_scope", q => q.eq("scope", "template")).collect();
+    const matches = rows.filter(row => {
+      if (identity(row.title ?? "") !== wanted || !row.content.trim()) return false;
+      const accountTags = (row.tags ?? []).map(tag => tag.trim().toLowerCase())
+        .filter(tag => (ACCOUNT_SLUGS as readonly string[]).includes(tag));
+      return account === undefined || accountTags.length === 0 || accountTags.includes(account);
+    });
+    // Conflicting exact records need review, never arbitrary row-order selection.
+    if (matches.length !== 1) return missing();
+    const match = matches[0];
+    return { found: true as const, name: match.title!, content: match.content,
+      lastModified: match.updated_at ?? match._creationTime };
   },
 });
 

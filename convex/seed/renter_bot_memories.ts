@@ -444,7 +444,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: DB Cinema Price Match",
     content:
-      "I appreciate you sharing that — our prices reflect professional maintenance and support, plus full kit (batteries, cards, accessories) included. Let me see what I can do on my end.",
+      "Thanks for sharing that. What budget are you aiming for? I can look at suitable options for your shoot.",
     tags: ["template", "price-match", "negotiation", "dbcinema"],
     priority: 10,
   },

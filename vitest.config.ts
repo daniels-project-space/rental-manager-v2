@@ -119,6 +119,7 @@ export default defineConfig({
       "convex/lib/shadow_compare.test.ts",
       "src/lib/harvest-tool-prices.test.ts",
       "convex/lib/knowledge_search.test.ts",
+      "convex/knowledge.template.test.ts",
       "convex/lib/channel_response_rates.test.ts",
       "convex/lib/poller_window.test.ts",
       "convex/lib/response_rate_alerts.test.ts",
