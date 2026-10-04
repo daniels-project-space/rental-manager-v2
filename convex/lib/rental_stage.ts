@@ -6,6 +6,14 @@ export type RentalStage = (typeof RENTAL_STAGES)[number];
 export function isClosedRentalStage(stage:string|null|undefined) {
   return stage==="COMPLETED" || stage==="CANCELLED" || stage==="VERIFICATION_FAILED";
 }
+/** Historical completion is not permission for a new handover/booking. */
+export function rentalReplyPermissions(stage:string) {
+ const current=stage.toUpperCase();
+ const confirmed=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE","CONFIRMED","ONGOING","UPCOMING","ACTIVE"].includes(current);
+ return {can_confirm_booking:confirmed,can_share_pickup_address:confirmed,
+  can_acknowledge_owner_acceptance:confirmed||["AWAITING_PAYMENT","AWAITING_VERIFICATION"].includes(current)};
+}
+
 export function rentalStage(row: {
   status?: string | null;
   order_step?: string | null;
@@ -32,7 +40,7 @@ export function rentalStage(row: {
       : "This order is no longer going ahead. Do not arrange collection or claim it is booked. Help with a new request if they want to try again; any disputed cancellation needs human review.";
   } else if (status === "completed" || step === "REVIEWED") {
     stage = "COMPLETED";
-    guidance = "The return is complete. Answer after-rental questions, feedback or a new booking request. Do not arrange collection for this finished rental.";
+    guidance = "The return is complete. Answer after-rental questions, feedback or a new booking request. Do not arrange collection for this finished rental. Its historical confirmation does not confirm a new hire or permit new pickup details; a new request needs its own platform confirmation.";
   } else if (row.awaiting_owner_action === true || step === "REQUEST") {
     stage = "AWAITING_OWNER_APPROVAL";
     guidance = "The request awaits the owner's acceptance. Do not tell them to pay or verify yet, and do not claim approval happened. Owner acceptance alone does not establish a confirmed booking: the platform still determines payment and verification completion. Do not promise 'once accepted, your booking will be confirmed' or promise the exact pickup address immediately on acceptance. Share the address only after the platform reports confirmation. Prepare a helpful reply for human review.";
@@ -53,5 +61,11 @@ export function rentalStage(row: {
     guidance = "The order exists but its next required action is not verified. Do not invent a payment, approval or verification requirement. Answer from known facts and route consequential uncertainty to the owner.";
   }
   const confirmed = ["confirmed", "ongoing", "completed"].includes(status ?? "") && !row?.is_obsolete && row?.awaiting_owner_action !== true && !["CANCELED", "VERIFICATION_FAILED", "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"].includes(step ?? "");
-  return { stage, guidance, booking_confirmed: confirmed, can_share_pickup_address: confirmed && !["CANCELLED", "VERIFICATION_FAILED"].includes(stage) };
+  const permissions=rentalReplyPermissions(stage);
+  return { stage, guidance, booking_confirmed: confirmed,
+    can_confirm_booking:confirmed&&permissions.can_confirm_booking,
+    can_share_pickup_address:confirmed&&permissions.can_share_pickup_address,
+    can_acknowledge_owner_acceptance:permissions.can_acknowledge_owner_acceptance&&
+      (confirmed||["AWAITING_PAYMENT","AWAITING_VERIFICATION"].includes(stage)) };
+
 }

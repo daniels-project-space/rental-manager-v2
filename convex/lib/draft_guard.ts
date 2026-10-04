@@ -1,3 +1,5 @@
+import {rentalReplyPermissions} from "./rental_stage";
+import {assertsOutsideConditional,claimsCurrentOwnerApproval,claimsBookingConfirmation,hasPickupDisclosure} from "./booking_reply_claims";
 import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedCatalogueReadinessClaims, type CatalogueReadinessEvidence } from "./catalogue_readiness";
 import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
@@ -103,6 +105,9 @@ export interface GuardOpts {
   /** True once the owner has actually approved the booking — so an accurate
    *  "I've approved your request" is not mis-flagged as a false action claim. */
   ownerApproved?: boolean;
+  /** Native configured pickup details, never model-provided strings. */
+  pickupPrivacySources?: string[];
+  rentalPermissions?: ReturnType<typeof rentalReplyPermissions>;
   /** Booked items we can't fulfil (marketing/SEO listing, not owned). The draft
    *  must not confirm them. */
   unfulfillableItems?: string[];
@@ -179,6 +184,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   KIT_HALLUCINATION: "critical",
   FALSE_ACTION_CLAIM: "critical",
   PREMATURE_CONFIRMATION: "critical",
+  PICKUP_DETAILS_EARLY: "critical",
   MARKETING_ITEM_AVAILABLE: "critical",
   EQUIPMENT_SUBSTITUTION: "critical",
   FABRICATED_QUOTE: "critical",
@@ -256,23 +262,9 @@ function parseTimeToMinutes(timeStr: string): number | null {
 
 // ── Main entry ────────────────────────────────────────────────────
 
-/** Mentions of acceptance are not assertions that it happened. Evaluate each
- * sentence so a valid conditional cannot excuse a separate false assertion. */
-function claimsCurrentOwnerApproval(text: string): boolean {
-  const assertion = /\byour\s+(?:already\s+)?booked\s+(?:kit|rental|booking|order|camera|lens|gear)\b|\byour\b[^.!?]{0,90}\b(?:is|has been)\s+(?:(?:now|already|fully)\s+)*booked\b(?!\s*(?:[-–—]\s*)?out\b|\s+by\s+(?:another|someone else))|\b(?:it|that)(?: is|\'s|’s)\s+booked\s+for\s+you\b|\b(?:(?:(?:your|the|this)\s+)?(?:booking|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:approved|accepted|confirmed)\b|\bI(?:'ve|’ve| have)\s+(?:just\s+)?(?:approved|accepted|confirmed)\b|\b(?:accepted|approved|confirmed)\s+(?:your|the)\s+(?:booking|request|order)\b/i;
-  return assertsOutsideConditional(text, assertion);
-}
-
-function assertsOutsideConditional(text: string, assertion: RegExp): boolean {
-  return text.split(/(?<=[.!?])\s+|\n+/).some(sentence => {
-    const match = assertion.exec(sentence);
-    if (!match) return false;
-    return !/\b(?:once|when|after|if|until|as soon as|the moment|the second)\b[^,;:]{0,100}$/i.test(sentence.slice(0, match.index));
-  });
-}
-
 export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   const flags: DraftFlag[] = [];
+  const permissions=opts.rentalPermissions??(opts.stage?rentalReplyPermissions(opts.stage):undefined);
   let text = draft;
   const push = (type: string, detail: string, action: FlagAction) =>
     flags.push({ type, detail, severity: sev(type), action });
@@ -1177,7 +1169,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 20. VAGUE CONFIRMED LOCATION — FLAG (don't inject a possibly-stale address)
-  const postBooking = ["confirmed", "confirmed_upcoming", "collection_due", "in_use", "return_overdue", "completed", "booked", "ongoing", "upcoming", "active"];
+  const postBooking = ["confirmed", "confirmed_upcoming", "collection_due", "in_use", "return_overdue", "booked", "ongoing", "upcoming", "active"];
   if (stage && postBooking.includes(stage)) {
     const vague =
       (account === "leo" &&
@@ -1210,9 +1202,11 @@ const ASSERTS_AVAIL_RE =
       );
   }
 
-  if (["inquiry", "unconfirmed", "cancelled", "verification_failed", "awaiting_verification", "awaiting_payment", "awaiting_owner_approval"].includes(stage ?? "") &&
-    assertsOutsideConditional(text, /\b(?:(?:(?:your|the|this)\s+)?(?:booking|rental|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:confirmed|booked|secured|locked in|all set)\b|\byou(?:'re|’re| are)\s+(?:all\s+)?(?:booked|confirmed|set|good to go|locked in)\b|\b(?:confirmed|booked)\s+(?:your|the|this)\s+(?:booking|request|order|rental)\b/i)) {
+  if (permissions && !permissions.can_confirm_booking && claimsBookingConfirmation(text)) {
     push("PREMATURE_CONFIRMATION", "Claims a confirmed booking without a current confirmed platform order", "flagged");
+  }
+  if (permissions && !permissions.can_share_pickup_address && hasPickupDisclosure(text,opts.pickupPrivacySources)) {
+    push("PICKUP_DETAILS_EARLY", "Shares pickup details without a current confirmed platform order", "flagged");
   }
 
   // Future promises also have to respect the remaining platform steps.
@@ -1330,7 +1324,7 @@ const ASSERTS_AVAIL_RE =
   // this false positive was tripping the hard-escalation backstop on an
   // otherwise-correct draft, forcing an unnecessary escalation.
   else if (
-    !opts.ownerApproved && claimsCurrentOwnerApproval(text)
+    (!opts.ownerApproved || !!permissions && !permissions.can_acknowledge_owner_acceptance) && claimsCurrentOwnerApproval(text)
   )
     push(
       "FALSE_ACTION_CLAIM",

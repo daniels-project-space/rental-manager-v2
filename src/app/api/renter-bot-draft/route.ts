@@ -607,7 +607,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
             : `date ${lc.start_date} (single day)`,
         );
       if (lc.gross_paid_gbp != null) req.push(`total £${lc.gross_paid_gbp}`);
-      req.push(bookingConfirmed ? "status: CONFIRMED" : "status: NOT confirmed (pending)");
+      req.push(`status: ${lc.rental_stage?.stage ?? (bookingConfirmed ? "CONFIRMED" : "UNCONFIRMED")}; current booking confirmed: ${bookingConfirmed}`);
       groundTruth += `REQUESTED (ground truth — do NOT contradict): ${req.join(", ")}.\n`;
 
       // ALREADY-GATHERED CONTEXT.
@@ -1052,7 +1052,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     if (hub?.pickup_address) {
       groundTruth += bookingConfirmed
         ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
-        : `PICKUP LOCATION for this account is "${hub.pickup_address}" — do NOT reveal it yet (booking not confirmed). Say you'll send the exact pickup address the moment the booking is confirmed. NEVER give a different or made-up address.\n`;
+        : `PICKUP LOCATION: withhold the exact account address until there is a current confirmed booking. Historical confirmation of a finished rental does not confirm a new request. Say you'll send the exact pickup address once the new booking is confirmed.\n`;
     } else if (!bookingConfirmed) {
       // No pickup_address configured for this account (dbcinema, as of
       // 2026-08-18) — but the withhold instruction must STILL be injected.

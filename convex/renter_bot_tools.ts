@@ -441,7 +441,7 @@ export const get_listing_context = query({
       status: reservation?.status ?? null,
       rental_stage: rentalStage(reservation, londonToday()),
       // A booking is only CONFIRMED (safe to call "booked") in these states.
-      is_confirmed: rentalStage(reservation, londonToday()).booking_confirmed,
+      is_confirmed: rentalStage(reservation, londonToday()).can_confirm_booking,
       awaiting_owner_action: (reservation as { awaiting_owner_action?: boolean } | null)?.awaiting_owner_action ?? null,
     };
   },

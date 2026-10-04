@@ -71,6 +71,7 @@ export default defineConfig({
       "convex/lib/item_display_name.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",
       "convex/lib/rental_stage.test.ts",
+      "convex/lib/booking_reply_claims.test.ts",
       "convex/lib/renter_booking_consent.test.ts",
       "convex/lib/renter_identity.test.ts",
       "src/lib/renter-tool-evidence.test.ts",

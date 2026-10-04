@@ -1,3 +1,4 @@
+import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources} from "./lib/booking_reply_claims";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
 import { performJointStockCheck } from "./renter_bot_tools";
@@ -1128,6 +1129,8 @@ export const getThreadContext = internalQuery({
       slug = acc?.slug;
     }
 
+    if (!accountId && slug)accountId=(await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",slug!)).first())?._id;
+
     // Per-account persona / voice / business rules for grounded drafting.
     let persona_prompt: string | undefined;
     let discount_codes: unknown;
@@ -1650,6 +1653,7 @@ export const getThreadContext = internalQuery({
       playbook_intents: playbook.intents,
       learned_lessons,
       pickup_windows: pickupHours ?? null,
+      pickup_privacy_sources:pickupPrivacySources(profile),
       persona_prompt: persona_prompt ?? null,
       discount_codes: discount_codes ?? null,
       business_rules: business_rules ?? null,
@@ -2140,6 +2144,15 @@ export const recheckCopiedDraftStock = internalQuery({
       context_key:draftContextKey(booking,conv?.inquiry_items,await getLabOrder(ctx,thread_id))});
     if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
       return {ok:false,reason:"stale_draft"};
+    const currentStage=rentalStage(booking,londonToday());
+    const permissions=currentStage;
+    if(!permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
+      !permissions.can_acknowledge_owner_acceptance && claimsCurrentOwnerApproval(text))return {ok:false,reason:"booking_state_unverified"};
+    if(!currentStage.can_share_pickup_address) {
+      const accountId=booking?.account_id??conv?.account_id??(await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",account_slug)).first())?._id;
+      const profile=accountId?await ctx.db.query("account_profiles").withIndex("by_account",q=>q.eq("account_id",accountId)).first():null;
+      if(hasPickupDisclosure(text,pickupPrivacySources(profile)))return {ok:false,reason:"pickup_details_unverified"};
+    }
     const evidence=conv?.ai_draft_evidence;
     const request=stockRequestForInquiryQuote(evidence?.stock_request??{items:[]},evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
     // Human wording edits cannot borrow technical facts from a previous draft.

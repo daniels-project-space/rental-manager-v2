@@ -900,6 +900,8 @@ export const generateDraft = action({
       account: c.account_slug ?? undefined,
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
+      pickupPrivacySources:c.pickup_privacy_sources,
+      rentalPermissions:c.rental_stage,
       firstPerson: c.account_slug === "leo" || c.account_slug === "diogo",
       // Genuinely approved ONLY when it's no longer awaiting my approve/decline.
       // (order_step=APPROVED + awaiting_owner_action=true is still a PENDING
@@ -1147,6 +1149,10 @@ export const sendRenterReply = action({
         const stock = await ctx.runQuery(internal.replyInbox.recheckCopiedDraftStock,{thread_id,account_slug,text:body,draft_approval:approvalContext.draft_approval});
         if (!stock.ok) return {status:"failed",reason:stock.reason,error:stock.reason === "stale_draft"
           ? "This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."
+          : stock.reason === "booking_state_unverified"
+          ? "This reply claims a booking state that the current platform order does not establish. Review the new enquiry separately from any previous rental."
+          : stock.reason === "pickup_details_unverified"
+          ? "Pickup details can only be shared for a current confirmed booking. Keep the new enquiry's address withheld until confirmation."
           : stock.reason === "price_unverified"
           ? "The quoted price no longer matches the current listing rates. Generate a fresh draft before sending this quote."
           : stock.reason === "technical_claims_unverified"
