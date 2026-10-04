@@ -5,7 +5,7 @@ import { offeringConsentIdentity } from "./lib/offering_consent_identity";
 import { acceptsRemoval } from "./lib/renter_removal_acceptance";
 import { acceptsAddition } from "./lib/renter_addition_acceptance";
 import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventoryItem } from "./lib/renter_booking_consent";
-import { friendBasketReply, verificationFailureReply } from "./lib/verification_failure";
+import { friendBasketReply, verificationFailureReply, requestsFriendBasketRestore, friendReferralCode } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { internalMutation, mutation, query, internalMutationOf, internalQueryOf } from "./owner_functions";
@@ -853,17 +853,22 @@ export const simulateVerificationFailure = mutation({
 
 /** Explicit basket handoff. No inherited verification, payment or approval. */
 export const redeemReferral = mutation({
-  args: { thread_id: v.string(), code: v.string(), preview_only:v.optional(v.boolean()) },
+  args: { thread_id: v.string(), code: v.string(), preview_only:v.optional(v.boolean()), request_message_id:v.optional(v.string()),
+    start_date:v.optional(v.string()),end_date:v.optional(v.string()),items:v.optional(v.array(v.object({product_id:v.number(),qty:v.number()}))) },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
     const referral = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code", q => q.eq("code", a.code)).unique();
     if (!referral || referral.expires_at <= Date.now()) return { ok: false, error: "Referral is invalid or expired" };
     if (referral.source_thread_id === a.thread_id) return { ok: false, error: "A friend needs their own new booking" };
     if (referral.redeemed_by) return referral.redeemed_by === a.thread_id
-      ? { ok: true, already_applied: true, message: "This referral is already linked to your request. No duplicate items were added and your current basket has not been changed. Your own booking still needs the platform checks." } : { ok: false, error: "Referral has already been used" };
-    const latest=(await recentThreadMessages(ctx,a.thread_id,1))[0];
-    if(!a.preview_only && (!latest || latest.sender!=="renter" || renterRequestsReadOnly(latest.body_text,"add_item")))
+      ? { ok: true, already_applied: true, action_performed:false, message: "This referral is already linked to your request. No duplicate items were added and your current basket has not been changed. Use your current basket and rental stage for the next step." } : { ok: false, error: "Referral has already been used" };
+    const messages=await recentThreadMessages(ctx,a.thread_id,12),latest=messages.at(-1);
+    if(a.request_message_id!=null && (!a.request_message_id || latest?.sender!=="renter" || latest.message_id!==a.request_message_id))
+      return {ok:false,action_performed:false,error:"Use the current renter message. No basket was changed",reason:"stale_inbound"};
+    if(!a.preview_only && (!latest || latest.sender!=="renter" || renterRequestsReadOnly(latest.body_text,"add_item") || !requestsFriendBasketRestore(latest.body_text)))
       return {ok:false,action_performed:false,error:"Restoring this basket needs a current renter request that allows basket changes. Use a read-only referral preview otherwise",reason:"referral_restore_not_authorized"};
+    if(friendReferralCode(messages).code!==a.code)
+      return {ok:false,action_performed:false,error:"Use the exact basket reference supplied by this renter. No basket was changed",reason:"referral_not_in_current_context"};
     const target = await getLabOrder(ctx, a.thread_id);
     const source = await getLabOrder(ctx, referral.source_thread_id);
     const booking = await getBotBooking(ctx, referral.source_thread_id);
@@ -874,16 +879,24 @@ export const redeemReferral = mutation({
     // The referral identifies gear, not the friend's trip dates. An existing
     // destination date request takes precedence as a whole; never blend a
     // partial request with the source or silently overwrite it.
-    const ownDates=target.start_date!=null || target.end_date!=null;
-    const start=ownDates?target.start_date:source.start_date;
-    const end=ownDates?target.end_date:source.end_date;
-    if (!start || !end || !validIsoDate(start) || !validIsoDate(end) || start>end || start<londonToday())
+    const suppliedDates=a.start_date!=null || a.end_date!=null;
+    const ownDates=suppliedDates || target.start_date!=null || target.end_date!=null;
+    const start=suppliedDates?a.start_date:ownDates?target.start_date:source.start_date;
+    const end=suppliedDates?a.end_date:ownDates?target.end_date:source.end_date;
+    if (!start || !end || !validIsoDate(start) || !validIsoDate(end) || start>end || start<londonToday() || inclusiveDays(start,end)>366)
       return { ok: false, error: ownDates ? "Confirm valid pickup and return dates for your own request before restoring the basket" : "Original dates have passed or need confirmation. Choose new dates for your own request" };
-    const identity=await resolveOrderPhysicalItems(ctx,target.account_slug,source.items);
+    const sources=await loadStockSources(ctx);
+    const identity=await resolveOrderPhysicalItems(ctx,target.account_slug,source.items,sources.items);
     if(!sameOrderPhysicalItems(referral.physical_items,[...identity.items]))
       return {ok:false,error:"The original equipment identity needs review before restoring this basket",reason:"referral_basket_identity_changed_or_unverified"};
+    const selected=a.items;
+    if(selected && (!selected.length || selected.length>8 || new Set(selected.map(l=>l.product_id)).size!==selected.length || selected.some(l=>!Number.isInteger(l.product_id)||!Number.isInteger(l.qty)||l.qty<1||l.qty>20||!source.items.some(s=>s.product_id===l.product_id))))
+      return {ok:false,action_performed:false,error:"Select exact original listing references and valid quantities. Other gear needs its own normal inquiry",reason:"invalid_referral_selection"};
+    const requested=selected?selected.map(l=>({...source.items.find(s=>s.product_id===l.product_id)!,qty:l.qty})):source.items;
+    if(!a.preview_only && await prohibitsSelectedItems(ctx,target.account_slug,latest!.body_text,"add_item",requested))
+      return {ok:false,action_performed:false,error:"The current renter request excludes selected equipment. No basket was changed",reason:"referral_restore_not_authorized"};
     const lines = [];
-    for (const old of source.items) {
+    for (const old of requested) {
       if (old.product_id != null) {
         const listing = await ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", target.account_slug).eq("product_id", old.product_id!)).unique();
         if (!listing || typeof listing.daily_price !== "number") return { ok: false, error: "A basket listing is no longer priced. Ask the owner to check it" };
@@ -897,20 +910,24 @@ export const redeemReferral = mutation({
         lines.push({ ...old, name: item.name_canonical, daily_price_gbp: daily, price_tiers: await tiersForProduct(ctx, target.account_slug, pid), pricing_basis: "listing" as const });
       } else return { ok: false, error: "Unresolved item identity: ask the owner to check the basket" };
     }
-    const stock = await checkOrderRentalStock(ctx, target.account_slug, lines, start, end, a.thread_id);
+    const stock = await checkOrderRentalStock(ctx, target.account_slug, lines, start, end, a.thread_id,sources);
     if (stock.available !== true) return { ok: false, error: "Original basket is no longer available for these dates", stock_receipts: stock.receipts };
     const quote = summarise(lines.map(l => ({ ...l, item_id: l.item_id ? String(l.item_id) : undefined })), start, end);
     if (quote.total_gbp == null || quote.unpriced.length) return { ok: false, error: "Basket needs current pricing; ask the owner before restoring it" };
     const display = await listingDisplayCatalog(ctx, target.account_slug);
     const message = friendBasketReply({ ...quote, lines: lines.map(l => ({ qty: l.qty, name: l.product_id != null ? display.name(target.account_slug, l.product_id, l.name) : shortItemName(l.name) })) },a.preview_only);
     if(a.preview_only)return {ok:true,preview_only:true,action_performed:false,order:quote,message,stock_receipts:stock.receipts};
+    const beforeContext=await amendmentContext(ctx,a.thread_id),beforeRevision=target.changes.length;
     const now = Date.now();
     await ctx.db.patch(target._id, { items: lines, start_date: start, end_date: end, changes: [{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required" }], updated_at: now });
     const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", a.thread_id)).first();
     if (conv) await ctx.db.patch(conv._id, { inquiry_items: lines.map(l => ({ name: l.name, qty: l.qty, ...(l.product_id != null ? { product_id: l.product_id } : {}) })) });
     await ctx.db.patch(referral._id, { redeemed_by: a.thread_id });
-    await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
-    return { ok: true, already_applied: false, order: quote, message, stock_receipts: stock.receipts };
+    // Agent calls publish one reviewed reply through the canonical draft path.
+    // Legacy owner-driven Lab redemption still records its event reply here.
+    if(a.request_message_id==null)await ctx.db.insert("hygglo_messages", { account_slug: target.account_slug, thread_id: a.thread_id, message_id: `${a.thread_id}-friend-referral`, sender: "owner", sender_name: "Lab owner", body_text: message, hygglo_sent_at: now, fetched_at: now });
+    return { ok: true, already_applied: false, action_performed:true, source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:target.account_slug,order: quote, message, stock_receipts: stock.receipts,
+      context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1} };
   },
 });
 

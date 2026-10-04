@@ -1,3 +1,4 @@
+import { referralContext } from "./lib/referral_context";
 import { qualifyRecommendationBasket, recommendationRequirementValidator, type RecommendationRequirement } from "./lib/recommendation_qualification";
 import {cameraRequirementsValidator} from "./lib/camera_requirement_validator";
 import { renterHistory } from "./lib/renter_history";
@@ -422,6 +423,7 @@ export const get_listing_context = query({
     return {
       thread_id,
       owner_checks,
+      referral_context:account_slug?await referralContext(ctx,thread_id,account_slug,allItems):null,
       found: items.length > 0,
       is_inquiry: !reservation,
       account_slug,

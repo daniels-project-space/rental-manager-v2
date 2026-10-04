@@ -99,6 +99,32 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
   inbound.body_text=`My friend sent me referral ${code}. Please restore the same basket.`;
   expect(await redeem(f.ctx)).toMatchObject({ok:true,already_applied:false});
  });
+ it("uses planned friend dates and quantities while keeping the source and current inbound intact",async()=>{
+  const f=setup();f.tables.items[0].qty=2;f.tables.renter_bot_lab_orders[0].items[0].product_id=1;await fail(f.ctx);
+  const sourceBefore=structuredClone(f.tables.renter_bot_lab_orders[0]),messagesBefore=f.tables.hygglo_messages.length;
+  f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__friend").body_text=`Referral ${code}. Please restore the same gear but two cameras for 8–10 October 2099.`;
+  const result=await (redeemReferral as any)._handler(f.ctx,{thread_id:"__probe__friend",code,request_message_id:"friend-inbound",start_date:"2099-10-08",end_date:"2099-10-10",items:[{product_id:1,qty:2}]});
+  expect(result).toMatchObject({ok:true,action_performed:true,order:{start_date:"2099-10-08",end_date:"2099-10-10",total_gbp:330},context_transition:{source:"native_lab_amendment",thread_id:"__probe__friend",before_revision:0,after_revision:1}});
+  expect(result.context_transition.before_context_key).not.toBe(result.context_transition.after_context_key);
+  expect(f.tables.renter_bot_lab_orders[0]).toEqual(sourceBefore);expect(f.tables.renter_bot_lab_orders[1].items[0].qty).toBe(2);
+  expect(f.tables.hygglo_messages).toHaveLength(messagesBefore);expect(f.tables.renter_bot_lab_bookings).toHaveLength(1);
+ });
+ it("recognition, information and hypothetical instructions never authorise restoration",async()=>{
+  for(const text of [`My friend sent me referral ${code}.`,`Referral ${code}. What equipment is included?`,`Referral ${code}. If I ask you to restore the basket, what happens?`,`Referral ${code}. Please do not restore the basket.`]){
+   const f=setup();await fail(f.ctx);f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__friend").body_text=text;const before=structuredClone(f.tables);
+   expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_restore_not_authorized"});expect(f.tables).toEqual(before);
+  }
+ });
+ it("rejects stale scoped messages, foreign gear and malformed selections atomically",async()=>{
+  for(const extra of [{request_message_id:"old"},{items:[{product_id:999,qty:1}]},{items:[{product_id:1,qty:0}]},{items:[{product_id:1,qty:1},{product_id:1,qty:1}]},{items:[]},{start_date:"2099-10-08"}]){
+   const f=setup();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;await fail(f.ctx);const before=structuredClone(f.tables);
+   expect(await (redeemReferral as any)._handler(f.ctx,{thread_id:"__probe__friend",code,request_message_id:"friend-inbound",...extra})).toMatchObject({ok:false});expect(f.tables).toEqual(before);
+  }
+ });
+ it("never lets a tool supply a valid referral that the renter did not share",async()=>{
+  const f=setup();await fail(f.ctx);f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__friend").body_text="Please restore the same basket.";const before=structuredClone(f.tables);
+  expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_not_in_current_context"});expect(f.tables).toEqual(before);
+ });
  it("holds native restoration without a current renter instruction, including after an owner preview",async()=>{
   for(const sender of ["owner",null]){const f=setup();await fail(f.ctx);
    const inbound=f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__friend");if(sender)inbound.sender=sender;else f.tables.hygglo_messages=f.tables.hygglo_messages.filter(m=>m!==inbound);

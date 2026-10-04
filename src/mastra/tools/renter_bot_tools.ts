@@ -562,7 +562,16 @@ export const modifyBookingTool = createTool({
   },
 });
 
+export const restoreReferralBasketTool=createTool({
+  id:"restore_referral_basket",
+  description:"Restore selected original friend-referral gear into the renter's empty Lab inquiry. get_listing_context supplies the verified code and exact original listing IDs. Only use for the CURRENT renter's direct instruction to restore/add/use that basket. A code, an information question or a quote is not consent. Respect their current dates, quantities and exclusions; never inherit the source's approval/payment/verification. Native rechecks original equipment identity, selected stock and current prices atomically. Does not create or confirm a booking. For quotes use check_basket_availability instead. After success, previous stock/quote receipts are stale: check the actual restored basket once for a current renter_quote before replying with financial amounts. Real Hygglo writes are unavailable.",
+  inputSchema:z.object({thread_id:z.string(),code:z.string().uuid(),start_date:z.string(),end_date:z.string(),items:z.array(z.object({product_id:z.number().int().positive(),qty:z.number().int().min(1).max(20)})).min(1).max(8)}),
+  outputSchema:z.unknown(),
+  execute:async(input)=>await convex().mutation(anyApi.renter_bot_lab_order.redeemReferral,input),
+});
+
 export const RENTER_BOT_TOOLS = {
+  restore_referral_basket:restoreReferralBasketTool,
   find_owned_alternatives: findOwnedAlternativesTool,
   quote_booking_replacement:quoteBookingReplacementTool,
   check_location: checkLocationTool,

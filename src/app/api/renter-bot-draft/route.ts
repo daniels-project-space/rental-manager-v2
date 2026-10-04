@@ -578,6 +578,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lc: any = await convex.query(api.renter_bot_tools.get_listing_context, { thread_id });
     toolReceipts.push({tool:"get_listing_context",call_id:"prefetch:listing-context",result:lc});
+    if(lc?.referral_context)groundTruth += `FRIEND BASKET REFERENCE (Native listing context already gathered, not an applied booking): ${JSON.stringify(lc.referral_context)}\n`;
     if (lc?.found) {
       bookingConfirmed = lc.is_confirmed === true;
       const req: string[] = [];
@@ -1423,12 +1424,14 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
       obj.draft = text;
     }
+    const bookingContextTransitions=toolReceipts.filter(r=>r.result.ok===true &&
+      (r.result.context_transition as {source?:string}|undefined)?.source==="native_lab_amendment")
+      .map(r=>r.result.context_transition);
     if (orderChangesBefore !== null) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const after: any = await convex.query(api.renter_bot_lab_order.get, { thread_id });
-        bookingModified = toolReceipts.some(r => r.tool === "modify_booking" && r.result.ok === true
-          && !!r.result.context_transition) && ((after?.changes ?? []).length as number) > orderChangesBefore;
+        bookingModified = bookingContextTransitions.length>0 && ((after?.changes ?? []).length as number) > orderChangesBefore;
         if (bookingModified && Array.isArray(after?.lines)) {
           stockRequest = { ...stockRequest, start_date: after.start_date, end_date: after.end_date };
           priceRequest = {start_date:after.start_date,end_date:after.end_date,items:after.lines.map((l: {name:string;qty:number})=>({name:l.name,quantity:l.qty}))};
@@ -1502,8 +1505,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       commercialContext,
       offeredPrices: [...new Set(offeredPrices)],
       bookingModified,
-      bookingContextTransitions: toolReceipts.filter(r => r.tool === "modify_booking" && r.result.ok === true)
-        .map(r => r.result.context_transition).filter(t => !!t),
+      bookingContextTransitions,
       tokenUsage,
       // Verified NOT-rentable items. Registering the alternatives above turns
       // hasItemGrounding on, which disables the blanket ungrounded-assertion

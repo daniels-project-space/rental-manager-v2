@@ -50,7 +50,7 @@ it("blocks booking tools in a read-only diagnostic while preserving scoped reads
 });
 
 it("binds and disables atomic setup acceptance just like other booking writes",()=>{
- for(const name of ["renter_bot_lab_order:applyAdditionBasket","renter_bot_lab_order:applyReplacementBasket"]){
+ for(const name of ["renter_bot_lab_order:applyAdditionBasket","renter_bot_lab_order:applyReplacementBasket","renter_bot_lab_order:redeemReferral"]){
  expect(bindRenterToolArgs(name,{thread_id:"other",request_message_id:"fabricated",items:[{product_id:1,qty:1}]},{threadId:"__probe__one",accountSlug:"leo",requestMessageId:"current"})).toMatchObject({thread_id:"__probe__one",request_message_id:"current"});
  expect(()=>bindRenterToolArgs(name,{items:[]},{threadId:"__probe__one",accountSlug:"leo",bookingWritesAllowed:false})).toThrow("disabled");
 }

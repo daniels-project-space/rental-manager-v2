@@ -1,6 +1,4 @@
-import { renterRequestsReadOnly } from "./lib/renter_booking_consent";
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
-import { friendReferralFromMessage } from "./lib/verification_failure";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
@@ -297,22 +295,8 @@ export const sendTestMessage = action({
       text: args.text,
     });
 
-    const referralCode = friendReferralFromMessage(args.text);
-    if (referralCode) {
-      const handoff = await ctx.runMutation(internal.renter_bot_lab_order.__service_redeemReferral, { thread_id: args.threadId, code: referralCode,preview_only:renterRequestsReadOnly(args.text,"add_item") });
-      if (!handoff.ok) {
-        const draft = `I couldn't restore that basket referral: ${handoff.error ?? "please ask the owner to check it"}. Your current basket hasn't been changed.`;
-        const runId = `referral-${Date.now()}`;
-        await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, { thread_id: args.threadId, account_slug: args.accountSlug, text: draft, run_id: runId });
-        return { draft, overall_status: "not_scored", runId, productionGuardFlags: [], status: "referral_not_restored", reason: handoff.error };
-      }
-      if(handoff.ok && handoff.preview_only && handoff.message){
-        const runId=`native-referral-preview-${Date.now()}`;
-        await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage,{thread_id:args.threadId,account_slug:args.accountSlug,text:handoff.message,run_id:runId});
-        return {draft:handoff.message,overall_status:"not_scored",runId,productionGuardFlags:[],status:"referral_preview"};
-      }
-      if (handoff.message) return { draft: handoff.message, overall_status: "not_scored", runId: `native-referral-${Date.now()}`, productionGuardFlags: [], status: "referral_restored" };
-    }
+    // Referrals enter the SAME request-planning/quote pipeline as other chats.
+    // Native listing context supplies the shared gear; a code is not an edit.
     const startedAt = Date.now();
     const draftResult = await ctx.runAction(
       internal.replyInbox_actions.__service_generateDraft,
