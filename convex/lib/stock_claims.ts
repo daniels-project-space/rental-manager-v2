@@ -198,7 +198,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*$/i.test(prefix) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(prefix)) continue;
     const negative = !!match[1] || /^(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available))$/i.test(match[0]);
     const quoteHeader=quoteGroups.find(group=>clauseStart>=group.start&&clauseStart<=group.end || precedingBullets.length>0 && /^\s*(?:both|they|these|those|all)\b/i.test(prefix) && clauseStart>group.end && !scopedText.slice(group.end,clauseStart).trim())?.header??"";
-    const dateScope = itemQuoteDateScope(clause, quoteHeader, request.start_date);
+    let dateScope = itemQuoteDateScope(clause, quoteHeader, request.start_date);
     const datedPrefix = dateScope.matched_text ? prefix.replace(dateScope.matched_text, "__stock_date__") : prefix;
     const extensionSubject = /^I\s+(?:can't|cannot|can not|am not able to)\s+extend\s+(.+?)\s+(?:through|until|to)\s+__stock_date__\s+(?:as|because)\s+(?:it's|it is)\s*$/i.exec(datedPrefix.trim());
     const subject = subjectOf(extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
@@ -246,7 +246,35 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
     const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
     const coordinated=requestedSet ? [coordinatedPrefix] : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
-    const jointClaim=!!heading || pluralGroup || coordinated.length>1 || !!requestedSet;
+    // A setup is a basket reference, not an inventory model or a camera kit.
+    // Resolve an introductory offer against the following explicit quote rows;
+    // descriptions remain subject to the separate technical-claim guard.
+    const setupReference=offer && !heading && modifiers.length>0 &&
+      /^(?:(\w+)\s+)?(?:(?:full[ -]frame|\d+k|mirrorless|cinema)\s+)*setup$/i.exec(subject.name);
+    const offeredGroup=setupReference ? quoteGroups.find(group=>group.start>clauseEnd) : undefined;
+    if(offeredGroup && setupReference) {
+      const rows=scopedText.slice(offeredGroup.start,offeredGroup.end).split("\n").map(itemQuoteRow).filter((row):row is string=>row!==null);
+      const members=rows.map(row=>{
+        const parsed=subjectOf(row);
+        const matches=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
+        return matches.length===1 ? withQuantity(matches[0],parsed.quantity??1) : undefined;
+      });
+      const cameras=members.filter(i=>i && receipts.some(r=>sameItem(r.item,i.name)&&["camera","camera_body"].includes(r.kind??"")));
+      const brand=setupReference[1]?.toLowerCase();
+      const specified=modifiers.map(raw=>{
+        const parsed=subjectOf(raw),lens=lensSubject(parsed.name);
+        const matches=lens ? [lens] : knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
+        return matches.length===1 ? withQuantity(matches[0],parsed.quantity??1) : undefined;
+      });
+      const unambiguous=members.length>=2 && members.every((i,index)=>i&&!members.slice(0,index).some(other=>other&&sameItem(i.name,other.name))) && cameras.length>0 &&
+        (!brand || cameras.every(i=>[i!.name,...(i!.aliases??[])].some(n=>n.toLowerCase().split(/[^a-z0-9]+/).includes(brand)))) &&
+        specified.every(i=>i&&members.some(member=>member&&sameItem(member.name,i.name)&&member.quantity===i.quantity));
+      targets=unambiguous ? (members as StockRequest["items"]).map(i=>withQuantity(i,i.quantity*(subject.quantity??1))) : [];
+      subject.quantity=undefined;
+      if(unambiguous)modifiers.splice(0); // explicitly quoted members, not kit-inclusion modifiers
+      dateScope=itemQuoteDateScope(clause,offeredGroup.header,request.start_date);
+    }
+    const jointClaim=!!heading || !!offeredGroup || pluralGroup || coordinated.length>1 || !!requestedSet;
     if(heading) {
       targets=!invalidHeading && forwardTargets.length>=2 && forwardTargets.every((i,index)=>!forwardTargets.slice(0,index).some(previous=>sameItem(i.name,previous.name))) ? forwardTargets : [];
       subject.quantity=undefined;

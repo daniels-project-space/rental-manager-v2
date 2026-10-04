@@ -5,6 +5,9 @@ import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
 import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
 import {validateRenterBotOutput,type RenterBotOutput} from "./renter-bot-output";
 import fixtures from "./fixtures/renter-native-quotes.json";
+import sales from "./fixtures/renter-sales-structured-native.json";
+import {unsupportedStockClaims,type StockReceipt} from "../../convex/lib/stock_claims";
+import {forbiddenFulfillmentClaims} from "../../convex/lib/fulfillment_claims";
 const scope={threadId:fixtures.first.thread_id,accountSlug:"leo",requestMessageId:"renter-1",rentalStage:"INQUIRY",queryRevision:()=>0};
 const receipt=(result=fixtures.first,context=scope)=>({tool:"check_basket_availability",call_id:"real-native",result:{...result,renter_quote:nativeInquiryQuote(result,context)}});
 const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_stage:"INQUIRY",needs_human:false,red_flags:[],factsClaimed:[]};
@@ -69,5 +72,18 @@ describe("Native inquiry quote rendering",()=>{
   expect(renderNativeQuoteReply({...base,draft:"The total is £138."},[receipt()],scope).ok).toBe(false);
   expect(renderNativeQuoteReply({...base,draft:"Yes, that lens is already included."},[receipt()],scope)).toEqual({ok:true,draft:"Yes, that lens is already included.",quote_keys:[]});
   expect(renderNativeQuoteReply({...base,needs_human:true},[receipt()],scope)).toEqual({ok:true,draft:"",quote_keys:[]});
+ });
+});
+
+describe("structured quote basket references from the fresh model capture",()=>{
+ const stock=sales.stock as StockReceipt[];
+ it("binds a described setup to exact quoted members while keeping stock and pricing guards",()=>{
+  expect(unsupportedStockClaims(sales.draft,stock,sales.request,sales.ineligible_items,sales.renter_message)).toEqual([]);
+  expect(unsupportedPriceClaims(sales.draft,sales.prices as Parameters<typeof unsupportedPriceClaims>[1],sales.request,sales.renter_message)).toEqual([]);
+  expect(forbiddenFulfillmentClaims(sales.draft,sales.ineligible_items,sales.prices.flatMap(p=>p.names))).toEqual([]);
+ });
+ it("cannot borrow a different camera, lens, count, dates or individual stock checks",()=>{
+  for(const text of [sales.draft.replace("a Sony full-frame 4K setup","a Canon full-frame 4K setup"),sales.draft.replace("a Sony full-frame 4K setup","a Sony FX6 setup"),sales.draft.replace("a Sony full-frame 4K setup","two Sony full-frame 4K setup"),sales.draft.replace("with the Sony FE 16–35mm f/2.8 GM", "with the Sony FE 24–70mm f/2.8 GM")])expect(unsupportedStockClaims(text,stock,sales.request,sales.ineligible_items)).not.toEqual([]);
+  for(const altered of [stock.map(r=>({...r,basket:undefined})),stock.map(r=>({...r,start_date:"2026-10-22",end_date:"2026-10-23"})),stock.map(r=>r.item==="Sony FX3"?{...r,available:false,free_units:0}:r)])expect(unsupportedStockClaims(sales.draft,altered,sales.request,sales.ineligible_items)).not.toEqual([]);
  });
 });
