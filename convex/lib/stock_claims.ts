@@ -207,7 +207,10 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const before = clause.slice(0, offset);
       const after = clause.slice(offset + word.length);
       const adjective = /\b(?:your|my|our|the|this|that|their)\s*$/i.test(before);
-      const ownerConfirmation = /\byour\b[^.!?]{0,70}\b(?:is|are)\s*$/i.test(before)
+      // A request/order's booking state is a different subject from occupied
+      // equipment. Negation/adverbs do not turn it into a stock refusal.
+      const bookingState=/\b(?:booking|rental|request|order|enquiry|inquiry)\s+(?:is|are|was|were|isn't|aren't|has\s+(?:not\s+)?been|have\s+(?:not\s+)?been|hasn't been|haven't been)\s+(?:(?:not|yet|already|now|fully)\s+)*$/i.test(before);
+      const ownerConfirmation = bookingState || /\byour\b[^.!?]{0,70}\b(?:is|are)\s*$/i.test(before)
         || /^\s+for\s+you\b/i.test(after);
       const inclusionReference = /\b(?:included|supplied)\s+(?:(?:exactly|already)\s+)?as\s*$/i.test(before);
       return (adjective || ownerConfirmation || inclusionReference) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;

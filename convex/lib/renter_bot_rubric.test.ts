@@ -1,3 +1,4 @@
+import type {PriceEvidence} from "./price_claims";
 import { describe, it, expect } from "vitest";
 import { scoreDraft, scoreSkippedGeneration } from "./renter_bot_rubric";
 
@@ -160,7 +161,7 @@ describe("renter_bot_rubric.scoreDraft", () => {
 
 describe("Native price grading",()=>{
  const request={start_date:"2026-10-22",end_date:"2026-10-23",items:[{name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",quantity:1}]};
- const prices:import("./price_claims").PriceEvidence[]=[{names:[],items:request.items,start_date:request.start_date,end_date:request.end_date,kind:"basket",days:2,total_gbp:42,source:"native_inquiry_basket",quote_role:"inquiry",call_id:"native-quote"},
+ const prices:PriceEvidence[]=[{names:[],items:request.items,start_date:request.start_date,end_date:request.end_date,kind:"basket",days:2,total_gbp:42,source:"native_inquiry_basket",quote_role:"inquiry",call_id:"native-quote"},
   {names:[request.items[0].name,"TTArtisan 11mm f/2.8 fisheye (E)"],kind:"rental",days:2,quantity:1,start_date:request.start_date,end_date:request.end_date,total_gbp:42,source:"native_inquiry_basket",call_id:"native-quote:line"}];
  const text="For 2 days (22 October 2026 to 23 October 2026):\n- 1 × TTArtisan 11mm f/2.8 fisheye (E): £42\nTotal: £42\n\nThis new hire is not yet confirmed. I can send the exact address once the new booking is confirmed.";
  const score=(draftText=text,priceEvidence=prices)=>scoreDraft({accountSlug:"leo",draftText,priceEvidence,priceRequest:request,factsClaimed:[],productionFlags:[]});

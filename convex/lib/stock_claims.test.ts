@@ -483,3 +483,14 @@ describe("offer headings bind only their immediate named basket",()=>{
   for(const changed of [text.replace("Sony setup","Canon setup"),text.replace("Sony setup","Sony FX6 setup"),text.replace("Sony GM","Canon RF"),text.replace("\n• Sony FX3","\nPlease let me know.\n• Sony FX3"),text.replace("Sony GM 16-35mm f2.8 lens","Sony FX3 body")])expect(unsupportedStockClaims(changed,proof,scope)).not.toEqual([]);
  });
 });
+
+
+describe("booking status is not equipment occupancy",()=>{
+ it("keeps an explicit booking subject across negation and tense without needing a stock denial",()=>{
+  for(const text of ["Since this new request is not yet booked, I can send the address once confirmed.","Your rental hasn't been booked yet.","The enquiry is not booked.","The previous order was booked."])expect(unsupportedStockClaims(text,[],{items:[]})).toEqual([]);
+ });
+ it("still requires proof for equipment occupancy and an independent verdict after a status clause",()=>{
+  for(const text of ["Sony FX3 is booked out.","Sony FX3 is booked by another customer.","Your request is not yet booked; Sony FX3 is unavailable.","The rental is booked out."])expect(unsupportedStockClaims(text,[],request)).not.toEqual([]);
+  expect(unsupportedStockClaims("Your request is not yet booked, and Sony FX3 is unavailable for 2 to 4 October.",[stock],request)).toEqual([]);
+ });
+});
