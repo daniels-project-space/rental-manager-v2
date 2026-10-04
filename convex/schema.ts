@@ -172,6 +172,7 @@ const operationalSchema = defineSchema({
       role: v.union(v.literal("action"), v.literal("interchangeable_lens")),
       sensor_format: v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor")),
       native_mount: v.optional(v.string()), internal_4k: v.boolean(), built_in_nd: v.optional(v.boolean()),
+      built_in_nd_review:v.optional(v.object({verified_model:v.string(),source_url:v.string(),verified_at:v.number()})),
       // Optional for migration; reader requires these before qualification.
       verified_model: v.optional(v.string()), source_url: v.optional(v.string()), verified_at: v.optional(v.number()),
       recording_modes: v.optional(v.array(v.object({

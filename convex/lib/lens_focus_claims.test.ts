@@ -2,6 +2,7 @@ import {describe,it,expect} from "vitest";
 import {unsupportedLensFocusClaims,type LensFocusEvidence} from "./lens_focus_claims";
 import {equipmentClaimProfiles,equipmentClaimsNeedProfiles} from "./equipment_claim_profiles";
 import {guardDraft} from "./draft_guard";
+import {verifiedCameraCapabilities} from "./camera_requirements";
 const lens:LensFocusEvidence={names:["TTArtisan 11mm f2.8 Fisheye (Sony E)"],capabilities:{model:"TTArtisan 11mm f/2.8",source_url:"https://ttartisan.com/11mm",focus_mode:"manual_focus"}};
 const sony:LensFocusEvidence={names:["Sony FE 16-35mm F2.8 GM"],capabilities:{model:"SEL1635GM",source_url:"https://sony.com/lens",focus_mode:"autofocus",manual_focus_available:true}};
 const check=(text:string,evidence=[lens,sony],initial=[lens.names[0]])=>unsupportedLensFocusClaims(text,evidence,initial,["Sony FX3","FX3"]);
@@ -13,6 +14,9 @@ describe("reviewed lens focus assertions",()=>{
   expect(check("It's a manual-focus lens.")).toEqual([]);
   expect(check("It's an autofocus lens.")).not.toEqual([]);
   expect(check("It has autofocus.")).not.toEqual([]);
+  expect(check("It's manual-focus only and has autofocus.")).not.toEqual([]);
+  expect(check("It does not have autofocus and supports autofocus.")).not.toEqual([]);
+  expect(check("It does not have autofocus and supports manual focus.")).toEqual([]);
  });
  it("keeps manufacturer, mount and generation identities separate",()=>{
   for(const name of ["Sony 11mm f/2.8 fisheye","TTArtisan 11mm f/2.8 fisheye (RF)","Sony FE 16-35mm F2.8 GM II"])expect(check(`The ${name} supports autofocus.`)).not.toEqual([]);
@@ -47,5 +51,14 @@ describe("current Native equipment profile projection",()=>{
  it("uses one trigger for compact modes, focus assertions and camera features",()=>{
   for(const text of ["4K120fps","4K120p","UHD 4K","built-in ND","autofocus","manual-focus"])expect(equipmentClaimsNeedProfiles(text)).toBe(true);
   expect(equipmentClaimsNeedProfiles("Thanks, that works.")).toBe(false);
+ });
+ it("invalidates a stale or foreign ND review without losing the camera's other reviewed capabilities",()=>{
+  const record={...spec,item_name_canonical:"Sony FX3",verified_model:"ILME-FX3",camera_capabilities:{role:"interchangeable_lens" as const,sensor_format:"full_frame" as const,internal_4k:true,verified_model:"ILME-FX3",source_url:spec.source_url,verified_at:1,built_in_nd:false,
+    built_in_nd_review:{verified_model:"ILME-FX3",source_url:"https://sony.com/fx3-nd",verified_at:2}}};
+  expect(verifiedCameraCapabilities(record,"Sony FX3")?.built_in_nd).toBe(false);
+  for(const review of [{...record.camera_capabilities.built_in_nd_review,verified_model:"ILME-FX6"},{...record.camera_capabilities.built_in_nd_review,verified_at:0}]){
+   const cap=verifiedCameraCapabilities({...record,camera_capabilities:{...record.camera_capabilities,built_in_nd_review:review}},"Sony FX3");
+   expect(cap?.built_in_nd).toBeUndefined();expect(cap?.internal_4k).toBe(true);
+  }
  });
 });

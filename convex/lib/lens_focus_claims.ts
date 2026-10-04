@@ -12,8 +12,7 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
  let subject=initial.length===1?initial:[];
  const failures:string[]=[];
  for(const clause of text.replace(/’/g,"'").split(/(?<=[.!?])\s+|\n+|[,;]|\b(?:but|while|whereas)\b/i)) {
-  const focus=/\b(auto[- ]?focus|manual[- ]focus(?:\s+only)?|AF)\b/i.exec(clause);
-  if(!focus)continue;
+  for(const focus of clause.matchAll(/\b(auto[- ]?focus|manual[- ]focus(?:\s+only)?|AF)\b/gi)) {
   if(/^\s*(?:does|do|can|could|would|is|are)\b/i.test(clause) && /\?\s*$/.test(clause))continue;
   const prefix=clause.slice(0,focus.index);
   if(/\b(?:if|whether|check(?:ing)?|verify(?:ing)?|confirm(?:ing)?|want|need|require|prefer|looking for)\b[^;:]{0,100}$/i.test(prefix))continue;
@@ -32,16 +31,18 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
    // must prove the feature. Different variants remain ambiguous.
    if(!subject.length && match.match && match.ambiguousWith.length && match.ambiguousWith.every(e=>normal(e.names[0])===normal(match.match!.names[0])))subject=[match.match,...match.ambiguousWith];
   }
-  const negative=/\b(?:not|no|without|isn't|aren't|doesn't|does not|don't|do not|cannot|can't|lacks?)\b/i.test(prefix);
+  const polarity=prefix.split(/\s+and\s+/i).at(-1)!;
+  const negative=/\b(?:not|no|without|isn't|aren't|doesn't|does not|don't|do not|cannot|can't|lacks?)\b/i.test(polarity);
   const autofocus=/^(?:auto[- ]?focus|AF)$/i.test(focus[1]),only=/\bonly\b/i.test(focus[1])||/^\s*(?:only|lens only)\b/i.test(clause.slice(focus.index+focus[0].length));
   const verified=subject.length>0 && subject.every(e=>{
    const cap=e.capabilities;if(!cap)return false;
    if(autofocus)return negative?cap.focus_mode==="manual_focus":cap.focus_mode==="autofocus";
-   if(only)return !negative&&cap.focus_mode==="manual_focus";
+   if(only)return cap.focus_mode===(negative?"autofocus":"manual_focus");
    const manual=cap.focus_mode==="manual_focus"?true:cap.manual_focus_available;
    return manual!==undefined && manual===!negative;
   });
   if(!verified)failures.push(clause.trim());
+  }
  }
  return [...new Set(failures)];
 }

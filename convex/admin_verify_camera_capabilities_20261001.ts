@@ -1,6 +1,9 @@
 import { internalMutation } from "./_generated/server";
+import { v } from "convex/values";
+import { verifiedCameraCapabilities } from "./lib/camera_requirements";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import type { CameraCapabilities, RecordingMode } from "./lib/camera_requirements";
+const FX3_ND_SOURCE_URL="https://www.sony.com.au/interchangeable-lens-cameras/products/ilme-fx3/ILME-FX3_BIG6_Home_screen_video_transcript";
 
 // Exact owned models already reviewed; these fields are manufacturer facts,
 // not quantities, rental inclusions or permissions. Missing ND stays unknown.
@@ -8,7 +11,7 @@ const profiles: Array<{ name: string; model: string; capabilities: CameraCapabil
   { name: "Sony A7 II", model: "ILCE-7M2", capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "E", internal_4k: false } },
   { name: "Sony A7 III", model: "ILCE-7M3", capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "E", internal_4k: true } },
   { name: "Sony A7 V", model: "ILCE-7M5", capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "E", internal_4k: true } },
-  { name: "Sony FX3", model: "ILME-FX3", capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "E", internal_4k: true } },
+  { name: "Sony FX3", model: "ILME-FX3", capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "E", internal_4k: true, built_in_nd:false } },
   { name: "BMPCC 6K Pro", model: "Blackmagic Pocket Cinema Camera 6K Pro", capabilities: { role: "interchangeable_lens", sensor_format: "super35", native_mount: "EF", internal_4k: true, built_in_nd: true } },
   { name: "BMPCC 6K Full Frame", model: "Blackmagic Cinema Camera 6K", capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "L", internal_4k: true } },
   { name: "GoPro 12 Hero", model: "HERO12 Black", capabilities: { role: "action", sensor_format: "small_sensor", internal_4k: true } },
@@ -44,9 +47,27 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
     if (!spec || spec.verified_model !== profile.model || !verifiedItemSpec(spec, profile.name)) throw new Error(`Review provenance changed for ${profile.name}`);
     const reviewedAt = Date.now();
     const modes = reviewedModes(profile.model, reviewedAt);
-    const capabilities = { ...profile.capabilities, ...(modes ? { recording_modes: modes } : {}), verified_model: profile.model, source_url: spec.source_url, verified_at: reviewedAt };
+    const capabilities = { ...profile.capabilities, ...(modes ? { recording_modes: modes } : {}),
+      ...(profile.model==="ILME-FX3"?{built_in_nd_review:{verified_model:profile.model,source_url:FX3_ND_SOURCE_URL,verified_at:reviewedAt}}:{}),
+      verified_model: profile.model, source_url: spec.source_url, verified_at: reviewedAt };
     await ctx.db.patch(spec._id, { camera_capabilities: capabilities });
     changes.push({ item: profile.name, model: profile.model, source_url: spec.source_url, previous: spec.camera_capabilities ?? null, capabilities });
   }
   return { changes };
 } });
+/** A feature review must not overwrite independent sensor/mode reviews.
+ * Sony's exact FX3 home-screen transcript explicitly distinguishes the ND
+ * metadata menu from a physical built-in filter. */
+export const reviewFx3Nd=internalMutation({args:{dry_run:v.optional(v.boolean())},handler:async(ctx,args)=>{
+ const source_url=FX3_ND_SOURCE_URL;
+ const item=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","Sony FX3")).unique();
+ if(!item || item.kind!=="camera")throw new Error("Exact Sony FX3 inventory record is required");
+ const spec=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).unique();
+ if(!spec || spec.verified_model!=="ILME-FX3" || !verifiedCameraCapabilities(spec,item.name_canonical))throw new Error("FX3 review identity needs checking");
+ const previous=spec.camera_capabilities!;
+ if(previous.built_in_nd===false && previous.built_in_nd_review?.source_url===source_url && previous.built_in_nd_review.verified_model===spec.verified_model)
+  return {changed:false,item:item.name_canonical,capabilities:previous};
+ const capabilities={...previous,built_in_nd:false,built_in_nd_review:{verified_model:spec.verified_model,source_url,verified_at:Date.now()}};
+ if(!args.dry_run)await ctx.db.patch(spec._id,{camera_capabilities:capabilities});
+ return {changed:!args.dry_run,dry_run:args.dry_run??false,item:item.name_canonical,previous,capabilities};
+}});
