@@ -2,7 +2,7 @@ import { normalizeApertureNotation, bestMatch } from "./item_name_match";
 import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
-import { lensClaimReferences } from "./lens_claim_references";
+import { declaredLensReferences, lensClaimReferences } from "./lens_claim_references";
 import { itemReferenceLabel, itemQuoteRow, itemQuoteTotalLine, itemQuoteGroups, itemQuoteDateScope } from "./renter_claim_structure";
 import { requestedLensSets, resolveLensSet, lensSetSubjectFamily, lensSetFocalPattern, lensSetSuffixPattern } from "./lens_set_resolution";
 export type StockReceipt = {
@@ -88,9 +88,10 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   let bulletSubjects: StockRequest["items"] = [];
   let invalidBullet = false;
   const knownSubjects:StockRequest["items"] = request.items.map(i=>({...i,aliases:[...(i.aliases??[])]}));
+  const requestedCounts=[...new Set(request.items.map(i=>i.quantity))];
   for (const receipt of receipts)
     if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
-      knownSubjects.push({name:receipt.item,quantity:1});
+      knownSubjects.push({name:receipt.item,quantity:requestedCounts.length===1?requestedCounts[0]:request.items.length?NaN:1});
   for(const receipt of receipts) {
     const item=knownSubjects.find(i=>sameItem(i.name,receipt.item));
     if(item && receipt.identity_names?.length)item.aliases=[...new Set([...(item.aliases??[]),...receipt.identity_names])];
@@ -101,10 +102,22 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const label=itemReferenceLabel(reference,"lens");
     const focal=/\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.exec(label)?.[0];
     if(!focal)return undefined;
+    const declared=declaredLensReferences(identity(label));
     const candidates=knownSubjects.filter(i=>receipts.some(r=>r.kind==="lens"&&sameItem(r.item,i.name)) &&
+      declared.every(key=>references.get(key)?.item===i) &&
       [i.name,...(i.aliases??[])].some(n=>{const range=/\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.exec(n)?.[0];return range && identity(range)===identity(focal);}));
     const match=bestMatch(label,candidates,i=>i.name,i=>i.aliases??[]);
     return match.confident ? match.match ?? undefined : undefined;
+  };
+  const namedSubject=(reference:string)=>{
+    const resolve=(label:string)=>{
+      const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(label,n)));
+      return exact.length===1 ? exact[0] : exact.length ? undefined : lensSubject(label);
+    };
+    // A source phrase qualifies where a named item came from, not its model.
+    // Only an independently resolvable noun phrase may use this projection;
+    // counts, included components and dates are still checked separately.
+    return resolve(reference) ?? resolve(reference.split(/\s+from\s+/i)[0]);
   };
   const withQuantity=(item:StockRequest["items"][number],quantity:number)=>({...item,quantity,
     components:item.components?.map(c=>({...c,quantity:c.quantity*quantity/item.quantity})),
@@ -217,8 +230,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(subject.name);
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:that|this|the same)\s+(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
-    const namedLens=lensSubject(subject.name);
-    let targets = reference ? [reference.item] : namedLens ? [namedLens] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
+    const namedItem=namedSubject(subject.name);
+    let targets = reference ? [reference.item] : namedItem ? [namedItem] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     // Only the explicit latest requested members can define an abbreviated
     // set. Unrelated negative lens receipts cannot invent its contents.
     const statedSet=namedKit && !modifiers.length ? resolveLensSet(`${subject.name} set`,lenses) : null;
@@ -297,6 +310,14 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       subject.quantity=undefined;
     }
     if (!generic) previousSubjects = targets;
+    // An empty inquiry has no booking year. Infer omitted years only from
+    // unambiguous Native checks for these exact members, never the wall clock
+    // or unrelated inventory. The full resulting span must still match.
+    if(!request.start_date && dateScope.explicit && !dateScope.valid) {
+      const relevant=receipts.filter(r=>targets.some(t=>[t.name,...(t.aliases??[])].some(n=>sameItem(n,r.item))));
+      const years=new Set(relevant.map(r=>r.start_date.slice(0,4)));
+      if(years.size===1)dateScope=itemQuoteDateScope(clause,quoteHeader,relevant[0].start_date);
+    }
     const start = dateScope.start_date ?? request.start_date;
     const end = dateScope.end_date ?? request.end_date;
     if (negative && supportsRentalEligibilityDecline(clause, { ...request, items: targets }, ineligibleItems)) continue;

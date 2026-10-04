@@ -4,6 +4,28 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("named Native stock in an empty inquiry",()=>{
+ const lens:StockReceipt={...stock,item:"TTArtisan 11mm f2.8 Fisheye (Sony E)",kind:"lens",start_date:"2026-10-22",end_date:"2026-10-23",available:true,free_units:1};
+ const sentence="The TTArtisan 11mm f/2.8 fisheye lens from your friend's referral is available for 22 to 23 October.";
+ const review=(text=sentence,evidence=[lens])=>unsupportedStockClaims(text,evidence,{items:[]});
+ it("resolves a complete Native noun phrase independently of its source qualifier",()=>{
+  expect(review()).toEqual([]);
+  expect(review(sentence.replace("your friend's referral","the earlier conversation"))).toEqual([]);
+  expect(review(`The ${lens.item} is available for 22 to 23 October.`)).toEqual([]);
+  expect(review("Sony FX3 is available for 22 to 23 October.",[{...lens,item:"Sony FX3",kind:"camera"}])).toEqual([]);
+ });
+ it("keeps exact quantities, dates, model tokens and included components",()=>{
+  for(const text of [sentence.replace("22 to 23","24 to 25"),sentence.replace("The TTArtisan","Two TTArtisan"),sentence.replace("11mm","12mm"),sentence.replace("f/2.8","f/1.8"),sentence.replace("TTArtisan","Sony"),sentence.replace("lens from","lens with Sony FX3 from")])expect(review(text)).not.toEqual([]);
+  expect(review(sentence.replace("fisheye lens","fisheye (RF) lens"))).not.toEqual([]);
+  expect(review(sentence,[])).not.toEqual([]);
+  expect(review(sentence,[{...lens,available:false}])).not.toEqual([]);
+ });
+ it("does not choose a year or model between conflicting Native checks",()=>{
+  expect(review(sentence,[lens,{...lens,start_date:"2027-10-22",end_date:"2027-10-23"}])).not.toEqual([]);
+  expect(review(sentence.replace("f/2.8 ",""),[lens,{...lens,item:"TTArtisan 11mm f4 Fisheye (Sony E)"}])).not.toEqual([]);
+  expect(review(sentence.replace("22 to 23 October","22 to 23 October 2027"))).not.toEqual([]);
+ });
+});
 it("does not promise a free camera as an extra when its shared proposal failed or remains unknown",()=>{
  const positive={...stock,available:true,owned:true,basket:{available:false,items:[{name:stock.item,quantity:1}]}};
  expect(check("Sony FX3 is available for 2 to 4 October.",[positive])).not.toEqual([]);
