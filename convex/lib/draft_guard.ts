@@ -1,5 +1,6 @@
 import {rentalReplyPermissions} from "./rental_stage";
 import { unsupportedRenterCameraClaims } from "./renter_camera_identity";
+import { hasSingleBookingRecord, type BookingRecord } from "./booking_record";
 import {assertsOutsideConditional,claimsCurrentOwnerApproval,claimsBookingConfirmation,hasPickupDisclosure} from "./booking_reply_claims";
 import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedCatalogueReadinessClaims, type CatalogueReadinessEvidence } from "./catalogue_readiness";
@@ -50,6 +51,7 @@ export interface GuardResult {
 }
 
 export interface GuardOpts {
+  bookingRecord?: BookingRecord;
   catalogueReadinessEvidence?: CatalogueReadinessEvidence[];
   stockEvidence?: StockReceipt[];
   priceEvidence?: PriceEvidence[];
@@ -201,6 +203,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   UNGROUNDED_SPEC: "high",
   LENS_FOCUS_HALLUCINATION: "high",
   RENTER_CAMERA_IDENTITY_UNVERIFIED: "high",
+  BOOKING_RECORD_UNVERIFIED: "high",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
@@ -1037,7 +1040,8 @@ const ASSERTS_AVAIL_RE =
     }
   }
 
-  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage)) {
+  if(opts.bookingRecord&&!hasSingleBookingRecord(text,opts.bookingRecord))push("BOOKING_RECORD_UNVERIFIED","The historical financial record was edited, omitted or duplicated.","flagged");
+  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
   if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(text, opts.priceEvidence)) {

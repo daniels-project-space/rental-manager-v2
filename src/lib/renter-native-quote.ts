@@ -1,3 +1,4 @@
+import { bookingRecordText, type BookingRecord } from "../../convex/lib/booking_record";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {isClosedRentalStage} from "../../convex/lib/rental_stage";
 import { minimumRentalContext, minimumRentalPrompt, type MinimumRentalContext } from "../../convex/lib/minimum_rental";
@@ -11,7 +12,14 @@ import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 import { shortItemName } from "../../convex/lib/item_display_name";
 
-export type NativeQuoteScope={referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
+export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
+export type NativeBookingRecord={record_key:string;display_text:string;request_revision:number;record:BookingRecord};
+export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:NativeQuoteScope):NativeBookingRecord|null {
+ const revision=scope.queryRevision?.();
+ if(!record||!isClosedRentalStage(scope.rentalStage)||record.stage!==scope.rentalStage||record.thread_id!==scope.threadId||record.account_slug!==scope.accountSlug||revision===undefined||!Number.isInteger(revision))return null;
+ const record_key=`record_${createHash("sha256").update(JSON.stringify([record,scope.requestMessageId??"",revision])).digest("hex").slice(0,32)}`;
+ return {record_key,request_revision:revision,display_text:bookingRecordText(record),record};
+}
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number;commercial_context?:MinimumRentalContext;commercial_guidance?:string};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
 const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
@@ -57,7 +65,7 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
 /** Render before any guard or persistence. Unknown references, hand-written
  * money in structured prose, and receipts from before a write fail closed. */
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
-  {ok:true;draft:string;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[]}|{ok:false;reason:string} {
+  {ok:true;draft:string;booking_record?:BookingRecord;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[]}|{ok:false;reason:string} {
   if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   const quotes=new Map<string,NativeInquiryQuote>();
   const stock=new Map<string,StockQuoteEvidence>();
@@ -87,10 +95,16 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};
   const used=new Set<string>(),parts:string[]=[];
+  let selectedRecord:BookingRecord|undefined;
   for(const part of output.reply_parts) {
     if(part.type==="text") {
       if(monetaryProse.test(part.text))return {ok:false,reason:"Financial amounts must come from Native quote parts"};
       if(part.text.trim())parts.push(part.text.trim());
+    } else if(part.type==="booking_record") {
+      const descriptor=scope.bookingRecord;
+      if(selectedRecord||!descriptor||descriptor.record_key!==part.record_key||descriptor.request_revision!==scope.queryRevision?.()||
+        nativeBookingRecord(descriptor.record,scope)?.record_key!==part.record_key)return {ok:false,reason:"Booking record selection is missing, stale or duplicated"};
+      selectedRecord=descriptor.record;parts.push(bookingRecordText(descriptor.record));
     } else {
       const quote=quotes.get(part.quote_key);
       if(!quote || used.has(part.quote_key))return {ok:false,reason:"Quote selection is missing, stale or duplicated"};
@@ -110,5 +124,5 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
-  return {ok:true,draft:parts.join("\n\n"),quote_keys:[...used],stock_quotes:[...used].map(key=>stock.get(key)!),commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
+  return {ok:true,draft:parts.join("\n\n"),...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes:[...used].map(key=>stock.get(key)!),commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }

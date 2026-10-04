@@ -164,6 +164,7 @@ export const runFixture = action({
         factsClaimed,
         productionFlags: draftResult.flags,
         priceEvidence:draftResult.evidence?.prices,
+        bookingRecord:draftResult.evidence?.booking_record,
         priceRequest:draftResult.evidence?.stock_request,
         lastRenterMessage:fixture.messages.filter(m=>m.role==="renter").at(-1)?.text,
       });
@@ -370,6 +371,7 @@ export const runMultiTurnScenario = action({
         factsClaimed,
         productionFlags: draftResult.flags,
         priceEvidence:draftResult.evidence?.prices,
+        bookingRecord:draftResult.evidence?.booking_record,
         priceRequest:draftResult.evidence?.stock_request,
         lastRenterMessage:text,
       });

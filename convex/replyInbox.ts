@@ -1,3 +1,4 @@
+import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
 import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources} from "./lib/booking_reply_claims";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
@@ -2143,8 +2144,9 @@ export const recheckCopiedDraftStock = internalQuery({
     const latest = cameraMessages.at(-1);
     const settings=await ctx.db.query("settings").first();
     const booking=await getBotBooking(ctx,thread_id);
+    const labOrder=await getLabOrder(ctx,thread_id);
     const current=currentDraftApproval(conv,{message_id:latest?.message_id,epoch:settings?.draft_epoch??0,
-      context_key:draftContextKey(booking,conv?.inquiry_items,await getLabOrder(ctx,thread_id))});
+      context_key:draftContextKey(booking,conv?.inquiry_items,labOrder)});
     if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
       return {ok:false,reason:"stale_draft"};
     const currentStage=rentalStage(booking,londonToday());
@@ -2159,6 +2161,11 @@ export const recheckCopiedDraftStock = internalQuery({
       if(hasPickupDisclosure(text,pickupPrivacySources(profile)))return {ok:false,reason:"pickup_details_unverified"};
     }
     const evidence=conv?.ai_draft_evidence;
+    if(evidence?.booking_record) {
+      const freshRecord=bookingRecord(thread_id,account_slug,currentStage.stage,booking,labOrder);
+      if(!freshRecord||!hasSingleBookingRecord(text,freshRecord)||Object.keys(freshRecord).some(key=>freshRecord[key as keyof typeof freshRecord]!==evidence.booking_record![key as keyof typeof freshRecord]))
+        return {ok:false,reason:"booking_record_unverified"};
+    }
     const request=stockRequestForInquiryQuote(evidence?.stock_request??{items:[]},evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
     // Human wording edits cannot borrow technical facts from a previous draft.
     // Reuse the generation validators with current exact catalogue reviews.
@@ -2174,7 +2181,7 @@ export const recheckCopiedDraftStock = internalQuery({
     const prices:PriceEvidence[]=evidence?.stock_quotes?.length?[]:evidence?.prices??[];
     const inbound=latest?.sender!=="owner"?latest?.body_text??"":"";
     if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length) {
-      if(unsupportedPriceClaims(text,prices,request,inbound).length)return {ok:false,reason:"price_unverified"};
+      if(unsupportedPriceClaims(text,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
       return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
     }
     const sources=await loadStockSources(ctx);
@@ -2212,7 +2219,7 @@ export const recheckCopiedDraftStock = internalQuery({
         return {ok:false,reason:"price_unverified"};
       prices.push(...renterPriceEvidence([{tool:"check_basket_availability",call_id:`send-quote:${quote.quote_key}`,result:fresh}],[],thread_id));
     }
-    if(unsupportedPriceClaims(text,prices,request,inbound).length)return {ok:false,reason:"price_unverified"};
+    if(unsupportedPriceClaims(text,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
     const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
     // A copied recommendation must still qualify even when its prose says
     // only "this setup". Reuse the initial Native criteria and physical IDs;

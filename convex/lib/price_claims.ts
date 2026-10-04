@@ -1,4 +1,5 @@
 import { bestMatch, isGenericItemQuery } from "./item_name_match";
+import { withoutBookingRecord, type BookingRecord } from "./booking_record";
 import { inclusiveRentalDays } from "./hygglo_pricing";
 import { claimDateScope } from "./claim_date_scope";
 import { renterItemNames } from "./renter_item_names";
@@ -79,7 +80,8 @@ function priceClauseAfterAmount(segment:string) {
 }
 
 /** Checks recognised currency claims against their subject, purpose and scope. */
-export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest, latestRenterMessage="") {
+export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest, latestRenterMessage="",record?:BookingRecord|null) {
+  text=withoutBookingRecord(text,record);
   const failures: string[] = [];
   const moneyRoles = new Map(amendmentMoneyClaims(text).map(claim => [claim.index, claim.role]));
   const known = [...request.items.map(i => ({ names: [i.name, ...(i.aliases ?? [])], quantity: i.quantity })),

@@ -1,5 +1,6 @@
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
 import type {StockRequest} from "./stock_claims";
+import type { BookingRecord } from "./booking_record";
 /**
  * renter_bot_rubric — scores one renter-bot draft against Daniel's policy
  * categories, for the test harness only (never imported by production
@@ -49,6 +50,7 @@ export interface RubricInput {
   priceEvidence?: PriceEvidence[];
   priceRequest?: StockRequest;
   lastRenterMessage?: string;
+  bookingRecord?: BookingRecord;
 }
 
 export type RubricStatus = "pass" | "fail" | "flag" | "n_a";
@@ -103,7 +105,7 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     factsClaimed,
   );
   const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
-  const nativePriceFailures=nativePricing?unsupportedPriceClaims(draftText,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??""):[];
+  const nativePriceFailures=nativePricing?unsupportedPriceClaims(draftText,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord):[];
   const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
   const cats = new Set(allViolations.map((v) => v.category));
   if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");

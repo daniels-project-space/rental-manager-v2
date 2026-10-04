@@ -1,3 +1,4 @@
+import type { BookingRecord } from "./lib/booking_record";
 import type { RecommendationQuoteEvidence } from "./lib/renter_draft_evidence";
 import { equipmentClaimsNeedProfiles } from "./lib/equipment_claim_profiles";
 import { committedAmendmentConfirmation } from "./lib/amendment_confirmation";
@@ -677,6 +678,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
+          booking_record?:BookingRecord;
           recommendation_quotes?: RecommendationQuoteEvidence[];
           stock_quotes?: NonNullable<DraftEvidence["stock_quotes"]>;
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
@@ -745,7 +747,7 @@ export const generateDraft = action({
         routePriceRequest = j.priceRequest;
         routeCommercialContext = j.commercialContext ? minimumRentalContext(c.rental_stage.stage,
           j.commercialContext.threshold_gbp, j.priceEvidence ?? [], j.priceRequest ?? {items:[]},j.selectedInquiryQuotes??[]) : undefined;
-        generationMeta.evidence = { stock_quotes:j.stock_quotes, recommendation_quotes: j.recommendation_quotes, camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        generationMeta.evidence = { booking_record:j.booking_record, stock_quotes:j.stock_quotes, recommendation_quotes: j.recommendation_quotes, camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         generationMeta.evidence.stock_request = routeStockRequest;
         generationMeta.evidence.stock.forEach(receipt=>{
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
@@ -890,6 +892,7 @@ export const generateDraft = action({
     const guardOptions: Parameters<typeof guardDraft>[1] = {
       catalogueReadinessEvidence: ownerChecks.length && unsupportedCatalogueReadinessClaims(checkedDraft,[]).length ? await ctx.runQuery(internal.renter_bot_owner_checks.readinessEvidence,{checks:ownerChecks}) : [],
       cameraEvidence:profiles.cameras,lensEvidence:profiles.lenses,
+      bookingRecord:generationMeta.evidence?.booking_record,
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,
       priceEvidence: routePriceEvidence,
@@ -1154,6 +1157,8 @@ export const sendRenterReply = action({
           ? "This reply claims a booking state that the current platform order does not establish. Review the new enquiry separately from any previous rental."
           : stock.reason === "pickup_details_unverified"
           ? "Pickup details can only be shared for a current confirmed booking. Keep the new enquiry's address withheld until confirmation."
+          : stock.reason === "booking_record_unverified"
+          ? "The historical rental record in this reply no longer matches the original order. Generate a fresh draft before quoting its recorded total."
           : stock.reason === "price_unverified"
           ? "The quoted price no longer matches the current listing rates. Generate a fresh draft before sending this quote."
           : stock.reason === "technical_claims_unverified"

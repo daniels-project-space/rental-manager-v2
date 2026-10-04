@@ -1,5 +1,6 @@
 import { v, type Infer } from "convex/values";
 import { recommendationRequirementValidator } from "./recommendation_qualification";
+import { bookingRecordValidator } from "./booking_record";
 
 /** Selected Native quotes retain physical identity and the criteria checked for them.
  * At approval, current catalogue reviews must satisfy these criteria again. */
@@ -20,6 +21,7 @@ export const stockQuoteEvidenceValidator=v.object({
 export type StockQuoteEvidence=Infer<typeof stockQuoteEvidenceValidator>;
 
 export const draftEvidenceValidator = v.object({
+  booking_record:v.optional(bookingRecordValidator),
   stock_quotes:v.optional(v.array(stockQuoteEvidenceValidator)),
   model_id: v.string(),
   recommendation_quotes:v.optional(v.array(recommendationQuoteEvidenceValidator)),

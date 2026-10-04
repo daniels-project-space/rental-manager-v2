@@ -10,6 +10,7 @@ import { inventorySpecMap } from "./lib/inventory_spec_grounding";
 import { equipmentClaimProfiles } from "./lib/equipment_claim_profiles";
 import { equipmentUsageContext } from "./lib/item_technical_context";
 import { renterCameraIdentities } from "./lib/renter_camera_identity";
+import { bookingRecord } from "./lib/booking_record";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
@@ -433,6 +434,7 @@ export const get_listing_context = query({
       account_slug,
       items,
       equipment_usage: equipmentUsageContext(items),
+      booking_record: account_slug?bookingRecord(thread_id,account_slug,rentalStage(reservation,londonToday()).stage,reservation,simOrder):null,
       // The request itself: dates, pickup/return time, what they pay, location.
       start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
       end_date: simOrder?.end_date ?? reservation?.end_date ?? null,

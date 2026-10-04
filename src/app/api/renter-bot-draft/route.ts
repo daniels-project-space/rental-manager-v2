@@ -1,6 +1,6 @@
 import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import type { RecommendationRequirement } from "../../../../convex/lib/recommendation_qualification";
-import { renderNativeQuoteReply, type NativeQuoteScope } from "@/lib/renter-native-quote";
+import { renderNativeQuoteReply, nativeBookingRecord, type NativeQuoteScope } from "@/lib/renter-native-quote";
 import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
@@ -355,11 +355,14 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   const recommendationRequirements:RecommendationRequirement[]=[];
   const qualificationScope={threadId:thread_id,accountSlug:"",recommendationRequirements};
   let nativeReferralContext:NativeQuoteScope["referralContext"];
+  let nativeBookingRecordContext:NativeQuoteScope["bookingRecord"];
   let nativeReferralContextRevision:number|undefined;
   const querySession = createConvexQuerySession(rawConvex, (functionName, value) => {
     if(functionName==="renter_bot_tools:get_listing_context" && value && typeof value==="object") {
       nativeReferralContext=(value as {referral_context?:NativeQuoteScope["referralContext"]}).referral_context;
       nativeReferralContextRevision=querySession.getRevision();
+      const lc=value as {booking_record?:Parameters<typeof nativeBookingRecord>[0];account_slug?:string;rental_stage?:{stage:string}};
+      nativeBookingRecordContext=nativeBookingRecord(lc.booking_record,{threadId:thread_id,accountSlug:lc.account_slug??"",requestMessageId,rentalStage:lc.rental_stage?.stage,queryRevision:querySession.getRevision})??undefined;
     }
     if(functionName==="renter_bot_tools:find_owned_alternatives")recordRecommendationRequirements(qualificationScope,value);
     const tool = ({ "renter_bot_tools:lookup_pricing": "lookup_pricing", "renter_bot_tools:find_owned_alternatives": "find_owned_alternatives", "renter_bot_lab_order:get": "get_lab_order" } as Record<string,string>)[functionName];
@@ -590,6 +593,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // Item resolution cannot gate the stage used by tools and quote rendering.
     if (lc?.rental_stage) {
       authoritativeStage = lc.rental_stage.stage;
+      if(nativeBookingRecordContext)groundTruth += `HISTORICAL RENTAL RECORD: ${JSON.stringify(nativeBookingRecordContext)}. When answering about this closed rental's dates or total, select its record_key in a booking_record reply part. Its paid/quoted basis is explicit; never reprice this record from current listings or treat it as a new enquiry quote.\n`;
       groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
     }
     nativeReferralContext=lc?.referral_context;
@@ -647,7 +651,9 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       if (platformNotice) {
         groundTruth += `PLATFORM NOTICE (Hygglo said this, NOT the renter): "${platformNotice}". Do NOT reply to it and do NOT bring it up — the renter did not say it and may not even know it happened. Answer their actual last message instead. If THEY raise paying or talking off-platform, keep it on the platform, warmly and without accusing them.\n`;
       }
-      if (!bookingConfirmed) {
+      if (!bookingConfirmed && ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(authoritativeStage)) {
+        groundTruth += "CLOSED RENTAL: preserve the recorded history and its exact payment/quote basis. A new enquiry has no current booking confirmation or pickup permission; keep it separate from the closed record.\n";
+      } else if (!bookingConfirmed) {
         const inviteLine = lc.is_inquiry
           ? `This is an ENQUIRY (no booking placed yet) — answer warmly and confirm availability ONLY after an exact stock check. Do NOT tell them to "send a request" or "complete a booking" merely to get info/a quote; only talk booking if they say they're ready.`
           : `Follow the authoritative RENTAL STAGE and its exact next action. Availability may be confirmed only after a stock check; do not invent payment or verification steps.`;
@@ -686,10 +692,12 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
               );
             })
             .join("; ");
-          groundTruth += `CURRENT BOOKING (live, you CAN change it with modify_booking): ${rows || "(empty)"}. Dates: ${ord.start_date ?? "not set"} to ${ord.end_date ?? "not set"} = ${ord.days} day(s). Total: ${ord.total_gbp != null ? `£${ord.total_gbp}` : `NOT CALCULABLE (no price for ${ord.unpriced.join(", ")}) — do not quote a total`}.\n`;
+          groundTruth += `${["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(authoritativeStage)?"CLOSED RENTAL RECORD (historical; do not change it)":"CURRENT BOOKING (live, you CAN change it with modify_booking)"}: ${rows || "(empty)"}. Dates: ${ord.start_date ?? "not set"} to ${ord.end_date ?? "not set"} = ${ord.days} day(s). Total: ${ord.total_gbp != null ? `£${ord.total_gbp}` : `NOT CALCULABLE (no price for ${ord.unpriced.join(", ")}) — do not quote a total`}.\n`;
+          if(!["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(authoritativeStage)) {
           groundTruth += `  Before offering an uncommitted combined total, call quote_booking_addition for the exact extra item and quantity. This checks the existing kit plus the extra without changes. Say it would bring the total to the quote, never say a proposal was added. If an addition fails, quote a smaller available extra before offering its complete total. Individual item prices alone do not prove a combined booking total.\n`;
           groundTruth += `  When the renter asks you to add or remove gear or move dates, CALL modify_booking and then state what changed and the new total. Do NOT ask them to confirm a change they just asked for.\n`;
           groundTruth += `  PRICING IS TIERED: the per-day rate DROPS at 3 and 7 days, and the tiers above are what Hygglo charges. Daily displays can be approximate: quote the provided line/grand total, never recalculate from a rounded daily display. Quote the rate for the length they actually asked for, and when a longer hire is better value, say so using the tier numbers above and nothing else. Never multiply the 1-day rate across a longer booking, and never invent a rate that is not in the tiers.\n`;
+          }
         }
       } catch {
         /* not a Lab session — no simulated order exists */
@@ -1341,7 +1349,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
     }
 
-    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
+    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements,bookingRecord:nativeBookingRecordContext,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
     if(!renderedReply.ok)return NextResponse.json({ok:false,error:"invalid_native_quote_selection",error_code:"invalid_model_output",transient:false}, {status:502});
     obj.draft=renderedReply.draft;
     const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;
@@ -1462,6 +1470,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       ok: true,
       draft: obj.draft ?? "",
       rendered_quote_keys:renderedReply.quote_keys,
+      booking_record:renderedReply.booking_record,
       selectedInquiryQuotes:renderedReply.commercial_quotes,
       recommendation_quotes:renderedReply.recommendation_quotes,
       stock_quotes:renderedReply.stock_quotes,

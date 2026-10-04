@@ -1,7 +1,8 @@
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
-import {nativeInquiryQuote,renderNativeQuoteReply} from "./renter-native-quote";
+import {nativeInquiryQuote,nativeBookingRecord,renderNativeQuoteReply} from "./renter-native-quote";
+import {bookingRecordText,type BookingRecord} from "../../convex/lib/booking_record";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
 import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
@@ -16,6 +17,28 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it("renders an old record and a new quote as separate Native financial purposes",()=>{
+  const context={...scope,rentalStage:"COMPLETED"};
+  const record:BookingRecord={thread_id:scope.threadId,account_slug:"leo",stage:"COMPLETED",start_date:"2026-10-01",end_date:"2026-10-02",total_gbp:42,amount_basis:"lab_quote"};
+  const descriptor=nativeBookingRecord(record,context)!;
+  const result={...clone(),rental_stage:"COMPLETED",booking_use:"standalone"};
+  const quote=nativeInquiryQuote(result,context)!;
+  const output: RenterBotOutput={...base,reply_parts:[{type:"booking_record",record_key:descriptor.record_key},{type:"text",text:"Separately, here is the new enquiry quote:"},{type:"quote",quote_key:quote.quote_key}]};
+  expect(validateRenterBotOutput(output)).not.toBeNull();
+  const rendered=renderNativeQuoteReply(output,[receipt(result as typeof fixtures.first,context)],{...context,bookingRecord:descriptor});
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.draft).toContain(bookingRecordText(record));expect(rendered.draft).toContain("Total: £138");
+  expect(rendered.booking_record).toEqual(record);expect(rendered.stock_quotes).toHaveLength(1);expect(rendered.commercial_quotes).toHaveLength(1);
+  const request=stockRequestForInquiryQuote({items:[{name:"TTArtisan 11mm",quantity:1}]},rendered.stock_quotes,"COMPLETED");
+  expect(unsupportedPriceClaims(rendered.draft,renterPriceEvidence([receipt(result as typeof fixtures.first,context)],[],scope.threadId),request,"",record)).toEqual([]);
+  for(const bad of [undefined,{...descriptor,record_key:"record_"+"0".repeat(32)},{...descriptor,request_revision:1},{...descriptor,record:{...record,total_gbp:43}}])
+   expect(renderNativeQuoteReply({...base,reply_parts:[output.reply_parts![0]]},[],{...context,bookingRecord:bad}).ok).toBe(false);
+  expect(nativeBookingRecord({...record,thread_id:"other"},context)).toBeNull();
+  expect(nativeBookingRecord(record,{...context,rentalStage:"IN_USE"})).toBeNull();
+  expect(renderNativeQuoteReply({...base,reply_parts:[output.reply_parts![0],output.reply_parts![0]]},[],{...context,bookingRecord:descriptor}).ok).toBe(false);
+  const recordOnly=validateRenterBotOutput({...base,reply_parts:[output.reply_parts![0]]})!;
+  expect(renderNativeQuoteReply(recordOnly,[],{...context,bookingRecord:descriptor}).ok).toBe(true);
+ });
  it("quotes a separate new inquiry after a closed rental without reopening its scope",()=>{
   const original={start_date:"2026-10-01",end_date:"2026-10-02",items:[{name:"Sony FX3",quantity:1}]};
   for(const stage of ["COMPLETED","CANCELLED","VERIFICATION_FAILED"]) {

@@ -325,6 +325,7 @@ export const sendTestMessage = action({
       factsClaimed,
       productionFlags: draftResult.flags,
       priceEvidence:draftResult.evidence?.prices,
+        bookingRecord:draftResult.evidence?.booking_record,
       priceRequest:draftResult.evidence?.stock_request,
       lastRenterMessage:args.text,
     });

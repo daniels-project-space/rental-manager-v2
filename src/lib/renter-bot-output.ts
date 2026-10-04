@@ -6,7 +6,8 @@ export const RENTER_BOT_OUTPUT_SCHEMA = z.object({
   reply_parts: z.array(z.discriminatedUnion("type",[
     z.object({type:z.literal("text"),text:z.string()}),
     z.object({type:z.literal("quote"),quote_key:z.string().regex(/^inquiry_[a-f0-9]{32}$/),offer_action:z.literal("restore_referral").optional()}),
-  ])).min(1).max(12).optional().describe("For Native inquiry quotes, use text parts without money and quote parts selecting renter_quote.quote_key from check_basket_availability. Leave draft empty; the server renders the verified quote. Omit for replies without a Native inquiry quote."),
+    z.object({type:z.literal("booking_record"),record_key:z.string().regex(/^record_[a-f0-9]{32}$/)}),
+  ])).min(1).max(12).optional().describe("Use text parts without money, quote parts selecting renter_quote.quote_key for prospective hires, and booking_record parts selecting booking_record.record_key for an original closed rental. Both financial purposes can appear together. Leave draft empty; the server renders each verified block."),
   intent: z.enum(RENTER_BOT_INTENTS),
   conversation_stage: z.enum(CONVERSATION_STAGES),
   red_flags: z.array(z.string()),
@@ -28,7 +29,7 @@ export type RenterBotOutput = z.infer<typeof RENTER_BOT_OUTPUT_SCHEMA>;
 
 export function validateRenterBotOutput(value: unknown): RenterBotOutput | null {
  const parsed=RENTER_BOT_OUTPUT_SCHEMA.safeParse(value);
- if(!parsed.success||!parsed.data.needs_human&&!parsed.data.draft.trim()&&!parsed.data.reply_parts?.some(p=>p.type==="quote"||p.text.trim()))return null;
+ if(!parsed.success||!parsed.data.needs_human&&!parsed.data.draft.trim()&&!parsed.data.reply_parts?.some(p=>p.type!=="text"||p.text.trim()))return null;
  return parsed.data;
 }
 
