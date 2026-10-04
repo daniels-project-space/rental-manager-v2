@@ -1,4 +1,5 @@
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
+import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
 import {nativeInquiryQuote,renderNativeQuoteReply} from "./renter-native-quote";
 import {renterPriceEvidence} from "./renter-price-evidence";
@@ -15,6 +16,23 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it("quotes a separate new inquiry after a closed rental without reopening its scope",()=>{
+  const original={start_date:"2026-10-01",end_date:"2026-10-02",items:[{name:"Sony FX3",quantity:1}]};
+  for(const stage of ["COMPLETED","CANCELLED","VERIFICATION_FAILED"]) {
+   const context={...scope,rentalStage:stage},result={...fixtures.first,rental_stage:stage,booking_use:"standalone"};
+   const quote=nativeInquiryQuote(result,context)!;expect(quote).not.toBeNull();
+   const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(result as typeof fixtures.first,context)],context);
+   expect(rendered.ok).toBe(true);if(!rendered.ok)continue;
+   expect(rendered.stock_quotes[0].new_inquiry).toBe(true);
+   const request=stockRequestForInquiryQuote(original,rendered.stock_quotes,stage);
+   expect(request.start_date).toBe(fixtures.first.start_date);expect(request.items).toHaveLength(2);expect(original.start_date).toBe("2026-10-01");
+   expect(stockRequestForInquiryQuote(original,rendered.stock_quotes,"IN_USE")).toBe(original);
+   expect(stockRequestForInquiryQuote(original,rendered.stock_quotes.map(q=>({...q,new_inquiry:undefined})),stage)).toBe(original);
+   expect(nativeInquiryQuote({...result,booking_use:"addition"},context)).toBeNull();
+   expect(nativeInquiryQuote({...result,rental_stage:"IN_USE"},context)).toBeNull();
+   expect(nativeInquiryQuote({...result,rental_stage:undefined},context)).toBeNull();
+  }
+ });
  it("renders and records a single explicit referral proposal without applying a basket",()=>{
   const key=nativeInquiryQuote(fixtures.first,scope)!.quote_key;
   const referralContext={ok:true,code:"native-code",already_linked:false,items:fixtures.first.quote.lines.map(l=>({product_id:l.product_id}))};

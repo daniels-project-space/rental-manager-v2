@@ -3,6 +3,9 @@
  */
 export const RENTAL_STAGES = ["INQUIRY", "AWAITING_OWNER_APPROVAL", "AWAITING_PAYMENT", "AWAITING_VERIFICATION", "CONFIRMED_UPCOMING", "COLLECTION_DUE", "IN_USE", "RETURN_OVERDUE", "COMPLETED", "CANCELLED", "VERIFICATION_FAILED", "UNCONFIRMED"] as const;
 export type RentalStage = (typeof RENTAL_STAGES)[number];
+export function isClosedRentalStage(stage:string|null|undefined) {
+  return stage==="COMPLETED" || stage==="CANCELLED" || stage==="VERIFICATION_FAILED";
+}
 export function rentalStage(row: {
   status?: string | null;
   order_step?: string | null;

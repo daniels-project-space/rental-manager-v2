@@ -1,4 +1,5 @@
 import { normalizeApertureNotation, bestMatch } from "./item_name_match";
+import {isClosedRentalStage} from "./rental_stage";
 import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
@@ -21,8 +22,8 @@ export type StockRequest = {
 /** A rendered single Native offer is the subject of an otherwise empty inquiry.
  * Unselected tool results and multiple alternatives cannot define that subject.
  * This is display/guard scope, never a basket write or a booking promise. */
-export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;items:Array<{name:string;quantity:number}>}>) {
-  if(request.items.length || quotes.length!==1 || !quotes[0].items.length)return request;
+export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;new_inquiry?:true;items:Array<{name:string;quantity:number}>}>,stage?:string) {
+  if(quotes.length!==1 || !quotes[0].items.length || request.items.length && !(quotes[0].new_inquiry && isClosedRentalStage(stage)))return request;
   const quote=quotes[0];
   return {start_date:quote.start_date,end_date:quote.end_date,items:quote.items.map(i=>({name:i.name,quantity:i.quantity}))};
 }

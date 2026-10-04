@@ -1452,7 +1452,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         /* leave false — a claim without proof stays a false claim */
       }
     }
-    stockRequest=stockRequestForInquiryQuote(stockRequest,renderedReply.stock_quotes);
+    stockRequest=stockRequestForInquiryQuote(stockRequest,renderedReply.stock_quotes,authoritativeStage);
     if (commercialContext) commercialContext=minimumRentalContext(authoritativeStage,commercialContext.threshold_gbp,currentPriceEvidence(),priceRequest,renderedReply.commercial_quotes);
     return NextResponse.json({
       ok: true,

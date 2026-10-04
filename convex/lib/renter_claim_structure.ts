@@ -37,7 +37,7 @@ export function parenthesizedPriceBreakdowns(text:string):Map<number,PriceBreakd
 /** Presentation categories are separate from model tokens. This is only an
  * identity projection, not proof of the described technical capabilities. */
 export function itemReferenceLabel(label:string,category:"camera"|"lens") {
-  const reference=label.trim().replace(/^(?:(?:the|my|our|your|an?)\s+)+/i,"");
+  const reference=label.trim().replace(/^(?:(?:and|but|so)\s+)+/i,"").replace(/^(?:(?:the|my|our|your|an?)\s+)+/i,"");
   return category==="camera" ? reference
     .replace(/^(?:(?:full[ -]frame|\d+k|mirrorless|cinema)\s+)+/i,"")
     .replace(/(?:\s+(?:camera\s+body|body|camera))+$/i,"").trim()

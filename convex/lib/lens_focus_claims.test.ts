@@ -17,6 +17,8 @@ describe("reviewed lens focus assertions",()=>{
   expect(check("It's manual-focus only and has autofocus.")).not.toEqual([]);
   expect(check("It does not have autofocus and supports autofocus.")).not.toEqual([]);
   expect(check("It does not have autofocus and supports manual focus.")).toEqual([]);
+  expect(check("The TTArtisan 11mm f/2.8 is a fully manual focus lens, so it doesn't have autofocus or electronic contacts.")).toEqual([]);
+  expect(check("The TTArtisan 11mm f/2.8 is a fully manual focus lens, so it supports autofocus.")).not.toEqual([]);
   expect(check("It's a manual focus lens, so there's no autofocus on this one—you'll focus it manually.")).toEqual([]);
   expect(check("There is autofocus on this lens.")).not.toEqual([]);
   expect(check("There's no autofocus on the Sony FE 16-35mm F2.8 GM.")).not.toEqual([]);

@@ -41,7 +41,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { checkRentalStock, loadStockSources, stockForRentalItem, stockForItem } from "./lib/renter_stock";
 import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_identity";
-import { rentalStage } from "./lib/rental_stage";
+import { rentalStage,isClosedRentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { computeNegotiationStance } from "./lib/renter_bot_negotiation";
@@ -736,13 +736,13 @@ type JointStockArgs={account_slug:string;thread_id?:string;start_date:string;end
   items:Array<{item_name:string;quantity:number;product_id?:number}>;
   booking_use?:"standalone"|"additional"|"replacement";replace_product_id?:number;replace_quantity?:number;
   pickup_time?:string;return_time?:string;recommendation_requirements?:RecommendationRequirement[]};
-export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>,recheck?:{standalone_offer:true}) {
+export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>,recheck?:{standalone_offer:true;new_inquiry?:true}) {
     if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
     const [booking,labOrder]=a.thread_id ? await Promise.all([getBotBooking(ctx,a.thread_id),getLabOrder(ctx,a.thread_id)]) : [null,null];
     if ((booking?.account_slug && booking.account_slug!==a.account_slug) || (labOrder?.account_slug && labOrder.account_slug!==a.account_slug)) throw new Error("The current booking belongs to a different account");
     const stage=rentalStage(booking,londonToday()).stage;
-    if(recheck && stage!=="INQUIRY")return {available:null,reason:"inquiry_offer_stage_changed",components:[]};
-    const closed=["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
+    if(recheck && stage!=="INQUIRY" && !(recheck.new_inquiry && isClosedRentalStage(stage)))return {available:null,reason:"inquiry_offer_stage_changed",components:[]};
+    const closed=isClosedRentalStage(stage);
     const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
     const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
       : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id})) : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];

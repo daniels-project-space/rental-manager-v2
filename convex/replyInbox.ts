@@ -2141,7 +2141,7 @@ export const recheckCopiedDraftStock = internalQuery({
     if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
       return {ok:false,reason:"stale_draft"};
     const evidence=conv?.ai_draft_evidence;
-    const request=evidence?.stock_request??{items:[]};
+    const request=stockRequestForInquiryQuote(evidence?.stock_request??{items:[]},evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
     // Human wording edits cannot borrow technical facts from a previous draft.
     // Reuse the generation validators with current exact catalogue reviews.
     if(equipmentClaimsNeedProfiles(text)) {
@@ -2182,7 +2182,7 @@ export const recheckCopiedDraftStock = internalQuery({
       // Reuse the same Native stock/price/listing resolution as the original
       // offer. Physical IDs alone cannot establish the price of a listing.
       const fresh=await performJointStockCheck(ctx,{account_slug,thread_id,start_date:quote.start_date,end_date:quote.end_date,booking_use:"standalone",
-        items:priced.lines.map(l=>({product_id:l.product_id,item_name:l.name,quantity:l.quantity}))},sources,{standalone_offer:true});
+        items:priced.lines.map(l=>({product_id:l.product_id,item_name:l.name,quantity:l.quantity}))},sources,{standalone_offer:true,new_inquiry:quote.new_inquiry});
       const identity=JSON.stringify(quote.items.map(l=>[l.item_id,l.name,l.quantity]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
       if(fresh.available!==true || !("physical_identity_key" in fresh) || fresh.physical_identity_key!==identity)
         return {ok:false,reason:"stock_unverified"};
