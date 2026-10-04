@@ -1,0 +1,613 @@
+{
+  "stock": [
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Full Frame:basket:kn740n15w16172sn1qj8h89gx586b2xf",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Full Frame",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Full Frame:basket:kn7b8ezbpk7k3c4gdrb1smn7ad89a2j0",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "EF to L mount",
+      "kind": "accessory",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Full Frame:basket:kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 12,
+      "item": "NP-F570 batteries",
+      "kind": "power",
+      "owned": true,
+      "quantity": 5,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony FX3:basket:kn7bw2cr1ye5hqj3x770b332ks86atzw",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 3,
+      "item": "Sony FX3",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony A7 III:basket:kn74p93r60ndmmb0qghjqg84yh86abvh",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 III",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony A7 II:basket:kn71src7p25m5ppzkxnjwadm1s86azfk",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 II",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Pro:basket:kn737xq0jcc8a011f6x2m6srt986az25",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Pro",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Pro:basket:kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 12,
+      "item": "NP-F570 batteries",
+      "kind": "power",
+      "owned": true,
+      "quantity": 5,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony A7 V:basket:kn71951h7f9z8p3cea06v6zjjx86bgn4",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 V",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Full Frame",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Full Frame",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony FX3",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 3,
+      "item": "Sony FX3",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony A7 III",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 III",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony A7 II",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 II",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Pro",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Pro",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "prefetch-alternatives:1:Sony A7 V",
+      "checked_at": 1791086222337,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 V",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_2862618:Sony GM 16-35mm f2.8:basket:kn73ga9tdczw4azpvv41qm3dw186b9pb",
+      "checked_at": 1791086233364,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "identity_names": [
+        "Sony GM 16-35mm f2.8",
+        "Sony 16-35mm f2.8 GM",
+        "Sony FE 16-35mm F2.8 GM"
+      ],
+      "item": "Sony GM 16-35mm f2.8",
+      "kind": "lens",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_2862618:Sony GM 16-35mm f2.8",
+      "checked_at": 1791086233364,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "identity_names": [
+        "Sony GM 16-35mm f2.8",
+        "Sony 16-35mm f2.8 GM",
+        "Sony FE 16-35mm F2.8 GM"
+      ],
+      "item": "Sony GM 16-35mm f2.8",
+      "kind": "lens",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Sony GM 16-35mm f2.8",
+            "quantity": 1
+          },
+          {
+            "name": "Sony FX3",
+            "quantity": 1
+          }
+        ]
+      },
+      "call_id": "call_5179027:component:kn73ga9tdczw4azpvv41qm3dw186b9pb",
+      "checked_at": 1791086237977,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony GM 16-35mm f2.8",
+      "kind": "lens",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Sony GM 16-35mm f2.8",
+            "quantity": 1
+          },
+          {
+            "name": "Sony FX3",
+            "quantity": 1
+          }
+        ]
+      },
+      "call_id": "call_5179027:component:kn7bw2cr1ye5hqj3x770b332ks86atzw",
+      "checked_at": 1791086237977,
+      "end_date": "2026-10-21",
+      "free_units": 3,
+      "item": "Sony FX3",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Sony A7 V",
+            "quantity": 1
+          },
+          {
+            "name": "Sony GM 16-35mm f2.8",
+            "quantity": 1
+          }
+        ]
+      },
+      "call_id": "call_5179048:component:kn71951h7f9z8p3cea06v6zjjx86bgn4",
+      "checked_at": 1791086237976,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 V",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Sony A7 V",
+            "quantity": 1
+          },
+          {
+            "name": "Sony GM 16-35mm f2.8",
+            "quantity": 1
+          }
+        ]
+      },
+      "call_id": "call_5179048:component:kn73ga9tdczw4azpvv41qm3dw186b9pb",
+      "checked_at": 1791086237976,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony GM 16-35mm f2.8",
+      "kind": "lens",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    }
+  ],
+  "prices": [
+    {
+      "base_rate_gbp": 49,
+      "call_id": "server-price:1:Sony FX3",
+      "daily_rate_gbp": 49,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony FX3",
+        "Sony fx 3 cinema camera full frame mirrorless 4k sony fx3 (same sensor as a7siii a7s iii )"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 98
+    },
+    {
+      "base_rate_gbp": 35,
+      "call_id": "server-price:1:BMPCC 6K Pro",
+      "daily_rate_gbp": 35,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "BMPCC 6K Pro",
+        "Bmpcc 6k pro blackmagic bmpcc6k cinema camera body set + 2tb ssd"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 70
+    },
+    {
+      "base_rate_gbp": 42,
+      "call_id": "server-price:1:Sony A7 V",
+      "daily_rate_gbp": 42,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony A7 V",
+        "Sony A7 V Full Frame Camera | Sony a7V / a7 V / a7v / Alpha 7 V /  a7 5 Full-Frame Mirrorless / 4K Camera / Hybrid Photo Video Camera"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 84
+    },
+    {
+      "base_rate_gbp": 20,
+      "call_id": "server-price:4:Sony GM 16-35mm f2.8",
+      "daily_rate_gbp": 20,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony GM 16-35mm f2.8",
+        "Sony 16-35mm f2.8 GM",
+        "Sony FE 16-35mm F2.8 GM",
+        "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 40
+    },
+    {
+      "base_rate_gbp": 45,
+      "call_id": "server-price:5:Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k",
+      "daily_rate_gbp": 45,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k"
+      ],
+      "quantity": 1,
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 90
+    },
+    {
+      "call_id": "server-price:5",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 90
+    },
+    {
+      "base_rate_gbp": 49,
+      "call_id": "prefetch-alternatives:1:Sony FX3",
+      "daily_rate_gbp": 49,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony FX3",
+        "Sony fx 3 cinema camera full frame mirrorless 4k sony fx3 (same sensor as a7siii a7s iii )"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 98
+    },
+    {
+      "base_rate_gbp": 35,
+      "call_id": "prefetch-alternatives:1:BMPCC 6K Pro",
+      "daily_rate_gbp": 35,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "BMPCC 6K Pro",
+        "Bmpcc 6k pro blackmagic bmpcc6k cinema camera body set + 2tb ssd"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 70
+    },
+    {
+      "base_rate_gbp": 42,
+      "call_id": "prefetch-alternatives:1:Sony A7 V",
+      "daily_rate_gbp": 42,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony A7 V",
+        "Sony A7 V Full Frame Camera | Sony a7V / a7 V / a7v / Alpha 7 V /  a7 5 Full-Frame Mirrorless / 4K Camera / Hybrid Photo Video Camera"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 84
+    },
+    {
+      "base_rate_gbp": 20,
+      "call_id": "call_2862618:Sony GM 16-35mm f2.8",
+      "daily_rate_gbp": 20,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony GM 16-35mm f2.8",
+        "Sony 16-35mm f2.8 GM",
+        "Sony FE 16-35mm F2.8 GM",
+        "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 40
+    },
+    {
+      "call_id": "call_5179027",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Sony FX3",
+          "quantity": 1
+        },
+        {
+          "name": "Sony 16-35mm f2.8 GM",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "quote_role": "inquiry",
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 138
+    },
+    {
+      "base_rate_gbp": 49,
+      "call_id": "call_5179027:line:1097510",
+      "daily_rate_gbp": 49,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony FX3",
+        "Sony fx 3 cinema camera full frame mirrorless 4k sony fx3 (same sensor as a7siii"
+      ],
+      "quantity": 1,
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 98
+    },
+    {
+      "base_rate_gbp": 20,
+      "call_id": "call_5179027:line:1115113",
+      "daily_rate_gbp": 20,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony 16-35mm f2.8 GM",
+        "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series"
+      ],
+      "quantity": 1,
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 40
+    },
+    {
+      "call_id": "call_5179048",
+      "days": 2,
+      "end_date": "2026-10-21",
+      "items": [
+        {
+          "name": "Sony A7 V",
+          "quantity": 1
+        },
+        {
+          "name": "Sony 16-35mm f2.8 GM",
+          "quantity": 1
+        }
+      ],
+      "kind": "basket",
+      "names": [],
+      "quote_role": "inquiry",
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 42,
+      "call_id": "call_5179048:line:1172384",
+      "daily_rate_gbp": 42,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony A7 V",
+        "Sony A7 V Full Frame Camera | Sony a7V / a7 V / a7v / Alpha 7 V /  a7 5"
+      ],
+      "quantity": 1,
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 84
+    },
+    {
+      "base_rate_gbp": 20,
+      "call_id": "call_5179048:line:1115113",
+      "daily_rate_gbp": 20,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony 16-35mm f2.8 GM",
+        "Sony 16\u201335mm f/2.8 GM Wide Angle Lens \u2013 Full Frame E-Mount / G Master Series"
+      ],
+      "quantity": 1,
+      "source": "native_inquiry_basket",
+      "start_date": "2026-10-20",
+      "total_gbp": 40
+    }
+  ],
+  "stock_request": {
+    "end_date": "2026-10-21",
+    "items": [
+      {
+        "aliases": [
+          "Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k",
+          "Canon R5",
+          "Cannon r5 + 24-105mm f4 mirrorless Camera Full Frame 4k"
+        ],
+        "complete": false,
+        "components": [
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          }
+        ],
+        "name": "Canon R5",
+        "quantity": 1
+      }
+    ],
+    "start_date": "2026-10-20"
+  },
+  "candidate": "That exact Canon R5 kit isn't available for 20\u201321 October, but I can offer our full-frame 4K Sony FX3 paired with the Sony FE 16\u201335mm f/2.8 GM autofocus wide-angle zoom lens, which fits your indoor walkthrough perfectly.\n\nFor the 2-day hire (20\u201321 October), the total comes to \u00a3138 (\u00a398 for the FX3 body and \u00a340 for the 16\u201335mm f/2.8 GM lens), fitting right within your \u00a3150 budget. The FX3 comes with 2x NP-FZ100 battery sets and a CFexpress Type A card.\n\nIf you'd prefer the Sony A7 V instead, that paired with the 16\u201335mm f/2.8 GM would come to \u00a3124 total for the two days.\n\nLet me know if either setup works for your shoot and you'd like to go ahead!",
+  "renter_message": "Hi, I was looking at your Canon R5 kit. I need a full-frame 4K camera with an autofocus wide-angle lens for a moving indoor walkthrough on 20\u201321 October. If the R5 kit isn't available, I'm happy to use Sony. My budget is \u00a3150 total for those two days. What camera-and-lens option can you offer and what's the exact total? Quote only, please don't change or confirm a booking."
+}

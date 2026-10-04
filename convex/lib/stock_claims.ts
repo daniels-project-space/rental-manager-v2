@@ -3,6 +3,7 @@ import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
 import { lensClaimReferences } from "./lens_claim_references";
+import { itemReferenceLabel } from "./renter_claim_structure";
 import { requestedLensSets, resolveLensSet, lensSetSubjectFamily, lensSetFocalPattern, lensSetSuffixPattern } from "./lens_set_resolution";
 export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
@@ -97,7 +98,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   const lensSubject=(reference:string)=>{
     // These words describe a lens's capabilities/category, not its identity.
     // Stock evidence does not attest them; technical evidence remains separate.
-    const label=reference.replace(/(?:\s+(?:wide[ -]angle|autofocus|manual[ -]focus|zoom|lens))+$/i,"").trim();
+    const label=itemReferenceLabel(reference,"lens");
     const focal=/\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.exec(label)?.[0];
     if(!focal)return undefined;
     const candidates=knownSubjects.filter(i=>receipts.some(r=>r.kind==="lens"&&sameItem(r.item,i.name)) &&
@@ -250,6 +251,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     } else if(coordinated.length>1) {
       targets=coordinated.flatMap(part=>{
         const parsed=subjectOf(part);
+        parsed.name=itemReferenceLabel(parsed.name,/\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm\b/i.test(parsed.name)?"lens":"camera");
         const lens=parsed.name.replace(/\s+(?:anamorphic\s+)?lens(?:es)?$/i,"");
         const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n))
           || receipts.some(r=>r.kind==="lens" && sameItem(r.item,i.name)) && sameItem(lens,i.name));

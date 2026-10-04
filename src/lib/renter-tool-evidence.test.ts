@@ -1,3 +1,4 @@
+import breakdownNative from "./fixtures/renter-sales-breakdown-native.json";
 import pairedNative from "./fixtures/renter-sales-paired-native.json";
 import {unsupportedPriceClaims,type PriceEvidence} from "../../convex/lib/price_claims";
 import {renterPriceEvidence} from "./renter-price-evidence";
@@ -153,5 +154,30 @@ describe("captured paired lens sales reply",()=>{
   for(const changed of [pairedNative.candidate.replace("£40","£41"),pairedNative.candidate.replace("16-35mm f/2.8 GM is","Canon RF 16-35mm f/2.8 GM is"),pairedNative.candidate.replace("£138","£139")])expect(unsupportedPriceClaims(changed,pairedNative.prices as PriceEvidence[],pairedNative.request,pairedNative.renter_message)).not.toEqual([]);
   const nested=pairedNative.candidate.replace("(includes 2x NP-FZ100 battery sets and a CFexpress Type A card)","(includes batteries (two sets) and a card)");
   expect(unsupportedPriceClaims(nested,pairedNative.prices as PriceEvidence[],pairedNative.request,pairedNative.renter_message)).toEqual([]);
+ });
+});
+
+
+describe("captured total-before-breakdown sales reply",()=>{
+ const prices=breakdownNative.prices as PriceEvidence[];
+ const priceCheck=(text=breakdownNative.candidate,evidence=prices)=>unsupportedPriceClaims(text,evidence,breakdownNative.stock_request,breakdownNative.renter_message);
+ const stockCheck=(text=breakdownNative.candidate)=>unsupportedStockClaims(text,breakdownNative.stock,breakdownNative.stock_request,["Canon R5"],breakdownNative.renter_message);
+ it("binds both captured offers and their component prices to Native receipts",()=>{
+  expect(priceCheck()).toEqual([]);
+  expect(stockCheck()).toEqual([]);
+ });
+ it("rejects wrong totals, component amounts, quantities and identities",()=>{
+  for(const text of [breakdownNative.candidate.replace("£138","£139"),breakdownNative.candidate.replace("£98","£97"),breakdownNative.candidate.replace("£98 for the FX3 body and £40","£40 for the FX3 body and £98"),breakdownNative.candidate.replace("FX3 body","two FX3 bodies"),breakdownNative.candidate.replace("FX3 body","Sony A7 V body"),breakdownNative.candidate.replace("16–35mm f/2.8 GM lens","Canon RF 16–35mm f/2.8 GM lens"),breakdownNative.candidate.replace("16–35mm f/2.8 GM lens","16–35mm f/2.8 GM II lens")])expect(priceCheck(text),text).not.toEqual([]);
+ });
+ it("requires same-call component receipts with matching dates and quantities",()=>{
+  const firstBasket=prices.find(e=>e.kind==="basket"&&e.total_gbp===138)!;
+  const child=prices.find(e=>e.call_id.startsWith(firstBasket.call_id+":line:")&&e.total_gbp===98)!;
+  for(const evidence of [prices.filter(e=>e!==child),prices.map(e=>e===child?{...e,call_id:"unrelated-line"}:e),prices.map(e=>e===child?{...e,end_date:"2026-10-22"}:e),prices.map(e=>e===child?{...e,quantity:2}:e)])expect(priceCheck(breakdownNative.candidate,evidence)).not.toEqual([]);
+ });
+ it("rejects malformed or repeated breakdown members",()=>{
+  for(const text of [breakdownNative.candidate.replace("£98 for the FX3 body","£98 fee"),breakdownNative.candidate.replace("£98 for the FX3 body","£40 for the 16–35mm f/2.8 GM lens"),breakdownNative.candidate.replace("£40 for the 16–35mm f/2.8 GM lens","£40 for an unknown item")])expect(priceCheck(text),text).not.toEqual([]);
+ });
+ it("keeps camera category captions separate from lens and model identity",()=>{
+  for(const text of [breakdownNative.candidate.replace("our full-frame 4K Sony FX3","our full-frame 4K Sony FX3 autofocus lens"),breakdownNative.candidate.replace("our full-frame 4K Sony FX3","our full-frame 4K Sony FX30"),breakdownNative.candidate.replace("Sony FE 16–35mm f/2.8 GM autofocus wide-angle zoom lens","Sony FE 16–35mm f/2.8 GM II autofocus wide-angle zoom lens")])expect(stockCheck(text),text).not.toEqual([]);
  });
 });
