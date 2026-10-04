@@ -14,7 +14,7 @@ export function bindRenterToolArgs(functionName: string, args: Record<string, un
   const bound = { ...args };
   if ("account_slug" in args || functionName === "renter_bot_tools:lookup_pricing") bound.account_slug = scope.accountSlug;
   if ("hygglo_order_id" in args) bound.hygglo_order_id = scope.threadId;
-  if ("thread_id" in args || ["renter_bot_tools:check_availability","renter_bot_tools:check_basket_availability"].includes(functionName)) bound.thread_id = scope.threadId;
+  if ("thread_id" in args || ["renter_bot_tools:check_availability","renter_bot_tools:check_basket_availability","renter_bot_tools:find_owned_alternatives"].includes(functionName)) bound.thread_id = scope.threadId;
   if (["renter_bot_lab_order:applyChange", "renter_bot_lab_order:applyAdditionBasket", "renter_bot_lab_order:applyReplacementBasket"].includes(functionName)) bound.request_message_id = scope.requestMessageId ?? "";
   return bound;
 }

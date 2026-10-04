@@ -15,6 +15,7 @@ describe("trusted tool request scope", () => {
     expect(bindRenterToolArgs("renter_bot_tools:lookup_pricing", {}, scope)).toEqual({ account_slug: "leo" });
     expect(bindRenterToolArgs("renter_bot_tools:check_availability", {}, scope)).toEqual({ thread_id: "one" });
     expect(bindRenterToolArgs("renter_bot_tools:check_basket_availability", {account_slug:"diogo"}, scope)).toEqual({account_slug:"leo",thread_id:"one"});
+    expect(bindRenterToolArgs("renter_bot_tools:find_owned_alternatives", {account_slug:"diogo",kind:"camera",camera_requirements:{sensor_format:"full_frame",internal_4k:true}}, scope)).toEqual({account_slug:"leo",thread_id:"one",kind:"camera",camera_requirements:{sensor_format:"full_frame",internal_4k:true}});
     expect(bindRenterToolArgs("settings:get", {}, scope)).toEqual({});
   });
   it("keeps concurrent threads isolated across async tool calls", async () => {
