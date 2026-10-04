@@ -1,6 +1,6 @@
 import { sharedLensFacts, type LensVariantReview } from "./lens_variant_review";
 import { verifiedItemSpec, type SpecRecord } from "./verified_item_spec";
-export type LensRequirements = {focus_mode?: "autofocus"|"manual_focus"; wide_angle?: boolean; macro?: boolean; projection?: "fisheye"|"anamorphic"; excluded_projections?: Array<"fisheye"|"anamorphic">; coverage?: "full_frame"; focal_mm?: number; max_wide_focal_mm?: number; max_aperture_f?: number; max_aperture_t?: number};
+export type LensRequirements = {focus_mode?: "autofocus"|"manual_focus"; wide_angle?: boolean; macro?: boolean; projection?: "fisheye"|"anamorphic"|"rectilinear"; excluded_projections?: Array<"fisheye"|"anamorphic"|"rectilinear">; coverage?: "full_frame"; focal_mm?: number; max_wide_focal_mm?: number; max_aperture_f?: number; max_aperture_t?: number};
 export type LensCapabilities = LensRequirements & {manual_focus_available?: boolean; focal_min_mm?: number; focal_max_mm?: number; model: string; source_url: string|null; model_scope?:"shared_variants"; reviewed_models?:Array<{model:string;source_urls:string[]}>};
 export type LensSpec = SpecRecord & {lens_variant_reviews?:LensVariantReview[];lens_capabilities?: Partial<LensCapabilities> & {verified_model?:string; verified_at?:number}};
 /** Reviews must match the inventory identity and remain current. Shared variant

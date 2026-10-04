@@ -2,8 +2,8 @@ import {cameraRequirementsValidator} from "./camera_requirement_validator";
 import { normalizeMount } from "./item_name_match";
 import { v, type Infer } from "convex/values";
 export const lensRequirementsValidator = v.object({
- excluded_projections:v.optional(v.array(v.union(v.literal("fisheye"),v.literal("anamorphic")))),focus_mode:v.optional(v.union(v.literal("autofocus"),v.literal("manual_focus"))),
- wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),projection:v.optional(v.union(v.literal("fisheye"),v.literal("anamorphic"))),coverage:v.optional(v.literal("full_frame")),
+ excluded_projections:v.optional(v.array(v.union(v.literal("fisheye"),v.literal("anamorphic"),v.literal("rectilinear")))),focus_mode:v.optional(v.union(v.literal("autofocus"),v.literal("manual_focus"))),
+ wide_angle:v.optional(v.boolean()),macro:v.optional(v.boolean()),projection:v.optional(v.union(v.literal("fisheye"),v.literal("anamorphic"),v.literal("rectilinear"))),coverage:v.optional(v.literal("full_frame")),
  focal_mm:v.optional(v.number()),max_wide_focal_mm:v.optional(v.number()),max_aperture_f:v.optional(v.number()),max_aperture_t:v.optional(v.number()),
 });
 const checkDates={start_date:v.union(v.string(),v.null()),end_date:v.union(v.string(),v.null()),quantity:v.number()};

@@ -33,6 +33,14 @@ describe("verified lens requirement boundary",()=>{
   expect(assessLensRequirements(cap,{max_aperture_t:2.8}).status).toBe("unknown");
   expect(assessLensRequirements(cap,{focal_mm:90}).status).toBe("mismatch");
  });
+ it("requires positive projection evidence when excluding optical designs",()=>{
+  const cap=verifiedLensCapabilities(spec,"Exact lens")!;
+  const request={max_wide_focal_mm:20,excluded_projections:["fisheye","anamorphic"] as ("fisheye"|"anamorphic")[]};
+  expect(assessLensRequirements(cap,request)).toEqual({status:"unknown",unknown:["excluded_projections"],mismatched:[]});
+  expect(assessLensRequirements({...cap,projection:"rectilinear"},request).status).toBe("match");
+  expect(assessLensRequirements({...cap,projection:"fisheye"},request).status).toBe("mismatch");
+  expect(meetsLensRequirements({...cap,projection:"rectilinear"},{excluded_projections:["rectilinear"]})).toBe(false);
+ });
 });
 
 
@@ -48,6 +56,16 @@ describe("shared model variant reviews",()=>{
   const cap=verifiedLensCapabilities({...spec,lens_variant_reviews:[review("GM",base),review("GM II",{...base,focus_mode:undefined,max_aperture_f:4})]},"Exact lens");
   expect(cap?.focus_mode).toBeUndefined();expect(cap?.max_aperture_f).toBeUndefined();
   expect(assessLensRequirements(cap,{focus_mode:"autofocus",max_aperture_f:2.8}).status).toBe("unknown");
+ });
+ it("shares projection only when both exact models have the same reviewed classification",()=>{
+  const reviewed={...base,projection:"rectilinear"};
+  const request={excluded_projections:["fisheye"] as "fisheye"[]};
+  const capabilities=(second:any)=>verifiedLensCapabilities({...spec,lens_variant_reviews:[review("GM",reviewed),review("GM II",second)]},"Exact lens");
+  expect(assessLensRequirements(capabilities(reviewed),request).status).toBe("match");
+  for(const second of [base,{...base,projection:"fisheye"}]){
+   expect(capabilities(second)?.projection).toBeUndefined();
+   expect(assessLensRequirements(capabilities(second),request).status).toBe("unknown");
+  }
  });
  it("rejects missing, duplicate, stale or invalid variant evidence instead of falling back",()=>{
   const reviews=[review("GM",base),review("GM II",base)];
