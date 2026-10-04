@@ -1,4 +1,5 @@
 import type { RecommendationQuoteEvidence } from "./lib/renter_draft_evidence";
+import { equipmentClaimsNeedProfiles } from "./lib/equipment_claim_profiles";
 import { committedAmendmentConfirmation } from "./lib/amendment_confirmation";
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
@@ -884,11 +885,11 @@ export const generateDraft = action({
     // claims, premature confirmation, false action claims, out-of-hours times…).
     const guardStage = c.rental_stage.stage;
     const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
-    const cameraEvidence = /\b4k\b|\b4k\d{2,3}p\b|\b(?:built[ -]?in|internal)\s+(?:variable\s+)?NDs?\b/i.test(checkedDraft)
-      ? await ctx.runQuery(internal.renter_bot_tools.__service_get_verified_camera_profiles, {}) : [];
+    const profiles = equipmentClaimsNeedProfiles(checkedDraft)
+      ? await ctx.runQuery(internal.renter_bot_tools.__service_get_verified_equipment_profiles, {}) : {cameras:[],lenses:[]};
     const guardOptions: Parameters<typeof guardDraft>[1] = {
       catalogueReadinessEvidence: ownerChecks.length && unsupportedCatalogueReadinessClaims(checkedDraft,[]).length ? await ctx.runQuery(internal.renter_bot_owner_checks.readinessEvidence,{checks:ownerChecks}) : [],
-      cameraEvidence,
+      cameraEvidence:profiles.cameras,lensEvidence:profiles.lenses,
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,
       priceEvidence: routePriceEvidence,
@@ -1148,6 +1149,8 @@ export const sendRenterReply = action({
           ? "This copied AI reply is out of date. Clear it and write your reply, or copy a fresh draft before sending."
           : stock.reason === "price_unverified"
           ? "The quoted price no longer matches the current listing rates. Generate a fresh draft before sending this quote."
+          : stock.reason === "technical_claims_unverified"
+          ? "The equipment details in this reply do not match current verified specifications. Review the claimed capability before sending."
           : stock.reason === "technical_requirements_unverified"
           ? "The recommended equipment no longer has verified specifications for the requirements in this draft. Generate a fresh draft, or clear the copied draft and review the equipment yourself."
           : "The quoted equipment or availability no longer matches current inventory. Generate a fresh draft, or clear the copied draft and review the gear before sending."};

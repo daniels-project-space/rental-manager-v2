@@ -6,6 +6,7 @@ import { unsupportedPriceClaims, incompleteSetupQuotes, type PriceEvidence } fro
 import { supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
+import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
@@ -54,6 +55,7 @@ export interface GuardOpts {
   stockRequest?: StockRequest;
   /** Reviewed exact-model catalog results, not a tool-use boolean or prose. */
   cameraEvidence?: CameraEvidence[];
+  lensEvidence?: LensFocusEvidence[];
   /** Prior turns, oldest→newest. role is the V2 sender ("owner"/"renter"). */
   history: { role: "owner" | "renter"; content: string }[];
   /** The renter's most recent message (drives time/intent checks). */
@@ -188,6 +190,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   VERIFICATION_CIRCUMVENTION: "critical",
   LOCATION_ASK_FOR_DISCOUNT: "high",
   UNGROUNDED_SPEC: "high",
+  LENS_FOCUS_HALLUCINATION: "high",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
@@ -1101,6 +1104,9 @@ const ASSERTS_AVAIL_RE =
 
   for (const claim of unsupportedBuiltInNDClaims(text, opts.cameraEvidence ?? [], opts.stockRequest?.items.map(i => i.name) ?? [])) {
     push("CAMERA_FEATURE_HALLUCINATION", `Built-in ND lacks matching reviewed body proof: "${claim.slice(0, 160)}"`, "flagged");
+  }
+  if(opts.lensEvidence!==undefined)for(const claim of unsupportedLensFocusClaims(text,opts.lensEvidence,opts.stockRequest?.items.map(i=>i.name)??[],opts.cameraEvidence?.flatMap(e=>e.names)??[])) {
+    push("LENS_FOCUS_HALLUCINATION",`Focus mode lacks matching reviewed lens proof: "${claim.slice(0,160)}"`,"flagged");
   }
 
   // 17. INCLUDED ACCESSORY CHARGED SEPARATELY — FLAG

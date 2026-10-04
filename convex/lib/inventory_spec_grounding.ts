@@ -6,8 +6,8 @@ export function ownedInventoryItem(item: {status: string; is_marketing_only?: bo
 
 /** Join by the physical item ID, then verify its exact canonical identity.
  * Multiple spec rows require review rather than selecting a convenient row. */
-export function inventorySpecMap(rows: Array<SpecRecord & {item_id: unknown}>) {
-  const map = new Map<string, SpecRecord>();
+export function inventorySpecMap<T extends SpecRecord & {item_id:unknown}>(rows:T[]) {
+  const map = new Map<string, T>();
   const ambiguous = new Set<string>();
   for (const row of rows) {
     const key = String(row.item_id);

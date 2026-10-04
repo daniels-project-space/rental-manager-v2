@@ -2,6 +2,9 @@ import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
 import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
 import { performJointStockCheck } from "./renter_bot_tools";
 import { qualifyRecommendationBasket } from "./lib/recommendation_qualification";
+import { equipmentClaimProfiles, equipmentClaimsNeedProfiles } from "./lib/equipment_claim_profiles";
+import { unsupportedLensFocusClaims } from "./lib/lens_focus_claims";
+import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims } from "./lib/camera_mode_claims";
 import { renterHistory } from "./lib/renter_history";
 import { conversationStageValidator } from "./lib/conversation_stage_validator";
 import type { ConversationStage } from "./lib/renter_bot_intents";
@@ -35,7 +38,7 @@ import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
 import { loadStockSources, resolveStockItem, stockForRentalItem } from "./lib/renter_stock";
-import { unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
+import { stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
 import { reviewFlagValidator } from "./lib/draft_review_validator";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { summarise } from "./lib/renter_order_quote";
@@ -2139,6 +2142,14 @@ export const recheckCopiedDraftStock = internalQuery({
       return {ok:false,reason:"stale_draft"};
     const evidence=conv?.ai_draft_evidence;
     const request=evidence?.stock_request??{items:[]};
+    // Human wording edits cannot borrow technical facts from a previous draft.
+    // Reuse the generation validators with current exact catalogue reviews.
+    if(equipmentClaimsNeedProfiles(text)) {
+      const [items,specs]=await Promise.all([ctx.db.query("items").collect(),ctx.db.query("item_specs").collect()]);
+      const profiles=equipmentClaimProfiles(items,specs),initial=stockRequestForInquiryQuote(request,evidence?.stock_quotes??[]).items.map(i=>i.name);
+      if(unsupportedCameraModeClaims(text,profiles.cameras).length || unsupportedBuiltInNDClaims(text,profiles.cameras,initial).length ||
+        unsupportedLensFocusClaims(text,profiles.lenses,initial,profiles.cameras.flatMap(e=>e.names)).length)return {ok:false,reason:"technical_claims_unverified"};
+    }
     // A copied reply's edited amounts must still belong to its Native proof.
     // Selected inquiry offers use fresh receipts only; an unselected pricing
     // lookup cannot authorize a different amount in the outgoing reply.

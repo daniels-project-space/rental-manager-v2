@@ -7,6 +7,7 @@ import { lensRequirementsValidator, listingMappingOwnerCheck } from "./lib/owner
 import { ownerChecksForBot } from "./renter_bot_owner_checks";
 import { draftContextKey } from "./lib/draft_review";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
+import { equipmentClaimProfiles } from "./lib/equipment_claim_profiles";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
@@ -989,17 +990,13 @@ export const check_location = action({
 // when the renter asks for something we don't stock. Works for every account.
 /** Technical evidence only: never an availability or rental-kit verdict. */
 export const get_verified_camera_profiles = query({ args: {}, handler: async ctx => {
-  const items = await ctx.db.query("items").collect();
-  const specs = await ctx.db.query("item_specs").collect();
-  const byItem = new Map(specs.map(s => [String(s.item_id), s]));
-  return items.filter(i => i.kind === "camera" && i.status === "active" && !i.is_marketing_only && i.qty > 0).flatMap(i => {
-    const spec = byItem.get(String(i._id));
-    const capabilities = verifiedCameraCapabilities(spec, i.name_canonical);
-    return capabilities ? [{ names: [i.name_canonical, ...(i.aliases ?? []), spec!.verified_model!,
-      // Manufacturer can be omitted in ordinary replies ("the FX3", "A7 V").
-      ...(i.name_canonical.startsWith("Sony ") ? [i.name_canonical.slice(5)] : [])].flatMap(renterItemNames), capabilities }] : [];
-  });
+  return (await readEquipmentClaimProfiles(ctx)).cameras;
 } });
+async function readEquipmentClaimProfiles(ctx:QueryCtx) {
+ const [items,specs]=await Promise.all([ctx.db.query("items").collect(),ctx.db.query("item_specs").collect()]);
+ return equipmentClaimProfiles(items,specs);
+}
+export const get_verified_equipment_profiles=query({args:{},handler:readEquipmentClaimProfiles});
 
 export const find_owned_alternatives = query({
   args: {
@@ -1468,3 +1465,4 @@ export const __service_find_owned_alternatives = internalQueryOf(find_owned_alte
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_get_verified_camera_profiles = internalQueryOf(get_verified_camera_profiles);
+export const __service_get_verified_equipment_profiles = internalQueryOf(get_verified_equipment_profiles);
