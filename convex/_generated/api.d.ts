@@ -202,6 +202,7 @@ import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.
 import type * as lib_renter_bot_rubric from "../lib/renter_bot_rubric.js";
 import type * as lib_renter_bot_runtime from "../lib/renter_bot_runtime.js";
 import type * as lib_renter_bot_tone_scorer from "../lib/renter_bot_tone_scorer.js";
+import type * as lib_renter_claim_structure from "../lib/renter_claim_structure.js";
 import type * as lib_renter_date_acceptance from "../lib/renter_date_acceptance.js";
 import type * as lib_renter_date_proposal from "../lib/renter_date_proposal.js";
 import type * as lib_renter_dna from "../lib/renter_dna.js";
@@ -551,6 +552,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_rubric": typeof lib_renter_bot_rubric;
   "lib/renter_bot_runtime": typeof lib_renter_bot_runtime;
   "lib/renter_bot_tone_scorer": typeof lib_renter_bot_tone_scorer;
+  "lib/renter_claim_structure": typeof lib_renter_claim_structure;
   "lib/renter_date_acceptance": typeof lib_renter_date_acceptance;
   "lib/renter_date_proposal": typeof lib_renter_date_proposal;
   "lib/renter_dna": typeof lib_renter_dna;
