@@ -38,7 +38,7 @@ export interface NegotiationOutput {
   competitorMentioned: boolean;
   suggestedFraming: string;
   lastPriceOfferedGbp: number | null;
-  /** Whether the agent has discount authority to surface NOW. */
+  /** Strategy only; monetary reductions still require current Native policy/approval. */
   discountAuthority: "none" | "may_offer_alternatives" | "may_escalate";
 }
 
@@ -69,18 +69,18 @@ function countObjections(messages: string[]): number {
   return n;
 }
 
-// ── Framing copy (V1 verbatim, lightly compacted) ──────────────
-
+// The tool supplies strategy, not business facts or financial approval.
+// Both the draft context and Mastra consume this same guidance.
 const FRAMING = {
-  NONE: "No negotiation framing — quote the listed price normally.",
+  NONE: "No current price objection. Answer the current request using its verified facts; do not introduce a discount or repeat an unrelated quote.",
   COMPETITOR_ACK:
-    "Open with: 'I appreciate you sharing that — our prices reflect professional maintenance and support. Let me see what I can do.' Then proceed with the stance.",
+    "Acknowledge the comparison politely without disparaging the competitor. Explain value only from verified item facts and current policy; do not invent coverage, service or logistical benefits.",
   HOLD_FIRM:
-    "First pushback. Emphasise value: professional gear, flexible logistics, insurance coverage. Mention multi-day savings if the dates qualify. DO NOT offer a discount.",
+    "First pushback: hold the verified quoted price. Briefly explain the relevant verified gear or included contents. Offer multi-day savings only if a Native dated quote proves the saving for the requested gear. Do not offer a discount.",
   OFFER_ALTERNATIVES:
-    "Suggest: (1) longer rental for better daily rate, (2) alternative gear at a lower price point. If a pre-approved discount applies (distance / 7+ days), surface it here — never reveal thresholds or %.",
+    "Offer suitable lower-cost owned gear using find_owned_alternatives and a dated Native basket quote. Preserve the renter's requirements and explain any verified trade-offs. If their dates are flexible, compare Native quotes for a longer hire; a lower daily rate does not mean a lower total. A policy discount requires current search_knowledge evidence that it applies to this request and a verified resulting quote; this stance supplies no monetary approval.",
   SOFT_YIELD:
-    "If a pre-approved discount applies, surface now. Else: 'Let me check with Daniel for a special rate.' NEVER go below cost. If still unsatisfied, gracefully offer them time to compare options.",
+    "Repeated price pushback: use a current applicable policy and verified quote for any authorized reduction; never undercut an applicable verified pricing floor. Otherwise offer an owner review of a special-rate request, without promising approval, a price or a response time. Keep suitable owned alternatives available and let the renter consider the offer without pressure. Historical offers and this stance supply no monetary approval.",
 } as const;
 
 // ── Public API ────────────────────────────────────────────────
