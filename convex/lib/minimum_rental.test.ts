@@ -24,6 +24,7 @@ describe("prospective minimum-value context",()=>{
  it("keeps prospective instructions scoped to the evaluated quote",()=>{
   for(const assessed of [context(),context([{...price,total_gbp:30}]),context([])])expect(minimumRentalPrompt(assessed)).toContain("supersedes the earlier request's assessment");
   expect(minimumRentalPrompt(context([price],request,"CONFIRMED_UPCOMING"))).not.toContain("supersedes");
+  expect(minimumRentalPrompt(context([price],request,"COMPLETED"))).toContain("supersedes");
  });
  it("assesses the new selected inquiry rather than reopening a closed rental's price",()=>{
   const quote:PriceEvidence={names:[],items:[{name:"TTArtisan 11mm",quantity:1}],kind:"basket",days:1,start_date:"2026-10-22",end_date:"2026-10-22",total_gbp:21,source:"native_inquiry_basket",quote_role:"inquiry",call_id:"selected-new-inquiry"};
@@ -78,5 +79,12 @@ describe("prospective minimum-value context",()=>{
   expect(guardDraft("There is a £40 booking minimum.",opts).flags.some(f=>f.type==="MINIMUM_POLICY_DISCLOSURE")).toBe(true);
   expect(guardDraft("Minimum focus distance is 30cm, and the kit is £60.",opts).flags.some(f=>f.type==="MINIMUM_POLICY_DISCLOSURE")).toBe(false);
   expect(guardDraft("It is available for those dates.",{...opts,commercialContext:context([price],request,"CONFIRMED_UPCOMING")}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
+ });
+ it("uses authoritative completion for receipt acknowledgements but never for invented inspection",()=>{
+  const opts={history:[],lastRenterMessage:"Everything returned, thanks."};
+  const acknowledgement="Thanks for bringing everything back!";
+  expect(guardDraft(acknowledgement,{...opts,stage:"IN_USE"}).flags.some(f=>f.type==="GEAR_RECEIPT_CONFIRMED")).toBe(true);
+  expect(guardDraft(acknowledgement,{...opts,stage:"COMPLETED"}).flags.some(f=>f.type==="GEAR_RECEIPT_CONFIRMED")).toBe(false);
+  expect(guardDraft("All good on the return.",{...opts,stage:"COMPLETED"}).flags.some(f=>f.type==="GEAR_RECEIPT_CONFIRMED")).toBe(true);
  });
 });

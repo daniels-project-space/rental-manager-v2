@@ -1334,11 +1334,11 @@ const ASSERTS_AVAIL_RE =
       "flagged",
     );
 
-  // 23. GEAR RECEIPT CONFIRMED — FLAG (owner must inspect first)
+  // A Native completion signal establishes receipt, not a condition inspection.
+  // A renter's return claim alone still cannot establish either fact.
   if (
-    /(all received|got it back|equipment received|gear received|all good on the return|return(ed)? (complete|successful|confirmed)|everything.{0,15}(back|returned|received)|received.{0,10}(back|thanks))/i.test(
-      text,
-    )
+    /all good on the return|return(ed)? successful/i.test(text) ||
+    opts.stage!=="COMPLETED" && /(all received|got it back|equipment received|gear received|return(ed)? (complete|confirmed)|everything.{0,15}(back|returned|received)|received.{0,10}(back|thanks))/i.test(text)
   )
     push("GEAR_RECEIPT_CONFIRMED", "Confirms gear received back — inspect before confirming", "flagged");
 
