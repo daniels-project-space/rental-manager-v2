@@ -44,7 +44,7 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       // start a new assertion. A named camera/new predicate after a comma
       // does, so a preceding conditional/negative cannot license that promise.
       const independentAssertion = clauseNamed.length > 0 || explicitCameraModel.test(clause) ||
-        /\b(?:records?|shoots?|supports?|achieves?|can|does|is|has|offers?|tops\s*out|requires?)\b/i.test(clause.slice(0, match.index! - start));
+        /\b(?:records|shoots|supports|achieves|can|does|is|has|offers|tops\s*out|requires)\b|\b(?:they|these|those|bodies|cameras|models)\s+(?:record|shoot|support|achieve|offer|require)\b/i.test(clause.slice(0, match.index! - start));
       const polarityScope = start > 0 && sentence[start - 1] === "," && !independentAssertion ? sentence.slice(0, end) : clause;
       // A fronted request phrase has its governing predicate AFTER the comma:
       // "For a camera recording ..., I'm checking the recording specs." It

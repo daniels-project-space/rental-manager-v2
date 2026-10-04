@@ -23,6 +23,11 @@ export function forbiddenFulfillmentClaims(text:string, forbidden:string[], know
       const at=assertion.index!, prefix=clause.slice(0,at), after=clause.slice(at+assertion[0].length);
       if(/\b(?:not|never|no longer|isn't|aren't|wasn't|weren't|don't|doesn't|do not|cannot be|can't be)\s*$/.test(prefix)
         || assertion[0]==="free" && /\bfeel\s*$/.test(prefix))continue;
+      // Verification of a technical fact is a different subject/state from
+      // rental approval. Do not inherit the requested listing for "once that
+      // specification is confirmed"; actual availability/booking confirmation
+      // and deictic "it is confirmed" retain the normal rental subject checks.
+      if (assertion[0] === "confirmed" && /\b(?:specifications?|capabilit(?:y|ies)|recording mode|compatibility|mount|sensor format|frame rate)\s+(?:is|are|has been|have been|will be)\s*$/.test(prefix)) continue;
       const preceding=mentions.filter(m=>m.at<=at);
       // Equal positions select the longest exact identity, then the blocked one.
       const lastAt=preceding.at(-1)?.at;

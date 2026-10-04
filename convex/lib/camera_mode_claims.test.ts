@@ -38,6 +38,7 @@ describe("recording mode claims use exact model and capture area", () => {
     }
   });
   it("preserves the actual canonical requirement-review reply without attesting its mode", () => {
+    expect(unsupportedCameraModeClaims("Hey! I'm checking my owned Sony E-mount full-frame cameras, including the FX3, A7 III, and A7 V, to verify exact support for uncropped internal DCI 4K at 60fps before quoting. Once that specification is confirmed, I'll share the verified camera option and exact two-day price for 20–21 October.", evidence)).toEqual([]);
     const reply = "Hi! The Canon R5 kit isn't available for 20–21 October. For a Sony E-mount full-frame camera recording uncropped internal DCI 4K at 60fps, I'm checking the exact recording specs across my bodies (like the Sony FX3, A7 V, and A7 III) to ensure I match your exact requirements before confirming the option and quoting the 2-day price.";
     expect(unsupportedCameraModeClaims(reply, evidence)).toEqual([]);
     const result = guardDraft(reply, { history: [], lastRenterMessage: "I need uncropped internal DCI 4K60fps", cameraEvidence: evidence });

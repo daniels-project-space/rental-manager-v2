@@ -48,3 +48,11 @@ it("separates a named alternative class from a prior denial without allowing blo
  for(const text of ["I have a couple of Canon R5 kits.","I have the Sony FX3 and the Canon R5.","I can offer Sony FX3 plus Canon R5.","I can supply Sony FX3 with Canon R5."])expect(forbiddenFulfillmentClaims(text,["Canon R5"],known),text).toContain("Canon R5");
  expect(forbiddenFulfillmentClaims("I have the Sony FX3 instead of the Canon R5.",["Canon R5"],known)).toEqual([]);
 });
+
+it("does not turn technical verification into rental confirmation",()=>{
+ for(const fact of ["specification","capability","recording mode","compatibility","mount","sensor format","frame rate"])
+  expect(forbiddenFulfillmentClaims(`Once that ${fact} is confirmed, I'll share the verified option and price.`,blocked,known)).toEqual([]);
+ for(const subject of ["booking","rental","request","order","availability","it"])
+  expect(forbiddenFulfillmentClaims(`Once that ${subject} is confirmed, I'll share the price.`,blocked,known)).toContain("RED Komodo");
+ expect(forbiddenFulfillmentClaims("The specification is confirmed. The RED Komodo is available.",blocked,known)).toContain("RED Komodo");
+});
